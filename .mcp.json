@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "evna-remote": {
+      "type": "sse",
+      "url": "https://evna.ngrok.io/sse",
+      "headers": {
+        "Authorization": "Basic ZXZhbjp5b3VyX3N0cm9uZ19wYXNzd29yZF9oZXJl"
+      }
+    }
+  }
+}
