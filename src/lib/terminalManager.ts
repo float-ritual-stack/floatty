@@ -162,7 +162,8 @@ class TerminalManager {
       const os = await platform();
       const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
       const args = os === 'windows' ? [] : ['-l'];
-      const defaultCwd = os === 'windows' ? undefined : (cwd || '/Users/evan');
+      // Use provided cwd, or let the shell determine its default (usually $HOME)
+      const defaultCwd = cwd || undefined;
 
       // Text buffer for ctx:: detection
       let textBuffer = '';

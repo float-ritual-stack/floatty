@@ -32,7 +32,7 @@ impl Default for AggregatorConfig {
             ollama_model: default_parser.model,
             poll_interval_ms: default_parser.poll_interval_ms,
             max_retries: default_parser.max_retries,
-            max_age_hours: 12, // Default: last 12 hours
+            max_age_hours: 72, // Default: last 3 days (matches CLAUDE.md docs)
         }
     }
 }

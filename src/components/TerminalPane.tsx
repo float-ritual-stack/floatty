@@ -8,7 +8,7 @@
  * 4. Callbacks stored in manager, not effect deps
  */
 
-import { useRef, useCallback, useImperativeHandle, forwardRef, useEffect } from 'react';
+import { useCallback, useImperativeHandle, forwardRef, useEffect } from 'react';
 import { terminalManager } from '../lib/terminalManager';
 import '@xterm/xterm/css/xterm.css';
 

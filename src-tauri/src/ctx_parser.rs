@@ -19,7 +19,7 @@ pub struct ParserConfig {
 impl Default for ParserConfig {
     fn default() -> Self {
         Self {
-            endpoint: "http://float-box:11434".to_string(),
+            endpoint: "http://localhost:11434".to_string(),
             model: "qwen2.5:7b".to_string(),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             timeout_ms: 30000,
@@ -131,13 +131,22 @@ impl CtxParser {
     }
 
     /// Start the parser worker in a background thread
+    /// Safe to call multiple times - will only spawn one thread
     pub fn start(&self) {
+        // Guard against duplicate start() calls - only spawn if not already running
+        {
+            let mut guard = self.running.lock().unwrap_or_else(|e| e.into_inner());
+            if *guard {
+                log::warn!("ctx:: parser already running, ignoring duplicate start()");
+                return;
+            }
+            *guard = true;
+        }
+
         let db = Arc::clone(&self.db);
         let config = self.config.clone();
         let client = self.client.clone();
         let running = Arc::clone(&self.running);
-
-        *running.lock().unwrap_or_else(|e| e.into_inner()) = true;
 
         thread::spawn(move || {
             log::info!("Starting ctx:: parser worker");

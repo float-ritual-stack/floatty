@@ -86,12 +86,12 @@ Critical rules:
 
 Config file: `~/.floatty/config.toml`
 ```toml
-watch_path = "/Users/evan/.claude/projects"
-ollama_endpoint = "http://float-box:11434"
+watch_path = "~/.claude/projects"       # Claude Code session logs
+ollama_endpoint = "http://localhost:11434"  # Standard Ollama port
 ollama_model = "qwen2.5:7b"
 poll_interval_ms = 2000
 max_retries = 3
-max_age_hours = 72
+max_age_hours = 72                      # Look back 3 days for markers
 ```
 
 Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
