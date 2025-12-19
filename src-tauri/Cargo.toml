@@ -23,3 +23,14 @@ tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-pty = { path = "plugins/tauri-plugin-pty" }
 tauri-plugin-os = "2"
+
+# Context aggregator dependencies
+rusqlite = { version = "0.32", features = ["bundled"] }
+notify = "7"
+sha2 = "0.10"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+dirs = "5"
+hex = "0.4"
+walkdir = "2"
+toml = "0.8"

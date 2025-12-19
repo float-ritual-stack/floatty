@@ -6,96 +6,15 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
+import { ContextSidebar } from './ContextSidebar';
 import '@xterm/xterm/css/xterm.css';
-
-// Parsed context marker
-interface CtxMarker {
-  id: string;
-  timestamp: string;
-  time: string;
-  project?: string;
-  mode?: string;
-  message: string;
-  raw: string;
-}
-
-// Parse a ctx:: line into structured data
-function parseCtxLine(line: string): CtxMarker | null {
-  // Pattern: ctx::YYYY-MM-DD @ HH:MM AM/PM [project::xxx] [mode::xxx] message
-  const match = line.match(
-    /ctx::(\d{4}-\d{2}-\d{2})\s*@\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)\s*(?:\[project::([^\]]+)\])?\s*(?:\[mode::([^\]]+)\])?\s*(.+)?/i
-  );
-
-  if (!match) return null;
-
-  return {
-    id: crypto.randomUUID(),
-    timestamp: match[1],
-    time: match[2].trim(),
-    project: match[3],
-    mode: match[4],
-    message: match[5]?.trim() || '',
-    raw: line,
-  };
-}
-
-// Context Sidebar Component
-function ContextSidebar({ markers, onMarkerClick }: {
-  markers: CtxMarker[];
-  onMarkerClick?: (marker: CtxMarker) => void;
-}) {
-  if (markers.length === 0) {
-    return (
-      <div className="ctx-sidebar ctx-sidebar-empty">
-        <div className="ctx-sidebar-header">Context Stream</div>
-        <div className="ctx-empty-state">
-          No ctx:: markers yet
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="ctx-sidebar">
-      <div className="ctx-sidebar-header">
-        Context Stream ({markers.length})
-      </div>
-      <div className="ctx-markers-list">
-        {markers.map((marker) => (
-          <div
-            key={marker.id}
-            className="ctx-marker"
-            onClick={() => onMarkerClick?.(marker)}
-          >
-            <div className="ctx-marker-time">{marker.time}</div>
-            <div className="ctx-marker-tags">
-              {marker.project && (
-                <span className="ctx-tag ctx-tag-project">{marker.project}</span>
-              )}
-              {marker.mode && (
-                <span className="ctx-tag ctx-tag-mode">{marker.mode}</span>
-              )}
-            </div>
-            <div className="ctx-marker-message">{marker.message}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 export function Terminal() {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const ptyPidRef = useRef<number | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const [ctxMarkers, setCtxMarkers] = useState<CtxMarker[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
-
-  // Text buffer for detecting ctx:: across chunk boundaries
-  const textBufferRef = useRef<string>('');
-  // Dedupe set to prevent duplicate markers from rapid redraws
-  const seenMarkersRef = useRef<Set<string>>(new Set());
 
   // Keyboard interception
   useEffect(() => {
@@ -232,6 +151,7 @@ export function Terminal() {
       }
 
       // Create IPC Channel for PTY data streaming
+      // Note: ctx:: markers are now captured by the JSONL watcher in the Rust backend
       const onData = new Channel<string>();
       onData.onmessage = (base64Data: string) => {
         // Decode base64 to binary
@@ -243,55 +163,6 @@ export function Terminal() {
 
         // Write to xterm
         term.write(bytes);
-
-        // Detect ctx:: markers in the output
-        const text = new TextDecoder().decode(bytes);
-        textBufferRef.current += text;
-
-        // Look for complete ctx:: lines
-        const lines = textBufferRef.current.split('\n');
-        // Keep incomplete last line in buffer
-        textBufferRef.current = lines.pop() || '';
-
-        for (const line of lines) {
-          // Check for ctx:: pattern
-          if (line.includes('ctx::')) {
-            const marker = parseCtxLine(line);
-            if (marker) {
-              // Dedupe: skip if we've seen this exact content before
-              const contentKey = `${marker.timestamp}|${marker.time}|${marker.message}`;
-              if (!seenMarkersRef.current.has(contentKey)) {
-                seenMarkersRef.current.add(contentKey);
-                setCtxMarkers(prev => [...prev, marker]);
-
-                // TODO: Fire to evna automatically
-                // invoke('plugin:evna|capture_context', { line: marker.raw });
-
-                console.log('[ctx:: captured]', marker);
-              }
-            }
-          }
-
-          // Check for OSC sequences (format: ESC ] code ; data BEL)
-          // OSC 1337 is iTerm2's custom protocol
-          // We could define our own: OSC 7337 for float-pty
-          const oscMatch = line.match(/\x1b\]7337;([^\x07]+)\x07/);
-          if (oscMatch) {
-            try {
-              const oscData = JSON.parse(oscMatch[1]);
-              console.log('[OSC 7337 received]', oscData);
-              // Handle custom OSC commands here
-              if (oscData.type === 'ctx') {
-                const marker = parseCtxLine(oscData.line);
-                if (marker) {
-                  setCtxMarkers(prev => [...prev, marker]);
-                }
-              }
-            } catch {
-              // Not JSON, treat as plain text
-            }
-          }
-        }
       };
 
       const pid = await invoke<number>('plugin:pty|spawn', {
@@ -366,15 +237,7 @@ export function Terminal() {
         ref={terminalRef}
         className="terminal-container"
       />
-      {sidebarVisible && (
-        <ContextSidebar
-          markers={ctxMarkers}
-          onMarkerClick={(marker) => {
-            console.log('Clicked marker:', marker);
-            // Could scroll to that point in terminal history
-          }}
-        />
-      )}
+      <ContextSidebar visible={sidebarVisible} />
     </div>
   );
 }

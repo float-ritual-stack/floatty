@@ -1,86 +1,98 @@
-# CLAUDE.md - floatty
+# CLAUDE.md
 
-Instructions for Claude Code when working on this codebase.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What This Is
 
-A high-performance Tauri v2 terminal emulator with a "consciousness siphon" - it captures `ctx::` context markers from terminal output and displays them in a sidebar.
-
-## Architecture
-
-### The Performance Pattern (DO NOT DEVIATE)
-
-The terminal handles 4000+ redraws/sec from tools like Claude Code. This requires:
-
-1. **Greedy Slurp Batching** (Rust side)
-   - Reader thread blocks on PTY read
-   - Pushes chunks to mpsc channel
-   - Batcher thread blocks on first chunk (0 CPU idle)
-   - Then `try_recv()` slurps ALL queued data (up to 64KB)
-   - Emits ONE batched payload via IPC Channel
-
-2. **Base64 Encoding**
-   - `Vec<u8>` serializes to slow JSON array `[255, 0, 12...]`
-   - Base64 string is 60% faster to parse in JS
-
-3. **Tauri Channels**
-   - `Channel<String>` is a direct IPC pipe
-   - Passed from frontend to `spawn` command
-   - No broadcast overhead like `window.emit()`
-
-### Key Files
-
-```
-src-tauri/plugins/tauri-plugin-pty/src/lib.rs  # Vendored PTY plugin with batching
-src/components/Terminal.tsx                     # xterm.js + ctx:: detection + sidebar
-src/index.css                                   # Sidebar styling
-```
-
-### The ctx:: Siphon
-
-Terminal output is scanned for:
-```
-ctx::YYYY-MM-DD @ HH:MM AM/PM [project::X] [mode::Y] message
-```
-
-Parsed markers appear in sidebar. Dedupe prevents duplicates from rapid redraws.
-
-### OSC 7337
-
-Custom escape sequence for structured metadata:
-```
-\x1b]7337;{"type":"ctx","line":"..."}\x07
-```
-
-Invisible in terminal, intercepted by parser.
+**floatty** - A Tauri v2 terminal emulator with two integrated systems:
+1. **High-performance PTY** - handles 4000+ redraws/sec from tools like Claude Code
+2. **ctx:: Aggregation** - watches JSONL session logs, extracts markers, parses via Ollama, displays in sidebar
 
 ## Commands
 
 ```bash
-npm install          # Install deps
-npm run tauri dev    # Dev server
-npm run tauri build  # Production build
+npm install           # Install JS dependencies
+npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
+npm run tauri build   # Production build
+npm run lint          # ESLint
 ```
 
-## Known Issues (For Future Claude)
+## Architecture
 
-1. **Sidebar resize** - `Ctrl+Shift+C` toggles sidebar but terminal doesn't refit properly. The `useEffect` with `fitAddon.fit()` fires but xterm doesn't resize. Needs investigation.
+### PTY Performance Pattern (DO NOT DEVIATE)
 
-2. **xterm decorations** - Tried `term.registerDecoration()` for highlighting ctx:: lines. Crashed with renderer errors. Removed. Could try debounced approach (wait for scroll stop, then decorate viewport).
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Reader Thread  │     │  Batcher Thread │     │   IPC Channel   │
+│  (PTY read)     │ ──▶ │  (slurp ≤64KB)  │ ──▶ │  (base64 str)   │
+│  blocks on read │     │  blocks on recv │     │  to frontend    │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
 
-3. **evna auto-capture** - The `// TODO: Fire to evna automatically` is stubbed. When ready, uncomment and add proper evna plugin invoke.
+Critical rules:
+- **Greedy slurp**: Batcher blocks on first chunk, then `try_recv()` drains all queued
+- **Base64 encoding**: `Vec<u8>` → base64 string (60% faster than JSON array)
+- **Tauri Channels**: Direct IPC pipe, NOT `window.emit()` (broadcasts are slow)
+- **No sync work** in batcher thread
+
+### ctx:: Aggregation System
+
+```
+~/.claude/projects/*.jsonl  ──▶  CtxWatcher  ──▶  SQLite  ──▶  CtxParser  ──▶  Sidebar
+     (JSONL logs)              (file watcher)    (state)     (Ollama API)    (React)
+```
+
+**Rust modules** (`src-tauri/src/`):
+| File | Purpose |
+|------|---------|
+| `lib.rs` | App setup, Tauri commands, config loading |
+| `ctx_watcher.rs` | Watches JSONL files, extracts ctx:: lines, tracks file positions |
+| `ctx_parser.rs` | Background worker calling Ollama for structured parsing |
+| `db.rs` | SQLite schema, marker CRUD, file position persistence |
+
+**React components** (`src/components/`):
+| File | Purpose |
+|------|---------|
+| `Terminal.tsx` | xterm.js setup, PTY spawn, keyboard handling, sidebar toggle |
+| `ContextSidebar.tsx` | Polls Tauri commands, renders markers with tags |
+
+### Key Data Flows
+
+**ctx:: marker lifecycle**:
+1. Watcher scans JSONL → extracts line containing `ctx::` + metadata (cwd, branch, session_id)
+2. Inserts to SQLite with `status='pending'`, deterministic hash ID (dedupe)
+3. Parser polls pending → calls Ollama → updates `status='parsed'` with JSON
+4. Sidebar polls every 2s → displays with project/mode/issue tags
+
+**Tauri commands** (invoked from frontend):
+- `get_ctx_markers` / `get_ctx_counts` - sidebar data
+- `get_ctx_config` / `set_ctx_config` - aggregator settings
+- `clear_ctx_markers` - reset database
+
+### Configuration
+
+Config file: `~/.floatty/config.toml`
+```toml
+watch_path = "/Users/evan/.claude/projects"
+ollama_endpoint = "http://float-box:11434"
+ollama_model = "qwen2.5:7b"
+poll_interval_ms = 2000
+max_retries = 3
+max_age_hours = 72
+```
+
+Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
+
+## Known Issues
+
+1. **Sidebar resize** - `Ctrl+Shift+C` toggles sidebar but terminal doesn't refit. The `fitAddon.fit()` fires but xterm dims don't update. Needs investigation.
+
+2. **xterm decorations** - `term.registerDecoration()` for highlighting ctx:: lines crashed with renderer errors. Removed. Could try debounced viewport-only approach.
 
 ## Do NOT
 
-- Remove the batching pattern (will break performance)
-- Use `window.emit()` instead of Channels (slow)
-- Send `Vec<u8>` without base64 encoding (slow JSON)
-- Add synchronous work in the batcher thread
-
-## The Pattern Library
-
-This codebase demonstrates patterns reusable for other Float Substrate experiments:
-- High-throughput IPC
-- PTY integration
-- Metadata siphoning
-- Sidebar ToC UI
+- Remove batching pattern (breaks performance)
+- Use `window.emit()` instead of Channels
+- Send `Vec<u8>` without base64 encoding
+- Add sync work in batcher thread
+- Change Ollama JSON schema without updating both `ctx_parser.rs` and `ContextSidebar.tsx`
