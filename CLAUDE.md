@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-**floatty** - A Tauri v2 terminal emulator with two integrated systems:
+**floatty** - A Tauri v2 terminal emulator with three integrated systems:
 1. **High-performance PTY** - handles 4000+ redraws/sec from tools like Claude Code
-2. **ctx:: Aggregation** - watches JSONL session logs, extracts markers, parses via Ollama, displays in sidebar
+2. **Multi-tab terminals** - independent PTY per tab, platform-aware keybinds (⌘ on macOS)
+3. **ctx:: Aggregation** - watches JSONL session logs, extracts markers, parses via Ollama, displays in sidebar
 
 ## Commands
 
@@ -53,8 +54,20 @@ Critical rules:
 **React components** (`src/components/`):
 | File | Purpose |
 |------|---------|
-| `Terminal.tsx` | xterm.js setup, PTY spawn, keyboard handling, sidebar toggle |
+| `Terminal.tsx` | Tab orchestration, keybind handling, layout |
+| `TerminalPane.tsx` | Thin wrapper, attaches to terminalManager |
 | `ContextSidebar.tsx` | Polls Tauri commands, renders markers with tags |
+
+**Frontend modules** (`src/lib/`):
+| File | Purpose |
+|------|---------|
+| `terminalManager.ts` | Singleton owning xterm lifecycle OUTSIDE React |
+| `keybinds.ts` | Platform-aware keybind system (⌘ on macOS, Ctrl elsewhere) |
+
+**State** (`src/hooks/`):
+| File | Purpose |
+|------|---------|
+| `useTabStore.ts` | Zustand store for tab state |
 
 ### Key Data Flows
 
@@ -83,11 +96,35 @@ max_age_hours = 72
 
 Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
 
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `⌘T` / `Ctrl+T` | New tab |
+| `⌘W` / `Ctrl+W` | Close tab |
+| `⌘1-9` | Jump to tab N |
+| `⌘⇧[` / `⌘⇧]` | Prev/next tab |
+| `⌘B` | Toggle sidebar |
+
+Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, readline)
+
+### Terminal Manager Architecture
+
+```
+React Component                    Singleton (outside React)
+┌─────────────────┐               ┌─────────────────────────────┐
+│  TerminalPane   │ ref callback  │    terminalManager          │
+│  (thin wrapper) │ ───────────▶  │  - instances: Map<id, term> │
+│                 │               │  - attach(id, container)    │
+│                 │               │  - dispose(id)              │
+└─────────────────┘               └─────────────────────────────┘
+```
+
+Why: React's useEffect dependency tracking caused terminals to re-initialize on tab switch. Moving lifecycle outside React eliminates this class of bugs.
+
 ## Known Issues
 
-1. **Sidebar resize** - `Ctrl+Shift+C` toggles sidebar but terminal doesn't refit. The `fitAddon.fit()` fires but xterm dims don't update. Needs investigation.
-
-2. **xterm decorations** - `term.registerDecoration()` for highlighting ctx:: lines crashed with renderer errors. Removed. Could try debounced viewport-only approach.
+1. **xterm decorations** - `term.registerDecoration()` for highlighting ctx:: lines crashed with renderer errors. Removed. Could try debounced viewport-only approach.
 
 ## Do NOT
 

@@ -4,9 +4,10 @@ A high-performance terminal emulator built with Tauri v2 + xterm.js, featuring a
 
 ## What It Does
 
-- **Full PTY terminal** with GPU-accelerated rendering (WebGL)
+- **Multi-tab terminals** with full PTY support per tab
+- **GPU-accelerated rendering** via WebGL addon
 - **ctx:: Siphon** - Parses terminal output for `ctx::` markers and displays them in a sidebar ToC
-- **OSC 7337** - Custom escape sequence for structured metadata
+- **Platform-aware keybinds** - Cmd on macOS, Ctrl on Windows/Linux
 - **High-throughput optimized** - Handles Claude Code's 4000+ redraws/sec without stuttering
 
 ## Architecture Highlights
@@ -43,8 +44,26 @@ npm run tauri build
 
 ## Keyboard Shortcuts
 
-- `Ctrl+Shift+C` - Toggle context sidebar
-- `Cmd+Enter` - Insert literal newline (multi-line input)
+Uses platform-aware keybinds: **Cmd** on macOS, **Ctrl** on Windows/Linux.
+
+### Tab Management
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+T` | New tab |
+| `Cmd+W` | Close tab |
+| `Cmd+1-9` | Go to tab N |
+| `Cmd+Shift+[` | Previous tab |
+| `Cmd+Shift+]` | Next tab |
+
+### UI
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+B` | Toggle context sidebar |
+
+### Terminal Reserved (always pass through)
+These keys are never intercepted - they reach the PTY for shell signals:
+- `Ctrl+C` (SIGINT), `Ctrl+Z` (SIGTSTP), `Ctrl+D` (EOF)
+- `Ctrl+L`, `Ctrl+R`, `Ctrl+A`, `Ctrl+E`, `Ctrl+K`, `Ctrl+U`, `Ctrl+W`
 
 ## ctx:: Marker Format
 
@@ -76,7 +95,6 @@ printf '\e]7337;{"type":"ctx","line":"ctx::2025-12-16 @ 08:30 AM [project::x] me
 
 ## Known Issues
 
-- Sidebar toggle doesn't trigger terminal resize (documented, fixable)
 - xterm decoration API unstable (removed for now)
 - Auto-fire to evna not wired yet (manual capture works)
 
