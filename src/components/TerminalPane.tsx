@@ -38,13 +38,15 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const attachedRef = useRef(false);
 
-    // Update callbacks in manager
-    terminalManager.setCallbacks(id, {
-      onPtySpawn,
-      onPtyExit,
-      onTitleChange,
-      onCtxMarker: onCtxMarker as (marker: unknown) => void,
-    });
+    // Update callbacks in manager when they change
+    useLayoutEffect(() => {
+      terminalManager.setCallbacks(id, {
+        onPtySpawn,
+        onPtyExit,
+        onTitleChange,
+        onCtxMarker: onCtxMarker as (marker: unknown) => void,
+      });
+    }, [id, onPtySpawn, onPtyExit, onTitleChange, onCtxMarker]);
 
     // Position this terminal over its placeholder
     const updatePosition = useCallback(() => {
@@ -101,15 +103,21 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(
 
     // Update position when visibility changes (tab switch)
     useLayoutEffect(() => {
+      let rafId: number | undefined;
       if (isVisible) {
         // Delay to let layout settle after tab switch
-        requestAnimationFrame(() => {
+        rafId = requestAnimationFrame(() => {
           updatePosition();
           if (isActive) {
             terminalManager.focus(id);
           }
         });
       }
+      return () => {
+        if (rafId !== undefined) {
+          cancelAnimationFrame(rafId);
+        }
+      };
     }, [id, isVisible, isActive, updatePosition]);
 
     // Imperative handle

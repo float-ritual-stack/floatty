@@ -122,16 +122,14 @@ export function Terminal() {
     }
   }, []);
 
-  // Initialize layout for initial tab on first mount
+  // Initialize layout for tabs that don't have one
   useEffect(() => {
-    // Initialize layouts for any tabs that don't have one
     for (const tab of tabs) {
       if (!getLayout(tab.id)) {
         initLayout(tab.id);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only on mount - intentionally empty deps
+  }, [tabs, getLayout, initLayout]);
 
   // Handle creating a new tab - creates tab + layout
   const handleNewTab = useCallback((cwd?: string) => {
@@ -438,7 +436,9 @@ export function Terminal() {
               isVisible={isActiveTab}
               ref={(handle) => setPaneRef(paneId, handle)}
               onPtySpawn={(pid) => handlePtySpawn(paneId, pid)}
-              onPtyExit={() => handlePtyExit(paneId)}
+              onPtyExit={() => handlePtyExit(paneId).catch(e =>
+                console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
+              )}
               onTitleChange={(title) => handleTitleChange(paneId, title)}
             />
           ))}

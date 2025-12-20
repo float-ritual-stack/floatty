@@ -172,7 +172,9 @@ class TerminalManager {
       webglAddon.onContextLoss(() => {
         console.warn(`[TerminalManager] WebGL context lost for ${id}, falling back to canvas`);
         webglAddon?.dispose();
-        if (instance) instance.webglAddon = null;
+        // Fetch instance from map at callback time to avoid stale closure
+        const inst = this.instances.get(id);
+        if (inst) inst.webglAddon = null;
       });
       term.loadAddon(webglAddon);
     } catch (e) {
@@ -350,14 +352,23 @@ class TerminalManager {
     const instance = this.instances.get(id);
     if (!instance) return;
 
-    if (instance.ptyPid !== null && !instance.exitedNaturally) {
-      // Only kill and notify if PTY didn't already exit naturally
-      try {
-        await invoke('plugin:pty|kill', { pid: instance.ptyPid });
-        this.callbacks.get(id)?.onPtyExit?.(0);
-      } catch (e) {
-        console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
-        this.callbacks.get(id)?.onPtyExit?.(-1);
+    if (instance.ptyPid !== null) {
+      if (instance.exitedNaturally) {
+        // PTY already exited - just clean up Rust session map
+        try {
+          await invoke('plugin:pty|dispose', { pid: instance.ptyPid });
+        } catch (e) {
+          console.warn(`[TerminalManager] PTY dispose failed for ${id}:`, e);
+        }
+      } else {
+        // PTY still running - kill it and notify
+        try {
+          await invoke('plugin:pty|kill', { pid: instance.ptyPid });
+          this.callbacks.get(id)?.onPtyExit?.(0);
+        } catch (e) {
+          console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
+          this.callbacks.get(id)?.onPtyExit?.(-1);
+        }
       }
     }
 

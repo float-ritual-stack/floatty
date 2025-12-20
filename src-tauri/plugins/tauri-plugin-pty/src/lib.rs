@@ -211,6 +211,15 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
         .await
         .kill()
         .map_err(|e| e.to_string())?;
+    // Clean up session from map to prevent memory leak
+    state.sessions.write().await.remove(&pid);
+    Ok(())
+}
+
+#[tauri::command]
+async fn dispose(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(), String> {
+    // Remove session from map without killing (for already-exited PTYs)
+    state.sessions.write().await.remove(&pid);
     Ok(())
 }
 
@@ -236,7 +245,7 @@ async fn exitstatus(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Re
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::<R>::new("pty")
         .invoke_handler(tauri::generate_handler![
-            spawn, write, resize, kill, exitstatus
+            spawn, write, resize, kill, dispose, exitstatus
         ])
         .setup(|app_handle, _api| {
             app_handle.manage(PluginState::default());
