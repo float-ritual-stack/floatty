@@ -47,11 +47,9 @@ export function ResizeHandle({ direction, onResize, parentRef }: ResizeHandlePro
     const parentStart = direction === 'horizontal' ? parentRect.left : parentRect.top;
     const parentSize = direction === 'horizontal' ? parentRect.width : parentRect.height;
 
-    // Calculate new ratio based on pointer position within parent
-    // Account for 4px handle width to get accurate ratio
-    const handleWidth = 4;
-    const effectiveSize = parentSize - handleWidth;
-    const rawRatio = (currentPos - parentStart) / effectiveSize;
+    // Calculate ratio - offset by half handle width so pointer stays centered on handle
+    const handleOffset = 2; // half of 4px handle
+    const rawRatio = (currentPos - handleOffset - parentStart) / parentSize;
     // Clamp ratio to valid range before passing to handler
     const clampedRatio = Math.max(0.1, Math.min(0.9, rawRatio));
     onResize(clampedRatio);
