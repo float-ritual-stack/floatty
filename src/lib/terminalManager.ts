@@ -19,9 +19,11 @@ import { platform } from '@tauri-apps/plugin-os';
 export interface TerminalInstance {
   term: XTerm;
   fitAddon: FitAddon;
+  webglAddon: WebglAddon | null;
   ptyPid: number | null;
   title: string;
   container: HTMLElement | null;
+  exitedNaturally: boolean;  // Guards against double onPtyExit calls
 }
 
 export interface TerminalCallbacks {
@@ -70,14 +72,54 @@ class TerminalManager {
     let instance = this.instances.get(id);
 
     if (instance) {
-      // Already exists - just reattach to new container if needed
+      // Already exists - check if container changed (happens on layout tree changes)
       if (instance.container !== container) {
-        // xterm doesn't support re-parenting, so we keep the existing attachment
-        // This happens during React re-renders; container should be stable
-        console.warn(`[TerminalManager] Terminal ${id} already attached to different container`);
+        console.log(`[TerminalManager] Re-parenting terminal ${id} to new container`);
+
+        // CRITICAL: Dispose WebGL addon BEFORE re-opening to prevent context exhaustion
+        if (instance.webglAddon) {
+          try {
+            instance.webglAddon.dispose();
+          } catch (e) {
+            console.warn(`[TerminalManager] WebGL dispose failed for ${id}:`, e);
+          }
+          instance.webglAddon = null;
+        }
+
+        // Re-open xterm to new container
+        instance.term.open(container);
+        instance.container = container;
+
+        // Re-add WebGL addon after re-opening
+        try {
+          const webglAddon = new WebglAddon();
+          webglAddon.onContextLoss(() => {
+            console.warn(`[TerminalManager] WebGL context lost for ${id}, falling back to canvas`);
+            webglAddon.dispose();
+            instance.webglAddon = null;
+          });
+          instance.term.loadAddon(webglAddon);
+          instance.webglAddon = webglAddon;
+        } catch (e) {
+          console.warn(`[TerminalManager] WebGL re-add failed for ${id}:`, e);
+        }
+
+        instance.fitAddon.fit();
+        // Notify PTY of new size
+        if (instance.ptyPid !== null) {
+          invoke('plugin:pty|resize', {
+            pid: instance.ptyPid,
+            cols: instance.term.cols,
+            rows: instance.term.rows,
+          }).catch(console.error);
+        }
+      } else {
+        console.log(`[TerminalManager] Terminal ${id} already attached to same container`);
       }
       return instance;
     }
+
+    console.log(`[TerminalManager] Creating new terminal ${id}`);
 
     // Create new terminal
     const term = new XTerm({
@@ -121,13 +163,23 @@ class TerminalManager {
 
     term.open(container);
 
+    // Track webgl addon for proper disposal during re-parenting
+    let webglAddon: WebglAddon | null = null;
+
     // Optional addons (fail gracefully)
     try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => webglAddon.dispose());
+      webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        console.warn(`[TerminalManager] WebGL context lost for ${id}, falling back to canvas`);
+        webglAddon?.dispose();
+        // Fetch instance from map at callback time to avoid stale closure
+        const inst = this.instances.get(id);
+        if (inst) inst.webglAddon = null;
+      });
       term.loadAddon(webglAddon);
     } catch (e) {
       console.warn(`[TerminalManager] WebGL addon failed for ${id}:`, e);
+      webglAddon = null;
     }
 
     try {
@@ -138,7 +190,7 @@ class TerminalManager {
 
     fitAddon.fit();
 
-    instance = { term, fitAddon, ptyPid: null, title: 'Terminal', container };
+    instance = { term, fitAddon, webglAddon, ptyPid: null, title: 'Terminal', container, exitedNaturally: false };
     this.instances.set(id, instance);
     this.seenMarkers.set(id, new Set());
 
@@ -198,6 +250,18 @@ class TerminalManager {
         }
       };
 
+      // Exit channel - notified when PTY closes (shell exits)
+      const onExit = new Channel<number>();
+      onExit.onmessage = (exitCode: number) => {
+        console.log(`[TerminalManager] PTY ${id} exited with code ${exitCode}`);
+        // Mark as naturally exited to prevent double callback in dispose()
+        const inst = this.instances.get(id);
+        if (inst) {
+          inst.exitedNaturally = true;
+        }
+        this.callbacks.get(id)?.onPtyExit?.(exitCode);
+      };
+
       const pid = await invoke<number>('plugin:pty|spawn', {
         file: shell,
         args,
@@ -206,6 +270,7 @@ class TerminalManager {
         cwd: defaultCwd,
         env: { TERM: 'xterm-256color', COLORTERM: 'truecolor' },
         onData,
+        onExit,
       });
 
       instance.ptyPid = pid;
@@ -288,11 +353,31 @@ class TerminalManager {
     if (!instance) return;
 
     if (instance.ptyPid !== null) {
+      if (instance.exitedNaturally) {
+        // PTY already exited - just clean up Rust session map
+        try {
+          await invoke('plugin:pty|dispose', { pid: instance.ptyPid });
+        } catch (e) {
+          console.warn(`[TerminalManager] PTY dispose failed for ${id}:`, e);
+        }
+      } else {
+        // PTY still running - kill it and notify
+        try {
+          await invoke('plugin:pty|kill', { pid: instance.ptyPid });
+          this.callbacks.get(id)?.onPtyExit?.(0);
+        } catch (e) {
+          console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
+          this.callbacks.get(id)?.onPtyExit?.(-1);
+        }
+      }
+    }
+
+    // Dispose WebGL addon first to free context
+    if (instance.webglAddon) {
       try {
-        await invoke('plugin:pty|kill', { pid: instance.ptyPid });
-        this.callbacks.get(id)?.onPtyExit?.(0);
-      } catch {
-        this.callbacks.get(id)?.onPtyExit?.(-1);
+        instance.webglAddon.dispose();
+      } catch (e) {
+        console.warn(`[TerminalManager] WebGL dispose failed during cleanup for ${id}:`, e);
       }
     }
 

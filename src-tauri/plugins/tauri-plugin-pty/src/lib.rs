@@ -43,6 +43,7 @@ async fn spawn(
     cwd: Option<String>,
     env: BTreeMap<String, String>,
     on_data: Channel<String>,
+    on_exit: Channel<u32>,
     state: tauri::State<'_, PluginState>,
 ) -> Result<PtyHandler, String> {
     let pty_system = native_pty_system();
@@ -73,18 +74,26 @@ async fn spawn(
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
 
     // READER THREAD: Reads from PTY and pushes to internal channel
+    // Notifies on_exit when PTY closes (EOF or error)
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
             match reader.read(&mut buf) {
-                Ok(0) => break, // EOF
+                Ok(0) => break, // EOF - shell exited
                 Ok(n) => {
                     if tx.send(buf[..n].to_vec()).is_err() {
                         break; // Channel closed
                     }
                 }
-                Err(_) => break,
+                Err(e) => {
+                    eprintln!("[PTY Reader] Read error: {}", e);
+                    break;
+                }
             }
+        }
+        // PTY closed - notify frontend
+        if let Err(e) = on_exit.send(0) {
+            eprintln!("[PTY Reader] Failed to send exit notification: {}", e);
         }
     });
 
@@ -202,6 +211,15 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
         .await
         .kill()
         .map_err(|e| e.to_string())?;
+    // Clean up session from map to prevent memory leak
+    state.sessions.write().await.remove(&pid);
+    Ok(())
+}
+
+#[tauri::command]
+async fn dispose(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(), String> {
+    // Remove session from map without killing (for already-exited PTYs)
+    state.sessions.write().await.remove(&pid);
     Ok(())
 }
 
@@ -227,7 +245,7 @@ async fn exitstatus(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Re
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::<R>::new("pty")
         .invoke_handler(tauri::generate_handler![
-            spawn, write, resize, kill, exitstatus
+            spawn, write, resize, kill, dispose, exitstatus
         ])
         .setup(|app_handle, _api| {
             app_handle.manage(PluginState::default());
