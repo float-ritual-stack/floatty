@@ -40,10 +40,11 @@ Critical rules:
 
 ```
 ~/.claude/projects/*.jsonl  ──▶  CtxWatcher  ──▶  SQLite  ──▶  CtxParser  ──▶  Sidebar
-     (JSONL logs)              (file watcher)    (state)     (Ollama API)    (React)
+     (JSONL logs)              (file watcher)    (state)     (Ollama API)    (SolidJS)
 ```
 
 **Rust modules** (`src-tauri/src/`):
+
 | File | Purpose |
 |------|---------|
 | `lib.rs` | App setup, Tauri commands, config loading |
@@ -52,6 +53,7 @@ Critical rules:
 | `db.rs` | SQLite schema, marker CRUD, file position persistence |
 
 **SolidJS components** (`src/components/`):
+
 | File | Purpose |
 |------|---------|
 | `Terminal.tsx` | Tab orchestration, keybind handling, layout |
@@ -60,6 +62,7 @@ Critical rules:
 | `PaneLayout.tsx` | Recursive split pane layout with resize handles |
 
 **Frontend modules** (`src/lib/`):
+
 | File | Purpose |
 |------|---------|
 | `terminalManager.ts` | Singleton owning xterm lifecycle OUTSIDE SolidJS |
@@ -67,6 +70,7 @@ Critical rules:
 | `layoutTypes.ts` | Layout tree types and pure manipulation functions |
 
 **State** (`src/hooks/`):
+
 | File | Purpose |
 |------|---------|
 | `useTabStore.ts` | SolidJS store for tab state |
