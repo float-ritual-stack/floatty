@@ -441,3 +441,89 @@ html, body, #root {
 .terminal-container {
   position: relative;
 }
+
+/* ================================================
+   Pane Layout - Split Pane System
+   ================================================ */
+
+.pane-layout-root {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.pane-layout-split {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.pane-layout-horizontal {
+  flex-direction: row;
+}
+
+.pane-layout-vertical {
+  flex-direction: column;
+}
+
+.pane-layout-child {
+  display: flex;
+  overflow: hidden;
+}
+
+.pane-layout-leaf {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-placeholder {
+  background: transparent;
+}
+
+.pane-layout-leaf.pane-active {
+  background: rgba(124, 58, 237, 0.05);
+}
+
+/* ================================================
+   Resize Handle
+   ================================================ */
+
+.resize-handle {
+  background: #2a2a4a;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.resize-handle-horizontal {
+  width: 4px;
+  cursor: col-resize;
+}
+
+.resize-handle-vertical {
+  height: 4px;
+  cursor: row-resize;
+}
+
+.resize-handle:hover {
+  background: #7c3aed;
+}
+
+.resize-handle.dragging {
+  background: #7c3aed;
+}
+
+/* During resize, disable pointer events on terminals */
+body.resizing .terminal-pane-positioned {
+  pointer-events: none;
+}
+
+/* Terminal pane positioned over placeholder */
+.terminal-pane-positioned {
+  background: #1a1a2e;
+}
+
+.terminal-pane-positioned.active {
+  /* Active pane styling if needed */
+}

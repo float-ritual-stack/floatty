@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 
 // Status of a ctx:: marker parsing
@@ -59,14 +59,14 @@ function getRepoFromCwd(cwd?: string): string | null {
   return parts[parts.length - 1] || null;
 }
 
-export function ContextSidebar({ visible }: { visible: boolean }) {
-  const [markers, setMarkers] = useState<CtxMarker[]>([]);
-  const [counts, setCounts] = useState<MarkerCounts>({ pending: 0, parsed: 0, error: 0, total: 0 });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export function ContextSidebar(props: { visible: boolean }) {
+  const [markers, setMarkers] = createSignal<CtxMarker[]>([]);
+  const [counts, setCounts] = createSignal<MarkerCounts>({ pending: 0, parsed: 0, error: 0, total: 0 });
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
 
   // Fetch markers from backend
-  const fetchMarkers = useCallback(async () => {
+  const fetchMarkers = async () => {
     try {
       const [newMarkers, newCounts] = await Promise.all([
         invoke<CtxMarker[]>('get_ctx_markers', { limit: 100 }),
@@ -81,133 +81,175 @@ export function ContextSidebar({ visible }: { visible: boolean }) {
       setError(String(e));
       setLoading(false);
     }
-  }, []);
+  };
 
   // Poll for updates
-  useEffect(() => {
-    if (!visible) return;
+  createEffect(() => {
+    if (!props.visible) return;
 
     // Schedule initial fetch (not called synchronously in effect)
     const initialTimeout = setTimeout(fetchMarkers, 0);
 
     // Poll every 2 seconds
     const interval = setInterval(fetchMarkers, 2000);
-    return () => {
+
+    onCleanup(() => {
       clearTimeout(initialTimeout);
       clearInterval(interval);
-    };
-  }, [visible, fetchMarkers]);
-
-  if (!visible) return null;
-
-  if (loading) {
-    return (
-      <div className="ctx-sidebar">
-        <div className="ctx-sidebar-header">Context Stream</div>
-        <div className="ctx-empty-state">Loading...</div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="ctx-sidebar ctx-sidebar-error">
-        <div className="ctx-sidebar-header">Context Stream</div>
-        <div className="ctx-error-state">
-          <div className="ctx-error-message">{error}</div>
-          <button className="ctx-retry-button" onClick={fetchMarkers}>
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (markers.length === 0) {
-    return (
-      <div className="ctx-sidebar ctx-sidebar-empty">
-        <div className="ctx-sidebar-header">Context Stream</div>
-        <div className="ctx-empty-state">
-          No ctx:: markers yet
-          <div className="ctx-hint">
-            Watching ~/.claude/projects/*.jsonl
-          </div>
-        </div>
-      </div>
-    );
-  }
+    });
+  });
 
   return (
-    <div className="ctx-sidebar">
-      <div className="ctx-sidebar-header">
-        Context Stream ({counts.total})
-        {counts.pending > 0 && (
-          <span className="ctx-pending-badge">{counts.pending} parsing...</span>
-        )}
-      </div>
-      <div className="ctx-markers-list">
-        {markers.map((marker) => (
-          <MarkerCard key={marker.id} marker={marker} />
-        ))}
-      </div>
-    </div>
+    <Show when={props.visible}>
+      <Show
+        when={!loading()}
+        fallback={
+          <div class="ctx-sidebar">
+            <div class="ctx-sidebar-header">Context Stream</div>
+            <div class="ctx-empty-state">Loading...</div>
+          </div>
+        }
+      >
+        <Show
+          when={!error()}
+          fallback={
+            <div class="ctx-sidebar ctx-sidebar-error">
+              <div class="ctx-sidebar-header">Context Stream</div>
+              <div class="ctx-error-state">
+                <div class="ctx-error-message">{error()}</div>
+                <button class="ctx-retry-button" onClick={fetchMarkers}>
+                  Retry
+                </button>
+              </div>
+            </div>
+          }
+        >
+          <Show
+            when={markers().length > 0}
+            fallback={
+              <div class="ctx-sidebar ctx-sidebar-empty">
+                <div class="ctx-sidebar-header">Context Stream</div>
+                <div class="ctx-empty-state">
+                  No ctx:: markers yet
+                  <div class="ctx-hint">
+                    Watching ~/.claude/projects/*.jsonl
+                  </div>
+                </div>
+              </div>
+            }
+          >
+            <div class="ctx-sidebar">
+              <div class="ctx-sidebar-header">
+                Context Stream ({counts().total})
+                <Show when={counts().pending > 0}>
+                  <span class="ctx-pending-badge">{counts().pending} parsing...</span>
+                </Show>
+              </div>
+              <div class="ctx-markers-list">
+                <For each={markers()}>
+                  {(marker) => <MarkerCard marker={marker} />}
+                </For>
+              </div>
+            </div>
+          </Show>
+        </Show>
+      </Show>
+    </Show>
   );
 }
 
-function MarkerCard({ marker }: { marker: CtxMarker }) {
-  const isPending = marker.status === 'pending';
-  const isError = marker.status === 'error';
+function MarkerCard(props: { marker: CtxMarker }) {
+  const isPending = () => props.marker.status === 'pending';
+  const isError = () => props.marker.status === 'error';
 
   // JSONL metadata (always available)
-  const repo = getRepoFromCwd(marker.cwd);
-  const branch = marker.git_branch;
-
-  // For parsed markers, use the structured data
-  if (marker.parsed) {
-    const { time, project, mode, meeting, issue, summary, message } = marker.parsed;
-
-    // Dedupe: skip repo badge if project matches repo name
-    const showRepo = repo && (!project || !project.toLowerCase().includes(repo.toLowerCase()));
-
-    return (
-      <div className={`ctx-marker ${isPending ? 'ctx-marker-pending' : ''} ${isError ? 'ctx-marker-error' : ''}`}>
-        <div className="ctx-marker-time">{time || extractTimeFromRaw(marker.raw_line)}</div>
-        <div className="ctx-marker-tags">
-          {showRepo && <span className={`ctx-tag ${TAG_COLORS.repo}`}>{repo}</span>}
-          {branch && branch !== 'main' && <span className={`ctx-tag ${TAG_COLORS.branch}`}>{branch}</span>}
-          {project && <span className={`ctx-tag ${TAG_COLORS.project}`}>{project}</span>}
-          {mode && <span className={`ctx-tag ${TAG_COLORS.mode}`}>{mode}</span>}
-          {meeting && <span className={`ctx-tag ${TAG_COLORS.meeting}`}>{meeting}</span>}
-          {issue && <span className={`ctx-tag ${TAG_COLORS.issue}`}>{issue}</span>}
-        </div>
-        {summary && <div className="ctx-marker-summary">{summary}</div>}
-        {message && <div className="ctx-marker-message">{message}</div>}
-      </div>
-    );
-  }
-
-  // For raw markers (pending/error), show simplified version
-  const time = extractTimeFromRaw(marker.raw_line);
-  const project = extractTagFromRaw(marker.raw_line, 'project');
-  const mode = extractTagFromRaw(marker.raw_line, 'mode');
+  const repo = () => getRepoFromCwd(props.marker.cwd);
+  const branch = () => props.marker.git_branch;
 
   return (
-    <div className={`ctx-marker ${isPending ? 'ctx-marker-pending' : ''} ${isError ? 'ctx-marker-error' : ''}`}>
-      <div className="ctx-marker-time">
-        {time}
-        {isPending && <span className="ctx-parsing-indicator">...</span>}
-        {isError && <span className="ctx-error-indicator">!</span>}
-      </div>
-      <div className="ctx-marker-tags">
-        {repo && <span className={`ctx-tag ${TAG_COLORS.repo}`}>{repo}</span>}
-        {branch && branch !== 'main' && <span className={`ctx-tag ${TAG_COLORS.branch}`}>{branch}</span>}
-        {project && <span className={`ctx-tag ${TAG_COLORS.project}`}>{project}</span>}
-        {mode && <span className={`ctx-tag ${TAG_COLORS.mode}`}>{mode}</span>}
-      </div>
-      <div className="ctx-marker-message ctx-marker-raw">
-        {extractMessageFromRaw(marker.raw_line)}
-      </div>
-    </div>
+    <Show
+      when={props.marker.parsed}
+      fallback={
+        // For raw markers (pending/error), show simplified version
+        (() => {
+          const time = extractTimeFromRaw(props.marker.raw_line);
+          const project = extractTagFromRaw(props.marker.raw_line, 'project');
+          const mode = extractTagFromRaw(props.marker.raw_line, 'mode');
+
+          return (
+            <div class={`ctx-marker ${isPending() ? 'ctx-marker-pending' : ''} ${isError() ? 'ctx-marker-error' : ''}`}>
+              <div class="ctx-marker-time">
+                {time}
+                <Show when={isPending()}>
+                  <span class="ctx-parsing-indicator">...</span>
+                </Show>
+                <Show when={isError()}>
+                  <span class="ctx-error-indicator">!</span>
+                </Show>
+              </div>
+              <div class="ctx-marker-tags">
+                <Show when={repo()}>
+                  <span class={`ctx-tag ${TAG_COLORS.repo}`}>{repo()}</span>
+                </Show>
+                <Show when={branch() && branch() !== 'main'}>
+                  <span class={`ctx-tag ${TAG_COLORS.branch}`}>{branch()}</span>
+                </Show>
+                <Show when={project}>
+                  <span class={`ctx-tag ${TAG_COLORS.project}`}>{project}</span>
+                </Show>
+                <Show when={mode}>
+                  <span class={`ctx-tag ${TAG_COLORS.mode}`}>{mode}</span>
+                </Show>
+              </div>
+              <div class="ctx-marker-message ctx-marker-raw">
+                {extractMessageFromRaw(props.marker.raw_line)}
+              </div>
+            </div>
+          );
+        })()
+      }
+    >
+      {/* For parsed markers, use the structured data */}
+      {(() => {
+        const parsed = props.marker.parsed!;
+        const { time, project, mode, meeting, issue, summary, message } = parsed;
+
+        // Dedupe: skip repo badge if project matches repo name
+        const showRepo = repo() && (!project || !project.toLowerCase().includes(repo()!.toLowerCase()));
+
+        return (
+          <div class={`ctx-marker ${isPending() ? 'ctx-marker-pending' : ''} ${isError() ? 'ctx-marker-error' : ''}`}>
+            <div class="ctx-marker-time">{time || extractTimeFromRaw(props.marker.raw_line)}</div>
+            <div class="ctx-marker-tags">
+              <Show when={showRepo}>
+                <span class={`ctx-tag ${TAG_COLORS.repo}`}>{repo()}</span>
+              </Show>
+              <Show when={branch() && branch() !== 'main'}>
+                <span class={`ctx-tag ${TAG_COLORS.branch}`}>{branch()}</span>
+              </Show>
+              <Show when={project}>
+                <span class={`ctx-tag ${TAG_COLORS.project}`}>{project}</span>
+              </Show>
+              <Show when={mode}>
+                <span class={`ctx-tag ${TAG_COLORS.mode}`}>{mode}</span>
+              </Show>
+              <Show when={meeting}>
+                <span class={`ctx-tag ${TAG_COLORS.meeting}`}>{meeting}</span>
+              </Show>
+              <Show when={issue}>
+                <span class={`ctx-tag ${TAG_COLORS.issue}`}>{issue}</span>
+              </Show>
+            </div>
+            <Show when={summary}>
+              <div class="ctx-marker-summary">{summary}</div>
+            </Show>
+            <Show when={message}>
+              <div class="ctx-marker-message">{message}</div>
+            </Show>
+          </div>
+        );
+      })()}
+    </Show>
   );
 }
 

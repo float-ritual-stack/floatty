@@ -1,5 +1,5 @@
 /**
- * Layout Store - Zustand store for per-tab split pane layouts
+ * Layout Store - SolidJS store for per-tab split pane layouts
  *
  * Each tab has its own layout tree. The store manages:
  * - Creating/removing layouts when tabs are created/closed
@@ -9,7 +9,8 @@
  * - Resize ratio updates
  */
 
-import { create } from 'zustand';
+import { createRoot } from 'solid-js';
+import { createStore, produce, reconcile } from 'solid-js/store';
 import {
   type LayoutNode,
   type TabLayout,
@@ -29,72 +30,36 @@ import {
 } from '../lib/layoutTypes';
 
 interface LayoutState {
-  // Map of tabId -> TabLayout
-  layouts: Map<string, TabLayout>;
+  // Record of tabId -> TabLayout (using Record instead of Map for SolidJS reactivity)
+  layouts: Record<string, TabLayout>;
 }
 
-interface LayoutActions {
-  // Initialize a layout for a new tab (single pane)
-  initLayout: (tabId: string) => string;  // Returns initial paneId
+function createLayoutStore() {
+  const [state, setState] = createStore<LayoutState>({
+    layouts: {},
+  });
 
-  // Remove layout when tab closes (returns pane IDs for cleanup)
-  removeLayout: (tabId: string) => string[];
-
-  // Split the active pane in a direction
-  splitPane: (tabId: string, direction: 'horizontal' | 'vertical') => string | null;  // Returns new paneId
-
-  // Close a specific pane (collapses tree)
-  closePane: (tabId: string, paneId: string) => string | null;  // Returns new active paneId
-
-  // Set which pane is active in a tab
-  setActivePaneId: (tabId: string, paneId: string) => void;
-
-  // Update split ratio
-  setRatio: (tabId: string, splitId: string, ratio: number) => void;
-
-  // Focus adjacent pane in a direction
-  focusDirection: (tabId: string, direction: FocusDirection) => string | null;  // Returns new pane ID
-
-  // Getters
-  getActivePaneId: (tabId: string) => string | null;
-  getLayout: (tabId: string) => LayoutNode | null;
-  getTabLayout: (tabId: string) => TabLayout | null;
-  getAllPaneIds: (tabId: string) => string[];
-  getPaneLeaf: (tabId: string, paneId: string) => PaneLeaf | null;
-}
-
-export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => ({
-  layouts: new Map(),
-
-  initLayout: (tabId: string) => {
+  const initLayout = (tabId: string): string => {
     const layout = createInitialLayout(tabId);
-    set((state) => {
-      const newLayouts = new Map(state.layouts);
-      newLayouts.set(tabId, layout);
-      return { layouts: newLayouts };
-    });
+    setState('layouts', tabId, layout);
     return layout.activePaneId;
-  },
+  };
 
-  removeLayout: (tabId: string) => {
-    const state = get();
-    const layout = state.layouts.get(tabId);
+  const removeLayout = (tabId: string): string[] => {
+    const layout = state.layouts[tabId];
     if (!layout) return [];
 
     const paneIds = collectPaneIds(layout.root);
 
-    set((state) => {
-      const newLayouts = new Map(state.layouts);
-      newLayouts.delete(tabId);
-      return { layouts: newLayouts };
-    });
+    setState('layouts', produce((layouts) => {
+      delete layouts[tabId];
+    }));
 
     return paneIds;
-  },
+  };
 
-  splitPane: (tabId: string, direction: 'horizontal' | 'vertical') => {
-    const state = get();
-    const layout = state.layouts.get(tabId);
+  const splitPane = (tabId: string, direction: 'horizontal' | 'vertical'): string | null => {
+    const layout = state.layouts[tabId];
     if (!layout) {
       console.warn(`[LayoutStore] splitPane: no layout for tab ${tabId}`);
       return null;
@@ -122,25 +87,17 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
     // Replace the active pane with the split
     const newRoot = replaceNode(layout.root, activePane.id, newSplit);
 
-    set((state) => {
-      const newLayouts = new Map(state.layouts);
-      // Re-fetch layout from state to avoid stale closure
-      const currentLayout = state.layouts.get(tabId);
-      if (!currentLayout) return state; // Guard against concurrent removal
-      newLayouts.set(tabId, {
-        ...currentLayout,
-        root: newRoot,
-        activePaneId: newPaneId,  // Focus new pane
-      });
-      return { layouts: newLayouts };
+    setState('layouts', tabId, {
+      ...layout,
+      root: reconcile(newRoot),
+      activePaneId: newPaneId,  // Focus new pane
     });
 
     return newPaneId;
-  },
+  };
 
-  closePane: (tabId: string, paneId: string) => {
-    const state = get();
-    const layout = state.layouts.get(tabId);
+  const closePane = (tabId: string, paneId: string): string | null => {
+    const layout = state.layouts[tabId];
     if (!layout) {
       console.warn(`[LayoutStore] closePane: no layout for tab ${tabId}`);
       return null;
@@ -173,44 +130,27 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
       ? findFirstLeaf(sibling).id
       : layout.activePaneId;
 
-    set((state) => {
-      const newLayouts = new Map(state.layouts);
-      const currentLayout = state.layouts.get(tabId);
-      if (!currentLayout) return state;
-      newLayouts.set(tabId, {
-        ...currentLayout,
-        root: newRoot,
-        activePaneId: newActivePaneId,
-      });
-      return { layouts: newLayouts };
+    setState('layouts', tabId, {
+      ...layout,
+      root: reconcile(newRoot),
+      activePaneId: newActivePaneId,
     });
 
     return newActivePaneId;
-  },
+  };
 
-  setActivePaneId: (tabId: string, paneId: string) => {
-    const state = get();
-    const layout = state.layouts.get(tabId);
+  const setActivePaneId = (tabId: string, paneId: string) => {
+    const layout = state.layouts[tabId];
     if (!layout) return;
 
     // Verify pane exists
     if (!findNode(layout.root, paneId)) return;
 
-    set((state) => {
-      const newLayouts = new Map(state.layouts);
-      const currentLayout = state.layouts.get(tabId);
-      if (!currentLayout) return state;
-      newLayouts.set(tabId, {
-        ...currentLayout,
-        activePaneId: paneId,
-      });
-      return { layouts: newLayouts };
-    });
-  },
+    setState('layouts', tabId, 'activePaneId', paneId);
+  };
 
-  setRatio: (tabId: string, splitId: string, ratio: number) => {
-    const state = get();
-    const layout = state.layouts.get(tabId);
+  const setRatio = (tabId: string, splitId: string, ratio: number) => {
+    const layout = state.layouts[tabId];
     if (!layout) return;
 
     const split = findNode(layout.root, splitId);
@@ -225,21 +165,11 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
 
     const newRoot = replaceNode(layout.root, splitId, newSplit);
 
-    set((state) => {
-      const newLayouts = new Map(state.layouts);
-      const currentLayout = state.layouts.get(tabId);
-      if (!currentLayout) return state;
-      newLayouts.set(tabId, {
-        ...currentLayout,
-        root: newRoot,
-      });
-      return { layouts: newLayouts };
-    });
-  },
+    setState('layouts', tabId, 'root', reconcile(newRoot));
+  };
 
-  focusDirection: (tabId: string, direction: FocusDirection) => {
-    const state = get();
-    const layout = state.layouts.get(tabId);
+  const focusDirection = (tabId: string, direction: FocusDirection): string | null => {
+    const layout = state.layouts[tabId];
     if (!layout) return null;
 
     const adjacentPaneId = findAdjacentPane(
@@ -249,43 +179,56 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
     );
 
     if (adjacentPaneId) {
-      set((state) => {
-        const newLayouts = new Map(state.layouts);
-        const currentLayout = state.layouts.get(tabId);
-        if (!currentLayout) return state;
-        newLayouts.set(tabId, {
-          ...currentLayout,
-          activePaneId: adjacentPaneId,
-        });
-        return { layouts: newLayouts };
-      });
+      setState('layouts', tabId, 'activePaneId', adjacentPaneId);
       return adjacentPaneId;
     }
     return null;
-  },
+  };
 
-  getActivePaneId: (tabId: string) => {
-    return get().layouts.get(tabId)?.activePaneId ?? null;
-  },
+  const getActivePaneId = (tabId: string): string | null => {
+    return state.layouts[tabId]?.activePaneId ?? null;
+  };
 
-  getLayout: (tabId: string) => {
-    return get().layouts.get(tabId)?.root ?? null;
-  },
+  const getLayout = (tabId: string): LayoutNode | null => {
+    return state.layouts[tabId]?.root ?? null;
+  };
 
-  getTabLayout: (tabId: string) => {
-    return get().layouts.get(tabId) ?? null;
-  },
+  const getTabLayout = (tabId: string): TabLayout | null => {
+    return state.layouts[tabId] ?? null;
+  };
 
-  getAllPaneIds: (tabId: string) => {
-    const layout = get().layouts.get(tabId);
+  const getAllPaneIds = (tabId: string): string[] => {
+    const layout = state.layouts[tabId];
     if (!layout) return [];
     return collectPaneIds(layout.root);
-  },
+  };
 
-  getPaneLeaf: (tabId: string, paneId: string) => {
-    const layout = get().layouts.get(tabId);
+  const getPaneLeaf = (tabId: string, paneId: string): PaneLeaf | null => {
+    const layout = state.layouts[tabId];
     if (!layout) return null;
     const node = findNode(layout.root, paneId);
     return node?.type === 'leaf' ? node : null;
-  },
-}));
+  };
+
+  return {
+    // State (reactive)
+    layouts: state.layouts,
+    // Actions
+    initLayout,
+    removeLayout,
+    splitPane,
+    closePane,
+    setActivePaneId,
+    setRatio,
+    focusDirection,
+    // Getters
+    getActivePaneId,
+    getLayout,
+    getTabLayout,
+    getAllPaneIds,
+    getPaneLeaf,
+  };
+}
+
+// Create singleton store
+export const layoutStore = createRoot(createLayoutStore);

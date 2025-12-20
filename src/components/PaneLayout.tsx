@@ -8,10 +8,10 @@
  * - When this tree restructures on split, terminals stay mounted
  */
 
-import { useRef, useCallback } from 'react';
+import { Show } from 'solid-js';
 import { ResizeHandle } from './ResizeHandle';
 import { type LayoutNode, type PaneSplit } from '../lib/layoutTypes';
-import { useLayoutStore } from '../hooks/useLayoutStore';
+import { layoutStore } from '../hooks/useLayoutStore';
 
 interface PaneLayoutProps {
   tabId: string;
@@ -20,88 +20,82 @@ interface PaneLayoutProps {
   onPaneClick: (paneId: string) => void;
 }
 
-function PaneLayoutNode({
-  tabId,
-  node,
-  activePaneId,
-  onPaneClick,
-}: PaneLayoutProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const setRatio = useLayoutStore((s) => s.setRatio);
+function PaneLayoutNode(props: PaneLayoutProps) {
+  let containerRef: HTMLDivElement | undefined;
 
-  const handleResize = useCallback((ratio: number) => {
-    if (node.type === 'split') {
-      setRatio(tabId, node.id, ratio);
+  const handleResize = (ratio: number) => {
+    if (props.node.type === 'split') {
+      layoutStore.setRatio(props.tabId, props.node.id, ratio);
     }
-  }, [tabId, node, setRatio]);
-
-  // Leaf node - render PLACEHOLDER only (no TerminalPane here!)
-  if (node.type === 'leaf') {
-    return (
-      <div
-        className={`pane-layout-leaf pane-placeholder ${node.id === activePaneId ? 'pane-active' : ''}`}
-        data-pane-id={node.id}
-        onClick={() => onPaneClick(node.id)}
-      />
-    );
-  }
-
-  // Split node - render children with resize handle
-  const split = node as PaneSplit;
-  const firstBasis = `${split.ratio * 100}%`;
-  const secondBasis = `${(1 - split.ratio) * 100}%`;
+  };
 
   return (
-    <div
-      ref={containerRef}
-      className={`pane-layout-split pane-layout-${split.direction}`}
+    <Show
+      when={props.node.type === 'split'}
+      fallback={
+        // Leaf node - render PLACEHOLDER only (no TerminalPane here!)
+        <div
+          class={`pane-layout-leaf pane-placeholder ${props.node.id === props.activePaneId ? 'pane-active' : ''}`}
+          data-pane-id={props.node.id}
+          onClick={() => props.onPaneClick(props.node.id)}
+        />
+      }
     >
-      <div
-        className="pane-layout-child"
-        style={{ flexBasis: firstBasis, flexGrow: 0, flexShrink: 0 }}
-      >
-        <PaneLayoutNode
-          tabId={tabId}
-          node={split.children[0]}
-          activePaneId={activePaneId}
-          onPaneClick={onPaneClick}
-        />
-      </div>
+      {/* Split node - render children with resize handle */}
+      {(() => {
+        const split = props.node as PaneSplit;
+        const firstBasis = `${split.ratio * 100}%`;
+        const secondBasis = `${(1 - split.ratio) * 100}%`;
 
-      <ResizeHandle
-        direction={split.direction}
-        onResize={handleResize}
-        parentRef={containerRef}
-      />
+        return (
+          <div
+            ref={containerRef}
+            class={`pane-layout-split pane-layout-${split.direction}`}
+          >
+            <div
+              class="pane-layout-child"
+              style={{ "flex-basis": firstBasis, "flex-grow": 0, "flex-shrink": 0 }}
+            >
+              <PaneLayoutNode
+                tabId={props.tabId}
+                node={split.children[0]}
+                activePaneId={props.activePaneId}
+                onPaneClick={props.onPaneClick}
+              />
+            </div>
 
-      <div
-        className="pane-layout-child"
-        style={{ flexBasis: secondBasis, flexGrow: 0, flexShrink: 0 }}
-      >
-        <PaneLayoutNode
-          tabId={tabId}
-          node={split.children[1]}
-          activePaneId={activePaneId}
-          onPaneClick={onPaneClick}
-        />
-      </div>
-    </div>
+            <ResizeHandle
+              direction={split.direction}
+              onResize={handleResize}
+              parentRef={() => containerRef}
+            />
+
+            <div
+              class="pane-layout-child"
+              style={{ "flex-basis": secondBasis, "flex-grow": 0, "flex-shrink": 0 }}
+            >
+              <PaneLayoutNode
+                tabId={props.tabId}
+                node={split.children[1]}
+                activePaneId={props.activePaneId}
+                onPaneClick={props.onPaneClick}
+              />
+            </div>
+          </div>
+        );
+      })()}
+    </Show>
   );
 }
 
-export function PaneLayout({
-  tabId,
-  node,
-  activePaneId,
-  onPaneClick,
-}: PaneLayoutProps) {
+export function PaneLayout(props: PaneLayoutProps) {
   return (
-    <div className="pane-layout-root">
+    <div class="pane-layout-root">
       <PaneLayoutNode
-        tabId={tabId}
-        node={node}
-        activePaneId={activePaneId}
-        onPaneClick={onPaneClick}
+        tabId={props.tabId}
+        node={props.node}
+        activePaneId={props.activePaneId}
+        onPaneClick={props.onPaneClick}
       />
     </div>
   );

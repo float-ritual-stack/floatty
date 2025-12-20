@@ -9,7 +9,7 @@
  * - Terminals NEVER unmount during layout changes
  */
 
-import { useImperativeHandle, forwardRef, useCallback, useRef, useLayoutEffect } from 'react';
+import { createEffect, onMount, onCleanup } from 'solid-js';
 import { terminalManager } from '../lib/terminalManager';
 import '@xterm/xterm/css/xterm.css';
 
@@ -31,120 +31,123 @@ export interface TerminalPaneProps {
   onTitleChange?: (title: string) => void;
   isActive?: boolean;
   isVisible?: boolean;  // Whether the tab containing this pane is visible
+  ref?: (handle: TerminalPaneHandle | null) => void;
 }
 
-export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(
-  ({ id, cwd, placeholderId, onPtySpawn, onPtyExit, onCtxMarker, onTitleChange, isActive = true, isVisible = true }, ref) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const attachedRef = useRef(false);
+export function TerminalPane(props: TerminalPaneProps) {
+  let containerRef: HTMLDivElement | undefined;
+  let attached = false;
 
-    // Update callbacks in manager when they change
-    useLayoutEffect(() => {
-      terminalManager.setCallbacks(id, {
-        onPtySpawn,
-        onPtyExit,
-        onTitleChange,
-        onCtxMarker: onCtxMarker as (marker: unknown) => void,
-      });
-    }, [id, onPtySpawn, onPtyExit, onTitleChange, onCtxMarker]);
+  // Position this terminal over its placeholder
+  const updatePosition = () => {
+    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
 
-    // Position this terminal over its placeholder
-    const updatePosition = useCallback(() => {
-      const container = containerRef.current;
-      const placeholder = document.querySelector(`[data-pane-id="${placeholderId}"]`) as HTMLElement;
+    if (!containerRef || !placeholder) return;
 
-      if (!container || !placeholder) return;
+    const rect = placeholder.getBoundingClientRect();
+    const parentRect = containerRef.offsetParent?.getBoundingClientRect() ?? { left: 0, top: 0 };
 
-      const rect = placeholder.getBoundingClientRect();
-      const parentRect = container.offsetParent?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    containerRef.style.left = `${rect.left - parentRect.left}px`;
+    containerRef.style.top = `${rect.top - parentRect.top}px`;
+    containerRef.style.width = `${rect.width}px`;
+    containerRef.style.height = `${rect.height}px`;
 
-      container.style.left = `${rect.left - parentRect.left}px`;
-      container.style.top = `${rect.top - parentRect.top}px`;
-      container.style.width = `${rect.width}px`;
-      container.style.height = `${rect.height}px`;
+    // Refit terminal after resize
+    if (attached) {
+      terminalManager.fit(props.id);
+    }
+  };
 
-      // Refit terminal after resize
-      if (attachedRef.current) {
-        terminalManager.fit(id);
-      }
-    }, [id, placeholderId]);
-
-    // Initial attachment and position tracking
-    useLayoutEffect(() => {
-      const container = containerRef.current;
-      if (!container) return;
-
-      // Attach terminal once
-      if (!attachedRef.current) {
-        terminalManager.attach(id, container, cwd);
-        attachedRef.current = true;
-      }
-
-      // Initial position
+  // Create the imperative handle
+  const handle: TerminalPaneHandle = {
+    focus: () => terminalManager.focus(props.id),
+    fit: () => {
       updatePosition();
+      terminalManager.fit(props.id);
+    },
+    refresh: () => terminalManager.refresh(props.id),
+    getPtyPid: () => terminalManager.getPtyPid(props.id),
+    getTitle: () => terminalManager.getTitle(props.id),
+  };
 
-      // Watch for placeholder size/position changes
-      const placeholder = document.querySelector(`[data-pane-id="${placeholderId}"]`) as HTMLElement;
-      if (!placeholder) return;
+  // Update callbacks in manager when they change
+  createEffect(() => {
+    terminalManager.setCallbacks(props.id, {
+      onPtySpawn: props.onPtySpawn,
+      onPtyExit: props.onPtyExit,
+      onTitleChange: props.onTitleChange,
+      onCtxMarker: props.onCtxMarker as (marker: unknown) => void,
+    });
+  });
 
-      const resizeObserver = new ResizeObserver(() => {
+  // Initial attachment and position tracking
+  onMount(() => {
+    if (!containerRef) return;
+
+    // Expose the handle via ref callback
+    props.ref?.(handle);
+
+    // Attach terminal once
+    if (!attached) {
+      terminalManager.attach(props.id, containerRef, props.cwd);
+      attached = true;
+    }
+
+    // Initial position
+    updatePosition();
+
+    // Watch for placeholder size/position changes
+    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
+    if (!placeholder) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      updatePosition();
+    });
+    resizeObserver.observe(placeholder);
+
+    // Also update on window resize (placeholder might move)
+    window.addEventListener('resize', updatePosition);
+
+    onCleanup(() => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updatePosition);
+      props.ref?.(null);
+    });
+  });
+
+  // Update position when visibility changes (tab switch)
+  createEffect(() => {
+    const isVisible = props.isVisible ?? true;
+    const isActive = props.isActive ?? true;
+
+    let rafId: number | undefined;
+    if (isVisible) {
+      // Delay to let layout settle after tab switch
+      rafId = requestAnimationFrame(() => {
         updatePosition();
-      });
-      resizeObserver.observe(placeholder);
-
-      // Also update on window resize (placeholder might move)
-      window.addEventListener('resize', updatePosition);
-
-      return () => {
-        resizeObserver.disconnect();
-        window.removeEventListener('resize', updatePosition);
-      };
-    }, [id, cwd, placeholderId, updatePosition]);
-
-    // Update position when visibility changes (tab switch)
-    useLayoutEffect(() => {
-      let rafId: number | undefined;
-      if (isVisible) {
-        // Delay to let layout settle after tab switch
-        rafId = requestAnimationFrame(() => {
-          updatePosition();
-          if (isActive) {
-            terminalManager.focus(id);
-          }
-        });
-      }
-      return () => {
-        if (rafId !== undefined) {
-          cancelAnimationFrame(rafId);
+        if (isActive) {
+          terminalManager.focus(props.id);
         }
-      };
-    }, [id, isVisible, isActive, updatePosition]);
+      });
+    }
 
-    // Imperative handle
-    useImperativeHandle(ref, () => ({
-      focus: () => terminalManager.focus(id),
-      fit: () => {
-        updatePosition();
-        terminalManager.fit(id);
-      },
-      refresh: () => terminalManager.refresh(id),
-      getPtyPid: () => terminalManager.getPtyPid(id),
-      getTitle: () => terminalManager.getTitle(id),
-    }), [id, updatePosition]);
+    onCleanup(() => {
+      if (rafId !== undefined) {
+        cancelAnimationFrame(rafId);
+      }
+    });
+  });
 
-    return (
-      <div
-        ref={containerRef}
-        className={`terminal-pane-positioned ${isActive ? 'active' : ''}`}
-        data-terminal-id={id}
-        style={{
-          position: 'absolute',
-          overflow: 'hidden',
-          display: isVisible ? 'block' : 'none',
-        }}
-      />
-    );
-  }
-);
-
-TerminalPane.displayName = 'TerminalPane';
+  return (
+    <div
+      ref={containerRef}
+      class={`terminal-pane-positioned ${props.isActive ? 'active' : ''}`}
+      data-terminal-id={props.id}
+      style={{
+        position: 'absolute',
+        overflow: 'hidden',
+        display: (props.isVisible ?? true) ? 'block' : 'none',
+      }}
+    />
+  );
+}
