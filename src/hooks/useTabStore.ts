@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { createSignal, createRoot } from 'solid-js';
+import { createStore, produce } from 'solid-js/store';
 
 // A single terminal tab
 export interface Tab {
@@ -12,36 +13,6 @@ export interface Tab {
   isAlive: boolean;
 }
 
-// Tab store state
-interface TabState {
-  tabs: Tab[];
-  activeTabId: string | null;
-}
-
-// Tab store actions
-interface TabActions {
-  // Create a new tab and make it active
-  createTab: (cwd?: string) => string;
-  // Close a tab by ID
-  closeTab: (id: string) => void;
-  // Set active tab
-  setActiveTab: (id: string) => void;
-  // Update tab title (usually from shell OSC)
-  setTabTitle: (id: string, title: string) => void;
-  // Update tab's PTY pid after spawn
-  setTabPtyPid: (id: string, ptyPid: number) => void;
-  // Mark tab as dead (PTY exited)
-  markTabDead: (id: string) => void;
-  // Navigate to previous tab
-  prevTab: () => void;
-  // Navigate to next tab
-  nextTab: () => void;
-  // Navigate to tab by number (1-indexed)
-  goToTab: (n: number) => void;
-  // Get active tab
-  getActiveTab: () => Tab | null;
-}
-
 // Generate unique tab ID
 function generateTabId(): string {
   return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -50,120 +21,139 @@ function generateTabId(): string {
 // Initial tab created on startup
 const initialTabId = generateTabId();
 
-export const useTabStore = create<TabState & TabActions>((set, get) => ({
-  // Initial state: one tab
-  tabs: [{
+// Create the store in a root to ensure it persists
+function createTabStore() {
+  const [tabs, setTabs] = createStore<Tab[]>([{
     id: initialTabId,
     title: 'Terminal',
     ptyPid: null,
     isAlive: true,
-  }],
-  activeTabId: initialTabId,
+  }]);
 
-  createTab: (cwd?: string) => {
+  const [activeTabId, setActiveTabId] = createSignal<string | null>(initialTabId);
+
+  const createTab = (cwd?: string): string => {
     const newId = generateTabId();
-    set((state) => ({
-      tabs: [...state.tabs, {
+    setTabs(produce((tabs) => {
+      tabs.push({
         id: newId,
         title: 'Terminal',
         ptyPid: null,
         cwd,
         isAlive: true,
-      }],
-      activeTabId: newId,
+      });
     }));
+    setActiveTabId(newId);
     return newId;
-  },
+  };
 
-  closeTab: (id: string) => {
-    const state = get();
-
+  const closeTab = (id: string) => {
     // Don't close the last tab
-    if (state.tabs.length <= 1) {
+    if (tabs.length <= 1) {
       return;
     }
 
-    const closingIndex = state.tabs.findIndex((t) => t.id === id);
-    const newTabs = state.tabs.filter((t) => t.id !== id);
+    const closingIndex = tabs.findIndex((t) => t.id === id);
+    const currentActiveId = activeTabId();
 
     // If closing the active tab, activate adjacent tab
-    let newActiveId = state.activeTabId;
-    if (state.activeTabId === id) {
+    if (currentActiveId === id) {
       // Prefer tab to the left, fall back to first remaining
+      const newTabs = tabs.filter((t) => t.id !== id);
       const nextIndex = Math.max(0, closingIndex - 1);
-      newActiveId = newTabs[nextIndex]?.id ?? newTabs[0]?.id ?? null;
+      const newActiveId = newTabs[nextIndex]?.id ?? newTabs[0]?.id ?? null;
+      setActiveTabId(newActiveId);
     }
 
-    set({
-      tabs: newTabs,
-      activeTabId: newActiveId,
-    });
-  },
+    setTabs(produce((tabs) => {
+      const idx = tabs.findIndex((t) => t.id === id);
+      if (idx !== -1) {
+        tabs.splice(idx, 1);
+      }
+    }));
+  };
 
-  setActiveTab: (id: string) => {
-    const state = get();
-    if (state.tabs.some((t) => t.id === id)) {
-      set({ activeTabId: id });
+  const setActiveTab = (id: string) => {
+    if (tabs.some((t) => t.id === id)) {
+      setActiveTabId(id);
     }
-  },
+  };
 
-  setTabTitle: (id: string, title: string) => {
-    set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.id === id ? { ...t, title } : t
-      ),
-    }));
-  },
+  const setTabTitle = (id: string, title: string) => {
+    setTabs(
+      (t) => t.id === id,
+      'title',
+      title
+    );
+  };
 
-  setTabPtyPid: (id: string, ptyPid: number) => {
-    set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.id === id ? { ...t, ptyPid, isAlive: true } : t
-      ),
-    }));
-  },
+  const setTabPtyPid = (id: string, ptyPid: number) => {
+    setTabs(
+      (t) => t.id === id,
+      produce((tab) => {
+        tab.ptyPid = ptyPid;
+        tab.isAlive = true;
+      })
+    );
+  };
 
-  markTabDead: (id: string) => {
-    set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.id === id ? { ...t, isAlive: false } : t
-      ),
-    }));
-  },
+  const markTabDead = (id: string) => {
+    setTabs(
+      (t) => t.id === id,
+      'isAlive',
+      false
+    );
+  };
 
-  prevTab: () => {
-    const state = get();
-    const currentIndex = state.tabs.findIndex((t) => t.id === state.activeTabId);
+  const prevTab = () => {
+    const currentIndex = tabs.findIndex((t) => t.id === activeTabId());
     if (currentIndex > 0) {
-      set({ activeTabId: state.tabs[currentIndex - 1].id });
-    } else if (state.tabs.length > 0) {
+      setActiveTabId(tabs[currentIndex - 1].id);
+    } else if (tabs.length > 0) {
       // Wrap to last tab
-      set({ activeTabId: state.tabs[state.tabs.length - 1].id });
+      setActiveTabId(tabs[tabs.length - 1].id);
     }
-  },
+  };
 
-  nextTab: () => {
-    const state = get();
-    const currentIndex = state.tabs.findIndex((t) => t.id === state.activeTabId);
-    if (currentIndex < state.tabs.length - 1) {
-      set({ activeTabId: state.tabs[currentIndex + 1].id });
-    } else if (state.tabs.length > 0) {
+  const nextTab = () => {
+    const currentIndex = tabs.findIndex((t) => t.id === activeTabId());
+    if (currentIndex < tabs.length - 1) {
+      setActiveTabId(tabs[currentIndex + 1].id);
+    } else if (tabs.length > 0) {
       // Wrap to first tab
-      set({ activeTabId: state.tabs[0].id });
+      setActiveTabId(tabs[0].id);
     }
-  },
+  };
 
-  goToTab: (n: number) => {
-    const state = get();
+  const goToTab = (n: number) => {
     // 1-indexed to 0-indexed
     const index = n - 1;
-    if (index >= 0 && index < state.tabs.length) {
-      set({ activeTabId: state.tabs[index].id });
+    if (index >= 0 && index < tabs.length) {
+      setActiveTabId(tabs[index].id);
     }
-  },
+  };
 
-  getActiveTab: () => {
-    const state = get();
-    return state.tabs.find((t) => t.id === state.activeTabId) ?? null;
-  },
-}));
+  const getActiveTab = (): Tab | null => {
+    return tabs.find((t) => t.id === activeTabId()) ?? null;
+  };
+
+  return {
+    // State (reactive)
+    tabs,
+    activeTabId,
+    // Actions
+    createTab,
+    closeTab,
+    setActiveTab,
+    setTabTitle,
+    setTabPtyPid,
+    markTabDead,
+    prevTab,
+    nextTab,
+    goToTab,
+    getActiveTab,
+  };
+}
+
+// Create singleton store
+export const tabStore = createRoot(createTabStore);

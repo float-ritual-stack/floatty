@@ -1,23 +1,18 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'solid-js';
+import { Key } from '@solid-primitives/keyed';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
 import { ContextSidebar } from './ContextSidebar';
-import { useTabStore } from '../hooks/useTabStore';
+import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
-import { useLayoutStore } from '../hooks/useLayoutStore';
+import { layoutStore } from '../hooks/useLayoutStore';
 import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
-import type { FocusDirection } from '../lib/layoutTypes';
+import type { FocusDirection, LayoutNode, PaneLeaf } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
 
 // Tab bar component
-function TabBar({
-  tabs,
-  activeTabId,
-  onSelectTab,
-  onCloseTab,
-  onNewTab,
-}: {
+function TabBar(props: {
   tabs: Tab[];
   activeTabId: string | null;
   onSelectTab: (id: string) => void;
@@ -25,36 +20,37 @@ function TabBar({
   onNewTab: () => void;
 }) {
   return (
-    <div className="tab-bar">
-      <div className="tab-list">
-        {tabs.map((tab, index) => (
-          <div
-            key={tab.id}
-            className={`tab ${tab.id === activeTabId ? 'tab-active' : ''} ${!tab.isAlive ? 'tab-dead' : ''}`}
-            onClick={() => onSelectTab(tab.id)}
-          >
-            <span className="tab-index">{index + 1}</span>
-            <span className="tab-title" title={tab.title}>
-              {tab.title.length > 20 ? tab.title.slice(-20) : tab.title}
-            </span>
-            {tabs.length > 1 && (
-              <button
-                className="tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCloseTab(tab.id);
-                }}
-                title={`Close tab (${getKeybindDisplay('closeTab') || 'Cmd+W'})`}
-              >
-                ×
-              </button>
-            )}
-          </div>
-        ))}
+    <div class="tab-bar">
+      <div class="tab-list">
+        <For each={props.tabs}>
+          {(tab, index) => (
+            <div
+              class={`tab ${tab.id === props.activeTabId ? 'tab-active' : ''} ${!tab.isAlive ? 'tab-dead' : ''}`}
+              onClick={() => props.onSelectTab(tab.id)}
+            >
+              <span class="tab-index">{index() + 1}</span>
+              <span class="tab-title" title={tab.title}>
+                {tab.title.length > 20 ? tab.title.slice(-20) : tab.title}
+              </span>
+              <Show when={props.tabs.length > 1}>
+                <button
+                  class="tab-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onCloseTab(tab.id);
+                  }}
+                  title={`Close tab (${getKeybindDisplay('closeTab') || 'Cmd+W'})`}
+                >
+                  ×
+                </button>
+              </Show>
+            </div>
+          )}
+        </For>
       </div>
       <button
-        className="tab-new"
-        onClick={onNewTab}
+        class="tab-new"
+        onClick={props.onNewTab}
         title={`New tab (${getKeybindDisplay('newTab') || 'Cmd+T'})`}
       >
         +
@@ -64,82 +60,64 @@ function TabBar({
 }
 
 export function Terminal() {
-  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [sidebarVisible, setSidebarVisible] = createSignal(true);
 
-  // Tab store
-  const tabs = useTabStore((s) => s.tabs);
-  const activeTabId = useTabStore((s) => s.activeTabId);
-  const createTab = useTabStore((s) => s.createTab);
-  const closeTab = useTabStore((s) => s.closeTab);
-  const setActiveTab = useTabStore((s) => s.setActiveTab);
-  const setTabTitle = useTabStore((s) => s.setTabTitle);
-  const setTabPtyPid = useTabStore((s) => s.setTabPtyPid);
-  // markTabDead removed - we now close panes on PTY exit instead
-  const prevTab = useTabStore((s) => s.prevTab);
-  const nextTab = useTabStore((s) => s.nextTab);
-  const goToTab = useTabStore((s) => s.goToTab);
-
-  // Layout store - subscribe to layouts Map for reactivity
-  const layouts = useLayoutStore((s) => s.layouts);
-  const initLayout = useLayoutStore((s) => s.initLayout);
-  const removeLayout = useLayoutStore((s) => s.removeLayout);
-  const setActivePaneId = useLayoutStore((s) => s.setActivePaneId);
-  const splitPane = useLayoutStore((s) => s.splitPane);
-  const closePane = useLayoutStore((s) => s.closePane);
-  const focusDirection = useLayoutStore((s) => s.focusDirection);
-
-  // Derived getters (use layouts Map directly for reactivity)
-  const getLayout = useCallback((tabId: string) => layouts.get(tabId)?.root ?? null, [layouts]);
-  const getActivePaneId = useCallback((tabId: string) => layouts.get(tabId)?.activePaneId ?? null, [layouts]);
-  const getAllPaneIds = useCallback((tabId: string) => {
-    const layout = layouts.get(tabId);
-    if (!layout) return [];
-    const collectIds = (node: import('../lib/layoutTypes').LayoutNode): string[] => {
-      if (node.type === 'leaf') return [node.id];
-      return [...collectIds(node.children[0]), ...collectIds(node.children[1])];
-    };
-    return collectIds(layout.root);
-  }, [layouts]);
-  const getPaneLeaf = useCallback((tabId: string, paneId: string) => {
-    const layout = layouts.get(tabId);
-    if (!layout) return null;
-    const findLeaf = (node: import('../lib/layoutTypes').LayoutNode): import('../lib/layoutTypes').PaneLeaf | null => {
-      if (node.type === 'leaf') return node.id === paneId ? node : null;
-      return findLeaf(node.children[0]) ?? findLeaf(node.children[1]);
-    };
-    return findLeaf(layout.root);
-  }, [layouts]);
-
-  // Refs to terminal panes for imperative control
-  const paneRefs = useRef<Map<string, TerminalPaneHandle>>(new Map());
+  // Pane refs for imperative control
+  const paneRefs = new Map<string, TerminalPaneHandle>();
 
   // Register a pane ref
-  const setPaneRef = useCallback((id: string, handle: TerminalPaneHandle | null) => {
+  const setPaneRef = (id: string, handle: TerminalPaneHandle | null) => {
     if (handle) {
-      paneRefs.current.set(id, handle);
+      paneRefs.set(id, handle);
     } else {
-      paneRefs.current.delete(id);
+      paneRefs.delete(id);
     }
-  }, []);
+  };
+
+  // Helper to collect all pane IDs from layout
+  const collectIds = (node: LayoutNode): string[] => {
+    if (node.type === 'leaf') return [node.id];
+    return [...collectIds(node.children[0]), ...collectIds(node.children[1])];
+  };
+
+  // Helper to find a leaf by pane ID
+  const findLeaf = (node: LayoutNode, paneId: string): PaneLeaf | null => {
+    if (node.type === 'leaf') return node.id === paneId ? node : null;
+    return findLeaf(node.children[0], paneId) ?? findLeaf(node.children[1], paneId);
+  };
+
+  // Derived getters using layout store
+  const getLayout = (tabId: string) => layoutStore.layouts[tabId]?.root ?? null;
+  const getActivePaneId = (tabId: string) => layoutStore.layouts[tabId]?.activePaneId ?? null;
+  const getAllPaneIds = (tabId: string) => {
+    const layout = layoutStore.layouts[tabId];
+    if (!layout) return [];
+    return collectIds(layout.root);
+  };
+  const getPaneLeaf = (tabId: string, paneId: string) => {
+    const layout = layoutStore.layouts[tabId];
+    if (!layout) return null;
+    return findLeaf(layout.root, paneId);
+  };
 
   // Initialize layout for tabs that don't have one
-  useEffect(() => {
-    for (const tab of tabs) {
+  createEffect(() => {
+    for (const tab of tabStore.tabs) {
       if (!getLayout(tab.id)) {
-        initLayout(tab.id);
+        layoutStore.initLayout(tab.id);
       }
     }
-  }, [tabs, getLayout, initLayout]);
+  });
 
   // Handle creating a new tab - creates tab + layout
-  const handleNewTab = useCallback((cwd?: string) => {
-    const tabId = createTab(cwd);
-    initLayout(tabId);
+  const handleNewTab = (cwd?: string) => {
+    const tabId = tabStore.createTab(cwd);
+    layoutStore.initLayout(tabId);
     return tabId;
-  }, [createTab, initLayout]);
+  };
 
   // Handle closing a tab - dispose all panes then tab
-  const handleCloseTab = useCallback(async (id: string) => {
+  const handleCloseTab = async (id: string) => {
     // Get all pane IDs in this tab's layout
     const paneIds = getAllPaneIds(id);
     const failedDisposals: string[] = [];
@@ -159,12 +137,12 @@ export function Terminal() {
     }
 
     // Remove layout and tab
-    removeLayout(id);
-    closeTab(id);
-  }, [closeTab, getAllPaneIds, removeLayout]);
+    layoutStore.removeLayout(id);
+    tabStore.closeTab(id);
+  };
 
   // Handle closing a single pane (not entire tab)
-  const handleClosePane = useCallback(async (tabId: string) => {
+  const handleClosePane = async (tabId: string) => {
     const paneId = getActivePaneId(tabId);
     if (!paneId) return;
 
@@ -180,11 +158,11 @@ export function Terminal() {
     await terminalManager.dispose(paneId);
 
     // Update layout (collapses tree)
-    closePane(tabId, paneId);
-  }, [getActivePaneId, getAllPaneIds, handleCloseTab, closePane]);
+    layoutStore.closePane(tabId, paneId);
+  };
 
   // Keyboard shortcuts - using keybind system
-  useEffect(() => {
+  createEffect(() => {
     const handleKeydown = (e: KeyboardEvent) => {
       // Never intercept terminal-reserved keys (Ctrl+C, Ctrl+Z, etc.)
       if (isTerminalReserved(e)) {
@@ -196,22 +174,24 @@ export function Terminal() {
 
       e.preventDefault();
 
+      const activeId = tabStore.activeTabId();
+
       switch (action) {
         case 'newTab':
           handleNewTab();
           break;
         case 'closeTab':
-          if (activeTabId) {
-            handleCloseTab(activeTabId).catch(e =>
+          if (activeId) {
+            handleCloseTab(activeId).catch(e =>
               console.error('[Terminal] closeTab shortcut failed:', e)
             );
           }
           break;
         case 'prevTab':
-          prevTab();
+          tabStore.prevTab();
           break;
         case 'nextTab':
-          nextTab();
+          tabStore.nextTab();
           break;
         case 'goToTab1':
         case 'goToTab2':
@@ -222,17 +202,18 @@ export function Terminal() {
         case 'goToTab7':
         case 'goToTab8':
         case 'goToTab9':
-          goToTab(parseInt(action.replace('goToTab', ''), 10));
+          tabStore.goToTab(parseInt(action.replace('goToTab', ''), 10));
           break;
         case 'toggleSidebar':
           setSidebarVisible((v) => !v);
           // Refit all visible panes after sidebar toggle
           requestAnimationFrame(() => {
             setTimeout(() => {
-              if (activeTabId) {
-                const paneIds = getAllPaneIds(activeTabId);
+              const currentActiveId = tabStore.activeTabId();
+              if (currentActiveId) {
+                const paneIds = getAllPaneIds(currentActiveId);
                 for (const paneId of paneIds) {
-                  paneRefs.current.get(paneId)?.fit();
+                  paneRefs.get(paneId)?.fit();
                 }
               }
             }, 100);
@@ -240,41 +221,41 @@ export function Terminal() {
           break;
         // Split management
         case 'splitHorizontal':
-          if (activeTabId) {
-            const newPaneId = splitPane(activeTabId, 'horizontal');
+          if (activeId) {
+            const newPaneId = layoutStore.splitPane(activeId, 'horizontal');
             if (newPaneId) {
               // Delay to let layout + terminals settle, then fit and focus
               requestAnimationFrame(() => {
                 setTimeout(() => {
-                  const paneIds = getAllPaneIds(activeTabId);
+                  const paneIds = getAllPaneIds(activeId);
                   for (const paneId of paneIds) {
-                    paneRefs.current.get(paneId)?.fit();
+                    paneRefs.get(paneId)?.fit();
                   }
-                  paneRefs.current.get(newPaneId)?.focus();
+                  paneRefs.get(newPaneId)?.focus();
                 }, 100);
               });
             }
           }
           break;
         case 'splitVertical':
-          if (activeTabId) {
-            const newPaneId = splitPane(activeTabId, 'vertical');
+          if (activeId) {
+            const newPaneId = layoutStore.splitPane(activeId, 'vertical');
             if (newPaneId) {
               requestAnimationFrame(() => {
                 setTimeout(() => {
-                  const paneIds = getAllPaneIds(activeTabId);
+                  const paneIds = getAllPaneIds(activeId);
                   for (const paneId of paneIds) {
-                    paneRefs.current.get(paneId)?.fit();
+                    paneRefs.get(paneId)?.fit();
                   }
-                  paneRefs.current.get(newPaneId)?.focus();
+                  paneRefs.get(newPaneId)?.focus();
                 }, 100);
               });
             }
           }
           break;
         case 'closeSplit':
-          if (activeTabId) {
-            handleClosePane(activeTabId).catch(e =>
+          if (activeId) {
+            handleClosePane(activeId).catch(e =>
               console.error('[Terminal] closeSplit shortcut failed:', e)
             );
           }
@@ -283,13 +264,13 @@ export function Terminal() {
         case 'focusRight':
         case 'focusUp':
         case 'focusDown': {
-          if (activeTabId) {
+          if (activeId) {
             const direction = action.replace('focus', '').toLowerCase() as FocusDirection;
-            const newPaneId = focusDirection(activeTabId, direction);
+            const newPaneId = layoutStore.focusDirection(activeId, direction);
             // Focus the newly active pane (use returned ID, not stale closure)
             if (newPaneId) {
               requestAnimationFrame(() => {
-                paneRefs.current.get(newPaneId)?.focus();
+                paneRefs.get(newPaneId)?.focus();
               });
             }
           }
@@ -299,43 +280,44 @@ export function Terminal() {
     };
 
     window.addEventListener('keydown', handleKeydown, true);
-    return () => window.removeEventListener('keydown', handleKeydown, true);
-  }, [activeTabId, handleNewTab, handleCloseTab, handleClosePane, goToTab, prevTab, nextTab, splitPane, focusDirection, getActivePaneId, getAllPaneIds]);
+    onCleanup(() => window.removeEventListener('keydown', handleKeydown, true));
+  });
 
   // Focus active pane when tab changes
-  useEffect(() => {
-    if (activeTabId) {
-      const activePaneId = getActivePaneId(activeTabId);
+  createEffect(() => {
+    const activeId = tabStore.activeTabId();
+    if (activeId) {
+      const activePaneId = getActivePaneId(activeId);
       if (activePaneId) {
         // Refit all panes in the tab, then focus the active one
         requestAnimationFrame(() => {
-          const paneIds = getAllPaneIds(activeTabId);
+          const paneIds = getAllPaneIds(activeId);
           for (const paneId of paneIds) {
-            paneRefs.current.get(paneId)?.fit();
+            paneRefs.get(paneId)?.fit();
           }
           setTimeout(() => {
-            const pane = paneRefs.current.get(activePaneId);
+            const pane = paneRefs.get(activePaneId);
             pane?.refresh();
             pane?.focus();
           }, 50);
         });
       }
     }
-  }, [activeTabId, getActivePaneId, getAllPaneIds]);
+  });
 
   // Callbacks for TerminalPane
-  const handlePtySpawn = useCallback((paneId: string, pid: number) => {
+  const handlePtySpawn = (paneId: string, pid: number) => {
     // For now, track on the tab level (first pane's pid wins)
-    const tab = tabs.find(t => getAllPaneIds(t.id).includes(paneId));
+    const tab = tabStore.tabs.find(t => getAllPaneIds(t.id).includes(paneId));
     if (tab && !tab.ptyPid) {
-      setTabPtyPid(tab.id, pid);
+      tabStore.setTabPtyPid(tab.id, pid);
     }
-  }, [tabs, getAllPaneIds, setTabPtyPid]);
+  };
 
-  const handlePtyExit = useCallback(async (paneId: string) => {
+  const handlePtyExit = async (paneId: string) => {
     try {
       // Find which tab this pane belongs to
-      const tab = tabs.find(t => getAllPaneIds(t.id).includes(paneId));
+      const tab = tabStore.tabs.find(t => getAllPaneIds(t.id).includes(paneId));
       if (!tab) {
         console.warn(`[Terminal] PTY exit for orphaned pane: ${paneId}`);
         return;
@@ -349,101 +331,108 @@ export function Terminal() {
       } else {
         // Multiple panes - just close this one and collapse tree
         await terminalManager.dispose(paneId);
-        closePane(tab.id, paneId);
+        layoutStore.closePane(tab.id, paneId);
       }
     } catch (e) {
       console.error(`[Terminal] Failed to handle PTY exit for ${paneId}:`, e);
     }
-  }, [tabs, getAllPaneIds, handleCloseTab, closePane]);
+  };
 
-  const handleTitleChange = useCallback((paneId: string, title: string) => {
+  const handleTitleChange = (paneId: string, title: string) => {
     // Update tab title from active pane
-    const tab = tabs.find(t => getActivePaneId(t.id) === paneId);
+    const tab = tabStore.tabs.find(t => getActivePaneId(t.id) === paneId);
     if (tab) {
-      setTabTitle(tab.id, title);
+      tabStore.setTabTitle(tab.id, title);
     }
-  }, [tabs, getActivePaneId, setTabTitle]);
+  };
 
-  const handlePaneClick = useCallback((paneId: string) => {
-    if (activeTabId) {
-      setActivePaneId(activeTabId, paneId);
-      const pane = paneRefs.current.get(paneId);
+  const handlePaneClick = (paneId: string) => {
+    const activeId = tabStore.activeTabId();
+    if (activeId) {
+      layoutStore.setActivePaneId(activeId, paneId);
+      const pane = paneRefs.get(paneId);
       pane?.fit();
       pane?.focus();
     }
-  }, [activeTabId, setActivePaneId]);
+  };
 
-  // Collect all pane info across all tabs for terminal layer
-  const allPaneInfo = tabs.flatMap(tab => {
-    const paneIds = getAllPaneIds(tab.id);
-    const activePaneId = getActivePaneId(tab.id);
-    return paneIds.map(paneId => {
-      const leaf = getPaneLeaf(tab.id, paneId);
-      return {
-        paneId,
-        tabId: tab.id,
-        cwd: leaf?.cwd,
-        isActivePane: paneId === activePaneId,
-        isActiveTab: tab.id === activeTabId,
-      };
+  // Collect all pane info across all tabs for terminal layer (memoized for performance)
+  const allPaneInfo = createMemo(() => {
+    const activeId = tabStore.activeTabId();
+    return tabStore.tabs.flatMap(tab => {
+      const paneIds = getAllPaneIds(tab.id);
+      const activePaneId = getActivePaneId(tab.id);
+      return paneIds.map(paneId => {
+        const leaf = getPaneLeaf(tab.id, paneId);
+        return {
+          paneId,
+          tabId: tab.id,
+          cwd: leaf?.cwd,
+          isActivePane: paneId === activePaneId,
+          isActiveTab: tab.id === activeId,
+        };
+      });
     });
   });
 
   return (
-    <div className="terminal-root">
+    <div class="terminal-root">
       <TabBar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onSelectTab={setActiveTab}
+        tabs={tabStore.tabs}
+        activeTabId={tabStore.activeTabId()}
+        onSelectTab={tabStore.setActiveTab}
         onCloseTab={handleCloseTab}
         onNewTab={() => handleNewTab()}
       />
-      <div className="terminal-wrapper">
-        <div className="terminal-container">
+      <div class="terminal-wrapper">
+        <div class="terminal-container">
           {/* Layout layer - just placeholder divs */}
-          {tabs.map((tab) => {
-            const layout = getLayout(tab.id);
-            const activePaneId = getActivePaneId(tab.id);
+          <For each={tabStore.tabs}>
+            {(tab) => {
+              const layout = () => getLayout(tab.id);
+              const activePaneId = () => getActivePaneId(tab.id);
 
-            if (!layout || !activePaneId) {
-              return null;
-            }
-
-            return (
-              <div
-                key={tab.id}
-                className={`terminal-pane-wrapper ${tab.id === activeTabId ? 'pane-active' : 'pane-hidden'}`}
-              >
-                <PaneLayout
-                  tabId={tab.id}
-                  node={layout}
-                  activePaneId={activePaneId}
-                  onPaneClick={handlePaneClick}
-                />
-              </div>
-            );
-          })}
+              return (
+                <Show when={layout() && activePaneId()}>
+                  <div
+                    class={`terminal-pane-wrapper ${tab.id === tabStore.activeTabId() ? 'pane-active' : 'pane-hidden'}`}
+                  >
+                    <PaneLayout
+                      tabId={tab.id}
+                      node={layout()!}
+                      activePaneId={activePaneId()!}
+                      onPaneClick={handlePaneClick}
+                    />
+                  </div>
+                </Show>
+              );
+            }}
+          </For>
 
           {/* Terminal layer - absolutely positioned over placeholders */}
           {/* These components NEVER unmount during layout changes! */}
-          {allPaneInfo.map(({ paneId, cwd, isActivePane, isActiveTab }) => (
-            <TerminalPane
-              key={paneId}
-              id={paneId}
-              cwd={cwd}
-              placeholderId={paneId}
-              isActive={isActivePane && isActiveTab}
-              isVisible={isActiveTab}
-              ref={(handle) => setPaneRef(paneId, handle)}
-              onPtySpawn={(pid) => handlePtySpawn(paneId, pid)}
-              onPtyExit={() => handlePtyExit(paneId).catch(e =>
-                console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
-              )}
-              onTitleChange={(title) => handleTitleChange(paneId, title)}
-            />
-          ))}
+          {/* Using <Key> for stable identity - SolidJS <For> uses object reference, not property */}
+          <Key each={allPaneInfo()} by={(info) => info.paneId}>
+            {(info) => (
+              <TerminalPane
+                id={info().paneId}
+                cwd={info().cwd}
+                placeholderId={info().paneId}
+                isActive={info().isActivePane && info().isActiveTab}
+                isVisible={info().isActiveTab}
+                ref={(handle) => setPaneRef(info().paneId, handle)}
+                onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
+                onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
+                  console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
+                )}
+                onTitleChange={(title) => handleTitleChange(info().paneId, title)}
+              />
+            )}
+          </Key>
         </div>
-        {sidebarVisible && <ContextSidebar visible={sidebarVisible} />}
+        <Show when={sidebarVisible()}>
+          <ContextSidebar visible={sidebarVisible()} />
+        </Show>
       </div>
     </div>
   );
