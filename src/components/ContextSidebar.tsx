@@ -158,10 +158,89 @@ export function ContextSidebar(props: { visible: boolean }) {
   );
 }
 
-function MarkerCard(props: { marker: CtxMarker }) {
+// Raw marker card for pending/error states
+function RawMarkerCard(props: { marker: CtxMarker; repo: string | null; branch: string | undefined }) {
   const isPending = () => props.marker.status === 'pending';
   const isError = () => props.marker.status === 'error';
+  const time = () => extractTimeFromRaw(props.marker.raw_line);
+  const project = () => extractTagFromRaw(props.marker.raw_line, 'project');
+  const mode = () => extractTagFromRaw(props.marker.raw_line, 'mode');
 
+  return (
+    <div class={`ctx-marker ${isPending() ? 'ctx-marker-pending' : ''} ${isError() ? 'ctx-marker-error' : ''}`}>
+      <div class="ctx-marker-time">
+        {time()}
+        <Show when={isPending()}>
+          <span class="ctx-parsing-indicator">...</span>
+        </Show>
+        <Show when={isError()}>
+          <span class="ctx-error-indicator">!</span>
+        </Show>
+      </div>
+      <div class="ctx-marker-tags">
+        <Show when={props.repo}>
+          <span class={`ctx-tag ${TAG_COLORS.repo}`}>{props.repo}</span>
+        </Show>
+        <Show when={props.branch && props.branch !== 'main'}>
+          <span class={`ctx-tag ${TAG_COLORS.branch}`}>{props.branch}</span>
+        </Show>
+        <Show when={project()}>
+          <span class={`ctx-tag ${TAG_COLORS.project}`}>{project()}</span>
+        </Show>
+        <Show when={mode()}>
+          <span class={`ctx-tag ${TAG_COLORS.mode}`}>{mode()}</span>
+        </Show>
+      </div>
+      <div class="ctx-marker-message ctx-marker-raw">
+        {extractMessageFromRaw(props.marker.raw_line)}
+      </div>
+    </div>
+  );
+}
+
+// Parsed marker card with structured data
+function ParsedMarkerCard(props: { marker: CtxMarker; parsed: ParsedCtx; repo: string | null; branch: string | undefined }) {
+  const isPending = () => props.marker.status === 'pending';
+  const isError = () => props.marker.status === 'error';
+  const { time, project, mode, meeting, issue, summary, message } = props.parsed;
+
+  // Dedupe: skip repo badge if project matches repo name
+  const showRepo = () => props.repo && (!project || !project.toLowerCase().includes(props.repo!.toLowerCase()));
+
+  return (
+    <div class={`ctx-marker ${isPending() ? 'ctx-marker-pending' : ''} ${isError() ? 'ctx-marker-error' : ''}`}>
+      <div class="ctx-marker-time">{time || extractTimeFromRaw(props.marker.raw_line)}</div>
+      <div class="ctx-marker-tags">
+        <Show when={showRepo()}>
+          <span class={`ctx-tag ${TAG_COLORS.repo}`}>{props.repo}</span>
+        </Show>
+        <Show when={props.branch && props.branch !== 'main'}>
+          <span class={`ctx-tag ${TAG_COLORS.branch}`}>{props.branch}</span>
+        </Show>
+        <Show when={project}>
+          <span class={`ctx-tag ${TAG_COLORS.project}`}>{project}</span>
+        </Show>
+        <Show when={mode}>
+          <span class={`ctx-tag ${TAG_COLORS.mode}`}>{mode}</span>
+        </Show>
+        <Show when={meeting}>
+          <span class={`ctx-tag ${TAG_COLORS.meeting}`}>{meeting}</span>
+        </Show>
+        <Show when={issue}>
+          <span class={`ctx-tag ${TAG_COLORS.issue}`}>{issue}</span>
+        </Show>
+      </div>
+      <Show when={summary}>
+        <div class="ctx-marker-summary">{summary}</div>
+      </Show>
+      <Show when={message}>
+        <div class="ctx-marker-message">{message}</div>
+      </Show>
+    </div>
+  );
+}
+
+function MarkerCard(props: { marker: CtxMarker }) {
   // JSONL metadata (always available)
   const repo = () => getRepoFromCwd(props.marker.cwd);
   const branch = () => props.marker.git_branch;
@@ -169,86 +248,10 @@ function MarkerCard(props: { marker: CtxMarker }) {
   return (
     <Show
       when={props.marker.parsed}
-      fallback={
-        // For raw markers (pending/error), show simplified version
-        (() => {
-          const time = extractTimeFromRaw(props.marker.raw_line);
-          const project = extractTagFromRaw(props.marker.raw_line, 'project');
-          const mode = extractTagFromRaw(props.marker.raw_line, 'mode');
-
-          return (
-            <div class={`ctx-marker ${isPending() ? 'ctx-marker-pending' : ''} ${isError() ? 'ctx-marker-error' : ''}`}>
-              <div class="ctx-marker-time">
-                {time}
-                <Show when={isPending()}>
-                  <span class="ctx-parsing-indicator">...</span>
-                </Show>
-                <Show when={isError()}>
-                  <span class="ctx-error-indicator">!</span>
-                </Show>
-              </div>
-              <div class="ctx-marker-tags">
-                <Show when={repo()}>
-                  <span class={`ctx-tag ${TAG_COLORS.repo}`}>{repo()}</span>
-                </Show>
-                <Show when={branch() && branch() !== 'main'}>
-                  <span class={`ctx-tag ${TAG_COLORS.branch}`}>{branch()}</span>
-                </Show>
-                <Show when={project}>
-                  <span class={`ctx-tag ${TAG_COLORS.project}`}>{project}</span>
-                </Show>
-                <Show when={mode}>
-                  <span class={`ctx-tag ${TAG_COLORS.mode}`}>{mode}</span>
-                </Show>
-              </div>
-              <div class="ctx-marker-message ctx-marker-raw">
-                {extractMessageFromRaw(props.marker.raw_line)}
-              </div>
-            </div>
-          );
-        })()
-      }
+      keyed
+      fallback={<RawMarkerCard marker={props.marker} repo={repo()} branch={branch()} />}
     >
-      {/* For parsed markers, use the structured data */}
-      {(() => {
-        const parsed = props.marker.parsed!;
-        const { time, project, mode, meeting, issue, summary, message } = parsed;
-
-        // Dedupe: skip repo badge if project matches repo name
-        const showRepo = repo() && (!project || !project.toLowerCase().includes(repo()!.toLowerCase()));
-
-        return (
-          <div class={`ctx-marker ${isPending() ? 'ctx-marker-pending' : ''} ${isError() ? 'ctx-marker-error' : ''}`}>
-            <div class="ctx-marker-time">{time || extractTimeFromRaw(props.marker.raw_line)}</div>
-            <div class="ctx-marker-tags">
-              <Show when={showRepo}>
-                <span class={`ctx-tag ${TAG_COLORS.repo}`}>{repo()}</span>
-              </Show>
-              <Show when={branch() && branch() !== 'main'}>
-                <span class={`ctx-tag ${TAG_COLORS.branch}`}>{branch()}</span>
-              </Show>
-              <Show when={project}>
-                <span class={`ctx-tag ${TAG_COLORS.project}`}>{project}</span>
-              </Show>
-              <Show when={mode}>
-                <span class={`ctx-tag ${TAG_COLORS.mode}`}>{mode}</span>
-              </Show>
-              <Show when={meeting}>
-                <span class={`ctx-tag ${TAG_COLORS.meeting}`}>{meeting}</span>
-              </Show>
-              <Show when={issue}>
-                <span class={`ctx-tag ${TAG_COLORS.issue}`}>{issue}</span>
-              </Show>
-            </div>
-            <Show when={summary}>
-              <div class="ctx-marker-summary">{summary}</div>
-            </Show>
-            <Show when={message}>
-              <div class="ctx-marker-message">{message}</div>
-            </Show>
-          </div>
-        );
-      })()}
+      {(parsed) => <ParsedMarkerCard marker={props.marker} parsed={parsed} repo={repo()} branch={branch()} />}
     </Show>
   );
 }

@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup, For, Show } from 'solid-js';
+import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'solid-js';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
@@ -355,8 +355,8 @@ export function Terminal() {
     }
   };
 
-  // Collect all pane info across all tabs for terminal layer
-  const allPaneInfo = () => {
+  // Collect all pane info across all tabs for terminal layer (memoized for performance)
+  const allPaneInfo = createMemo(() => {
     const activeId = tabStore.activeTabId();
     return tabStore.tabs.flatMap(tab => {
       const paneIds = getAllPaneIds(tab.id);
@@ -372,7 +372,7 @@ export function Terminal() {
         };
       });
     });
-  };
+  });
 
   return (
     <div class="terminal-root">

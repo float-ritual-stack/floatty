@@ -31,7 +31,8 @@ function PaneLayoutNode(props: PaneLayoutProps) {
 
   return (
     <Show
-      when={props.node.type === 'split'}
+      when={props.node.type === 'split' ? props.node as PaneSplit : undefined}
+      keyed
       fallback={
         // Leaf node - render PLACEHOLDER only (no TerminalPane here!)
         <div
@@ -42,8 +43,7 @@ function PaneLayoutNode(props: PaneLayoutProps) {
       }
     >
       {/* Split node - render children with resize handle */}
-      {(() => {
-        const split = props.node as PaneSplit;
+      {(split) => {
         const firstBasis = `${split.ratio * 100}%`;
         const secondBasis = `${(1 - split.ratio) * 100}%`;
 
@@ -83,7 +83,7 @@ function PaneLayoutNode(props: PaneLayoutProps) {
             </div>
           </div>
         );
-      })()}
+      }}
     </Show>
   );
 }

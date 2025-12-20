@@ -211,8 +211,8 @@ function createLayoutStore() {
   };
 
   return {
-    // State (reactive)
-    layouts: state.layouts,
+    // State (reactive getter preserves store reactivity)
+    get layouts() { return state.layouts; },
     // Actions
     initLayout,
     removeLayout,
