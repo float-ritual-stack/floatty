@@ -124,8 +124,11 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
 
     set((state) => {
       const newLayouts = new Map(state.layouts);
+      // Re-fetch layout from state to avoid stale closure
+      const currentLayout = state.layouts.get(tabId);
+      if (!currentLayout) return state; // Guard against concurrent removal
       newLayouts.set(tabId, {
-        ...layout,
+        ...currentLayout,
         root: newRoot,
         activePaneId: newPaneId,  // Focus new pane
       });
@@ -172,8 +175,10 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
 
     set((state) => {
       const newLayouts = new Map(state.layouts);
+      const currentLayout = state.layouts.get(tabId);
+      if (!currentLayout) return state;
       newLayouts.set(tabId, {
-        ...layout,
+        ...currentLayout,
         root: newRoot,
         activePaneId: newActivePaneId,
       });
@@ -193,8 +198,10 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
 
     set((state) => {
       const newLayouts = new Map(state.layouts);
+      const currentLayout = state.layouts.get(tabId);
+      if (!currentLayout) return state;
       newLayouts.set(tabId, {
-        ...layout,
+        ...currentLayout,
         activePaneId: paneId,
       });
       return { layouts: newLayouts };
@@ -220,8 +227,10 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
 
     set((state) => {
       const newLayouts = new Map(state.layouts);
+      const currentLayout = state.layouts.get(tabId);
+      if (!currentLayout) return state;
       newLayouts.set(tabId, {
-        ...layout,
+        ...currentLayout,
         root: newRoot,
       });
       return { layouts: newLayouts };
@@ -242,8 +251,10 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
     if (adjacentPaneId) {
       set((state) => {
         const newLayouts = new Map(state.layouts);
+        const currentLayout = state.layouts.get(tabId);
+        if (!currentLayout) return state;
         newLayouts.set(tabId, {
-          ...layout,
+          ...currentLayout,
           activePaneId: adjacentPaneId,
         });
         return { layouts: newLayouts };

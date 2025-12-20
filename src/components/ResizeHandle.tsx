@@ -5,7 +5,7 @@
  * During drag, terminals get pointer-events: none to prevent interference.
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 interface ResizeHandleProps {
   direction: 'horizontal' | 'vertical';
@@ -15,8 +15,6 @@ interface ResizeHandleProps {
 
 export function ResizeHandle({ direction, onResize, parentRef }: ResizeHandleProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const startPosRef = useRef(0);
-  const startSizeRef = useRef(0);
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
@@ -27,18 +25,9 @@ export function ResizeHandle({ direction, onResize, parentRef }: ResizeHandlePro
 
     setIsDragging(true);
 
-    // Store starting position
-    startPosRef.current = direction === 'horizontal' ? e.clientX : e.clientY;
-
-    // Get parent container size
-    if (parentRef.current) {
-      const rect = parentRef.current.getBoundingClientRect();
-      startSizeRef.current = direction === 'horizontal' ? rect.width : rect.height;
-    }
-
     // Add resizing class to container (disables terminal pointer events)
     document.body.classList.add('resizing');
-  }, [direction, parentRef]);
+  }, []);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!isDragging) return;
@@ -55,8 +44,10 @@ export function ResizeHandle({ direction, onResize, parentRef }: ResizeHandlePro
     // Account for 4px handle width to get accurate ratio
     const handleWidth = 4;
     const effectiveSize = parentSize - handleWidth;
-    const newRatio = (currentPos - parentStart) / effectiveSize;
-    onResize(newRatio);
+    const rawRatio = (currentPos - parentStart) / effectiveSize;
+    // Clamp ratio to valid range before passing to handler
+    const clampedRatio = Math.max(0.1, Math.min(0.9, rawRatio));
+    onResize(clampedRatio);
   }, [isDragging, direction, parentRef, onResize]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
