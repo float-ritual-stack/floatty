@@ -1,4 +1,5 @@
 import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'solid-js';
+import { Key } from '@solid-primitives/keyed';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
@@ -410,23 +411,24 @@ export function Terminal() {
 
           {/* Terminal layer - absolutely positioned over placeholders */}
           {/* These components NEVER unmount during layout changes! */}
-          <For each={allPaneInfo()}>
+          {/* Using <Key> for stable identity - SolidJS <For> uses object reference, not property */}
+          <Key each={allPaneInfo()} by={(info) => info.paneId}>
             {(info) => (
               <TerminalPane
-                id={info.paneId}
-                cwd={info.cwd}
-                placeholderId={info.paneId}
-                isActive={info.isActivePane && info.isActiveTab}
-                isVisible={info.isActiveTab}
-                ref={(handle) => setPaneRef(info.paneId, handle)}
-                onPtySpawn={(pid) => handlePtySpawn(info.paneId, pid)}
-                onPtyExit={() => handlePtyExit(info.paneId).catch(e =>
+                id={info().paneId}
+                cwd={info().cwd}
+                placeholderId={info().paneId}
+                isActive={info().isActivePane && info().isActiveTab}
+                isVisible={info().isActiveTab}
+                ref={(handle) => setPaneRef(info().paneId, handle)}
+                onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
+                onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
                   console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
                 )}
-                onTitleChange={(title) => handleTitleChange(info.paneId, title)}
+                onTitleChange={(title) => handleTitleChange(info().paneId, title)}
               />
             )}
-          </For>
+          </Key>
         </div>
         <Show when={sidebarVisible()}>
           <ContextSidebar visible={sidebarVisible()} />

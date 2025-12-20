@@ -9,8 +9,8 @@
  * - Resize ratio updates
  */
 
-import { createRoot } from 'solid-js';
-import { createStore, produce, reconcile } from 'solid-js/store';
+import { batch, createRoot } from 'solid-js';
+import { createStore, produce } from 'solid-js/store';
 import {
   type LayoutNode,
   type TabLayout,
@@ -79,18 +79,19 @@ function createLayoutStore() {
       direction,
       ratio: 0.5,
       children: [
-        activePane,  // Original pane stays first (left/top)
-        { type: 'leaf', id: newPaneId, cwd: activePane.cwd },  // New pane inherits cwd
+        // CLONE the leaf - don't use proxy directly (causes infinite recursion)
+        { type: 'leaf', id: activePane.id, cwd: activePane.cwd },
+        { type: 'leaf', id: newPaneId, cwd: activePane.cwd },
       ],
     };
 
     // Replace the active pane with the split
     const newRoot = replaceNode(layout.root, activePane.id, newSplit);
 
-    setState('layouts', tabId, {
-      ...layout,
-      root: reconcile(newRoot),
-      activePaneId: newPaneId,  // Focus new pane
+    // Atomic update - batch prevents partial state during tree mutation
+    batch(() => {
+      setState('layouts', tabId, 'root', newRoot);
+      setState('layouts', tabId, 'activePaneId', newPaneId);
     });
 
     return newPaneId;
@@ -130,10 +131,10 @@ function createLayoutStore() {
       ? findFirstLeaf(sibling).id
       : layout.activePaneId;
 
-    setState('layouts', tabId, {
-      ...layout,
-      root: reconcile(newRoot),
-      activePaneId: newActivePaneId,
+    // Atomic update - batch prevents partial state during tree mutation
+    batch(() => {
+      setState('layouts', tabId, 'root', newRoot);
+      setState('layouts', tabId, 'activePaneId', newActivePaneId);
     });
 
     return newActivePaneId;
@@ -165,7 +166,7 @@ function createLayoutStore() {
 
     const newRoot = replaceNode(layout.root, splitId, newSplit);
 
-    setState('layouts', tabId, 'root', reconcile(newRoot));
+    setState('layouts', tabId, 'root', newRoot);
   };
 
   const focusDirection = (tabId: string, direction: FocusDirection): string | null => {

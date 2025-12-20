@@ -111,7 +111,9 @@ export function TerminalPane(props: TerminalPaneProps) {
     onCleanup(() => {
       resizeObserver.disconnect();
       window.removeEventListener('resize', updatePosition);
-      props.ref?.(null);
+      // Note: We intentionally do NOT clear the ref here.
+      // Terminal disposal is handled explicitly by handleClosePane/handleCloseTab,
+      // not by component unmount. This prevents losing the handle during layout flickers.
     });
   });
 
