@@ -523,4 +523,50 @@ impl CtxDatabase {
             },
         )
     }
+
+    /// Update a block
+    pub fn update_block(&self, block: &Block) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE blocks SET content = ?, type = ?, collapsed = ?, updated_at = ? WHERE id = ?",
+            params![
+                block.content,
+                block.type_.as_str(),
+                block.collapsed,
+                block.updated_at,
+                block.id
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a block
+    pub fn delete_block(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM blocks WHERE id = ?", [id])?;
+        Ok(())
+    }
+
+    /// Get all children of a block
+    pub fn get_children(&self, parent_id: &str) -> Result<Vec<Block>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content, parent_id, type, collapsed, created_at, updated_at FROM blocks WHERE parent_id = ? ORDER BY created_at ASC",
+        )?;
+
+        let blocks = stmt.query_map([parent_id], |row| {
+            let type_str: String = row.get(3)?;
+            Ok(Block {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                parent_id: row.get(2)?,
+                type_: BlockType::from_str(&type_str),
+                collapsed: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+
+        blocks.collect()
+    }
 }
