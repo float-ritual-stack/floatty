@@ -242,7 +242,7 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
     // useSyncedYDoc in frontend sends full state via Y.encodeStateAsUpdate(doc).
     
     // Let's load current state, merge with update using yrs, and save back.
-    use yrs::{Doc, Transact, Update, updates::decoder::Decode, updates::encoder::Encode};
+    use yrs::{Doc, Transact, Update, updates::decoder::Decode, ReadTxn, StateVector};
     
     let doc = Doc::new();
     let current_state = inner.db.get_system_state("ydoc")
@@ -259,7 +259,7 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
         txn.apply_update(Update::decode_v1(&update_bytes).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     }
     
-    let new_state = doc.transact().encode_state_as_update_v1();
+    let new_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
     inner.db.set_system_state("ydoc", &new_state).map_err(|e| e.to_string())?;
     
     Ok(())
