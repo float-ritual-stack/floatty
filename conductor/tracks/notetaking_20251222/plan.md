@@ -1,27 +1,38 @@
-# Plan: Initial Note-Taking and Outlining
+# Plan: Block-Based Integrated Outliner
 
-This plan outlines the steps to integrate hierarchical note-taking and outlining functionality into Floatty.
+This plan outlines the implementation of a hierarchical block-based outliner integrated into Floatty's terminal environment.
 
-## Phase 1: Foundation & Data Modeling
-- [ ] Task: Define SQLite schema for note items and parent-child relationships
-- [ ] Task: Implement Rust data models and DAO for notes in `src-tauri/src/db.rs`
-- [ ] Task: Create Tauri commands for Note CRUD operations
-- [ ] Task: Conductor - User Manual Verification 'Foundation & Data Modeling' (Protocol in workflow.md)
+## Phase 1: Persistence & Data Modeling (Rust/SQLite)
+- [ ] Task: Define SQLite schema for hierarchical blocks (id, content, parent_id, type, collapsed, metadata)
+- [ ] Task: Implement Rust `Block` struct and SQLite DAO in `src-tauri/src/db.rs`
+- [ ] Task: Set up `yrs` (Rust Yjs) for local CRDT synchronization
+- [ ] Task: Implement Tauri commands for core block operations
+- [ ] Task: Conductor - User Manual Verification 'Persistence & Data Modeling' (Protocol in workflow.md)
 
-## Phase 2: Core Outliner Logic
-- [ ] Task: Implement frontend store `useNoteStore` for managing hierarchical state
-- [ ] Task: Write unit tests for node insertion, deletion, and movement logic
-- [ ] Task: Implement core logic for nested bullet points
-- [ ] Task: Conductor - User Manual Verification 'Core Outliner Logic' (Protocol in workflow.md)
+## Phase 2: State Management (Zustand/Yjs)
+- [ ] Task: Install `yjs` and `zustand` dependencies
+- [ ] Task: Implement `useBlockStore` backed by a Yjs `Y.Doc`
+- [ ] Task: Implement hierarchical tree traversal and modification logic (indent, outdent, move)
+- [ ] Task: Write comprehensive unit tests for tree operations
+- [ ] Task: Conductor - User Manual Verification 'State Management' (Protocol in workflow.md)
 
-## Phase 3: Integrated UI
-- [ ] Task: Create `Outliner` and `NoteItem` SolidJS components
-- [ ] Task: Integrate `NotePane` into the recursive split-pane system in `PaneLayout.tsx`
-- [ ] Task: Implement basic styling for the outliner UI (consistent with terminal theme)
-- [ ] Task: Conductor - User Manual Verification 'Integrated UI' (Protocol in workflow.md)
+## Phase 3: Outliner UI Components (SolidJS)
+- [ ] Task: Create recursive `BlockItem` component for rendering blocks and their children
+- [ ] Task: Create `Outliner` container component for note panes
+- [ ] Task: Implement basic editing UX (Enter for new block, Tab/Shift-Tab for nesting)
+- [ ] Task: Implement block folding/collapsing logic
+- [ ] Task: Conductor - User Manual Verification 'Outliner UI Components' (Protocol in workflow.md)
 
-## Phase 4: Outliner UX & Shortcuts
-- [ ] Task: Implement Tab/Shift-Tab shortcuts for indentation/outdenting
-- [ ] Task: Implement Enter shortcut for creating new nodes
-- [ ] Task: Implement arrow key navigation between nodes
-- [ ] Task: Conductor - User Manual Verification 'Outliner UX & Shortcuts' (Protocol in workflow.md)
+## Phase 4: Layout & Terminal Integration
+- [ ] Task: Extend `PaneLeaf` in `layoutTypes.ts` to support `type: 'terminal' | 'outliner'`
+- [ ] Task: Update `PaneLayout.tsx` to render either a terminal or an outliner based on pane type
+- [ ] Task: Implement UI for creating a new outliner pane (e.g., split into outliner)
+- [ ] Task: Ensure focus management works seamlessly between terminal and outliner panes
+- [ ] Task: Conductor - User Manual Verification 'Layout & Terminal Integration' (Protocol in workflow.md)
+
+## Phase 5: Advanced Block Types & Execution
+- [ ] Task: Implement block prefix parsing (sh::, ai::, etc.)
+- [ ] Task: Implement `sh::` block executor: runs command and appends output block
+- [ ] Task: Implement `ai::` block executor: sends prompt to Ollama and appends response block
+- [ ] Task: Implement styling for different block types (color coding, icons)
+- [ ] Task: Conductor - User Manual Verification 'Advanced Block Types & Execution' (Protocol in workflow.md)

@@ -1,17 +1,32 @@
-# Track Specification: Initial Note-Taking and Outlining
+# Track Specification: Block-Based Integrated Outliner
 
 ## Overview
-This track focuses on integrating basic note-taking and outlining capabilities into the Floatty terminal environment. The goal is to allow users to capture thoughts, structure information in an outline format, and have these notes live alongside their terminal panes.
+Integrate a high-performance, hierarchical block-based outliner into Floatty. This system is "not your typical notes"—everything is a block, and blocks can be typed via prefixes (e.g., `sh::`, `ai::`, `ctx::`). These outliner panes will live alongside terminal panes in the recursive split-pane layout.
+
+## Core Concepts
+- **Universal Block:** The fundamental unit of information. A block contains text, parent/child relationships, and a type.
+- **Prefix-Based Typing:**
+    - `text` (default): Standard hierarchical text.
+    - `sh::` or `term::`: Executes as a shell command, displaying output in a sub-block.
+    - `ai::` or `chat::`: Sends content to a local LLM (Ollama), displaying the response.
+    - `ctx::`: Captures context for AI workflows.
+    - `web::`: Embeds a web view.
+- **Recursive Panes:** Outliner panes view a specific "root block" and display its entire subtree.
 
 ## Requirements
-- **Integrated UI:** Note-taking panes should be able to occupy slots in the existing recursive split-pane system.
-- **Outline Format:** Support for a hierarchical list structure (bullets, indentation).
-- **Persistence:** Notes must be saved locally (likely using the existing SQLite database).
-- **Reactivity:** Real-time updates as the user types, leveraging SolidJS primitives.
-- **Keyboard Navigation:** Support for common outliner shortcuts (Tab/Shift-Tab for indentation, Enter for new items).
+- **Data Persistence:** Blocks stored in SQLite with parent-child hierarchy.
+- **Real-time Sync:** Local-first synchronization using Yjs (CRDTs) for potentially multi-window or shared use.
+- **High Density UI:** A minimalist, high-density outliner interface using SolidJS.
+- **Keyboard-Centric UX:** Outliner-standard shortcuts (Tab/Shift-Tab, Enter, Arrow keys, Cmd+Enter to execute).
+- **Layout Integration:** Outliner panes must be first-class citizens in the `PaneLayout` system.
 
 ## Architecture
-- **Frontend:** New `Outliner` and `NotePane` components in `src/components/`.
-- **State Management:** Integration with a new `useNoteStore` or expansion of existing stores.
-- **Backend:** New database table in SQLite for storing note items and their relationships.
-- **IPC:** New Tauri commands for CRUD operations on notes.
+- **Backend (Rust):**
+    - SQLite schema for `blocks` (id, content, parent_id, type, metadata).
+    - Yjs server/provider using `yrs` for CRDT synchronization.
+    - Tauri commands for direct block manipulation and execution.
+- **Frontend (SolidJS):**
+    - `useBlockStore`: Zustand store backed by a Yjs document.
+    - `Outliner`: Root component for a note pane.
+    - `BlockItem`: Recursive component for rendering individual blocks and their children.
+    - `PlateBlock`: Rich text editor integration for block content.
