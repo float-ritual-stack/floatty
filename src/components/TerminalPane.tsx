@@ -11,15 +11,10 @@
 
 import { createEffect, onMount, onCleanup } from 'solid-js';
 import { terminalManager } from '../lib/terminalManager';
+import { type PaneHandle } from '../lib/layoutTypes';
 import '@xterm/xterm/css/xterm.css';
 
-export interface TerminalPaneHandle {
-  focus: () => void;
-  fit: () => void;
-  refresh: () => void;
-  getPtyPid: () => number | null;
-  getTitle: () => string;
-}
+export type TerminalPaneHandle = PaneHandle;
 
 export interface TerminalPaneProps {
   id: string;

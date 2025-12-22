@@ -58,7 +58,7 @@ function createLayoutStore() {
     return paneIds;
   };
 
-  const splitPane = (tabId: string, direction: 'horizontal' | 'vertical'): string | null => {
+  const splitPane = (tabId: string, direction: 'horizontal' | 'vertical', leafType: 'terminal' | 'outliner' = 'terminal'): string | null => {
     const layout = state.layouts[tabId];
     if (!layout) {
       console.warn(`[LayoutStore] splitPane: no layout for tab ${tabId}`);
@@ -80,8 +80,8 @@ function createLayoutStore() {
       ratio: 0.5,
       children: [
         // CLONE the leaf - don't use proxy directly (causes infinite recursion)
-        { type: 'leaf', id: activePane.id, cwd: activePane.cwd },
-        { type: 'leaf', id: newPaneId, cwd: activePane.cwd },
+        { type: 'leaf', id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal' },
+        { type: 'leaf', id: newPaneId, cwd: activePane.cwd, leafType },
       ],
     };
 
@@ -95,6 +95,20 @@ function createLayoutStore() {
     });
 
     return newPaneId;
+  };
+
+  const togglePaneType = (tabId: string, paneId: string) => {
+    const layout = state.layouts[tabId];
+    if (!layout) return;
+
+    const node = findNode(layout.root, paneId);
+    if (!node || node.type !== 'leaf') return;
+
+    const newType = node.leafType === 'outliner' ? 'terminal' : 'outliner';
+    const newNode: PaneLeaf = { ...node, leafType: newType };
+    
+    const newRoot = replaceNode(layout.root, paneId, newNode);
+    setState('layouts', tabId, 'root', newRoot);
   };
 
   const closePane = (tabId: string, paneId: string): string | null => {
@@ -219,6 +233,7 @@ function createLayoutStore() {
     removeLayout,
     splitPane,
     closePane,
+    togglePaneType,
     setActivePaneId,
     setRatio,
     focusDirection,

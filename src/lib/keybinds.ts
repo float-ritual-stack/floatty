@@ -27,6 +27,8 @@ export type KeyAction =
   | 'toggleSidebar'
   | 'splitHorizontal'
   | 'splitVertical'
+  | 'splitHorizontalOutliner'
+  | 'splitVerticalOutliner'
   | 'closeSplit'
   | 'focusLeft'
   | 'focusRight'
@@ -102,9 +104,11 @@ export const defaultKeybinds: Keybind[] = [
   // Sidebar
   { key: 'b', modifiers: { mod: true }, action: 'toggleSidebar' },
 
-  // Split management (future)
+  // Split management
   { key: 'd', modifiers: { mod: true }, action: 'splitHorizontal' },
   { key: 'd', modifiers: { mod: true, shift: true }, action: 'splitVertical' },
+  { key: 'o', modifiers: { mod: true }, action: 'splitHorizontalOutliner' },
+  { key: 'o', modifiers: { mod: true, shift: true }, action: 'splitVerticalOutliner' },
   { key: 'w', modifiers: { mod: true, shift: true }, action: 'closeSplit' },
 
   // Focus navigation (future - using Alt to avoid terminal conflicts)

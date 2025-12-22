@@ -7,11 +7,12 @@
  * - Ratio controls the size of the first child (0.1-0.9)
  */
 
-// A single terminal pane
+// A single leaf pane (terminal or outliner)
 export interface PaneLeaf {
   type: 'leaf';
-  id: string;  // Used as terminal ID in terminalManager
-  cwd?: string;  // Working directory for the terminal
+  id: string;  // Used as terminal ID or outliner ID
+  leafType?: 'terminal' | 'outliner';
+  cwd?: string;  // Working directory for the terminal (if terminal)
 }
 
 // A split containing two children
@@ -35,6 +36,17 @@ export interface TabLayout {
 
 // Direction for focus navigation
 export type FocusDirection = 'left' | 'right' | 'up' | 'down';
+
+/**
+ * Imperative handle for any pane type (terminal, outliner, etc.)
+ */
+export interface PaneHandle {
+  focus: () => void;
+  fit: () => void;
+  refresh: () => void;
+  getPtyPid?: () => number | null;
+  getTitle?: () => string;
+}
 
 // --- Tree Utilities ---
 

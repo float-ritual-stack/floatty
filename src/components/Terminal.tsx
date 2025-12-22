@@ -2,13 +2,13 @@ import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'so
 import { Key } from '@solid-primitives/keyed';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
-import type { TerminalPaneHandle } from './TerminalPane';
+import { OutlinerPane } from './OutlinerPane';
 import { ContextSidebar } from './ContextSidebar';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
-import type { FocusDirection, LayoutNode, PaneLeaf } from '../lib/layoutTypes';
+import type { FocusDirection, LayoutNode, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
 
 // Tab bar component
@@ -63,10 +63,10 @@ export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
 
   // Pane refs for imperative control
-  const paneRefs = new Map<string, TerminalPaneHandle>();
+  const paneRefs = new Map<string, PaneHandle>();
 
   // Register a pane ref
-  const setPaneRef = (id: string, handle: TerminalPaneHandle | null) => {
+  const setPaneRef = (id: string, handle: PaneHandle | null) => {
     if (handle) {
       paneRefs.set(id, handle);
     } else {
@@ -253,6 +253,38 @@ export function Terminal() {
             }
           }
           break;
+        case 'splitHorizontalOutliner':
+          if (activeId) {
+            const newPaneId = layoutStore.splitPane(activeId, 'horizontal', 'outliner');
+            if (newPaneId) {
+              requestAnimationFrame(() => {
+                setTimeout(() => {
+                  const paneIds = getAllPaneIds(activeId);
+                  for (const paneId of paneIds) {
+                    paneRefs.get(paneId)?.fit();
+                  }
+                  paneRefs.get(newPaneId)?.focus();
+                }, 100);
+              });
+            }
+          }
+          break;
+        case 'splitVerticalOutliner':
+          if (activeId) {
+            const newPaneId = layoutStore.splitPane(activeId, 'vertical', 'outliner');
+            if (newPaneId) {
+              requestAnimationFrame(() => {
+                setTimeout(() => {
+                  const paneIds = getAllPaneIds(activeId);
+                  for (const paneId of paneIds) {
+                    paneRefs.get(paneId)?.fit();
+                  }
+                  paneRefs.get(newPaneId)?.focus();
+                }, 100);
+              });
+            }
+          }
+          break;
         case 'closeSplit':
           if (activeId) {
             handleClosePane(activeId).catch(e =>
@@ -368,6 +400,7 @@ export function Terminal() {
           paneId,
           tabId: tab.id,
           cwd: leaf?.cwd,
+          leafType: leaf?.leafType || 'terminal',
           isActivePane: paneId === activePaneId,
           isActiveTab: tab.id === activeId,
         };
@@ -414,19 +447,32 @@ export function Terminal() {
           {/* Using <Key> for stable identity - SolidJS <For> uses object reference, not property */}
           <Key each={allPaneInfo()} by={(info) => info.paneId}>
             {(info) => (
-              <TerminalPane
-                id={info().paneId}
-                cwd={info().cwd}
-                placeholderId={info().paneId}
-                isActive={info().isActivePane && info().isActiveTab}
-                isVisible={info().isActiveTab}
-                ref={(handle) => setPaneRef(info().paneId, handle)}
-                onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
-                onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
-                  console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
-                )}
-                onTitleChange={(title) => handleTitleChange(info().paneId, title)}
-              />
+              <Show
+                when={info().leafType === 'terminal'}
+                fallback={
+                  <OutlinerPane
+                    id={info().paneId}
+                    placeholderId={info().paneId}
+                    isActive={info().isActivePane && info().isActiveTab}
+                    isVisible={info().isActiveTab}
+                    ref={(handle) => setPaneRef(info().paneId, handle)}
+                  />
+                }
+              >
+                <TerminalPane
+                  id={info().paneId}
+                  cwd={info().cwd}
+                  placeholderId={info().paneId}
+                  isActive={info().isActivePane && info().isActiveTab}
+                  isVisible={info().isActiveTab}
+                  ref={(handle) => setPaneRef(info().paneId, handle)}
+                  onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
+                  onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
+                    console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
+                  )}
+                  onTitleChange={(title) => handleTitleChange(info().paneId, title)}
+                />
+              </Show>
             )}
           </Key>
         </div>
