@@ -10,10 +10,7 @@ use serde::{Deserialize, Serialize};
 use shelf::{Shelf, ShelfDatabase, ShelfItem, ShelfStorage};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{Manager, State};
-
-#[cfg(target_os = "macos")]
-use shelf::ShelfPanelManager;
+use tauri::State;
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)
 #[derive(Clone, Serialize, Deserialize)]
@@ -123,8 +120,6 @@ pub struct AppState {
 pub struct ShelfState {
     db: Arc<ShelfDatabase>,
     storage: ShelfStorage,
-    #[cfg(target_os = "macos")]
-    panel_manager: ShelfPanelManager<tauri::Wry>,
 }
 
 // ============================================================================
@@ -146,7 +141,7 @@ fn create_shelf(
 
     // Create and show the panel (macOS)
     #[cfg(target_os = "macos")]
-    state.panel_manager.create_panel(&app, &shelf)?;
+    shelf::panel::create_panel(&app, &shelf)?;
 
     log::info!("Created shelf: {}", shelf.id);
     Ok(shelf)
@@ -209,7 +204,7 @@ fn delete_shelf(
     // Close panel first (macOS)
     #[cfg(target_os = "macos")]
     {
-        let _ = state.panel_manager.close_panel(&app, &shelf_id);
+        let _ = shelf::panel::close_panel(&app, &shelf_id);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -272,12 +267,12 @@ fn show_shelf_panel(
     #[cfg(target_os = "macos")]
     {
         // If panel doesn't exist, create it
-        if !state.panel_manager.is_panel_open(&shelf_id) {
+        if !shelf::panel::panel_exists(&app, &shelf_id) {
             if let Some(shelf) = state.db.get_shelf(&shelf_id).map_err(|e| e.to_string())? {
-                state.panel_manager.create_panel(&app, &shelf)?;
+                shelf::panel::create_panel(&app, &shelf)?;
             }
         } else {
-            state.panel_manager.show_panel(&app, &shelf_id)?;
+            shelf::panel::show_panel(&app, &shelf_id)?;
         }
     }
 
@@ -294,15 +289,14 @@ fn show_shelf_panel(
 #[tauri::command]
 fn hide_shelf_panel(
     app: tauri::AppHandle,
-    state: State<ShelfState>,
     shelf_id: String,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    state.panel_manager.hide_panel(&app, &shelf_id)?;
+    shelf::panel::hide_panel(&app, &shelf_id)?;
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (&app, &state, &shelf_id);
+        let _ = (&app, &shelf_id);
     }
 
     Ok(())
@@ -316,10 +310,10 @@ fn show_all_shelf_panels(app: tauri::AppHandle, state: State<ShelfState>) -> Res
         // Get all shelves and create/show panels for them
         let shelves = state.db.get_all_shelves().map_err(|e| e.to_string())?;
         for shelf in shelves {
-            if !state.panel_manager.is_panel_open(&shelf.id) {
-                state.panel_manager.create_panel(&app, &shelf)?;
+            if !shelf::panel::panel_exists(&app, &shelf.id) {
+                shelf::panel::create_panel(&app, &shelf)?;
             } else {
-                state.panel_manager.show_panel(&app, &shelf.id)?;
+                shelf::panel::show_panel(&app, &shelf.id)?;
             }
         }
     }
@@ -473,8 +467,6 @@ pub fn run() {
             ShelfState {
                 db: Arc::new(db),
                 storage: ShelfStorage::new(),
-                #[cfg(target_os = "macos")]
-                panel_manager: ShelfPanelManager::new(),
             }
         }
         Err(e) => {

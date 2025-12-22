@@ -7,13 +7,10 @@ mod db;
 mod storage;
 
 #[cfg(target_os = "macos")]
-mod panel;
+pub mod panel;
 
 pub use db::ShelfDatabase;
 pub use storage::ShelfStorage;
-
-#[cfg(target_os = "macos")]
-pub use panel::ShelfPanelManager;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
