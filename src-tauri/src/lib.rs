@@ -6,7 +6,7 @@ mod sync_test;
 
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
-use db::{CtxDatabase, CtxMarker};
+use db::{CtxDatabase, CtxMarker, Block};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -171,6 +171,46 @@ fn clear_ctx_markers(state: State<AppState>) -> Result<(), String> {
     inner.db.clear_all().map_err(|e| e.to_string())
 }
 
+/// Insert a new block
+#[tauri::command]
+fn create_block(state: State<AppState>, block: Block) -> Result<(), String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    inner.db.insert_block(&block).map_err(|e| e.to_string())
+}
+
+/// Update an existing block
+#[tauri::command]
+fn update_block(state: State<AppState>, block: Block) -> Result<(), String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    inner.db.update_block(&block).map_err(|e| e.to_string())
+}
+
+/// Delete a block
+#[tauri::command]
+fn delete_block(state: State<AppState>, id: String) -> Result<(), String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    inner.db.delete_block(&id).map_err(|e| e.to_string())
+}
+
+/// Get a block by ID
+#[tauri::command]
+fn get_block(state: State<AppState>, id: String) -> Result<Block, String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    inner.db.get_block(&id).map_err(|e| e.to_string())
+}
+
+/// Get children of a block
+#[tauri::command]
+fn get_block_children(state: State<AppState>, parent_id: String) -> Result<Vec<Block>, String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    inner.db.get_children(&parent_id).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
@@ -234,6 +274,11 @@ pub fn run() {
             get_ctx_config,
             set_ctx_config,
             clear_ctx_markers,
+            create_block,
+            update_block,
+            delete_block,
+            get_block,
+            get_block_children,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
