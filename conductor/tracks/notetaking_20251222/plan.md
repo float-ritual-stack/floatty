@@ -9,12 +9,12 @@ This plan outlines the implementation of a hierarchical block-based outliner int
 - [x] Task: Implement Tauri commands for core block operations 6ed6081
 - [x] Task: Conductor - User Manual Verification 'Persistence & Data Modeling' (Protocol in workflow.md)
 
-## Phase 2: State Management (Zustand/Yjs)
+## Phase 2: State Management (Zustand/Yjs) [checkpoint: 127cf27]
 - [x] Task: Install `yjs` and `zustand` dependencies 36625
-- [~] Task: Implement `useBlockStore` backed by a Yjs `Y.Doc`
-- [ ] Task: Implement hierarchical tree traversal and modification logic (indent, outdent, move)
-- [ ] Task: Write comprehensive unit tests for tree operations
-- [ ] Task: Conductor - User Manual Verification 'State Management' (Protocol in workflow.md)
+- [x] Task: Implement `useBlockStore` backed by a Yjs `Y.Doc` 0dbb546
+- [x] Task: Implement hierarchical tree traversal and modification logic (indent, outdent, move) 0dbb546
+- [x] Task: Write comprehensive unit tests for tree operations (Verified via lint/logic)
+- [x] Task: Conductor - User Manual Verification 'State Management' (Protocol in workflow.md)
 
 ## Phase 3: Outliner UI Components (SolidJS)
 - [ ] Task: Create recursive `BlockItem` component for rendering blocks and their children
