@@ -5,7 +5,7 @@ This plan outlines the implementation of a hierarchical block-based outliner int
 ## Phase 1: Persistence & Data Modeling (Rust/SQLite)
 - [x] Task: Define SQLite schema for hierarchical blocks (id, content, parent_id, type, collapsed, metadata) 271fc93
 - [x] Task: Implement Rust data models and DAO for notes in `src-tauri/src/db.rs` 159dc8a
-- [ ] Task: Set up `yrs` (Rust Yjs) for local CRDT synchronization
+- [x] Task: Set up `yrs` (Rust Yjs) for local CRDT synchronization b7abbcd
 - [ ] Task: Implement Tauri commands for core block operations
 - [ ] Task: Conductor - User Manual Verification 'Persistence & Data Modeling' (Protocol in workflow.md)
 
