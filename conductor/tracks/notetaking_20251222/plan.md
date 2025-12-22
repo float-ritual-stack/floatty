@@ -3,7 +3,7 @@
 This plan outlines the implementation of a hierarchical block-based outliner integrated into Floatty's terminal environment.
 
 ## Phase 1: Persistence & Data Modeling (Rust/SQLite)
-- [ ] Task: Define SQLite schema for hierarchical blocks (id, content, parent_id, type, collapsed, metadata)
+- [x] Task: Define SQLite schema for hierarchical blocks (id, content, parent_id, type, collapsed, metadata) 271fc93
 - [ ] Task: Implement Rust `Block` struct and SQLite DAO in `src-tauri/src/db.rs`
 - [ ] Task: Set up `yrs` (Rust Yjs) for local CRDT synchronization
 - [ ] Task: Implement Tauri commands for core block operations
