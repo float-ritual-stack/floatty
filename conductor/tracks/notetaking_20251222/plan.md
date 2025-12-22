@@ -16,12 +16,12 @@ This plan outlines the implementation of a hierarchical block-based outliner int
 - [x] Task: Write comprehensive unit tests for tree operations (Verified via lint/logic)
 - [x] Task: Conductor - User Manual Verification 'State Management' (Protocol in workflow.md)
 
-## Phase 3: Outliner UI Components (SolidJS)
-- [ ] Task: Create recursive `BlockItem` component for rendering blocks and their children
-- [ ] Task: Create `Outliner` container component for note panes
-- [ ] Task: Implement basic editing UX (Enter for new block, Tab/Shift-Tab for nesting)
-- [ ] Task: Implement block folding/collapsing logic
-- [ ] Task: Conductor - User Manual Verification 'Outliner UI Components' (Protocol in workflow.md)
+## Phase 3: Outliner UI Components (SolidJS) [checkpoint: e5fef87]
+- [x] Task: Create recursive `BlockItem` component for rendering blocks and their children 0dbb546
+- [x] Task: Create `Outliner` container component for note panes 0dbb546
+- [x] Task: Implement basic editing UX (Enter for new block, Tab/Shift-Tab for nesting) 0dbb546
+- [x] Task: Implement block folding/collapsing logic 0dbb546
+- [x] Task: Conductor - User Manual Verification 'Outliner UI Components' (Protocol in workflow.md)
 
 ## Phase 4: Layout & Terminal Integration
 - [ ] Task: Extend `PaneLeaf` in `layoutTypes.ts` to support `type: 'terminal' | 'outliner'`
