@@ -1,0 +1,8 @@
+{
+  "track_id": "notetaking_20251222",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2025-12-22T15:30:00Z",
+  "updated_at": "2025-12-22T15:30:00Z",
+  "description": "Integrate initial note-taking and outlining functionality alongside the terminal panes."
+}
