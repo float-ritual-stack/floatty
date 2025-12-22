@@ -3,10 +3,20 @@
 use crate::shelf::{Shelf, ShelfItem};
 use rusqlite::{params, Connection, Result};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub struct ShelfDatabase {
     conn: Mutex<Connection>,
+}
+
+/// Helper to convert mutex poison errors to rusqlite errors
+fn lock_conn(mutex: &Mutex<Connection>) -> Result<MutexGuard<'_, Connection>> {
+    mutex.lock().map_err(|e: PoisonError<_>| {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(1),
+            Some(format!("Database mutex poisoned: {}", e)),
+        )
+    })
 }
 
 impl ShelfDatabase {
@@ -14,9 +24,14 @@ impl ShelfDatabase {
     pub fn open() -> Result<Self> {
         let db_path = Self::db_path();
 
-        // Ensure parent directory exists
+        // Ensure parent directory exists - propagate error instead of ignoring
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            std::fs::create_dir_all(parent).map_err(|e| {
+                rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(14), // SQLITE_CANTOPEN
+                    Some(format!("Failed to create database directory {:?}: {}", parent, e)),
+                )
+            })?;
         }
 
         let conn = Connection::open(&db_path)?;
@@ -69,7 +84,7 @@ impl ShelfDatabase {
 
     /// Create a new shelf
     pub fn create_shelf(&self, shelf: &Shelf) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         conn.execute(
             r#"
             INSERT INTO shelves (id, name, position_x, position_y, width, height, created_at, updated_at)
@@ -91,7 +106,7 @@ impl ShelfDatabase {
 
     /// Get all shelves
     pub fn get_all_shelves(&self) -> Result<Vec<Shelf>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         let mut stmt = conn.prepare(
             "SELECT id, name, position_x, position_y, width, height, created_at, updated_at FROM shelves ORDER BY created_at DESC",
         )?;
@@ -116,7 +131,7 @@ impl ShelfDatabase {
 
     /// Get a shelf by ID
     pub fn get_shelf(&self, id: &str) -> Result<Option<Shelf>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         let mut stmt = conn.prepare(
             "SELECT id, name, position_x, position_y, width, height, created_at, updated_at FROM shelves WHERE id = ?1",
         )?;
@@ -140,7 +155,7 @@ impl ShelfDatabase {
 
     /// Update shelf position
     pub fn update_shelf_position(&self, id: &str, x: f64, y: f64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         let now = crate::shelf::chrono_timestamp();
         conn.execute(
             "UPDATE shelves SET position_x = ?1, position_y = ?2, updated_at = ?3 WHERE id = ?4",
@@ -151,7 +166,7 @@ impl ShelfDatabase {
 
     /// Update shelf size
     pub fn update_shelf_size(&self, id: &str, width: f64, height: f64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         let now = crate::shelf::chrono_timestamp();
         conn.execute(
             "UPDATE shelves SET width = ?1, height = ?2, updated_at = ?3 WHERE id = ?4",
@@ -162,7 +177,7 @@ impl ShelfDatabase {
 
     /// Delete a shelf and all its items
     pub fn delete_shelf(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         // Items are deleted via CASCADE
         conn.execute("DELETE FROM shelves WHERE id = ?1", params![id])?;
         Ok(())
@@ -170,7 +185,7 @@ impl ShelfDatabase {
 
     /// Add an item to a shelf
     pub fn add_item(&self, item: &ShelfItem) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         conn.execute(
             r#"
             INSERT INTO shelf_items (id, shelf_id, original_path, stored_path, filename, size_bytes, is_directory, added_at)
@@ -192,7 +207,7 @@ impl ShelfDatabase {
 
     /// Get all items in a shelf
     pub fn get_shelf_items(&self, shelf_id: &str) -> Result<Vec<ShelfItem>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         let mut stmt = conn.prepare(
             "SELECT id, shelf_id, original_path, stored_path, filename, size_bytes, is_directory, added_at
              FROM shelf_items WHERE shelf_id = ?1 ORDER BY added_at DESC",
@@ -220,7 +235,7 @@ impl ShelfDatabase {
 
     /// Get item count for a shelf
     pub fn get_item_count(&self, shelf_id: &str) -> Result<i32> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         let count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM shelf_items WHERE shelf_id = ?1",
             params![shelf_id],
@@ -231,14 +246,14 @@ impl ShelfDatabase {
 
     /// Delete an item
     pub fn delete_item(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         conn.execute("DELETE FROM shelf_items WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     /// Get an item by ID
     pub fn get_item(&self, id: &str) -> Result<Option<ShelfItem>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = lock_conn(&self.conn)?;
         let mut stmt = conn.prepare(
             "SELECT id, shelf_id, original_path, stored_path, filename, size_bytes, is_directory, added_at
              FROM shelf_items WHERE id = ?1",

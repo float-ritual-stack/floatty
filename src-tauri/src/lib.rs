@@ -9,7 +9,7 @@ use db::{CtxDatabase, CtxMarker};
 use serde::{Deserialize, Serialize};
 use shelf::{Shelf, ShelfDatabase, ShelfItem, ShelfStorage};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)
@@ -117,9 +117,11 @@ pub struct AppState {
 }
 
 /// Shelf system state
+/// - db is Option to allow graceful degradation if database fails to open
+/// - storage is Mutex-wrapped for thread-safe concurrent access
 pub struct ShelfState {
-    db: Arc<ShelfDatabase>,
-    storage: ShelfStorage,
+    db: Option<Arc<ShelfDatabase>>,
+    storage: Mutex<ShelfStorage>,
 }
 
 // ============================================================================
@@ -133,11 +135,14 @@ fn create_shelf(
     state: State<ShelfState>,
     position: Option<(f64, f64)>,
 ) -> Result<Shelf, String> {
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+
     let id = uuid::Uuid::new_v4().to_string();
     let shelf = Shelf::new(id, position);
 
     // Save to database
-    state.db.create_shelf(&shelf).map_err(|e| e.to_string())?;
+    db.create_shelf(&shelf).map_err(|e| e.to_string())?;
 
     // Create and show the panel (macOS)
     #[cfg(target_os = "macos")]
@@ -150,13 +155,17 @@ fn create_shelf(
 /// Get all shelves
 #[tauri::command]
 fn get_shelves(state: State<ShelfState>) -> Result<Vec<Shelf>, String> {
-    state.db.get_all_shelves().map_err(|e| e.to_string())
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    db.get_all_shelves().map_err(|e| e.to_string())
 }
 
 /// Get a specific shelf
 #[tauri::command]
 fn get_shelf(state: State<ShelfState>, shelf_id: String) -> Result<Option<Shelf>, String> {
-    state.db.get_shelf(&shelf_id).map_err(|e| e.to_string())
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    db.get_shelf(&shelf_id).map_err(|e| e.to_string())
 }
 
 /// Add files to a shelf
@@ -166,6 +175,11 @@ fn add_to_shelf(
     shelf_id: String,
     paths: Vec<String>,
 ) -> Result<Vec<ShelfItem>, String> {
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    let storage = state.storage.lock()
+        .map_err(|e| format!("Storage lock poisoned: {}", e))?;
+
     let mut items = Vec::new();
 
     for path_str in paths {
@@ -176,10 +190,10 @@ fn add_to_shelf(
         }
 
         // Copy file to shelf storage
-        let item = state.storage.add_file(&shelf_id, &path)?;
+        let item = storage.add_file(&shelf_id, &path)?;
 
         // Save to database
-        state.db.add_item(&item).map_err(|e| e.to_string())?;
+        db.add_item(&item).map_err(|e| e.to_string())?;
 
         items.push(item);
     }
@@ -191,7 +205,9 @@ fn add_to_shelf(
 /// Get items in a shelf
 #[tauri::command]
 fn get_shelf_items(state: State<ShelfState>, shelf_id: String) -> Result<Vec<ShelfItem>, String> {
-    state.db.get_shelf_items(&shelf_id).map_err(|e| e.to_string())
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    db.get_shelf_items(&shelf_id).map_err(|e| e.to_string())
 }
 
 /// Delete a shelf and all its contents
@@ -201,6 +217,11 @@ fn delete_shelf(
     state: State<ShelfState>,
     shelf_id: String,
 ) -> Result<(), String> {
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    let storage = state.storage.lock()
+        .map_err(|e| format!("Storage lock poisoned: {}", e))?;
+
     // Close panel first (macOS)
     #[cfg(target_os = "macos")]
     {
@@ -211,10 +232,10 @@ fn delete_shelf(
     let _ = &app; // Suppress unused warning
 
     // Delete storage
-    state.storage.delete_shelf_storage(&shelf_id)?;
+    storage.delete_shelf_storage(&shelf_id)?;
 
     // Delete from database
-    state.db.delete_shelf(&shelf_id).map_err(|e| e.to_string())?;
+    db.delete_shelf(&shelf_id).map_err(|e| e.to_string())?;
 
     log::info!("Deleted shelf: {}", shelf_id);
     Ok(())
@@ -223,13 +244,18 @@ fn delete_shelf(
 /// Delete a single item from a shelf
 #[tauri::command]
 fn delete_shelf_item(state: State<ShelfState>, item_id: String) -> Result<(), String> {
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    let storage = state.storage.lock()
+        .map_err(|e| format!("Storage lock poisoned: {}", e))?;
+
     // Get item to find stored path
-    if let Some(item) = state.db.get_item(&item_id).map_err(|e| e.to_string())? {
+    if let Some(item) = db.get_item(&item_id).map_err(|e| e.to_string())? {
         // Delete file
-        state.storage.delete_item(&item.stored_path)?;
+        storage.delete_item(&item.stored_path)?;
 
         // Delete from database
-        state.db.delete_item(&item_id).map_err(|e| e.to_string())?;
+        db.delete_item(&item_id).map_err(|e| e.to_string())?;
 
         log::info!("Deleted shelf item: {}", item_id);
     }
@@ -243,14 +269,19 @@ fn move_shelf_item(
     item_id: String,
     dest_path: String,
 ) -> Result<(), String> {
-    if let Some(item) = state.db.get_item(&item_id).map_err(|e| e.to_string())? {
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    let storage = state.storage.lock()
+        .map_err(|e| format!("Storage lock poisoned: {}", e))?;
+
+    if let Some(item) = db.get_item(&item_id).map_err(|e| e.to_string())? {
         let dest = PathBuf::from(&dest_path);
 
         // Move file
-        state.storage.move_item_out(&item.stored_path, &dest)?;
+        storage.move_item_out(&item.stored_path, &dest)?;
 
         // Delete from database
-        state.db.delete_item(&item_id).map_err(|e| e.to_string())?;
+        db.delete_item(&item_id).map_err(|e| e.to_string())?;
 
         log::info!("Moved shelf item {} to {}", item_id, dest_path);
     }
@@ -266,11 +297,14 @@ fn show_shelf_panel(
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        let db = state.db.as_ref()
+            .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+
         // If panel doesn't exist, create it
         if !shelf::panel::panel_exists(&app, &shelf_id) {
-            if let Some(shelf) = state.db.get_shelf(&shelf_id).map_err(|e| e.to_string())? {
-                shelf::panel::create_panel(&app, &shelf)?;
-            }
+            let shelf = db.get_shelf(&shelf_id).map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Shelf {} not found", shelf_id))?;
+            shelf::panel::create_panel(&app, &shelf)?;
         } else {
             shelf::panel::show_panel(&app, &shelf_id)?;
         }
@@ -307,8 +341,11 @@ fn hide_shelf_panel(
 fn show_all_shelf_panels(app: tauri::AppHandle, state: State<ShelfState>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        let db = state.db.as_ref()
+            .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+
         // Get all shelves and create/show panels for them
-        let shelves = state.db.get_all_shelves().map_err(|e| e.to_string())?;
+        let shelves = db.get_all_shelves().map_err(|e| e.to_string())?;
         for shelf in shelves {
             if !shelf::panel::panel_exists(&app, &shelf.id) {
                 shelf::panel::create_panel(&app, &shelf)?;
@@ -334,7 +371,9 @@ fn update_shelf_position(
     x: f64,
     y: f64,
 ) -> Result<(), String> {
-    state.db.update_shelf_position(&shelf_id, x, y).map_err(|e| e.to_string())
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    db.update_shelf_position(&shelf_id, x, y).map_err(|e| e.to_string())
 }
 
 /// Update shelf size (called when panel is resized)
@@ -345,7 +384,9 @@ fn update_shelf_size(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    state.db.update_shelf_size(&shelf_id, width, height).map_err(|e| e.to_string())
+    let db = state.db.as_ref()
+        .ok_or_else(|| "Shelf system unavailable: database failed to initialize".to_string())?;
+    db.update_shelf_size(&shelf_id, width, height).map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -460,20 +501,22 @@ pub fn run() {
     // Always register AppState - inner is None when initialization fails
     let app_state = AppState { inner };
 
-    // Initialize shelf system
-    let shelf_state = match ShelfDatabase::open() {
+    // Initialize shelf system (with graceful degradation like ctx system)
+    let shelf_db = match ShelfDatabase::open() {
         Ok(db) => {
             log::info!("Shelf database initialized successfully");
-            ShelfState {
-                db: Arc::new(db),
-                storage: ShelfStorage::new(),
-            }
+            Some(Arc::new(db))
         }
         Err(e) => {
             log::error!("Failed to open shelf database: {}", e);
-            // Create a minimal state that will error on use
-            panic!("Failed to initialize shelf database: {}", e);
+            log::error!("Shelf functionality will be unavailable. Check ~/.floatty permissions.");
+            None
         }
+    };
+
+    let shelf_state = ShelfState {
+        db: shelf_db,
+        storage: Mutex::new(ShelfStorage::new()),
     };
 
     let mut builder = tauri::Builder::default()

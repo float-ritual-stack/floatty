@@ -4,8 +4,18 @@
 //! with Tauri's managed state.
 
 use crate::shelf::Shelf;
-use tauri::{AppHandle, Manager, WebviewUrl};
-use tauri_nspanel::{ManagerExt, PanelBuilder, PanelLevel};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl};
+use tauri_nspanel::{tauri_panel, ManagerExt, PanelBuilder, PanelLevel};
+
+// Define the shelf panel type using the tauri_panel! macro
+tauri_panel! {
+    panel!(ShelfPanel {
+        config: {
+            can_become_key_window: true,
+            is_floating_panel: true
+        }
+    })
+}
 
 /// Create and show a panel for a shelf
 pub fn create_panel(app: &AppHandle, shelf: &Shelf) -> Result<(), String> {
@@ -21,7 +31,7 @@ pub fn create_panel(app: &AppHandle, shelf: &Shelf) -> Result<(), String> {
     let url = format!("/shelf.html?id={}", shelf.id);
 
     // Create the floating panel
-    PanelBuilder::new(app, &label)
+    PanelBuilder::<_, ShelfPanel>::new(app, &label)
         .url(WebviewUrl::App(url.into()))
         .title(
             shelf
@@ -29,8 +39,8 @@ pub fn create_panel(app: &AppHandle, shelf: &Shelf) -> Result<(), String> {
                 .clone()
                 .unwrap_or_else(|| format!("Shelf {}", &shelf.id[..8])),
         )
-        .position((shelf.position_x, shelf.position_y).into())
-        .size((shelf.width, shelf.height).into())
+        .position(LogicalPosition::new(shelf.position_x, shelf.position_y).into())
+        .size(LogicalSize::new(shelf.width, shelf.height).into())
         .floating(true)
         .level(PanelLevel::Floating)
         .transparent(true)

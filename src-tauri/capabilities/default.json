@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "Default permissions for floatty terminal emulator with drop shelf functionality. Read access to common user directories (Downloads, Documents, Desktop) enables drag-and-drop from Finder to create shelves. Files are copied to ~/.floatty/shelves/ where write access is allowed. This is an opt-in feature activated only by user drag-and-drop actions.",
   "windows": [
     "main",
     "shelf-*"

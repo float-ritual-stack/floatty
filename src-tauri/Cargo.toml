@@ -39,4 +39,5 @@ uuid = { version = "1", features = ["v4"] }
 
 # macOS-specific dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+# Pinned to specific commit for reproducible builds (v2.1 branch as of 2024-12)
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "da9c9a8d4eb7f0524a2508988df1a7d9585b4904" }

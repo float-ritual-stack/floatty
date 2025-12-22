@@ -2,7 +2,7 @@
 
 use crate::shelf::{chrono_timestamp, ShelfItem};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub struct ShelfStorage {
     base_path: PathBuf,
@@ -30,11 +30,44 @@ impl ShelfStorage {
         Ok(dir)
     }
 
+    /// Validate source path to prevent path traversal attacks
+    fn validate_source_path(&self, source_path: &Path) -> Result<(), String> {
+        // Check for path traversal via parent directory components
+        if source_path.components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err(format!(
+                "Path traversal detected in source path: {:?}",
+                source_path
+            ));
+        }
+
+        // Verify the path exists
+        if !source_path.exists() {
+            return Err(format!("Source path does not exist: {:?}", source_path));
+        }
+
+        Ok(())
+    }
+
     /// Copy a file or directory to a shelf, returning the ShelfItem
     pub fn add_file(&self, shelf_id: &str, source_path: &Path) -> Result<ShelfItem, String> {
+        // Validate source path to prevent path traversal attacks
+        self.validate_source_path(source_path)?;
+
         let shelf_dir = self.ensure_shelf_dir(shelf_id)?;
 
-        // Get file metadata
+        // Get file metadata (don't follow symlinks to check if it's a symlink first)
+        let metadata = fs::symlink_metadata(source_path)
+            .map_err(|e| format!("Failed to read source file: {}", e))?;
+
+        // Skip symlinks for security
+        if metadata.is_symlink() {
+            return Err(format!(
+                "Symlinks are not supported for security reasons: {:?}",
+                source_path
+            ));
+        }
+
+        // Now get regular metadata for the file/directory
         let metadata = fs::metadata(source_path)
             .map_err(|e| format!("Failed to read source file: {}", e))?;
 
@@ -49,7 +82,10 @@ impl ShelfStorage {
 
         let is_directory = metadata.is_dir();
         let size_bytes = if is_directory {
-            self.dir_size(source_path).unwrap_or(0)
+            self.dir_size(source_path).unwrap_or_else(|e| {
+                log::warn!("Failed to calculate directory size for {:?}: {}", source_path, e);
+                0
+            })
         } else {
             metadata.len()
         };
@@ -115,7 +151,17 @@ impl ShelfStorage {
             let src_path = entry.path();
             let dst_path = dst.join(entry.file_name());
 
-            if src_path.is_dir() {
+            // Get metadata without following symlinks
+            let metadata = fs::symlink_metadata(&src_path)
+                .map_err(|e| format!("Failed to read metadata: {}", e))?;
+
+            // Skip symlinks to avoid cycles and security issues
+            if metadata.is_symlink() {
+                log::warn!("Skipping symlink during copy: {:?}", src_path);
+                continue;
+            }
+
+            if metadata.is_dir() {
                 self.copy_dir_recursive(&src_path, &dst_path)?;
             } else {
                 fs::copy(&src_path, &dst_path)

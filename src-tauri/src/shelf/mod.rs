@@ -59,9 +59,13 @@ pub struct ShelfItem {
 }
 
 /// Get current unix timestamp in seconds
+/// Returns 0 and logs an error if system time is before Unix epoch (should never happen)
 pub(crate) fn chrono_timestamp() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .unwrap_or_else(|e| {
+            log::error!("System time is before Unix epoch: {}", e);
+            0
+        })
 }
