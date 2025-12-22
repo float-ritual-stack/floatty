@@ -1,6 +1,7 @@
 mod ctx_parser;
 mod ctx_watcher;
 mod db;
+mod db_blocks_test;
 
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
