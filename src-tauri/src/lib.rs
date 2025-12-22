@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)
 #[derive(Clone, Serialize, Deserialize)]
@@ -211,6 +212,59 @@ fn get_block_children(state: State<AppState>, parent_id: String) -> Result<Vec<B
     inner.db.get_children(&parent_id).map_err(|e| e.to_string())
 }
 
+/// Get the initial Yjs document state as Base64
+#[tauri::command]
+fn get_initial_state(state: State<AppState>) -> Result<String, String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    
+    let state = inner.db.get_system_state("ydoc")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    
+    Ok(BASE64.encode(state))
+}
+
+/// Apply a Yjs update from the frontend
+#[tauri::command]
+fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    
+    let update_bytes = BASE64.decode(update_b64)
+        .map_err(|e| e.to_string())?;
+    
+    // In a real local-first app, we'd use yrs to merge the update with the current state.
+    // For now, we'll just store the full state if the frontend sends it, 
+    // or merge it if we keep a Doc in memory.
+    
+    // Simplest persistence: append to a log or update the full blob if frontend sends full state.
+    // useSyncedYDoc in frontend sends full state via Y.encodeStateAsUpdate(doc).
+    
+    // Let's load current state, merge with update using yrs, and save back.
+    use yrs::{Doc, Transact, Update, updates::decoder::Decode, updates::encoder::Encode};
+    
+    let doc = Doc::new();
+    let current_state = inner.db.get_system_state("ydoc")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    
+    if !current_state.is_empty() {
+        let mut txn = doc.transact_mut();
+        txn.apply_update(Update::decode_v1(&current_state).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    }
+    
+    {
+        let mut txn = doc.transact_mut();
+        txn.apply_update(Update::decode_v1(&update_bytes).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    }
+    
+    let new_state = doc.transact().encode_state_as_update_v1();
+    inner.db.set_system_state("ydoc", &new_state).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
@@ -279,6 +333,8 @@ pub fn run() {
             delete_block,
             get_block,
             get_block_children,
+            get_initial_state,
+            apply_update,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

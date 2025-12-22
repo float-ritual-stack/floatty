@@ -217,6 +217,13 @@ impl CtxDatabase {
             );
 
             CREATE INDEX IF NOT EXISTS idx_parent_id ON blocks(parent_id);
+
+            -- Serialized Yjs document state
+            CREATE TABLE IF NOT EXISTS system_state (
+                key TEXT PRIMARY KEY,
+                value BLOB NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         "#)?;
 
         // Migrations: add columns if they don't exist (for existing DBs)
@@ -547,7 +554,7 @@ impl CtxDatabase {
         Ok(())
     }
 
-    /// Get all children of a block
+    /// Get children of a block
     pub fn get_children(&self, parent_id: &str) -> Result<Vec<Block>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -568,5 +575,28 @@ impl CtxDatabase {
         })?;
 
         blocks.collect()
+    }
+
+    /// Get serialized Yjs state
+    pub fn get_system_state(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT value FROM system_state WHERE key = ?")?;
+        let mut rows = stmt.query([key])?;
+        
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set serialized Yjs state
+    pub fn set_system_state(&self, key: &str, value: &[u8]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            params![key, value],
+        )?;
+        Ok(())
     }
 }

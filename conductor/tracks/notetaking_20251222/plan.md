@@ -10,8 +10,8 @@ This plan outlines the implementation of a hierarchical block-based outliner int
 - [x] Task: Conductor - User Manual Verification 'Persistence & Data Modeling' (Protocol in workflow.md)
 
 ## Phase 2: State Management (Zustand/Yjs)
-- [ ] Task: Install `yjs` and `zustand` dependencies
-- [ ] Task: Implement `useBlockStore` backed by a Yjs `Y.Doc`
+- [x] Task: Install `yjs` and `zustand` dependencies 36625
+- [~] Task: Implement `useBlockStore` backed by a Yjs `Y.Doc`
 - [ ] Task: Implement hierarchical tree traversal and modification logic (indent, outdent, move)
 - [ ] Task: Write comprehensive unit tests for tree operations
 - [ ] Task: Conductor - User Manual Verification 'State Management' (Protocol in workflow.md)
