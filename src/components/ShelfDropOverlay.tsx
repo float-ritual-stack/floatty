@@ -1,5 +1,7 @@
 import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import type { DragDropEvent } from '@tauri-apps/api/webview';
 
 interface Shelf {
   id: string;
@@ -17,9 +19,7 @@ export function ShelfDropOverlay() {
   const [shelves, setShelves] = createSignal<Shelf[]>([]);
   const [dragOverTarget, setDragOverTarget] = createSignal<string | null>(null);
   const [dropPosition, setDropPosition] = createSignal<{ x: number; y: number } | null>(null);
-
-  // Track drag counter to handle nested elements
-  let dragCounter = 0;
+  const [pendingPaths, setPendingPaths] = createSignal<string[]>([]);
 
   const loadShelves = async () => {
     try {
@@ -41,114 +41,91 @@ export function ShelfDropOverlay() {
     }
   };
 
-  // Global drag event listeners
+  // Use Tauri's drag-drop API for native file drops
   createEffect(() => {
-    const onDragEnter = (e: DragEvent) => {
-      // Only respond to file drags
-      if (!e.dataTransfer?.types.includes('Files')) return;
+    let unlisten: (() => void) | null = null;
 
-      dragCounter++;
-      if (dragCounter === 1) {
-        e.preventDefault();
-        showOverlay();
-      }
-    };
+    const setupListener = async () => {
+      try {
+        const webview = getCurrentWebview();
+        unlisten = await webview.onDragDropEvent((event: DragDropEvent) => {
+          const payload = event.payload;
 
-    const onDragLeave = (e: DragEvent) => {
-      dragCounter--;
-      if (dragCounter === 0) {
-        // Small delay to prevent flicker when moving between elements
-        setTimeout(() => {
-          if (dragCounter === 0) {
+          if (payload.type === 'enter' || payload.type === 'over') {
+            // Show overlay when files enter the webview
+            if (!visible()) {
+              showOverlay();
+            }
+            // Track position for new shelf creation
+            if (payload.position) {
+              setDropPosition({ x: payload.position.x, y: payload.position.y });
+            }
+            // Store paths for when user drops on a zone
+            if (payload.paths && payload.paths.length > 0) {
+              setPendingPaths(payload.paths);
+            }
+          } else if (payload.type === 'leave') {
+            // Small delay to prevent flicker
+            setTimeout(() => {
+              if (!visible()) return;
+              setVisible(false);
+              setDragOverTarget(null);
+              setPendingPaths([]);
+            }, 50);
+          } else if (payload.type === 'drop') {
+            // Drop happened - check if we have a target zone selected
+            const target = dragOverTarget();
+            const paths = payload.paths || pendingPaths();
+
+            if (paths.length > 0 && target) {
+              // Handle drop based on selected target
+              if (target === 'new') {
+                handleDropNewShelfWithPaths(paths, dropPosition());
+              } else {
+                handleDropOnShelfWithPaths(target, paths);
+              }
+            }
+
+            // Reset state
             setVisible(false);
             setDragOverTarget(null);
+            setPendingPaths([]);
           }
-        }, 50);
+        });
+      } catch (e) {
+        console.error('Failed to setup drag-drop listener:', e);
       }
     };
 
-    const onDragOver = (e: DragEvent) => {
-      if (!e.dataTransfer?.types.includes('Files')) return;
-      e.preventDefault();
-      // Track mouse position for new shelf creation
-      setDropPosition({ x: e.screenX, y: e.screenY });
-    };
-
-    const onDrop = (e: DragEvent) => {
-      dragCounter = 0;
-      // Don't hide immediately - let specific handlers deal with it
-    };
-
-    window.addEventListener('dragenter', onDragEnter);
-    window.addEventListener('dragleave', onDragLeave);
-    window.addEventListener('dragover', onDragOver);
-    window.addEventListener('drop', onDrop);
+    setupListener();
 
     onCleanup(() => {
-      window.removeEventListener('dragenter', onDragEnter);
-      window.removeEventListener('dragleave', onDragLeave);
-      window.removeEventListener('dragover', onDragOver);
-      window.removeEventListener('drop', onDrop);
+      if (unlisten) {
+        unlisten();
+      }
     });
   });
 
-  const handleDropOnShelf = async (e: DragEvent, shelfId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
+  // Handler for dropping on existing shelf (using Tauri paths)
+  const handleDropOnShelfWithPaths = async (shelfId: string, paths: string[]) => {
+    if (paths.length === 0) return;
 
-    const files = e.dataTransfer?.files;
-    if (!files || files.length === 0) {
-      setVisible(false);
-      return;
+    try {
+      await invoke('add_to_shelf', { shelfId, paths });
+    } catch (e) {
+      console.error('Failed to add files to shelf:', e);
     }
-
-    const paths: string[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i] as File & { path?: string };
-      if (file.path) {
-        paths.push(file.path);
-      }
-    }
-
-    if (paths.length > 0) {
-      try {
-        await invoke('add_to_shelf', { shelfId, paths });
-      } catch (e) {
-        console.error('Failed to add files to shelf:', e);
-      }
-    }
-
-    setVisible(false);
-    setDragOverTarget(null);
-    dragCounter = 0;
   };
 
-  const handleDropNewShelf = async (e: DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const files = e.dataTransfer?.files;
-    if (!files || files.length === 0) {
-      setVisible(false);
-      return;
-    }
-
-    const paths: string[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i] as File & { path?: string };
-      if (file.path) {
-        paths.push(file.path);
-      }
-    }
-
-    if (paths.length === 0) {
-      setVisible(false);
-      return;
-    }
+  // Handler for creating new shelf (using Tauri paths)
+  const handleDropNewShelfWithPaths = async (
+    paths: string[],
+    position: { x: number; y: number } | null
+  ) => {
+    if (paths.length === 0) return;
 
     try {
       // Create new shelf at drop position
-      const position = dropPosition();
       const shelf = await invoke<Shelf>('create_shelf', {
         position: position ? [position.x - 140, position.y - 200] : null,
       });
@@ -158,10 +135,6 @@ export function ShelfDropOverlay() {
     } catch (e) {
       console.error('Failed to create shelf:', e);
     }
-
-    setVisible(false);
-    setDragOverTarget(null);
-    dragCounter = 0;
   };
 
   const getShelfDisplayName = (shelf: Shelf, index: number): string => {
@@ -184,12 +157,8 @@ export function ShelfDropOverlay() {
                 <div
                   class="shelf-drop-zone"
                   classList={{ 'shelf-drop-zone-active': dragOverTarget() === shelf.id }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setDragOverTarget(shelf.id);
-                  }}
-                  onDragLeave={() => setDragOverTarget(null)}
-                  onDrop={(e) => handleDropOnShelf(e, shelf.id)}
+                  onMouseEnter={() => setDragOverTarget(shelf.id)}
+                  onMouseLeave={() => setDragOverTarget(null)}
                 >
                   <span class="shelf-drop-zone-icon">📥</span>
                   <span class="shelf-drop-zone-name">{getShelfDisplayName(shelf, index())}</span>
@@ -201,12 +170,8 @@ export function ShelfDropOverlay() {
             <div
               class="shelf-drop-zone shelf-drop-zone-new"
               classList={{ 'shelf-drop-zone-active': dragOverTarget() === 'new' }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOverTarget('new');
-              }}
-              onDragLeave={() => setDragOverTarget(null)}
-              onDrop={handleDropNewShelf}
+              onMouseEnter={() => setDragOverTarget('new')}
+              onMouseLeave={() => setDragOverTarget(null)}
             >
               <span class="shelf-drop-zone-icon">+</span>
               <span class="shelf-drop-zone-name">New Shelf</span>
