@@ -948,11 +948,14 @@ dependencies = [
  "sha2",
  "tauri",
  "tauri-build",
+ "tauri-nspanel",
+ "tauri-plugin-fs",
  "tauri-plugin-log",
  "tauri-plugin-os",
  "tauri-plugin-pty",
  "tokio",
  "toml 0.8.2",
+ "uuid",
  "walkdir",
 ]
 
@@ -2684,6 +2687,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pastey"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4163,6 +4172,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-nspanel"
+version = "2.1.0"
+source = "git+https://github.com/ahkohd/tauri-nspanel?branch=v2.1#da9c9a8d4eb7f0524a2508988df1a7d9585b4904"
+dependencies = [
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "pastey",
+ "tauri",
+]
+
+[[package]]
 name = "tauri-plugin"
 version = "2.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4177,6 +4198,28 @@ dependencies = [
  "tauri-utils",
  "toml 0.9.8",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-fs"
+version = "2.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47df422695255ecbe7bac7012440eddaeefd026656171eac9559f5243d3230d9"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "glob",
+ "percent-encoding",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "tauri",
+ "tauri-plugin",
+ "tauri-utils",
+ "thiserror 2.0.17",
+ "toml 0.9.8",
+ "url",
 ]
 
 [[package]]

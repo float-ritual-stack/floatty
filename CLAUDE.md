@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-**floatty** - A Tauri v2 terminal emulator with three integrated systems:
+**floatty** - A Tauri v2 terminal emulator with four integrated systems:
 1. **High-performance PTY** - handles 4000+ redraws/sec from tools like Claude Code
 2. **Multi-tab terminals** - independent PTY per tab, platform-aware keybinds (⌘ on macOS)
 3. **ctx:: Aggregation** - watches JSONL session logs, extracts markers, parses via Ollama, displays in sidebar
+4. **Drop Shelf** (macOS) - Dropover-style floating file shelves via NSPanel
 
 ## Commands
 
@@ -88,6 +89,64 @@ Critical rules:
 - `get_ctx_markers` / `get_ctx_counts` - sidebar data
 - `get_ctx_config` / `set_ctx_config` - aggregator settings
 - `clear_ctx_markers` - reset database
+
+### Drop Shelf System (macOS only)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Desktop                                                            │
+│                                                                     │
+│   ┌─────────────────┐     ┌─────────────┐   ┌─────────────┐        │
+│   │  Floatty Main   │     │ Shelf Panel │   │ Shelf Panel │        │
+│   │  Window         │     │ (NSPanel)   │   │ (NSPanel)   │        │
+│   │  ┌───────────┐  │     │ file.zip    │   │ src/        │        │
+│   │  │ Terminal  │  │     │ doc.pdf     │   │ pkg.json    │        │
+│   │  └───────────┘  │     └─────────────┘   └─────────────┘        │
+│   └─────────────────┘            ▲                                  │
+│                                  │ drag from Finder                 │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Rust modules** (`src-tauri/src/shelf/`):
+
+| File | Purpose |
+|------|---------|
+| `mod.rs` | Types (Shelf, ShelfItem), public exports |
+| `db.rs` | SQLite persistence for shelves and items |
+| `storage.rs` | File copy/move operations to `~/.floatty/shelves/` |
+| `panel.rs` | NSPanel creation and lifecycle (macOS only) |
+
+**SolidJS components** (`src/components/`):
+
+| File | Purpose |
+|------|---------|
+| `ShelfPanel.tsx` | Content rendered inside each floating shelf panel |
+| `ShelfDropOverlay.tsx` | Overlay shown in main window during file drag |
+
+**Entry points**:
+- `shelf.html` + `src/shelf-main.tsx` - Separate Vite entry for shelf panels
+- Shelf panels load `/shelf.html?id={shelf_id}`
+
+**Tauri commands** (shelf operations):
+- `create_shelf` - Create new shelf, optionally at position
+- `get_shelves` / `get_shelf` - List or get shelf metadata
+- `add_to_shelf` - Copy files to shelf storage
+- `get_shelf_items` - List items in a shelf
+- `delete_shelf` / `delete_shelf_item` - Remove shelf or item
+- `move_shelf_item` - Move item out of shelf to destination
+- `show_shelf_panel` / `hide_shelf_panel` / `show_all_shelf_panels` - Panel visibility
+- `update_shelf_position` / `update_shelf_size` - Persist panel geometry
+
+**Storage**:
+- Database: `~/.floatty/shelves.db` (SQLite, WAL mode)
+- Files: `~/.floatty/shelves/{shelf_id}/{filename}`
+
+**Interaction flow**:
+1. User drags files into main window → `ShelfDropOverlay` appears
+2. Existing shelf panels also become visible
+3. Drop on existing shelf → files copied to that shelf
+4. Drop on "+ New Shelf" → new shelf created at drop position, files added
+5. Shelf panels are draggable, persist position/size
 
 ### Configuration
 

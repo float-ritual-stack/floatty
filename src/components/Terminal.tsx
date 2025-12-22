@@ -4,6 +4,7 @@ import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import type { TerminalPaneHandle } from './TerminalPane';
 import { ContextSidebar } from './ContextSidebar';
+import { ShelfDropOverlay } from './ShelfDropOverlay';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -434,6 +435,9 @@ export function Terminal() {
           <ContextSidebar visible={sidebarVisible()} />
         </Show>
       </div>
+
+      {/* Drop shelf overlay - shown when dragging files into the window */}
+      <ShelfDropOverlay />
     </div>
   );
 }

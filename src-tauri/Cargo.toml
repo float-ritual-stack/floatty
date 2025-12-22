@@ -23,6 +23,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-pty = { path = "plugins/tauri-plugin-pty" }
 tauri-plugin-os = "2"
+tauri-plugin-fs = "2"
 
 # Context aggregator dependencies
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -34,3 +35,8 @@ dirs = "5"
 hex = "0.4"
 walkdir = "2"
 toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
+
+# macOS-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }

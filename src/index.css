@@ -527,3 +527,90 @@ body.resizing .terminal-pane-positioned {
 .terminal-pane-positioned.active {
   /* Active pane styling if needed */
 }
+
+/* ================================================
+   Shelf Drop Overlay
+   ================================================ */
+
+.shelf-drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 26, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shelf-drop-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  max-width: 400px;
+  width: 100%;
+  padding: 32px;
+}
+
+.shelf-drop-hint {
+  font-family: "JetBrains Mono", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 14px;
+  color: #8b8b8b;
+  text-align: center;
+}
+
+.shelf-drop-zones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+.shelf-drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 120px;
+  height: 100px;
+  background: rgba(42, 42, 74, 0.5);
+  border: 2px dashed #4a4a7a;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.shelf-drop-zone:hover,
+.shelf-drop-zone-active {
+  background: rgba(124, 58, 237, 0.15);
+  border-color: #7c3aed;
+}
+
+.shelf-drop-zone-new {
+  border-style: dashed;
+  border-color: #06b6d4;
+}
+
+.shelf-drop-zone-new:hover,
+.shelf-drop-zone-new.shelf-drop-zone-active {
+  background: rgba(6, 182, 212, 0.15);
+  border-color: #06b6d4;
+}
+
+.shelf-drop-zone-icon {
+  font-size: 28px;
+}
+
+.shelf-drop-zone-new .shelf-drop-zone-icon {
+  font-size: 32px;
+  color: #06b6d4;
+}
+
+.shelf-drop-zone-name {
+  font-family: "JetBrains Mono", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  color: #c8c8dc;
+  text-align: center;
+}

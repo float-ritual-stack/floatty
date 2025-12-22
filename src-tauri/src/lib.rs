@@ -1,14 +1,19 @@
 mod ctx_parser;
 mod ctx_watcher;
 mod db;
+mod shelf;
 
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::{CtxDatabase, CtxMarker};
 use serde::{Deserialize, Serialize};
+use shelf::{Shelf, ShelfDatabase, ShelfItem, ShelfStorage};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Manager, State};
+
+#[cfg(target_os = "macos")]
+use shelf::ShelfPanelManager;
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)
 #[derive(Clone, Serialize, Deserialize)]
@@ -113,6 +118,245 @@ struct AppStateInner {
 pub struct AppState {
     inner: Option<AppStateInner>,
 }
+
+/// Shelf system state
+pub struct ShelfState {
+    db: Arc<ShelfDatabase>,
+    storage: ShelfStorage,
+    #[cfg(target_os = "macos")]
+    panel_manager: ShelfPanelManager<tauri::Wry>,
+}
+
+// ============================================================================
+// Shelf Commands
+// ============================================================================
+
+/// Create a new shelf, optionally at a specific position
+#[tauri::command]
+fn create_shelf(
+    app: tauri::AppHandle,
+    state: State<ShelfState>,
+    position: Option<(f64, f64)>,
+) -> Result<Shelf, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let shelf = Shelf::new(id, position);
+
+    // Save to database
+    state.db.create_shelf(&shelf).map_err(|e| e.to_string())?;
+
+    // Create and show the panel (macOS)
+    #[cfg(target_os = "macos")]
+    state.panel_manager.create_panel(&app, &shelf)?;
+
+    log::info!("Created shelf: {}", shelf.id);
+    Ok(shelf)
+}
+
+/// Get all shelves
+#[tauri::command]
+fn get_shelves(state: State<ShelfState>) -> Result<Vec<Shelf>, String> {
+    state.db.get_all_shelves().map_err(|e| e.to_string())
+}
+
+/// Get a specific shelf
+#[tauri::command]
+fn get_shelf(state: State<ShelfState>, shelf_id: String) -> Result<Option<Shelf>, String> {
+    state.db.get_shelf(&shelf_id).map_err(|e| e.to_string())
+}
+
+/// Add files to a shelf
+#[tauri::command]
+fn add_to_shelf(
+    state: State<ShelfState>,
+    shelf_id: String,
+    paths: Vec<String>,
+) -> Result<Vec<ShelfItem>, String> {
+    let mut items = Vec::new();
+
+    for path_str in paths {
+        let path = PathBuf::from(&path_str);
+        if !path.exists() {
+            log::warn!("Skipping non-existent path: {}", path_str);
+            continue;
+        }
+
+        // Copy file to shelf storage
+        let item = state.storage.add_file(&shelf_id, &path)?;
+
+        // Save to database
+        state.db.add_item(&item).map_err(|e| e.to_string())?;
+
+        items.push(item);
+    }
+
+    log::info!("Added {} items to shelf {}", items.len(), shelf_id);
+    Ok(items)
+}
+
+/// Get items in a shelf
+#[tauri::command]
+fn get_shelf_items(state: State<ShelfState>, shelf_id: String) -> Result<Vec<ShelfItem>, String> {
+    state.db.get_shelf_items(&shelf_id).map_err(|e| e.to_string())
+}
+
+/// Delete a shelf and all its contents
+#[tauri::command]
+fn delete_shelf(
+    app: tauri::AppHandle,
+    state: State<ShelfState>,
+    shelf_id: String,
+) -> Result<(), String> {
+    // Close panel first (macOS)
+    #[cfg(target_os = "macos")]
+    {
+        let _ = state.panel_manager.close_panel(&app, &shelf_id);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = &app; // Suppress unused warning
+
+    // Delete storage
+    state.storage.delete_shelf_storage(&shelf_id)?;
+
+    // Delete from database
+    state.db.delete_shelf(&shelf_id).map_err(|e| e.to_string())?;
+
+    log::info!("Deleted shelf: {}", shelf_id);
+    Ok(())
+}
+
+/// Delete a single item from a shelf
+#[tauri::command]
+fn delete_shelf_item(state: State<ShelfState>, item_id: String) -> Result<(), String> {
+    // Get item to find stored path
+    if let Some(item) = state.db.get_item(&item_id).map_err(|e| e.to_string())? {
+        // Delete file
+        state.storage.delete_item(&item.stored_path)?;
+
+        // Delete from database
+        state.db.delete_item(&item_id).map_err(|e| e.to_string())?;
+
+        log::info!("Deleted shelf item: {}", item_id);
+    }
+    Ok(())
+}
+
+/// Move an item out of a shelf to a destination path
+#[tauri::command]
+fn move_shelf_item(
+    state: State<ShelfState>,
+    item_id: String,
+    dest_path: String,
+) -> Result<(), String> {
+    if let Some(item) = state.db.get_item(&item_id).map_err(|e| e.to_string())? {
+        let dest = PathBuf::from(&dest_path);
+
+        // Move file
+        state.storage.move_item_out(&item.stored_path, &dest)?;
+
+        // Delete from database
+        state.db.delete_item(&item_id).map_err(|e| e.to_string())?;
+
+        log::info!("Moved shelf item {} to {}", item_id, dest_path);
+    }
+    Ok(())
+}
+
+/// Show a shelf panel (macOS)
+#[tauri::command]
+fn show_shelf_panel(
+    app: tauri::AppHandle,
+    state: State<ShelfState>,
+    shelf_id: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        // If panel doesn't exist, create it
+        if !state.panel_manager.is_panel_open(&shelf_id) {
+            if let Some(shelf) = state.db.get_shelf(&shelf_id).map_err(|e| e.to_string())? {
+                state.panel_manager.create_panel(&app, &shelf)?;
+            }
+        } else {
+            state.panel_manager.show_panel(&app, &shelf_id)?;
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (&app, &state, &shelf_id);
+        log::warn!("Shelf panels are only supported on macOS");
+    }
+
+    Ok(())
+}
+
+/// Hide a shelf panel (macOS)
+#[tauri::command]
+fn hide_shelf_panel(
+    app: tauri::AppHandle,
+    state: State<ShelfState>,
+    shelf_id: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    state.panel_manager.hide_panel(&app, &shelf_id)?;
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (&app, &state, &shelf_id);
+    }
+
+    Ok(())
+}
+
+/// Show all existing shelf panels (macOS)
+#[tauri::command]
+fn show_all_shelf_panels(app: tauri::AppHandle, state: State<ShelfState>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Get all shelves and create/show panels for them
+        let shelves = state.db.get_all_shelves().map_err(|e| e.to_string())?;
+        for shelf in shelves {
+            if !state.panel_manager.is_panel_open(&shelf.id) {
+                state.panel_manager.create_panel(&app, &shelf)?;
+            } else {
+                state.panel_manager.show_panel(&app, &shelf.id)?;
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (&app, &state);
+    }
+
+    Ok(())
+}
+
+/// Update shelf position (called when panel is moved)
+#[tauri::command]
+fn update_shelf_position(
+    state: State<ShelfState>,
+    shelf_id: String,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    state.db.update_shelf_position(&shelf_id, x, y).map_err(|e| e.to_string())
+}
+
+/// Update shelf size (called when panel is resized)
+#[tauri::command]
+fn update_shelf_size(
+    state: State<ShelfState>,
+    shelf_id: String,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    state.db.update_shelf_size(&shelf_id, width, height).map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// Context Aggregator Commands
+// ============================================================================
 
 /// Get ctx:: markers for sidebar display
 #[tauri::command]
@@ -220,18 +464,61 @@ pub fn run() {
     };
 
     // Always register AppState - inner is None when initialization fails
-    let state = AppState { inner };
+    let app_state = AppState { inner };
 
-    tauri::Builder::default()
+    // Initialize shelf system
+    let shelf_state = match ShelfDatabase::open() {
+        Ok(db) => {
+            log::info!("Shelf database initialized successfully");
+            ShelfState {
+                db: Arc::new(db),
+                storage: ShelfStorage::new(),
+                #[cfg(target_os = "macos")]
+                panel_manager: ShelfPanelManager::new(),
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to open shelf database: {}", e);
+            // Create a minimal state that will error on use
+            panic!("Failed to initialize shelf database: {}", e);
+        }
+    };
+
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
-        .manage(state)
+        .plugin(tauri_plugin_fs::init());
+
+    // Add NSPanel plugin on macOS
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
+    }
+
+    builder
+        .manage(app_state)
+        .manage(shelf_state)
         .invoke_handler(tauri::generate_handler![
+            // Context aggregator commands
             get_ctx_markers,
             get_ctx_counts,
             get_ctx_config,
             set_ctx_config,
             clear_ctx_markers,
+            // Shelf commands
+            create_shelf,
+            get_shelves,
+            get_shelf,
+            add_to_shelf,
+            get_shelf_items,
+            delete_shelf,
+            delete_shelf_item,
+            move_shelf_item,
+            show_shelf_panel,
+            hide_shelf_panel,
+            show_all_shelf_panels,
+            update_shelf_position,
+            update_shelf_size,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

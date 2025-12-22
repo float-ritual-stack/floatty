@@ -3,16 +3,52 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "shelf-*"
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-create",
+    "core:window:allow-close",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:webview:allow-create-webview",
+    "core:webview:allow-create-webview-window",
+    "core:event:default",
     "pty:allow-spawn",
     "pty:allow-read",
     "pty:allow-write",
     "pty:allow-resize",
     "pty:allow-kill",
     "pty:allow-exitstatus",
-    "os:default"
+    "os:default",
+    "fs:default",
+    {
+      "identifier": "fs:allow-read",
+      "allow": [
+        { "path": "$HOME/.floatty/shelves/**" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write",
+      "allow": [
+        { "path": "$HOME/.floatty/shelves/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        { "path": "$HOME/.floatty/**" }
+      ]
+    },
+    "fs:allow-exists",
+    "fs:allow-copy-file",
+    "fs:allow-remove",
+    "fs:allow-rename",
+    "fs:allow-read-dir",
+    "fs:allow-stat"
   ]
 }
