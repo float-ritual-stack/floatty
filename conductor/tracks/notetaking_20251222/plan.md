@@ -30,9 +30,9 @@ This plan outlines the implementation of a hierarchical block-based outliner int
 - [x] Task: Ensure focus management works seamlessly between terminal and outliner panes 43829
 - [x] Task: Conductor - User Manual Verification 'Layout & Terminal Integration' (Protocol in workflow.md)
 
-## Phase 5: Advanced Block Types & Execution
-- [ ] Task: Implement block prefix parsing (sh::, ai::, etc.)
-- [ ] Task: Implement `sh::` block executor: runs command and appends output block
-- [ ] Task: Implement `ai::` block executor: sends prompt to Ollama and appends response block
-- [ ] Task: Implement styling for different block types (color coding, icons)
-- [ ] Task: Conductor - User Manual Verification 'Advanced Block Types & Execution' (Protocol in workflow.md)
+## Phase 5: Advanced Block Types & Execution [checkpoint: 49319]
+- [x] Task: Implement block prefix parsing (sh::, ai::, etc.) (Implemented in Phase 2)
+- [x] Task: Implement `sh::` block executor: runs command and appends output block 44279
+- [x] Task: Implement `ai::` block executor: sends prompt to Ollama and appends response block 46385
+- [x] Task: Implement styling for different block types (color coding, icons) 47716
+- [x] Task: Conductor - User Manual Verification 'Advanced Block Types & Execution' (Protocol in workflow.md)

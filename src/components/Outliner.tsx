@@ -1,15 +1,17 @@
-import { Component, For, createSignal, onMount, Show } from 'solid-js';
+import { For, createSignal, onMount, Show } from 'solid-js';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
-import { useBlockStore } from '../hooks/useBlockStore';
+import { blockStore } from '../hooks/useBlockStore';
+import { useBlockOperations } from '../hooks/useBlockOperations';
 import { BlockItem } from './BlockItem';
 
 interface OutlinerProps {
   paneId: string;
 }
 
-export const Outliner: Component<OutlinerProps> = (props) => {
+export function Outliner(props: OutlinerProps) {
   const { doc, isLoaded } = useSyncedYDoc();
-  const store = useBlockStore();
+  const store = blockStore;
+  const { findNextVisibleBlock, findPrevVisibleBlock } = useBlockOperations();
   const [focusedBlockId, setFocusedBlockId] = createSignal<string | null>(null);
 
   onMount(() => {
@@ -19,6 +21,16 @@ export const Outliner: Component<OutlinerProps> = (props) => {
 
   const handleFocus = (id: string) => {
     setFocusedBlockId(id);
+  };
+
+  const handleNavigateUp = (id: string) => {
+    const prev = findPrevVisibleBlock(id, props.paneId);
+    if (prev) setFocusedBlockId(prev);
+  };
+
+  const handleNavigateDown = (id: string) => {
+    const next = findNextVisibleBlock(id, props.paneId);
+    if (next) setFocusedBlockId(next);
   };
 
   return (
@@ -33,8 +45,8 @@ export const Outliner: Component<OutlinerProps> = (props) => {
                 class="ctx-retry-button" 
                 style="margin-top: 8px"
                 onClick={() => {
-                  // Create first block if empty
-                  // const id = store.createInitialBlock();
+                  const id = store.createInitialBlock();
+                  if (id) setFocusedBlockId(id);
                 }}
               >
                 Create first block
@@ -46,9 +58,12 @@ export const Outliner: Component<OutlinerProps> = (props) => {
             {(rootId) => (
               <BlockItem
                 id={rootId}
+                paneId={props.paneId}
                 depth={0}
-                isFocused={focusedBlockId() === rootId}
+                focusedBlockId={focusedBlockId()}
                 onFocus={handleFocus}
+                onNavigateUp={() => handleNavigateUp(rootId)}
+                onNavigateDown={() => handleNavigateDown(rootId)}
               />
             )}
           </For>

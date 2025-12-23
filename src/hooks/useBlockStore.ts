@@ -1,44 +1,21 @@
 /**
- * useBlockStore - Zustand store backed by Y.Doc
- *
- * Provides:
- * - Reactive block state from Y.Map observation
- * - Block CRUD operations that modify Y.Doc
- * - Tree traversal utilities
+ * useBlockStore - SolidJS store backed by Y.Doc
  */
 
-import { create } from 'zustand';
+import { createRoot, batch } from 'solid-js';
+import { createStore } from 'solid-js/store';
 import * as Y from 'yjs';
-import { Block, BlockType, parseBlockType, createBlock } from '../lib/blockTypes';
+import { parseBlockType, createBlock } from '../lib/blockTypes';
+import type { Block, BlockType } from '../lib/blockTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPES
 // ═══════════════════════════════════════════════════════════════
 
-export interface BlockStore {
-  // State
-  blocks: Map<string, Block>;
+export interface BlockState {
+  blocks: Record<string, Block>;
   rootIds: string[];
   isInitialized: boolean;
-
-  // Y.Doc reference
-  _doc: Y.Doc | null;
-
-  // Initialization
-  initFromYDoc: (doc: Y.Doc) => void;
-
-  // Block operations
-  getBlock: (id: string) => Block | undefined;
-  updateBlockContent: (id: string, content: string) => void;
-  createBlockAfter: (afterId: string) => string;
-  createBlockInside: (parentId: string) => string;
-  deleteBlock: (id: string) => void;
-  indentBlock: (id: string) => void;
-  outdentBlock: (id: string) => void;
-  toggleCollapsed: (id: string) => void;
-
-  // Internal
-  _syncFromYDoc: () => void;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -101,78 +78,64 @@ function blockToPlainObject(block: Block): Record<string, unknown> {
 // STORE
 // ═══════════════════════════════════════════════════════════════
 
-export const useBlockStore = create<BlockStore>((set, get) => ({
-  blocks: new Map(),
-  rootIds: [],
-  isInitialized: false,
-  _doc: null,
+function createBlockStore() {
+  const [state, setState] = createStore<BlockState>({
+    blocks: {},
+    rootIds: [],
+    isInitialized: false,
+  });
 
-  initFromYDoc: (doc: Y.Doc) => {
-    set({ _doc: doc });
+  let _doc: Y.Doc | null = null;
 
-    get()._syncFromYDoc();
+  const initFromYDoc = (doc: Y.Doc) => {
+    if (state.isInitialized) return;
+    _doc = doc;
 
     const blocksMap = doc.getMap('blocks');
-    blocksMap.observe(() => {
-      get()._syncFromYDoc();
-    });
+    const rootIdsArr = doc.getArray<string>('rootIds');
 
-    const rootIds = doc.getArray<string>('rootIds');
-    rootIds.observe(() => {
-      get()._syncFromYDoc();
-    });
-
-    set({ isInitialized: true });
-  },
-
-  _syncFromYDoc: () => {
-    const { _doc } = get();
-    if (!_doc) return;
-
-    const blocksMap = _doc.getMap('blocks');
-    const rootIdsArr = _doc.getArray<string>('rootIds');
-
-    const blocks = new Map<string, Block>();
+    // Initial Sync
+    const initialBlocks: Record<string, Block> = {};
     blocksMap.forEach((value, key) => {
       const block = toBlock(value);
       if (block) {
-        blocks.set(key, block);
+        initialBlocks[key] = block;
       }
     });
 
-    const oldBlocks = get().blocks;
-    const oldRootIds = get().rootIds;
-    const newRootIds = rootIdsArr.toArray();
+    batch(() => {
+      setState('blocks', initialBlocks);
+      setState('rootIds', rootIdsArr.toArray());
+      setState('isInitialized', true);
+    });
 
-    let blocksChanged = oldBlocks.size !== blocks.size;
-    if (!blocksChanged) {
-      for (const [id, block] of blocks) {
-        const oldBlock = oldBlocks.get(id);
-        if (!oldBlock || oldBlock.content !== block.content ||
-            oldBlock.collapsed !== block.collapsed ||
-            JSON.stringify(oldBlock.childIds) !== JSON.stringify(block.childIds)) {
-          blocksChanged = true;
-          break;
-        }
-      }
-    }
-
-    const rootIdsChanged = JSON.stringify(oldRootIds) !== JSON.stringify(newRootIds);
-
-    if (blocksChanged || rootIdsChanged) {
-      set({
-        blocks: blocksChanged ? blocks : oldBlocks,
-        rootIds: rootIdsChanged ? newRootIds : oldRootIds,
+    // Observe Blocks Map (Granular Updates)
+    blocksMap.observe((event) => {
+      batch(() => {
+        event.changes.keys.forEach((change, key) => {
+          if (change.action === 'add' || change.action === 'update') {
+            const block = toBlock(blocksMap.get(key));
+            if (block) {
+              setState('blocks', key, block);
+            }
+          } else if (change.action === 'delete') {
+            setState('blocks', key, undefined!); // 'undefined!' to satisfy type, effectively removes key in some stores or sets to undefined
+          }
+        });
       });
-    }
-  },
+    });
 
-  getBlock: (id: string) => {
-    return get().blocks.get(id);
-  },
+    // Observe Root IDs (Full sync for simplicity on list changes)
+    rootIdsArr.observe(() => {
+      setState('rootIds', rootIdsArr.toArray());
+    });
+  };
 
-  updateBlockContent: (id: string, content: string) => {
-    const { _doc } = get();
+  const getBlock = (id: string) => {
+    return state.blocks[id];
+  };
+
+  const updateBlockContent = (id: string, content: string) => {
     if (!_doc) return;
 
     _doc.transact(() => {
@@ -181,13 +144,12 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       setValueOnYMap(blocksMap, id, 'type', parseBlockType(content));
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
     });
-  },
+  };
 
-  createBlockAfter: (afterId: string) => {
-    const { _doc, blocks } = get();
+  const createBlockAfter = (afterId: string) => {
     if (!_doc) return '';
 
-    const afterBlock = blocks.get(afterId);
+    const afterBlock = state.blocks[afterId];
     if (!afterBlock) return '';
 
     const newId = crypto.randomUUID();
@@ -212,13 +174,12 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     });
 
     return newId;
-  },
+  };
 
-  createBlockInside: (parentId: string) => {
-    const { _doc, blocks } = get();
+  const createBlockInside = (parentId: string) => {
     if (!_doc) return '';
 
-    const parentBlock = blocks.get(parentId);
+    const parentBlock = state.blocks[parentId];
     if (!parentBlock) return '';
 
     const newId = crypto.randomUUID();
@@ -236,13 +197,75 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     });
 
     return newId;
-  },
+  };
 
-  deleteBlock: (id: string) => {
-    const { _doc, blocks } = get();
+  const createBlockInsideAtTop = (parentId: string) => {
+    if (!_doc) return '';
+
+    const parentBlock = state.blocks[parentId];
+    if (!parentBlock) return '';
+
+    const newId = crypto.randomUUID();
+    const newBlock = createBlock(newId, '', parentId);
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      blocksMap.set(newId, blockToPlainObject(newBlock));
+
+      const parentData = blocksMap.get(parentId);
+      const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+      childIds.unshift(newId); // Insert at start
+      setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
+      setValueOnYMap(blocksMap, parentId, 'collapsed', false);
+    });
+
+    return newId;
+  };
+
+  const splitBlock = (id: string, offset: number) => {
+    if (!_doc) return null;
+
+    const block = state.blocks[id];
+    if (!block) return null;
+
+    const contentBefore = block.content.slice(0, offset);
+    const contentAfter = block.content.slice(offset);
+
+    const newId = crypto.randomUUID();
+    const newBlock = createBlock(newId, contentAfter, block.parentId);
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      
+      // Update current block content
+      setValueOnYMap(blocksMap, id, 'content', contentBefore);
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+
+      // Create new block
+      blocksMap.set(newId, blockToPlainObject(newBlock));
+
+      // Insert new block after current
+      if (block.parentId) {
+        const parentData = blocksMap.get(block.parentId);
+        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const afterIndex = childIds.indexOf(id);
+        childIds.splice(afterIndex + 1, 0, newId);
+        setValueOnYMap(blocksMap, block.parentId, 'childIds', childIds);
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        const arr = rootIds.toArray();
+        const afterIndex = arr.indexOf(id);
+        rootIds.insert(afterIndex + 1, [newId]);
+      }
+    });
+
+    return newId;
+  };
+
+  const deleteBlock = (id: string) => {
     if (!_doc) return;
 
-    const block = blocks.get(id);
+    const block = state.blocks[id];
     if (!block) return;
 
     if (block.childIds.length > 0) return;
@@ -265,28 +288,27 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
       blocksMap.delete(id);
     });
-  },
+  };
 
-  indentBlock: (id: string) => {
-    const { _doc, blocks } = get();
+  const indentBlock = (id: string) => {
     if (!_doc) return;
 
-    const block = blocks.get(id);
+    const block = state.blocks[id];
     if (!block) return;
 
     let siblings: string[];
     if (block.parentId) {
-      const parent = blocks.get(block.parentId);
+      const parent = state.blocks[block.parentId];
       siblings = parent?.childIds || [];
     } else {
-      siblings = get().rootIds;
+      siblings = state.rootIds;
     }
 
     const index = siblings.indexOf(id);
     if (index <= 0) return;
 
     const newParentId = siblings[index - 1];
-    const newParent = blocks.get(newParentId);
+    const newParent = state.blocks[newParentId];
     if (!newParent) return;
 
     _doc.transact(() => {
@@ -311,16 +333,15 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       setValueOnYMap(blocksMap, id, 'parentId', newParentId);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
     });
-  },
+  };
 
-  outdentBlock: (id: string) => {
-    const { _doc, blocks } = get();
+  const outdentBlock = (id: string) => {
     if (!_doc) return;
 
-    const block = blocks.get(id);
+    const block = state.blocks[id];
     if (!block || !block.parentId) return;
 
-    const parent = blocks.get(block.parentId);
+    const parent = state.blocks[block.parentId];
     if (!parent) return;
 
     _doc.transact(() => {
@@ -350,18 +371,54 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       setValueOnYMap(blocksMap, id, 'parentId', parent.parentId);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
     });
-  },
+  };
 
-  toggleCollapsed: (id: string) => {
-    const { _doc, blocks } = get();
+  const toggleCollapsed = (id: string) => {
     if (!_doc) return;
 
-    const block = blocks.get(id);
+    const block = state.blocks[id];
     if (!block || block.childIds.length === 0) return;
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       setValueOnYMap(blocksMap, id, 'collapsed', !block.collapsed);
     });
-  },
-}));
+  };
+
+  const createInitialBlock = () => {
+    if (!_doc) return '';
+    
+    const newId = crypto.randomUUID();
+    const newBlock = createBlock(newId, '');
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      const rootIds = _doc.getArray<string>('rootIds');
+      
+      blocksMap.set(newId, blockToPlainObject(newBlock));
+      rootIds.push([newId]);
+    });
+
+    return newId;
+  };
+
+  return {
+    get blocks() { return state.blocks; },
+    get rootIds() { return state.rootIds; },
+    get isInitialized() { return state.isInitialized; },
+    initFromYDoc,
+    getBlock,
+    updateBlockContent,
+    createBlockAfter,
+    createBlockInside,
+    createBlockInsideAtTop,
+    splitBlock,
+    deleteBlock,
+    indentBlock,
+    outdentBlock,
+    toggleCollapsed,
+    createInitialBlock,
+  };
+}
+
+export const blockStore = createRoot(createBlockStore);

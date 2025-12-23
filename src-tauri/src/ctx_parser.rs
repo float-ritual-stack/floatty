@@ -1,9 +1,10 @@
 use crate::db::{CtxDatabase, ParsedCtx};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
+use yrs::{Doc, Transact, Map, Array, ReadTxn, GetString, Text};
 
 /// Configuration for the Ollama parser
 #[derive(Clone, Serialize, Deserialize)]
@@ -113,10 +114,11 @@ pub struct CtxParser {
     db: Arc<CtxDatabase>,
     client: Client,
     running: Arc<std::sync::Mutex<bool>>,
+    doc: Arc<RwLock<Doc>>,
 }
 
 impl CtxParser {
-    pub fn new(db: Arc<CtxDatabase>, config: ParserConfig) -> Result<Self, String> {
+    pub fn new(db: Arc<CtxDatabase>, config: ParserConfig, doc: Arc<RwLock<Doc>>) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms))
             .build()
@@ -127,6 +129,7 @@ impl CtxParser {
             db,
             client,
             running: Arc::new(std::sync::Mutex::new(false)),
+            doc,
         })
     }
 
@@ -147,6 +150,7 @@ impl CtxParser {
         let config = self.config.clone();
         let client = self.client.clone();
         let running = Arc::clone(&self.running);
+        let doc = Arc::clone(&self.doc);
 
         thread::spawn(move || {
             log::info!("Starting ctx:: parser worker");
@@ -180,10 +184,15 @@ impl CtxParser {
                                         Ok(json) => {
                                             if let Err(e) = db.update_parsed(&marker.id, &json) {
                                                 log::error!("Failed to update marker {}: {}", marker.id, e);
+                                            } else {
+                                                // Sync to Yjs
+                                                if let Err(e) = sync_to_yjs(&doc, &marker.id, &parsed) {
+                                                    log::error!("Failed to sync marker {} to Yjs: {}", marker.id, e);
+                                                }
                                             }
                                         }
                                         Err(e) => {
-                                            log::error!("Failed to serialize parsed ctx for {}: {}", marker.id, e);
+                                            log::error!("Failed to serialize parsed parsed ctx for {}: {}", marker.id, e);
                                             if let Err(e) = db.mark_error(&marker.id) {
                                                 log::error!("Failed to mark error: {}", e);
                                             }
@@ -221,6 +230,54 @@ impl CtxParser {
     pub fn stop(&self) {
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
+}
+
+/// Sync a parsed marker to the Yjs document
+fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Result<(), String> {
+    let doc_guard = doc.write().map_err(|e| e.to_string())?;
+    let mut txn = doc_guard.transact_mut();
+    
+    let blocks_map = txn.get_map("blocks");
+    let root_ids = txn.get_array("rootIds"); // Assuming generic Array<String>
+    
+    // Check if block already exists (deduplication)
+    if blocks_map.get(&mut txn, id).is_some() {
+        return Ok(());
+    }
+
+    // Construct content: "ctx:: [Project] Summary"
+    let mut content = String::from("ctx:: ");
+    if let Some(proj) = &parsed.project {
+        content.push_str(&format!("[{}] ", proj));
+    }
+    if let Some(summary) = &parsed.summary {
+        content.push_str(summary);
+    } else if let Some(msg) = &parsed.message {
+        content.push_str(msg);
+    }
+
+    // Create block map
+    let block = txn.init_map(None);
+    block.insert(&mut txn, "id", id);
+    block.insert(&mut txn, "parentId", Option::<String>::None); // Root level for now
+    block.insert(&mut txn, "childIds", Vec::<String>::new());
+    block.insert(&mut txn, "content", content);
+    block.insert(&mut txn, "type", "ctx");
+    block.insert(&mut txn, "collapsed", false);
+    block.insert(&mut txn, "createdAt", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
+    block.insert(&mut txn, "updatedAt", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
+
+    // Insert into blocks map
+    blocks_map.insert(&mut txn, id, block);
+
+    // Append to rootIds (Inbox)
+    // We want it at the TOP? Or bottom?
+    // User probably wants new contexts to appear at the bottom or top.
+    // Logs usually bottom.
+    // Let's prepend to make it visible immediately at top?
+    root_ids.insert(&mut txn, 0, id);
+
+    Ok(())
 }
 
 /// Parse a single ctx:: line using Ollama

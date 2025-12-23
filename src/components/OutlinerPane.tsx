@@ -1,4 +1,4 @@
-import { Component, createEffect, onMount, onCleanup, createSignal } from 'solid-js';
+import { createEffect, onMount, onCleanup, createSignal } from 'solid-js';
 import { Outliner } from './Outliner';
 import { type PaneHandle } from '../lib/layoutTypes';
 
@@ -12,7 +12,7 @@ interface OutlinerPaneProps {
   ref?: (handle: OutlinerPaneHandle) => void;
 }
 
-export const OutlinerPane: Component<OutlinerPaneProps> = (props) => {
+export function OutlinerPane(props: OutlinerPaneProps) {
   let containerRef: HTMLDivElement | undefined;
   const [rect, setRect] = createSignal<{ top: number; left: number; width: number; height: number }>({
     top: 0,

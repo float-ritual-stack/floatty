@@ -7,20 +7,24 @@
  * - Move/Drag logic
  */
 
-import { useBlockStore } from './useBlockStore';
+import { blockStore } from './useBlockStore';
+import { paneStore } from './usePaneStore';
 
 export function useBlockOperations() {
-  const store = useBlockStore();
+  const store = blockStore;
 
   /**
    * Find the next visible block in the tree (for arrow key navigation)
    */
-  const findNextVisibleBlock = (id: string): string | null => {
+  const findNextVisibleBlock = (id: string, paneId: string): string | null => {
     const block = store.getBlock(id);
     if (!block) return null;
 
+    // Check pane-specific collapse state
+    const isCollapsed = paneStore.isCollapsed(paneId, id, block.collapsed);
+
     // 1. If has children and not collapsed, go to first child
-    if (block.childIds.length > 0 && !block.collapsed) {
+    if (block.childIds.length > 0 && !isCollapsed) {
       return block.childIds[0];
     }
 
@@ -50,7 +54,7 @@ export function useBlockOperations() {
   /**
    * Find the previous visible block in the tree
    */
-  const findPrevVisibleBlock = (id: string): string | null => {
+  const findPrevVisibleBlock = (id: string, paneId: string): string | null => {
     const block = store.getBlock(id);
     if (!block) return null;
 
@@ -66,9 +70,13 @@ export function useBlockOperations() {
       let prevSiblingId = siblings[index - 1];
       let prevSibling = store.getBlock(prevSiblingId)!;
 
-      while (prevSibling.childIds.length > 0 && !prevSibling.collapsed) {
+      // Check pane-specific collapse state
+      let isPrevCollapsed = paneStore.isCollapsed(paneId, prevSiblingId, prevSibling.collapsed);
+
+      while (prevSibling.childIds.length > 0 && !isPrevCollapsed) {
         prevSiblingId = prevSibling.childIds[prevSibling.childIds.length - 1];
         prevSibling = store.getBlock(prevSiblingId)!;
+        isPrevCollapsed = paneStore.isCollapsed(paneId, prevSiblingId, prevSibling.collapsed);
       }
       return prevSiblingId;
     }
