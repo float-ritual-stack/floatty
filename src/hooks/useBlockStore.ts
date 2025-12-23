@@ -95,10 +95,19 @@ function createBlockStore() {
 
   let _doc: Y.Doc | null = null;
   let _isInitializing = false; // Sync guard against race conditions
+  let _blocksObserver: ((event: Y.YMapEvent<unknown>) => void) | null = null;
+  let _rootIdsObserver: ((event: Y.YArrayEvent<string>) => void) | null = null;
 
-  const initFromYDoc = (doc: Y.Doc) => {
+  /**
+   * Initialize the store from a Y.Doc. Returns a dispose function to cleanup observers.
+   * Safe to call multiple times - only first call takes effect.
+   */
+  const initFromYDoc = (doc: Y.Doc): (() => void) => {
     // Double-check guard: store state (reactive) + local flag (sync)
-    if (state.isInitialized || _isInitializing) return;
+    if (state.isInitialized || _isInitializing) {
+      // Return no-op dispose if already initialized
+      return () => {};
+    }
     _isInitializing = true;
     _doc = doc;
 
@@ -121,7 +130,7 @@ function createBlockStore() {
     });
 
     // Observe Blocks Map (Granular Updates)
-    blocksMap.observe((event) => {
+    _blocksObserver = (event: Y.YMapEvent<unknown>) => {
       batch(() => {
         event.changes.keys.forEach((change, key) => {
           if (change.action === 'add' || change.action === 'update') {
@@ -130,17 +139,31 @@ function createBlockStore() {
               setState('blocks', key, block);
             }
           } else if (change.action === 'delete') {
-            setState('blocks', key, undefined!); 
+            setState('blocks', key, undefined!);
           }
         });
       });
-    });
+    };
+    blocksMap.observe(_blocksObserver);
 
     // Observe Root IDs (Full sync for simplicity on list changes)
-    rootIdsArr.observe(() => {
+    _rootIdsObserver = () => {
       console.log('[BlockStore] Root IDs updated:', rootIdsArr.length);
       setState('rootIds', rootIdsArr.toArray());
-    });
+    };
+    rootIdsArr.observe(_rootIdsObserver);
+
+    // Return dispose function for cleanup
+    return () => {
+      if (_blocksObserver) {
+        blocksMap.unobserve(_blocksObserver);
+        _blocksObserver = null;
+      }
+      if (_rootIdsObserver) {
+        rootIdsArr.unobserve(_rootIdsObserver);
+        _rootIdsObserver = null;
+      }
+    };
   };
 
   const getBlock = (id: string) => {

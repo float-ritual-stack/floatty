@@ -1,4 +1,5 @@
-import { For, createSignal, createEffect, onMount, Show } from 'solid-js';
+import { createSignal, createEffect, onMount, onCleanup, Show } from 'solid-js';
+import { Key } from '@solid-primitives/keyed';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
 import { blockStore } from '../hooks/useBlockStore';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -17,7 +18,8 @@ export function Outliner(props: OutlinerProps) {
 
   onMount(() => {
     console.log('Outliner mounted for pane:', props.paneId);
-    store.initFromYDoc(doc);
+    const dispose = store.initFromYDoc(doc);
+    onCleanup(dispose);
   });
 
   // Auto-create first block when workspace is empty
@@ -71,19 +73,22 @@ export function Outliner(props: OutlinerProps) {
               {confirmClear() ? 'Confirm?' : 'Clear'}
             </button>
           </div>
-          <For each={store.rootIds}>
-            {(rootId) => (
-              <BlockItem
-                id={rootId}
-                paneId={props.paneId}
-                depth={0}
-                focusedBlockId={focusedBlockId()}
-                onFocus={handleFocus}
-                onNavigateUp={() => handleNavigateUp(rootId)}
-                onNavigateDown={() => handleNavigateDown(rootId)}
-              />
-            )}
-          </For>
+          <Key each={store.rootIds} by={(id) => id}>
+            {(rootId) => {
+              const id = rootId();
+              return (
+                <BlockItem
+                  id={id}
+                  paneId={props.paneId}
+                  depth={0}
+                  focusedBlockId={focusedBlockId()}
+                  onFocus={handleFocus}
+                  onNavigateUp={() => handleNavigateUp(id)}
+                  onNavigateDown={() => handleNavigateDown(id)}
+                />
+              );
+            }}
+          </Key>
         </Show>
       </Show>
     </div>
