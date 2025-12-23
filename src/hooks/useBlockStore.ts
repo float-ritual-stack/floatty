@@ -4,6 +4,7 @@
 
 import { createRoot, batch } from 'solid-js';
 import { createStore } from 'solid-js/store';
+import { invoke } from '@tauri-apps/api/core';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
 import type { Block, BlockType } from '../lib/blockTypes';
@@ -119,14 +120,6 @@ function createBlockStore() {
 
     // Observe Blocks Map (Granular Updates)
     blocksMap.observe((event) => {
-      // Optimization: If map is empty, clear store directly
-      const currentSize = Array.from(blocksMap.keys()).length;
-      if (currentSize === 0) {
-        console.log('[BlockStore] Map empty, resetting store.');
-        setState('blocks', {});
-        return;
-      }
-
       batch(() => {
         event.changes.keys.forEach((change, key) => {
           if (change.action === 'add' || change.action === 'update') {
@@ -324,26 +317,14 @@ function createBlockStore() {
     });
   };
 
-  const clearWorkspace = () => {
-    if (!_doc) return;
-    console.log('[BlockStore] Clearing workspace...');
-
-    _doc.transact(() => {
-      const blocksMap = _doc.getMap('blocks');
-      const rootIds = _doc.getArray<string>('rootIds');
-
-      console.log(`[BlockStore] Clearing ${rootIds.length} root IDs...`);
-      // Clear root IDs first to update UI immediately
-      if (rootIds.length > 0) {
-        rootIds.delete(0, rootIds.length);
-      }
-
-      // Clear all blocks
-      const keys = Array.from(blocksMap.keys());
-      console.log(`[BlockStore] Deleting ${keys.length} blocks...`);
-      keys.forEach(key => blocksMap.delete(key));
-    });
-    console.log('[BlockStore] Workspace cleared.');
+  const clearWorkspace = async () => {
+    try {
+      console.log('[BlockStore] Calling backend clear_workspace...');
+      await invoke('clear_workspace');
+      console.log('[BlockStore] Backend clear_workspace completed.');
+    } catch (err) {
+      console.error('[BlockStore] Failed to clear workspace:', err);
+    }
   };
 
   const indentBlock = (id: string) => {

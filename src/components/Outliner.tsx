@@ -13,6 +13,7 @@ export function Outliner(props: OutlinerProps) {
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock } = useBlockOperations();
   const [focusedBlockId, setFocusedBlockId] = createSignal<string | null>(null);
+  const [confirmClear, setConfirmClear] = createSignal(false);
 
   onMount(() => {
     console.log('Outliner mounted for pane:', props.paneId);
@@ -57,15 +58,26 @@ export function Outliner(props: OutlinerProps) {
           <div style={{ display: 'flex', "justify-content": 'flex-end', "margin-bottom": '4px', "padding-right": '4px' }}>
             <button 
               class="ctx-retry-button"
-              style={{ "font-size": "10px", padding: "2px 6px", opacity: 0.6, border: '1px solid #2a2a4a' }}
+              style={{ 
+                "font-size": "10px", 
+                padding: "2px 6px", 
+                opacity: confirmClear() ? 1 : 0.6, 
+                border: '1px solid #2a2a4a',
+                color: confirmClear() ? '#ef4444' : 'inherit',
+                "border-color": confirmClear() ? '#ef4444' : '#2a2a4a'
+              }}
               title="Clear entire workspace"
               onClick={() => {
-                if (confirm('Clear entire workspace? This cannot be undone.')) {
+                if (confirmClear()) {
                   store.clearWorkspace();
+                  setConfirmClear(false);
+                } else {
+                  setConfirmClear(true);
                 }
               }}
+              onMouseLeave={() => setConfirmClear(false)}
             >
-              Clear All
+              {confirmClear() ? 'Confirm Clear?' : 'Clear All'}
             </button>
           </div>
           <For each={store.rootIds}>

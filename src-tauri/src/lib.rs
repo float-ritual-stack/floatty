@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tauri::State;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use yrs::{Doc, Transact, Update, updates::decoder::Decode, ReadTxn, StateVector};
+use yrs::{Array, Doc, Map, ReadTxn, StateVector, Transact, Update, updates::decoder::Decode};
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)
 #[derive(Clone, Serialize, Deserialize)]
@@ -266,6 +266,43 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
     }
 }
 
+/// Clear the entire workspace (blocks and rootIds) efficiently
+#[tauri::command]
+fn clear_workspace(state: State<AppState>) -> Result<(), String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    
+    let doc = inner.doc.write().map_err(|e| e.to_string())?;
+    let mut txn = doc.transact_mut();
+    
+    // Clear rootIds
+    let root_ids = txn.get_array("rootIds");
+    if let Some(root_ids) = root_ids {
+        let len = root_ids.len(&txn);
+        if len > 0 {
+            root_ids.remove_range(&mut txn, 0, len);
+        }
+    }
+
+    // Clear blocks map
+    let blocks = txn.get_map("blocks");
+    if let Some(blocks) = blocks {
+        // yrs Map doesn't have a clear() method exposed directly in all versions?
+        // Let's check. If not, we iterate keys.
+        // But yrs iteration in Rust is fast.
+        let keys: Vec<String> = blocks.keys(&txn).map(|k| k.to_string()).collect();
+        for key in keys {
+            blocks.remove(&mut txn, &key);
+        }
+    }
+
+    // Persist empty state
+    let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+    inner.db.set_system_state("ydoc", &full_state).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
@@ -356,6 +393,7 @@ pub fn run() {
             apply_update,
             execute_shell_command,
             execute_ai_command,
+            clear_workspace,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
