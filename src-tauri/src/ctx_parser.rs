@@ -1,10 +1,11 @@
 use crate::db::{CtxDatabase, ParsedCtx};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
-use yrs::{Doc, Transact, Map, Array, ReadTxn, GetString, Text};
+use yrs::{Any, Array, Doc, Map, Transact, WriteTxn};
 
 /// Configuration for the Ollama parser
 #[derive(Clone, Serialize, Deserialize)]
@@ -233,49 +234,64 @@ impl CtxParser {
 }
 
 /// Sync a parsed marker to the Yjs document
-fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Result<(), String> {
+pub fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Result<(), String> {
     let doc_guard = doc.write().map_err(|e| e.to_string())?;
     let mut txn = doc_guard.transact_mut();
     
-    let blocks_map = txn.get_map("blocks");
-    let root_ids = txn.get_array("rootIds"); // Assuming generic Array<String>
+    let blocks_map = txn.get_or_insert_map("blocks");
+    let root_ids = txn.get_or_insert_array("rootIds");
     
     // Check if block already exists (deduplication)
     if blocks_map.get(&mut txn, id).is_some() {
         return Ok(());
     }
 
-    // Construct content: "ctx:: [Project] Summary"
-    let mut content = String::from("ctx:: ");
-    if let Some(proj) = &parsed.project {
-        content.push_str(&format!("[{}] ", proj));
-    }
-    if let Some(summary) = &parsed.summary {
-        content.push_str(summary);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as f64;
+    let content_id = format!("{}_content", id);
+
+    // 1. Create content child block
+    let content_text = if let Some(summary) = &parsed.summary {
+        summary.clone()
     } else if let Some(msg) = &parsed.message {
-        content.push_str(msg);
-    }
+        msg.clone()
+    } else {
+        String::new()
+    };
 
-    // Create block map
-    let block = txn.init_map(None);
-    block.insert(&mut txn, "id", id);
-    block.insert(&mut txn, "parentId", Option::<String>::None); // Root level for now
-    block.insert(&mut txn, "childIds", Vec::<String>::new());
-    block.insert(&mut txn, "content", content);
-    block.insert(&mut txn, "type", "ctx");
-    block.insert(&mut txn, "collapsed", false);
-    block.insert(&mut txn, "createdAt", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
-    block.insert(&mut txn, "updatedAt", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
+    let mut content_block_values = HashMap::new();
+    content_block_values.insert("id".to_string(), Any::from(content_id.clone()));
+    content_block_values.insert("parentId".to_string(), Any::from(id.to_string()));
+    content_block_values.insert("childIds".to_string(), Any::from(Vec::<String>::new()));
+    content_block_values.insert("content".to_string(), Any::from(content_text));
+    content_block_values.insert("type".to_string(), Any::from("text"));
+    content_block_values.insert("collapsed".to_string(), Any::from(false));
+    content_block_values.insert("createdAt".to_string(), Any::from(now));
+    content_block_values.insert("updatedAt".to_string(), Any::from(now));
+    blocks_map.insert(&mut txn, content_id.clone(), content_block_values);
 
-    // Insert into blocks map
-    blocks_map.insert(&mut txn, id, block);
+    // 2. Create parent ctx block
+    let mut metadata = HashMap::new();
+    if let Some(v) = &parsed.project { metadata.insert("project".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.mode { metadata.insert("mode".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.meeting { metadata.insert("meeting".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.issue { metadata.insert("issue".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.time { metadata.insert("time".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.timestamp { metadata.insert("timestamp".to_string(), Any::from(v.to_string())); }
 
-    // Append to rootIds (Inbox)
-    // We want it at the TOP? Or bottom?
-    // User probably wants new contexts to appear at the bottom or top.
-    // Logs usually bottom.
-    // Let's prepend to make it visible immediately at top?
-    root_ids.insert(&mut txn, 0, id);
+    let mut parent_block_values = HashMap::new();
+    parent_block_values.insert("id".to_string(), Any::from(id.to_string()));
+    parent_block_values.insert("parentId".to_string(), Any::Null);
+    parent_block_values.insert("childIds".to_string(), Any::from(vec![content_id]));
+    parent_block_values.insert("content".to_string(), Any::from("")); // Header block has no text of its own
+    parent_block_values.insert("type".to_string(), Any::from("ctx"));
+    parent_block_values.insert("metadata".to_string(), Any::from(metadata));
+    parent_block_values.insert("collapsed".to_string(), Any::from(false));
+    parent_block_values.insert("createdAt".to_string(), Any::from(now));
+    parent_block_values.insert("updatedAt".to_string(), Any::from(now));
+    blocks_map.insert(&mut txn, id.to_string(), parent_block_values);
+
+    // 3. Prepend parent to rootIds
+    root_ids.insert(&mut txn, 0, id.to_string());
 
     Ok(())
 }

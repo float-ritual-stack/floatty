@@ -24,10 +24,16 @@ export interface BlockState {
 
 function getValue(obj: unknown, key: string): unknown {
   if (obj instanceof Y.Map) {
-    return obj.get(key);
+    const val = obj.get(key);
+    if (val instanceof Y.Array) return val.toArray();
+    if (val instanceof Y.Map) return val.toJSON();
+    return val;
   }
   if (obj && typeof obj === 'object') {
-    return (obj as Record<string, unknown>)[key];
+    const val = (obj as Record<string, unknown>)[key];
+    if (val instanceof Y.Array) return val.toArray();
+    if (val instanceof Y.Map) return val.toJSON();
+    return val;
   }
   return undefined;
 }
@@ -55,6 +61,7 @@ function toBlock(value: unknown): Block | null {
     childIds: (getValue(value, 'childIds') as string[]) || [],
     content: (getValue(value, 'content') as string) || '',
     type: (getValue(value, 'type') as BlockType) || 'text',
+    metadata: (getValue(value, 'metadata') as Record<string, any>) || undefined,
     collapsed: (getValue(value, 'collapsed') as boolean) || false,
     createdAt: getValue(value, 'createdAt') as number,
     updatedAt: getValue(value, 'updatedAt') as number,
@@ -68,6 +75,7 @@ function blockToPlainObject(block: Block): Record<string, unknown> {
     childIds: block.childIds,
     content: block.content,
     type: block.type,
+    metadata: block.metadata,
     collapsed: block.collapsed,
     createdAt: block.createdAt,
     updatedAt: block.updatedAt,

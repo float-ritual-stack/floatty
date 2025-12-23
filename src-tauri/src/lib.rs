@@ -317,6 +317,17 @@ pub fn run() {
                     watcher.start();
                     parser.start();
 
+                    // Migration: Sync existing parsed markers to Yjs if not present
+                    if let Ok(markers) = db.get_all(500, 0) {
+                        for marker in markers {
+                            if let Some(parsed) = marker.parsed {
+                                if let Err(e) = ctx_parser::sync_to_yjs(&doc_arc, &marker.id, &parsed) {
+                                    log::error!("Migration failed for marker {}: {}", marker.id, e);
+                                }
+                            }
+                        }
+                    }
+
                     log::info!("ctx:: aggregation system initialized successfully");
                     Some(AppStateInner { 
                         db, 
