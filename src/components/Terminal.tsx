@@ -53,7 +53,7 @@ function TabBar(props: {
         onClick={props.onNewTab}
         title={`New tab (${getKeybindDisplay('newTab') || 'Cmd+T'})`}
       >
-        +
+        + New
       </button>
     </div>
   );

@@ -327,10 +327,37 @@ html, body, #root {
   color: #c8c8dc;
 }
 
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: #8b8b8b;
+  background: transparent;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  max-width: 180px;
+  min-width: 80px;
+  border-bottom: 1px solid transparent;
+}
+
+.tab:hover {
+  background: rgba(124, 58, 237, 0.1);
+  color: #c8c8dc;
+}
+
+.tab:not(.tab-active) {
+  border-bottom: 1px solid #2a2a4a;
+}
+
 .tab-active {
-  background: #1a1a2e;
+  background: #24243e;
   color: #eaeaea;
   border-top: 2px solid #7c3aed;
+  border-bottom: none;
 }
 
 .tab-dead {
@@ -386,12 +413,13 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  padding: 0 8px;
   height: 24px;
   border: none;
   background: transparent;
   color: #8b8b8b;
-  font-size: 18px;
+  font-size: 11px;
+  font-family: "JetBrains Mono", monospace;
   cursor: pointer;
   border-radius: 4px;
   transition: background 0.15s ease, color 0.15s ease;
@@ -429,6 +457,10 @@ html, body, #root {
   width: 100%;
   height: 100%;
   padding: 4px;
+}
+
+.terminal-pane-positioned.active {
+  box-shadow: inset 0 0 0 1px #7c3aed; /* Purple border inside */
 }
 
 /* Adjust wrapper to account for tab bar */

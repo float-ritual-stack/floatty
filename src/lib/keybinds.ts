@@ -50,7 +50,8 @@ export interface Keybind {
 }
 
 // Platform detection
-export const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+export const isMac = typeof navigator !== 'undefined' &&
+  (navigator.platform ? /Mac|iPod|iPhone|iPad/.test(navigator.platform) : false);
 
 // Check if event matches a keybind
 export function matchesKeybind(event: KeyboardEvent, bind: Keybind): boolean {
@@ -105,8 +106,8 @@ export const defaultKeybinds: Keybind[] = [
   { key: 'b', modifiers: { mod: true }, action: 'toggleSidebar' },
 
   // Split management
-  { key: 'd', modifiers: { mod: true }, action: 'splitHorizontal' },
-  { key: 'd', modifiers: { mod: true, shift: true }, action: 'splitVertical' },
+  { key: isMac ? 'd' : '\\', modifiers: { mod: true }, action: 'splitHorizontal' },
+  { key: isMac ? 'd' : '\\', modifiers: { mod: true, shift: true }, action: 'splitVertical' },
   { key: 'o', modifiers: { mod: true }, action: 'splitHorizontalOutliner' },
   { key: 'o', modifiers: { mod: true, shift: true }, action: 'splitVerticalOutliner' },
   { key: 'w', modifiers: { mod: true, shift: true }, action: 'closeSplit' },
@@ -185,6 +186,9 @@ export const TERMINAL_RESERVED_KEYS = [
 
 export function isTerminalReserved(event: KeyboardEvent): boolean {
   if (!event.ctrlKey) return false;
+  // Allow Shift/Alt/Meta combos to pass through (e.g. Ctrl+Shift+C for copy)
+  if (event.shiftKey || event.altKey || event.metaKey) return false;
+
   const key = event.key.toLowerCase();
   return TERMINAL_RESERVED_KEYS.some(r => r.key === key && r.ctrl);
 }
