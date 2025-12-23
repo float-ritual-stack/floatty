@@ -276,16 +276,30 @@ function createBlockStore() {
     const block = state.blocks[id];
     if (!block) return;
 
-    if (block.childIds.length > 0) return;
+    // Collect all descendant IDs recursively
+    const toDelete = new Set<string>();
+    const stack = [id];
+
+    while (stack.length > 0) {
+      const currentId = stack.pop()!;
+      toDelete.add(currentId);
+      
+      const currentBlock = state.blocks[currentId];
+      if (currentBlock && currentBlock.childIds.length > 0) {
+        stack.push(...currentBlock.childIds);
+      }
+    }
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
+      // Remove from parent's children list
       if (block.parentId) {
         const parentData = blocksMap.get(block.parentId);
         const childIds = ((getValue(parentData, 'childIds') as string[]) || []).filter(cid => cid !== id);
         setValueOnYMap(blocksMap, block.parentId, 'childIds', childIds);
       } else {
+        // Remove from rootIds
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
         const index = arr.indexOf(id);
@@ -294,7 +308,28 @@ function createBlockStore() {
         }
       }
 
-      blocksMap.delete(id);
+      // Delete all collected blocks from the map
+      toDelete.forEach(delId => {
+        blocksMap.delete(delId);
+      });
+    });
+  };
+
+  const clearWorkspace = () => {
+    if (!_doc) return;
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      const rootIds = _doc.getArray<string>('rootIds');
+
+      // Clear all blocks
+      const keys = Array.from(blocksMap.keys());
+      keys.forEach(key => blocksMap.delete(key));
+
+      // Clear root IDs
+      if (rootIds.length > 0) {
+        rootIds.delete(0, rootIds.length);
+      }
     });
   };
 
@@ -426,6 +461,7 @@ function createBlockStore() {
     outdentBlock,
     toggleCollapsed,
     createInitialBlock,
+    clearWorkspace,
   };
 }
 

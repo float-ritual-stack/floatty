@@ -54,6 +54,20 @@ export function Outliner(props: OutlinerProps) {
             </div>
           }
         >
+          <div style={{ display: 'flex', "justify-content": 'flex-end', "margin-bottom": '4px', "padding-right": '4px' }}>
+            <button 
+              class="ctx-retry-button"
+              style={{ "font-size": "10px", padding: "2px 6px", opacity: 0.6, border: '1px solid #2a2a4a' }}
+              title="Clear entire workspace"
+              onClick={() => {
+                if (confirm('Clear entire workspace? This cannot be undone.')) {
+                  store.clearWorkspace();
+                }
+              }}
+            >
+              Clear All
+            </button>
+          </div>
           <For each={store.rootIds}>
             {(rootId) => (
               <BlockItem

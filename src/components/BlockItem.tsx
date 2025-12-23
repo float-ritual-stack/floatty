@@ -102,10 +102,24 @@ export function BlockItem(props: BlockItemProps) {
         store.indentBlock(props.id);
       }
     } else if (e.key === 'Backspace') {
+      if (e.metaKey || e.ctrlKey) {
+        // Mod+Backspace: Delete block and subtree
+        e.preventDefault();
+        const prevId = findPrevVisibleBlock(props.id, props.paneId);
+        store.deleteBlock(props.id);
+        if (prevId) props.onFocus(prevId);
+        return;
+      }
+
       const selection = window.getSelection();
       const isAtStart = selection?.anchorOffset === 0 && selection?.isCollapsed;
       
       if (isAtStart) {
+          // Only merge if no children to avoid deleting subtree accidentally
+          if (block()?.childIds.length && block()!.childIds.length > 0) {
+             return;
+          }
+
           // Merge with previous block
           const prevId = findPrevVisibleBlock(props.id, props.paneId);
           if (prevId) {
