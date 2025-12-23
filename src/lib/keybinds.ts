@@ -33,7 +33,10 @@ export type KeyAction =
   | 'focusLeft'
   | 'focusRight'
   | 'focusUp'
-  | 'focusDown';
+  | 'focusDown'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomReset';
 
 // Modifier representation
 export interface Modifiers {
@@ -116,6 +119,12 @@ export const defaultKeybinds: Keybind[] = [
   { key: 'ArrowRight', modifiers: { mod: true, alt: true }, action: 'focusRight' },
   { key: 'ArrowUp', modifiers: { mod: true, alt: true }, action: 'focusUp' },
   { key: 'ArrowDown', modifiers: { mod: true, alt: true }, action: 'focusDown' },
+
+  // Zoom
+  { key: '=', modifiers: { mod: true }, action: 'zoomIn' },
+  { key: '+', modifiers: { mod: true }, action: 'zoomIn' },
+  { key: '-', modifiers: { mod: true }, action: 'zoomOut' },
+  { key: '0', modifiers: { mod: true }, action: 'zoomReset' },
 ];
 
 // Find action for a keyboard event

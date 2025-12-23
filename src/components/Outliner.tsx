@@ -1,4 +1,4 @@
-import { For, createSignal, onMount, Show } from 'solid-js';
+import { For, createSignal, createEffect, onMount, Show } from 'solid-js';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
 import { blockStore } from '../hooks/useBlockStore';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -20,6 +20,14 @@ export function Outliner(props: OutlinerProps) {
     store.initFromYDoc(doc);
   });
 
+  // Auto-create first block when workspace is empty
+  createEffect(() => {
+    if (isLoaded() && store.rootIds.length === 0) {
+      const id = store.createInitialBlock();
+      if (id) setFocusedBlockId(id);
+    }
+  });
+
   const handleFocus = (id: string) => {
     setFocusedBlockId(id);
   };
@@ -37,34 +45,17 @@ export function Outliner(props: OutlinerProps) {
   return (
     <div class="outliner-container">
       <Show when={isLoaded()} fallback={<div class="ctx-empty-state">Loading workspace...</div>}>
-        <Show 
-          when={store.rootIds.length > 0} 
-          fallback={
-            <div class="ctx-empty-state">
-              Empty workspace. 
-              <button 
-                class="ctx-retry-button" 
-                style="margin-top: 8px"
-                onClick={() => {
-                  const id = store.createInitialBlock();
-                  if (id) setFocusedBlockId(id);
-                }}
-              >
-                Create first block
-              </button>
-            </div>
-          }
-        >
+        <Show when={store.rootIds.length > 0}>
           <div style={{ display: 'flex', "justify-content": 'flex-end', "margin-bottom": '4px', "padding-right": '4px' }}>
-            <button 
+            <button
               class="ctx-retry-button"
-              style={{ 
-                "font-size": "10px", 
-                padding: "2px 6px", 
-                opacity: confirmClear() ? 1 : 0.6, 
-                border: '1px solid #2a2a4a',
-                color: confirmClear() ? '#ef4444' : 'inherit',
-                "border-color": confirmClear() ? '#ef4444' : '#2a2a4a'
+              style={{
+                "font-size": "10px",
+                padding: "2px 6px",
+                border: '1px solid',
+                color: confirmClear() ? '#ef4444' : '#888',
+                "border-color": confirmClear() ? '#ef4444' : '#555',
+                background: confirmClear() ? 'rgba(239, 68, 68, 0.1)' : 'transparent'
               }}
               title="Clear entire workspace"
               onClick={() => {
@@ -77,7 +68,7 @@ export function Outliner(props: OutlinerProps) {
               }}
               onMouseLeave={() => setConfirmClear(false)}
             >
-              {confirmClear() ? 'Confirm Clear?' : 'Clear All'}
+              {confirmClear() ? 'Confirm?' : 'Clear'}
             </button>
           </div>
           <For each={store.rootIds}>

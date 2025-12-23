@@ -132,6 +132,7 @@ export function useSyncedYDoc(
       if (syncTimer) {
         clearTimeout(syncTimer);
       }
+      doc.destroy();
     });
   });
 

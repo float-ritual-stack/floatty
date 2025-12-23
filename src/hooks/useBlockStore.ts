@@ -4,7 +4,6 @@
 
 import { createRoot, batch } from 'solid-js';
 import { createStore } from 'solid-js/store';
-import { invoke } from '@tauri-apps/api/core';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
 import type { Block, BlockType } from '../lib/blockTypes';
@@ -95,9 +94,12 @@ function createBlockStore() {
   });
 
   let _doc: Y.Doc | null = null;
+  let _isInitializing = false; // Sync guard against race conditions
 
   const initFromYDoc = (doc: Y.Doc) => {
-    if (state.isInitialized) return;
+    // Double-check guard: store state (reactive) + local flag (sync)
+    if (state.isInitialized || _isInitializing) return;
+    _isInitializing = true;
     _doc = doc;
 
     const blocksMap = doc.getMap('blocks');
@@ -317,14 +319,26 @@ function createBlockStore() {
     });
   };
 
-  const clearWorkspace = async () => {
-    try {
-      console.log('[BlockStore] Calling backend clear_workspace...');
-      await invoke('clear_workspace');
-      console.log('[BlockStore] Backend clear_workspace completed.');
-    } catch (err) {
-      console.error('[BlockStore] Failed to clear workspace:', err);
-    }
+  const clearWorkspace = () => {
+    if (!_doc) return;
+
+    console.log('[BlockStore] Clearing workspace locally...');
+
+    _doc.transact(() => {
+      // Clear rootIds array
+      const rootIds = _doc.getArray<string>('rootIds');
+      if (rootIds.length > 0) {
+        rootIds.delete(0, rootIds.length);
+      }
+
+      // Clear blocks map
+      const blocksMap = _doc.getMap('blocks');
+      blocksMap.forEach((_value, key) => {
+        blocksMap.delete(key);
+      });
+    });
+
+    console.log('[BlockStore] Workspace cleared, sync will persist to Rust.');
   };
 
   const indentBlock = (id: string) => {

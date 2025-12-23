@@ -257,7 +257,7 @@ function MarkerCard(props: { marker: CtxMarker }) {
 
 // Simple regex fallbacks for raw lines
 function extractTimeFromRaw(line: string): string {
-  const match = line.match(/@\s*(\d{1,2}:\d{2}(?:\d{2})?\s*(?:AM|PM)?)/i);
+  const match = line.match(/@\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)/i);
   return match?.[1]?.trim() || '';
 }
 

@@ -45,7 +45,9 @@ export function useBlockOperations() {
 
       if (!parentId) break;
       currentId = parentId;
-      currentBlock = store.getBlock(parentId)!;
+      const parent = store.getBlock(parentId);
+      if (!parent) break;
+      currentBlock = parent;
     }
 
     return null;
@@ -68,14 +70,17 @@ export function useBlockOperations() {
     // 1. If has previous sibling, go to its last visible descendant
     if (index > 0) {
       let prevSiblingId = siblings[index - 1];
-      let prevSibling = store.getBlock(prevSiblingId)!;
+      let prevSibling = store.getBlock(prevSiblingId);
+      if (!prevSibling) return null;
 
       // Check pane-specific collapse state
       let isPrevCollapsed = paneStore.isCollapsed(paneId, prevSiblingId, prevSibling.collapsed);
 
       while (prevSibling.childIds.length > 0 && !isPrevCollapsed) {
         prevSiblingId = prevSibling.childIds[prevSibling.childIds.length - 1];
-        prevSibling = store.getBlock(prevSiblingId)!;
+        const nextSibling = store.getBlock(prevSiblingId);
+        if (!nextSibling) break;
+        prevSibling = nextSibling;
         isPrevCollapsed = paneStore.isCollapsed(paneId, prevSiblingId, prevSibling.collapsed);
       }
       return prevSiblingId;

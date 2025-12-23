@@ -195,7 +195,7 @@ impl CtxParser {
                                             }
                                         }
                                         Err(e) => {
-                                            log::error!("Failed to serialize parsed parsed ctx for {}: {}", marker.id, e);
+                                            log::error!("Failed to serialize parsed ctx for {}: {}", marker.id, e);
                                             if let Err(e) = db.mark_error(&marker.id) {
                                                 log::error!("Failed to mark error: {}", e);
                                             }

@@ -20,10 +20,16 @@ function createPaneStore() {
   });
 
   const toggleCollapsed = (paneId: string, blockId: string) => {
+    // Get current value first to ensure proper toggle
+    const currentValue = isCollapsed(paneId, blockId, false);
+
+    // Ensure the pane entry exists
     if (!state.collapsed[paneId]) {
-        setState('collapsed', paneId, {});
+      setState('collapsed', paneId, {});
     }
-    setState('collapsed', paneId, blockId, (prev) => !prev);
+
+    // Set the new value explicitly (not toggling undefined)
+    setState('collapsed', paneId, blockId, !currentValue);
   };
 
   const isCollapsed = (paneId: string, blockId: string, defaultCollapsed: boolean): boolean => {
@@ -35,6 +41,9 @@ function createPaneStore() {
   };
 
   const setCollapsed = (paneId: string, blockId: string, collapsed: boolean) => {
+    if (!state.collapsed[paneId]) {
+      setState('collapsed', paneId, {});
+    }
     setState('collapsed', paneId, blockId, collapsed);
   };
 

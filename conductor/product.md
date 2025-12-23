@@ -1,7 +1,5 @@
 # Initial Concept
 
-primarily myself, seeking a high-performance terminal with integrated AI context capture, hybrid note-taking/outlining features, and future agent integration.
-
 ## Target Audience
 - Developers who need a high-performance terminal with integrated AI-driven context capture.
 - System administrators looking for a lightweight, customizable terminal emulator.

@@ -10,7 +10,13 @@ export type BlockType =
   | 'dispatch'  // dispatch:: - agent execution
   | 'web'       // web:: or link:: - iframe embed
   | 'output'    // Output from sh:: or ai:: execution
-  | 'error';    // Error output from execution
+  | 'error'     // Error output from execution
+  | 'h1'        // # heading
+  | 'h2'        // ## heading
+  | 'h3'        // ### heading
+  | 'bullet'    // - bullet point
+  | 'todo'      // - [ ] or - [x] checkbox
+  | 'quote';    // > blockquote
 
 export interface Block {
   id: string;
@@ -25,13 +31,25 @@ export interface Block {
 }
 
 export function parseBlockType(content: string): BlockType {
-  const trimmed = content.trim().toLowerCase();
+  const trimmed = content.trim();
+  const lower = trimmed.toLowerCase();
 
-  if (trimmed.startsWith('sh::') || trimmed.startsWith('term::')) return 'sh';
-  if (trimmed.startsWith('ai::') || trimmed.startsWith('chat::')) return 'ai';
-  if (trimmed.startsWith('ctx::')) return 'ctx';
-  if (trimmed.startsWith('dispatch::')) return 'dispatch';
-  if (trimmed.startsWith('web::') || trimmed.startsWith('link::')) return 'web';
+  // Magic triggers (case-insensitive)
+  if (lower.startsWith('sh::') || lower.startsWith('term::')) return 'sh';
+  if (lower.startsWith('ai::') || lower.startsWith('chat::')) return 'ai';
+  if (lower.startsWith('ctx::')) return 'ctx';
+  if (lower.startsWith('dispatch::')) return 'dispatch';
+  if (lower.startsWith('web::') || lower.startsWith('link::')) return 'web';
+  if (lower.startsWith('output::')) return 'output';
+  if (lower.startsWith('error::')) return 'error';
+
+  // Markdown syntax (case-sensitive prefix matching)
+  if (trimmed.startsWith('### ')) return 'h3';
+  if (trimmed.startsWith('## ')) return 'h2';
+  if (trimmed.startsWith('# ')) return 'h1';
+  if (trimmed.startsWith('> ')) return 'quote';
+  if (/^- \[[ x]\] /i.test(trimmed)) return 'todo';
+  if (trimmed.startsWith('- ')) return 'bullet';
 
   return 'text';
 }

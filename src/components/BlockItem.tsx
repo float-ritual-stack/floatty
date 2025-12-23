@@ -60,7 +60,7 @@ export function BlockItem(props: BlockItemProps) {
         // Execute block if it's executable
         if (block()) {
           const content = block()!.content;
-          
+
           if (isExecutableShellBlock(content)) {
             e.preventDefault();
             const command = extractShellCommand(content);
@@ -86,12 +86,26 @@ export function BlockItem(props: BlockItemProps) {
         return;
       }
       e.preventDefault();
-      
+
       const selection = window.getSelection();
       const offset = selection?.anchorOffset || 0;
-      
+      const currentContent = block()?.content || '';
+      const hasChildren = block()?.childIds && block()!.childIds.length > 0;
+      const atEnd = offset >= currentContent.length;
+
+      // At end of block with children → create first child (continue under heading)
+      if (atEnd && hasChildren) {
+        const newId = store.createBlockInsideAtTop(props.id);
+        if (newId) props.onFocus(newId);
+        return;
+      }
+
       const newId = store.splitBlock(props.id, offset);
       if (newId) {
+        // Force DOM sync for the split block (the focus guard prevents reactive update)
+        if (contentRef) {
+          contentRef.textContent = currentContent.slice(0, offset);
+        }
         props.onFocus(newId);
       }
     } else if (e.key === 'Tab') {
@@ -100,6 +114,13 @@ export function BlockItem(props: BlockItemProps) {
         store.outdentBlock(props.id);
       } else {
         store.indentBlock(props.id);
+      }
+    } else if (e.key === '.' && (e.metaKey || e.ctrlKey)) {
+      // Cmd+. to toggle collapse
+      e.preventDefault();
+      const hasChildren = block()?.childIds && block()!.childIds.length > 0;
+      if (hasChildren) {
+        paneStore.toggleCollapsed(props.paneId, props.id);
       }
     } else if (e.key === 'Backspace') {
       if (e.metaKey || e.ctrlKey) {
@@ -171,10 +192,24 @@ export function BlockItem(props: BlockItemProps) {
     store.updateBlockContent(props.id, target.textContent || '');
   };
 
-  const indicatorClass = () => {
+  const bulletClass = () => {
     const type = block()?.type;
     if (!type) return '';
-    return `block-indicator-${type}`;
+    return `block-bullet-${type}`;
+  };
+
+  const contentClass = () => {
+    const type = block()?.type;
+    if (!type) return '';
+    return `block-content-${type}`;
+  };
+
+  const bulletChar = () => {
+    const hasChildren = block()?.childIds && block()!.childIds.length > 0;
+    if (hasChildren) {
+      return isCollapsed() ? '▸' : '▾';
+    }
+    return '•';
   };
 
   return (
@@ -184,25 +219,22 @@ export function BlockItem(props: BlockItemProps) {
         classList={{ 'block-focused': isFocused() }}
         onClick={() => props.onFocus(props.id)}
       >
-        <div 
-          class="block-bullet"
-          onClick={(e) => {
+        <div
+          class={`block-bullet ${bulletClass()}`}
+          onPointerDown={(e) => {
             e.stopPropagation();
+            e.preventDefault();
             paneStore.toggleCollapsed(props.paneId, props.id);
           }}
         >
-          <Show when={block()?.childIds.length && block()?.childIds.length > 0}>
-            {isCollapsed() ? '▸' : '▾'}
-          </Show>
+          {bulletChar()}
         </div>
-
-        <div class={`block-indicator ${indicatorClass()}`} />
 
         <div class="block-content-wrapper">
           <div
             ref={contentRef}
             contentEditable
-            class="block-content"
+            class={`block-content ${contentClass()}`}
             spellcheck={false}
             autocapitalize="off"
             autocorrect="off"

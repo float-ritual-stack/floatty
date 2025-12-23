@@ -1,5 +1,6 @@
 import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
@@ -10,6 +11,36 @@ import { layoutStore } from '../hooks/useLayoutStore';
 import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
 import type { FocusDirection, LayoutNode, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
+
+// Zoom state
+let currentZoom = 1.0;
+const ZOOM_STEP = 0.1;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2.0;
+
+// Status bar with keyboard shortcuts
+function StatusBar() {
+  const shortcuts = [
+    { label: 'Split', keys: '⌘D' },
+    { label: 'Focus', keys: '⌘⌥↑↓←→' },
+    { label: 'Outliner', keys: '⌘O' },
+    { label: 'Fold', keys: '⌘.' },
+    { label: 'Zoom', keys: '⌘+/-' },
+  ];
+
+  return (
+    <div class="status-bar">
+      <For each={shortcuts}>
+        {(item) => (
+          <span class="status-item">
+            <span class="status-keys">{item.keys}</span>
+            <span class="status-label">{item.label}</span>
+          </span>
+        )}
+      </For>
+    </div>
+  );
+}
 
 // Tab bar component
 function TabBar(props: {
@@ -308,6 +339,21 @@ export function Terminal() {
           }
           break;
         }
+        case 'zoomIn': {
+          currentZoom = Math.min(ZOOM_MAX, currentZoom + ZOOM_STEP);
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          break;
+        }
+        case 'zoomOut': {
+          currentZoom = Math.max(ZOOM_MIN, currentZoom - ZOOM_STEP);
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          break;
+        }
+        case 'zoomReset': {
+          currentZoom = 1.0;
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          break;
+        }
       }
     };
 
@@ -480,6 +526,7 @@ export function Terminal() {
           <ContextSidebar visible={sidebarVisible()} />
         </Show>
       </div>
+      <StatusBar />
     </div>
   );
 }
