@@ -120,7 +120,9 @@ function createBlockStore() {
     // Observe Blocks Map (Granular Updates)
     blocksMap.observe((event) => {
       // Optimization: If map is empty, clear store directly
-      if (blocksMap.size === 0) {
+      const currentSize = Array.from(blocksMap.keys()).length;
+      if (currentSize === 0) {
+        console.log('[BlockStore] Map empty, resetting store.');
         setState('blocks', {});
         return;
       }
@@ -141,6 +143,7 @@ function createBlockStore() {
 
     // Observe Root IDs (Full sync for simplicity on list changes)
     rootIdsArr.observe(() => {
+      console.log('[BlockStore] Root IDs updated:', rootIdsArr.length);
       setState('rootIds', rootIdsArr.toArray());
     });
   };
@@ -329,6 +332,7 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
       const rootIds = _doc.getArray<string>('rootIds');
 
+      console.log(`[BlockStore] Clearing ${rootIds.length} root IDs...`);
       // Clear root IDs first to update UI immediately
       if (rootIds.length > 0) {
         rootIds.delete(0, rootIds.length);
