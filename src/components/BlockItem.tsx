@@ -2,10 +2,11 @@ import { For, Show, createMemo, createEffect } from 'solid-js';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { useBlockOperations } from '../hooks/useBlockOperations';
-import { 
+import {
   isExecutableShellBlock, extractShellCommand, executeShellBlock,
   isExecutableAiBlock, extractAiPrompt, executeAiBlock
 } from '../lib/executor';
+import { isCursorAtContentStart, isCursorAtContentEnd } from '../lib/cursorUtils';
 
 interface BlockItemProps {
   id: string;
@@ -48,13 +49,23 @@ export function BlockItem(props: BlockItemProps) {
     if (!block()) return;
 
     if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      const prev = findPrevVisibleBlock(props.id, props.paneId);
-      if (prev) props.onFocus(prev);
+      // Only exit block if cursor is at absolute start of content
+      // Otherwise let browser handle multi-line navigation within block
+      if (contentRef && isCursorAtContentStart(contentRef)) {
+        e.preventDefault();
+        const prev = findPrevVisibleBlock(props.id, props.paneId);
+        if (prev) props.onFocus(prev);
+      }
+      // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const next = findNextVisibleBlock(props.id, props.paneId);
-      if (next) props.onFocus(next);
+      // Only exit block if cursor is at absolute end of content
+      // Otherwise let browser handle multi-line navigation within block
+      if (contentRef && isCursorAtContentEnd(contentRef)) {
+        e.preventDefault();
+        const next = findNextVisibleBlock(props.id, props.paneId);
+        if (next) props.onFocus(next);
+      }
+      // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'Enter' && !e.shiftKey) {
       if (e.metaKey || e.ctrlKey) {
         // Execute block if it's executable
