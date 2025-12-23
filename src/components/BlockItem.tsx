@@ -167,7 +167,6 @@ export function BlockItem(props: BlockItemProps) {
     <div class="block-wrapper">
       <div 
         class="block-item" 
-        data-type={block()?.type}
         classList={{ 'block-focused': isFocused() }}
         onClick={() => props.onFocus(props.id)}
       >
@@ -186,22 +185,6 @@ export function BlockItem(props: BlockItemProps) {
         <div class={`block-indicator ${indicatorClass()}`} />
 
         <div class="block-content-wrapper">
-          <Show when={block()?.type === 'ctx' && block()?.metadata}>
-            <div class="block-ctx-meta">
-              <span class="ctx-marker-time">{block()?.metadata?.time}</span>
-              <div class="ctx-marker-tags">
-                <Show when={block()?.metadata?.project}>
-                  <span class="ctx-tag ctx-tag-project">{block()?.metadata?.project}</span>
-                </Show>
-                <Show when={block()?.metadata?.mode}>
-                  <span class="ctx-tag ctx-tag-mode">{block()?.metadata?.mode}</span>
-                </Show>
-                <Show when={block()?.metadata?.issue}>
-                  <span class="ctx-tag ctx-tag-issue">{block()?.metadata?.issue}</span>
-                </Show>
-              </div>
-            </div>
-          </Show>
           <div
             ref={contentRef}
             contentEditable

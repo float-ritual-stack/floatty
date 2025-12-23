@@ -603,44 +603,4 @@ body.resizing .terminal-pane-positioned {
   background: rgba(124, 58, 237, 0.15);
 }
 
-.block-item[data-type="ctx"] {
-  margin-top: 6px;
-  padding-bottom: 0;
-}
 
-.block-ctx-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 0;
-  padding-left: 2px;
-  min-height: 18px;
-}
-
-.block-ctx-meta .ctx-marker-time {
-  margin-bottom: 0;
-  font-size: 9px;
-  color: #06b6d4;
-  opacity: 0.8;
-  font-weight: 600;
-}
-
-.block-ctx-meta .ctx-marker-tags {
-  margin-bottom: 0;
-  gap: 4px;
-}
-
-.block-item[data-type="ctx"] .block-content {
-  font-size: 11px;
-  color: #8b8b8b;
-  font-style: italic;
-  padding-top: 0;
-}
-
-/* Style for the content block under the ctx header */
-.block-children > .block-wrapper > .block-item[data-type="text"] .block-content {
-  color: #eaeaea;
-  font-size: 13px;
-  line-height: 1.5;
-  padding-top: 2px;
-}

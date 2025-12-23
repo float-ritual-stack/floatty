@@ -186,10 +186,12 @@ impl CtxParser {
                                             if let Err(e) = db.update_parsed(&marker.id, &json) {
                                                 log::error!("Failed to update marker {}: {}", marker.id, e);
                                             } else {
-                                                // Sync to Yjs
+                                                // Sync to Yjs (DISABLED for now)
+                                                /*
                                                 if let Err(e) = sync_to_yjs(&doc, &marker.id, &parsed) {
                                                     log::error!("Failed to sync marker {} to Yjs: {}", marker.id, e);
                                                 }
+                                                */
                                             }
                                         }
                                         Err(e) => {
