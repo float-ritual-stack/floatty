@@ -119,6 +119,12 @@ function createBlockStore() {
 
     // Observe Blocks Map (Granular Updates)
     blocksMap.observe((event) => {
+      // Optimization: If map is empty, clear store directly
+      if (blocksMap.size === 0) {
+        setState('blocks', {});
+        return;
+      }
+
       batch(() => {
         event.changes.keys.forEach((change, key) => {
           if (change.action === 'add' || change.action === 'update') {
@@ -127,7 +133,7 @@ function createBlockStore() {
               setState('blocks', key, block);
             }
           } else if (change.action === 'delete') {
-            setState('blocks', key, undefined!); // 'undefined!' to satisfy type, effectively removes key in some stores or sets to undefined
+            setState('blocks', key, undefined!); 
           }
         });
       });
@@ -317,20 +323,23 @@ function createBlockStore() {
 
   const clearWorkspace = () => {
     if (!_doc) return;
+    console.log('[BlockStore] Clearing workspace...');
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       const rootIds = _doc.getArray<string>('rootIds');
 
-      // Clear all blocks
-      const keys = Array.from(blocksMap.keys());
-      keys.forEach(key => blocksMap.delete(key));
-
-      // Clear root IDs
+      // Clear root IDs first to update UI immediately
       if (rootIds.length > 0) {
         rootIds.delete(0, rootIds.length);
       }
+
+      // Clear all blocks
+      const keys = Array.from(blocksMap.keys());
+      console.log(`[BlockStore] Deleting ${keys.length} blocks...`);
+      keys.forEach(key => blocksMap.delete(key));
     });
+    console.log('[BlockStore] Workspace cleared.');
   };
 
   const indentBlock = (id: string) => {
