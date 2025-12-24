@@ -130,10 +130,10 @@ Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, 
 | `Enter` | Execute command | Create sibling/split |
 | `⌘Enter` | Zoom into subtree | Zoom into subtree |
 | `Escape` | Zoom out to full tree | Zoom out to full tree |
-| `Tab` | Indent (at line start) or insert spaces |
-| `⇧Tab` | Outdent (at line start) or remove spaces |
-| `⌘.` | Toggle collapse |
-| `⌘⌫` | Delete block and subtree |
+| `Tab` | Indent (at line start) or insert spaces | Indent (at line start) or insert spaces |
+| `⇧Tab` | Outdent (at line start) or remove spaces | Outdent (at line start) or remove spaces |
+| `⌘.` | Toggle collapse | Toggle collapse |
+| `⌘⌫` | Delete block and subtree | Delete block and subtree |
 
 ### Terminal Manager Architecture
 

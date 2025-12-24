@@ -1,6 +1,7 @@
 mod ctx_parser;
 mod ctx_watcher;
 mod db;
+#[cfg(target_os = "macos")]
 mod panel;
 mod sync_test;
 
@@ -386,37 +387,75 @@ pub fn run() {
     // Always register AppState - inner is None when initialization fails
     let state = AppState { inner };
 
-    tauri::Builder::default()
+    // Build app with platform-specific plugins and commands
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_pty::init())
-        .plugin(tauri_nspanel::init())
+        .plugin(tauri_plugin_pty::init());
+
+    // macOS-only: NSPanel floating window support
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
+    }
+
+    builder
         .manage(state)
-        .invoke_handler(tauri::generate_handler![
-            get_ctx_markers,
-            get_ctx_counts,
-            get_ctx_config,
-            set_ctx_config,
-            clear_ctx_markers,
-            get_initial_state,
-            apply_update,
-            execute_shell_command,
-            execute_ai_command,
-            clear_workspace,
-            panel::show_test_panel,
-            panel::hide_test_panel,
-            panel::toggle_test_panel,
-        ])
-        // Intercept panel close to hide instead of destroy (prevents foreign exception crash)
+        .invoke_handler({
+            // Platform-agnostic commands
+            #[cfg(not(target_os = "macos"))]
+            {
+                tauri::generate_handler![
+                    get_ctx_markers,
+                    get_ctx_counts,
+                    get_ctx_config,
+                    set_ctx_config,
+                    clear_ctx_markers,
+                    get_initial_state,
+                    apply_update,
+                    execute_shell_command,
+                    execute_ai_command,
+                    clear_workspace,
+                ]
+            }
+            // macOS: include panel commands
+            #[cfg(target_os = "macos")]
+            {
+                tauri::generate_handler![
+                    get_ctx_markers,
+                    get_ctx_counts,
+                    get_ctx_config,
+                    set_ctx_config,
+                    clear_ctx_markers,
+                    get_initial_state,
+                    apply_update,
+                    execute_shell_command,
+                    execute_ai_command,
+                    clear_workspace,
+                    panel::show_test_panel,
+                    panel::hide_test_panel,
+                    panel::toggle_test_panel,
+                ]
+            }
+        })
         .on_window_event(|window, event| {
-            use tauri_nspanel::ManagerExt;
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Check if this window is managed as an NSPanel
-                if window.app_handle().get_webview_panel(window.label()).is_ok() {
-                    // Hide instead of destroy to preserve state/memory
-                    let _ = window.hide();
-                    api.prevent_close();
-                    log::info!("[panel] Intercepted close for {}, hiding instead", window.label());
+            // macOS-only: Intercept panel close to hide instead of destroy
+            #[cfg(target_os = "macos")]
+            {
+                use tauri_nspanel::ManagerExt;
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Check if this window is managed as an NSPanel
+                    if window.app_handle().get_webview_panel(window.label()).is_ok() {
+                        // Hide instead of destroy to preserve state/memory
+                        let _ = window.hide();
+                        api.prevent_close();
+                        log::info!("[panel] Intercepted close for {}, hiding instead", window.label());
+                    }
                 }
+            }
+            // Non-macOS: allow default behavior (suppress unused variable warnings)
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (window, event);
             }
         })
         .setup(|app| {
