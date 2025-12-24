@@ -368,11 +368,11 @@ function createBlockStore() {
     return newId;
   };
 
-  const deleteBlock = (id: string) => {
-    if (!_doc) return;
+  const deleteBlock = (id: string): boolean => {
+    if (!_doc) return false;
 
     const block = state.blocks[id];
-    if (!block) return;
+    if (!block) return false;
 
     // Collect all descendant IDs recursively
     const toDelete = new Set<string>();
@@ -411,6 +411,8 @@ function createBlockStore() {
         blocksMap.delete(delId);
       });
     });
+
+    return true;
   };
 
   const clearWorkspace = () => {

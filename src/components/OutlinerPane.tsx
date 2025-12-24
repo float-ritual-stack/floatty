@@ -81,7 +81,6 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       class="terminal-pane-positioned"
       classList={{
         'pane-active': props.isActive,
-        'pane-hidden': !props.isVisible,
       }}
       style={{
         position: 'absolute',
