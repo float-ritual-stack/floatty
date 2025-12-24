@@ -211,78 +211,90 @@ class TerminalManager {
     if (!instance) return;
 
     try {
-      const os = await platform();
-      const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
-      const args = os === 'windows' ? [] : ['-l'];
-      // Use provided cwd, or let the shell determine its default (usually $HOME)
-      const defaultCwd = cwd || undefined;
+      // Check if we are in Tauri environment
+      if (typeof window !== 'undefined' && 'window' in window && '__TAURI__' in window) {
+        const os = await platform();
+        const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
+        const args = os === 'windows' ? [] : ['-l'];
+        // Use provided cwd, or let the shell determine its default (usually $HOME)
+        const defaultCwd = cwd || undefined;
 
-      // Text buffer for ctx:: detection
-      let textBuffer = '';
-      const seenSet = this.seenMarkers.get(id)!;
+        // Text buffer for ctx:: detection
+        let textBuffer = '';
+        const seenSet = this.seenMarkers.get(id)!;
 
-      const onData = new Channel<string>();
-      onData.onmessage = (base64Data: string) => {
-        const binaryString = atob(base64Data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        term.write(bytes);
+        const onData = new Channel<string>();
+        onData.onmessage = (base64Data: string) => {
+          const binaryString = atob(base64Data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          term.write(bytes);
 
-        // ctx:: detection
-        const text = new TextDecoder().decode(bytes);
-        textBuffer += text;
-        const lines = textBuffer.split('\n');
-        textBuffer = lines.pop() || '';
+          // ctx:: detection
+          const text = new TextDecoder().decode(bytes);
+          textBuffer += text;
+          const lines = textBuffer.split('\n');
+          textBuffer = lines.pop() || '';
 
-        for (const line of lines) {
-          if (line.includes('ctx::')) {
-            const marker = parseCtxLine(line);
-            if (marker) {
-              const contentKey = `${marker.timestamp}|${marker.time}|${marker.message}`;
-              if (!seenSet.has(contentKey)) {
-                seenSet.add(contentKey);
-                this.callbacks.get(id)?.onCtxMarker?.(marker);
+          for (const line of lines) {
+            if (line.includes('ctx::')) {
+              const marker = parseCtxLine(line);
+              if (marker) {
+                const contentKey = `${marker.timestamp}|${marker.time}|${marker.message}`;
+                if (!seenSet.has(contentKey)) {
+                  seenSet.add(contentKey);
+                  this.callbacks.get(id)?.onCtxMarker?.(marker);
+                }
               }
             }
           }
-        }
-      };
+        };
 
-      // Exit channel - notified when PTY closes (shell exits)
-      const onExit = new Channel<number>();
-      onExit.onmessage = (exitCode: number) => {
-        console.log(`[TerminalManager] PTY ${id} exited with code ${exitCode}`);
-        // Mark as naturally exited to prevent double callback in dispose()
-        const inst = this.instances.get(id);
-        if (inst) {
-          inst.exitedNaturally = true;
-        }
-        this.callbacks.get(id)?.onPtyExit?.(exitCode);
-      };
+        // Exit channel - notified when PTY closes (shell exits)
+        const onExit = new Channel<number>();
+        onExit.onmessage = (exitCode: number) => {
+          console.log(`[TerminalManager] PTY ${id} exited with code ${exitCode}`);
+          // Mark as naturally exited to prevent double callback in dispose()
+          const inst = this.instances.get(id);
+          if (inst) {
+            inst.exitedNaturally = true;
+          }
+          this.callbacks.get(id)?.onPtyExit?.(exitCode);
+        };
 
-      const pid = await invoke<number>('plugin:pty|spawn', {
-        file: shell,
-        args,
-        cols: term.cols,
-        rows: term.rows,
-        cwd: defaultCwd,
-        env: { TERM: 'xterm-256color', COLORTERM: 'truecolor' },
-        onData,
-        onExit,
-      });
+        const pid = await invoke<number>('plugin:pty|spawn', {
+          file: shell,
+          args,
+          cols: term.cols,
+          rows: term.rows,
+          cwd: defaultCwd,
+          env: { TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+          onData,
+          onExit,
+        });
 
-      instance.ptyPid = pid;
-      this.callbacks.get(id)?.onPtySpawn?.(pid);
+        instance.ptyPid = pid;
+        this.callbacks.get(id)?.onPtySpawn?.(pid);
 
-      term.onData((data: string) => {
-        invoke('plugin:pty|write', { pid, data }).catch(console.error);
-      });
+        term.onData((data: string) => {
+          invoke('plugin:pty|write', { pid, data }).catch(console.error);
+        });
 
-      term.onResize(({ cols, rows }) => {
-        invoke('plugin:pty|resize', { pid, cols, rows }).catch(console.error);
-      });
+        term.onResize(({ cols, rows }) => {
+          invoke('plugin:pty|resize', { pid, cols, rows }).catch(console.error);
+        });
+      } else {
+        console.warn('Tauri environment not found. PTY not spawned.');
+        term.write('\r\n[Warning: Running in browser mode. PTY not available.]\r\n');
+        // Mock PTY for testing UI
+        instance.ptyPid = 12345;
+        this.callbacks.get(id)?.onPtySpawn?.(12345);
+        term.onData((data) => {
+           term.write(data); // Echo back
+        });
+      }
 
     } catch (e) {
       console.error(`[TerminalManager] PTY spawn failed for ${id}:`, e);

@@ -1,6 +1,9 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 
+// Check if running in Tauri environment
+const isTauri = typeof window !== 'undefined' && 'window' in window && '__TAURI__' in window;
+
 // Status of a ctx:: marker parsing
 type MarkerStatus = 'pending' | 'parsed' | 'error';
 
@@ -67,6 +70,30 @@ export function ContextSidebar(props: { visible: boolean }) {
 
   // Fetch markers from backend
   const fetchMarkers = async () => {
+    if (!isTauri) {
+      // Mock data for browser mode
+      setMarkers([
+        {
+          id: 'mock-1',
+          session_file: '/mock/session.jsonl',
+          raw_line: 'ctx::2024-03-20 @ 10:30 AM [project::floatty] [mode::coding] Initial setup',
+          status: 'parsed',
+          parsed: {
+            timestamp: '2024-03-20',
+            time: '10:30 AM',
+            project: 'floatty',
+            mode: 'coding',
+            message: 'Initial setup completed',
+          },
+          created_at: new Date().toISOString(),
+          retry_count: 0,
+        },
+      ]);
+      setCounts({ pending: 0, parsed: 1, error: 0, total: 1 });
+      setLoading(false);
+      return;
+    }
+
     try {
       const [newMarkers, newCounts] = await Promise.all([
         invoke<CtxMarker[]>('get_ctx_markers', { limit: 100 }),

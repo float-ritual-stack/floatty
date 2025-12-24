@@ -131,6 +131,10 @@ async fn spawn(
                     break; // Frontend disconnected
                 }
                 pending_data.clear();
+                // Shrink buffer if it got too large (memory optimization)
+                if pending_data.capacity() > 1024 * 1024 {
+                    pending_data.shrink_to(65536);
+                }
             }
         }
     });
