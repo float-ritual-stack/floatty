@@ -305,7 +305,7 @@ export function BlockItem(props: BlockItemProps) {
   };
 
   return (
-    <div class="block-wrapper">
+    <div class="block-wrapper" data-block-id={props.id}>
       <div 
         class="block-item" 
         classList={{ 'block-focused': isFocused() }}

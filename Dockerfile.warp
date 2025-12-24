@@ -1,0 +1,33 @@
+# Warp Environment Dockerfile for floatty
+# Multi-stage build with Rust + Node.js for Tauri v2 development
+
+FROM node:20-bookworm
+
+# Install system dependencies required for Tauri
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    wget \
+    file \
+    git \
+    libwebkit2gtk-4.1-dev \
+    libssl-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Set Rust version to match project requirements
+RUN rustup default stable && rustup update
+
+# Verify installations
+RUN node --version && npm --version && rustc --version && cargo --version
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

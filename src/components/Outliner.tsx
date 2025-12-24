@@ -27,16 +27,33 @@ export function Outliner(props: OutlinerProps) {
     onCleanup(dispose);
   });
 
+  // Restore focus state from paneStore (for split panes)
+  createEffect(() => {
+    if (isLoaded() && store.rootIds.length > 0) {
+      const savedFocus = paneStore.getFocusedBlockId(props.paneId);
+      if (savedFocus && store.blocks[savedFocus]) {
+        setFocusedBlockId(savedFocus);
+        // Scroll into view after DOM updates
+        requestAnimationFrame(() => {
+          const el = document.querySelector(`[data-block-id="${savedFocus}"]`);
+          el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+      }
+    }
+  });
+
   // Auto-create first block when workspace is empty
   createEffect(() => {
     if (isLoaded() && store.rootIds.length === 0) {
       const id = store.createInitialBlock();
-      if (id) setFocusedBlockId(id);
+      if (id) handleFocus(id);
     }
   });
 
   const handleFocus = (id: string) => {
     setFocusedBlockId(id);
+    // Persist focus state for this pane (used when splitting)
+    paneStore.setFocusedBlockId(props.paneId, id);
   };
 
   const handleNavigateUp = (id: string) => {

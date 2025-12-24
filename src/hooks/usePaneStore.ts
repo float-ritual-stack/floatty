@@ -14,12 +14,15 @@ interface PaneState {
   collapsed: Record<string, Record<string, boolean>>;
   // Map of paneId -> zoomed root block ID (null = show all roots)
   zoomedRootId: Record<string, string | null>;
+  // Map of paneId -> focused block ID (for preserving focus on split)
+  focusedBlockId: Record<string, string | null>;
 }
 
 function createPaneStore() {
   const [state, setState] = createStore<PaneState>({
     collapsed: {},
     zoomedRootId: {},
+    focusedBlockId: {},
   });
 
   const toggleCollapsed = (paneId: string, blockId: string) => {
@@ -58,12 +61,22 @@ function createPaneStore() {
     setState('zoomedRootId', paneId, blockId);
   };
 
+  const getFocusedBlockId = (paneId: string): string | null => {
+    return state.focusedBlockId[paneId] ?? null;
+  };
+
+  const setFocusedBlockId = (paneId: string, blockId: string | null) => {
+    setState('focusedBlockId', paneId, blockId);
+  };
+
   return {
     toggleCollapsed,
     isCollapsed,
     setCollapsed,
     getZoomedRootId,
     setZoomedRoot,
+    getFocusedBlockId,
+    setFocusedBlockId,
   };
 }
 
