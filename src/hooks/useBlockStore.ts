@@ -181,6 +181,36 @@ function createBlockStore() {
     });
   };
 
+  const createBlockBefore = (beforeId: string) => {
+    if (!_doc) return '';
+
+    const beforeBlock = state.blocks[beforeId];
+    if (!beforeBlock) return '';
+
+    const newId = crypto.randomUUID();
+    const newBlock = createBlock(newId, '', beforeBlock.parentId);
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      blocksMap.set(newId, blockToPlainObject(newBlock));
+
+      if (beforeBlock.parentId) {
+        const parentData = blocksMap.get(beforeBlock.parentId);
+        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const beforeIndex = childIds.indexOf(beforeId);
+        childIds.splice(beforeIndex, 0, newId);  // Insert BEFORE
+        setValueOnYMap(blocksMap, beforeBlock.parentId, 'childIds', childIds);
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        const arr = rootIds.toArray();
+        const beforeIndex = arr.indexOf(beforeId);
+        rootIds.insert(beforeIndex, [newId]);  // Insert BEFORE
+      }
+    });
+
+    return newId;
+  };
+
   const createBlockAfter = (afterId: string) => {
     if (!_doc) return '';
 
@@ -271,7 +301,7 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      
+
       // Update current block content
       setValueOnYMap(blocksMap, id, 'content', contentBefore);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
@@ -292,6 +322,45 @@ function createBlockStore() {
         const afterIndex = arr.indexOf(id);
         rootIds.insert(afterIndex + 1, [newId]);
       }
+    });
+
+    return newId;
+  };
+
+  /**
+   * Split block and make the "after" content become FIRST CHILD
+   * Used when splitting in middle of an EXPANDED parent - content nests inside
+   */
+  const splitBlockToFirstChild = (id: string, offset: number) => {
+    if (!_doc) return null;
+
+    const block = state.blocks[id];
+    if (!block) return null;
+
+    const contentBefore = block.content.slice(0, offset);
+    const contentAfter = block.content.slice(offset);
+
+    const newId = crypto.randomUUID();
+    // New block becomes child of current block (not sibling)
+    const newBlock = createBlock(newId, contentAfter, id);
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      // Update current block content
+      setValueOnYMap(blocksMap, id, 'content', contentBefore);
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+
+      // Create new block
+      blocksMap.set(newId, blockToPlainObject(newBlock));
+
+      // Insert as FIRST child (unshift, not push)
+      const blockData = blocksMap.get(id);
+      const childIds = [...((getValue(blockData, 'childIds') as string[]) || [])];
+      childIds.unshift(newId);  // Insert at start
+      setValueOnYMap(blocksMap, id, 'childIds', childIds);
+      // Ensure expanded so user sees the new child
+      setValueOnYMap(blocksMap, id, 'collapsed', false);
     });
 
     return newId;
@@ -483,10 +552,12 @@ function createBlockStore() {
     initFromYDoc,
     getBlock,
     updateBlockContent,
+    createBlockBefore,
     createBlockAfter,
     createBlockInside,
     createBlockInsideAtTop,
     splitBlock,
+    splitBlockToFirstChild,
     deleteBlock,
     indentBlock,
     outdentBlock,

@@ -157,7 +157,33 @@ function isCursorAtEnd(element: HTMLElement): boolean {
 
 ## Implementation Plan
 
-### Phase 1: Fix Arrow Navigation (High Priority)
+### Phase 1: Fix Arrow Navigation (IMPLEMENTED)
+
+Update `handleKeyDown` in BlockItem.tsx:
+
+### Phase 1.5: Enter Key Behavior (IMPLEMENTED)
+
+**Problem**: Enter at position 0 would split block, creating empty parent that "steals" children.
+
+**Solution**: Position-aware Enter:
+- **Enter at position 0** (with content): Create sibling BEFORE, focus new block
+- **Enter at end with children**: Create first child (continue under heading)
+- **Enter elsewhere**: Split block at cursor position
+
+```typescript
+const atStart = offset === 0;
+
+// At START of block with content → create sibling BEFORE (not split)
+if (atStart && currentContent.length > 0) {
+  const newId = store.createBlockBefore(props.id);
+  if (newId) props.onFocus(newId);
+  return;
+}
+```
+
+New store function: `createBlockBefore(id)` - creates empty sibling before target block.
+
+### Phase 1 (original): Fix Arrow Navigation (IMPLEMENTED)
 
 Update `handleKeyDown` in BlockItem.tsx:
 
@@ -181,15 +207,14 @@ Update `handleKeyDown` in BlockItem.tsx:
 }
 ```
 
-### Phase 2: Tab Behavior (Medium Priority, Needs Design Decision)
+### Phase 2: Tab Behavior (IMPLEMENTED - Position-Aware)
 
-Options:
-1. **Keep current**: Tab always indents/outdents block (float-liner's approach)
-2. **Detection mode**: If content starts with `- ` or `* `, Tab indents within block
-3. **Modifier switch**: Opt+Tab for block indent, Tab for inline (or vice versa)
-4. **Soft tabs**: Tab inserts actual tab/spaces within block (like a normal editor)
+**Solution**: Tab behavior depends on cursor position:
+- **Tab at position 0**: Indent block in tree (original behavior)
+- **Tab elsewhere**: Insert 2 spaces at cursor
+- **Shift+Tab**: Always outdent block (original behavior)
 
-**Recommendation**: Start with option 1 (status quo), document it clearly. Consider option 2 if inline lists become common use case.
+This preserves muscle memory for tree operations while enabling inline indentation.
 
 ### Phase 3: Cmd+Left/Right Behavior (Low Priority)
 
@@ -197,16 +222,30 @@ Let browser handle line-aware navigation within contentEditable. Focus on not br
 
 ## Testing Checklist
 
+### Arrow Keys (IMPLEMENTED)
 - [ ] Multi-line block: ArrowUp moves up within block
 - [ ] Multi-line block: ArrowDown moves down within block
 - [ ] Multi-line block: ArrowUp at line 1 col 0 exits to previous block
 - [ ] Multi-line block: ArrowDown at last line end exits to next block
 - [ ] Single-line block: ArrowUp exits to previous block
 - [ ] Single-line block: ArrowDown exits to next block
-- [ ] Tab indents block (not cursor)
-- [ ] Shift+Tab outdents block
+
+### Enter Key (IMPLEMENTED)
+- [ ] Enter at start of block with content → creates sibling before
+- [ ] Enter at start of collapsed parent → creates sibling before, children stay under original
+- [ ] Enter at end of parent with children → creates first child
+- [ ] Enter in middle → splits block
+- [ ] Enter on empty block → creates sibling after (split behavior)
+
+### Tab Key (IMPLEMENTED - Position-Aware)
+- [ ] Tab at position 0 → indents block in tree
+- [ ] Tab elsewhere → inserts 2 spaces
+- [ ] Shift+Tab → outdents block
+
+### Browser Defaults (Not Intercepted)
 - [ ] Cmd+Left moves to line start (within block)
 - [ ] Cmd+Right moves to line end (within block)
+- [ ] Option+arrows move by word
 
 ## Files to Modify
 

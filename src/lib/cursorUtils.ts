@@ -4,7 +4,148 @@
  * Used for cursor-aware navigation: only exit block when cursor
  * is at the absolute start/end, otherwise let browser handle
  * internal multi-line navigation.
+ *
+ * CRITICAL: In multi-line contentEditable, browsers render newlines as <br> tags
+ * and create separate text nodes per line. `selection.anchorOffset` is relative
+ * to the CURRENT text node, not the absolute position in the content.
+ * Use getAbsoluteCursorOffset() for accurate offset calculation.
  */
+
+/**
+ * Get absolute character offset within contentEditable element.
+ * Manually walks DOM to count characters, treating <br> elements as newlines.
+ *
+ * CRITICAL: Range.toString() does NOT count <br> tags as newlines!
+ * We must walk the DOM ourselves to get accurate offsets for multi-line content.
+ */
+export function getAbsoluteCursorOffset(element: HTMLElement): number {
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount) return 0;
+
+  const range = selection.getRangeAt(0);
+  const targetContainer = range.startContainer;
+  const targetOffset = range.startOffset;
+
+  let charCount = 0;
+  let found = false;
+
+  // Walk all nodes in document order
+  function walk(node: Node): boolean {
+    if (found) return true;
+
+    if (node === targetContainer) {
+      // Found the cursor's container
+      if (node.nodeType === Node.TEXT_NODE) {
+        charCount += targetOffset;
+      } else {
+        // Element node - count children up to offset
+        for (let i = 0; i < targetOffset && i < node.childNodes.length; i++) {
+          const child = node.childNodes[i];
+          if (child.nodeType === Node.TEXT_NODE) {
+            charCount += child.textContent?.length || 0;
+          } else if (child.nodeName === 'BR') {
+            charCount += 1; // <br> = newline
+          }
+        }
+      }
+      found = true;
+      return true;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      charCount += node.textContent?.length || 0;
+    } else if (node.nodeName === 'BR') {
+      charCount += 1; // <br> = newline character
+    } else if (node.nodeName === 'DIV' && node !== element) {
+      // <div> inside contentEditable = line break (browser default)
+      // Add 1 for the implicit newline, then recurse into children
+      charCount += 1;
+      for (let i = 0; i < node.childNodes.length; i++) {
+        if (walk(node.childNodes[i])) return true;
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      // Recurse into children
+      for (let i = 0; i < node.childNodes.length; i++) {
+        if (walk(node.childNodes[i])) return true;
+      }
+    }
+
+    return false;
+  }
+
+  walk(element);
+  return charCount;
+}
+
+/**
+ * Set cursor at an absolute character offset within contentEditable element.
+ * Handles multi-line content by walking DOM and treating <br> tags as newlines.
+ */
+export function setCursorAtOffset(element: HTMLElement, offset: number): void {
+  const selection = window.getSelection();
+  if (!selection) return;
+
+  const range = document.createRange();
+  let currentOffset = 0;
+  let found = false;
+
+  // Walk all nodes in document order
+  function walk(node: Node): boolean {
+    if (found) return true;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const nodeLength = node.textContent?.length || 0;
+      if (currentOffset + nodeLength >= offset) {
+        // Cursor belongs in this text node
+        range.setStart(node, offset - currentOffset);
+        range.collapse(true);
+        found = true;
+        return true;
+      }
+      currentOffset += nodeLength;
+    } else if (node.nodeName === 'BR') {
+      // <br> = 1 character (newline)
+      if (currentOffset + 1 >= offset) {
+        // Cursor goes right after this <br>
+        const parent = node.parentNode;
+        if (parent) {
+          const index = Array.from(parent.childNodes).indexOf(node as ChildNode);
+          range.setStart(parent, index + 1);
+          range.collapse(true);
+          found = true;
+          return true;
+        }
+      }
+      currentOffset += 1;
+    } else if (node.nodeName === 'DIV' && node !== element) {
+      // <div> inside contentEditable = line break
+      currentOffset += 1;
+      for (let i = 0; i < node.childNodes.length; i++) {
+        if (walk(node.childNodes[i])) return true;
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      // Recurse into children
+      for (let i = 0; i < node.childNodes.length; i++) {
+        if (walk(node.childNodes[i])) return true;
+      }
+    }
+
+    return false;
+  }
+
+  walk(element);
+
+  if (found) {
+    selection.removeAllRanges();
+    selection.addRange(range);
+  } else {
+    // Fallback: put cursor at end
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+}
 
 /**
  * Check if cursor is at the very start of the contentEditable element.

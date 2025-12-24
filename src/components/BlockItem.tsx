@@ -6,7 +6,7 @@ import {
   isExecutableShellBlock, extractShellCommand, executeShellBlock,
   isExecutableAiBlock, extractAiPrompt, executeAiBlock
 } from '../lib/executor';
-import { isCursorAtContentStart, isCursorAtContentEnd } from '../lib/cursorUtils';
+import { isCursorAtContentStart, isCursorAtContentEnd, getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 
 interface BlockItemProps {
   id: string;
@@ -34,12 +34,13 @@ export function BlockItem(props: BlockItemProps) {
   });
 
   // Sync content from store to DOM, but respect focus to prevent cursor jumps
+  // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
   createEffect(() => {
     const currentBlock = block();
     if (contentRef && currentBlock) {
-      if (contentRef.textContent !== currentBlock.content) {
+      if (contentRef.innerText !== currentBlock.content) {
         if (document.activeElement !== contentRef) {
-           contentRef.textContent = currentBlock.content;
+           contentRef.innerText = currentBlock.content;
         }
       }
     }
@@ -98,11 +99,19 @@ export function BlockItem(props: BlockItemProps) {
       }
       e.preventDefault();
 
-      const selection = window.getSelection();
-      const offset = selection?.anchorOffset || 0;
+      // CRITICAL: Use absolute offset, not anchorOffset (which is text-node-relative)
+      const offset = contentRef ? getAbsoluteCursorOffset(contentRef) : 0;
       const currentContent = block()?.content || '';
       const hasChildren = block()?.childIds && block()!.childIds.length > 0;
       const atEnd = offset >= currentContent.length;
+      const atStart = offset === 0;
+
+      // At START of block with content → create sibling BEFORE (not split)
+      if (atStart && currentContent.length > 0) {
+        const newId = store.createBlockBefore(props.id);
+        if (newId) props.onFocus(newId);
+        return;
+      }
 
       // At end of block with children → create first child (continue under heading)
       if (atEnd && hasChildren) {
@@ -111,20 +120,71 @@ export function BlockItem(props: BlockItemProps) {
         return;
       }
 
-      const newId = store.splitBlock(props.id, offset);
+      // Middle split: behavior depends on expanded/collapsed state
+      // EXPANDED with children → split content becomes first child (nest inside)
+      // COLLAPSED or no children → normal split (sibling after)
+      const blockIsCollapsed = isCollapsed();
+      const shouldNestSplit = hasChildren && !blockIsCollapsed;
+
+      const newId = shouldNestSplit
+        ? store.splitBlockToFirstChild(props.id, offset)
+        : store.splitBlock(props.id, offset);
+
       if (newId) {
         // Force DOM sync for the split block (the focus guard prevents reactive update)
+        // Use innerText to preserve newline rendering
         if (contentRef) {
-          contentRef.textContent = currentContent.slice(0, offset);
+          contentRef.innerText = currentContent.slice(0, offset);
         }
         props.onFocus(newId);
       }
     } else if (e.key === 'Tab') {
+      // FIRST: prevent browser default (Shift+Tab can collapse content otherwise)
       e.preventDefault();
-      if (e.shiftKey) {
-        store.outdentBlock(props.id);
+
+      // Use absolute block start (0,0), not just line start
+      const atAbsoluteStart = contentRef ? isCursorAtContentStart(contentRef) : false;
+
+      if (atAbsoluteStart) {
+        // At absolute block start: Tab/Shift+Tab controls tree structure
+        if (e.shiftKey) {
+          store.outdentBlock(props.id);
+        } else {
+          store.indentBlock(props.id);
+        }
       } else {
-        store.indentBlock(props.id);
+        // Anywhere else: Tab/Shift+Tab works on LINE content (inline indentation)
+        if (e.shiftKey) {
+          // Shift+Tab: remove up to 2 leading spaces from current line
+          if (contentRef) {
+            const text = contentRef.textContent || '';
+            const pos = getAbsoluteCursorOffset(contentRef);
+
+            // Find line start (look backwards for newline)
+            const lineStart = text.lastIndexOf('\n', pos - 1) + 1;
+
+            // Count leading spaces on this line
+            let spaces = 0;
+            while (lineStart + spaces < text.length && text[lineStart + spaces] === ' ') {
+              spaces++;
+            }
+
+            // Remove up to 2 spaces
+            const toRemove = Math.min(spaces, 2);
+            if (toRemove > 0) {
+              const newText = text.slice(0, lineStart) + text.slice(lineStart + toRemove);
+              contentRef.textContent = newText;
+              store.updateBlockContent(props.id, newText);
+
+              // Restore cursor position using proper utility
+              const newPos = Math.max(lineStart, pos - toRemove);
+              setCursorAtOffset(contentRef, newPos);
+            }
+          }
+        } else {
+          // Tab: insert 2 spaces
+          document.execCommand('insertText', false, '  ');
+        }
       }
     } else if (e.key === '.' && (e.metaKey || e.ctrlKey)) {
       // Cmd+. to toggle collapse
@@ -143,9 +203,13 @@ export function BlockItem(props: BlockItemProps) {
         return;
       }
 
+      // CRITICAL: Use absolute offset for multi-line content
+      // Also check isCollapsed - if text is selected (Cmd+A), let browser handle delete
       const selection = window.getSelection();
-      const isAtStart = selection?.anchorOffset === 0 && selection?.isCollapsed;
-      
+      const isAtStart = contentRef
+        && selection?.isCollapsed
+        && getAbsoluteCursorOffset(contentRef) === 0;
+
       if (isAtStart) {
           // Only merge if no children to avoid deleting subtree accidentally
           if (block()?.childIds.length && block()!.childIds.length > 0) {
@@ -171,25 +235,11 @@ export function BlockItem(props: BlockItemProps) {
                 // Focus previous block
                 props.onFocus(prevId);
                 
-                // Restore cursor position
+                // Restore cursor position using proper utility
                 requestAnimationFrame(() => {
                    const el = document.activeElement as HTMLElement;
-                   // Use textContent check instead of innerText
                    if (el && el.textContent === prevContent + oldContent) {
-                      const range = document.createRange();
-                      const sel = window.getSelection();
-                      if (el.firstChild) {
-                        try {
-                          range.setStart(el.firstChild, prevContentLength);
-                          range.collapse(true);
-                          sel?.removeAllRanges();
-                          sel?.addRange(range);
-                        } catch {
-                          // Ignore range errors
-                        }
-                      } else if (prevContentLength === 0) {
-                         // Empty block, cursor at start
-                      }
+                      setCursorAtOffset(el, prevContentLength);
                    }
                 });
              }
@@ -200,7 +250,10 @@ export function BlockItem(props: BlockItemProps) {
 
   const handleInput = (e: InputEvent) => {
     const target = e.target as HTMLDivElement;
-    store.updateBlockContent(props.id, target.textContent || '');
+    // CRITICAL: Use innerText, not textContent!
+    // textContent ignores <div> and <br> elements, losing line breaks.
+    // innerText respects visual line breaks and converts them to \n.
+    store.updateBlockContent(props.id, target.innerText || '');
   };
 
   const bulletClass = () => {
