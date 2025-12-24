@@ -12,11 +12,14 @@ interface PaneState {
   // Since Sets aren't easily serializable/reactive in stores, we use an array or object
   // Using Record<paneId, Record<blockId, boolean>> for easy access
   collapsed: Record<string, Record<string, boolean>>;
+  // Map of paneId -> zoomed root block ID (null = show all roots)
+  zoomedRootId: Record<string, string | null>;
 }
 
 function createPaneStore() {
   const [state, setState] = createStore<PaneState>({
     collapsed: {},
+    zoomedRootId: {},
   });
 
   const toggleCollapsed = (paneId: string, blockId: string) => {
@@ -47,10 +50,20 @@ function createPaneStore() {
     setState('collapsed', paneId, blockId, collapsed);
   };
 
+  const getZoomedRootId = (paneId: string): string | null => {
+    return state.zoomedRootId[paneId] ?? null;
+  };
+
+  const setZoomedRoot = (paneId: string, blockId: string | null) => {
+    setState('zoomedRootId', paneId, blockId);
+  };
+
   return {
     toggleCollapsed,
     isCollapsed,
     setCollapsed,
+    getZoomedRootId,
+    setZoomedRoot,
   };
 }
 

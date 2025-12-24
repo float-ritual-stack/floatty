@@ -25,6 +25,7 @@ export type KeyAction =
   | 'goToTab8'
   | 'goToTab9'
   | 'toggleSidebar'
+  | 'togglePanel'
   | 'splitHorizontal'
   | 'splitVertical'
   | 'splitHorizontalOutliner'
@@ -36,7 +37,9 @@ export type KeyAction =
   | 'focusDown'
   | 'zoomIn'
   | 'zoomOut'
-  | 'zoomReset';
+  | 'zoomReset'
+  | 'zoomInBlock'    // Outliner: focus on block subtree (Cmd+Enter at block level)
+  | 'zoomOutBlock';  // Outliner: return to parent/full view (Escape at block level)
 
 // Modifier representation
 export interface Modifiers {
@@ -107,6 +110,9 @@ export const defaultKeybinds: Keybind[] = [
 
   // Sidebar
   { key: 'b', modifiers: { mod: true }, action: 'toggleSidebar' },
+
+  // Floating panel (NSPanel spike)
+  { key: 'p', modifiers: { mod: true, shift: true }, action: 'togglePanel' },
 
   // Split management
   { key: isMac ? 'd' : '\\', modifiers: { mod: true }, action: 'splitHorizontal' },

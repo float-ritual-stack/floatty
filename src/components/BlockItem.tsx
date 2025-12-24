@@ -50,6 +50,16 @@ export function BlockItem(props: BlockItemProps) {
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!block()) return;
 
+    // Escape: zoom out if currently zoomed
+    if (e.key === 'Escape') {
+      const zoomedRoot = paneStore.getZoomedRootId(props.paneId);
+      if (zoomedRoot) {
+        e.preventDefault();
+        paneStore.setZoomedRoot(props.paneId, null);
+        return;
+      }
+    }
+
     if (e.key === 'ArrowUp') {
       // Only exit block if cursor is at absolute start of content
       // Otherwise let browser handle multi-line navigation within block
@@ -70,34 +80,51 @@ export function BlockItem(props: BlockItemProps) {
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'Enter' && !e.shiftKey) {
       if (e.metaKey || e.ctrlKey) {
-        // Execute block if it's executable
+        // Cmd+Enter: Always zoom into block's subtree
+        e.preventDefault();
         if (block()) {
-          const content = block()!.content;
-
-          if (isExecutableShellBlock(content)) {
-            e.preventDefault();
-            const command = extractShellCommand(content);
-            if (command) {
-              executeShellBlock(props.id, command, {
-                createBlockInside: store.createBlockInside,
-                createBlockInsideAtTop: store.createBlockInsideAtTop,
-                updateBlockContent: store.updateBlockContent
-              });
-            }
-          } else if (isExecutableAiBlock(content)) {
-            e.preventDefault();
-            const prompt = extractAiPrompt(content);
-            if (prompt) {
-              executeAiBlock(props.id, prompt, {
-                createBlockInside: store.createBlockInside,
-                createBlockInsideAtTop: store.createBlockInsideAtTop,
-                updateBlockContent: store.updateBlockContent
-              });
+          // Auto-create child if block has none (avoids stuck-on-empty-block bug)
+          if (block()!.childIds.length === 0) {
+            const newChildId = store.createBlockInside(props.id);
+            if (newChildId) {
+              // Focus the new child after zoom
+              requestAnimationFrame(() => props.onFocus(newChildId));
             }
           }
+          paneStore.setZoomedRoot(props.paneId, props.id);
         }
         return;
       }
+
+      // Plain Enter on executable blocks = execute
+      if (block()) {
+        const content = block()!.content;
+
+        if (isExecutableShellBlock(content)) {
+          e.preventDefault();
+          const command = extractShellCommand(content);
+          if (command) {
+            executeShellBlock(props.id, command, {
+              createBlockInside: store.createBlockInside,
+              createBlockInsideAtTop: store.createBlockInsideAtTop,
+              updateBlockContent: store.updateBlockContent
+            });
+          }
+          return;
+        } else if (isExecutableAiBlock(content)) {
+          e.preventDefault();
+          const prompt = extractAiPrompt(content);
+          if (prompt) {
+            executeAiBlock(props.id, prompt, {
+              createBlockInside: store.createBlockInside,
+              createBlockInsideAtTop: store.createBlockInsideAtTop,
+              updateBlockContent: store.updateBlockContent
+            });
+          }
+          return;
+        }
+      }
+
       e.preventDefault();
 
       // CRITICAL: Use absolute offset, not anchorOffset (which is text-node-relative)
