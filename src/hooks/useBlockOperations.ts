@@ -90,9 +90,28 @@ export function useBlockOperations() {
     return parentId;
   };
 
+  /**
+   * Get ancestor chain from root to block (inclusive)
+   * Returns [rootId, ..., parentId, blockId]
+   */
+  const getAncestors = (blockId: string): string[] => {
+    const result: string[] = [];
+    let currentId: string | null = blockId;
+
+    while (currentId) {
+      result.unshift(currentId);
+      const block = store.getBlock(currentId);
+      if (!block) break;
+      currentId = block.parentId ?? null;
+    }
+
+    return result;
+  };
+
   return {
     ...store,
     findNextVisibleBlock,
     findPrevVisibleBlock,
+    getAncestors,
   };
 }

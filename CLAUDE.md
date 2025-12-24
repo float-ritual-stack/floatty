@@ -60,6 +60,9 @@ Critical rules:
 | `TerminalPane.tsx` | Thin wrapper, attaches to terminalManager |
 | `ContextSidebar.tsx` | Polls Tauri commands, renders markers with tags |
 | `PaneLayout.tsx` | Recursive split pane layout with resize handles |
+| `Outliner.tsx` | Block tree view with zoom support |
+| `BlockItem.tsx` | Individual block with keybinds (Enter, Tab, etc.) |
+| `Breadcrumb.tsx` | Navigation trail for zoomed block view |
 
 **Frontend modules** (`src/lib/`):
 
@@ -75,6 +78,9 @@ Critical rules:
 |------|---------|
 | `useTabStore.ts` | SolidJS store for tab state |
 | `useLayoutStore.ts` | SolidJS store for per-tab split pane layouts |
+| `usePaneStore.ts` | Per-pane view state (collapsed, zoomedRootId) |
+| `useBlockStore.ts` | Block tree CRUD operations (Y.Doc backed) |
+| `useBlockOperations.ts` | Navigation helpers (findNext/Prev, getAncestors) |
 
 ### Key Data Flows
 
@@ -105,6 +111,8 @@ Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
 
 ### Keyboard Shortcuts
 
+**Terminal/Global:**
+
 | Key | Action |
 |-----|--------|
 | `⌘T` / `Ctrl+T` | New tab |
@@ -114,6 +122,18 @@ Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
 | `⌘B` | Toggle sidebar |
 
 Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, readline)
+
+**Outliner (block editing):**
+
+| Key | On `sh::`/`ai::` block | On regular block |
+|-----|------------------------|------------------|
+| `Enter` | Execute command | Create sibling/split |
+| `⌘Enter` | Zoom into subtree | Zoom into subtree |
+| `Escape` | Zoom out to full tree | Zoom out to full tree |
+| `Tab` | Indent (at line start) or insert spaces |
+| `⇧Tab` | Outdent (at line start) or remove spaces |
+| `⌘.` | Toggle collapse |
+| `⌘⌫` | Delete block and subtree |
 
 ### Terminal Manager Architecture
 
