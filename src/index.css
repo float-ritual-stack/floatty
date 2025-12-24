@@ -519,11 +519,136 @@ body.resizing .terminal-pane-positioned {
   pointer-events: none;
 }
 
-/* Terminal pane positioned over placeholder */
-.terminal-pane-positioned {
+/* ================================================
+   Outliner & Blocks
+   ================================================ */
+
+.outliner-container {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  padding: 16px;
+  font-family: "JetBrains Mono", monospace;
   background: #1a1a2e;
 }
 
-.terminal-pane-positioned.active {
-  /* Active pane styling if needed */
+.block-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 1px 0;
 }
+
+.block-bullet {
+  width: 20px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  color: #6a6a9a;
+  font-size: 14px;
+  /* Larger click target via padding */
+  padding: 2px;
+  margin: -2px;
+  border-radius: 3px;
+  transition: background 0.1s ease;
+}
+
+.block-bullet:hover {
+  background: rgba(124, 58, 237, 0.15);
+  color: #7c3aed;
+}
+
+/* Bullet colors by block type */
+.block-bullet-sh { color: #10b981; }
+.block-bullet-ai { color: #d946ef; }
+.block-bullet-ctx { color: #f59e0b; }
+.block-bullet-output { color: #0891b2; }
+.block-bullet-error { color: #ef4444; }
+.block-bullet-h1 { color: #60a5fa; }
+.block-bullet-h2 { color: #818cf8; }
+.block-bullet-h3 { color: #a78bfa; }
+.block-bullet-quote { color: #6b7280; }
+.block-bullet-todo { color: #22c55e; }
+
+.block-content-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+.block-content {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #eaeaea;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.block-content:focus {
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.block-children {
+  border-left: 1px solid #2a2a4a;
+  margin-left: 6px;
+  padding-left: 2px;
+}
+
+.block-focused .block-content {
+  background: rgba(124, 58, 237, 0.15);
+}
+
+/* ================================================
+   Status Bar
+   ================================================ */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 6px 16px;
+  background: #0f0f1a;
+  border-top: 1px solid #2a2a4a;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-keys {
+  color: #a78bfa;
+}
+
+.status-label {
+  color: #888;
+}
+
+/* Block content syntax colors */
+.block-content-h1 { color: #60a5fa; }
+.block-content-h2 { color: #818cf8; }
+.block-content-h3 { color: #a78bfa; }
+.block-content-sh { color: #34d399; }
+.block-content-ai { color: #e879f9; }
+.block-content-ctx { color: #fbbf24; }
+.block-content-output { color: #67e8f9; }
+.block-content-error { color: #f87171; }
+.block-content-quote { color: #9ca3af; font-style: italic; }
+.block-content-todo { color: #86efac; }
+.block-content-bullet { color: #c8c8dc; }
+.block-content-text { color: #eaeaea; }
+
+

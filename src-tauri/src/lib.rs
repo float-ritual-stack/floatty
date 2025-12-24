@@ -1,14 +1,17 @@
 mod ctx_parser;
 mod ctx_watcher;
 mod db;
+mod sync_test;
 
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::{CtxDatabase, CtxMarker};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tauri::State;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use yrs::{Array, Doc, Map, ReadTxn, StateVector, Transact, Update, updates::decoder::Decode};
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)
 #[derive(Clone, Serialize, Deserialize)]
@@ -28,8 +31,8 @@ impl Default for AggregatorConfig {
 
         Self {
             watch_path: default_watcher.watch_path.to_string_lossy().to_string(),
-            ollama_endpoint: default_parser.endpoint,
-            ollama_model: default_parser.model,
+            ollama_endpoint: "http://localhost:11434".to_string(),
+            ollama_model: "llama3.2:latest".to_string(),
             poll_interval_ms: default_parser.poll_interval_ms,
             max_retries: default_parser.max_retries,
             max_age_hours: 72, // Default: last 3 days (matches CLAUDE.md docs)
@@ -107,6 +110,7 @@ struct AppStateInner {
     watcher: CtxWatcher,
     #[allow(dead_code)]
     parser: CtxParser,
+    doc: Arc<RwLock<Doc>>,
 }
 
 /// Managed state wrapper - inner is None when DB initialization fails
@@ -169,6 +173,142 @@ fn clear_ctx_markers(state: State<AppState>) -> Result<(), String> {
     inner.db.clear_all().map_err(|e| e.to_string())
 }
 
+/// Get the initial Yjs document state as Base64
+#[tauri::command]
+fn get_initial_state(state: State<AppState>) -> Result<String, String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    
+    let doc = inner.doc.read().map_err(|e| e.to_string())?;
+    let state_vector = StateVector::default();
+    let update = doc.transact().encode_state_as_update_v1(&state_vector);
+    
+    Ok(BASE64.encode(update))
+}
+
+/// Apply a Yjs update from the frontend
+#[tauri::command]
+fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    
+    let update_bytes = BASE64.decode(update_b64)
+        .map_err(|e| e.to_string())?;
+    
+    let doc = inner.doc.write().map_err(|e| e.to_string())?;
+    
+    // Apply update to in-memory doc
+    {
+        let mut txn = doc.transact_mut();
+        txn.apply_update(Update::decode_v1(&update_bytes).map_err(|e| e.to_string())?)
+           .map_err(|e| e.to_string())?;
+    }
+    
+    // Persist full state to DB (Still heavy, but avoids read cost)
+    // Optimization: In real world, use append-only updates table
+    let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+    inner.db.set_system_state("ydoc", &full_state).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
+
+/// Execute a shell command and return stdout/stderr
+///
+/// # Security Model
+/// This command is intentionally exposed for the outliner's `sh::` block feature,
+/// which allows users to execute arbitrary shell commands from within blocks.
+/// This is a power-user feature - commands run with the user's shell privileges.
+/// No validation/allowlist is applied since this is equivalent to the user's terminal.
+#[tauri::command]
+async fn execute_shell_command(command: String) -> Result<String, String> {
+    // Parse command string respecting quotes
+    let parts = shell_words::split(&command).map_err(|e| e.to_string())?;
+    
+    if parts.is_empty() {
+        return Ok("".to_string());
+    }
+    
+    tauri::async_runtime::spawn_blocking(move || {
+        let prog = &parts[0];
+        let args = &parts[1..];
+        
+        let output = std::process::Command::new(prog)
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())?;
+            
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        
+        if output.status.success() {
+            Ok(stdout.to_string())
+        } else {
+            Ok(format!("{}\nError: {}", stdout, stderr))
+        }
+    }).await.map_err(|e| e.to_string())?
+}
+
+/// Execute an AI prompt using Ollama
+#[tauri::command]
+async fn execute_ai_command(prompt: String) -> Result<String, String> {
+    // Get config for endpoint/model
+    let config = AggregatorConfig::load();
+    
+    // Parse endpoint
+    let url = url::Url::parse(&config.ollama_endpoint).map_err(|e| e.to_string())?;
+    let host = url.host_str().unwrap_or("localhost");
+    let port = url.port().unwrap_or(11434);
+    
+    let ollama = Ollama::new(host.to_string(), port);
+    let model = config.ollama_model;
+    
+    let request = GenerationRequest::new(model, prompt);
+    
+    match ollama.generate(request).await {
+        Ok(res) => Ok(res.response),
+        Err(e) => Err(format!("Ollama error: {}", e)),
+    }
+}
+
+/// Clear the entire workspace (blocks and rootIds) efficiently
+#[tauri::command]
+fn clear_workspace(state: State<AppState>) -> Result<(), String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+    
+    let doc = inner.doc.write().map_err(|e| e.to_string())?;
+    let mut txn = doc.transact_mut();
+    
+    // Clear rootIds
+    let root_ids = txn.get_array("rootIds");
+    if let Some(root_ids) = root_ids {
+        let len = root_ids.len(&txn);
+        if len > 0 {
+            root_ids.remove_range(&mut txn, 0, len);
+        }
+    }
+
+    // Clear blocks map
+    let blocks = txn.get_map("blocks");
+    if let Some(blocks) = blocks {
+        // yrs Map doesn't have a clear() method exposed directly in all versions?
+        // Let's check. If not, we iterate keys.
+        // But yrs iteration in Rust is fast.
+        let keys: Vec<String> = blocks.keys(&txn).map(|k| k.to_string()).collect();
+        for key in keys {
+            blocks.remove(&mut txn, &key);
+        }
+    }
+
+    // Persist empty state
+    let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+    inner.db.set_system_state("ydoc", &full_state).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
@@ -179,6 +319,22 @@ pub fn run() {
     // Try to initialize database and ctx aggregation
     let inner = match CtxDatabase::open() {
         Ok(db) => {
+            // Load persistent state into in-memory Doc
+            let doc = Doc::new();
+            if let Ok(Some(state_bytes)) = db.get_system_state("ydoc") {
+                if !state_bytes.is_empty() {
+                    let mut txn = doc.transact_mut();
+                    match Update::decode_v1(&state_bytes) {
+                        Ok(u) => {
+                            if let Err(e) = txn.apply_update(u) {
+                                log::error!("Failed to apply Yjs update: {}", e);
+                            }
+                        },
+                        Err(e) => log::error!("Failed to decode Yjs state: {}", e),
+                    }
+                }
+            }
+
             let db = Arc::new(db);
 
             // Create watcher and parser with loaded config
@@ -196,14 +352,21 @@ pub fn run() {
             };
 
             let watcher = CtxWatcher::new(Arc::clone(&db), watcher_config);
-            match CtxParser::new(Arc::clone(&db), parser_config) {
+            let doc_arc = Arc::new(RwLock::new(doc)); // Wrap once here
+
+            match CtxParser::new(Arc::clone(&db), parser_config, Arc::clone(&doc_arc)) {
                 Ok(parser) => {
                     // Start background workers
                     watcher.start();
                     parser.start();
 
                     log::info!("ctx:: aggregation system initialized successfully");
-                    Some(AppStateInner { db, watcher, parser })
+                    Some(AppStateInner { 
+                        db, 
+                        watcher, 
+                        parser,
+                        doc: doc_arc, // Move Arc
+                    })
                 }
                 Err(e) => {
                     log::error!("Failed to create ctx:: parser: {}", e);
@@ -232,6 +395,11 @@ pub fn run() {
             get_ctx_config,
             set_ctx_config,
             clear_ctx_markers,
+            get_initial_state,
+            apply_update,
+            execute_shell_command,
+            execute_ai_command,
+            clear_workspace,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

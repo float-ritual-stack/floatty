@@ -27,11 +27,16 @@ export type KeyAction =
   | 'toggleSidebar'
   | 'splitHorizontal'
   | 'splitVertical'
+  | 'splitHorizontalOutliner'
+  | 'splitVerticalOutliner'
   | 'closeSplit'
   | 'focusLeft'
   | 'focusRight'
   | 'focusUp'
-  | 'focusDown';
+  | 'focusDown'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomReset';
 
 // Modifier representation
 export interface Modifiers {
@@ -102,9 +107,11 @@ export const defaultKeybinds: Keybind[] = [
   // Sidebar
   { key: 'b', modifiers: { mod: true }, action: 'toggleSidebar' },
 
-  // Split management (future)
+  // Split management
   { key: 'd', modifiers: { mod: true }, action: 'splitHorizontal' },
   { key: 'd', modifiers: { mod: true, shift: true }, action: 'splitVertical' },
+  { key: 'o', modifiers: { mod: true }, action: 'splitHorizontalOutliner' },
+  { key: 'o', modifiers: { mod: true, shift: true }, action: 'splitVerticalOutliner' },
   { key: 'w', modifiers: { mod: true, shift: true }, action: 'closeSplit' },
 
   // Focus navigation (future - using Alt to avoid terminal conflicts)
@@ -112,6 +119,12 @@ export const defaultKeybinds: Keybind[] = [
   { key: 'ArrowRight', modifiers: { mod: true, alt: true }, action: 'focusRight' },
   { key: 'ArrowUp', modifiers: { mod: true, alt: true }, action: 'focusUp' },
   { key: 'ArrowDown', modifiers: { mod: true, alt: true }, action: 'focusDown' },
+
+  // Zoom
+  { key: '=', modifiers: { mod: true }, action: 'zoomIn' },
+  { key: '+', modifiers: { mod: true }, action: 'zoomIn' },
+  { key: '-', modifiers: { mod: true }, action: 'zoomOut' },
+  { key: '0', modifiers: { mod: true }, action: 'zoomReset' },
 ];
 
 // Find action for a keyboard event

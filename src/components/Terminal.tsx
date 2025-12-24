@@ -1,15 +1,46 @@
 import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
-import type { TerminalPaneHandle } from './TerminalPane';
+import { OutlinerPane } from './OutlinerPane';
 import { ContextSidebar } from './ContextSidebar';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
-import type { FocusDirection, LayoutNode, PaneLeaf } from '../lib/layoutTypes';
+import type { FocusDirection, LayoutNode, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
+
+// Zoom state
+let currentZoom = 1.0;
+const ZOOM_STEP = 0.1;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2.0;
+
+// Status bar with keyboard shortcuts
+function StatusBar() {
+  const shortcuts = [
+    { label: 'Split', keys: '⌘D' },
+    { label: 'Focus', keys: '⌘⌥↑↓←→' },
+    { label: 'Outliner', keys: '⌘O' },
+    { label: 'Fold', keys: '⌘.' },
+    { label: 'Zoom', keys: '⌘+/-' },
+  ];
+
+  return (
+    <div class="status-bar">
+      <For each={shortcuts}>
+        {(item) => (
+          <span class="status-item">
+            <span class="status-keys">{item.keys}</span>
+            <span class="status-label">{item.label}</span>
+          </span>
+        )}
+      </For>
+    </div>
+  );
+}
 
 // Tab bar component
 function TabBar(props: {
@@ -63,10 +94,10 @@ export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
 
   // Pane refs for imperative control
-  const paneRefs = new Map<string, TerminalPaneHandle>();
+  const paneRefs = new Map<string, PaneHandle>();
 
   // Register a pane ref
-  const setPaneRef = (id: string, handle: TerminalPaneHandle | null) => {
+  const setPaneRef = (id: string, handle: PaneHandle | null) => {
     if (handle) {
       paneRefs.set(id, handle);
     } else {
@@ -253,6 +284,38 @@ export function Terminal() {
             }
           }
           break;
+        case 'splitHorizontalOutliner':
+          if (activeId) {
+            const newPaneId = layoutStore.splitPane(activeId, 'horizontal', 'outliner');
+            if (newPaneId) {
+              requestAnimationFrame(() => {
+                setTimeout(() => {
+                  const paneIds = getAllPaneIds(activeId);
+                  for (const paneId of paneIds) {
+                    paneRefs.get(paneId)?.fit();
+                  }
+                  paneRefs.get(newPaneId)?.focus();
+                }, 100);
+              });
+            }
+          }
+          break;
+        case 'splitVerticalOutliner':
+          if (activeId) {
+            const newPaneId = layoutStore.splitPane(activeId, 'vertical', 'outliner');
+            if (newPaneId) {
+              requestAnimationFrame(() => {
+                setTimeout(() => {
+                  const paneIds = getAllPaneIds(activeId);
+                  for (const paneId of paneIds) {
+                    paneRefs.get(paneId)?.fit();
+                  }
+                  paneRefs.get(newPaneId)?.focus();
+                }, 100);
+              });
+            }
+          }
+          break;
         case 'closeSplit':
           if (activeId) {
             handleClosePane(activeId).catch(e =>
@@ -274,6 +337,21 @@ export function Terminal() {
               });
             }
           }
+          break;
+        }
+        case 'zoomIn': {
+          currentZoom = Math.min(ZOOM_MAX, currentZoom + ZOOM_STEP);
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          break;
+        }
+        case 'zoomOut': {
+          currentZoom = Math.max(ZOOM_MIN, currentZoom - ZOOM_STEP);
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          break;
+        }
+        case 'zoomReset': {
+          currentZoom = 1.0;
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
           break;
         }
       }
@@ -368,6 +446,7 @@ export function Terminal() {
           paneId,
           tabId: tab.id,
           cwd: leaf?.cwd,
+          leafType: leaf?.leafType || 'terminal',
           isActivePane: paneId === activePaneId,
           isActiveTab: tab.id === activeId,
         };
@@ -414,19 +493,32 @@ export function Terminal() {
           {/* Using <Key> for stable identity - SolidJS <For> uses object reference, not property */}
           <Key each={allPaneInfo()} by={(info) => info.paneId}>
             {(info) => (
-              <TerminalPane
-                id={info().paneId}
-                cwd={info().cwd}
-                placeholderId={info().paneId}
-                isActive={info().isActivePane && info().isActiveTab}
-                isVisible={info().isActiveTab}
-                ref={(handle) => setPaneRef(info().paneId, handle)}
-                onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
-                onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
-                  console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
-                )}
-                onTitleChange={(title) => handleTitleChange(info().paneId, title)}
-              />
+              <Show
+                when={info().leafType === 'terminal'}
+                fallback={
+                  <OutlinerPane
+                    id={info().paneId}
+                    placeholderId={info().paneId}
+                    isActive={info().isActivePane && info().isActiveTab}
+                    isVisible={info().isActiveTab}
+                    ref={(handle) => setPaneRef(info().paneId, handle)}
+                  />
+                }
+              >
+                <TerminalPane
+                  id={info().paneId}
+                  cwd={info().cwd}
+                  placeholderId={info().paneId}
+                  isActive={info().isActivePane && info().isActiveTab}
+                  isVisible={info().isActiveTab}
+                  ref={(handle) => setPaneRef(info().paneId, handle)}
+                  onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
+                  onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
+                    console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
+                  )}
+                  onTitleChange={(title) => handleTitleChange(info().paneId, title)}
+                />
+              </Show>
             )}
           </Key>
         </div>
@@ -434,6 +526,7 @@ export function Terminal() {
           <ContextSidebar visible={sidebarVisible()} />
         </Show>
       </div>
+      <StatusBar />
     </div>
   );
 }

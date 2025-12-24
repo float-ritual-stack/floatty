@@ -101,6 +101,14 @@ impl CtxDatabase {
         Ok(db)
     }
 
+    /// Open an in-memory database for testing
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        let db = Self { conn: Mutex::new(conn) };
+        db.init_schema()?;
+        Ok(db)
+    }
+
     /// Get the database file path
     fn db_path() -> PathBuf {
         dirs::home_dir()
@@ -139,6 +147,13 @@ impl CtxDatabase {
                 file_path TEXT PRIMARY KEY,
                 last_position INTEGER DEFAULT 0,
                 last_modified TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Serialized Yjs document state
+            CREATE TABLE IF NOT EXISTS system_state (
+                key TEXT PRIMARY KEY,
+                value BLOB NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         "#)?;
@@ -404,6 +419,32 @@ impl CtxDatabase {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM ctx_markers", [])?;
         conn.execute("DELETE FROM file_positions", [])?;
+        // We do not delete system_state (Yjs doc) on clear_all unless explicitly requested, 
+        // as that destroys user notes. 
+        // If we want to support clearing notes, we should add a separate method.
+        Ok(())
+    }
+
+    /// Get serialized Yjs state
+    pub fn get_system_state(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT value FROM system_state WHERE key = ?")?;
+        let mut rows = stmt.query([key])?;
+        
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set serialized Yjs state
+    pub fn set_system_state(&self, key: &str, value: &[u8]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            params![key, value],
+        )?;
         Ok(())
     }
 }

@@ -1,9 +1,11 @@
 use crate::db::{CtxDatabase, ParsedCtx};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
+use yrs::{Any, Array, Doc, Map, Transact, WriteTxn};
 
 /// Configuration for the Ollama parser
 #[derive(Clone, Serialize, Deserialize)]
@@ -113,10 +115,11 @@ pub struct CtxParser {
     db: Arc<CtxDatabase>,
     client: Client,
     running: Arc<std::sync::Mutex<bool>>,
+    doc: Arc<RwLock<Doc>>,
 }
 
 impl CtxParser {
-    pub fn new(db: Arc<CtxDatabase>, config: ParserConfig) -> Result<Self, String> {
+    pub fn new(db: Arc<CtxDatabase>, config: ParserConfig, doc: Arc<RwLock<Doc>>) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms))
             .build()
@@ -127,6 +130,7 @@ impl CtxParser {
             db,
             client,
             running: Arc::new(std::sync::Mutex::new(false)),
+            doc,
         })
     }
 
@@ -147,6 +151,7 @@ impl CtxParser {
         let config = self.config.clone();
         let client = self.client.clone();
         let running = Arc::clone(&self.running);
+        let doc = Arc::clone(&self.doc);
 
         thread::spawn(move || {
             log::info!("Starting ctx:: parser worker");
@@ -180,6 +185,13 @@ impl CtxParser {
                                         Ok(json) => {
                                             if let Err(e) = db.update_parsed(&marker.id, &json) {
                                                 log::error!("Failed to update marker {}: {}", marker.id, e);
+                                            } else {
+                                                // Sync to Yjs (DISABLED for now)
+                                                /*
+                                                if let Err(e) = sync_to_yjs(&doc, &marker.id, &parsed) {
+                                                    log::error!("Failed to sync marker {} to Yjs: {}", marker.id, e);
+                                                }
+                                                */
                                             }
                                         }
                                         Err(e) => {
@@ -221,6 +233,72 @@ impl CtxParser {
     pub fn stop(&self) {
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
+}
+
+/// Sync a parsed marker to the Yjs document
+pub fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Result<(), String> {
+    let doc_guard = doc.write().map_err(|e| e.to_string())?;
+    let mut txn = doc_guard.transact_mut();
+    
+    let blocks_map = txn.get_or_insert_map("blocks");
+    let root_ids = txn.get_or_insert_array("rootIds");
+    
+    // Check if block already exists (deduplication)
+    if blocks_map.get(&mut txn, id).is_some() {
+        return Ok(());
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("System time error: {}", e))?
+        .as_millis() as f64;
+    let content_id = format!("{}_content", id);
+
+    // 1. Create content child block
+    let content_text = if let Some(summary) = &parsed.summary {
+        summary.clone()
+    } else if let Some(msg) = &parsed.message {
+        msg.clone()
+    } else {
+        String::new()
+    };
+
+    let mut content_block_values = HashMap::new();
+    content_block_values.insert("id".to_string(), Any::from(content_id.clone()));
+    content_block_values.insert("parentId".to_string(), Any::from(id.to_string()));
+    content_block_values.insert("childIds".to_string(), Any::from(Vec::<String>::new()));
+    content_block_values.insert("content".to_string(), Any::from(content_text));
+    content_block_values.insert("type".to_string(), Any::from("text"));
+    content_block_values.insert("collapsed".to_string(), Any::from(false));
+    content_block_values.insert("createdAt".to_string(), Any::from(now));
+    content_block_values.insert("updatedAt".to_string(), Any::from(now));
+    blocks_map.insert(&mut txn, content_id.clone(), content_block_values);
+
+    // 2. Create parent ctx block
+    let mut metadata = HashMap::new();
+    if let Some(v) = &parsed.project { metadata.insert("project".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.mode { metadata.insert("mode".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.meeting { metadata.insert("meeting".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.issue { metadata.insert("issue".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.time { metadata.insert("time".to_string(), Any::from(v.to_string())); }
+    if let Some(v) = &parsed.timestamp { metadata.insert("timestamp".to_string(), Any::from(v.to_string())); }
+
+    let mut parent_block_values = HashMap::new();
+    parent_block_values.insert("id".to_string(), Any::from(id.to_string()));
+    parent_block_values.insert("parentId".to_string(), Any::Null);
+    parent_block_values.insert("childIds".to_string(), Any::from(vec![content_id]));
+    parent_block_values.insert("content".to_string(), Any::from("")); // Header block has no text of its own
+    parent_block_values.insert("type".to_string(), Any::from("ctx"));
+    parent_block_values.insert("metadata".to_string(), Any::from(metadata));
+    parent_block_values.insert("collapsed".to_string(), Any::from(false));
+    parent_block_values.insert("createdAt".to_string(), Any::from(now));
+    parent_block_values.insert("updatedAt".to_string(), Any::from(now));
+    blocks_map.insert(&mut txn, id.to_string(), parent_block_values);
+
+    // 3. Prepend parent to rootIds
+    root_ids.insert(&mut txn, 0, id.to_string());
+
+    Ok(())
 }
 
 /// Parse a single ctx:: line using Ollama

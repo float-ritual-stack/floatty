@@ -262,6 +262,7 @@ function extractTimeFromRaw(line: string): string {
 }
 
 function extractTagFromRaw(line: string, tag: string): string | null {
+  // Double-escape for template string → regex: \\[ becomes \[ in regex
   const regex = new RegExp(`\\[${tag}::([^\\]]+)\\]`, 'i');
   const match = line.match(regex);
   return match?.[1]?.trim() || null;
@@ -271,8 +272,8 @@ function extractMessageFromRaw(line: string): string {
   // Remove ctx:: prefix and tags, return remaining
   let msg = line
     .replace(/ctx::\d{4}-\d{2}-\d{2}\s*@\s*[\d:]+\s*(?:AM|PM)?/i, '')
-    .replace(/\[[\w-]+::[^\]]+\]/g, '')
-    .replace(/"\s*,\s*"[^"]+"\s*:/g, '')  // Remove JSON field patterns
+    .replace(/\[[\w-]+\s*::[^\]]+\]/g, '')
+    .replace(/"\s*,\s*"[^"\\]+\s*:/g, '')  // Remove JSON field patterns
     .replace(/[}\]]+.*$/g, '')  // Remove trailing JSON garbage
     .replace(/"stop_reason.*$/i, '')  // Remove stop_reason and after
     .replace(/"type.*$/i, '')  // Remove type field and after
