@@ -139,6 +139,8 @@ function createBlockStore() {
               setState('blocks', key, block);
             }
           } else if (change.action === 'delete') {
+            // SolidJS stores don't support key deletion directly.
+            // Setting to undefined! removes the key from the reactive store.
             setState('blocks', key, undefined!);
           }
         });

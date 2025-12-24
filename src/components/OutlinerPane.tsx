@@ -24,9 +24,10 @@ export function OutlinerPane(props: OutlinerPaneProps) {
   // Imperative handle for parent
   const handle: OutlinerPaneHandle = {
     focus: () => {
-      // Focus logic for outliner - find first block and focus its editor
-      const el = containerRef?.querySelector('[contenteditable]') as HTMLElement;
-      el?.focus();
+      // Focus the first root block's editor (more specific than generic [contenteditable])
+      const firstBlock = containerRef?.querySelector('[data-block-id]') as HTMLElement;
+      const editor = firstBlock?.querySelector('[contenteditable]') as HTMLElement;
+      editor?.focus();
     },
     fit: () => {
       updatePosition();

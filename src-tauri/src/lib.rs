@@ -31,7 +31,7 @@ impl Default for AggregatorConfig {
 
         Self {
             watch_path: default_watcher.watch_path.to_string_lossy().to_string(),
-            ollama_endpoint: "http://float-box:11434".to_string(),
+            ollama_endpoint: "http://localhost:11434".to_string(),
             ollama_model: "llama3.2:latest".to_string(),
             poll_interval_ms: default_parser.poll_interval_ms,
             max_retries: default_parser.max_retries,
@@ -215,6 +215,12 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
 
 /// Execute a shell command and return stdout/stderr
+///
+/// # Security Model
+/// This command is intentionally exposed for the outliner's `sh::` block feature,
+/// which allows users to execute arbitrary shell commands from within blocks.
+/// This is a power-user feature - commands run with the user's shell privileges.
+/// No validation/allowlist is applied since this is equivalent to the user's terminal.
 #[tauri::command]
 async fn execute_shell_command(command: String) -> Result<String, String> {
     // Parse command string respecting quotes

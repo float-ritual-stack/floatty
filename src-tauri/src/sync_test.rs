@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use yrs::{Doc, StateVector, Update, Transact, Text, ReadTxn, GetString};
+    use yrs::{Doc, Transact, Text, ReadTxn, GetString};
 
     #[test]
     fn test_yrs_setup() {

@@ -25,8 +25,11 @@ export function extractAiPrompt(content: string): string | null {
 }
 
 interface ExecutorActions {
+  /** Create a new block as the last child of parentId */
   createBlockInside: (parentId: string) => string;
+  /** Create a new block as the first child of parentId (optional - falls back to createBlockInside) */
   createBlockInsideAtTop?: (parentId: string) => string;
+  /** Update the content of a block */
   updateBlockContent: (id: string, content: string) => void;
 }
 

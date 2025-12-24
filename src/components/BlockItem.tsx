@@ -212,7 +212,7 @@ export function BlockItem(props: BlockItemProps) {
 
       if (isAtStart) {
           // Only merge if no children to avoid deleting subtree accidentally
-          if (block()?.childIds.length && block()!.childIds.length > 0) {
+          if (block()?.childIds.length) {
              return;
           }
 
@@ -309,7 +309,7 @@ export function BlockItem(props: BlockItemProps) {
         </div>
       </div>
 
-      <Show when={!isCollapsed() && block()?.childIds.length && block()?.childIds.length > 0}>
+      <Show when={!isCollapsed() && block()?.childIds.length}>
         <div class="block-children">
           <For each={block()?.childIds}>
             {(childId) => (
