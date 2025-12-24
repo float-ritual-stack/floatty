@@ -131,6 +131,25 @@ export function Terminal() {
     return findLeaf(layout.root, paneId);
   };
 
+  // Helper to split pane and handle post-split fitting/focusing
+  const handleSplit = (direction: 'horizontal' | 'vertical', leafType?: 'terminal' | 'outliner') => {
+    const activeId = tabStore.activeTabId();
+    if (!activeId) return;
+
+    const newPaneId = layoutStore.splitPane(activeId, direction, leafType);
+    if (newPaneId) {
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          const paneIds = getAllPaneIds(activeId);
+          for (const paneId of paneIds) {
+            paneRefs.get(paneId)?.fit();
+          }
+          paneRefs.get(newPaneId)?.focus();
+        }, 100);
+      });
+    }
+  };
+
   // Initialize layout for tabs that don't have one
   createEffect(() => {
     for (const tab of tabStore.tabs) {
@@ -252,69 +271,16 @@ export function Terminal() {
           break;
         // Split management
         case 'splitHorizontal':
-          if (activeId) {
-            const newPaneId = layoutStore.splitPane(activeId, 'horizontal');
-            if (newPaneId) {
-              // Delay to let layout + terminals settle, then fit and focus
-              requestAnimationFrame(() => {
-                setTimeout(() => {
-                  const paneIds = getAllPaneIds(activeId);
-                  for (const paneId of paneIds) {
-                    paneRefs.get(paneId)?.fit();
-                  }
-                  paneRefs.get(newPaneId)?.focus();
-                }, 100);
-              });
-            }
-          }
+          handleSplit('horizontal');
           break;
         case 'splitVertical':
-          if (activeId) {
-            const newPaneId = layoutStore.splitPane(activeId, 'vertical');
-            if (newPaneId) {
-              requestAnimationFrame(() => {
-                setTimeout(() => {
-                  const paneIds = getAllPaneIds(activeId);
-                  for (const paneId of paneIds) {
-                    paneRefs.get(paneId)?.fit();
-                  }
-                  paneRefs.get(newPaneId)?.focus();
-                }, 100);
-              });
-            }
-          }
+          handleSplit('vertical');
           break;
         case 'splitHorizontalOutliner':
-          if (activeId) {
-            const newPaneId = layoutStore.splitPane(activeId, 'horizontal', 'outliner');
-            if (newPaneId) {
-              requestAnimationFrame(() => {
-                setTimeout(() => {
-                  const paneIds = getAllPaneIds(activeId);
-                  for (const paneId of paneIds) {
-                    paneRefs.get(paneId)?.fit();
-                  }
-                  paneRefs.get(newPaneId)?.focus();
-                }, 100);
-              });
-            }
-          }
+          handleSplit('horizontal', 'outliner');
           break;
         case 'splitVerticalOutliner':
-          if (activeId) {
-            const newPaneId = layoutStore.splitPane(activeId, 'vertical', 'outliner');
-            if (newPaneId) {
-              requestAnimationFrame(() => {
-                setTimeout(() => {
-                  const paneIds = getAllPaneIds(activeId);
-                  for (const paneId of paneIds) {
-                    paneRefs.get(paneId)?.fit();
-                  }
-                  paneRefs.get(newPaneId)?.focus();
-                }, 100);
-              });
-            }
-          }
+          handleSplit('vertical', 'outliner');
           break;
         case 'closeSplit':
           if (activeId) {

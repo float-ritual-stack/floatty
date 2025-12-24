@@ -1,4 +1,5 @@
-import { For, Show, createMemo, createEffect } from 'solid-js';
+import { Show, createMemo, createEffect } from 'solid-js';
+import { Key } from '@solid-primitives/keyed';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -311,17 +312,20 @@ export function BlockItem(props: BlockItemProps) {
 
       <Show when={!isCollapsed() && block()?.childIds.length}>
         <div class="block-children">
-          <For each={block()?.childIds}>
-            {(childId) => (
-              <BlockItem
-                id={childId}
-                paneId={props.paneId}
-                depth={props.depth + 1}
-                focusedBlockId={props.focusedBlockId}
-                onFocus={props.onFocus}
-              />
-            )}
-          </For>
+          <Key each={block()?.childIds} by={(id) => id}>
+            {(childId) => {
+              const id = childId();
+              return (
+                <BlockItem
+                  id={id}
+                  paneId={props.paneId}
+                  depth={props.depth + 1}
+                  focusedBlockId={props.focusedBlockId}
+                  onFocus={props.onFocus}
+                />
+              );
+            }}
+          </Key>
         </div>
       </Show>
     </div>
