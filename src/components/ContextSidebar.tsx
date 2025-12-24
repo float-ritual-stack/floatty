@@ -1,8 +1,8 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 
-// Check if running in Tauri environment
-const isTauri = typeof window !== 'undefined' && 'window' in window && '__TAURI__' in window;
+// Check if running in Tauri environment (Tauri 2 uses 'isTauri' or '__TAURI_INTERNALS__')
+const isTauri = typeof window !== 'undefined' && ('isTauri' in window || '__TAURI_INTERNALS__' in window);
 
 // Status of a ctx:: marker parsing
 type MarkerStatus = 'pending' | 'parsed' | 'error';

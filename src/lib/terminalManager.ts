@@ -211,8 +211,9 @@ class TerminalManager {
     if (!instance) return;
 
     try {
-      // Check if we are in Tauri environment
-      if (typeof window !== 'undefined' && 'window' in window && '__TAURI__' in window) {
+      // Check if we are in Tauri environment (Tauri 2 uses 'isTauri' or '__TAURI_INTERNALS__')
+      const isTauri = typeof window !== 'undefined' && ('isTauri' in window || '__TAURI_INTERNALS__' in window);
+      if (isTauri) {
         const os = await platform();
         const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
         const args = os === 'windows' ? [] : ['-l'];
