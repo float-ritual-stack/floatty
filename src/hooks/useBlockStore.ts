@@ -100,12 +100,11 @@ function createBlockStore() {
 
   /**
    * Initialize the store from a Y.Doc. Returns a dispose function to cleanup observers.
-   * Safe to call multiple times - only first call takes effect.
+   * Safe to call multiple times - subsequent calls will re-sync from Y.Doc and add new observers.
    */
   const initFromYDoc = (doc: Y.Doc): (() => void) => {
-    // Double-check guard: store state (reactive) + local flag (sync)
-    if (state.isInitialized || _isInitializing) {
-      // Return no-op dispose if already initialized
+    // Skip if we're already observing this exact doc instance
+    if (_doc === doc && state.isInitialized) {
       return () => {};
     }
     _isInitializing = true;
