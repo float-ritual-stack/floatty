@@ -8,6 +8,7 @@ import {
   isExecutableAiBlock, extractAiPrompt, executeAiBlock
 } from '../lib/executor';
 import { isCursorAtContentStart, isCursorAtContentEnd, getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
+import { getActionForEvent } from '../lib/keybinds';
 
 interface BlockItemProps {
   id: string;
@@ -50,16 +51,58 @@ export function BlockItem(props: BlockItemProps) {
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!block()) return;
 
-    // Escape: zoom out if currently zoomed
-    if (e.key === 'Escape') {
-      const zoomedRoot = paneStore.getZoomedRootId(props.paneId);
-      if (zoomedRoot) {
+    // Check centralized keybind system first for block-level actions
+    const action = getActionForEvent(e);
+
+    switch (action) {
+      case 'zoomOutBlock': {
+        // Escape: zoom out if currently zoomed
+        const zoomedRoot = paneStore.getZoomedRootId(props.paneId);
+        if (zoomedRoot) {
+          e.preventDefault();
+          paneStore.setZoomedRoot(props.paneId, null);
+          return;
+        }
+        break; // Not zoomed - let Escape propagate naturally (blur, etc.)
+      }
+
+      case 'zoomInBlock': {
+        // Cmd+Enter: Always zoom into block's subtree
         e.preventDefault();
-        paneStore.setZoomedRoot(props.paneId, null);
+        // Auto-create child if block has none (avoids stuck-on-empty-block bug)
+        if (block()!.childIds.length === 0) {
+          const newChildId = store.createBlockInside(props.id);
+          if (newChildId) {
+            // Focus the new child after zoom
+            requestAnimationFrame(() => props.onFocus(newChildId));
+          }
+        }
+        paneStore.setZoomedRoot(props.paneId, props.id);
+        return;
+      }
+
+      case 'collapseBlock': {
+        // Cmd+. to toggle collapse
+        e.preventDefault();
+        const currentBlock = block();
+        const hasChildren = currentBlock?.childIds && currentBlock.childIds.length > 0;
+        if (hasChildren) {
+          paneStore.toggleCollapsed(props.paneId, props.id);
+        }
+        return;
+      }
+
+      case 'deleteBlock': {
+        // Cmd+Backspace: Delete block and subtree
+        e.preventDefault();
+        const prevId = findPrevVisibleBlock(props.id, props.paneId);
+        store.deleteBlock(props.id);
+        if (prevId) props.onFocus(prevId);
         return;
       }
     }
 
+    // Non-action keybinds (navigation, editing)
     if (e.key === 'ArrowUp') {
       // Only exit block if cursor is at absolute start of content
       // Otherwise let browser handle multi-line navigation within block
@@ -79,22 +122,7 @@ export function BlockItem(props: BlockItemProps) {
       }
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'Enter' && !e.shiftKey) {
-      if (e.metaKey || e.ctrlKey) {
-        // Cmd+Enter: Always zoom into block's subtree
-        e.preventDefault();
-        if (block()) {
-          // Auto-create child if block has none (avoids stuck-on-empty-block bug)
-          if (block()!.childIds.length === 0) {
-            const newChildId = store.createBlockInside(props.id);
-            if (newChildId) {
-              // Focus the new child after zoom
-              requestAnimationFrame(() => props.onFocus(newChildId));
-            }
-          }
-          paneStore.setZoomedRoot(props.paneId, props.id);
-        }
-        return;
-      }
+      // NOTE: Cmd+Enter (zoomInBlock) is handled above via getActionForEvent()
 
       // Plain Enter on executable blocks = execute
       if (block()) {
@@ -214,23 +242,9 @@ export function BlockItem(props: BlockItemProps) {
           document.execCommand('insertText', false, '  ');
         }
       }
-    } else if (e.key === '.' && (e.metaKey || e.ctrlKey)) {
-      // Cmd+. to toggle collapse
-      e.preventDefault();
-      const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-      if (hasChildren) {
-        paneStore.toggleCollapsed(props.paneId, props.id);
-      }
+      // NOTE: Cmd+. (collapseBlock) handled above via getActionForEvent()
+      // NOTE: Cmd+Backspace (deleteBlock) handled above via getActionForEvent()
     } else if (e.key === 'Backspace') {
-      if (e.metaKey || e.ctrlKey) {
-        // Mod+Backspace: Delete block and subtree
-        e.preventDefault();
-        const prevId = findPrevVisibleBlock(props.id, props.paneId);
-        store.deleteBlock(props.id);
-        if (prevId) props.onFocus(prevId);
-        return;
-      }
-
       // CRITICAL: Use absolute offset for multi-line content
       // Also check isCollapsed - if text is selected (Cmd+A), let browser handle delete
       const selection = window.getSelection();
