@@ -1,6 +1,7 @@
 import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { invoke } from '@tauri-apps/api/core';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
@@ -318,6 +319,12 @@ export function Terminal() {
         case 'zoomReset': {
           currentZoom = 1.0;
           getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          break;
+        }
+        case 'togglePanel': {
+          invoke('toggle_test_panel').catch((err) => {
+            console.error('[Terminal] Failed to toggle panel:', err);
+          });
           break;
         }
       }

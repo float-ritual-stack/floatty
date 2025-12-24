@@ -25,6 +25,7 @@ export type KeyAction =
   | 'goToTab8'
   | 'goToTab9'
   | 'toggleSidebar'
+  | 'togglePanel'
   | 'splitHorizontal'
   | 'splitVertical'
   | 'splitHorizontalOutliner'
@@ -107,6 +108,9 @@ export const defaultKeybinds: Keybind[] = [
 
   // Sidebar
   { key: 'b', modifiers: { mod: true }, action: 'toggleSidebar' },
+
+  // Floating panel (NSPanel spike)
+  { key: 'p', modifiers: { mod: true, shift: true }, action: 'togglePanel' },
 
   // Split management
   { key: isMac ? 'd' : '\\', modifiers: { mod: true }, action: 'splitHorizontal' },

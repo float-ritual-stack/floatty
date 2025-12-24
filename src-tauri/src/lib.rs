@@ -1,6 +1,7 @@
 mod ctx_parser;
 mod ctx_watcher;
 mod db;
+mod panel;
 mod sync_test;
 
 use ctx_parser::{CtxParser, ParserConfig};
@@ -9,7 +10,7 @@ use db::{CtxDatabase, CtxMarker};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use tauri::State;
+use tauri::{Manager, State};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use yrs::{Array, Doc, Map, ReadTxn, StateVector, Transact, Update, updates::decoder::Decode};
 
@@ -388,6 +389,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
+        .plugin(tauri_nspanel::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             get_ctx_markers,
@@ -400,7 +402,23 @@ pub fn run() {
             execute_shell_command,
             execute_ai_command,
             clear_workspace,
+            panel::show_test_panel,
+            panel::hide_test_panel,
+            panel::toggle_test_panel,
         ])
+        // Intercept panel close to hide instead of destroy (prevents foreign exception crash)
+        .on_window_event(|window, event| {
+            use tauri_nspanel::ManagerExt;
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Check if this window is managed as an NSPanel
+                if window.app_handle().get_webview_panel(window.label()).is_ok() {
+                    // Hide instead of destroy to preserve state/memory
+                    let _ = window.hide();
+                    api.prevent_close();
+                    log::info!("[panel] Intercepted close for {}, hiding instead", window.label());
+                }
+            }
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

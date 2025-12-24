@@ -8,4 +8,5 @@ export default defineConfig({
     port: 5188,
     strictPort: true, // fail if port is in use instead of trying another
   },
+  // Note: panel.html is in public/ directory, served automatically at /panel.html
 })

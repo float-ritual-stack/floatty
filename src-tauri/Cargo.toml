@@ -39,3 +39,6 @@ base64 = "0.22.1"
 ollama-rs = "0.3.3"
 url = "2.5.7"
 shell-words = "1.1.1"
+
+# NSPanel floating window support (macOS only)
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
