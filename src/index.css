@@ -548,6 +548,20 @@ html, body, #root {
   background: #7c3aed;
 }
 
+/* Resize overlay hit areas (above terminals) */
+.resize-overlay-handle {
+  /* Slight visual feedback on hover */
+  transition: background 0.1s ease;
+}
+
+.resize-overlay-handle:hover {
+  background: rgba(124, 58, 237, 0.3) !important;
+}
+
+.resize-overlay-handle.dragging {
+  background: rgba(124, 58, 237, 0.5) !important;
+}
+
 /* During resize, disable pointer events on terminals */
 body.resizing .terminal-pane-positioned {
   pointer-events: none;

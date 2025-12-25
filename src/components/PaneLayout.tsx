@@ -51,6 +51,7 @@ function PaneLayoutNode(props: PaneLayoutProps) {
           <div
             ref={containerRef}
             class={`pane-layout-split pane-layout-${split.direction}`}
+            data-split-id={split.id}
           >
             <div
               class="pane-layout-child"

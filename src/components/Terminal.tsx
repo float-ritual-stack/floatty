@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
+import { ResizeOverlay } from './ResizeOverlay';
 import { ContextSidebar } from './ContextSidebar';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
@@ -496,6 +497,16 @@ export function Terminal() {
               </Show>
             )}
           </Key>
+
+          {/* Resize overlay - rendered AFTER terminals so it's on top */}
+          <For each={tabStore.tabs}>
+            {(tab) => (
+              <ResizeOverlay
+                tabId={tab.id}
+                isVisible={tab.id === tabStore.activeTabId()}
+              />
+            )}
+          </For>
         </div>
         <Show when={sidebarVisible()}>
           <ContextSidebar visible={sidebarVisible()} />
