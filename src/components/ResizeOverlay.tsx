@@ -72,18 +72,8 @@ function ResizeHitArea(props: {
     if (container) observer.observe(container);
   }, 100);
 
-  const handlePointerDown = (e: PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    isDragging = true;
-    setIsDraggingVisual(true);
-    document.body.classList.add('resizing');
-    updatePosition();
-  };
-
-  const handlePointerMove = (e: PointerEvent) => {
+  // Use window listeners for move/up to avoid pointer capture issues
+  const onWindowPointerMove = (e: PointerEvent) => {
     if (!isDragging) return;
 
     // Find the parent split container to calculate ratio
@@ -105,13 +95,29 @@ function ResizeHitArea(props: {
     layoutStore.setRatio(props.tabId, props.splitId, clampedRatio);
   };
 
-  const handlePointerUp = (e: PointerEvent) => {
+  const onWindowPointerUp = () => {
     if (!isDragging) return;
-
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     isDragging = false;
     setIsDraggingVisual(false);
     document.body.classList.remove('resizing');
+    window.removeEventListener('pointermove', onWindowPointerMove);
+    window.removeEventListener('pointerup', onWindowPointerUp);
+    // Update overlay position to match new handle position
+    updatePosition();
+  };
+
+  const handlePointerDown = (e: PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    isDragging = true;
+    setIsDraggingVisual(true);
+    document.body.classList.add('resizing');
+    updatePosition();
+
+    // Add window listeners for move/up
+    window.addEventListener('pointermove', onWindowPointerMove);
+    window.addEventListener('pointerup', onWindowPointerUp);
   };
 
   return (
@@ -126,13 +132,8 @@ function ResizeHitArea(props: {
           height: props.direction === 'horizontal' ? `${rect()!.height + 8}px` : '12px',
           cursor: props.direction === 'horizontal' ? 'col-resize' : 'row-resize',
           'z-index': 1000,
-          // Invisible but clickable
-          background: 'transparent',
         }}
         onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
       />
     </Show>
   );
