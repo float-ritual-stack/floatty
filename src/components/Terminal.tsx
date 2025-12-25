@@ -222,11 +222,22 @@ export function Terminal() {
       }
 
       const action = getActionForEvent(e);
+
+      // Debug: log all keyboard events with modifiers to trace sporadic failures
+      if (e.metaKey || e.ctrlKey) {
+        console.log('[Keybind] key:', e.key, 'meta:', e.metaKey, 'ctrl:', e.ctrlKey, 'shift:', e.shiftKey, 'action:', action);
+      }
+
       if (!action) return;
 
       e.preventDefault();
 
       const activeId = tabStore.activeTabId();
+
+      // Debug: warn if activeId is missing when needed
+      if ((action === 'closeTab' || action === 'closeSplit') && !activeId) {
+        console.warn('[Keybind] action', action, 'but activeId is null!');
+      }
 
       switch (action) {
         case 'newTab':
