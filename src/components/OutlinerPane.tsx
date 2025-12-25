@@ -38,14 +38,29 @@ export function OutlinerPane(props: OutlinerPaneProps) {
     }
   };
 
-  // Register handle
+  // Register handle and set up resize tracking
   onMount(() => {
     props.ref?.(handle);
     updatePosition();
-    
-    // Watch for window resize
+
+    // Watch for placeholder size/position changes (matches TerminalPane pattern)
+    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
+    let resizeObserver: ResizeObserver | undefined;
+
+    if (placeholder) {
+      resizeObserver = new ResizeObserver(() => {
+        updatePosition();
+      });
+      resizeObserver.observe(placeholder);
+    }
+
+    // Also update on window resize (placeholder might move)
     window.addEventListener('resize', updatePosition);
-    onCleanup(() => window.removeEventListener('resize', updatePosition));
+
+    onCleanup(() => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updatePosition);
+    });
   });
 
   // Update absolute position based on placeholder in PaneLayout

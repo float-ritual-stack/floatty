@@ -8,7 +8,7 @@
  * These overlay the visual resize handles and forward events to the layout store.
  */
 
-import { createSignal, For, Show, createMemo } from 'solid-js';
+import { createSignal, For, Show, createMemo, onMount, onCleanup } from 'solid-js';
 import { layoutStore } from '../hooks/useLayoutStore';
 import type { LayoutNode, PaneSplit } from '../lib/layoutTypes';
 
@@ -62,15 +62,23 @@ function ResizeHitArea(props: {
     }
   };
 
-  // Update position periodically and on resize
-  const observer = new ResizeObserver(updatePosition);
-
-  // Start observing when mounted
-  setTimeout(() => {
+  // Update position on mount and observe container resize
+  onMount(() => {
+    // Initial position update
     updatePosition();
+
+    // Observe container for resize events
+    const observer = new ResizeObserver(updatePosition);
     const container = document.querySelector('.terminal-container');
-    if (container) observer.observe(container);
-  }, 100);
+    if (container) {
+      observer.observe(container);
+    }
+
+    // Clean up observer on unmount
+    onCleanup(() => {
+      observer.disconnect();
+    });
+  });
 
   // Use window listeners for move/up to avoid pointer capture issues
   const onWindowPointerMove = (e: PointerEvent) => {
@@ -131,7 +139,7 @@ function ResizeHitArea(props: {
           width: props.direction === 'horizontal' ? '12px' : `${rect()!.width + 8}px`,
           height: props.direction === 'horizontal' ? `${rect()!.height + 8}px` : '12px',
           cursor: props.direction === 'horizontal' ? 'col-resize' : 'row-resize',
-          'z-index': 1000,
+          'z-index': 150,  // Above terminals (z-index: 100) but not excessive
         }}
         onPointerDown={handlePointerDown}
       />
