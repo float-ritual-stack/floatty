@@ -9,6 +9,7 @@ interface OutlinerPaneProps {
   placeholderId: string;
   isActive: boolean;
   isVisible: boolean;
+  onPaneClick?: () => void;  // Called when pane is clicked (for focus tracking)
   ref?: (handle: OutlinerPaneHandle) => void;
 }
 
@@ -82,6 +83,7 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       classList={{
         'pane-active': props.isActive,
       }}
+      onMouseDown={() => props.onPaneClick?.()}
       style={{
         position: 'absolute',
         top: `${rect().top}px`,

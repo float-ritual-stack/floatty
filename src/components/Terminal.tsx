@@ -475,6 +475,7 @@ export function Terminal() {
                     isActive={info().isActivePane && info().isActiveTab}
                     isVisible={info().isActiveTab}
                     ref={(handle) => setPaneRef(info().paneId, handle)}
+                    onPaneClick={() => handlePaneClick(info().paneId)}
                   />
                 }
               >
@@ -485,6 +486,7 @@ export function Terminal() {
                   isActive={info().isActivePane && info().isActiveTab}
                   isVisible={info().isActiveTab}
                   ref={(handle) => setPaneRef(info().paneId, handle)}
+                  onPaneClick={() => handlePaneClick(info().paneId)}
                   onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
                   onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
                     console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)

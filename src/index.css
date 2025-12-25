@@ -526,6 +526,8 @@ html, body, #root {
   background: #2a2a4a;
   flex-shrink: 0;
   transition: background 0.15s ease;
+  position: relative;  /* Enable z-index */
+  z-index: 100;  /* Above absolutely-positioned panes */
 }
 
 .resize-handle-horizontal {
