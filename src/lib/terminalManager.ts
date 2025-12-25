@@ -63,6 +63,9 @@ class TerminalManager {
   private instances = new Map<string, TerminalInstance>();
   private callbacks = new Map<string, TerminalCallbacks>();
   private seenMarkers = new Map<string, Set<string>>();
+  // Guards against race: keyboard dispose() calls kill → PTY exit fires → onPtyExit callback
+  // When disposing is set, onPtyExit callback should NOT trigger closePane
+  private disposing = new Set<string>();
 
   /**
    * Get or create a terminal for the given ID.
@@ -257,6 +260,14 @@ class TerminalManager {
         const onExit = new Channel<number>();
         onExit.onmessage = (exitCode: number) => {
           console.log(`[TerminalManager] PTY ${id} exited with code ${exitCode}`);
+
+          // Check if this exit was triggered by dispose() (keyboard-initiated close)
+          // In that case, skip onPtyExit callback - dispose() already handled cleanup
+          if (this.disposing.has(id)) {
+            console.debug(`[TerminalManager] Skipping onPtyExit for ${id} - disposal in progress`);
+            return;
+          }
+
           // Mark as naturally exited to prevent double callback in dispose()
           const inst = this.instances.get(id);
           if (inst) {
@@ -365,6 +376,9 @@ class TerminalManager {
     const instance = this.instances.get(id);
     if (!instance) return;
 
+    // Mark as disposing BEFORE kill - prevents onExit callback from triggering closePane
+    this.disposing.add(id);
+
     if (instance.ptyPid !== null) {
       if (instance.exitedNaturally) {
         // PTY already exited - just clean up Rust session map
@@ -374,13 +388,11 @@ class TerminalManager {
           console.warn(`[TerminalManager] PTY dispose failed for ${id}:`, e);
         }
       } else {
-        // PTY still running - kill it and notify
+        // PTY still running - kill it (onExit callback will fire but check disposing flag)
         try {
           await invoke('plugin:pty|kill', { pid: instance.ptyPid });
-          this.callbacks.get(id)?.onPtyExit?.(0);
         } catch (e) {
           console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
-          this.callbacks.get(id)?.onPtyExit?.(-1);
         }
       }
     }
@@ -398,6 +410,7 @@ class TerminalManager {
     this.instances.delete(id);
     this.callbacks.delete(id);
     this.seenMarkers.delete(id);
+    this.disposing.delete(id);
   }
 
   /**

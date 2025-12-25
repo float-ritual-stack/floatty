@@ -12,6 +12,10 @@ import { createSignal, For, Show, createMemo, onMount, onCleanup } from 'solid-j
 import { layoutStore } from '../hooks/useLayoutStore';
 import type { LayoutNode, PaneSplit } from '../lib/layoutTypes';
 
+// Module-level drag state - prevents non-dragging handles from repositioning during drag
+// This fixes the bug where dragging one handle causes sibling handles to jump around
+let activeDragSplitId: string | null = null;
+
 interface ResizeOverlayProps {
   tabId: string;
   isVisible: boolean;
@@ -53,6 +57,12 @@ function ResizeHitArea(props: {
 
   // Find the visual resize handle and match its position
   const updatePosition = () => {
+    // Skip position updates if ANOTHER handle is being dragged
+    // This prevents sibling handles from jumping around during resize
+    if (activeDragSplitId !== null && activeDragSplitId !== props.splitId) {
+      return;
+    }
+
     const handle = document.querySelector(
       `.pane-layout-split[data-split-id="${props.splitId}"] > .resize-handle`
     ) as HTMLElement | null;
@@ -67,11 +77,22 @@ function ResizeHitArea(props: {
     // Initial position update
     updatePosition();
 
-    // Observe container for resize events
+    // Observe BOTH the global container AND the specific split container
+    // When sibling splits resize, the split container changes - we need to reposition
     const observer = new ResizeObserver(updatePosition);
-    const container = document.querySelector('.terminal-container');
-    if (container) {
-      observer.observe(container);
+
+    // Observe the specific split container (for when siblings resize)
+    const splitContainer = document.querySelector(
+      `.pane-layout-split[data-split-id="${props.splitId}"]`
+    );
+    if (splitContainer) {
+      observer.observe(splitContainer);
+    }
+
+    // Also observe the global container (for window resize, sidebar toggle, etc.)
+    const globalContainer = document.querySelector('.terminal-container');
+    if (globalContainer) {
+      observer.observe(globalContainer);
     }
 
     // Clean up observer on unmount
@@ -106,19 +127,45 @@ function ResizeHitArea(props: {
   const onWindowPointerUp = () => {
     if (!isDragging) return;
     isDragging = false;
+    activeDragSplitId = null;  // Clear module-level drag state
     setIsDraggingVisual(false);
     document.body.classList.remove('resizing');
     window.removeEventListener('pointermove', onWindowPointerMove);
     window.removeEventListener('pointerup', onWindowPointerUp);
-    // Update overlay position to match new handle position
-    updatePosition();
+
+    // Update ALL overlay positions after drag ends
+    // Use requestAnimationFrame to let layout settle first
+    requestAnimationFrame(() => {
+      // Dispatch a single event that all overlays listen to
+      window.dispatchEvent(new CustomEvent('resize-overlay-update'));
+    });
   };
+
+  // Listen for resize-overlay-update to sync all handles after any drag ends
+  onMount(() => {
+    const handleOverlayUpdate = () => {
+      // Only update if we're not currently dragging
+      if (!isDragging) {
+        const handle = document.querySelector(
+          `.pane-layout-split[data-split-id="${props.splitId}"] > .resize-handle`
+        ) as HTMLElement | null;
+        if (handle) {
+          setRect(handle.getBoundingClientRect());
+        }
+      }
+    };
+    window.addEventListener('resize-overlay-update', handleOverlayUpdate);
+    onCleanup(() => {
+      window.removeEventListener('resize-overlay-update', handleOverlayUpdate);
+    });
+  });
 
   const handlePointerDown = (e: PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
     isDragging = true;
+    activeDragSplitId = props.splitId;  // Set module-level drag state
     setIsDraggingVisual(true);
     document.body.classList.add('resizing');
     updatePosition();

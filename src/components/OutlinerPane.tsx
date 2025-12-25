@@ -85,8 +85,12 @@ export function OutlinerPane(props: OutlinerPaneProps) {
   createEffect(() => {
     if (props.isVisible) {
       // Small delay to ensure DOM has updated after layout change
-      requestAnimationFrame(() => {
+      const frameId = requestAnimationFrame(() => {
         updatePosition();
+      });
+      // Cancel animation frame if effect re-runs or component unmounts
+      onCleanup(() => {
+        cancelAnimationFrame(frameId);
       });
     }
   });
