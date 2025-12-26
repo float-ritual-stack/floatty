@@ -42,7 +42,7 @@ export type KeyAction =
   | 'zoomOutBlock'   // Outliner: return to parent/full view (Escape at block level)
   | 'collapseBlock'  // Outliner: toggle block collapse (Cmd+. at block level)
   | 'deleteBlock'    // Outliner: delete block and subtree (Cmd+Backspace at block level)
-  | 'nextTheme';     // Cycle through available themes (Cmd+K)
+  | 'nextTheme';     // Cycle through available themes (Cmd+;)
 
 // Modifier representation
 export interface Modifiers {
