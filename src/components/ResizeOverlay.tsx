@@ -8,7 +8,8 @@
  * These overlay the visual resize handles and forward events to the layout store.
  */
 
-import { createSignal, For, Show, createMemo, onMount, onCleanup } from 'solid-js';
+import { createSignal, Show, createMemo, onMount, onCleanup } from 'solid-js';
+import { Key } from '@solid-primitives/keyed';
 import { layoutStore } from '../hooks/useLayoutStore';
 import type { LayoutNode, PaneSplit } from '../lib/layoutTypes';
 
@@ -85,18 +86,35 @@ function ResizeHitArea(props: {
 
   // Update position on mount, observe container resize, and listen for overlay updates
   onMount(() => {
-    updatePosition();
-
-    // Observe BOTH the global container AND the specific split container
-    // When sibling splits resize, the split container changes - we need to reposition
     const observer = new ResizeObserver(updatePosition);
+    let retryCount = 0;
+    const maxRetries = 10;
+    const retryDelay = 50; // ms
 
-    const splitContainer = document.querySelector(
-      `.pane-layout-split[data-split-id="${props.splitId}"]`
-    );
-    if (splitContainer) {
-      observer.observe(splitContainer);
-    }
+    // Try to find and observe the split container, with retries for timing issues
+    const trySetupObserver = () => {
+      const splitContainer = document.querySelector(
+        `.pane-layout-split[data-split-id="${props.splitId}"]`
+      );
+
+      if (splitContainer) {
+        observer.observe(splitContainer);
+        updatePosition();
+        return true;
+      }
+
+      // Retry if DOM not ready yet (happens after layout changes)
+      if (retryCount < maxRetries) {
+        retryCount++;
+        setTimeout(trySetupObserver, retryDelay);
+        return false;
+      }
+
+      console.warn(`[ResizeOverlay] Could not find split container for ${props.splitId} after ${maxRetries} retries`);
+      return false;
+    };
+
+    trySetupObserver();
 
     const globalContainer = document.querySelector('.terminal-container');
     if (globalContainer) {
@@ -233,15 +251,16 @@ export function ResizeOverlay(props: ResizeOverlayProps) {
 
   return (
     <Show when={props.isVisible}>
-      <For each={splits()}>
+      {/* Use <Key> for stable identity - <For> would unmount/remount on layout changes */}
+      <Key each={splits()} by={(split) => split.splitId}>
         {(split) => (
           <ResizeHitArea
             tabId={props.tabId}
-            splitId={split.splitId}
-            direction={split.direction}
+            splitId={split().splitId}
+            direction={split().direction}
           />
         )}
-      </For>
+      </Key>
     </Show>
   );
 }
