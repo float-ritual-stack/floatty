@@ -12,6 +12,13 @@ import { createSignal, For, Show, createMemo, onMount, onCleanup } from 'solid-j
 import { layoutStore } from '../hooks/useLayoutStore';
 import type { LayoutNode, PaneSplit } from '../lib/layoutTypes';
 
+// Layout constants
+const Z_INDEX_RESIZE_OVERLAY = 150;  // Above terminals (typically z-index: 100)
+const HIT_AREA_PADDING = 4;          // Pixels to expand hit area beyond visual handle
+const HANDLE_CENTER_OFFSET = 2;      // Offset to center cursor on handle during drag
+const MIN_SPLIT_RATIO = 0.1;         // Minimum pane size (10%)
+const MAX_SPLIT_RATIO = 0.9;         // Maximum pane size (90%)
+
 // Module-level drag state - prevents non-dragging handles from repositioning during drag
 // This fixes the bug where dragging one handle causes sibling handles to jump around
 let activeDragSplitId: string | null = null;
@@ -144,9 +151,8 @@ function ResizeHitArea(props: {
     const parentStart = props.direction === 'horizontal' ? parentRect.left : parentRect.top;
     const parentSize = props.direction === 'horizontal' ? parentRect.width : parentRect.height;
 
-    const handleOffset = 2;
-    const rawRatio = (currentPos - handleOffset - parentStart) / parentSize;
-    const clampedRatio = Math.max(0.1, Math.min(0.9, rawRatio));
+    const rawRatio = (currentPos - HANDLE_CENTER_OFFSET - parentStart) / parentSize;
+    const clampedRatio = Math.max(MIN_SPLIT_RATIO, Math.min(MAX_SPLIT_RATIO, rawRatio));
 
     layoutStore.setRatio(props.tabId, props.splitId, clampedRatio);
   };
@@ -201,12 +207,16 @@ function ResizeHitArea(props: {
         class={`resize-overlay-handle ${isDraggingVisual() ? 'dragging' : ''}`}
         style={{
           position: 'fixed',
-          left: `${rect()!.left - 4}px`,  // Expand hit area
-          top: `${rect()!.top - 4}px`,
-          width: props.direction === 'horizontal' ? '12px' : `${rect()!.width + 8}px`,
-          height: props.direction === 'horizontal' ? `${rect()!.height + 8}px` : '12px',
+          left: `${rect()!.left - HIT_AREA_PADDING}px`,
+          top: `${rect()!.top - HIT_AREA_PADDING}px`,
+          width: props.direction === 'horizontal'
+            ? `${HIT_AREA_PADDING * 2 + 4}px`  // 4px visual handle + padding on each side
+            : `${rect()!.width + HIT_AREA_PADDING * 2}px`,
+          height: props.direction === 'horizontal'
+            ? `${rect()!.height + HIT_AREA_PADDING * 2}px`
+            : `${HIT_AREA_PADDING * 2 + 4}px`,
           cursor: props.direction === 'horizontal' ? 'col-resize' : 'row-resize',
-          'z-index': 150,  // Above terminals (z-index: 100) but not excessive
+          'z-index': Z_INDEX_RESIZE_OVERLAY,
         }}
         onPointerDown={handlePointerDown}
       />

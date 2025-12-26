@@ -88,7 +88,7 @@ function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
             <div
               class="pane-layout-child"
               style={{
-                "flex-basis": `${(node() as PaneSplit).ratio * 100}%`,
+                "flex-basis": `${split.ratio * 100}%`,
                 "flex-grow": 0,
                 "flex-shrink": 0
               }}
@@ -110,7 +110,7 @@ function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
             <div
               class="pane-layout-child"
               style={{
-                "flex-basis": `${(1 - (node() as PaneSplit).ratio) * 100}%`,
+                "flex-basis": `${(1 - split.ratio) * 100}%`,
                 "flex-grow": 0,
                 "flex-shrink": 0
               }}

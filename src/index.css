@@ -25,6 +25,7 @@ html, body, #root {
   width: 100%;
 }
 
+/* Override xterm.js library default (hidden scrollbar) - !important needed for library override */
 .xterm-viewport {
   overflow-y: auto !important;
 }
@@ -549,16 +550,18 @@ html, body, #root {
 
 /* Resize overlay hit areas (above terminals) */
 .resize-overlay-handle {
-  /* Slight visual feedback on hover */
+  /* Slight visual feedback on hover - transparent by default */
+  background: transparent;
   transition: background 0.1s ease;
 }
 
-.resize-overlay-handle:hover {
-  background: rgba(124, 58, 237, 0.3) !important;
+/* Doubled selector for higher specificity (avoids !important) */
+.resize-overlay-handle.resize-overlay-handle:hover {
+  background: rgba(124, 58, 237, 0.3);
 }
 
-.resize-overlay-handle.dragging {
-  background: rgba(124, 58, 237, 0.5) !important;
+.resize-overlay-handle.resize-overlay-handle.dragging {
+  background: rgba(124, 58, 237, 0.5);
 }
 
 /* During resize, disable pointer events on terminals */
