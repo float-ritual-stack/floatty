@@ -432,9 +432,15 @@ function createBlockStore() {
       blocksMap.forEach((_value, key) => {
         blocksMap.delete(key);
       });
+
+      // Create initial empty block immediately (fixes SolidJS effect batching issue)
+      const newId = crypto.randomUUID();
+      const newBlock = createBlock(newId, '');
+      blocksMap.set(newId, blockToPlainObject(newBlock));
+      rootIds.push([newId]);
     });
 
-    console.log('[BlockStore] Workspace cleared, sync will persist to Rust.');
+    console.log('[BlockStore] Workspace cleared with fresh block.');
   };
 
   const indentBlock = (id: string) => {

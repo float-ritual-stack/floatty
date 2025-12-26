@@ -10,6 +10,7 @@ import { ContextSidebar } from './ContextSidebar';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
+import { themeStore } from '../hooks/useThemeStore';
 import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
 import type { FocusDirection, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
@@ -27,7 +28,7 @@ function StatusBar() {
     { label: 'Split', keys: '⌘D' },
     { label: 'Focus', keys: '⌘⌥↑↓←→' },
     { label: 'Outliner', keys: '⌘O' },
-    { label: 'Fold', keys: '⌘.' },
+    { label: 'Theme', keys: '⌘;' },
     { label: 'Zoom', keys: '⌘+/-' },
   ];
 
@@ -333,6 +334,10 @@ export function Terminal() {
           invoke('toggle_test_panel').catch((err) => {
             console.error('[Terminal] Failed to toggle panel:', err);
           });
+          break;
+        }
+        case 'nextTheme': {
+          themeStore.nextTheme();
           break;
         }
       }

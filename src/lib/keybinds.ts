@@ -41,7 +41,8 @@ export type KeyAction =
   | 'zoomInBlock'    // Outliner: focus on block subtree (Cmd+Enter at block level)
   | 'zoomOutBlock'   // Outliner: return to parent/full view (Escape at block level)
   | 'collapseBlock'  // Outliner: toggle block collapse (Cmd+. at block level)
-  | 'deleteBlock';   // Outliner: delete block and subtree (Cmd+Backspace at block level)
+  | 'deleteBlock'    // Outliner: delete block and subtree (Cmd+Backspace at block level)
+  | 'nextTheme';     // Cycle through available themes (Cmd+;)
 
 // Modifier representation
 export interface Modifiers {
@@ -140,6 +141,9 @@ export const defaultKeybinds: Keybind[] = [
   { key: 'Escape', modifiers: {}, action: 'zoomOutBlock' },
   { key: '.', modifiers: { mod: true }, action: 'collapseBlock' },
   { key: 'Backspace', modifiers: { mod: true }, action: 'deleteBlock' },
+
+  // Theme (using ; to avoid conflict with command palette Cmd+K)
+  { key: ';', modifiers: { mod: true }, action: 'nextTheme' },
 ];
 
 // Find action for a keyboard event
