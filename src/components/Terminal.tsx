@@ -11,7 +11,8 @@ import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
-import type { FocusDirection, LayoutNode, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
+import type { FocusDirection, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
+import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
 
 // Zoom state
@@ -107,30 +108,19 @@ export function Terminal() {
     }
   };
 
-  // Helper to collect all pane IDs from layout
-  const collectIds = (node: LayoutNode): string[] => {
-    if (node.type === 'leaf') return [node.id];
-    return [...collectIds(node.children[0]), ...collectIds(node.children[1])];
-  };
-
-  // Helper to find a leaf by pane ID
-  const findLeaf = (node: LayoutNode, paneId: string): PaneLeaf | null => {
-    if (node.type === 'leaf') return node.id === paneId ? node : null;
-    return findLeaf(node.children[0], paneId) ?? findLeaf(node.children[1], paneId);
-  };
-
-  // Derived getters using layout store
+  // Derived getters using layout store (uses shared helpers from layoutTypes.ts)
   const getLayout = (tabId: string) => layoutStore.layouts[tabId]?.root ?? null;
   const getActivePaneId = (tabId: string) => layoutStore.layouts[tabId]?.activePaneId ?? null;
   const getAllPaneIds = (tabId: string) => {
     const layout = layoutStore.layouts[tabId];
     if (!layout) return [];
-    return collectIds(layout.root);
+    return collectPaneIds(layout.root);
   };
-  const getPaneLeaf = (tabId: string, paneId: string) => {
+  const getPaneLeaf = (tabId: string, paneId: string): PaneLeaf | null => {
     const layout = layoutStore.layouts[tabId];
     if (!layout) return null;
-    return findLeaf(layout.root, paneId);
+    const node = findNode(layout.root, paneId);
+    return node?.type === 'leaf' ? node : null;
   };
 
   // Helper to split pane and handle post-split fitting/focusing
