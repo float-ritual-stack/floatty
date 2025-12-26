@@ -136,7 +136,10 @@ export function Terminal() {
   // Helper to split pane and handle post-split fitting/focusing
   const handleSplit = (direction: 'horizontal' | 'vertical', leafType?: 'terminal' | 'outliner') => {
     const activeId = tabStore.activeTabId();
-    if (!activeId) return;
+    if (!activeId) {
+      console.warn('[Terminal] Split failed: no active tab');
+      return;
+    }
 
     const newPaneId = layoutStore.splitPane(activeId, direction, leafType);
     if (newPaneId) {
@@ -149,6 +152,9 @@ export function Terminal() {
           paneRefs.get(newPaneId)?.focus();
         }, 100);
       });
+    } else {
+      // Split failed - log for debugging (user sees no visual change, which is feedback enough)
+      console.warn('[Terminal] Split operation failed for tab:', activeId);
     }
   };
 

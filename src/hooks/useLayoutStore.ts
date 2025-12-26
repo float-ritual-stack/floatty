@@ -28,6 +28,7 @@ import {
   collectPaneIds,
   clampRatio,
 } from '../lib/layoutTypes';
+import { paneStore } from './usePaneStore';
 
 interface LayoutState {
   // Record of tabId -> TabLayout (using Record instead of Map for SolidJS reactivity)
@@ -54,6 +55,9 @@ function createLayoutStore() {
     setState('layouts', produce((layouts) => {
       delete layouts[tabId];
     }));
+
+    // Clean up all pane view state (prevents memory leak)
+    paneStore.removePanes(paneIds);
 
     return paneIds;
   };
@@ -158,6 +162,9 @@ function createLayoutStore() {
       setState('layouts', tabId, 'root', newRoot);
       setState('layouts', tabId, 'activePaneId', newActivePaneId);
     });
+
+    // Clean up pane view state (prevents memory leak)
+    paneStore.removePane(paneId);
 
     return newActivePaneId;
   };

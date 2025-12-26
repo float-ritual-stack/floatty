@@ -1,11 +1,11 @@
 /**
- * Terminal Manager - owns xterm lifecycle OUTSIDE React
+ * Terminal Manager - owns xterm lifecycle OUTSIDE SolidJS
  *
- * This avoids useEffect pitfalls by:
- * 1. Terminals live in a plain Map, not React state
+ * This avoids reactive pitfalls by:
+ * 1. Terminals live in a plain Map, not reactive state
  * 2. Initialization happens via ref callback (sync, predictable)
  * 3. Cleanup is explicit via dispose(), not effect cleanup
- * 4. React just renders containers; manager owns the terminals
+ * 4. SolidJS just renders containers; manager owns the terminals
  */
 
 import { Terminal as XTerm } from '@xterm/xterm';
@@ -109,12 +109,15 @@ class TerminalManager {
 
         instance.fitAddon.fit();
         // Notify PTY of new size
-        if (instance.ptyPid !== null) {
+        if (instance.ptyPid !== null && instance.ptyPid > 0) {
           invoke('plugin:pty|resize', {
             pid: instance.ptyPid,
             cols: instance.term.cols,
             rows: instance.term.rows,
-          }).catch(console.error);
+          }).catch((e) => {
+            console.error(`[TerminalManager] Resize failed for ${id}:`, e);
+            // PTY may have died - don't write error to terminal here, it's noisy during normal exit
+          });
         }
       } else {
         console.log(`[TerminalManager] Terminal ${id} already attached to same container`);
@@ -220,8 +223,6 @@ class TerminalManager {
         const os = await platform();
         const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
         const args = os === 'windows' ? [] : ['-l'];
-        // Use provided cwd, or let the shell determine its default (usually $HOME)
-        const defaultCwd = cwd || undefined;
 
         // Text buffer for ctx:: detection
         let textBuffer = '';
@@ -281,7 +282,7 @@ class TerminalManager {
           args,
           cols: term.cols,
           rows: term.rows,
-          cwd: defaultCwd,
+          cwd,
           env: { TERM: 'xterm-256color', COLORTERM: 'truecolor' },
           onData,
           onExit,
@@ -291,26 +292,53 @@ class TerminalManager {
         this.callbacks.get(id)?.onPtySpawn?.(pid);
 
         term.onData((data: string) => {
-          invoke('plugin:pty|write', { pid, data }).catch(console.error);
+          invoke('plugin:pty|write', { pid, data }).catch((e) => {
+            console.error(`[TerminalManager] PTY write failed for ${id}:`, e);
+            // PTY may have died - notify user
+            const inst = this.instances.get(id);
+            if (inst && !inst.exitedNaturally) {
+              inst.term.write('\r\n\x1b[31m[PTY Error: Write failed. Shell may have exited.]\x1b[0m\r\n');
+              // Trigger exit handling
+              this.callbacks.get(id)?.onPtyExit?.(-1);
+            }
+          });
         });
 
         term.onResize(({ cols, rows }) => {
-          invoke('plugin:pty|resize', { pid, cols, rows }).catch(console.error);
+          invoke('plugin:pty|resize', { pid, cols, rows }).catch((e) => {
+            // Resize failures are common during exit - only log, don't notify user
+            console.warn(`[TerminalManager] PTY resize failed for ${id}:`, e);
+          });
         });
       } else {
-        console.warn('Tauri environment not found. PTY not spawned.');
-        term.write('\r\n[Warning: Running in browser mode. PTY not available.]\r\n');
-        // Mock PTY for testing UI
-        instance.ptyPid = 12345;
-        this.callbacks.get(id)?.onPtySpawn?.(12345);
-        term.onData((data) => {
-           term.write(data); // Echo back
-        });
+        // Non-Tauri environment (browser dev mode)
+        const isDev = import.meta.env?.DEV ?? false;
+        if (isDev) {
+          console.warn('[TerminalManager] Browser dev mode: PTY not available, using echo mock.');
+          term.write('\r\n\x1b[33m[Dev Mode: PTY unavailable. Echo mode active.]\x1b[0m\r\n');
+          instance.ptyPid = -999; // Sentinel value for mock mode
+          this.callbacks.get(id)?.onPtySpawn?.(-999);
+          term.onData((data) => {
+            term.write(data); // Echo back for UI testing
+          });
+        } else {
+          // Production without Tauri - this is a fatal misconfiguration
+          const errorMsg = 'Tauri environment not detected. This app requires the desktop runtime.';
+          console.error(`[TerminalManager] FATAL: ${errorMsg}`);
+          term.write(`\r\n\x1b[31m[Error: ${errorMsg}]\x1b[0m\r\n`);
+          term.write('\r\n\x1b[31m[Press Cmd+W to close this pane]\x1b[0m\r\n');
+          instance.ptyPid = -1; // Sentinel for spawn failure
+          // Don't call onPtySpawn - this terminal is broken
+        }
       }
 
     } catch (e) {
       console.error(`[TerminalManager] PTY spawn failed for ${id}:`, e);
-      term.write(`\r\n[PTY Error: ${e}]\r\n`);
+      term.write(`\r\n\x1b[31m[PTY Spawn Error: ${e}]\x1b[0m\r\n`);
+      term.write('\r\n\x1b[33m[Press Cmd+W to close this pane, or wait for auto-recovery...]\x1b[0m\r\n');
+      instance.ptyPid = -1; // Sentinel for spawn failure
+      // Notify parent that spawn failed - they can decide to close or retry
+      this.callbacks.get(id)?.onPtyExit?.(-1);
     }
   }
 
@@ -335,12 +363,15 @@ class TerminalManager {
     const instance = this.instances.get(id);
     if (instance) {
       instance.fitAddon.fit();
-      if (instance.ptyPid !== null) {
+      if (instance.ptyPid !== null && instance.ptyPid > 0) {
         invoke('plugin:pty|resize', {
           pid: instance.ptyPid,
           cols: instance.term.cols,
           rows: instance.term.rows,
-        }).catch(console.error);
+        }).catch((e) => {
+          // Resize failures are expected during exit - just log
+          console.warn(`[TerminalManager] Fit resize failed for ${id}:`, e);
+        });
       }
     }
   }

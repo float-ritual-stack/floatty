@@ -24,25 +24,17 @@ interface ResizeOverlayProps {
 interface SplitInfo {
   splitId: string;
   direction: 'horizontal' | 'vertical';
-  // Position is determined by finding the resize handle in DOM
-  handleSelector: string;
 }
 
 // Collect all splits from a layout tree
-function collectSplits(node: LayoutNode, path: string[] = []): SplitInfo[] {
+function collectSplits(node: LayoutNode): SplitInfo[] {
   if (node.type === 'leaf') return [];
 
   const split = node as PaneSplit;
-  const splits: SplitInfo[] = [{
-    splitId: split.id,
-    direction: split.direction,
-    handleSelector: `[data-split-id="${split.id}"] > .resize-handle`,
-  }];
-
   return [
-    ...splits,
-    ...collectSplits(split.children[0], [...path, '0']),
-    ...collectSplits(split.children[1], [...path, '1']),
+    { splitId: split.id, direction: split.direction },
+    ...collectSplits(split.children[0]),
+    ...collectSplits(split.children[1]),
   ];
 }
 
@@ -55,6 +47,25 @@ function ResizeHitArea(props: {
   const [isDraggingVisual, setIsDraggingVisual] = createSignal(false);
   const [rect, setRect] = createSignal<DOMRect | null>(null);
 
+  // Track active window listeners for cleanup on unmount
+  let activePointerMoveListener: ((e: PointerEvent) => void) | null = null;
+  let activePointerUpListener: (() => void) | null = null;
+
+  // Query the visual handle element for this split
+  const getHandleElement = (): HTMLElement | null => {
+    return document.querySelector(
+      `.pane-layout-split[data-split-id="${props.splitId}"] > .resize-handle`
+    );
+  };
+
+  // Sync overlay position to match the visual handle
+  const syncPosition = () => {
+    const handle = getHandleElement();
+    if (handle) {
+      setRect(handle.getBoundingClientRect());
+    }
+  };
+
   // Find the visual resize handle and match its position
   const updatePosition = () => {
     // Skip position updates if ANOTHER handle is being dragged
@@ -62,26 +73,17 @@ function ResizeHitArea(props: {
     if (activeDragSplitId !== null && activeDragSplitId !== props.splitId) {
       return;
     }
-
-    const handle = document.querySelector(
-      `.pane-layout-split[data-split-id="${props.splitId}"] > .resize-handle`
-    ) as HTMLElement | null;
-
-    if (handle) {
-      setRect(handle.getBoundingClientRect());
-    }
+    syncPosition();
   };
 
-  // Update position on mount and observe container resize
+  // Update position on mount, observe container resize, and listen for overlay updates
   onMount(() => {
-    // Initial position update
     updatePosition();
 
     // Observe BOTH the global container AND the specific split container
     // When sibling splits resize, the split container changes - we need to reposition
     const observer = new ResizeObserver(updatePosition);
 
-    // Observe the specific split container (for when siblings resize)
     const splitContainer = document.querySelector(
       `.pane-layout-split[data-split-id="${props.splitId}"]`
     );
@@ -89,15 +91,40 @@ function ResizeHitArea(props: {
       observer.observe(splitContainer);
     }
 
-    // Also observe the global container (for window resize, sidebar toggle, etc.)
     const globalContainer = document.querySelector('.terminal-container');
     if (globalContainer) {
       observer.observe(globalContainer);
     }
 
-    // Clean up observer on unmount
+    // Listen for resize-overlay-update to sync all handles after any drag ends
+    // Use module-level activeDragSplitId to avoid stale closure issues with local isDragging
+    const handleOverlayUpdate = () => {
+      // Only sync if THIS handle is not currently being dragged
+      if (activeDragSplitId !== props.splitId) {
+        syncPosition();
+      }
+    };
+    window.addEventListener('resize-overlay-update', handleOverlayUpdate);
+
     onCleanup(() => {
       observer.disconnect();
+      window.removeEventListener('resize-overlay-update', handleOverlayUpdate);
+
+      // CRITICAL: Clean up window listeners if unmount happens mid-drag
+      // This prevents memory leak where orphaned listeners reference stale component state
+      if (activePointerMoveListener) {
+        window.removeEventListener('pointermove', activePointerMoveListener);
+        activePointerMoveListener = null;
+      }
+      if (activePointerUpListener) {
+        window.removeEventListener('pointerup', activePointerUpListener);
+        activePointerUpListener = null;
+      }
+      if (isDragging) {
+        isDragging = false;
+        activeDragSplitId = null;
+        document.body.classList.remove('resizing');
+      }
     });
   });
 
@@ -130,8 +157,16 @@ function ResizeHitArea(props: {
     activeDragSplitId = null;  // Clear module-level drag state
     setIsDraggingVisual(false);
     document.body.classList.remove('resizing');
-    window.removeEventListener('pointermove', onWindowPointerMove);
-    window.removeEventListener('pointerup', onWindowPointerUp);
+
+    // Remove and clear tracked listeners
+    if (activePointerMoveListener) {
+      window.removeEventListener('pointermove', activePointerMoveListener);
+      activePointerMoveListener = null;
+    }
+    if (activePointerUpListener) {
+      window.removeEventListener('pointerup', activePointerUpListener);
+      activePointerUpListener = null;
+    }
 
     // Update ALL overlay positions after drag ends
     // Use requestAnimationFrame to let layout settle first
@@ -140,25 +175,6 @@ function ResizeHitArea(props: {
       window.dispatchEvent(new CustomEvent('resize-overlay-update'));
     });
   };
-
-  // Listen for resize-overlay-update to sync all handles after any drag ends
-  onMount(() => {
-    const handleOverlayUpdate = () => {
-      // Only update if we're not currently dragging
-      if (!isDragging) {
-        const handle = document.querySelector(
-          `.pane-layout-split[data-split-id="${props.splitId}"] > .resize-handle`
-        ) as HTMLElement | null;
-        if (handle) {
-          setRect(handle.getBoundingClientRect());
-        }
-      }
-    };
-    window.addEventListener('resize-overlay-update', handleOverlayUpdate);
-    onCleanup(() => {
-      window.removeEventListener('resize-overlay-update', handleOverlayUpdate);
-    });
-  });
 
   const handlePointerDown = (e: PointerEvent) => {
     e.preventDefault();
@@ -169,6 +185,10 @@ function ResizeHitArea(props: {
     setIsDraggingVisual(true);
     document.body.classList.add('resizing');
     updatePosition();
+
+    // Store references for cleanup (memory leak prevention)
+    activePointerMoveListener = onWindowPointerMove;
+    activePointerUpListener = onWindowPointerUp;
 
     // Add window listeners for move/up
     window.addEventListener('pointermove', onWindowPointerMove);
