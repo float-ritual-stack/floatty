@@ -13,7 +13,6 @@
  */
 
 import { Show, createMemo } from 'solid-js';
-import { ResizeHandle } from './ResizeHandle';
 import { type LayoutNode, type PaneSplit } from '../lib/layoutTypes';
 import { layoutStore } from '../hooks/useLayoutStore';
 
@@ -44,8 +43,6 @@ function findNodeById(root: LayoutNode, id: string): LayoutNode | null {
 }
 
 function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
-  let containerRef: HTMLDivElement | undefined;
-
   // REACTIVE: Look up the current node from the store on every access
   // This creates a fine-grained subscription to the exact node we need
   const node = createMemo(() => {
@@ -53,13 +50,6 @@ function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
     if (!layout) return null;
     return findNodeById(layout.root, props.nodeId);
   });
-
-  const handleResize = (ratio: number) => {
-    const n = node();
-    if (n && n.type === 'split') {
-      layoutStore.setRatio(props.tabId, n.id, ratio);
-    }
-  };
 
   return (
     <Show when={node()}>
@@ -81,7 +71,6 @@ function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
 
         return (
           <div
-            ref={containerRef}
             class={`pane-layout-split pane-layout-${split.direction}`}
             data-split-id={split.id}
           >
@@ -102,10 +91,9 @@ function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
               />
             </div>
 
-            <ResizeHandle
-              direction={split.direction}
-              onResize={handleResize}
-              parentRef={() => containerRef}
+            {/* Spacer div - ResizeOverlay renders visible handle above this */}
+            <div
+              class={`resize-spacer resize-spacer-${split.direction}`}
             />
 
             <div

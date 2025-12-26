@@ -499,48 +499,34 @@ html, body, #root {
 }
 
 /* ================================================
-   Resize Handle
+   Resize System
    ================================================ */
 
-.resize-handle {
-  background: #2a2a4a;
+/* Invisible spacer in flex layout - creates the gap between panes */
+.resize-spacer {
   flex-shrink: 0;
-  transition: background 0.15s ease;
-  /* Note: z-index removed - ResizeOverlay handles pointer events above terminals */
 }
 
-.resize-handle-horizontal {
+.resize-spacer-horizontal {
   width: 4px;
-  cursor: col-resize;
 }
 
-.resize-handle-vertical {
+.resize-spacer-vertical {
   height: 4px;
-  cursor: row-resize;
 }
 
-.resize-handle:hover {
-  background: #7c3aed;
-}
-
-.resize-handle.dragging {
-  background: #7c3aed;
-}
-
-/* Resize overlay hit areas (above terminals) */
+/* Visible resize handles rendered by ResizeOverlay (above terminals) */
 .resize-overlay-handle {
-  /* Slight visual feedback on hover - transparent by default */
-  background: transparent;
-  transition: background 0.1s ease;
+  background: #2a2a4a;
+  transition: background 0.15s ease;
 }
 
-/* Doubled selector for higher specificity (avoids !important) */
 .resize-overlay-handle.resize-overlay-handle:hover {
-  background: rgba(124, 58, 237, 0.3);
+  background: #7c3aed;
 }
 
 .resize-overlay-handle.resize-overlay-handle.dragging {
-  background: rgba(124, 58, 237, 0.5);
+  background: #7c3aed;
 }
 
 /* During resize, disable pointer events on terminals */

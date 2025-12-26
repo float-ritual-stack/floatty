@@ -33,11 +33,14 @@ import { paneStore } from './usePaneStore';
 interface LayoutState {
   // Record of tabId -> TabLayout (using Record instead of Map for SolidJS reactivity)
   layouts: Record<string, TabLayout>;
+  // Currently dragging split handle (null when not dragging)
+  draggingSplitId: string | null;
 }
 
 function createLayoutStore() {
   const [state, setState] = createStore<LayoutState>({
     layouts: {},
+    draggingSplitId: null,
   });
 
   const initLayout = (tabId: string): string => {
@@ -240,9 +243,14 @@ function createLayoutStore() {
     return node?.type === 'leaf' ? node : null;
   };
 
+  const setDraggingSplitId = (splitId: string | null) => {
+    setState('draggingSplitId', splitId);
+  };
+
   return {
-    // State (reactive getter preserves store reactivity)
+    // State (reactive getters preserve store reactivity)
     get layouts() { return state.layouts; },
+    get draggingSplitId() { return state.draggingSplitId; },
     // Actions
     initLayout,
     removeLayout,
@@ -251,6 +259,7 @@ function createLayoutStore() {
     togglePaneType,
     setActivePaneId,
     setRatio,
+    setDraggingSplitId,
     focusDirection,
     // Getters
     getActivePaneId,
