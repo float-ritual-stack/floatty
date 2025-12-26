@@ -509,10 +509,12 @@ html, body, #root {
 
 .resize-spacer-horizontal {
   width: 4px;
+  height: 100%;  /* Stretch to full height in row flex */
 }
 
 .resize-spacer-vertical {
   height: 4px;
+  width: 100%;   /* Stretch to full width in column flex */
 }
 
 /* Visible resize handles rendered by ResizeOverlay (above terminals) */
@@ -521,11 +523,33 @@ html, body, #root {
   transition: background 0.15s ease;
 }
 
-.resize-overlay-handle.resize-overlay-handle:hover {
+/* Expanded hit area via pseudo-element - easier to grab than 4px */
+.resize-overlay-handle::before {
+  content: '';
+  position: absolute;
+}
+
+.resize-overlay-horizontal::before {
+  /* Expand horizontally: 4px padding on each side */
+  left: -4px;
+  right: -4px;
+  top: 0;
+  bottom: 0;
+}
+
+.resize-overlay-vertical::before {
+  /* Expand vertically: 4px padding on each side */
+  top: -4px;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+}
+
+.resize-overlay-handle:hover {
   background: #7c3aed;
 }
 
-.resize-overlay-handle.resize-overlay-handle.dragging {
+.resize-overlay-handle.dragging {
   background: #7c3aed;
 }
 
