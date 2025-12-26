@@ -1,28 +1,23 @@
 /**
- * ResizeOverlay - Renders resize handles ABOVE the terminal layer
+ * ResizeOverlay - Renders VISIBLE resize handles ABOVE the terminal layer
  *
- * The problem: PaneLayout renders resize handles in the layout layer,
- * but terminals are absolutely positioned on top, blocking pointer events.
- *
- * The fix: Render invisible resize hit areas in a layer ABOVE the terminals.
- * These overlay the visual resize handles and forward events to the layout store.
+ * Architecture: PaneLayout renders invisible spacer divs between panes.
+ * This overlay renders visible, interactive handles positioned over those spacers.
+ * This solves the problem of terminals blocking pointer events on the layout layer.
  */
 
-import { createSignal, Show, createMemo, onMount, onCleanup } from 'solid-js';
+import { createSignal, Show, createMemo, createEffect, onMount, onCleanup } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { layoutStore } from '../hooks/useLayoutStore';
 import type { LayoutNode, PaneSplit } from '../lib/layoutTypes';
 
 // Layout constants
 const Z_INDEX_RESIZE_OVERLAY = 150;  // Above terminals (typically z-index: 100)
-const HIT_AREA_PADDING = 4;          // Pixels to expand hit area beyond visual handle
 const HANDLE_CENTER_OFFSET = 2;      // Offset to center cursor on handle during drag
 const MIN_SPLIT_RATIO = 0.1;         // Minimum pane size (10%)
 const MAX_SPLIT_RATIO = 0.9;         // Maximum pane size (90%)
-
-// Module-level drag state - prevents non-dragging handles from repositioning during drag
-// This fixes the bug where dragging one handle causes sibling handles to jump around
-let activeDragSplitId: string | null = null;
+const RESIZE_THROTTLE_MS = 50;       // Throttle resize events during drag
+// Note: Hit area expansion (4px padding) is handled via CSS ::before pseudo-element
 
 interface ResizeOverlayProps {
   tabId: string;
@@ -52,6 +47,7 @@ function ResizeHitArea(props: {
   direction: 'horizontal' | 'vertical';
 }) {
   let isDragging = false;
+  let lastResizeDispatch = 0;  // Throttle resize events during drag
   const [isDraggingVisual, setIsDraggingVisual] = createSignal(false);
   const [rect, setRect] = createSignal<DOMRect | null>(null);
 
@@ -59,32 +55,28 @@ function ResizeHitArea(props: {
   let activePointerMoveListener: ((e: PointerEvent) => void) | null = null;
   let activePointerUpListener: (() => void) | null = null;
 
-  // Query the visual handle element for this split
-  const getHandleElement = (): HTMLElement | null => {
+  // Query the spacer element for this split (used for positioning)
+  const getSpacerElement = (): HTMLElement | null => {
     return document.querySelector(
-      `.pane-layout-split[data-split-id="${props.splitId}"] > .resize-handle`
+      `.pane-layout-split[data-split-id="${props.splitId}"] > .resize-spacer`
     );
   };
 
-  // Sync overlay position to match the visual handle
+  // Sync overlay position to match the spacer
   const syncPosition = () => {
-    const handle = getHandleElement();
-    if (handle) {
-      setRect(handle.getBoundingClientRect());
+    const spacer = getSpacerElement();
+    if (spacer) {
+      setRect(spacer.getBoundingClientRect());
     }
   };
 
-  // Find the visual resize handle and match its position
+  // Find the spacer and match its position
+  // All handles update during drag - siblings need to track layout changes too
   const updatePosition = () => {
-    // Skip position updates if ANOTHER handle is being dragged
-    // This prevents sibling handles from jumping around during resize
-    if (activeDragSplitId !== null && activeDragSplitId !== props.splitId) {
-      return;
-    }
     syncPosition();
   };
 
-  // Update position on mount, observe container resize, and listen for overlay updates
+  // Update position on mount and observe container resize
   onMount(() => {
     const observer = new ResizeObserver(updatePosition);
     let retryCount = 0;
@@ -121,19 +113,8 @@ function ResizeHitArea(props: {
       observer.observe(globalContainer);
     }
 
-    // Listen for resize-overlay-update to sync all handles after any drag ends
-    // Use module-level activeDragSplitId to avoid stale closure issues with local isDragging
-    const handleOverlayUpdate = () => {
-      // Only sync if THIS handle is not currently being dragged
-      if (activeDragSplitId !== props.splitId) {
-        syncPosition();
-      }
-    };
-    window.addEventListener('resize-overlay-update', handleOverlayUpdate);
-
     onCleanup(() => {
       observer.disconnect();
-      window.removeEventListener('resize-overlay-update', handleOverlayUpdate);
 
       // CRITICAL: Clean up window listeners if unmount happens mid-drag
       // This prevents memory leak where orphaned listeners reference stale component state
@@ -147,10 +128,31 @@ function ResizeHitArea(props: {
       }
       if (isDragging) {
         isDragging = false;
-        activeDragSplitId = null;
+        layoutStore.setDraggingSplitId(null);
         document.body.classList.remove('resizing');
       }
     });
+  });
+
+  // Sync all handles during drag - siblings need to track layout changes
+  createEffect(() => {
+    const dragging = layoutStore.draggingSplitId;
+    if (dragging === null) {
+      // Dragging ended - final sync
+      requestAnimationFrame(syncPosition);
+    } else if (dragging !== props.splitId) {
+      // ANOTHER handle is being dragged - poll position while drag is active
+      const pollInterval = setInterval(() => {
+        if (layoutStore.draggingSplitId === null) {
+          clearInterval(pollInterval);
+          return;
+        }
+        syncPosition();
+      }, RESIZE_THROTTLE_MS);
+
+      // Cleanup when effect reruns or component unmounts
+      onCleanup(() => clearInterval(pollInterval));
+    }
   });
 
   // Use window listeners for move/up to avoid pointer capture issues
@@ -173,12 +175,22 @@ function ResizeHitArea(props: {
     const clampedRatio = Math.max(MIN_SPLIT_RATIO, Math.min(MAX_SPLIT_RATIO, rawRatio));
 
     layoutStore.setRatio(props.tabId, props.splitId, clampedRatio);
+
+    // Sync overlay handle position to match updated spacer position
+    // Must happen AFTER setRatio updates the flex layout
+    requestAnimationFrame(syncPosition);
+
+    // Throttled resize event to keep terminals in sync during drag
+    const now = Date.now();
+    if (now - lastResizeDispatch > RESIZE_THROTTLE_MS) {
+      lastResizeDispatch = now;
+      window.dispatchEvent(new Event('resize'));
+    }
   };
 
   const onWindowPointerUp = () => {
     if (!isDragging) return;
     isDragging = false;
-    activeDragSplitId = null;  // Clear module-level drag state
     setIsDraggingVisual(false);
     document.body.classList.remove('resizing');
 
@@ -192,11 +204,12 @@ function ResizeHitArea(props: {
       activePointerUpListener = null;
     }
 
-    // Update ALL overlay positions after drag ends
-    // Use requestAnimationFrame to let layout settle first
+    // Clear drag state in store - this triggers createEffect in all handles to resync
+    layoutStore.setDraggingSplitId(null);
+
+    // Dispatch resize event so terminals/outliners refit to new dimensions
     requestAnimationFrame(() => {
-      // Dispatch a single event that all overlays listen to
-      window.dispatchEvent(new CustomEvent('resize-overlay-update'));
+      window.dispatchEvent(new Event('resize'));
     });
   };
 
@@ -205,7 +218,7 @@ function ResizeHitArea(props: {
     e.stopPropagation();
 
     isDragging = true;
-    activeDragSplitId = props.splitId;  // Set module-level drag state
+    layoutStore.setDraggingSplitId(props.splitId);  // Set drag state in store
     setIsDraggingVisual(true);
     document.body.classList.add('resizing');
     updatePosition();
@@ -222,17 +235,14 @@ function ResizeHitArea(props: {
   return (
     <Show when={rect()}>
       <div
-        class={`resize-overlay-handle ${isDraggingVisual() ? 'dragging' : ''}`}
+        class={`resize-overlay-handle resize-overlay-${props.direction} ${isDraggingVisual() ? 'dragging' : ''}`}
         style={{
           position: 'fixed',
-          left: `${rect()!.left - HIT_AREA_PADDING}px`,
-          top: `${rect()!.top - HIT_AREA_PADDING}px`,
-          width: props.direction === 'horizontal'
-            ? `${HIT_AREA_PADDING * 2 + 4}px`  // 4px visual handle + padding on each side
-            : `${rect()!.width + HIT_AREA_PADDING * 2}px`,
-          height: props.direction === 'horizontal'
-            ? `${rect()!.height + HIT_AREA_PADDING * 2}px`
-            : `${HIT_AREA_PADDING * 2 + 4}px`,
+          // Position exactly on the spacer - CSS handles hit area expansion
+          left: `${rect()!.left}px`,
+          top: `${rect()!.top}px`,
+          width: `${rect()!.width}px`,
+          height: `${rect()!.height}px`,
           cursor: props.direction === 'horizontal' ? 'col-resize' : 'row-resize',
           'z-index': Z_INDEX_RESIZE_OVERLAY,
         }}
