@@ -6,9 +6,13 @@
  * - Actual terminals are rendered in a SEPARATE layer (Terminal.tsx)
  * - Terminals position themselves absolutely over placeholders
  * - When this tree restructures on split, terminals stay mounted
+ *
+ * IMPORTANT: PaneLayoutNode reads directly from layoutStore using tabId
+ * to maintain reactivity. Passing node as prop breaks reactivity because
+ * the parent's <For each={tabs}> doesn't track layout store changes.
  */
 
-import { Show } from 'solid-js';
+import { Show, createMemo } from 'solid-js';
 import { ResizeHandle } from './ResizeHandle';
 import { type LayoutNode, type PaneSplit } from '../lib/layoutTypes';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -20,45 +24,79 @@ interface PaneLayoutProps {
   onPaneClick: (paneId: string) => void;
 }
 
-function PaneLayoutNode(props: PaneLayoutProps) {
+interface PaneLayoutNodeProps {
+  tabId: string;
+  nodeId: string;  // Node ID - we look up current state from store
+  activePaneId: string;
+  onPaneClick: (paneId: string) => void;
+}
+
+// Helper to find a node by ID in the tree
+function findNodeById(root: LayoutNode, id: string): LayoutNode | null {
+  if (root.id === id) return root;
+  if (root.type === 'split') {
+    for (const child of root.children) {
+      const found = findNodeById(child, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
   let containerRef: HTMLDivElement | undefined;
 
+  // REACTIVE: Look up the current node from the store on every access
+  // This creates a fine-grained subscription to the exact node we need
+  const node = createMemo(() => {
+    const layout = layoutStore.layouts[props.tabId];
+    if (!layout) return null;
+    return findNodeById(layout.root, props.nodeId);
+  });
+
   const handleResize = (ratio: number) => {
-    if (props.node.type === 'split') {
-      layoutStore.setRatio(props.tabId, props.node.id, ratio);
+    const n = node();
+    if (n && n.type === 'split') {
+      layoutStore.setRatio(props.tabId, n.id, ratio);
     }
   };
 
   return (
-    <Show
-      when={props.node.type === 'split' ? props.node as PaneSplit : undefined}
-      keyed
-      fallback={
-        // Leaf node - render PLACEHOLDER only (no TerminalPane here!)
-        <div
-          class={`pane-layout-leaf pane-placeholder ${props.node.id === props.activePaneId ? 'pane-active' : ''}`}
-          data-pane-id={props.node.id}
-          onClick={() => props.onPaneClick(props.node.id)}
-        />
-      }
-    >
-      {/* Split node - render children with resize handle */}
-      {(split) => {
-        const firstBasis = `${split.ratio * 100}%`;
-        const secondBasis = `${(1 - split.ratio) * 100}%`;
+    <Show when={node()}>
+      {() => {
+        const currentNode = node()!;
+
+        if (currentNode.type === 'leaf') {
+          return (
+            <div
+              class={`pane-layout-leaf pane-placeholder ${currentNode.id === props.activePaneId ? 'pane-active' : ''}`}
+              data-pane-id={currentNode.id}
+              onClick={() => props.onPaneClick(currentNode.id)}
+            />
+          );
+        }
+
+        // It's a split - use reactive getters for basis values
+        const split = currentNode as PaneSplit;
 
         return (
           <div
             ref={containerRef}
             class={`pane-layout-split pane-layout-${split.direction}`}
+            data-split-id={split.id}
           >
             <div
               class="pane-layout-child"
-              style={{ "flex-basis": firstBasis, "flex-grow": 0, "flex-shrink": 0 }}
+              style={{
+                // MUST use node() here for SolidJS reactivity - local vars don't update
+                "flex-basis": `${(node() as PaneSplit).ratio * 100}%`,
+                "flex-grow": 0,
+                "flex-shrink": 0
+              }}
             >
-              <PaneLayoutNode
+              <PaneLayoutNodeById
                 tabId={props.tabId}
-                node={split.children[0]}
+                nodeId={split.children[0].id}
                 activePaneId={props.activePaneId}
                 onPaneClick={props.onPaneClick}
               />
@@ -72,11 +110,16 @@ function PaneLayoutNode(props: PaneLayoutProps) {
 
             <div
               class="pane-layout-child"
-              style={{ "flex-basis": secondBasis, "flex-grow": 0, "flex-shrink": 0 }}
+              style={{
+                // MUST use node() here for SolidJS reactivity - local vars don't update
+                "flex-basis": `${(1 - (node() as PaneSplit).ratio) * 100}%`,
+                "flex-grow": 0,
+                "flex-shrink": 0
+              }}
             >
-              <PaneLayoutNode
+              <PaneLayoutNodeById
                 tabId={props.tabId}
-                node={split.children[1]}
+                nodeId={split.children[1].id}
                 activePaneId={props.activePaneId}
                 onPaneClick={props.onPaneClick}
               />
@@ -91,9 +134,9 @@ function PaneLayoutNode(props: PaneLayoutProps) {
 export function PaneLayout(props: PaneLayoutProps) {
   return (
     <div class="pane-layout-root">
-      <PaneLayoutNode
+      <PaneLayoutNodeById
         tabId={props.tabId}
-        node={props.node}
+        nodeId={props.node.id}
         activePaneId={props.activePaneId}
         onPaneClick={props.onPaneClick}
       />

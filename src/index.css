@@ -25,6 +25,7 @@ html, body, #root {
   width: 100%;
 }
 
+/* Override xterm.js library default (hidden scrollbar) - !important needed for library override */
 .xterm-viewport {
   overflow-y: auto !important;
 }
@@ -526,6 +527,7 @@ html, body, #root {
   background: #2a2a4a;
   flex-shrink: 0;
   transition: background 0.15s ease;
+  /* Note: z-index removed - ResizeOverlay handles pointer events above terminals */
 }
 
 .resize-handle-horizontal {
@@ -544,6 +546,22 @@ html, body, #root {
 
 .resize-handle.dragging {
   background: #7c3aed;
+}
+
+/* Resize overlay hit areas (above terminals) */
+.resize-overlay-handle {
+  /* Slight visual feedback on hover - transparent by default */
+  background: transparent;
+  transition: background 0.1s ease;
+}
+
+/* Doubled selector for higher specificity (avoids !important) */
+.resize-overlay-handle.resize-overlay-handle:hover {
+  background: rgba(124, 58, 237, 0.3);
+}
+
+.resize-overlay-handle.resize-overlay-handle.dragging {
+  background: rgba(124, 58, 237, 0.5);
 }
 
 /* During resize, disable pointer events on terminals */

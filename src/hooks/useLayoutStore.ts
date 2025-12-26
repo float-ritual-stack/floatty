@@ -28,6 +28,7 @@ import {
   collectPaneIds,
   clampRatio,
 } from '../lib/layoutTypes';
+import { paneStore } from './usePaneStore';
 
 interface LayoutState {
   // Record of tabId -> TabLayout (using Record instead of Map for SolidJS reactivity)
@@ -54,6 +55,9 @@ function createLayoutStore() {
     setState('layouts', produce((layouts) => {
       delete layouts[tabId];
     }));
+
+    // Clean up all pane view state (prevents memory leak)
+    paneStore.removePanes(paneIds);
 
     return paneIds;
   };
@@ -118,8 +122,15 @@ function createLayoutStore() {
       return null;
     }
 
-    // Can't close the last pane
+    // Check if pane exists in tree (idempotent - already closed is OK)
     const paneIds = collectPaneIds(layout.root);
+    if (!paneIds.includes(paneId)) {
+      // Pane already removed - this is expected with race between keyboard and PTY exit
+      console.debug(`[LayoutStore] closePane: pane ${paneId} not in tree (already closed)`);
+      return layout.activePaneId;
+    }
+
+    // Can't close the last pane
     if (paneIds.length <= 1) {
       console.debug(`[LayoutStore] closePane: can't close last pane in tab ${tabId}`);
       return null;
@@ -128,6 +139,7 @@ function createLayoutStore() {
     // Find parent split and sibling
     const parent = findParent(layout.root, paneId);
     if (!parent) {
+      // This shouldn't happen if pane is in tree, but be defensive
       console.warn(`[LayoutStore] closePane: parent not found for pane ${paneId}`);
       return null;
     }
@@ -150,6 +162,9 @@ function createLayoutStore() {
       setState('layouts', tabId, 'root', newRoot);
       setState('layouts', tabId, 'activePaneId', newActivePaneId);
     });
+
+    // Clean up pane view state (prevents memory leak)
+    paneStore.removePane(paneId);
 
     return newActivePaneId;
   };

@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
+import { ResizeOverlay } from './ResizeOverlay';
 import { ContextSidebar } from './ContextSidebar';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
@@ -135,7 +136,10 @@ export function Terminal() {
   // Helper to split pane and handle post-split fitting/focusing
   const handleSplit = (direction: 'horizontal' | 'vertical', leafType?: 'terminal' | 'outliner') => {
     const activeId = tabStore.activeTabId();
-    if (!activeId) return;
+    if (!activeId) {
+      console.warn('[Terminal] Split failed: no active tab');
+      return;
+    }
 
     const newPaneId = layoutStore.splitPane(activeId, direction, leafType);
     if (newPaneId) {
@@ -148,6 +152,9 @@ export function Terminal() {
           paneRefs.get(newPaneId)?.focus();
         }, 100);
       });
+    } else {
+      // Split failed - log for debugging (user sees no visual change, which is feedback enough)
+      console.warn('[Terminal] Split operation failed for tab:', activeId);
     }
   };
 
@@ -221,11 +228,22 @@ export function Terminal() {
       }
 
       const action = getActionForEvent(e);
+
+      // Debug: log all keyboard events with modifiers to trace sporadic failures
+      if (e.metaKey || e.ctrlKey) {
+        console.log('[Keybind] key:', e.key, 'meta:', e.metaKey, 'ctrl:', e.ctrlKey, 'shift:', e.shiftKey, 'action:', action);
+      }
+
       if (!action) return;
 
       e.preventDefault();
 
       const activeId = tabStore.activeTabId();
+
+      // Debug: warn if activeId is missing when needed
+      if ((action === 'closeTab' || action === 'closeSplit') && !activeId) {
+        console.warn('[Keybind] action', action, 'but activeId is null!');
+      }
 
       switch (action) {
         case 'newTab':
@@ -475,6 +493,7 @@ export function Terminal() {
                     isActive={info().isActivePane && info().isActiveTab}
                     isVisible={info().isActiveTab}
                     ref={(handle) => setPaneRef(info().paneId, handle)}
+                    onPaneClick={() => handlePaneClick(info().paneId)}
                   />
                 }
               >
@@ -485,6 +504,7 @@ export function Terminal() {
                   isActive={info().isActivePane && info().isActiveTab}
                   isVisible={info().isActiveTab}
                   ref={(handle) => setPaneRef(info().paneId, handle)}
+                  onPaneClick={() => handlePaneClick(info().paneId)}
                   onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
                   onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
                     console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
@@ -494,6 +514,16 @@ export function Terminal() {
               </Show>
             )}
           </Key>
+
+          {/* Resize overlay - rendered AFTER terminals so it's on top */}
+          <For each={tabStore.tabs}>
+            {(tab) => (
+              <ResizeOverlay
+                tabId={tab.id}
+                isVisible={tab.id === tabStore.activeTabId()}
+              />
+            )}
+          </For>
         </div>
         <Show when={sidebarVisible()}>
           <ContextSidebar visible={sidebarVisible()} />

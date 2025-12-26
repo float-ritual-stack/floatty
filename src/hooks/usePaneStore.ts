@@ -58,12 +58,38 @@ function createPaneStore() {
     setState('zoomedRootId', paneId, blockId);
   };
 
+  /**
+   * Clean up state for a deleted pane (prevents memory leak)
+   * Should be called when a pane is closed to remove orphaned view state
+   */
+  const removePane = (paneId: string) => {
+    // Clean up collapsed state
+    if (state.collapsed[paneId]) {
+      setState('collapsed', paneId, undefined!);
+    }
+    // Clean up zoomed state
+    if (state.zoomedRootId[paneId] !== undefined) {
+      setState('zoomedRootId', paneId, undefined!);
+    }
+  };
+
+  /**
+   * Clean up state for all panes in a tab (when tab closes)
+   */
+  const removePanes = (paneIds: string[]) => {
+    for (const paneId of paneIds) {
+      removePane(paneId);
+    }
+  };
+
   return {
     toggleCollapsed,
     isCollapsed,
     setCollapsed,
     getZoomedRootId,
     setZoomedRoot,
+    removePane,
+    removePanes,
   };
 }
 

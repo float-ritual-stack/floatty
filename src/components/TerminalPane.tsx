@@ -24,6 +24,7 @@ export interface TerminalPaneProps {
   onPtyExit?: (exitCode: number) => void;
   onCtxMarker?: (marker: unknown) => void;
   onTitleChange?: (title: string) => void;
+  onPaneClick?: () => void;  // Called when pane is clicked (for focus tracking)
   isActive?: boolean;
   isVisible?: boolean;  // Whether the tab containing this pane is visible
   ref?: (handle: TerminalPaneHandle | null) => void;
@@ -140,6 +141,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       ref={containerRef}
       class={`terminal-pane-positioned ${props.isActive ? 'active' : ''}`}
       data-terminal-id={props.id}
+      onMouseDown={() => props.onPaneClick?.()}
       style={{
         position: 'absolute',
         overflow: 'hidden',
