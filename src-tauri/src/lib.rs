@@ -24,6 +24,13 @@ pub struct AggregatorConfig {
     pub poll_interval_ms: u64,
     pub max_retries: i32,
     pub max_age_hours: u64,
+    /// UI theme name (default, dracula, nord, etc.)
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "default".to_string()
 }
 
 impl Default for AggregatorConfig {
@@ -38,6 +45,7 @@ impl Default for AggregatorConfig {
             poll_interval_ms: default_parser.poll_interval_ms,
             max_retries: default_parser.max_retries,
             max_age_hours: 72, // Default: last 3 days (matches CLAUDE.md docs)
+            theme: default_theme(),
         }
     }
 }
@@ -163,6 +171,20 @@ fn get_ctx_config() -> AggregatorConfig {
 /// Update configuration (requires restart to take effect)
 #[tauri::command]
 fn set_ctx_config(config: AggregatorConfig) -> Result<(), String> {
+    config.save()
+}
+
+/// Get current theme name
+#[tauri::command]
+fn get_theme() -> String {
+    AggregatorConfig::load().theme
+}
+
+/// Set theme name (persists to config.toml)
+#[tauri::command]
+fn set_theme(theme: String) -> Result<(), String> {
+    let mut config = AggregatorConfig::load();
+    config.theme = theme;
     config.save()
 }
 
@@ -409,6 +431,8 @@ pub fn run() {
                     get_ctx_counts,
                     get_ctx_config,
                     set_ctx_config,
+                    get_theme,
+                    set_theme,
                     clear_ctx_markers,
                     get_initial_state,
                     apply_update,
@@ -425,6 +449,8 @@ pub fn run() {
                     get_ctx_counts,
                     get_ctx_config,
                     set_ctx_config,
+                    get_theme,
+                    set_theme,
                     clear_ctx_markers,
                     get_initial_state,
                     apply_update,

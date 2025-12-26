@@ -13,68 +13,30 @@
 
 /**
  * Get absolute character offset within contentEditable element.
- * Manually walks DOM to count characters, treating <br> elements as newlines.
+ * Uses Range.cloneContents() + innerText for reliable multi-line handling.
  *
- * CRITICAL: Range.toString() does NOT count <br> tags as newlines!
- * We must walk the DOM ourselves to get accurate offsets for multi-line content.
+ * CRITICAL: Manual DOM walking can drift on long multi-line content because
+ * browsers vary in how they structure <div>/<br> elements. This approach
+ * extracts the actual content before cursor and measures its innerText.
  */
 export function getAbsoluteCursorOffset(element: HTMLElement): number {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) return 0;
 
-  const range = selection.getRangeAt(0);
-  const targetContainer = range.startContainer;
-  const targetOffset = range.startOffset;
+  const selRange = selection.getRangeAt(0);
 
-  let charCount = 0;
-  let found = false;
+  // Create a range from start of element to cursor position
+  const preRange = document.createRange();
+  preRange.setStart(element, 0);
+  preRange.setEnd(selRange.startContainer, selRange.startOffset);
 
-  // Walk all nodes in document order
-  function walk(node: Node): boolean {
-    if (found) return true;
+  // Clone the contents and measure via innerText (handles <br>/<div> correctly)
+  const fragment = preRange.cloneContents();
+  const tempDiv = document.createElement('div');
+  tempDiv.appendChild(fragment);
 
-    if (node === targetContainer) {
-      // Found the cursor's container
-      if (node.nodeType === Node.TEXT_NODE) {
-        charCount += targetOffset;
-      } else {
-        // Element node - count children up to offset
-        for (let i = 0; i < targetOffset && i < node.childNodes.length; i++) {
-          const child = node.childNodes[i];
-          if (child.nodeType === Node.TEXT_NODE) {
-            charCount += child.textContent?.length || 0;
-          } else if (child.nodeName === 'BR') {
-            charCount += 1; // <br> = newline
-          }
-        }
-      }
-      found = true;
-      return true;
-    }
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      charCount += node.textContent?.length || 0;
-    } else if (node.nodeName === 'BR') {
-      charCount += 1; // <br> = newline character
-    } else if (node.nodeName === 'DIV' && node !== element) {
-      // <div> inside contentEditable = line break (browser default)
-      // Add 1 for the implicit newline, then recurse into children
-      charCount += 1;
-      for (let i = 0; i < node.childNodes.length; i++) {
-        if (walk(node.childNodes[i])) return true;
-      }
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      // Recurse into children
-      for (let i = 0; i < node.childNodes.length; i++) {
-        if (walk(node.childNodes[i])) return true;
-      }
-    }
-
-    return false;
-  }
-
-  walk(element);
-  return charCount;
+  // innerText converts <br> and <div> to \n, matching how we store content
+  return tempDiv.innerText.length;
 }
 
 /**
@@ -157,6 +119,11 @@ export function isCursorAtContentStart(element: HTMLElement): boolean {
   const selection = window.getSelection();
   if (!selection || !selection.isCollapsed) return false;
 
+  // Handle empty element case - cursor is at start (and end)
+  if (!element.textContent || element.textContent.length === 0) {
+    return true;
+  }
+
   const range = selection.getRangeAt(0);
 
   // Must be at offset 0
@@ -192,6 +159,11 @@ export function isCursorAtContentStart(element: HTMLElement): boolean {
 export function isCursorAtContentEnd(element: HTMLElement): boolean {
   const selection = window.getSelection();
   if (!selection || !selection.isCollapsed) return false;
+
+  // Handle empty element case - cursor is both at start AND end
+  if (!element.textContent || element.textContent.length === 0) {
+    return true;
+  }
 
   const range = selection.getRangeAt(0);
   const container = range.startContainer;

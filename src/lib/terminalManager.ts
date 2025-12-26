@@ -15,6 +15,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
+import { defaultTheme, toXtermTheme } from './themes';
 
 export interface TerminalInstance {
   term: XTerm;
@@ -135,29 +136,7 @@ class TerminalManager {
       fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
       fontSize: 14,
       lineHeight: 1.2,
-      theme: {
-        background: '#1a1a2e',
-        foreground: '#eaeaea',
-        cursor: '#eaeaea',
-        cursorAccent: '#1a1a2e',
-        selectionBackground: '#4a4a7a',
-        black: '#1a1a2e',
-        red: '#ef4444',
-        green: '#22c55e',
-        yellow: '#eab308',
-        blue: '#3b82f6',
-        magenta: '#7c3aed',
-        cyan: '#06b6d4',
-        white: '#eaeaea',
-        brightBlack: '#8b8b8b',
-        brightRed: '#f87171',
-        brightGreen: '#4ade80',
-        brightYellow: '#fde047',
-        brightBlue: '#60a5fa',
-        brightMagenta: '#a78bfa',
-        brightCyan: '#22d3ee',
-        brightWhite: '#ffffff',
-      },
+      theme: toXtermTheme(defaultTheme),
     });
 
     const fitAddon = new FitAddon();
@@ -449,6 +428,38 @@ class TerminalManager {
    */
   has(id: string): boolean {
     return this.instances.has(id);
+  }
+
+  /**
+   * Update theme for all terminal instances (hot-swap)
+   */
+  updateAllThemes(theme: {
+    background: string;
+    foreground: string;
+    cursor: string;
+    cursorAccent: string;
+    selectionBackground: string;
+    black: string;
+    red: string;
+    green: string;
+    yellow: string;
+    blue: string;
+    magenta: string;
+    cyan: string;
+    white: string;
+    brightBlack: string;
+    brightRed: string;
+    brightGreen: string;
+    brightYellow: string;
+    brightBlue: string;
+    brightMagenta: string;
+    brightCyan: string;
+    brightWhite: string;
+  }) {
+    for (const [id, instance] of this.instances) {
+      console.log(`[TerminalManager] Updating theme for terminal ${id}`);
+      instance.term.options.theme = theme;
+    }
   }
 }
 

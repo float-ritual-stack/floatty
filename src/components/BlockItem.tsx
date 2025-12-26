@@ -40,13 +40,25 @@ export function BlockItem(props: BlockItemProps) {
   createEffect(() => {
     const currentBlock = block();
     if (contentRef && currentBlock) {
-      if (contentRef.innerText !== currentBlock.content) {
-        if (document.activeElement !== contentRef) {
-           contentRef.innerText = currentBlock.content;
-        }
+      const domContent = contentRef.innerText;
+      const storeContent = currentBlock.content;
+      const isFocusedNow = document.activeElement === contentRef;
+
+      if (domContent !== storeContent && !isFocusedNow) {
+        contentRef.innerText = storeContent;
       }
     }
   });
+
+  // CRITICAL: Sync DOM when focus leaves (catches splits where store updated while focused)
+  const handleBlur = () => {
+    const currentBlock = block();
+    if (contentRef && currentBlock) {
+      if (contentRef.innerText !== currentBlock.content) {
+        contentRef.innerText = currentBlock.content;
+      }
+    }
+  };
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!block()) return;
@@ -169,8 +181,9 @@ export function BlockItem(props: BlockItemProps) {
         return;
       }
 
-      // At end of block with children → create first child (continue under heading)
-      if (atEnd && hasChildren) {
+      // At end of block with EXPANDED children → create first child (continue under heading)
+      // COLLAPSED blocks with children → fall through to sibling behavior
+      if (atEnd && hasChildren && !isCollapsed()) {
         const newId = store.createBlockInsideAtTop(props.id);
         if (newId) props.onFocus(newId);
         return;
@@ -187,11 +200,8 @@ export function BlockItem(props: BlockItemProps) {
         : store.splitBlock(props.id, offset);
 
       if (newId) {
-        // Force DOM sync for the split block (the focus guard prevents reactive update)
-        // Use innerText to preserve newline rendering
-        if (contentRef) {
-          contentRef.innerText = currentContent.slice(0, offset);
-        }
+        // Trust the store - it updates old block's content to slice(0, offset)
+        // Reactive effect syncs DOM when focus moves (guard at line 44)
         props.onFocus(newId);
       }
     } else if (e.key === 'Tab') {
@@ -347,6 +357,7 @@ export function BlockItem(props: BlockItemProps) {
             onInput={handleInput}
             onKeyDown={handleKeyDown}
             onFocus={() => props.onFocus(props.id)}
+            onBlur={handleBlur}
           />
         </div>
       </div>
