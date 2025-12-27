@@ -662,9 +662,60 @@ body.resizing .terminal-pane-positioned {
 .block-content-wrapper {
   flex: 1;
   min-width: 0;
+  position: relative;  /* Container for overlay layers */
+  color: var(--color-fg);  /* Default color, overridden by block-content-* classes */
+}
+
+/* DISPLAY LAYER: styled tokens, no pointer events */
+.block-display {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 2px 4px;
+  color: inherit;  /* Inherit block-type color from wrapper */
+}
+
+/* Inline token styles - markers visible, content colored */
+.block-display .md-bold {
+  color: var(--color-ansi-bright-yellow);
+  font-weight: 600;
+}
+
+.block-display .md-italic {
+  color: var(--color-ansi-bright-cyan);
+  font-style: italic;
+}
+
+.block-display .md-code {
+  color: var(--color-ansi-bright-green);
+  background: color-mix(in srgb, var(--color-fg) 8%, transparent);
+  border-radius: 2px;
+  padding: 0 2px;
+  margin: 0 1px;
+}
+
+/* Future: wikilinks get pointer-events back for hover/click */
+.block-display .md-wikilink {
+  pointer-events: auto;
+  cursor: pointer;
+  color: var(--color-ansi-blue);
+  text-decoration: underline;
+}
+
+/* EDIT LAYER: transparent text, visible cursor */
+.block-edit {
+  color: transparent !important;
+  caret-color: var(--color-fg);
+  background: transparent;
 }
 
 .block-content {
+  position: relative;  /* Stacks above display layer */
   width: 100%;
   background: transparent;
   border: none;

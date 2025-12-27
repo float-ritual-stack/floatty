@@ -6,6 +6,7 @@ import { useBlockOperations } from '../hooks/useBlockOperations';
 import { findHandler, executeBlock } from '../lib/executor';
 import { isCursorAtContentStart, isCursorAtContentEnd, getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { getActionForEvent } from '../lib/keybinds';
+import { BlockDisplay } from './BlockDisplay';
 
 interface BlockItemProps {
   id: string;
@@ -331,11 +332,15 @@ export function BlockItem(props: BlockItemProps) {
           {bulletChar()}
         </div>
 
-        <div class="block-content-wrapper">
+        <div class={`block-content-wrapper ${contentClass()}`}>
+          {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
+          <BlockDisplay content={block()?.content || ''} />
+
+          {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
           <div
             ref={contentRef}
             contentEditable
-            class={`block-content ${contentClass()}`}
+            class="block-content block-edit"
             spellcheck={false}
             autocapitalize="off"
             autocorrect="off"
