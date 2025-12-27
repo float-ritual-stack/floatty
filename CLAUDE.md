@@ -4,10 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-**floatty** - A Tauri v2 terminal emulator with three integrated systems:
+**floatty** - A Tauri v2 terminal emulator with integrated outliner and consciousness siphon:
 1. **High-performance PTY** - handles 4000+ redraws/sec from tools like Claude Code
 2. **Multi-tab terminals** - independent PTY per tab, platform-aware keybinds (⌘ on macOS)
-3. **ctx:: Aggregation** - watches JSONL session logs, extracts markers, parses via Ollama, displays in sidebar
+3. **Block-based outliner** - CRDT-backed (yjs), inline markdown formatting, zoom navigation
+4. **ctx:: Aggregation** - watches JSONL session logs, extracts markers, parses via Ollama, displays in sidebar
+5. **Theming system** - 5 bundled themes (Dark, Light, Solarized Dark/Light, High Contrast), hot-swap via ⌘;
 
 ## Commands
 
@@ -60,8 +62,11 @@ Critical rules:
 | `TerminalPane.tsx` | Thin wrapper, attaches to terminalManager |
 | `ContextSidebar.tsx` | Polls Tauri commands, renders markers with tags |
 | `PaneLayout.tsx` | Recursive split pane layout with resize handles |
+| `ResizeOverlay.tsx` | Centralized resize handle rendering and drag logic |
 | `Outliner.tsx` | Block tree view with zoom support |
+| `OutlinerPane.tsx` | Wrapper for outliner in pane layout |
 | `BlockItem.tsx` | Individual block with keybinds (Enter, Tab, etc.) |
+| `BlockDisplay.tsx` | Display layer for inline formatting overlay |
 | `Breadcrumb.tsx` | Navigation trail for zoomed block view |
 
 **Frontend modules** (`src/lib/`):
@@ -71,6 +76,11 @@ Critical rules:
 | `terminalManager.ts` | Singleton owning xterm lifecycle OUTSIDE SolidJS |
 | `keybinds.ts` | Platform-aware keybind system (⌘ on macOS, Ctrl elsewhere) |
 | `layoutTypes.ts` | Layout tree types and pure manipulation functions |
+| `blockTypes.ts` | Block type definitions and prefix detection (`sh::`, `ai::`, etc.) |
+| `markdownParser.ts` | Parses markdown output into block hierarchy (headings, lists, fences) |
+| `inlineParser.ts` | Tokenizes inline markdown (`**bold**`, `*italic*`, `` `code` ``) for overlay |
+| `cursorUtils.ts` | Cursor position utilities for keybind logic |
+| `executor.ts` | Command execution for `sh::` blocks (child_process via Tauri) |
 
 **State** (`src/hooks/`):
 
@@ -149,90 +159,42 @@ SolidJS Component                  Singleton (outside SolidJS)
 
 Why: Framework reactivity caused terminals to re-initialize on tab switch. Moving lifecycle outside SolidJS eliminates this class of bugs.
 
+### Inline Formatting Overlay Architecture
+
+Two-layer technique for styled inline markdown while preserving cursor behavior:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  .block-content-wrapper (position: relative, color class)   │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  .block-display (position: absolute, pointer-events:   │ │
+│  │                  none, color: inherit)                  │ │
+│  │  └─ <For> tokens → <span class="md-bold/italic/code">  │ │
+│  └────────────────────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  .block-edit (contentEditable, color: transparent,     │ │
+│  │               caret-color: visible)                    │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key mechanics:**
+- Display layer shows styled tokens (`**bold**` → yellow, `*italic*` → cyan, `` `code` `` → green)
+- Edit layer has transparent text but visible cursor via `caret-color`
+- Block-type colors (headings, prefixes) applied to wrapper, inherited by display layer
+- Tokens parsed via `inlineParser.ts` using `createMemo()` for reactivity
+- Uses `<For>` for token iteration (lightweight, no identity issues)
+
+**Theme-awareness:** All colors use CSS variables (`--color-ansi-*`), auto-adapting on theme switch.
+
 ## SolidJS Mental Models (CRITICAL)
 
-### 1. `<For>` Uses Object Reference as Identity
-
-**The trap**: SolidJS `<For>` tracks items by **object reference**, not by a `key` prop like React.
-
-```typescript
-// ❌ BROKEN - creates new objects on each memo run
-<For each={items().map(x => ({ ...x, extra: computed }))}>
-  {(item) => <Heavy id={item.id} />}
-</For>
-// SolidJS sees new objects → unmounts old, mounts new → xterm dies
-
-// ✅ CORRECT - use <Key> for explicit identity
-import { Key } from '@solid-primitives/keyed';
-<Key each={items()} by={(item) => item.id}>
-  {(item) => <Heavy id={item().id} />}  // Note: item is a signal accessor
-</Key>
-```
-
-**Rule**: For heavy components (terminals, canvas, editors), always use `<Key>` from `@solid-primitives/keyed`.
-
-### 2. Don't Destructure Props
-
-Props in SolidJS are **getters on a proxy**. Destructuring breaks reactivity.
-
-```typescript
-// ❌ BROKEN - reads props.value once at component creation
-function Bad({ value }: Props) {
-  return <div>{value}</div>;  // Never updates
-}
-
-// ✅ CORRECT - access through props object
-function Good(props: Props) {
-  return <div>{props.value}</div>;  // Reactive
-}
-```
-
-### 3. Store Proxies Are Not Plain Objects
-
-SolidJS store values are **proxies**. Don't put them directly into new data structures.
-
-```typescript
-// ❌ BROKEN - creates circular reference via proxy
-const newSplit = {
-  children: [activePane, newPane]  // activePane is a store proxy!
-};
-
-// ✅ CORRECT - clone the data
-const newSplit = {
-  children: [
-    { type: 'leaf', id: activePane.id, cwd: activePane.cwd },
-    { type: 'leaf', id: newPaneId, cwd: newPane.cwd }
-  ]
-};
-```
-
-### 4. CSS Display vs `<Show>` for Heavy Components
-
-`<Show>` **unmounts** components when condition is false. For heavy components that should survive visibility changes:
-
-```typescript
-// ❌ AVOID - unmounts terminal when not visible
-<Show when={isVisible()}>
-  <TerminalPane />
-</Show>
-
-// ✅ PREFER - keeps terminal alive, just hidden
-<div style={{ display: isVisible() ? 'block' : 'none' }}>
-  <TerminalPane />
-</div>
-```
-
-### 5. Ref Cleanup Timing
-
-Don't clear refs in `onCleanup` for components that might flicker during re-renders:
-
-```typescript
-// ❌ RISKY - parent loses handle during layout changes
-onCleanup(() => props.ref?.(null));
-
-// ✅ SAFER - explicit disposal via handler, not lifecycle
-// Disposal happens in handleClosePane, not component unmount
-```
+See @.claude/rules/solidjs-patterns.md for detailed patterns on:
+- `<For>` vs `<Key>` for heavy components
+- Props destructuring (don't)
+- Store proxy cloning
+- `<Show>` vs CSS display
+- Ref cleanup timing
 
 ## Known Issues
 
@@ -240,16 +202,4 @@ onCleanup(() => props.ref?.(null));
 
 ## Do NOT
 
-**PTY/Rust:**
-- Remove batching pattern (breaks performance)
-- Use `window.emit()` instead of Channels
-- Send `Vec<u8>` without base64 encoding
-- Add sync work in batcher thread
-- Change Ollama JSON schema without updating both `ctx_parser.rs` and `ContextSidebar.tsx`
-
-**SolidJS:**
-- Use `<For>` for terminal iteration (use `<Key>` instead - see mental models)
-- Destructure props in components (breaks reactivity)
-- Put store proxies directly in new data structures (clone instead)
-- Clear refs in `onCleanup` for components that might re-render
-- Use `<Show>` for heavy components that should survive visibility changes
+See @.claude/rules/do-not.md for critical anti-patterns (PTY/Rust and SolidJS).
