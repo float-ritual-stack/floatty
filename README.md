@@ -88,10 +88,12 @@ printf '\e]7337;{"type":"ctx","line":"ctx::2025-12-16 @ 08:30 AM [project::x] me
 
 ## Tech Stack
 
-- **Frontend**: React 18, TypeScript, Vite
+- **Frontend**: SolidJS, TypeScript, Vite
 - **Terminal**: xterm.js + WebGL + Unicode11 + Ligatures addons
+- **Outliner**: Block tree with yjs CRDT, inline markdown formatting
 - **Backend**: Tauri v2, Rust
 - **PTY**: Vendored tauri-plugin-pty with custom batching
+- **Theming**: 5 bundled themes, hot-swap via ⌘;
 
 ## Known Issues
 
