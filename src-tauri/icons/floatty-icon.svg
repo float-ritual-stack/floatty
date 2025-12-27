@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Full canvas black background -->
+  <rect x="0" y="0" width="1024" height="1024" fill="#000000"/>
+  <!-- Background circle - true black -->
+  <circle cx="512" cy="512" r="480" fill="#000000"/>
+
+  <!-- Outer ring - magenta accent -->
+  <circle cx="512" cy="512" r="440" fill="none" stroke="#e91e8c" stroke-width="24"/>
+
+  <!-- Technical tick ring -->
+  <circle cx="512" cy="512" r="400" fill="none" stroke="#444" stroke-width="2"/>
+
+  <!-- Wireframe globe - horizontal lines -->
+  <ellipse cx="512" cy="512" rx="320" ry="320" fill="none" stroke="#666" stroke-width="2"/>
+  <ellipse cx="512" cy="512" rx="320" ry="240" fill="none" stroke="#555" stroke-width="2"/>
+  <ellipse cx="512" cy="512" rx="320" ry="160" fill="none" stroke="#555" stroke-width="2"/>
+  <ellipse cx="512" cy="512" rx="320" ry="80" fill="none" stroke="#555" stroke-width="2"/>
+  <line x1="192" y1="512" x2="832" y2="512" stroke="#666" stroke-width="2"/>
+
+  <!-- Wireframe globe - vertical lines -->
+  <ellipse cx="512" cy="512" rx="320" ry="320" fill="none" stroke="#666" stroke-width="2"/>
+  <ellipse cx="512" cy="512" rx="240" ry="320" fill="none" stroke="#555" stroke-width="2"/>
+  <ellipse cx="512" cy="512" rx="160" ry="320" fill="none" stroke="#555" stroke-width="2"/>
+  <ellipse cx="512" cy="512" rx="80" ry="320" fill="none" stroke="#555" stroke-width="2"/>
+  <line x1="512" y1="192" x2="512" y2="832" stroke="#666" stroke-width="2"/>
+
+  <!-- Center cross/plus - the terminal cursor -->
+  <rect x="448" y="320" width="128" height="384" fill="#e8e8e8"/>
+  <rect x="320" y="448" width="384" height="128" fill="#e8e8e8"/>
+
+  <!-- Green accent markers at cardinal points -->
+  <rect x="496" y="100" width="32" height="80" fill="#39ff14"/>
+  <rect x="496" y="844" width="32" height="80" fill="#39ff14"/>
+  <rect x="100" y="496" width="80" height="32" fill="#39ff14"/>
+  <rect x="844" y="496" width="80" height="32" fill="#39ff14"/>
+</svg>
