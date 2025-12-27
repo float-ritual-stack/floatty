@@ -27,10 +27,38 @@ pub struct AggregatorConfig {
     /// UI theme name (default, dracula, nord, etc.)
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Terminal font size in pixels
+    #[serde(default = "default_font_size")]
+    pub font_size: u32,
+    /// Terminal font weight (300 = light, 400 = normal, 500 = medium)
+    #[serde(default = "default_font_weight")]
+    pub font_weight: u32,
+    /// Terminal bold font weight
+    #[serde(default = "default_font_weight_bold")]
+    pub font_weight_bold: u32,
+    /// Terminal line height multiplier
+    #[serde(default = "default_line_height")]
+    pub line_height: f32,
 }
 
 fn default_theme() -> String {
     "default".to_string()
+}
+
+fn default_font_size() -> u32 {
+    13
+}
+
+fn default_font_weight() -> u32 {
+    300
+}
+
+fn default_font_weight_bold() -> u32 {
+    500
+}
+
+fn default_line_height() -> f32 {
+    1.2
 }
 
 impl Default for AggregatorConfig {
@@ -46,6 +74,10 @@ impl Default for AggregatorConfig {
             max_retries: default_parser.max_retries,
             max_age_hours: 72, // Default: last 3 days (matches CLAUDE.md docs)
             theme: default_theme(),
+            font_size: default_font_size(),
+            font_weight: default_font_weight(),
+            font_weight_bold: default_font_weight_bold(),
+            line_height: default_line_height(),
         }
     }
 }

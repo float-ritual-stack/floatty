@@ -17,6 +17,21 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { defaultTheme, toXtermTheme } from './themes';
 
+// Terminal font config from ~/.floatty/config.toml
+interface TerminalConfig {
+  font_size: number;
+  font_weight: number;
+  font_weight_bold: number;
+  line_height: number;
+}
+
+const defaultConfig: TerminalConfig = {
+  font_size: 13,
+  font_weight: 300,
+  font_weight_bold: 500,
+  line_height: 1.2,
+};
+
 export interface TerminalInstance {
   term: XTerm;
   fitAddon: FitAddon;
@@ -67,6 +82,29 @@ class TerminalManager {
   // Guards against race: keyboard dispose() calls kill → PTY exit fires → onPtyExit callback
   // When disposing is set, onPtyExit callback should NOT trigger closePane
   private disposing = new Set<string>();
+  // Font config loaded from ~/.floatty/config.toml
+  private config: TerminalConfig = defaultConfig;
+  private configLoaded = false;
+
+  /**
+   * Load terminal config from Tauri backend
+   */
+  async loadConfig(): Promise<void> {
+    if (this.configLoaded) return;
+    try {
+      const fullConfig = await invoke<TerminalConfig & Record<string, unknown>>('get_ctx_config');
+      this.config = {
+        font_size: fullConfig.font_size ?? defaultConfig.font_size,
+        font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
+        font_weight_bold: fullConfig.font_weight_bold ?? defaultConfig.font_weight_bold,
+        line_height: fullConfig.line_height ?? defaultConfig.line_height,
+      };
+      this.configLoaded = true;
+      console.log('[TerminalManager] Loaded config:', this.config);
+    } catch (err) {
+      console.warn('[TerminalManager] Failed to load config, using defaults:', err);
+    }
+  }
 
   /**
    * Get or create a terminal for the given ID.
@@ -128,14 +166,16 @@ class TerminalManager {
 
     console.log(`[TerminalManager] Creating new terminal ${id}`);
 
-    // Create new terminal
+    // Create new terminal with config values
     const term = new XTerm({
       allowProposedApi: true,
       convertEol: false,
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
-      fontSize: 14,
-      lineHeight: 1.2,
+      fontSize: this.config.font_size,
+      fontWeight: String(this.config.font_weight),
+      fontWeightBold: String(this.config.font_weight_bold),
+      lineHeight: this.config.line_height,
       theme: toXtermTheme(defaultTheme),
     });
 
