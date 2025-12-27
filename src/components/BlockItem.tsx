@@ -3,10 +3,7 @@ import { Key } from '@solid-primitives/keyed';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { useBlockOperations } from '../hooks/useBlockOperations';
-import {
-  isExecutableShellBlock, extractShellCommand, executeShellBlock,
-  isExecutableAiBlock, extractAiPrompt, executeAiBlock
-} from '../lib/executor';
+import { findHandler, executeBlock } from '../lib/executor';
 import { isCursorAtContentStart, isCursorAtContentEnd, getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { getActionForEvent } from '../lib/keybinds';
 
@@ -136,31 +133,19 @@ export function BlockItem(props: BlockItemProps) {
     } else if (e.key === 'Enter' && !e.shiftKey) {
       // NOTE: Cmd+Enter (zoomInBlock) is handled above via getActionForEvent()
 
-      // Plain Enter on executable blocks = execute
+      // Plain Enter on executable blocks = execute (unified handler)
       if (block()) {
         const content = block()!.content;
+        const handler = findHandler(content);
 
-        if (isExecutableShellBlock(content)) {
+        if (handler) {
           e.preventDefault();
-          const command = extractShellCommand(content);
-          if (command) {
-            executeShellBlock(props.id, command, {
-              createBlockInside: store.createBlockInside,
-              createBlockInsideAtTop: store.createBlockInsideAtTop,
-              updateBlockContent: store.updateBlockContent
-            });
-          }
-          return;
-        } else if (isExecutableAiBlock(content)) {
-          e.preventDefault();
-          const prompt = extractAiPrompt(content);
-          if (prompt) {
-            executeAiBlock(props.id, prompt, {
-              createBlockInside: store.createBlockInside,
-              createBlockInsideAtTop: store.createBlockInsideAtTop,
-              updateBlockContent: store.updateBlockContent
-            });
-          }
+          executeBlock(props.id, content, {
+            createBlockInside: store.createBlockInside,
+            createBlockInsideAtTop: store.createBlockInsideAtTop,
+            updateBlockContent: store.updateBlockContent,
+            deleteBlock: store.deleteBlock,
+          });
           return;
         }
       }
