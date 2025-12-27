@@ -15,6 +15,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
+import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { defaultTheme, toXtermTheme } from './themes';
 
 // Terminal font config from ~/.floatty/config.toml
@@ -310,18 +311,41 @@ class TerminalManager {
         instance.ptyPid = pid;
         this.callbacks.get(id)?.onPtySpawn?.(pid);
 
-        // Handle Shift+Enter specially - send ESC + CR for multiline input
-        // Wezterm uses: SendString="\x1b\r" (ESC + carriage return)
-        // Must block BOTH keydown and keypress to prevent xterm sending regular \r
+        // Custom key handlers for special input behavior
+        // - Shift+Enter: multiline input (ESC+CR for Claude Code)
+        // - Cmd+V (macOS) / Ctrl+V: clipboard paste
         term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+          // Shift+Enter: Send ESC + CR for multiline input
+          // Wezterm uses: SendString="\x1b\r" (ESC + carriage return)
+          // Must block ALL event types to prevent xterm sending regular \r
           if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
             if (event.type === 'keydown') {
               console.log('[TerminalManager] Sending ESC+CR for multiline');
               invoke('plugin:pty|write', { pid, data: '\x1b\r' }).catch(console.error);
             }
-            // Block keydown AND keypress to prevent xterm from also sending \r
             return false;
           }
+
+          // Cmd+V (macOS) or Ctrl+V (other platforms): Paste from clipboard
+          const isMac = os === 'macos';
+          const isPaste = event.key === 'v' && (isMac ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey;
+          if (isPaste) {
+            if (event.type === 'keydown') {
+              // Read clipboard and write to PTY
+              readText()
+                .then((text) => {
+                  if (text) {
+                    console.log(`[TerminalManager] Pasting ${text.length} chars`);
+                    invoke('plugin:pty|write', { pid, data: text }).catch(console.error);
+                  }
+                })
+                .catch((err) => {
+                  console.error('[TerminalManager] Clipboard read failed:', err);
+                });
+            }
+            return false; // Block default browser paste behavior
+          }
+
           return true; // Let xterm handle normally
         });
 

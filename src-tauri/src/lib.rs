@@ -444,7 +444,8 @@ pub fn run() {
     // Build app with platform-specific plugins and commands
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_pty::init());
+        .plugin(tauri_plugin_pty::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
 
     // macOS-only: NSPanel floating window support
     #[cfg(target_os = "macos")]
