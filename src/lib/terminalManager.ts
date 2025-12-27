@@ -310,6 +310,21 @@ class TerminalManager {
         instance.ptyPid = pid;
         this.callbacks.get(id)?.onPtySpawn?.(pid);
 
+        // Handle Shift+Enter specially - send ESC + CR for multiline input
+        // Wezterm uses: SendString="\x1b\r" (ESC + carriage return)
+        // Must block BOTH keydown and keypress to prevent xterm sending regular \r
+        term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+          if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+            if (event.type === 'keydown') {
+              console.log('[TerminalManager] Sending ESC+CR for multiline');
+              invoke('plugin:pty|write', { pid, data: '\x1b\r' }).catch(console.error);
+            }
+            // Block keydown AND keypress to prevent xterm from also sending \r
+            return false;
+          }
+          return true; // Let xterm handle normally
+        });
+
         term.onData((data: string) => {
           invoke('plugin:pty|write', { pid, data }).catch((e) => {
             console.error(`[TerminalManager] PTY write failed for ${id}:`, e);
