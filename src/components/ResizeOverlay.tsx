@@ -208,13 +208,12 @@ function ResizeHitArea(props: {
     // Clear drag state in store - this triggers createEffect in all handles to resync
     layoutStore.setDraggingSplitId(null);
 
-    // Re-enable fit() before dispatching resize event (FLO-88)
+    // Signal drag end to terminalManager (FLO-88)
+    // This starts a 150ms timeout that:
+    // 1. Keeps isDragging=true to suppress debounced fit() calls
+    // 2. Then does one clean fit() + scroll restore per terminal
+    // No need to dispatch resize event - the restoration timeout handles it
     terminalManager.setDragging(false);
-
-    // Dispatch resize event so terminals/outliners refit to new dimensions
-    requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('resize'));
-    });
   };
 
   const handlePointerDown = (e: PointerEvent) => {
