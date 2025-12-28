@@ -594,7 +594,7 @@ class TerminalManager {
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               // Defensive check: terminal may have been disposed during rAF delay (FLO-88)
-              if (!this.instances.has(terminalId)) return;
+              if (!this.instances.has(terminalId) || this.disposing.has(terminalId)) return;
               const maxScroll = term.buffer.active.baseY;
               term.scrollToLine(Math.min(target, maxScroll));
             });
@@ -639,7 +639,7 @@ class TerminalManager {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         // Defensive check: terminal may have been disposed during rAF delay (FLO-88)
-        if (!this.instances.has(id)) return;
+        if (!this.instances.has(id) || this.disposing.has(id)) return;
 
         const currentViewportY = term.buffer.active.viewportY;
         const scrollDelta = savedViewportY - currentViewportY;
