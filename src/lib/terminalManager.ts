@@ -560,20 +560,21 @@ class TerminalManager {
    * to let all resize events settle before doing one clean fit().
    */
   setDragging(dragging: boolean) {
-    // Clear any pending restoration
+    // Clear any pending restoration (handles rapid drag cycles - FLO-88 race condition fix)
     if (this.restorationTimeout) {
       clearTimeout(this.restorationTimeout);
       this.restorationTimeout = null;
     }
 
-    if (dragging && !this.isDragging) {
+    if (dragging) {
       // Drag starting - save all scroll positions NOW
+      // Always refresh positions even if already dragging (handles rapid drag cycles)
       for (const [id, instance] of this.instances) {
         const buffer = instance.term.buffer.active;
         this.savedScrollPositions.set(id, buffer.viewportY);
       }
       this.isDragging = true;
-    } else if (!dragging && this.isDragging) {
+    } else if (this.isDragging) {
       // Drag ending - delay isDragging=false to let resize events settle
       // Must be longer than TerminalPane's 50ms debounce + some buffer
       this.restorationTimeout = setTimeout(() => {
