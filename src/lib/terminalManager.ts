@@ -109,9 +109,12 @@ class TerminalManager {
 
   /**
    * Get or create a terminal for the given ID.
-   * Called from ref callback - runs synchronously when DOM mounts.
+   * Ensures config is loaded before creating terminals.
    */
-  attach(id: string, container: HTMLElement, cwd?: string): TerminalInstance {
+  async attach(id: string, container: HTMLElement, cwd?: string): Promise<TerminalInstance> {
+    // Ensure config is loaded before creating any terminal
+    await this.loadConfig();
+
     let instance = this.instances.get(id);
 
     if (instance) {

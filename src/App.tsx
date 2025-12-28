@@ -3,7 +3,6 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { Terminal } from './components/Terminal';
 import { themeStore } from './hooks/useThemeStore';
-import { terminalManager } from './lib/terminalManager';
 import { tabStore } from './hooks/useTabStore';
 import './App.css';
 
@@ -18,7 +17,7 @@ function App() {
 
   // Load saved theme and terminal config on startup
   onMount(async () => {
-    await terminalManager.loadConfig();
+    // Config loading moved to terminalManager.attach() to fix race condition
     themeStore.loadTheme();
 
     // Listen for file drag-drop from Finder
