@@ -1,8 +1,7 @@
 import { createSignal, createEffect, onMount, onCleanup, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
-import { blockStore } from '../hooks/useBlockStore';
-import { paneStore } from '../hooks/usePaneStore';
+import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
@@ -13,6 +12,7 @@ interface OutlinerProps {
 
 export function Outliner(props: OutlinerProps) {
   const { doc, isLoaded } = useSyncedYDoc();
+  const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock } = useBlockOperations();
   const [focusedBlockId, setFocusedBlockId] = createSignal<string | null>(null);

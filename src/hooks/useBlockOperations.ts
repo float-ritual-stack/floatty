@@ -7,10 +7,10 @@
  * - Move/Drag logic
  */
 
-import { blockStore } from './useBlockStore';
-import { paneStore } from './usePaneStore';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 export function useBlockOperations() {
+  const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
 
   /**

@@ -2,6 +2,7 @@ import { onMount, onCleanup } from 'solid-js';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { Terminal } from './components/Terminal';
+import { WorkspaceProvider } from './context/WorkspaceContext';
 import { themeStore } from './hooks/useThemeStore';
 import { tabStore } from './hooks/useTabStore';
 import './App.css';
@@ -50,7 +51,11 @@ function App() {
     unlistenDragDrop?.();
   });
 
-  return <Terminal />;
+  return (
+    <WorkspaceProvider>
+      <Terminal />
+    </WorkspaceProvider>
+  );
 }
 
 export default App;
