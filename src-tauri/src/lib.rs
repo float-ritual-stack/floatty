@@ -153,6 +153,8 @@ struct AppStateInner {
     #[allow(dead_code)]
     parser: CtxParser,
     doc: Arc<RwLock<Doc>>,
+    /// Counter to avoid SELECT on every keystroke - only check DB periodically
+    updates_since_compact_check: std::sync::atomic::AtomicI64,
 }
 
 /// Managed state wrapper - inner is None when DB initialization fails
@@ -246,6 +248,10 @@ fn get_initial_state(state: State<AppState>) -> Result<String, String> {
 const YDOC_KEY: &str = "default";
 /// Compact when update count exceeds this threshold
 const YDOC_COMPACT_THRESHOLD: i64 = 100;
+/// Only check DB for compaction every N updates (avoid SELECT per keystroke)
+const YDOC_COMPACT_CHECK_INTERVAL: i64 = 10;
+
+use std::sync::atomic::Ordering;
 
 /// Apply a Yjs update from the frontend
 #[tauri::command]
@@ -268,16 +274,23 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
     // Append delta to DB (fast, single row insert)
     inner.db.append_ydoc_update(YDOC_KEY, &update_bytes).map_err(|e| e.to_string())?;
 
-    // Compact if too many updates accumulated (optimization - don't fail the operation)
-    let update_count = inner.db.get_ydoc_update_count(YDOC_KEY).unwrap_or(0);
-    if update_count > YDOC_COMPACT_THRESHOLD {
-        let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
-        if let Err(e) = inner.db.compact_ydoc(YDOC_KEY, &full_state) {
-            log::warn!(
-                "Y.Doc compaction failed (will retry later): {}. Update count: {}",
-                e, update_count
-            );
-            // Continue - the update was saved, compaction can happen later
+    // Increment counter and only check DB periodically (avoid SELECT per keystroke)
+    let updates_since_check = inner.updates_since_compact_check.fetch_add(1, Ordering::Relaxed) + 1;
+
+    if updates_since_check >= YDOC_COMPACT_CHECK_INTERVAL {
+        // Reset counter and check actual count from DB
+        inner.updates_since_compact_check.store(0, Ordering::Relaxed);
+
+        let update_count = inner.db.get_ydoc_update_count(YDOC_KEY).unwrap_or(0);
+        if update_count > YDOC_COMPACT_THRESHOLD {
+            let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+            if let Err(e) = inner.db.compact_ydoc(YDOC_KEY, &full_state) {
+                log::warn!(
+                    "Y.Doc compaction failed (will retry later): {}. Update count: {}",
+                    e, update_count
+                );
+                // Continue - the update was saved, compaction can happen later
+            }
         }
     }
 
@@ -594,11 +607,12 @@ pub fn run() {
                     parser.start();
 
                     log::info!("ctx:: aggregation system initialized successfully");
-                    Some(AppStateInner { 
-                        db, 
-                        watcher, 
+                    Some(AppStateInner {
+                        db,
+                        watcher,
                         parser,
-                        doc: doc_arc, // Move Arc
+                        doc: doc_arc,
+                        updates_since_compact_check: std::sync::atomic::AtomicI64::new(0),
                     })
                 }
                 Err(e) => {
