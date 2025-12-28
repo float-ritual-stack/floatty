@@ -242,29 +242,39 @@ fn get_initial_state(state: State<AppState>) -> Result<String, String> {
     Ok(BASE64.encode(update))
 }
 
+/// Default doc key for the outliner (future: support multiple docs)
+const YDOC_KEY: &str = "default";
+/// Compact when update count exceeds this threshold
+const YDOC_COMPACT_THRESHOLD: i64 = 100;
+
 /// Apply a Yjs update from the frontend
 #[tauri::command]
 fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String> {
     let inner = state.inner.as_ref()
         .ok_or_else(|| "ctx:: system unavailable".to_string())?;
-    
+
     let update_bytes = BASE64.decode(update_b64)
         .map_err(|e| e.to_string())?;
-    
+
     let doc = inner.doc.write().map_err(|e| e.to_string())?;
-    
+
     // Apply update to in-memory doc
     {
         let mut txn = doc.transact_mut();
         txn.apply_update(Update::decode_v1(&update_bytes).map_err(|e| e.to_string())?)
            .map_err(|e| e.to_string())?;
     }
-    
-    // Persist full state to DB (Still heavy, but avoids read cost)
-    // Optimization: In real world, use append-only updates table
-    let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
-    inner.db.set_system_state("ydoc", &full_state).map_err(|e| e.to_string())?;
-    
+
+    // Append delta to DB (fast, single row insert)
+    inner.db.append_ydoc_update(YDOC_KEY, &update_bytes).map_err(|e| e.to_string())?;
+
+    // Compact if too many updates accumulated
+    let update_count = inner.db.get_ydoc_update_count(YDOC_KEY).map_err(|e| e.to_string())?;
+    if update_count > YDOC_COMPACT_THRESHOLD {
+        let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        inner.db.compact_ydoc(YDOC_KEY, &full_state).map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -384,9 +394,9 @@ fn clear_workspace(state: State<AppState>) -> Result<(), String> {
         }
     }
 
-    // Persist empty state
+    // Persist empty state (compact to single snapshot)
     let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
-    inner.db.set_system_state("ydoc", &full_state).map_err(|e| e.to_string())?;
+    inner.db.compact_ydoc(YDOC_KEY, &full_state).map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -487,16 +497,43 @@ pub fn run() {
         Ok(db) => {
             // Load persistent state into in-memory Doc
             let doc = Doc::new();
-            if let Ok(Some(state_bytes)) = db.get_system_state("ydoc") {
-                if !state_bytes.is_empty() {
+            let mut loaded_from_updates = false;
+
+            // Try loading from append-only updates first (new format)
+            if let Ok(updates) = db.get_ydoc_updates(YDOC_KEY) {
+                if !updates.is_empty() {
+                    log::info!("Replaying {} Y.Doc updates from append-only storage", updates.len());
                     let mut txn = doc.transact_mut();
-                    match Update::decode_v1(&state_bytes) {
-                        Ok(u) => {
+                    for update_bytes in updates {
+                        if let Ok(u) = Update::decode_v1(&update_bytes) {
                             if let Err(e) = txn.apply_update(u) {
-                                log::error!("Failed to apply Yjs update: {}", e);
+                                log::error!("Failed to apply Y.Doc update: {}", e);
                             }
-                        },
-                        Err(e) => log::error!("Failed to decode Yjs state: {}", e),
+                        }
+                    }
+                    loaded_from_updates = true;
+                }
+            }
+
+            // Fall back to legacy system_state for migration
+            if !loaded_from_updates {
+                if let Ok(Some(state_bytes)) = db.get_system_state("ydoc") {
+                    if !state_bytes.is_empty() {
+                        log::info!("Migrating Y.Doc from legacy system_state to append-only");
+                        let mut txn = doc.transact_mut();
+                        match Update::decode_v1(&state_bytes) {
+                            Ok(u) => {
+                                if let Err(e) = txn.apply_update(u) {
+                                    log::error!("Failed to apply legacy Yjs update: {}", e);
+                                } else {
+                                    // Migrate to new format
+                                    if let Err(e) = db.append_ydoc_update(YDOC_KEY, &state_bytes) {
+                                        log::error!("Failed to migrate to append-only: {}", e);
+                                    }
+                                }
+                            },
+                            Err(e) => log::error!("Failed to decode legacy Yjs state: {}", e),
+                        }
                     }
                 }
             }
