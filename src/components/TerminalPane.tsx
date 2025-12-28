@@ -59,8 +59,8 @@ export function TerminalPane(props: TerminalPaneProps) {
   const handle: TerminalPaneHandle = {
     focus: () => terminalManager.focus(props.id),
     fit: () => {
+      // updatePosition() already calls fit(), so just call that
       updatePosition();
-      terminalManager.fit(props.id);
     },
     refresh: () => terminalManager.refresh(props.id),
     getPtyPid: () => terminalManager.getPtyPid(props.id),
@@ -89,6 +89,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     if (!attached) {
       await terminalManager.attach(props.id, containerRef, props.cwd);
       attached = true;
+
     }
 
     // Initial position
@@ -98,17 +99,26 @@ export function TerminalPane(props: TerminalPaneProps) {
     const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
     if (!placeholder) return;
 
-    const resizeObserver = new ResizeObserver(() => {
-      updatePosition();
-    });
+    // Debounce resize updates to prevent rapid fit() calls during drag (FLO-88)
+    // xterm.js docs recommend debouncing resize calls
+    let resizeTimeout: ReturnType<typeof setTimeout> | undefined;
+    const debouncedUpdate = () => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        updatePosition();
+      }, 50);
+    };
+
+    const resizeObserver = new ResizeObserver(debouncedUpdate);
     resizeObserver.observe(placeholder);
 
     // Also update on window resize (placeholder might move)
-    window.addEventListener('resize', updatePosition);
+    window.addEventListener('resize', debouncedUpdate);
 
     onCleanup(() => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
       resizeObserver.disconnect();
-      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('resize', debouncedUpdate);
       // Note: We intentionally do NOT clear the ref here.
       // Terminal disposal is handled explicitly by handleClosePane/handleCloseTab,
       // not by component unmount. This prevents losing the handle during layout flickers.

@@ -9,6 +9,7 @@
 import { createSignal, Show, createMemo, createEffect, onMount, onCleanup } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { layoutStore } from '../hooks/useLayoutStore';
+import { terminalManager } from '../lib/terminalManager';
 import type { LayoutNode, PaneSplit } from '../lib/layoutTypes';
 
 // Layout constants
@@ -207,6 +208,9 @@ function ResizeHitArea(props: {
     // Clear drag state in store - this triggers createEffect in all handles to resync
     layoutStore.setDraggingSplitId(null);
 
+    // Re-enable fit() before dispatching resize event (FLO-88)
+    terminalManager.setDragging(false);
+
     // Dispatch resize event so terminals/outliners refit to new dimensions
     requestAnimationFrame(() => {
       window.dispatchEvent(new Event('resize'));
@@ -219,6 +223,7 @@ function ResizeHitArea(props: {
 
     isDragging = true;
     layoutStore.setDraggingSplitId(props.splitId);  // Set drag state in store
+    terminalManager.setDragging(true);  // Suppress fit() during drag (FLO-88)
     setIsDraggingVisual(true);
     document.body.classList.add('resizing');
     updatePosition();
