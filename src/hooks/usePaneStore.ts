@@ -89,8 +89,20 @@ function createPaneStore() {
     restoredZoomedRootIds: Record<string, string | null>,
     restoredCollapsed?: Record<string, Record<string, boolean>>
   ) => {
+    // Validate zoomedRootIds structure
+    if (typeof restoredZoomedRootIds !== 'object' || restoredZoomedRootIds === null) {
+      console.warn('[PaneStore] Invalid zoomedRootIds structure, skipping hydration');
+      return;
+    }
+
     setState('zoomedRootId', restoredZoomedRootIds);
+
     if (restoredCollapsed) {
+      // Validate collapsed structure
+      if (typeof restoredCollapsed !== 'object' || restoredCollapsed === null) {
+        console.warn('[PaneStore] Invalid collapsed structure, skipping');
+        return;
+      }
       setState('collapsed', restoredCollapsed);
     }
   };
