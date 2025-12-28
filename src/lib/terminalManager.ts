@@ -590,8 +590,11 @@ class TerminalManager {
 
           // Restore after fit, with double-rAF for xterm internal sync
           const target = savedY;
+          const terminalId = id; // Capture for closure
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
+              // Defensive check: terminal may have been disposed during rAF delay (FLO-88)
+              if (!this.instances.has(terminalId)) return;
               const maxScroll = term.buffer.active.baseY;
               term.scrollToLine(Math.min(target, maxScroll));
             });
@@ -635,6 +638,9 @@ class TerminalManager {
     // Only restore if scroll decreased significantly (indicates xterm bug, not user scrolling)
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        // Defensive check: terminal may have been disposed during rAF delay (FLO-88)
+        if (!this.instances.has(id)) return;
+
         const currentViewportY = term.buffer.active.viewportY;
         const scrollDelta = savedViewportY - currentViewportY;
 
@@ -693,6 +699,14 @@ class TerminalManager {
   async dispose(id: string) {
     const instance = this.instances.get(id);
     if (!instance) return;
+
+    // Clear any pending restoration timeout to prevent post-disposal access (FLO-88)
+    if (this.restorationTimeout) {
+      clearTimeout(this.restorationTimeout);
+      this.restorationTimeout = null;
+    }
+    // Remove this terminal's saved scroll position
+    this.savedScrollPositions.delete(id);
 
     // Mark as disposing BEFORE kill - prevents onExit callback from triggering closePane
     this.disposing.add(id);
