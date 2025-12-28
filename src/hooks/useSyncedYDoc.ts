@@ -68,13 +68,15 @@ export function useSyncedYDoc(
   let pendingUpdates: Uint8Array[] = [];
   let syncTimer: number | null = null;
   let isFlushing = false;
+  let retryCount = 0;
+  const MAX_RETRIES = 5;
 
-  // Schedule a flush after debounce period
-  const scheduleFlush = () => {
+  // Schedule a flush with optional delay override (for backoff)
+  const scheduleFlush = (delay?: number) => {
     if (syncTimer) {
       clearTimeout(syncTimer);
     }
-    syncTimer = window.setTimeout(flushUpdates, syncDebounce);
+    syncTimer = window.setTimeout(flushUpdates, delay ?? syncDebounce);
   };
 
   // Send pending updates to Rust
@@ -94,14 +96,20 @@ export function useSyncedYDoc(
         await invoke('apply_update', { updateB64 });
         sentCount++;
       }
+      retryCount = 0; // Reset on success
     } catch (err) {
-      console.error('Failed to sync to Rust:', err);
+      retryCount++;
+      console.error(`Failed to sync to Rust (attempt ${retryCount}/${MAX_RETRIES}):`, err);
       // Restore unsent updates to front of queue for retry
       pendingUpdates = [...updates.slice(sentCount), ...pendingUpdates];
-      setError(String(err));
-      // Schedule retry for restored updates
-      if (pendingUpdates.length > 0) {
-        scheduleFlush();
+
+      if (retryCount >= MAX_RETRIES) {
+        setError(`Sync failed after ${MAX_RETRIES} attempts. Changes may not be saved.`);
+        retryCount = 0; // Allow future attempts after user interaction
+      } else if (pendingUpdates.length > 0) {
+        // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
+        const backoffDelay = Math.min(syncDebounce * Math.pow(2, retryCount), 10000);
+        scheduleFlush(backoffDelay);
       }
     } finally {
       isFlushing = false;

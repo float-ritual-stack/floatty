@@ -268,11 +268,17 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
     // Append delta to DB (fast, single row insert)
     inner.db.append_ydoc_update(YDOC_KEY, &update_bytes).map_err(|e| e.to_string())?;
 
-    // Compact if too many updates accumulated
-    let update_count = inner.db.get_ydoc_update_count(YDOC_KEY).map_err(|e| e.to_string())?;
+    // Compact if too many updates accumulated (optimization - don't fail the operation)
+    let update_count = inner.db.get_ydoc_update_count(YDOC_KEY).unwrap_or(0);
     if update_count > YDOC_COMPACT_THRESHOLD {
         let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
-        inner.db.compact_ydoc(YDOC_KEY, &full_state).map_err(|e| e.to_string())?;
+        if let Err(e) = inner.db.compact_ydoc(YDOC_KEY, &full_state) {
+            log::warn!(
+                "Y.Doc compaction failed (will retry later): {}. Update count: {}",
+                e, update_count
+            );
+            // Continue - the update was saved, compaction can happen later
+        }
     }
 
     Ok(())
@@ -537,20 +543,26 @@ pub fn run() {
             if !loaded_from_updates {
                 if let Ok(Some(state_bytes)) = db.get_system_state("ydoc") {
                     if !state_bytes.is_empty() {
-                        log::info!("Migrating Y.Doc from legacy system_state to append-only");
+                        log::info!("Migrating Y.Doc from legacy system_state to append-only ({} bytes)", state_bytes.len());
                         let mut txn = doc.transact_mut();
                         match Update::decode_v1(&state_bytes) {
                             Ok(u) => {
                                 if let Err(e) = txn.apply_update(u) {
-                                    log::error!("Failed to apply legacy Yjs update: {}", e);
+                                    log::error!("Failed to apply legacy Y.Doc state: {}", e);
                                 } else {
                                     // Migrate to new format
                                     if let Err(e) = db.append_ydoc_update(YDOC_KEY, &state_bytes) {
-                                        log::error!("Failed to migrate to append-only: {}", e);
+                                        log::error!(
+                                            "Failed to migrate Y.Doc to append-only storage: {}. \
+                                             Legacy data loaded but not migrated. Check disk space/permissions.",
+                                            e
+                                        );
+                                    } else {
+                                        log::info!("Successfully migrated Y.Doc from legacy to append-only format");
                                     }
                                 }
                             },
-                            Err(e) => log::error!("Failed to decode legacy Yjs state: {}", e),
+                            Err(e) => log::error!("Failed to decode legacy Y.Doc state: {}", e),
                         }
                     }
                 }
