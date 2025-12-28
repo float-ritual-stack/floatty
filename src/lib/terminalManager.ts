@@ -134,6 +134,11 @@ class TerminalManager {
       if (instance.container !== container) {
         console.log(`[TerminalManager] Re-parenting terminal ${id} to new container`);
 
+        // Save scroll state before re-parenting (FLO-88)
+        const buffer = instance.term.buffer.active;
+        const savedViewportY = buffer.viewportY;
+        const wasAtBottom = buffer.viewportY >= buffer.baseY;
+
         // CRITICAL: Dispose WebGL addon BEFORE re-opening to prevent context exhaustion
         if (instance.webglAddon) {
           try {
@@ -163,6 +168,11 @@ class TerminalManager {
         }
 
         instance.fitAddon.fit();
+
+        // Restore scroll position if user was NOT at bottom (FLO-88)
+        if (!wasAtBottom) {
+          instance.term.scrollToLine(savedViewportY);
+        }
         // Notify PTY of new size
         if (instance.ptyPid !== null && instance.ptyPid > 0) {
           invoke('plugin:pty|resize', {
@@ -536,23 +546,119 @@ class TerminalManager {
     this.instances.get(id)?.term.focus();
   }
 
+  // Track whether ANY drag is in progress (set by ResizeOverlay via setDragging)
+  private isDragging = false;
+  // Saved scroll positions when drag started - Map<paneId, viewportY>
+  private savedScrollPositions = new Map<string, number>();
+
+  // Pending restoration timeout - used to delay isDragging=false and batch fit() calls
+  private restorationTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Set drag state - called by ResizeOverlay to suppress fit() during resize drag
+   * When drag starts, we save scroll positions; when it ends, we delay restoration
+   * to let all resize events settle before doing one clean fit().
+   */
+  setDragging(dragging: boolean) {
+    // Clear any pending restoration (handles rapid drag cycles - FLO-88 race condition fix)
+    if (this.restorationTimeout) {
+      clearTimeout(this.restorationTimeout);
+      this.restorationTimeout = null;
+    }
+
+    if (dragging) {
+      // Drag starting - save all scroll positions NOW
+      // Always refresh positions even if already dragging (handles rapid drag cycles)
+      for (const [id, instance] of this.instances) {
+        const buffer = instance.term.buffer.active;
+        this.savedScrollPositions.set(id, buffer.viewportY);
+      }
+      this.isDragging = true;
+    } else if (this.isDragging) {
+      // Drag ending - delay isDragging=false to let resize events settle
+      // Must be longer than TerminalPane's 50ms debounce + some buffer
+      this.restorationTimeout = setTimeout(() => {
+        this.restorationTimeout = null;
+
+        // Do one clean fit() for each terminal with saved position
+        for (const [id, savedY] of this.savedScrollPositions) {
+          const instance = this.instances.get(id);
+          if (!instance) continue;
+
+          const term = instance.term;
+          instance.fitAddon.fit();
+
+          // Restore after fit, with double-rAF for xterm internal sync
+          const target = savedY;
+          const terminalId = id; // Capture for closure
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              // Defensive check: terminal may have been disposed during rAF delay (FLO-88)
+              if (!this.instances.has(terminalId) || this.disposing.has(terminalId)) return;
+              const maxScroll = term.buffer.active.baseY;
+              term.scrollToLine(Math.min(target, maxScroll));
+            });
+          });
+
+          // Notify PTY of new size
+          if (instance.ptyPid !== null && instance.ptyPid > 0) {
+            invoke('plugin:pty|resize', {
+              pid: instance.ptyPid,
+              cols: term.cols,
+              rows: term.rows,
+            }).catch(() => { /* Resize failures during exit are expected */ });
+          }
+        }
+
+        // Clear saved positions and re-enable normal fit() calls
+        this.savedScrollPositions.clear();
+        this.isDragging = false;
+      }, 150);
+    }
+  }
+
   /**
    * Fit terminal to container
+   * Preserves scroll position using double-rAF to let xterm's internal viewport settle (FLO-88)
+   * Skips during drag - setDragging(false) handles final fit with restoration
    */
   fit(id: string) {
+    // Skip fit during drag - restoration happens in setDragging(false) timeout
+    if (this.isDragging) return;
+
     const instance = this.instances.get(id);
-    if (instance) {
-      instance.fitAddon.fit();
-      if (instance.ptyPid !== null && instance.ptyPid > 0) {
-        invoke('plugin:pty|resize', {
-          pid: instance.ptyPid,
-          cols: instance.term.cols,
-          rows: instance.term.rows,
-        }).catch((e) => {
-          // Resize failures are expected during exit - just log
-          console.warn(`[TerminalManager] Fit resize failed for ${id}:`, e);
-        });
-      }
+    if (!instance) return;
+
+    const term = instance.term;
+    const savedViewportY = term.buffer.active.viewportY;
+
+    instance.fitAddon.fit();
+
+    // Use double-rAF to restore scroll after xterm's internal viewport sync
+    // Only restore if scroll decreased significantly (indicates xterm bug, not user scrolling)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        // Defensive check: terminal may have been disposed during rAF delay (FLO-88)
+        if (!this.instances.has(id) || this.disposing.has(id)) return;
+
+        const currentViewportY = term.buffer.active.viewportY;
+        const scrollDelta = savedViewportY - currentViewportY;
+
+        // Restore if scroll dropped significantly AND user had scrollback position
+        // (don't restore if user was already at top - nothing to preserve)
+        if (scrollDelta > term.rows && savedViewportY > 0) {
+          const maxScroll = term.buffer.active.baseY;
+          term.scrollToLine(Math.min(savedViewportY, maxScroll));
+        }
+      });
+    });
+
+    if (instance.ptyPid !== null && instance.ptyPid > 0) {
+      invoke('plugin:pty|resize', {
+        pid: instance.ptyPid,
+        cols: term.cols,
+        rows: term.rows,
+      }).catch(() => { /* Resize failures during exit are expected */ });
     }
   }
 
@@ -594,6 +700,14 @@ class TerminalManager {
     const instance = this.instances.get(id);
     if (!instance) return;
 
+    // Clear any pending restoration timeout to prevent post-disposal access (FLO-88)
+    if (this.restorationTimeout) {
+      clearTimeout(this.restorationTimeout);
+      this.restorationTimeout = null;
+    }
+    // Remove this terminal's saved scroll position
+    this.savedScrollPositions.delete(id);
+
     // Mark as disposing BEFORE kill - prevents onExit callback from triggering closePane
     this.disposing.add(id);
 
@@ -628,6 +742,7 @@ class TerminalManager {
     this.instances.delete(id);
     this.callbacks.delete(id);
     this.seenMarkers.delete(id);
+    this.savedScrollPositions.delete(id);
     this.disposing.delete(id);
   }
 

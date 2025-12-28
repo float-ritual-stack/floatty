@@ -35,23 +35,52 @@ export function TerminalPane(props: TerminalPaneProps) {
   let containerRef: HTMLDivElement | undefined;
   let attached = false;
 
-  // Position this terminal over its placeholder
-  const updatePosition = () => {
+  // Minimum dimension threshold - xterm.js misbehaves (scroll jumps, 0 rows) below this
+  const MIN_DIMENSION = 10;
+
+  // Debounce state for fit() - CSS updates are immediate, fit() is debounced
+  let fitTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  // Schedule a debounced fit() call - expensive operation, rate-limited
+  const scheduleFit = () => {
+    if (fitTimeout) clearTimeout(fitTimeout);
+    fitTimeout = setTimeout(() => {
+      if (attached) {
+        terminalManager.fit(props.id);
+      }
+    }, 50);
+  };
+
+  // Update CSS geometry synchronously - keeps terminal visually glued to placeholder
+  // Uses provided dimensions (from ResizeObserver entry) or falls back to getBoundingClientRect
+  const updateGeometry = (providedWidth?: number, providedHeight?: number) => {
     const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
 
-    if (!containerRef || !placeholder) return;
+    if (!containerRef || !placeholder) return false;
 
     const rect = placeholder.getBoundingClientRect();
+    const width = providedWidth ?? rect.width;
+    const height = providedHeight ?? rect.height;
+
+    // Zero-height guard: xterm.js calculates 0 rows on tiny containers,
+    // causing scroll resets and undefined behavior (FLO-88 hardening)
+    if (width < MIN_DIMENSION || height < MIN_DIMENSION) return false;
+
     const parentRect = containerRef.offsetParent?.getBoundingClientRect() ?? { left: 0, top: 0 };
 
     containerRef.style.left = `${rect.left - parentRect.left}px`;
     containerRef.style.top = `${rect.top - parentRect.top}px`;
-    containerRef.style.width = `${rect.width}px`;
-    containerRef.style.height = `${rect.height}px`;
+    containerRef.style.width = `${width}px`;
+    containerRef.style.height = `${height}px`;
 
-    // Refit terminal after resize
-    if (attached) {
-      terminalManager.fit(props.id);
+    return true;
+  };
+
+  // Full update: geometry (sync) + fit (debounced)
+  // Used by imperative handle and visibility effect
+  const updatePosition = () => {
+    if (updateGeometry()) {
+      scheduleFit();
     }
   };
 
@@ -59,8 +88,8 @@ export function TerminalPane(props: TerminalPaneProps) {
   const handle: TerminalPaneHandle = {
     focus: () => terminalManager.focus(props.id),
     fit: () => {
+      // updatePosition() already calls fit(), so just call that
       updatePosition();
-      terminalManager.fit(props.id);
     },
     refresh: () => terminalManager.refresh(props.id),
     getPtyPid: () => terminalManager.getPtyPid(props.id),
@@ -89,6 +118,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     if (!attached) {
       await terminalManager.attach(props.id, containerRef, props.cwd);
       attached = true;
+
     }
 
     // Initial position
@@ -98,15 +128,31 @@ export function TerminalPane(props: TerminalPaneProps) {
     const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
     if (!placeholder) return;
 
-    const resizeObserver = new ResizeObserver(() => {
-      updatePosition();
+    // ResizeObserver: CSS geometry updates SYNCHRONOUSLY, fit() is DEBOUNCED
+    // This keeps the terminal visually glued to placeholder during resize
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+
+      const { width, height } = entry.contentRect;
+
+      // Zero-height guard using entry dimensions directly (FLO-88 hardening)
+      if (width < MIN_DIMENSION || height < MIN_DIMENSION) return;
+
+      // Sync CSS update using entry dimensions (no layout thrashing)
+      if (updateGeometry(width, height)) {
+        // Schedule debounced fit() - expensive xterm operation
+        scheduleFit();
+      }
     });
     resizeObserver.observe(placeholder);
 
-    // Also update on window resize (placeholder might move)
+    // Window resize: placeholder position may change (not just size)
+    // Full updatePosition() needed since we don't have entry dimensions
     window.addEventListener('resize', updatePosition);
 
     onCleanup(() => {
+      if (fitTimeout) clearTimeout(fitTimeout);
       resizeObserver.disconnect();
       window.removeEventListener('resize', updatePosition);
       // Note: We intentionally do NOT clear the ref here.
