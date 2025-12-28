@@ -15,7 +15,7 @@
     "pty:allow-kill",
     "pty:allow-exitstatus",
     "os:default",
-    "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text"
+    "clipboard:read-all",
+    "clipboard:write-all"
   ]
 }

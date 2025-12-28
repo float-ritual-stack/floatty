@@ -13,6 +13,7 @@ pub enum MarkerStatus {
 }
 
 impl MarkerStatus {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             MarkerStatus::Pending => "pending",
@@ -102,6 +103,7 @@ impl CtxDatabase {
     }
 
     /// Open an in-memory database for testing
+    #[allow(dead_code)]
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         let db = Self { conn: Mutex::new(conn) };
@@ -206,6 +208,7 @@ impl CtxDatabase {
     }
 
     /// Check if a marker with this ID already exists
+    #[allow(dead_code)]
     pub fn marker_exists(&self, id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let count: i32 = conn.query_row(
@@ -218,6 +221,7 @@ impl CtxDatabase {
 
     /// Insert a new raw marker (status = pending)
     /// Metadata comes from JSONL fields - authoritative source of truth
+    #[allow(dead_code)]
     pub fn insert_raw(&self, id: &str, session_file: &str, raw_line: &str, meta: &JsonlMetadata) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -343,6 +347,7 @@ impl CtxDatabase {
     }
 
     /// Update file position after reading
+    #[allow(dead_code)]
     pub fn set_file_position(&self, file_path: &str, position: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

@@ -125,6 +125,7 @@ impl CtxWatcher {
     }
 
     /// Stop the watcher
+    #[allow(dead_code)]
     pub fn stop(&self) {
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }

@@ -269,6 +269,7 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
 }
 
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Execute a shell command and return stdout/stderr
 ///
@@ -326,6 +327,31 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
         Ok(res) => Ok(res.response),
         Err(e) => Err(format!("Ollama error: {}", e)),
     }
+}
+
+/// Save clipboard image (base64) to temp file and return path
+/// Used for pasting screenshots - saves to /tmp/floatty-clipboard-{timestamp}.png
+#[tauri::command]
+fn save_clipboard_image(base64: String) -> Result<String, String> {
+    // Decode base64 to bytes
+    let bytes = BASE64.decode(&base64).map_err(|e| format!("Base64 decode failed: {}", e))?;
+
+    // Generate unique filename with timestamp
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+
+    let temp_dir = std::env::temp_dir();
+    let filename = format!("floatty-clipboard-{}.png", timestamp);
+    let path = temp_dir.join(&filename);
+
+    // Write image to temp file
+    std::fs::write(&path, bytes).map_err(|e| format!("Failed to write image: {}", e))?;
+
+    log::info!("Saved clipboard image to {:?}", path);
+
+    Ok(path.to_string_lossy().to_string())
 }
 
 /// Clear the entire workspace (blocks and rootIds) efficiently
@@ -445,7 +471,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
-        .plugin(tauri_plugin_clipboard_manager::init());
+        .plugin(tauri_plugin_clipboard::init());
 
     // macOS-only: NSPanel floating window support
     #[cfg(target_os = "macos")]
@@ -472,6 +498,7 @@ pub fn run() {
                     execute_shell_command,
                     execute_ai_command,
                     clear_workspace,
+                    save_clipboard_image,
                 ]
             }
             // macOS: include panel commands
@@ -490,6 +517,7 @@ pub fn run() {
                     execute_shell_command,
                     execute_ai_command,
                     clear_workspace,
+                    save_clipboard_image,
                     panel::show_test_panel,
                     panel::hide_test_panel,
                     panel::toggle_test_panel,

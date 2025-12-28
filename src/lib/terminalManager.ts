@@ -15,7 +15,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
-import { readText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText, readImageBase64, hasImage, hasText, hasFiles, readFiles } from 'tauri-plugin-clipboard-api';
 import { defaultTheme, toXtermTheme } from './themes';
 
 // Terminal font config from ~/.floatty/config.toml
@@ -327,21 +327,47 @@ class TerminalManager {
           }
 
           // Cmd+V (macOS) or Ctrl+V (other platforms): Paste from clipboard
+          // Priority: files > images > text (files from Finder Cmd+C)
           const isMac = os === 'macos';
           const isPaste = event.key === 'v' && (isMac ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey;
           if (isPaste) {
+            // CRITICAL: Prevent browser's native paste immediately, before async work
+            event.preventDefault();
+            event.stopPropagation();
             if (event.type === 'keydown') {
-              // Read clipboard and write to PTY
-              readText()
-                .then((text) => {
-                  if (text) {
-                    console.log(`[TerminalManager] Pasting ${text.length} chars`);
-                    invoke('plugin:pty|write', { pid, data: text }).catch(console.error);
+              // Check clipboard content type and paste appropriately
+              // Priority: files > images > text (files from Finder Cmd+C)
+              (async () => {
+                try {
+                  const hasFilesContent = await hasFiles();
+                  const hasImageContent = await hasImage();
+                  const hasTextContent = await hasText();
+
+                  if (hasFilesContent) {
+                    // Files in clipboard (Finder Cmd+C) - paste paths
+                    const files = await readFiles();
+                    if (files && files.length > 0) {
+                      const formatted = files.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
+                      invoke('plugin:pty|write', { pid, data: formatted }).catch(console.error);
+                    }
+                  } else if (hasImageContent) {
+                    // Image in clipboard - save to temp file, paste path
+                    const base64 = await readImageBase64();
+                    if (base64) {
+                      const tempPath = await invoke<string>('save_clipboard_image', { base64 });
+                      invoke('plugin:pty|write', { pid, data: tempPath }).catch(console.error);
+                    }
+                  } else if (hasTextContent) {
+                    // Text in clipboard - paste directly
+                    const text = await readText();
+                    if (text) {
+                      invoke('plugin:pty|write', { pid, data: text }).catch(console.error);
+                    }
                   }
-                })
-                .catch((err) => {
-                  console.error('[TerminalManager] Clipboard read failed:', err);
-                });
+                } catch (err) {
+                  console.error('[TerminalManager] Clipboard paste failed:', err);
+                }
+              })();
             }
             return false; // Block default browser paste behavior
           }
