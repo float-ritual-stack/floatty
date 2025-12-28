@@ -259,20 +259,30 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
     let inner = state.inner.as_ref()
         .ok_or_else(|| "ctx:: system unavailable".to_string())?;
 
+    // Decode base64 and validate update format before any mutations
     let update_bytes = BASE64.decode(update_b64)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Base64 decode failed: {}", e))?;
 
-    let doc = inner.doc.write().map_err(|e| e.to_string())?;
+    let update = Update::decode_v1(&update_bytes)
+        .map_err(|e| format!("Y.Doc update decode failed: {}", e))?;
 
-    // Apply update to in-memory doc
+    // PERSIST FIRST: Write to DB before applying to memory
+    // This prevents memory/DB divergence if DB write fails
+    inner.db.append_ydoc_update(YDOC_KEY, &update_bytes)
+        .map_err(|e| format!("Failed to persist Y.Doc update: {}", e))?;
+
+    // Now apply to in-memory doc (update is already persisted)
+    let doc = inner.doc.write()
+        .map_err(|e| format!("Failed to acquire Y.Doc write lock: {}", e))?;
     {
         let mut txn = doc.transact_mut();
-        txn.apply_update(Update::decode_v1(&update_bytes).map_err(|e| e.to_string())?)
-           .map_err(|e| e.to_string())?;
+        txn.apply_update(update)
+            .map_err(|e| {
+                // Log for debugging, return error so frontend can react
+                log::error!("Y.Doc apply failed (persisted, will replay on restart): {}", e);
+                format!("Y.Doc apply failed (data saved, restart may be needed): {}", e)
+            })?;
     }
-
-    // Append delta to DB (fast, single row insert)
-    inner.db.append_ydoc_update(YDOC_KEY, &update_bytes).map_err(|e| e.to_string())?;
 
     // Increment counter and only check DB periodically (avoid SELECT per keystroke)
     let updates_since_check = inner.updates_since_compact_check.fetch_add(1, Ordering::Relaxed) + 1;
@@ -289,7 +299,6 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
                     "Y.Doc compaction failed (will retry later): {}. Update count: {}",
                     e, update_count
                 );
-                // Continue - the update was saved, compaction can happen later
             }
         }
     }
