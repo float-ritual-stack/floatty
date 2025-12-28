@@ -561,41 +561,59 @@ pub fn run() {
                 }
             }
 
-            // Fall back to legacy system_state for migration (one-time)
-            // Check if migration was already attempted to avoid log spam on repeated failures
-            let migration_attempted = db.get_system_state("ydoc_migration_attempted")
+            // Fall back to legacy system_state for migration (bounded retries)
+            const MAX_MIGRATION_ATTEMPTS: u32 = 3;
+            let migration_attempts: u32 = db.get_system_state("ydoc_migration_attempts")
                 .ok()
                 .flatten()
-                .is_some();
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
 
-            if !loaded_from_updates && !migration_attempted {
+            if !loaded_from_updates && migration_attempts < MAX_MIGRATION_ATTEMPTS {
                 if let Ok(Some(state_bytes)) = db.get_system_state("ydoc") {
                     if !state_bytes.is_empty() {
-                        log::info!("Migrating Y.Doc from legacy system_state to append-only ({} bytes)", state_bytes.len());
+                        log::info!(
+                            "Migrating Y.Doc from legacy system_state to append-only ({} bytes, attempt {}/{})",
+                            state_bytes.len(), migration_attempts + 1, MAX_MIGRATION_ATTEMPTS
+                        );
                         let mut txn = doc.transact_mut();
                         match Update::decode_v1(&state_bytes) {
                             Ok(u) => {
                                 if let Err(e) = txn.apply_update(u) {
                                     log::error!("Failed to apply legacy Y.Doc state: {}", e);
+                                    // Decode worked but apply failed - likely corrupt, increment attempts
+                                    let new_attempts = migration_attempts + 1;
+                                    let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
                                 } else {
                                     // Migrate to new format
                                     if let Err(e) = db.append_ydoc_update(YDOC_KEY, &state_bytes) {
                                         log::error!(
-                                            "Failed to migrate Y.Doc to append-only storage: {}. \
+                                            "Failed to migrate Y.Doc to append-only storage: {} (attempt {}/{}). \
                                              Legacy data loaded but not migrated. Check disk space/permissions.",
-                                            e
+                                            e, migration_attempts + 1, MAX_MIGRATION_ATTEMPTS
                                         );
+                                        // Transient failure possible - increment attempts for bounded retry
+                                        let new_attempts = migration_attempts + 1;
+                                        let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
                                     } else {
                                         log::info!("Successfully migrated Y.Doc from legacy to append-only format");
+                                        // Clear attempts on success (migration complete)
+                                        let _ = db.set_system_state("ydoc_migration_attempts", b"0");
                                     }
                                 }
                             },
-                            Err(e) => log::error!("Failed to decode legacy Y.Doc state: {}", e),
+                            Err(e) => {
+                                log::error!("Failed to decode legacy Y.Doc state: {} (attempt {}/{})", e, migration_attempts + 1, MAX_MIGRATION_ATTEMPTS);
+                                // Decode failed - likely corrupt data, increment attempts
+                                let new_attempts = migration_attempts + 1;
+                                let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
+                            },
                         }
                     }
                 }
-                // Mark migration as attempted (even if failed) to prevent retry spam
-                let _ = db.set_system_state("ydoc_migration_attempted", b"1");
+            } else if migration_attempts >= MAX_MIGRATION_ATTEMPTS {
+                log::warn!("Y.Doc migration skipped: max attempts ({}) reached. Manual intervention may be needed.", MAX_MIGRATION_ATTEMPTS);
             }
 
             let db = Arc::new(db);
