@@ -16,7 +16,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { onMount, onCleanup, createSignal } from 'solid-js';
+import { createSignal } from 'solid-js';
 import { tabStore, type Tab } from './useTabStore';
 import { layoutStore } from './useLayoutStore';
 import { paneStore } from './usePaneStore';
@@ -93,7 +93,15 @@ export function createWorkspacePersistence() {
         isAlive: true,
       }));
 
-      tabStore.hydrateTabs(restoredTabs, state.activeTabId || state.tabs[0].id);
+      // Validate activeTabId exists in restored tabs
+      const tabIds = new Set(state.tabs.map((t) => t.id));
+      let activeTabId = state.activeTabId;
+      if (activeTabId && !tabIds.has(activeTabId)) {
+        console.warn(`[WorkspacePersistence] activeTabId '${activeTabId}' not found in tabs, falling back to first tab`);
+        activeTabId = state.tabs[0].id;
+      }
+
+      tabStore.hydrateTabs(restoredTabs, activeTabId || state.tabs[0].id);
 
       // Reconstruct TabLayout objects with tabId
       const layoutsWithTabId: Record<string, TabLayout> = {};
@@ -209,22 +217,11 @@ export function getWorkspacePersistence() {
 
 /**
  * Hook for components that need to trigger saves
- * Returns scheduleSave for debounced saves on state changes
+ * Returns the persistence singleton
+ *
+ * Note: Window close handling is done centrally in App.tsx using
+ * Tauri's onCloseRequested which properly awaits async saves.
  */
 export function useWorkspacePersistence() {
-  const persistence = getWorkspacePersistence();
-
-  // Set up beforeunload handler to save on close
-  onMount(() => {
-    const handleBeforeUnload = () => {
-      persistence.saveNow();
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    onCleanup(() => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    });
-  });
-
-  return persistence;
+  return getWorkspacePersistence();
 }

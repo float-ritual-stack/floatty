@@ -97,6 +97,7 @@ function createPaneStore() {
 
   /**
    * Get pane state for persistence
+   * Deep clones to avoid SolidJS proxy leakage
    */
   const getPaneStateForPersistence = (): {
     zoomedRootId: Record<string, string | null>;
@@ -104,7 +105,8 @@ function createPaneStore() {
   } => {
     return {
       zoomedRootId: { ...state.zoomedRootId },
-      collapsed: { ...state.collapsed },
+      // Deep clone nested structure to strip SolidJS proxies
+      collapsed: JSON.parse(JSON.stringify(state.collapsed)),
     };
   };
 

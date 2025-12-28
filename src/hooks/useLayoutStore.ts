@@ -257,12 +257,14 @@ function createLayoutStore() {
 
   /**
    * Get all layouts for persistence
+   * Deep clones to avoid SolidJS proxy leakage
    */
   const getLayoutsForPersistence = (): Record<string, { root: LayoutNode; activePaneId: string }> => {
     const result: Record<string, { root: LayoutNode; activePaneId: string }> = {};
     for (const [tabId, layout] of Object.entries(state.layouts)) {
       result[tabId] = {
-        root: layout.root,
+        // Deep clone to strip SolidJS proxies before serialization
+        root: JSON.parse(JSON.stringify(layout.root)),
         activePaneId: layout.activePaneId,
       };
     }

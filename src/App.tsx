@@ -1,6 +1,7 @@
 import { onMount, onCleanup, createSignal, Show, createEffect } from 'solid-js';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Terminal } from './components/Terminal';
 import { WorkspaceProvider } from './context/WorkspaceContext';
 import { themeStore } from './hooks/useThemeStore';
@@ -79,13 +80,12 @@ function App() {
     persistence.scheduleSave();
   });
 
-  // Save on window beforeunload (immediate, not debounced)
-  onMount(() => {
-    const handleBeforeUnload = () => {
-      persistence.saveNow();
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    onCleanup(() => window.removeEventListener('beforeunload', handleBeforeUnload));
+  // Save workspace on window close (Tauri's onCloseRequested properly awaits async)
+  onMount(async () => {
+    const unlisten = await getCurrentWindow().onCloseRequested(async () => {
+      await persistence.saveWorkspace();
+    });
+    onCleanup(() => unlisten());
   });
 
   onCleanup(() => {
