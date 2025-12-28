@@ -1,12 +1,12 @@
 import { Show, createMemo, createEffect } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
-import { blockStore } from '../hooks/useBlockStore';
-import { paneStore } from '../hooks/usePaneStore';
+import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
+import { useCursor } from '../hooks/useCursor';
 import { findHandler, executeBlock } from '../lib/executor';
-import { isCursorAtContentStart, isCursorAtContentEnd, getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { getActionForEvent } from '../lib/keybinds';
 import { BlockDisplay } from './BlockDisplay';
+import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
 
 interface BlockItemProps {
   id: string;
@@ -17,12 +17,16 @@ interface BlockItemProps {
 }
 
 export function BlockItem(props: BlockItemProps) {
+  const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock } = useBlockOperations();
   const block = createMemo(() => store.blocks[props.id]);
   const isFocused = createMemo(() => props.focusedBlockId === props.id);
   const isCollapsed = createMemo(() => paneStore.isCollapsed(props.paneId, props.id, block()?.collapsed || false));
   let contentRef: HTMLDivElement | undefined;
+
+  // Cursor abstraction - enables mocking in tests
+  const cursor = useCursor(() => contentRef);
 
   // Handle focus changes from props
   createEffect(() => {
@@ -116,7 +120,7 @@ export function BlockItem(props: BlockItemProps) {
     if (e.key === 'ArrowUp') {
       // Only exit block if cursor is at absolute start of content
       // Otherwise let browser handle multi-line navigation within block
-      if (contentRef && isCursorAtContentStart(contentRef)) {
+      if (cursor.isAtStart()) {
         e.preventDefault();
         const prev = findPrevVisibleBlock(props.id, props.paneId);
         if (prev) props.onFocus(prev);
@@ -125,7 +129,7 @@ export function BlockItem(props: BlockItemProps) {
     } else if (e.key === 'ArrowDown') {
       // Only exit block if cursor is at absolute end of content
       // Otherwise let browser handle multi-line navigation within block
-      if (contentRef && isCursorAtContentEnd(contentRef)) {
+      if (cursor.isAtEnd()) {
         e.preventDefault();
         const next = findNextVisibleBlock(props.id, props.paneId);
         if (next) props.onFocus(next);
@@ -154,7 +158,7 @@ export function BlockItem(props: BlockItemProps) {
       e.preventDefault();
 
       // CRITICAL: Use absolute offset, not anchorOffset (which is text-node-relative)
-      const offset = contentRef ? getAbsoluteCursorOffset(contentRef) : 0;
+      const offset = cursor.getOffset();
       const currentContent = block()?.content || '';
       const hasChildren = block()?.childIds && block()!.childIds.length > 0;
       const atEnd = offset >= currentContent.length;
@@ -195,7 +199,7 @@ export function BlockItem(props: BlockItemProps) {
       e.preventDefault();
 
       // Use absolute block start (0,0), not just line start
-      const atAbsoluteStart = contentRef ? isCursorAtContentStart(contentRef) : false;
+      const atAbsoluteStart = cursor.isAtStart();
 
       if (atAbsoluteStart) {
         // At absolute block start: Tab/Shift+Tab controls tree structure
@@ -210,7 +214,7 @@ export function BlockItem(props: BlockItemProps) {
           // Shift+Tab: remove up to 2 leading spaces from current line
           if (contentRef) {
             const text = contentRef.textContent || '';
-            const pos = getAbsoluteCursorOffset(contentRef);
+            const pos = cursor.getOffset();
 
             // Find line start (look backwards for newline)
             const lineStart = text.lastIndexOf('\n', pos - 1) + 1;
@@ -230,7 +234,7 @@ export function BlockItem(props: BlockItemProps) {
 
               // Restore cursor position using proper utility
               const newPos = Math.max(lineStart, pos - toRemove);
-              setCursorAtOffset(contentRef, newPos);
+              cursor.setOffset(newPos);
             }
           }
         } else {
@@ -243,10 +247,7 @@ export function BlockItem(props: BlockItemProps) {
     } else if (e.key === 'Backspace') {
       // CRITICAL: Use absolute offset for multi-line content
       // Also check isCollapsed - if text is selected (Cmd+A), let browser handle delete
-      const selection = window.getSelection();
-      const isAtStart = contentRef
-        && selection?.isCollapsed
-        && getAbsoluteCursorOffset(contentRef) === 0;
+      const isAtStart = cursor.isSelectionCollapsed() && cursor.getOffset() === 0;
 
       if (isAtStart) {
           // Only merge if no children to avoid deleting subtree accidentally

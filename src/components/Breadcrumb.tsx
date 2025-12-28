@@ -7,8 +7,7 @@
  */
 
 import { For } from 'solid-js';
-import { blockStore } from '../hooks/useBlockStore';
-import { paneStore } from '../hooks/usePaneStore';
+import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 
 interface BreadcrumbProps {
@@ -25,6 +24,7 @@ function truncate(text: string, maxLen: number): string {
 }
 
 export function Breadcrumb(props: BreadcrumbProps) {
+  const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { getAncestors } = useBlockOperations();
 
