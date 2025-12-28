@@ -89,8 +89,11 @@ function App() {
 
   // Save workspace on window close (Tauri's onCloseRequested properly awaits async)
   onMount(async () => {
-    const unlisten = await getCurrentWindow().onCloseRequested(async () => {
+    const currentWindow = getCurrentWindow();
+    const unlisten = await currentWindow.onCloseRequested(async (event) => {
+      event.preventDefault(); // Block default close
       await persistence.saveWorkspace();
+      await currentWindow.destroy(); // Now close after save completes
     });
     onCleanup(() => unlisten());
   });
