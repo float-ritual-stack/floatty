@@ -316,27 +316,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// which allows users to execute arbitrary shell commands from within blocks.
 /// This is a power-user feature - commands run with the user's shell privileges.
 /// No validation/allowlist is applied since this is equivalent to the user's terminal.
+/// Runs command through user's shell to inherit PATH and other environment setup.
 #[tauri::command]
 async fn execute_shell_command(command: String) -> Result<String, String> {
-    // Parse command string respecting quotes
-    let parts = shell_words::split(&command).map_err(|e| e.to_string())?;
-    
-    if parts.is_empty() {
+    if command.trim().is_empty() {
         return Ok("".to_string());
     }
-    
+
     tauri::async_runtime::spawn_blocking(move || {
-        let prog = &parts[0];
-        let args = &parts[1..];
-        
-        let output = std::process::Command::new(prog)
-            .args(args)
+        // Use user's shell to inherit PATH from .zshrc/.bashrc
+        // This ensures commands like `floatctl` in ~/.cargo/bin work
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+        let output = std::process::Command::new(&shell)
+            .arg("-l")  // Login shell to source profile
+            .arg("-c")  // Execute command string
+            .arg(&command)
             .output()
-            .map_err(|e| e.to_string())?;
-            
+            .map_err(|e| format!("Failed to execute shell: {}", e))?;
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        
+
         if output.status.success() {
             Ok(stdout.to_string())
         } else {
@@ -350,20 +351,31 @@ async fn execute_shell_command(command: String) -> Result<String, String> {
 async fn execute_ai_command(prompt: String) -> Result<String, String> {
     // Get config for endpoint/model
     let config = AggregatorConfig::load();
-    
-    // Parse endpoint
+
+    // Parse endpoint - ollama-rs expects "http://host" format, not just hostname
     let url = url::Url::parse(&config.ollama_endpoint).map_err(|e| e.to_string())?;
+    let scheme = url.scheme();
     let host = url.host_str().unwrap_or("localhost");
     let port = url.port().unwrap_or(11434);
-    
-    let ollama = Ollama::new(host.to_string(), port);
+    let host_with_scheme = format!("{}://{}", scheme, host);
+
+    log::info!("ai:: executing prompt on {}:{} model={}", host_with_scheme, port, &config.ollama_model);
+
+    let ollama = Ollama::new(host_with_scheme, port);
     let model = config.ollama_model;
-    
+
     let request = GenerationRequest::new(model, prompt);
-    
+
+    log::info!("ai:: sending request to Ollama...");
     match ollama.generate(request).await {
-        Ok(res) => Ok(res.response),
-        Err(e) => Err(format!("Ollama error: {}", e)),
+        Ok(res) => {
+            log::info!("ai:: got response ({} chars)", res.response.len());
+            Ok(res.response)
+        },
+        Err(e) => {
+            log::error!("ai:: Ollama error: {}", e);
+            Err(format!("Ollama error: {}", e))
+        },
     }
 }
 
