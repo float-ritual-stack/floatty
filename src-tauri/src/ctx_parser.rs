@@ -151,7 +151,7 @@ impl CtxParser {
         let config = self.config.clone();
         let client = self.client.clone();
         let running = Arc::clone(&self.running);
-        let doc = Arc::clone(&self.doc);
+        let _doc = Arc::clone(&self.doc); // Reserved for future Yjs sync
 
         thread::spawn(move || {
             log::info!("Starting ctx:: parser worker");
@@ -230,12 +230,14 @@ impl CtxParser {
     }
 
     /// Stop the parser worker
+    #[allow(dead_code)]
     pub fn stop(&self) {
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
 }
 
 /// Sync a parsed marker to the Yjs document
+#[allow(dead_code)]
 pub fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Result<(), String> {
     let doc_guard = doc.write().map_err(|e| e.to_string())?;
     let mut txn = doc_guard.transact_mut();

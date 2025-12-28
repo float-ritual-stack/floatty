@@ -77,15 +77,15 @@ export function TerminalPane(props: TerminalPaneProps) {
   });
 
   // Initial attachment and position tracking
-  onMount(() => {
+  onMount(async () => {
     if (!containerRef) return;
 
     // Expose the handle via ref callback
     props.ref?.(handle);
 
-    // Attach terminal once
+    // Attach terminal once (await config load)
     if (!attached) {
-      terminalManager.attach(props.id, containerRef, props.cwd);
+      await terminalManager.attach(props.id, containerRef, props.cwd);
       attached = true;
     }
 

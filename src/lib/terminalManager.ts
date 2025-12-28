@@ -15,7 +15,23 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
+import { readText, readImageBase64, hasImage, hasText, hasFiles, readFiles } from 'tauri-plugin-clipboard-api';
 import { defaultTheme, toXtermTheme } from './themes';
+
+// Terminal font config from ~/.floatty/config.toml
+interface TerminalConfig {
+  font_size: number;
+  font_weight: number;
+  font_weight_bold: number;
+  line_height: number;
+}
+
+const defaultConfig: TerminalConfig = {
+  font_size: 13,
+  font_weight: 300,
+  font_weight_bold: 500,
+  line_height: 1.2,
+};
 
 export interface TerminalInstance {
   term: XTerm;
@@ -67,12 +83,38 @@ class TerminalManager {
   // Guards against race: keyboard dispose() calls kill → PTY exit fires → onPtyExit callback
   // When disposing is set, onPtyExit callback should NOT trigger closePane
   private disposing = new Set<string>();
+  // Font config loaded from ~/.floatty/config.toml
+  private config: TerminalConfig = defaultConfig;
+  private configLoaded = false;
+
+  /**
+   * Load terminal config from Tauri backend
+   */
+  async loadConfig(): Promise<void> {
+    if (this.configLoaded) return;
+    try {
+      const fullConfig = await invoke<TerminalConfig & Record<string, unknown>>('get_ctx_config');
+      this.config = {
+        font_size: fullConfig.font_size ?? defaultConfig.font_size,
+        font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
+        font_weight_bold: fullConfig.font_weight_bold ?? defaultConfig.font_weight_bold,
+        line_height: fullConfig.line_height ?? defaultConfig.line_height,
+      };
+      this.configLoaded = true;
+      console.log('[TerminalManager] Loaded config:', this.config);
+    } catch (err) {
+      console.warn('[TerminalManager] Failed to load config, using defaults:', err);
+    }
+  }
 
   /**
    * Get or create a terminal for the given ID.
-   * Called from ref callback - runs synchronously when DOM mounts.
+   * Ensures config is loaded before creating terminals.
    */
-  attach(id: string, container: HTMLElement, cwd?: string): TerminalInstance {
+  async attach(id: string, container: HTMLElement, cwd?: string): Promise<TerminalInstance> {
+    // Ensure config is loaded before creating any terminal
+    await this.loadConfig();
+
     let instance = this.instances.get(id);
 
     if (instance) {
@@ -128,14 +170,16 @@ class TerminalManager {
 
     console.log(`[TerminalManager] Creating new terminal ${id}`);
 
-    // Create new terminal
+    // Create new terminal with config values
     const term = new XTerm({
       allowProposedApi: true,
       convertEol: false,
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
-      fontSize: 14,
-      lineHeight: 1.2,
+      fontSize: this.config.font_size,
+      fontWeight: String(this.config.font_weight),
+      fontWeightBold: String(this.config.font_weight_bold),
+      lineHeight: this.config.line_height,
       theme: toXtermTheme(defaultTheme),
     });
 
@@ -269,6 +313,70 @@ class TerminalManager {
 
         instance.ptyPid = pid;
         this.callbacks.get(id)?.onPtySpawn?.(pid);
+
+        // Custom key handlers for special input behavior
+        // - Shift+Enter: multiline input (ESC+CR for Claude Code)
+        // - Cmd+V (macOS) / Ctrl+V: clipboard paste
+        term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+          // Shift+Enter: Send ESC + CR for multiline input
+          // Wezterm uses: SendString="\x1b\r" (ESC + carriage return)
+          // Must block ALL event types to prevent xterm sending regular \r
+          if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+            if (event.type === 'keydown') {
+              console.log('[TerminalManager] Sending ESC+CR for multiline');
+              invoke('plugin:pty|write', { pid, data: '\x1b\r' }).catch(console.error);
+            }
+            return false;
+          }
+
+          // Cmd+V (macOS) or Ctrl+V (other platforms): Paste from clipboard
+          // Priority: files > images > text (files from Finder Cmd+C)
+          const isMac = os === 'macos';
+          const isPaste = event.key === 'v' && (isMac ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey;
+          if (isPaste) {
+            // CRITICAL: Prevent browser's native paste immediately, before async work
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.type === 'keydown') {
+              // Check clipboard content type and paste appropriately
+              // Priority: files > images > text (files from Finder Cmd+C)
+              (async () => {
+                try {
+                  const hasFilesContent = await hasFiles();
+                  const hasImageContent = await hasImage();
+                  const hasTextContent = await hasText();
+
+                  if (hasFilesContent) {
+                    // Files in clipboard (Finder Cmd+C) - paste paths
+                    const files = await readFiles();
+                    if (files && files.length > 0) {
+                      const formatted = files.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
+                      invoke('plugin:pty|write', { pid, data: formatted }).catch(console.error);
+                    }
+                  } else if (hasImageContent) {
+                    // Image in clipboard - save to temp file, paste path
+                    const base64 = await readImageBase64();
+                    if (base64) {
+                      const tempPath = await invoke<string>('save_clipboard_image', { base64 });
+                      invoke('plugin:pty|write', { pid, data: tempPath }).catch(console.error);
+                    }
+                  } else if (hasTextContent) {
+                    // Text in clipboard - paste directly
+                    const text = await readText();
+                    if (text) {
+                      invoke('plugin:pty|write', { pid, data: text }).catch(console.error);
+                    }
+                  }
+                } catch (err) {
+                  console.error('[TerminalManager] Clipboard paste failed:', err);
+                }
+              })();
+            }
+            return false; // Block default browser paste behavior
+          }
+
+          return true; // Let xterm handle normally
+        });
 
         term.onData((data: string) => {
           invoke('plugin:pty|write', { pid, data }).catch((e) => {

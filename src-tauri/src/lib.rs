@@ -27,10 +27,38 @@ pub struct AggregatorConfig {
     /// UI theme name (default, dracula, nord, etc.)
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Terminal font size in pixels
+    #[serde(default = "default_font_size")]
+    pub font_size: u32,
+    /// Terminal font weight (300 = light, 400 = normal, 500 = medium)
+    #[serde(default = "default_font_weight")]
+    pub font_weight: u32,
+    /// Terminal bold font weight
+    #[serde(default = "default_font_weight_bold")]
+    pub font_weight_bold: u32,
+    /// Terminal line height multiplier
+    #[serde(default = "default_line_height")]
+    pub line_height: f32,
 }
 
 fn default_theme() -> String {
     "default".to_string()
+}
+
+fn default_font_size() -> u32 {
+    13
+}
+
+fn default_font_weight() -> u32 {
+    300
+}
+
+fn default_font_weight_bold() -> u32 {
+    500
+}
+
+fn default_line_height() -> f32 {
+    1.2
 }
 
 impl Default for AggregatorConfig {
@@ -46,6 +74,10 @@ impl Default for AggregatorConfig {
             max_retries: default_parser.max_retries,
             max_age_hours: 72, // Default: last 3 days (matches CLAUDE.md docs)
             theme: default_theme(),
+            font_size: default_font_size(),
+            font_weight: default_font_weight(),
+            font_weight_bold: default_font_weight_bold(),
+            line_height: default_line_height(),
         }
     }
 }
@@ -237,6 +269,7 @@ fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String
 }
 
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Execute a shell command and return stdout/stderr
 ///
@@ -294,6 +327,31 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
         Ok(res) => Ok(res.response),
         Err(e) => Err(format!("Ollama error: {}", e)),
     }
+}
+
+/// Save clipboard image (base64) to temp file and return path
+/// Used for pasting screenshots - saves to /tmp/floatty-clipboard-{timestamp}.png
+#[tauri::command]
+fn save_clipboard_image(base64: String) -> Result<String, String> {
+    // Decode base64 to bytes
+    let bytes = BASE64.decode(&base64).map_err(|e| format!("Base64 decode failed: {}", e))?;
+
+    // Generate unique filename with timestamp
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+
+    let temp_dir = std::env::temp_dir();
+    let filename = format!("floatty-clipboard-{}.png", timestamp);
+    let path = temp_dir.join(&filename);
+
+    // Write image to temp file
+    std::fs::write(&path, bytes).map_err(|e| format!("Failed to write image: {}", e))?;
+
+    log::info!("Saved clipboard image to {:?}", path);
+
+    Ok(path.to_string_lossy().to_string())
 }
 
 /// Clear the entire workspace (blocks and rootIds) efficiently
@@ -412,7 +470,8 @@ pub fn run() {
     // Build app with platform-specific plugins and commands
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_pty::init());
+        .plugin(tauri_plugin_pty::init())
+        .plugin(tauri_plugin_clipboard::init());
 
     // macOS-only: NSPanel floating window support
     #[cfg(target_os = "macos")]
@@ -439,6 +498,7 @@ pub fn run() {
                     execute_shell_command,
                     execute_ai_command,
                     clear_workspace,
+                    save_clipboard_image,
                 ]
             }
             // macOS: include panel commands
@@ -457,6 +517,7 @@ pub fn run() {
                     execute_shell_command,
                     execute_ai_command,
                     clear_workspace,
+                    save_clipboard_image,
                     panel::show_test_panel,
                     panel::hide_test_panel,
                     panel::toggle_test_panel,
