@@ -406,9 +406,14 @@ _floatty_precmd() {
         _floatty_osc "133;D;$_floatty_last_exit"
         _floatty_cmd_started=0
     fi
+    _floatty_osc "1337;CurrentDir=$PWD"
     _floatty_osc "133;A"
 }
-_floatty_preexec() { _floatty_cmd_started=1; _floatty_osc "133;C"; }
+_floatty_preexec() {
+    _floatty_cmd_started=1
+    _floatty_osc "133;C"
+    _floatty_osc "1337;Command=${1//;/\;}"
+}
 _floatty_chpwd() { _floatty_osc "1337;CurrentDir=$PWD"; }
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _floatty_precmd
