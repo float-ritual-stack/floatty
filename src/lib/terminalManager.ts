@@ -33,6 +33,16 @@ const defaultConfig: TerminalConfig = {
   line_height: 1.2,
 };
 
+/** Semantic shell state from OSC 133/1337 sequences */
+export interface SemanticState {
+  cwd: string;
+  lastCommand: string;
+  lastExitCode: number;
+  lastDuration: number;  // ms
+  commandStartTime: number | null;
+  hooksActive: boolean;
+}
+
 export interface TerminalInstance {
   term: XTerm;
   fitAddon: FitAddon;
@@ -41,6 +51,7 @@ export interface TerminalInstance {
   title: string;
   container: HTMLElement | null;
   exitedNaturally: boolean;  // Guards against double onPtyExit calls
+  semanticState: SemanticState;
 }
 
 export interface TerminalCallbacks {
@@ -48,6 +59,7 @@ export interface TerminalCallbacks {
   onPtyExit?: (code: number) => void;
   onTitleChange?: (title: string) => void;
   onCtxMarker?: (marker: CtxMarker) => void;
+  onSemanticStateChange?: (state: SemanticState) => void;
 }
 
 interface CtxMarker {
@@ -219,9 +231,78 @@ class TerminalManager {
 
     fitAddon.fit();
 
-    instance = { term, fitAddon, webglAddon, ptyPid: null, title: 'Terminal', container, exitedNaturally: false };
+    instance = {
+      term,
+      fitAddon,
+      webglAddon,
+      ptyPid: null,
+      title: 'Terminal',
+      container,
+      exitedNaturally: false,
+      semanticState: {
+        cwd: '',
+        lastCommand: '',
+        lastExitCode: 0,
+        lastDuration: 0,
+        commandStartTime: null,
+        hooksActive: false,
+      },
+    };
     this.instances.set(id, instance);
     this.seenMarkers.set(id, new Set());
+
+    // OSC 133 handler - Semantic Prompts (FLO-54)
+    // Sequences: A=prompt start, B=command start, C=command exec, D;code=command done
+    term.parser.registerOscHandler(133, (data: string) => {
+      const inst = this.instances.get(id);
+      if (!inst) return true;
+
+      // Mark hooks as active on first OSC 133 received
+      if (!inst.semanticState.hooksActive) {
+        inst.semanticState.hooksActive = true;
+        console.log(`[TerminalManager] OSC 133 hooks detected for ${id}`);
+      }
+
+      const code = data.charAt(0);
+      switch (code) {
+        case 'A': // Prompt start
+          // Nothing to do here yet
+          break;
+        case 'C': // Command executing
+          inst.semanticState.commandStartTime = Date.now();
+          break;
+        case 'D': // Command done
+          const exitCode = parseInt(data.substring(2) || '0', 10);
+          const startTime = inst.semanticState.commandStartTime;
+          inst.semanticState.lastExitCode = exitCode;
+          inst.semanticState.lastDuration = startTime ? Date.now() - startTime : 0;
+          inst.semanticState.commandStartTime = null;
+          this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
+          break;
+      }
+      return true; // Allow sequence to continue to terminal
+    });
+
+    // OSC 1337 handler - iTerm2 custom sequences (CurrentDir)
+    term.parser.registerOscHandler(1337, (data: string) => {
+      const inst = this.instances.get(id);
+      if (!inst) return true;
+
+      // Parse key=value format
+      const eqIdx = data.indexOf('=');
+      if (eqIdx === -1) return true;
+
+      const key = data.substring(0, eqIdx);
+      const value = data.substring(eqIdx + 1);
+
+      if (key === 'CurrentDir') {
+        inst.semanticState.cwd = value;
+        inst.semanticState.hooksActive = true;
+        this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
+        console.log(`[TerminalManager] cwd updated: ${value}`);
+      }
+      return true;
+    });
 
     // Title change handler
     term.onTitleChange((title) => {
@@ -229,8 +310,9 @@ class TerminalManager {
       this.callbacks.get(id)?.onTitleChange?.(title);
     });
 
-    // Spawn PTY
-    this.spawnPty(id, term, cwd);
+    // Spawn PTY and wait for key handler to be attached
+    // Critical: spawnPty attaches the custom key handler, must await before returning
+    await this.spawnPty(id, term, cwd);
 
     return instance;
   }
@@ -485,6 +567,13 @@ class TerminalManager {
    */
   getPtyPid(id: string): number | null {
     return this.instances.get(id)?.ptyPid ?? null;
+  }
+
+  /**
+   * Get semantic shell state (from OSC 133/1337)
+   */
+  getSemanticState(id: string): SemanticState | null {
+    return this.instances.get(id)?.semanticState ?? null;
   }
 
   /**
