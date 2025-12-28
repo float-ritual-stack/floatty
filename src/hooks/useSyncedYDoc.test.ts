@@ -45,14 +45,17 @@ describe('Y.Doc singleton', () => {
 
   it('persists data across calls', () => {
     const doc = getSharedDoc();
-    const map = doc.getMap('test-singleton');
+    const map = doc.getMap('test-singleton-persist');
+
+    // Ensure clean state
+    map.clear();
 
     // Write some data
     map.set('key', 'value');
 
     // Get doc again and verify data persists
     const doc2 = getSharedDoc();
-    const map2 = doc2.getMap('test-singleton');
+    const map2 = doc2.getMap('test-singleton-persist');
 
     expect(map2.get('key')).toBe('value');
   });
