@@ -82,6 +82,32 @@ function createPaneStore() {
     }
   };
 
+  /**
+   * Hydrate pane state from persisted data
+   */
+  const hydratePaneState = (
+    restoredZoomedRootIds: Record<string, string | null>,
+    restoredCollapsed?: Record<string, Record<string, boolean>>
+  ) => {
+    setState('zoomedRootId', restoredZoomedRootIds);
+    if (restoredCollapsed) {
+      setState('collapsed', restoredCollapsed);
+    }
+  };
+
+  /**
+   * Get pane state for persistence
+   */
+  const getPaneStateForPersistence = (): {
+    zoomedRootId: Record<string, string | null>;
+    collapsed: Record<string, Record<string, boolean>>;
+  } => {
+    return {
+      zoomedRootId: { ...state.zoomedRootId },
+      collapsed: { ...state.collapsed },
+    };
+  };
+
   return {
     toggleCollapsed,
     isCollapsed,
@@ -90,6 +116,9 @@ function createPaneStore() {
     setZoomedRoot,
     removePane,
     removePanes,
+    // Persistence
+    hydratePaneState,
+    getPaneStateForPersistence,
   };
 }
 

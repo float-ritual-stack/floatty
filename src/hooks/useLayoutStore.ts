@@ -247,6 +247,28 @@ function createLayoutStore() {
     setState('draggingSplitId', splitId);
   };
 
+  /**
+   * Hydrate layouts from persisted state
+   * Replaces current layouts with restored data
+   */
+  const hydrateLayouts = (restoredLayouts: Record<string, TabLayout>) => {
+    setState('layouts', restoredLayouts);
+  };
+
+  /**
+   * Get all layouts for persistence
+   */
+  const getLayoutsForPersistence = (): Record<string, { root: LayoutNode; activePaneId: string }> => {
+    const result: Record<string, { root: LayoutNode; activePaneId: string }> = {};
+    for (const [tabId, layout] of Object.entries(state.layouts)) {
+      result[tabId] = {
+        root: layout.root,
+        activePaneId: layout.activePaneId,
+      };
+    }
+    return result;
+  };
+
   return {
     // State (reactive getters preserve store reactivity)
     get layouts() { return state.layouts; },
@@ -267,6 +289,9 @@ function createLayoutStore() {
     getTabLayout,
     getAllPaneIds,
     getPaneLeaf,
+    // Persistence
+    hydrateLayouts,
+    getLayoutsForPersistence,
   };
 }
 

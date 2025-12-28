@@ -1,10 +1,13 @@
-import { onMount, onCleanup } from 'solid-js';
+import { onMount, onCleanup, createSignal, Show, createEffect } from 'solid-js';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { Terminal } from './components/Terminal';
 import { WorkspaceProvider } from './context/WorkspaceContext';
 import { themeStore } from './hooks/useThemeStore';
 import { tabStore } from './hooks/useTabStore';
+import { layoutStore } from './hooks/useLayoutStore';
+import { paneStore } from './hooks/usePaneStore';
+import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import './App.css';
 
 // Type for Tauri drag-drop event payload
@@ -15,11 +18,22 @@ interface DragDropPayload {
 
 function App() {
   let unlistenDragDrop: UnlistenFn | undefined;
+  const [workspaceLoaded, setWorkspaceLoaded] = createSignal(false);
+  const persistence = getWorkspacePersistence();
 
   // Load saved theme and terminal config on startup
   onMount(async () => {
     // Config loading moved to terminalManager.attach() to fix race condition
     themeStore.loadTheme();
+
+    // Load workspace layout state (FLO-81)
+    // This must happen before Terminal component renders to avoid flickering
+    try {
+      await persistence.loadWorkspace();
+    } catch (err) {
+      console.error('[App] Failed to load workspace:', err);
+    }
+    setWorkspaceLoaded(true);
 
     // Listen for file drag-drop from Finder
     // When files are dropped, paste their paths into the active terminal
@@ -47,14 +61,43 @@ function App() {
     });
   });
 
+  // Save workspace on state changes (debounced)
+  // Track changes to tabs, layouts, and pane state
+  createEffect(() => {
+    // Skip until workspace is loaded
+    if (!workspaceLoaded()) return;
+
+    // Access reactive state to trigger effect on changes
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _ = [
+      tabStore.tabs.length,
+      tabStore.activeTabId(),
+      JSON.stringify(layoutStore.layouts),  // Deep track layout changes
+      JSON.stringify(paneStore.getPaneStateForPersistence()),  // Track pane state changes
+    ];
+
+    persistence.scheduleSave();
+  });
+
+  // Save on window beforeunload (immediate, not debounced)
+  onMount(() => {
+    const handleBeforeUnload = () => {
+      persistence.saveNow();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    onCleanup(() => window.removeEventListener('beforeunload', handleBeforeUnload));
+  });
+
   onCleanup(() => {
     unlistenDragDrop?.();
   });
 
   return (
-    <WorkspaceProvider>
-      <Terminal />
-    </WorkspaceProvider>
+    <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
+      <WorkspaceProvider>
+        <Terminal />
+      </WorkspaceProvider>
+    </Show>
   );
 }
 

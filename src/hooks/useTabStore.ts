@@ -13,9 +13,9 @@ export interface Tab {
   isAlive: boolean;
 }
 
-// Generate unique tab ID
+// Generate unique tab ID (UUID for persistence compatibility)
 function generateTabId(): string {
-  return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `tab-${crypto.randomUUID()}`;
 }
 
 // Initial tab created on startup
@@ -137,6 +137,32 @@ function createTabStore() {
     return tabs.find((t) => t.id === activeTabId()) ?? null;
   };
 
+  /**
+   * Hydrate tabs from persisted state
+   * Replaces current tabs with restored data
+   */
+  const hydrateTabs = (restoredTabs: Tab[], restoredActiveTabId: string) => {
+    // Reset PTY state - processes are gone, need to respawn
+    const tabsWithResetPty = restoredTabs.map((t) => ({
+      ...t,
+      ptyPid: null,
+      isAlive: true, // Will become alive when PTY spawns
+    }));
+
+    setTabs(tabsWithResetPty);
+    setActiveTabId(restoredActiveTabId);
+  };
+
+  /**
+   * Get all tabs for persistence (strips non-essential runtime state)
+   */
+  const getTabsForPersistence = (): { tabs: Array<{ id: string; title: string }>; activeTabId: string | null } => {
+    return {
+      tabs: tabs.map((t) => ({ id: t.id, title: t.title })),
+      activeTabId: activeTabId(),
+    };
+  };
+
   return {
     // State (reactive)
     tabs,
@@ -152,6 +178,9 @@ function createTabStore() {
     nextTab,
     goToTab,
     getActiveTab,
+    // Persistence
+    hydrateTabs,
+    getTabsForPersistence,
   };
 }
 
