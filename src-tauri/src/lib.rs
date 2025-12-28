@@ -371,28 +371,29 @@ fn clear_workspace(state: State<AppState>) -> Result<(), String> {
         .ok_or_else(|| "ctx:: system unavailable".to_string())?;
     
     let doc = inner.doc.write().map_err(|e| e.to_string())?;
-    let mut txn = doc.transact_mut();
-    
-    // Clear rootIds
-    let root_ids = txn.get_array("rootIds");
-    if let Some(root_ids) = root_ids {
-        let len = root_ids.len(&txn);
-        if len > 0 {
-            root_ids.remove_range(&mut txn, 0, len);
-        }
-    }
 
-    // Clear blocks map
-    let blocks = txn.get_map("blocks");
-    if let Some(blocks) = blocks {
-        // yrs Map doesn't have a clear() method exposed directly in all versions?
-        // Let's check. If not, we iterate keys.
-        // But yrs iteration in Rust is fast.
-        let keys: Vec<String> = blocks.keys(&txn).map(|k| k.to_string()).collect();
-        for key in keys {
-            blocks.remove(&mut txn, &key);
+    // Scope mutable transaction to drop before creating read transaction
+    {
+        let mut txn = doc.transact_mut();
+
+        // Clear rootIds
+        let root_ids = txn.get_array("rootIds");
+        if let Some(root_ids) = root_ids {
+            let len = root_ids.len(&txn);
+            if len > 0 {
+                root_ids.remove_range(&mut txn, 0, len);
+            }
         }
-    }
+
+        // Clear blocks map
+        let blocks = txn.get_map("blocks");
+        if let Some(blocks) = blocks {
+            let keys: Vec<String> = blocks.keys(&txn).map(|k| k.to_string()).collect();
+            for key in keys {
+                blocks.remove(&mut txn, &key);
+            }
+        }
+    } // txn dropped here
 
     // Persist empty state (compact to single snapshot)
     let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
