@@ -426,9 +426,10 @@ describe('clampRatio', () => {
 });
 
 describe('generatePaneId', () => {
-  it('generates IDs with pane prefix', () => {
+  it('generates IDs with pane prefix and UUID format', () => {
     const id = generatePaneId();
-    expect(id).toMatch(/^pane-\d+-[a-z0-9]+$/);
+    // UUID v4 format: pane-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    expect(id).toMatch(/^pane-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
   it('generates unique IDs', () => {
@@ -439,9 +440,10 @@ describe('generatePaneId', () => {
 });
 
 describe('generateSplitId', () => {
-  it('generates IDs with split prefix', () => {
+  it('generates IDs with split prefix and UUID format', () => {
     const id = generateSplitId();
-    expect(id).toMatch(/^split-\d+-[a-z0-9]+$/);
+    // UUID v4 format: split-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    expect(id).toMatch(/^split-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 });
 

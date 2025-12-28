@@ -169,6 +169,14 @@ impl CtxDatabase {
             );
 
             CREATE INDEX IF NOT EXISTS idx_ydoc_doc_key ON ydoc_updates(doc_key, id);
+
+            -- Workspace layout state (tabs, panes, splits)
+            -- JSON blob for flexibility; single row per workspace key
+            CREATE TABLE IF NOT EXISTS workspace_state (
+                key TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
         "#)?;
 
         // Migrations: add columns if they don't exist (for existing DBs)
@@ -524,6 +532,37 @@ impl CtxDatabase {
 
         tx.commit()?;
         log::info!("Compacted Y.Doc '{}' to single snapshot", doc_key);
+        Ok(())
+    }
+
+    // =========================================================================
+    // Workspace State Persistence (FLO-81)
+    // =========================================================================
+
+    /// Get workspace state JSON (returns None if not found)
+    pub fn get_workspace_state(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT state_json FROM workspace_state WHERE key = ?")?;
+        let mut rows = stmt.query([key])?;
+
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Save workspace state JSON
+    pub fn set_workspace_state(&self, key: &str, state_json: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT OR REPLACE INTO workspace_state (key, state_json, updated_at) VALUES (?, ?, ?)",
+            params![key, state_json, now],
+        )?;
         Ok(())
     }
 }

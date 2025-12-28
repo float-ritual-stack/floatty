@@ -404,6 +404,27 @@ fn save_clipboard_image(base64: String) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+// Workspace Layout Persistence (FLO-81)
+// ============================================================================
+
+/// Get persisted workspace layout state (JSON blob)
+#[tauri::command]
+fn get_workspace_state(state: State<AppState>, key: String) -> Result<Option<String>, String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+
+    inner.db.get_workspace_state(&key).map_err(|e| e.to_string())
+}
+
+/// Save workspace layout state (JSON blob)
+#[tauri::command]
+fn save_workspace_state(state: State<AppState>, key: String, state_json: String) -> Result<(), String> {
+    let inner = state.inner.as_ref()
+        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+
+    inner.db.set_workspace_state(&key, &state_json).map_err(|e| e.to_string())
+}
+
 /// Clear the entire workspace (blocks and rootIds) efficiently
 #[tauri::command]
 fn clear_workspace(state: State<AppState>) -> Result<(), String> {
@@ -714,6 +735,8 @@ pub fn run() {
                     check_hooks_installed,
                     install_shell_hooks,
                     uninstall_shell_hooks,
+                    get_workspace_state,
+                    save_workspace_state,
                 ]
             }
             // macOS: include panel commands
@@ -736,6 +759,8 @@ pub fn run() {
                     check_hooks_installed,
                     install_shell_hooks,
                     uninstall_shell_hooks,
+                    get_workspace_state,
+                    save_workspace_state,
                     panel::show_test_panel,
                     panel::hide_test_panel,
                     panel::toggle_test_panel,

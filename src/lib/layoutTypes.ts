@@ -51,17 +51,17 @@ export interface PaneHandle {
 // --- Tree Utilities ---
 
 /**
- * Generate a unique pane ID
+ * Generate a unique pane ID (UUID for persistence compatibility)
  */
 export function generatePaneId(): string {
-  return `pane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `pane-${crypto.randomUUID()}`;
 }
 
 /**
- * Generate a unique split ID
+ * Generate a unique split ID (UUID for persistence compatibility)
  */
 export function generateSplitId(): string {
-  return `split-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `split-${crypto.randomUUID()}`;
 }
 
 /**
