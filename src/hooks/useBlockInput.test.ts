@@ -9,6 +9,15 @@ import { describe, it, expect } from 'vitest';
 import { determineKeyAction, type KeyboardAction } from './useBlockInput';
 import type { Block } from '../lib/blockTypes';
 
+// Type-safe assertion helper for discriminated unions
+function expectAction<T extends KeyboardAction['type']>(
+  result: KeyboardAction,
+  type: T
+): Extract<KeyboardAction, { type: T }> {
+  expect(result.type).toBe(type);
+  return result as Extract<KeyboardAction, { type: T }>;
+}
+
 // Helper: create minimal block for tests
 function createBlock(overrides: Partial<Block> = {}): Block {
   return {
@@ -57,8 +66,8 @@ describe('determineKeyAction', () => {
         cursorAtStart: true,
       }));
 
-      expect(result.type).toBe('navigate_up');
-      expect((result as any).prevId).toBe('prev-block');
+      const action = expectAction(result, 'navigate_up');
+      expect(action.prevId).toBe('prev-block');
     });
 
     it('does nothing for ArrowUp when cursor not at start', () => {
@@ -74,8 +83,8 @@ describe('determineKeyAction', () => {
         cursorAtEnd: true,
       }));
 
-      expect(result.type).toBe('navigate_down');
-      expect((result as any).nextId).toBe('next-block');
+      const action = expectAction(result, 'navigate_down');
+      expect(action.nextId).toBe('next-block');
     });
   });
 
@@ -110,8 +119,8 @@ describe('determineKeyAction', () => {
         content: 'test content',
       }));
 
-      expect(result.type).toBe('split_block');
-      expect((result as any).offset).toBe(5);
+      const action = expectAction(result, 'split_block');
+      expect(action.offset).toBe(5);
     });
 
     it('splits to first child for expanded parent with children', () => {
@@ -122,8 +131,8 @@ describe('determineKeyAction', () => {
         content: 'test content',
       }));
 
-      expect(result.type).toBe('split_to_child');
-      expect((result as any).offset).toBe(5);
+      const action = expectAction(result, 'split_to_child');
+      expect(action.offset).toBe(5);
     });
 
     it('splits normally for collapsed parent', () => {
@@ -162,6 +171,14 @@ describe('determineKeyAction', () => {
 
       expect(result.type).toBe('insert_spaces');
     });
+
+    it('removes spaces when Shift+Tab not at cursor start', () => {
+      const result = determineKeyAction('Tab', true, null, createDeps({
+        cursorAtStart: false,
+      }));
+
+      expect(result.type).toBe('remove_spaces');
+    });
   });
 
   describe('Backspace at start', () => {
@@ -172,8 +189,8 @@ describe('determineKeyAction', () => {
         block: createBlock({ childIds: [] }),
       }));
 
-      expect(result.type).toBe('merge_with_previous');
-      expect((result as any).prevId).toBe('prev-block');
+      const action = expectAction(result, 'merge_with_previous');
+      expect(action.prevId).toBe('prev-block');
     });
 
     it('does nothing when Backspace at start but block has children', () => {

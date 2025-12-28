@@ -12,6 +12,7 @@
 
 import { getActionForEvent } from '../lib/keybinds';
 import { findHandler, executeBlock } from '../lib/executor';
+import { setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
 import type { Block } from '../lib/blockTypes';
@@ -356,10 +357,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           requestAnimationFrame(() => {
             const el = document.activeElement as HTMLElement;
             if (el && el.textContent === prevBlock.content + oldContent) {
-              // Import setCursorAtOffset directly for this edge case
-              import('../lib/cursorUtils').then(({ setCursorAtOffset }) => {
-                setCursorAtOffset(el, prevContentLength);
-              });
+              setCursorAtOffset(el, prevContentLength);
             }
           });
         }
