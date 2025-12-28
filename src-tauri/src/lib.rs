@@ -505,12 +505,29 @@ pub fn run() {
                 if !updates.is_empty() {
                     log::info!("Replaying {} Y.Doc updates from append-only storage", updates.len());
                     let mut txn = doc.transact_mut();
+                    let mut decode_errors = 0;
+                    let mut apply_errors = 0;
+
                     for update_bytes in updates {
-                        if let Ok(u) = Update::decode_v1(&update_bytes) {
-                            if let Err(e) = txn.apply_update(u) {
-                                log::error!("Failed to apply Y.Doc update: {}", e);
+                        match Update::decode_v1(&update_bytes) {
+                            Ok(u) => {
+                                if let Err(e) = txn.apply_update(u) {
+                                    log::error!("Failed to apply Y.Doc update: {}", e);
+                                    apply_errors += 1;
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Corrupted Y.Doc update, cannot decode: {}", e);
+                                decode_errors += 1;
                             }
                         }
+                    }
+
+                    if decode_errors > 0 || apply_errors > 0 {
+                        log::warn!(
+                            "Y.Doc replay completed with {} decode errors, {} apply errors",
+                            decode_errors, apply_errors
+                        );
                     }
                     loaded_from_updates = true;
                 }
