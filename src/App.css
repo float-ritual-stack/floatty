@@ -1,1 +1,45 @@
 /* App-specific styles - terminal styling is in index.css */
+
+/* StatusBar - FLO-54 */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-fg-muted);
+  flex-shrink: 0;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-hooks .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-ansi-red);
+}
+
+.status-hooks.active .status-dot {
+  background: var(--color-ansi-green);
+}
+
+.status-cwd {
+  color: var(--color-ansi-blue);
+}
+
+.status-cmd.success {
+  color: var(--color-ansi-green);
+}
+
+.status-cmd.error {
+  color: var(--color-ansi-red);
+}

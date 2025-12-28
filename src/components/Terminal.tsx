@@ -22,8 +22,10 @@ const ZOOM_STEP = 0.1;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2.0;
 
-// Status bar with keyboard shortcuts
-function StatusBar() {
+// Status bar with semantic state (FLO-54) + keyboard shortcuts
+import type { SemanticState } from '../lib/terminalManager';
+
+function StatusBar(props: { semanticState?: SemanticState | null }) {
   const shortcuts = [
     { label: 'Split', keys: '⌘D' },
     { label: 'Focus', keys: '⌘⌥↑↓←→' },
@@ -32,8 +34,62 @@ function StatusBar() {
     { label: 'Zoom', keys: '⌘+/-' },
   ];
 
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return ms + 'ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+    return (ms / 60000).toFixed(1) + 'm';
+  };
+
+  const truncatePath = (path: string) => {
+    if (!path) return '';
+    const homePath = path.replace(/^\/Users\/[^/]+/, '~');
+    return homePath.length > 35 ? '…' + homePath.slice(-34) : homePath;
+  };
+
+  const truncateCommand = (cmd: string) => {
+    if (!cmd) return '';
+    // Show first 30 chars, add ellipsis if longer
+    return cmd.length > 30 ? cmd.slice(0, 30) + '…' : cmd;
+  };
+
   return (
     <div class="status-bar">
+      {/* Semantic state (left side) */}
+      <span
+        class="status-item status-hooks"
+        classList={{ active: props.semanticState?.hooksActive }}
+        title={props.semanticState?.hooksActive ? 'Shell hooks active' : 'No hooks detected'}
+      >
+        <span class="status-dot" />
+        hooks
+      </span>
+      <Show when={props.semanticState?.cwd}>
+        <span class="status-item status-cwd" title={props.semanticState?.cwd}>
+          {truncatePath(props.semanticState?.cwd || '')}
+        </span>
+      </Show>
+      <Show when={props.semanticState?.lastCommand}>
+        <span
+          class="status-item status-cmd"
+          classList={{
+            success: props.semanticState?.lastExitCode === 0,
+            error: (props.semanticState?.lastExitCode || 0) !== 0,
+          }}
+          title={props.semanticState?.lastCommand}
+        >
+          {truncateCommand(props.semanticState?.lastCommand || '')}
+          <Show when={props.semanticState?.lastDuration}>
+            <span class="status-duration">
+              {' '}({props.semanticState?.lastExitCode}) {formatDuration(props.semanticState?.lastDuration || 0)}
+            </span>
+          </Show>
+        </span>
+      </Show>
+
+      {/* Spacer */}
+      <span style={{ flex: 1 }} />
+
+      {/* Keyboard shortcuts (right side) */}
       <For each={shortcuts}>
         {(item) => (
           <span class="status-item">
@@ -96,6 +152,7 @@ function TabBar(props: {
 
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
+  const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
 
   // Pane refs for imperative control
   const paneRefs = new Map<string, PaneHandle>();
@@ -505,6 +562,14 @@ export function Terminal() {
                     console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
                   )}
                   onTitleChange={(title) => handleTitleChange(info().paneId, title)}
+                  onSemanticStateChange={(state) => {
+                    // Only update status bar for active pane
+                    const i = info();
+                    if (i.isActivePane && i.isActiveTab) {
+                      // Clone to break reference equality - SolidJS signals won't update on same object
+                      setSemanticState({ ...state } as SemanticState);
+                    }
+                  }}
                 />
               </Show>
             )}
@@ -524,7 +589,7 @@ export function Terminal() {
           <ContextSidebar visible={sidebarVisible()} />
         </Show>
       </div>
-      <StatusBar />
+      <StatusBar semanticState={semanticState()} />
     </div>
   );
 }
