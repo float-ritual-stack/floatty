@@ -254,6 +254,7 @@ class TerminalManager {
     // OSC 133 handler - Semantic Prompts (FLO-54)
     // Sequences: A=prompt start, B=command start, C=command exec, D;code=command done
     term.parser.registerOscHandler(133, (data: string) => {
+      console.log(`[TerminalManager] OSC 133 received: "${data}"`);
       const inst = this.instances.get(id);
       if (!inst) return true;
 
@@ -271,7 +272,7 @@ class TerminalManager {
         case 'C': // Command executing
           inst.semanticState.commandStartTime = Date.now();
           break;
-        case 'D': // Command done
+        case 'D': { // Command done
           const exitCode = parseInt(data.substring(2) || '0', 10);
           const startTime = inst.semanticState.commandStartTime;
           inst.semanticState.lastExitCode = exitCode;
@@ -279,12 +280,14 @@ class TerminalManager {
           inst.semanticState.commandStartTime = null;
           this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
           break;
+        }
       }
       return true; // Allow sequence to continue to terminal
     });
 
     // OSC 1337 handler - iTerm2 custom sequences (CurrentDir)
     term.parser.registerOscHandler(1337, (data: string) => {
+      console.log(`[TerminalManager] OSC 1337 received: "${data}"`);
       const inst = this.instances.get(id);
       if (!inst) return true;
 
@@ -300,6 +303,10 @@ class TerminalManager {
         inst.semanticState.hooksActive = true;
         this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
         console.log(`[TerminalManager] cwd updated: ${value}`);
+      } else if (key === 'Command') {
+        // Unescape semicolons that were escaped in shell hooks
+        inst.semanticState.lastCommand = value.replace(/\\;/g, ';');
+        this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
       }
       return true;
     });
@@ -327,7 +334,7 @@ class TerminalManager {
       if (isTauri) {
         const os = await platform();
         const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
-        const args = os === 'windows' ? [] : ['-l'];
+        const args = os === 'windows' ? [] : ['-l'];  // login shell (PTY provides TTY for interactive mode)
 
         // Text buffer for ctx:: detection
         let textBuffer = '';
@@ -388,7 +395,11 @@ class TerminalManager {
           cols: term.cols,
           rows: term.rows,
           cwd,
-          env: { TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+          env: {
+            TERM: 'xterm-256color',
+            COLORTERM: 'truecolor',
+            FLOATTY_HOOKS_ACTIVE: '',  // Clear to allow fresh hook registration
+          },
           onData,
           onExit,
         });

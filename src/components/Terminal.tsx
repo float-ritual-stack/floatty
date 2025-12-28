@@ -46,6 +46,12 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
     return homePath.length > 35 ? '…' + homePath.slice(-34) : homePath;
   };
 
+  const truncateCommand = (cmd: string) => {
+    if (!cmd) return '';
+    // Show first 30 chars, add ellipsis if longer
+    return cmd.length > 30 ? cmd.slice(0, 30) + '…' : cmd;
+  };
+
   return (
     <div class="status-bar">
       {/* Semantic state (left side) */}
@@ -62,15 +68,21 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
           {truncatePath(props.semanticState?.cwd || '')}
         </span>
       </Show>
-      <Show when={props.semanticState?.lastDuration}>
+      <Show when={props.semanticState?.lastCommand}>
         <span
           class="status-item status-cmd"
           classList={{
             success: props.semanticState?.lastExitCode === 0,
             error: (props.semanticState?.lastExitCode || 0) !== 0,
           }}
+          title={props.semanticState?.lastCommand}
         >
-          ({props.semanticState?.lastExitCode}) {formatDuration(props.semanticState?.lastDuration || 0)}
+          {truncateCommand(props.semanticState?.lastCommand || '')}
+          <Show when={props.semanticState?.lastDuration}>
+            <span class="status-duration">
+              {' '}({props.semanticState?.lastExitCode}) {formatDuration(props.semanticState?.lastDuration || 0)}
+            </span>
+          </Show>
         </span>
       </Show>
 
