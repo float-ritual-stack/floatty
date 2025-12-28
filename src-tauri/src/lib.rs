@@ -552,8 +552,14 @@ pub fn run() {
                 }
             }
 
-            // Fall back to legacy system_state for migration
-            if !loaded_from_updates {
+            // Fall back to legacy system_state for migration (one-time)
+            // Check if migration was already attempted to avoid log spam on repeated failures
+            let migration_attempted = db.get_system_state("ydoc_migration_attempted")
+                .ok()
+                .flatten()
+                .is_some();
+
+            if !loaded_from_updates && !migration_attempted {
                 if let Ok(Some(state_bytes)) = db.get_system_state("ydoc") {
                     if !state_bytes.is_empty() {
                         log::info!("Migrating Y.Doc from legacy system_state to append-only ({} bytes)", state_bytes.len());
@@ -579,6 +585,8 @@ pub fn run() {
                         }
                     }
                 }
+                // Mark migration as attempted (even if failed) to prevent retry spam
+                let _ = db.set_system_state("ydoc_migration_attempted", b"1");
             }
 
             let db = Arc::new(db);
