@@ -75,14 +75,18 @@ export function useSyncedYDoc(
     const updates = pendingUpdates;
     pendingUpdates = [];
 
+    let sentCount = 0;
     try {
       // Send each delta individually - they're small and we want granular persistence
       for (const update of updates) {
         const updateB64 = bytesToBase64(update);
         await invoke('apply_update', { updateB64 });
+        sentCount++;
       }
     } catch (err) {
       console.error('Failed to sync to Rust:', err);
+      // Restore unsent updates to front of queue for retry
+      pendingUpdates = [...updates.slice(sentCount), ...pendingUpdates];
       setError(String(err));
     }
   };
