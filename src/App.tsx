@@ -64,6 +64,7 @@ function App() {
 
   // Save workspace on state changes (debounced)
   // Track changes to tabs, layouts, and pane state
+  let isFirstEffectRun = true;
   createEffect(() => {
     // Skip until workspace is loaded
     if (!workspaceLoaded()) return;
@@ -76,6 +77,12 @@ function App() {
       JSON.stringify(layoutStore.layouts),  // Deep track layout changes
       JSON.stringify(paneStore.getPaneStateForPersistence()),  // Track pane state changes
     ];
+
+    // Skip the first run (immediately after hydration) - nothing changed yet
+    if (isFirstEffectRun) {
+      isFirstEffectRun = false;
+      return;
+    }
 
     persistence.scheduleSave();
   });
