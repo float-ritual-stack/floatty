@@ -99,13 +99,17 @@ function createBlockStore() {
   let _rootIdsObserver: ((event: Y.YArrayEvent<string>) => void) | null = null;
 
   /**
-   * Initialize the store from a Y.Doc. Returns a dispose function to cleanup observers.
+   * Initialize the store from a Y.Doc.
    * Safe to call multiple times - only first call takes effect.
+   *
+   * NOTE: Returns a no-op. Observers are never removed because blockStore is
+   * a singleton that outlives individual Outliner components. If the first
+   * pane's cleanup removed observers, other panes would break.
    */
   const initFromYDoc = (doc: Y.Doc): (() => void) => {
     // Double-check guard: store state (reactive) + local flag (sync)
     if (state.isInitialized || _isInitializing) {
-      // Return no-op dispose if already initialized
+      // Return no-op - observers already set up, don't need per-component cleanup
       return () => {};
     }
     _isInitializing = true;
@@ -155,17 +159,9 @@ function createBlockStore() {
     };
     rootIdsArr.observe(_rootIdsObserver);
 
-    // Return dispose function for cleanup
-    return () => {
-      if (_blocksObserver) {
-        blocksMap.unobserve(_blocksObserver);
-        _blocksObserver = null;
-      }
-      if (_rootIdsObserver) {
-        rootIdsArr.unobserve(_rootIdsObserver);
-        _rootIdsObserver = null;
-      }
-    };
+    // Return no-op - observers live for app lifetime (singleton pattern)
+    // Don't cleanup here - other Outliner instances depend on these observers
+    return () => {};
   };
 
   const getBlock = (id: string) => {

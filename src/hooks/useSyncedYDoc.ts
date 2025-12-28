@@ -15,7 +15,7 @@ import * as Y from 'yjs';
 // BASE64 UTILITIES
 // ═══════════════════════════════════════════════════════════════
 
-function base64ToBytes(base64: string): Uint8Array {
+export function base64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
@@ -24,13 +24,40 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
 }
+
+/**
+ * Get the singleton Y.Doc instance.
+ * Used for testing singleton behavior.
+ */
+export function getSharedDoc(): Y.Doc {
+  return sharedDoc;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SINGLETON Y.DOC
+// ═══════════════════════════════════════════════════════════════
+
+// Y.Doc is a singleton - survives component unmount/remount cycles.
+// Only the update observer is cleaned up per-component.
+const sharedDoc = new Y.Doc();
+let sharedDocLoaded = false;
+let sharedDocError: string | null = null;
+let sharedDocLoadPromise: Promise<void> | null = null;
+
+// Sync machinery is also singleton (tied to the shared doc)
+let sharedPendingUpdates: Uint8Array[] = [];
+let sharedSyncTimer: number | null = null;
+let sharedIsFlushing = false;
+let sharedRetryCount = 0;
+const MAX_RETRIES = 5;
+const DEFAULT_SYNC_DEBOUNCE = 50;
 
 // ═══════════════════════════════════════════════════════════════
 // HOOK
@@ -55,38 +82,32 @@ export interface UseSyncedYDocReturn {
 export function useSyncedYDoc(
   options: UseSyncedYDocOptions = {}
 ): UseSyncedYDocReturn {
-  const { syncDebounce = 50 } = options;
+  const { syncDebounce = DEFAULT_SYNC_DEBOUNCE } = options;
 
-  const doc = new Y.Doc();
-  const [isLoaded, setIsLoaded] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
+  // Use the singleton doc
+  const doc = sharedDoc;
+  const [isLoaded, setIsLoaded] = createSignal(sharedDocLoaded);
+  const [error, setError] = createSignal<string | null>(sharedDocError);
 
   // Track whether we're currently applying an update from Rust
   let isApplyingRemote = false;
 
-  // Pending updates to batch (accumulate during debounce window)
-  let pendingUpdates: Uint8Array[] = [];
-  let syncTimer: number | null = null;
-  let isFlushing = false;
-  let retryCount = 0;
-  const MAX_RETRIES = 5;
-
   // Schedule a flush with optional delay override (for backoff)
   const scheduleFlush = (delay?: number) => {
-    if (syncTimer) {
-      clearTimeout(syncTimer);
+    if (sharedSyncTimer) {
+      clearTimeout(sharedSyncTimer);
     }
-    syncTimer = window.setTimeout(flushUpdates, delay ?? syncDebounce);
+    sharedSyncTimer = window.setTimeout(flushUpdates, delay ?? syncDebounce);
   };
 
   // Send pending updates to Rust
   const flushUpdates = async () => {
     // Guard against concurrent flushes
-    if (isFlushing || pendingUpdates.length === 0) return;
+    if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
 
-    isFlushing = true;
-    const updates = pendingUpdates;
-    pendingUpdates = [];
+    sharedIsFlushing = true;
+    const updates = sharedPendingUpdates;
+    sharedPendingUpdates = [];
 
     let sentCount = 0;
     try {
@@ -96,58 +117,82 @@ export function useSyncedYDoc(
         await invoke('apply_update', { updateB64 });
         sentCount++;
       }
-      retryCount = 0; // Reset on success
+      sharedRetryCount = 0; // Reset on success
     } catch (err) {
-      retryCount++;
-      console.error(`Failed to sync to Rust (attempt ${retryCount}/${MAX_RETRIES}):`, err);
+      sharedRetryCount++;
+      console.error(`Failed to sync to Rust (attempt ${sharedRetryCount}/${MAX_RETRIES}):`, err);
       // Restore unsent updates to front of queue for retry
-      pendingUpdates = [...updates.slice(sentCount), ...pendingUpdates];
+      sharedPendingUpdates = [...updates.slice(sentCount), ...sharedPendingUpdates];
 
-      if (retryCount >= MAX_RETRIES) {
+      if (sharedRetryCount >= MAX_RETRIES) {
         setError(`Sync failed after ${MAX_RETRIES} attempts. Changes may not be saved.`);
-        retryCount = 0; // Allow future attempts after user interaction
-      } else if (pendingUpdates.length > 0) {
+        sharedRetryCount = 0; // Allow future attempts after user interaction
+      } else if (sharedPendingUpdates.length > 0) {
         // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
-        const backoffDelay = Math.min(syncDebounce * Math.pow(2, retryCount), 10000);
+        const backoffDelay = Math.min(syncDebounce * Math.pow(2, sharedRetryCount), 10000);
         scheduleFlush(backoffDelay);
       }
     } finally {
-      isFlushing = false;
+      sharedIsFlushing = false;
     }
   };
 
   // Queue an update and schedule flush
   const queueUpdate = (update: Uint8Array) => {
-    pendingUpdates.push(update);
+    sharedPendingUpdates.push(update);
     scheduleFlush();
   };
 
   // Force sync (bypass debounce)
   const forceSync = async () => {
-    if (syncTimer) {
-      clearTimeout(syncTimer);
-      syncTimer = null;
+    if (sharedSyncTimer) {
+      clearTimeout(sharedSyncTimer);
+      sharedSyncTimer = null;
     }
     await flushUpdates();
   };
 
   onMount(() => {
+    // Load initial state only once (singleton pattern)
     async function loadInitialState() {
-      try {
-        const stateB64 = await invoke<string>('get_initial_state');
-        if (stateB64) {
-          const stateBytes = base64ToBytes(stateB64);
-
-          isApplyingRemote = true;
-          Y.applyUpdate(doc, stateBytes);
-          isApplyingRemote = false;
-        }
-
+      // If already loaded, just update local signal and return
+      if (sharedDocLoaded) {
         setIsLoaded(true);
-      } catch (err) {
-        console.error('Failed to load initial state:', err);
-        setError(String(err));
+        setError(sharedDocError);
+        return;
       }
+
+      // If currently loading, wait for it
+      if (sharedDocLoadPromise) {
+        await sharedDocLoadPromise;
+        setIsLoaded(sharedDocLoaded);
+        setError(sharedDocError);
+        return;
+      }
+
+      // First load - do it
+      sharedDocLoadPromise = (async () => {
+        try {
+          const stateB64 = await invoke<string>('get_initial_state');
+          if (stateB64) {
+            const stateBytes = base64ToBytes(stateB64);
+
+            isApplyingRemote = true;
+            Y.applyUpdate(doc, stateBytes);
+            isApplyingRemote = false;
+          }
+
+          sharedDocLoaded = true;
+          sharedDocError = null;
+        } catch (err) {
+          console.error('Failed to load initial state:', err);
+          sharedDocError = String(err);
+        }
+      })();
+
+      await sharedDocLoadPromise;
+      setIsLoaded(sharedDocLoaded);
+      setError(sharedDocError);
     }
 
     // Observe all changes - use the actual delta, not full state
@@ -161,11 +206,10 @@ export function useSyncedYDoc(
     loadInitialState();
 
     onCleanup(() => {
+      // Only cleanup the observer, NOT the doc or sync machinery (singleton survives)
       doc.off('update', updateHandler);
-      if (syncTimer) {
-        clearTimeout(syncTimer);
-      }
-      doc.destroy();
+      // NOTE: Don't clear sharedSyncTimer - other components may still need it
+      // NOTE: Don't destroy doc - it's shared across component lifecycles
     });
   });
 
