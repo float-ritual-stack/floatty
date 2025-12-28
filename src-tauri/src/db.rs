@@ -152,12 +152,23 @@ impl CtxDatabase {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- Serialized Yjs document state
+            -- Serialized Yjs document state (legacy full snapshots)
             CREATE TABLE IF NOT EXISTS system_state (
                 key TEXT PRIMARY KEY,
                 value BLOB NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Append-only Y.Doc updates for efficient persistence
+            -- Each row is a delta update; replay all on load, compact periodically
+            CREATE TABLE IF NOT EXISTS ydoc_updates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                doc_key TEXT NOT NULL,
+                update_data BLOB NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ydoc_doc_key ON ydoc_updates(doc_key, id);
         "#)?;
 
         // Migrations: add columns if they don't exist (for existing DBs)
@@ -450,6 +461,69 @@ impl CtxDatabase {
             "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
             params![key, value],
         )?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Y.Doc Append-Only Persistence (FLO-61)
+    // =========================================================================
+
+    /// Append a Y.Doc update delta (fast, single row insert)
+    pub fn append_ydoc_update(&self, doc_key: &str, update: &[u8]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT INTO ydoc_updates (doc_key, update_data, created_at) VALUES (?, ?, ?)",
+            params![doc_key, update, now],
+        )?;
+        Ok(())
+    }
+
+    /// Get all updates for a doc (replay on load)
+    /// Returns updates in order (oldest first) for correct replay
+    pub fn get_ydoc_updates(&self, doc_key: &str) -> Result<Vec<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT update_data FROM ydoc_updates WHERE doc_key = ? ORDER BY id ASC"
+        )?;
+        let rows = stmt.query_map([doc_key], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Get count of updates for a doc (to decide when to compact)
+    pub fn get_ydoc_update_count(&self, doc_key: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM ydoc_updates WHERE doc_key = ?",
+            [doc_key],
+            |row| row.get(0),
+        )
+    }
+
+    /// Compact: delete all updates and replace with single snapshot
+    /// This is a transaction to ensure atomicity
+    pub fn compact_ydoc(&self, doc_key: &str, snapshot: &[u8]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        // Delete all existing updates for this doc
+        tx.execute("DELETE FROM ydoc_updates WHERE doc_key = ?", [doc_key])?;
+
+        // Insert the compacted snapshot as a single update
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        tx.execute(
+            "INSERT INTO ydoc_updates (doc_key, update_data, created_at) VALUES (?, ?, ?)",
+            params![doc_key, snapshot, now],
+        )?;
+
+        tx.commit()?;
+        log::info!("Compacted Y.Doc '{}' to single snapshot", doc_key);
         Ok(())
     }
 }

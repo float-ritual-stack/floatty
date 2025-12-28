@@ -64,29 +64,62 @@ export function useSyncedYDoc(
   // Track whether we're currently applying an update from Rust
   let isApplyingRemote = false;
 
-  // Debounce timer for syncing
+  // Pending updates to batch (accumulate during debounce window)
+  let pendingUpdates: Uint8Array[] = [];
   let syncTimer: number | null = null;
+  let isFlushing = false;
+  let retryCount = 0;
+  const MAX_RETRIES = 5;
 
-  // Sync local changes to Rust
-  const syncToRust = async () => {
-    if (isApplyingRemote) return;
-
-    try {
-      const update = Y.encodeStateAsUpdate(doc);
-      const updateB64 = bytesToBase64(update);
-      await invoke('apply_update', { updateB64 });
-    } catch (err) {
-      console.error('Failed to sync to Rust:', err);
-      setError(String(err));
-    }
-  };
-
-  // Debounced sync
-  const debouncedSync = () => {
+  // Schedule a flush with optional delay override (for backoff)
+  const scheduleFlush = (delay?: number) => {
     if (syncTimer) {
       clearTimeout(syncTimer);
     }
-    syncTimer = window.setTimeout(syncToRust, syncDebounce);
+    syncTimer = window.setTimeout(flushUpdates, delay ?? syncDebounce);
+  };
+
+  // Send pending updates to Rust
+  const flushUpdates = async () => {
+    // Guard against concurrent flushes
+    if (isFlushing || pendingUpdates.length === 0) return;
+
+    isFlushing = true;
+    const updates = pendingUpdates;
+    pendingUpdates = [];
+
+    let sentCount = 0;
+    try {
+      // Send each delta individually - they're small and we want granular persistence
+      for (const update of updates) {
+        const updateB64 = bytesToBase64(update);
+        await invoke('apply_update', { updateB64 });
+        sentCount++;
+      }
+      retryCount = 0; // Reset on success
+    } catch (err) {
+      retryCount++;
+      console.error(`Failed to sync to Rust (attempt ${retryCount}/${MAX_RETRIES}):`, err);
+      // Restore unsent updates to front of queue for retry
+      pendingUpdates = [...updates.slice(sentCount), ...pendingUpdates];
+
+      if (retryCount >= MAX_RETRIES) {
+        setError(`Sync failed after ${MAX_RETRIES} attempts. Changes may not be saved.`);
+        retryCount = 0; // Allow future attempts after user interaction
+      } else if (pendingUpdates.length > 0) {
+        // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
+        const backoffDelay = Math.min(syncDebounce * Math.pow(2, retryCount), 10000);
+        scheduleFlush(backoffDelay);
+      }
+    } finally {
+      isFlushing = false;
+    }
+  };
+
+  // Queue an update and schedule flush
+  const queueUpdate = (update: Uint8Array) => {
+    pendingUpdates.push(update);
+    scheduleFlush();
   };
 
   // Force sync (bypass debounce)
@@ -95,7 +128,7 @@ export function useSyncedYDoc(
       clearTimeout(syncTimer);
       syncTimer = null;
     }
-    await syncToRust();
+    await flushUpdates();
   };
 
   onMount(() => {
@@ -117,11 +150,11 @@ export function useSyncedYDoc(
       }
     }
 
-    // Observe all changes
-    const updateHandler = (_update: Uint8Array, origin: unknown) => {
+    // Observe all changes - use the actual delta, not full state
+    const updateHandler = (update: Uint8Array, origin: unknown) => {
       // Don't sync back changes that came from Rust
       if (origin === 'remote' || isApplyingRemote) return;
-      debouncedSync();
+      queueUpdate(update);
     };
 
     doc.on('update', updateHandler);

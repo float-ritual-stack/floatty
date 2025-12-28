@@ -153,6 +153,8 @@ struct AppStateInner {
     #[allow(dead_code)]
     parser: CtxParser,
     doc: Arc<RwLock<Doc>>,
+    /// Counter to avoid SELECT on every keystroke - only check DB periodically
+    updates_since_compact_check: std::sync::atomic::AtomicI64,
 }
 
 /// Managed state wrapper - inner is None when DB initialization fails
@@ -242,29 +244,65 @@ fn get_initial_state(state: State<AppState>) -> Result<String, String> {
     Ok(BASE64.encode(update))
 }
 
+/// Default doc key for the outliner (future: support multiple docs)
+const YDOC_KEY: &str = "default";
+/// Compact when update count exceeds this threshold
+const YDOC_COMPACT_THRESHOLD: i64 = 100;
+/// Only check DB for compaction every N updates (avoid SELECT per keystroke)
+const YDOC_COMPACT_CHECK_INTERVAL: i64 = 10;
+
+use std::sync::atomic::Ordering;
+
 /// Apply a Yjs update from the frontend
 #[tauri::command]
 fn apply_update(state: State<AppState>, update_b64: String) -> Result<(), String> {
     let inner = state.inner.as_ref()
         .ok_or_else(|| "ctx:: system unavailable".to_string())?;
-    
+
+    // Decode base64 and validate update format before any mutations
     let update_bytes = BASE64.decode(update_b64)
-        .map_err(|e| e.to_string())?;
-    
-    let doc = inner.doc.write().map_err(|e| e.to_string())?;
-    
-    // Apply update to in-memory doc
+        .map_err(|e| format!("Base64 decode failed: {}", e))?;
+
+    let update = Update::decode_v1(&update_bytes)
+        .map_err(|e| format!("Y.Doc update decode failed: {}", e))?;
+
+    // PERSIST FIRST: Write to DB before applying to memory
+    // This prevents memory/DB divergence if DB write fails
+    inner.db.append_ydoc_update(YDOC_KEY, &update_bytes)
+        .map_err(|e| format!("Failed to persist Y.Doc update: {}", e))?;
+
+    // Now apply to in-memory doc (update is already persisted)
+    let doc = inner.doc.write()
+        .map_err(|e| format!("Failed to acquire Y.Doc write lock: {}", e))?;
     {
         let mut txn = doc.transact_mut();
-        txn.apply_update(Update::decode_v1(&update_bytes).map_err(|e| e.to_string())?)
-           .map_err(|e| e.to_string())?;
+        txn.apply_update(update)
+            .map_err(|e| {
+                // Log for debugging, return error so frontend can react
+                log::error!("Y.Doc apply failed (persisted, will replay on restart): {}", e);
+                format!("Y.Doc apply failed (data saved, restart may be needed): {}", e)
+            })?;
     }
-    
-    // Persist full state to DB (Still heavy, but avoids read cost)
-    // Optimization: In real world, use append-only updates table
-    let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
-    inner.db.set_system_state("ydoc", &full_state).map_err(|e| e.to_string())?;
-    
+
+    // Increment counter and only check DB periodically (avoid SELECT per keystroke)
+    let updates_since_check = inner.updates_since_compact_check.fetch_add(1, Ordering::Relaxed) + 1;
+
+    if updates_since_check >= YDOC_COMPACT_CHECK_INTERVAL {
+        // Reset counter and check actual count from DB
+        inner.updates_since_compact_check.store(0, Ordering::Relaxed);
+
+        let update_count = inner.db.get_ydoc_update_count(YDOC_KEY).unwrap_or(0);
+        if update_count > YDOC_COMPACT_THRESHOLD {
+            let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+            if let Err(e) = inner.db.compact_ydoc(YDOC_KEY, &full_state) {
+                log::warn!(
+                    "Y.Doc compaction failed (will retry later): {}. Update count: {}",
+                    e, update_count
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -361,32 +399,33 @@ fn clear_workspace(state: State<AppState>) -> Result<(), String> {
         .ok_or_else(|| "ctx:: system unavailable".to_string())?;
     
     let doc = inner.doc.write().map_err(|e| e.to_string())?;
-    let mut txn = doc.transact_mut();
-    
-    // Clear rootIds
-    let root_ids = txn.get_array("rootIds");
-    if let Some(root_ids) = root_ids {
-        let len = root_ids.len(&txn);
-        if len > 0 {
-            root_ids.remove_range(&mut txn, 0, len);
-        }
-    }
 
-    // Clear blocks map
-    let blocks = txn.get_map("blocks");
-    if let Some(blocks) = blocks {
-        // yrs Map doesn't have a clear() method exposed directly in all versions?
-        // Let's check. If not, we iterate keys.
-        // But yrs iteration in Rust is fast.
-        let keys: Vec<String> = blocks.keys(&txn).map(|k| k.to_string()).collect();
-        for key in keys {
-            blocks.remove(&mut txn, &key);
-        }
-    }
+    // Scope mutable transaction to drop before creating read transaction
+    {
+        let mut txn = doc.transact_mut();
 
-    // Persist empty state
+        // Clear rootIds
+        let root_ids = txn.get_array("rootIds");
+        if let Some(root_ids) = root_ids {
+            let len = root_ids.len(&txn);
+            if len > 0 {
+                root_ids.remove_range(&mut txn, 0, len);
+            }
+        }
+
+        // Clear blocks map
+        let blocks = txn.get_map("blocks");
+        if let Some(blocks) = blocks {
+            let keys: Vec<String> = blocks.keys(&txn).map(|k| k.to_string()).collect();
+            for key in keys {
+                blocks.remove(&mut txn, &key);
+            }
+        }
+    } // txn dropped here
+
+    // Persist empty state (compact to single snapshot)
     let full_state = doc.transact().encode_state_as_update_v1(&StateVector::default());
-    inner.db.set_system_state("ydoc", &full_state).map_err(|e| e.to_string())?;
+    inner.db.compact_ydoc(YDOC_KEY, &full_state).map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -487,18 +526,94 @@ pub fn run() {
         Ok(db) => {
             // Load persistent state into in-memory Doc
             let doc = Doc::new();
-            if let Ok(Some(state_bytes)) = db.get_system_state("ydoc") {
-                if !state_bytes.is_empty() {
+            let mut loaded_from_updates = false;
+
+            // Try loading from append-only updates first (new format)
+            if let Ok(updates) = db.get_ydoc_updates(YDOC_KEY) {
+                if !updates.is_empty() {
+                    log::info!("Replaying {} Y.Doc updates from append-only storage", updates.len());
                     let mut txn = doc.transact_mut();
-                    match Update::decode_v1(&state_bytes) {
-                        Ok(u) => {
-                            if let Err(e) = txn.apply_update(u) {
-                                log::error!("Failed to apply Yjs update: {}", e);
+                    let mut decode_errors = 0;
+                    let mut apply_errors = 0;
+
+                    for update_bytes in updates {
+                        match Update::decode_v1(&update_bytes) {
+                            Ok(u) => {
+                                if let Err(e) = txn.apply_update(u) {
+                                    log::error!("Failed to apply Y.Doc update: {}", e);
+                                    apply_errors += 1;
+                                }
                             }
-                        },
-                        Err(e) => log::error!("Failed to decode Yjs state: {}", e),
+                            Err(e) => {
+                                log::error!("Corrupted Y.Doc update, cannot decode: {}", e);
+                                decode_errors += 1;
+                            }
+                        }
+                    }
+
+                    if decode_errors > 0 || apply_errors > 0 {
+                        log::warn!(
+                            "Y.Doc replay completed with {} decode errors, {} apply errors",
+                            decode_errors, apply_errors
+                        );
+                    }
+                    loaded_from_updates = true;
+                }
+            }
+
+            // Fall back to legacy system_state for migration (bounded retries)
+            const MAX_MIGRATION_ATTEMPTS: u32 = 3;
+            let migration_attempts: u32 = db.get_system_state("ydoc_migration_attempts")
+                .ok()
+                .flatten()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+
+            if !loaded_from_updates && migration_attempts < MAX_MIGRATION_ATTEMPTS {
+                if let Ok(Some(state_bytes)) = db.get_system_state("ydoc") {
+                    if !state_bytes.is_empty() {
+                        log::info!(
+                            "Migrating Y.Doc from legacy system_state to append-only ({} bytes, attempt {}/{})",
+                            state_bytes.len(), migration_attempts + 1, MAX_MIGRATION_ATTEMPTS
+                        );
+                        let mut txn = doc.transact_mut();
+                        match Update::decode_v1(&state_bytes) {
+                            Ok(u) => {
+                                if let Err(e) = txn.apply_update(u) {
+                                    log::error!("Failed to apply legacy Y.Doc state: {}", e);
+                                    // Decode worked but apply failed - likely corrupt, increment attempts
+                                    let new_attempts = migration_attempts + 1;
+                                    let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
+                                } else {
+                                    // Migrate to new format
+                                    if let Err(e) = db.append_ydoc_update(YDOC_KEY, &state_bytes) {
+                                        log::error!(
+                                            "Failed to migrate Y.Doc to append-only storage: {} (attempt {}/{}). \
+                                             Legacy data loaded but not migrated. Check disk space/permissions.",
+                                            e, migration_attempts + 1, MAX_MIGRATION_ATTEMPTS
+                                        );
+                                        // Transient failure possible - increment attempts for bounded retry
+                                        let new_attempts = migration_attempts + 1;
+                                        let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
+                                    } else {
+                                        log::info!("Successfully migrated Y.Doc from legacy to append-only format");
+                                        // Clear attempts on success (migration complete)
+                                        let _ = db.set_system_state("ydoc_migration_attempts", b"0");
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                log::error!("Failed to decode legacy Y.Doc state: {} (attempt {}/{})", e, migration_attempts + 1, MAX_MIGRATION_ATTEMPTS);
+                                // Decode failed - likely corrupt data, increment attempts
+                                let new_attempts = migration_attempts + 1;
+                                let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
+                            },
+                        }
                     }
                 }
+            } else if migration_attempts >= MAX_MIGRATION_ATTEMPTS {
+                log::warn!("Y.Doc migration skipped: max attempts ({}) reached. Manual intervention may be needed.", MAX_MIGRATION_ATTEMPTS);
             }
 
             let db = Arc::new(db);
@@ -527,11 +642,12 @@ pub fn run() {
                     parser.start();
 
                     log::info!("ctx:: aggregation system initialized successfully");
-                    Some(AppStateInner { 
-                        db, 
-                        watcher, 
+                    Some(AppStateInner {
+                        db,
+                        watcher,
                         parser,
-                        doc: doc_arc, // Move Arc
+                        doc: doc_arc,
+                        updates_since_compact_check: std::sync::atomic::AtomicI64::new(0),
                     })
                 }
                 Err(e) => {
