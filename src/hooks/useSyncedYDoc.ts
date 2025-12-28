@@ -64,29 +64,37 @@ export function useSyncedYDoc(
   // Track whether we're currently applying an update from Rust
   let isApplyingRemote = false;
 
-  // Debounce timer for syncing
+  // Pending updates to batch (accumulate during debounce window)
+  let pendingUpdates: Uint8Array[] = [];
   let syncTimer: number | null = null;
 
-  // Sync local changes to Rust
-  const syncToRust = async () => {
-    if (isApplyingRemote) return;
+  // Send pending updates to Rust
+  const flushUpdates = async () => {
+    if (pendingUpdates.length === 0) return;
+
+    const updates = pendingUpdates;
+    pendingUpdates = [];
 
     try {
-      const update = Y.encodeStateAsUpdate(doc);
-      const updateB64 = bytesToBase64(update);
-      await invoke('apply_update', { updateB64 });
+      // Send each delta individually - they're small and we want granular persistence
+      for (const update of updates) {
+        const updateB64 = bytesToBase64(update);
+        await invoke('apply_update', { updateB64 });
+      }
     } catch (err) {
       console.error('Failed to sync to Rust:', err);
       setError(String(err));
     }
   };
 
-  // Debounced sync
-  const debouncedSync = () => {
+  // Queue an update and schedule flush
+  const queueUpdate = (update: Uint8Array) => {
+    pendingUpdates.push(update);
+
     if (syncTimer) {
       clearTimeout(syncTimer);
     }
-    syncTimer = window.setTimeout(syncToRust, syncDebounce);
+    syncTimer = window.setTimeout(flushUpdates, syncDebounce);
   };
 
   // Force sync (bypass debounce)
@@ -95,7 +103,7 @@ export function useSyncedYDoc(
       clearTimeout(syncTimer);
       syncTimer = null;
     }
-    await syncToRust();
+    await flushUpdates();
   };
 
   onMount(() => {
@@ -117,11 +125,11 @@ export function useSyncedYDoc(
       }
     }
 
-    // Observe all changes
-    const updateHandler = (_update: Uint8Array, origin: unknown) => {
+    // Observe all changes - use the actual delta, not full state
+    const updateHandler = (update: Uint8Array, origin: unknown) => {
       // Don't sync back changes that came from Rust
       if (origin === 'remote' || isApplyingRemote) return;
-      debouncedSync();
+      queueUpdate(update);
     };
 
     doc.on('update', updateHandler);
