@@ -578,9 +578,8 @@ class TerminalManager {
       // Must be longer than TerminalPane's 50ms debounce + some buffer
       this.restorationTimeout = setTimeout(() => {
         this.restorationTimeout = null;
-        this.isDragging = false;
 
-        // Now do one clean fit() for each terminal with saved position
+        // Do one clean fit() for each terminal with saved position
         for (const [id, savedY] of this.savedScrollPositions) {
           const instance = this.instances.get(id);
           if (!instance) continue;
@@ -607,8 +606,9 @@ class TerminalManager {
           }
         }
 
-        // Clear saved positions after restoration
+        // Clear saved positions and re-enable normal fit() calls
         this.savedScrollPositions.clear();
+        this.isDragging = false;
       }, 150);
     }
   }
@@ -637,8 +637,9 @@ class TerminalManager {
         const currentViewportY = term.buffer.active.viewportY;
         const scrollDelta = savedViewportY - currentViewportY;
 
-        // Restore if scroll dropped by more than a screenful AND wasn't already at top
-        if (scrollDelta > term.rows && savedViewportY > term.rows) {
+        // Restore if scroll dropped significantly AND user had scrollback position
+        // (don't restore if user was already at top - nothing to preserve)
+        if (scrollDelta > term.rows && savedViewportY > 0) {
           const maxScroll = term.buffer.active.baseY;
           term.scrollToLine(Math.min(savedViewportY, maxScroll));
         }
@@ -726,6 +727,7 @@ class TerminalManager {
     this.instances.delete(id);
     this.callbacks.delete(id);
     this.seenMarkers.delete(id);
+    this.savedScrollPositions.delete(id);
     this.disposing.delete(id);
   }
 
