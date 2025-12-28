@@ -67,11 +67,22 @@ export function useSyncedYDoc(
   // Pending updates to batch (accumulate during debounce window)
   let pendingUpdates: Uint8Array[] = [];
   let syncTimer: number | null = null;
+  let isFlushing = false;
+
+  // Schedule a flush after debounce period
+  const scheduleFlush = () => {
+    if (syncTimer) {
+      clearTimeout(syncTimer);
+    }
+    syncTimer = window.setTimeout(flushUpdates, syncDebounce);
+  };
 
   // Send pending updates to Rust
   const flushUpdates = async () => {
-    if (pendingUpdates.length === 0) return;
+    // Guard against concurrent flushes
+    if (isFlushing || pendingUpdates.length === 0) return;
 
+    isFlushing = true;
     const updates = pendingUpdates;
     pendingUpdates = [];
 
@@ -88,17 +99,19 @@ export function useSyncedYDoc(
       // Restore unsent updates to front of queue for retry
       pendingUpdates = [...updates.slice(sentCount), ...pendingUpdates];
       setError(String(err));
+      // Schedule retry for restored updates
+      if (pendingUpdates.length > 0) {
+        scheduleFlush();
+      }
+    } finally {
+      isFlushing = false;
     }
   };
 
   // Queue an update and schedule flush
   const queueUpdate = (update: Uint8Array) => {
     pendingUpdates.push(update);
-
-    if (syncTimer) {
-      clearTimeout(syncTimer);
-    }
-    syncTimer = window.setTimeout(flushUpdates, syncDebounce);
+    scheduleFlush();
   };
 
   // Force sync (bypass debounce)
