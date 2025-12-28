@@ -18,6 +18,51 @@ npm install           # Install JS dependencies
 npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
 npm run tauri build   # Production build
 npm run lint          # ESLint
+npm run test          # Run vitest (26 tests)
+npm run test:watch    # Watch mode for TDD
+```
+
+## Testing
+
+**Stack**: Vitest + jsdom + @solidjs/testing-library
+
+**Philosophy**: Store-first testability. Test pure logic without fighting DOM/contentEditable quirks.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/context/WorkspaceContext.tsx` | DI context for block/pane stores; `createMockBlockStore()` factory |
+| `src/hooks/useCursor.ts` | Cursor abstraction; `createMockCursor()` for tests |
+| `src/hooks/useBlockInput.ts` | Pure `determineKeyAction()` function returns typed `KeyboardAction` |
+| `src/hooks/useBlockInput.test.ts` | 22 keyboard behavior tests (no DOM needed) |
+| `src/components/BlockItem.test.tsx` | Context injection tests |
+
+### Testing Pattern
+
+```typescript
+// Test pure logic without rendering
+import { determineKeyAction } from './useBlockInput';
+
+it('splits block when Enter in middle', () => {
+  const result = determineKeyAction('Enter', false, null, {
+    block: { content: 'hello world', ... },
+    cursorOffset: 5,
+    ...
+  });
+
+  expect(result.type).toBe('split_block');
+  expect(result.offset).toBe(5);
+});
+
+// Test components with mock stores
+import { WorkspaceProvider, createMockBlockStore } from '../context/WorkspaceContext';
+
+render(() => (
+  <WorkspaceProvider blockStore={createMockBlockStore({ ... })}>
+    <BlockItem id="test" paneId="pane" depth={0} onFocus={() => {}} />
+  </WorkspaceProvider>
+));
 ```
 
 ## Architecture
@@ -91,6 +136,8 @@ Critical rules:
 | `usePaneStore.ts` | Per-pane view state (collapsed, zoomedRootId) |
 | `useBlockStore.ts` | Block tree CRUD operations (Y.Doc backed) |
 | `useBlockOperations.ts` | Navigation helpers (findNext/Prev, getAncestors) |
+| `useCursor.ts` | DOM cursor abstraction for testability |
+| `useBlockInput.ts` | Pure keyboard logic extraction (`determineKeyAction`) |
 
 ### Key Data Flows
 
