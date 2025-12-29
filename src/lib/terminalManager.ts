@@ -15,6 +15,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
+import { homeDir } from '@tauri-apps/api/path';
 import { readText, readImageBase64, hasImage, hasText, hasFiles, readFiles } from 'tauri-plugin-clipboard-api';
 import { defaultTheme, toXtermTheme } from './themes';
 
@@ -807,9 +808,25 @@ class TerminalManager {
 
     fitAddon.fit();
 
-    // Get platform for shell selection (done outside Promise to avoid async executor)
+    // Get platform and home dir for shell selection (done outside Promise to avoid async executor)
     const os = await platform();
     const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
+    const home = await homeDir();
+
+    // Build PATH for non-interactive shell (picker runs with -c, doesn't source .zshrc)
+    // Must include common tool locations for release builds where PATH is minimal
+    const pickerPath = [
+      `${home}/.cargo/bin`,      // Rust tools (tv might be here)
+      `${home}/.local/bin`,      // User local
+      `${home}/.bun/bin`,        // Bun
+      '/opt/homebrew/bin',       // Apple Silicon homebrew
+      '/opt/homebrew/sbin',
+      '/usr/local/bin',          // Intel homebrew / manual installs
+      '/usr/bin',
+      '/bin',
+      '/usr/sbin',
+      '/sbin',
+    ].join(':');
 
     return new Promise((resolve) => {
       const onDataChannel = new Channel<string>();
@@ -854,6 +871,8 @@ class TerminalManager {
         env: {
           TERM: 'xterm-256color',
           COLORTERM: 'truecolor',
+          PATH: pickerPath,
+          HOME: home,
         },
         onData: onDataChannel,
         onExit: onExitChannel,
