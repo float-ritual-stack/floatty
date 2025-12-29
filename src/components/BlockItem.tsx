@@ -24,7 +24,7 @@ interface BlockItemProps {
 export function BlockItem(props: BlockItemProps) {
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
-  const { findNextVisibleBlock, findPrevVisibleBlock } = useBlockOperations();
+  const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
   const block = createMemo(() => store.blocks[props.id]);
   const isFocused = createMemo(() => props.focusedBlockId === props.id);
   const isCollapsed = createMemo(() => paneStore.isCollapsed(props.paneId, props.id, block()?.collapsed || false));
@@ -125,11 +125,11 @@ export function BlockItem(props: BlockItemProps) {
       }
 
       case 'deleteBlock': {
-        // Cmd+Backspace: Delete block and subtree
+        // Cmd+Backspace: Delete block and subtree, focus parent (for better undo context)
         e.preventDefault();
-        const prevId = findPrevVisibleBlock(props.id, props.paneId);
+        const focusTarget = findFocusAfterDelete(props.id, props.paneId);
         store.deleteBlock(props.id);
-        if (prevId) props.onFocus(prevId);
+        if (focusTarget) props.onFocus(focusTarget);
         return;
       }
     }
