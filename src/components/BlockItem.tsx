@@ -131,17 +131,24 @@ export function BlockItem(props: BlockItemProps) {
       // Otherwise let browser handle multi-line navigation within block
       if (cursor.isAtEnd()) {
         e.preventDefault();
-        const next = findNextVisibleBlock(props.id, props.paneId);
-        if (next) {
-          props.onFocus(next);
-        } else {
-          // FLO-92: No next block - create trailing block for typeable target
-          // When zoomed, create inside zoomed root (not as tree-level sibling)
-          const zoomedRoot = paneStore.getZoomedRootId(props.paneId);
-          const newId = zoomedRoot
-            ? store.createBlockInside(zoomedRoot)  // Append to zoomed root's children
-            : store.createBlockAfter(props.id);    // Normal sibling after current
+
+        // FLO-92: Check if we're at last sibling - if so, create new sibling
+        // (Don't jump to uncle/aunt - create typeable target instead)
+        const currentBlock = block();
+        const parentId = currentBlock?.parentId;
+        const siblings = parentId
+          ? store.blocks[parentId]?.childIds
+          : store.rootIds;
+        const isLastSibling = siblings && siblings[siblings.length - 1] === props.id;
+
+        if (isLastSibling) {
+          // At last sibling - create new sibling for typeable target
+          const newId = store.createBlockAfter(props.id);
           if (newId) props.onFocus(newId);
+        } else {
+          // Not last sibling - navigate to next visible block
+          const next = findNextVisibleBlock(props.id, props.paneId);
+          if (next) props.onFocus(next);
         }
       }
       // No preventDefault = browser handles internal line navigation
