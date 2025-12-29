@@ -132,7 +132,13 @@ export function BlockItem(props: BlockItemProps) {
       if (cursor.isAtEnd()) {
         e.preventDefault();
         const next = findNextVisibleBlock(props.id, props.paneId);
-        if (next) props.onFocus(next);
+        if (next) {
+          props.onFocus(next);
+        } else {
+          // FLO-92: No next block - create trailing sibling for typeable target
+          const newId = store.createBlockAfter(props.id);
+          if (newId) props.onFocus(newId);
+        }
       }
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'Enter' && !e.shiftKey) {
