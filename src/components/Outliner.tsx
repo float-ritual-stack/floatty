@@ -49,19 +49,14 @@ export function Outliner(props: OutlinerProps) {
     }
   });
 
-  // Cleanup focus when focused block is deleted (e.g., by undo)
-  createEffect(() => {
+  // Helper: move focus to valid block if current focus is orphaned
+  const ensureValidFocus = () => {
     const focused = focusedBlockId();
     if (focused && !store.blocks[focused]) {
-      // Focused block no longer exists - move to first visible block
       const firstRoot = store.rootIds[0];
-      if (firstRoot) {
-        setFocusedBlockId(firstRoot);
-      } else {
-        setFocusedBlockId(null);
-      }
+      setFocusedBlockId(firstRoot ?? null);
     }
-  });
+  };
 
   // Get current zoomed root for this pane (null = show all roots)
   const zoomedRootId = () => paneStore.getZoomedRootId(props.paneId);
@@ -322,14 +317,15 @@ export function Outliner(props: OutlinerProps) {
         },
         // Undo/Redo (Y.Doc UndoManager)
         // Blur first so BlockItem syncs content from store on blur,
-        // then refocus to restore typing position
+        // then validate focus and refocus
         '$mod+z': (e) => {
           e.preventDefault();
           const activeEl = document.activeElement as HTMLElement;
           activeEl?.blur?.();
           undo();
-          // Refocus after Y.Doc update settles
+          // After Y.Doc update, ensure focus is valid then refocus
           requestAnimationFrame(() => {
+            ensureValidFocus();
             const focused = focusedBlockId();
             if (focused && store.blocks[focused]) {
               // Trigger refocus by resetting the signal
@@ -344,6 +340,7 @@ export function Outliner(props: OutlinerProps) {
           activeEl?.blur?.();
           redo();
           requestAnimationFrame(() => {
+            ensureValidFocus();
             const focused = focusedBlockId();
             if (focused && store.blocks[focused]) {
               setFocusedBlockId(null);
