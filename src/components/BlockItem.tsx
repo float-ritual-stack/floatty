@@ -135,8 +135,12 @@ export function BlockItem(props: BlockItemProps) {
         if (next) {
           props.onFocus(next);
         } else {
-          // FLO-92: No next block - create trailing sibling for typeable target
-          const newId = store.createBlockAfter(props.id);
+          // FLO-92: No next block - create trailing block for typeable target
+          // When zoomed, create inside zoomed root (not as tree-level sibling)
+          const zoomedRoot = paneStore.getZoomedRootId(props.paneId);
+          const newId = zoomedRoot
+            ? store.createBlockInside(zoomedRoot)  // Append to zoomed root's children
+            : store.createBlockAfter(props.id);    // Normal sibling after current
           if (newId) props.onFocus(newId);
         }
       }

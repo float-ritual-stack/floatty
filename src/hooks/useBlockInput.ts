@@ -137,7 +137,9 @@ export function determineKeyAction(
         return { type: 'navigate_down', nextId };
       }
       // FLO-92: No next block exists - create trailing sibling for typeable target
-      return { type: 'create_trailing_block', parentId: block.parentId };
+      // When zoomed, create inside zoomed root (not at block's parent level)
+      const targetParent = zoomedRootId ?? block.parentId;
+      return { type: 'create_trailing_block', parentId: targetParent };
     }
     return { type: 'none' };
   }

@@ -119,6 +119,35 @@ describe('determineKeyAction', () => {
       const action = expectAction(result, 'create_trailing_block');
       expect(action.parentId).toBeNull();
     });
+
+    it('creates trailing block INSIDE zoomed root when zoomed (FLO-92)', () => {
+      // When zoomed into 'zoomed-root', ArrowDown at last visible child should
+      // create a new block inside the zoomed root, NOT at tree level
+      const result = determineKeyAction('ArrowDown', false, null, createDeps({
+        cursorAtEnd: true,
+        findNextId: () => null, // At last visible block in zoomed subtree
+        zoomedRootId: 'zoomed-root',
+        block: createBlock({ id: 'last-child', parentId: 'zoomed-root' }),
+      }));
+
+      const action = expectAction(result, 'create_trailing_block');
+      // Should create inside zoomed root, not at block's parent level
+      expect(action.parentId).toBe('zoomed-root');
+    });
+
+    it('creates trailing block inside zoomed root even for nested children (FLO-92)', () => {
+      // Block is nested deeper than zoomed root - should still target zoomed root
+      const result = determineKeyAction('ArrowDown', false, null, createDeps({
+        cursorAtEnd: true,
+        findNextId: () => null,
+        zoomedRootId: 'zoomed-root',
+        block: createBlock({ id: 'deep-child', parentId: 'middle-parent' }), // Not direct child
+      }));
+
+      const action = expectAction(result, 'create_trailing_block');
+      // Should create inside zoomed root, not at block's immediate parent
+      expect(action.parentId).toBe('zoomed-root');
+    });
   });
 
   describe('Enter key behavior', () => {
