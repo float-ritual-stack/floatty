@@ -17,13 +17,16 @@ export function Outliner(props: OutlinerProps) {
   const { doc, isLoaded, undo, redo, clearUndoStack } = useSyncedYDoc();
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
-  const { findNextVisibleBlock, findPrevVisibleBlock } = useBlockOperations();
+  const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete, getAncestors } = useBlockOperations();
   const [focusedBlockId, setFocusedBlockId] = createSignal<string | null>(null);
   const [confirmClear, setConfirmClear] = createSignal(false);
 
   // FLO-74: Multi-select state
   const [selectedBlockIds, setSelectedBlockIds] = createSignal<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = createSignal<string | null>(null);
+
+  // Note: tinykeys handles Cmd+A sequence state internally
+  // (no need for expansion level tracking in component state)
 
   // FLO-74: Cleanup deleted blocks from selection (prevents memory leak)
   createEffect(() => {
@@ -130,62 +133,82 @@ export function Outliner(props: OutlinerProps) {
     setSelectedBlockIds(new Set());
   };
 
-  // Progressive Cmd+A: select focused → expand to heading scope → select all
-  const selectFocused = () => {
-    const focused = focusedBlockId();
-    if (focused) {
-      setSelectedBlockIds(new Set([focused]));
-      setSelectionAnchor(focused);
-    }
-  };
-
-  const selectHeadingScope = () => {
-    const focused = focusedBlockId();
-    if (!focused) return;
+  // FLO-74 Refinement: Indent-based progressive Cmd+A expansion
+  // Level 0: focused block only
+  // Level 1: siblings (same parent)
+  // Level 2+: climb ancestor chain (parent scope, grandparent scope, etc.)
+  // When level exceeds ancestor count: select all
+  const selectByIndentLevel = (level: number): string[] => {
+    const focusedId = focusedBlockId();
+    if (!focusedId) return getVisibleBlockIds();
 
     const visibleIds = getVisibleBlockIds();
-    const focusedIdx = visibleIds.indexOf(focused);
-    if (focusedIdx === -1) return;
+    const visibleSet = new Set(visibleIds);
 
-    // Find the heading that scopes this block (walk up to find h1/h2/h3)
-    let scopeStart = focusedIdx;
-    for (let i = focusedIdx - 1; i >= 0; i--) {
-      const block = store.blocks[visibleIds[i]];
-      if (block && (block.type === 'h1' || block.type === 'h2' || block.type === 'h3')) {
-        scopeStart = i;
-        break;
-      }
+    // Level 0: just focused block
+    if (level === 0) {
+      return [focusedId];
     }
 
-    // Find next heading of same or higher level (scope end)
-    const scopeBlock = store.blocks[visibleIds[scopeStart]];
-    if (!scopeBlock) return; // Block was deleted
-    const scopeLevel = scopeBlock.type === 'h1' ? 1 : scopeBlock.type === 'h2' ? 2 : 3;
-    let scopeEnd = visibleIds.length - 1;
+    const ancestors = getAncestors(focusedId); // [rootId, ..., parentId, focusedId]
 
-    for (let i = scopeStart + 1; i < visibleIds.length; i++) {
-      const block = store.blocks[visibleIds[i]];
-      if (block) {
-        const level = block.type === 'h1' ? 1 : block.type === 'h2' ? 2 : block.type === 'h3' ? 3 : 99;
-        if (level <= scopeLevel) {
-          scopeEnd = i - 1;
-          break;
-        }
+    // Level 1: siblings (same parent)
+    if (level === 1) {
+      const parentId = store.blocks[focusedId]?.parentId;
+      if (!parentId) {
+        // Top-level block - siblings are other roots
+        return [...store.rootIds];
       }
+      return getSiblingsWithDescendants(parentId, visibleSet);
     }
 
-    // Select all blocks in scope
-    const scopeIds = visibleIds.slice(scopeStart, scopeEnd + 1);
-    setSelectedBlockIds(new Set(scopeIds));
-    setSelectionAnchor(visibleIds[scopeStart]);
+    // Level 2+: climb ancestors
+    // level=2 → parent, level=3 → grandparent, etc.
+    const targetAncestorIdx = ancestors.length - level;
+
+    if (targetAncestorIdx < 0) {
+      // Climbed past root - select all
+      return visibleIds;
+    }
+
+    const scopeId = ancestors[targetAncestorIdx];
+    return getBlockWithVisibleDescendants(scopeId, visibleSet);
   };
 
-  const selectAll = () => {
-    const allIds = getVisibleBlockIds();
-    setSelectedBlockIds(new Set(allIds));
-    if (allIds.length > 0) {
-      setSelectionAnchor(allIds[0]);
+  // Helper: get all visible children of a parent + their visible descendants
+  const getSiblingsWithDescendants = (parentId: string, visibleSet: Set<string>): string[] => {
+    const parent = store.blocks[parentId];
+    if (!parent) return [];
+
+    const result: string[] = [];
+    for (const childId of parent.childIds) {
+      if (visibleSet.has(childId)) {
+        result.push(childId);
+        result.push(...getVisibleDescendantsOf(childId, visibleSet));
+      }
     }
+    return result;
+  };
+
+  // Helper: get block + all visible descendants
+  const getBlockWithVisibleDescendants = (blockId: string, visibleSet: Set<string>): string[] => {
+    if (!visibleSet.has(blockId)) return [];
+    return [blockId, ...getVisibleDescendantsOf(blockId, visibleSet)];
+  };
+
+  // Helper: recursively gather visible descendants
+  const getVisibleDescendantsOf = (blockId: string, visibleSet: Set<string>): string[] => {
+    const block = store.blocks[blockId];
+    if (!block) return [];
+
+    const result: string[] = [];
+    for (const childId of block.childIds) {
+      if (visibleSet.has(childId)) {
+        result.push(childId);
+        result.push(...getVisibleDescendantsOf(childId, visibleSet));
+      }
+    }
+    return result;
   };
 
   const copySelection = async () => {
@@ -210,21 +233,63 @@ export function Outliner(props: OutlinerProps) {
     const selected = selectedBlockIds();
     if (selected.size === 0) return;
 
-    // Find next block to focus after deletion
-    const visibleIds = getVisibleBlockIds();
+    // Find focus target based on selection
+    // For single block: use findFocusAfterDelete (prefers parent)
+    // For multi-select: find common ancestor's parent
+    let focusTarget: string | null = null;
     const selectedArray = Array.from(selected);
-    const firstSelectedIdx = Math.min(...selectedArray.map(id => visibleIds.indexOf(id)));
-    const nextFocusId = visibleIds.find((id, idx) => idx > firstSelectedIdx && !selected.has(id))
-      ?? visibleIds.find((id, idx) => idx < firstSelectedIdx && !selected.has(id));
+
+    if (selectedArray.length === 1) {
+      focusTarget = findFocusAfterDelete(selectedArray[0], props.paneId);
+    } else {
+      // Multi-select: find common ancestor
+      // If common ancestor is NOT being deleted → focus it directly
+      // If common ancestor IS being deleted → find its parent
+      const ancestorLists = selectedArray.map(id => getAncestors(id));
+      let commonDepth = 0;
+      const firstList = ancestorLists[0];
+
+      if (firstList) {
+        for (let i = 0; i < firstList.length; i++) {
+          if (ancestorLists.every(list => list[i] === firstList[i])) {
+            commonDepth = i + 1;
+          } else {
+            break;
+          }
+        }
+
+        if (commonDepth > 0) {
+          const commonAncestor = firstList[commonDepth - 1];
+          // Key fix: only climb to parent if ancestor itself is being deleted
+          if (selected.has(commonAncestor)) {
+            focusTarget = findFocusAfterDelete(commonAncestor, props.paneId);
+          } else {
+            focusTarget = commonAncestor;
+          }
+        }
+      }
+    }
 
     // Delete all selected blocks atomically (single undo operation)
     store.deleteBlocks([...selected]);
 
     clearSelection();
 
-    // Focus next block, or if all deleted, clear focus and let auto-create handle it
-    if (nextFocusId) {
-      setFocusedBlockId(nextFocusId);
+    // Edge case: if zoomed and zoomed root now has no children, unzoom
+    // (simpler than auto-creating, works for cross-pane deletes too)
+    const zoomedRoot = zoomedRootId();
+    if (zoomedRoot) {
+      const zoomedBlock = store.blocks[zoomedRoot];
+      if (zoomedBlock && zoomedBlock.childIds.length === 0) {
+        paneStore.setZoomedRoot(props.paneId, null);
+        setFocusedBlockId(zoomedRoot); // Focus the (now unzoomed) block
+        return;
+      }
+    }
+
+    // Focus parent (or sibling fallback), or if all deleted, clear focus
+    if (focusTarget) {
+      setFocusedBlockId(focusTarget);
     } else {
       // No blocks left - clear focus so auto-create effect can set it properly
       setFocusedBlockId(null);
@@ -235,6 +300,16 @@ export function Outliner(props: OutlinerProps) {
   const handleOutlinerKeyDown = (e: KeyboardEvent) => {
     const selected = selectedBlockIds();
     const modKey = isMac ? e.metaKey : e.ctrlKey;
+    const activeEl = document.activeElement;
+    const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+
+    // FLO-74: Clear selection when typing starts (prevents accidental delete)
+    // Printable character while editing with multi-select → clear selection, continue typing
+    if (selected.size > 0 && isEditing && e.key.length === 1 && !modKey && !e.ctrlKey && !e.altKey) {
+      clearSelection();
+      // Don't preventDefault - let typing continue in focused block
+      return;
+    }
 
     // Escape clears selection
     if (e.key === 'Escape' && selected.size > 0) {
@@ -254,9 +329,6 @@ export function Outliner(props: OutlinerProps) {
 
     // Delete/Backspace on selection (only when not editing a block)
     if ((e.key === 'Delete' || e.key === 'Backspace') && selected.size > 0) {
-      // Check if we're actively editing (contentEditable focused)
-      const activeEl = document.activeElement;
-      const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
       if (!isEditing) {
         e.preventDefault();
         deleteSelection();
@@ -272,32 +344,32 @@ export function Outliner(props: OutlinerProps) {
     const dispose = store.initFromYDoc(doc);
     onCleanup(dispose);
 
-    // Progressive Cmd+A sequences via tinykeys
-    // Pattern: Cmd+A enters selection mode, then plain A expands
+    // FLO-74 Refinement: Progressive Cmd+A with indent-based expansion
+    // Sequence pattern: Cmd+A, then tap A (no Cmd) to expand further
+    // Level progression: focused → siblings → parent scope → grandparent → ... → all
     if (containerRef) {
+      // Helper to handle expansion at given level
+      const expandToLevel = (level: number, e: KeyboardEvent) => {
+        const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
+        if (isEditing) return; // Let browser select text
+        e.preventDefault();
+
+        const idsToSelect = selectByIndentLevel(level);
+        setSelectedBlockIds(new Set(idsToSelect));
+        setSelectionAnchor(idsToSelect[0] ?? null);
+      };
+
       const unsubscribe = tinykeys(containerRef, {
-        // Progressive Cmd+A: only intercept when NOT editing text
-        // When editing, let browser handle text selection
-        '$mod+a': (e) => {
-          const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
-          if (isEditing) return; // Let browser select text
-          e.preventDefault();
-          selectFocused();
-        },
-        // Second A (after Cmd+A): expand to heading scope
-        '$mod+a a': (e) => {
-          const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
-          if (isEditing) return;
-          e.preventDefault();
-          selectHeadingScope();
-        },
-        // Third A: select all
-        '$mod+a a a': (e) => {
-          const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
-          if (isEditing) return;
-          e.preventDefault();
-          selectAll();
-        },
+        // Cmd+A → level 0 (focused block only)
+        '$mod+a': (e) => expandToLevel(0, e),
+        // Cmd+A, then A → level 1 (siblings)
+        '$mod+a a': (e) => expandToLevel(1, e),
+        // Cmd+A, A, A → level 2 (parent scope)
+        '$mod+a a a': (e) => expandToLevel(2, e),
+        // Cmd+A, A, A, A → level 3 (grandparent scope)
+        '$mod+a a a a': (e) => expandToLevel(3, e),
+        // Cmd+A, A, A, A, A → level 4+ (select all)
+        '$mod+a a a a a': (e) => expandToLevel(4, e),
         // Undo/Redo (Y.Doc UndoManager)
         // Blur first so BlockItem syncs content from store on blur,
         // then validate focus and refocus
