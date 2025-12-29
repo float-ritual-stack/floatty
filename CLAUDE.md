@@ -18,7 +18,7 @@ npm install           # Install JS dependencies
 npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
 npm run tauri build   # Production build
 npm run lint          # ESLint
-npm run test          # Run vitest (261 tests)
+npm run test          # Run vitest (268 tests)
 npm run test:watch    # Watch mode for TDD
 ```
 

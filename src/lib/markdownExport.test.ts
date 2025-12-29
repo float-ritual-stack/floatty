@@ -98,6 +98,85 @@ describe('blocksToMarkdown', () => {
       const result = blocksToMarkdown(selected, blocks, visible);
       expect(result).toBe('sh::ls -la');
     });
+
+    it('exports h3 (content already has ### prefix)', () => {
+      const blocks: Record<string, Block> = {
+        'b1': createBlock({ id: 'b1', content: '### Subsection', type: 'h3' }),
+      };
+      const selected = new Set(['b1']);
+      const visible = ['b1'];
+
+      const result = blocksToMarkdown(selected, blocks, visible);
+      expect(result).toBe('### Subsection');
+    });
+
+    it('exports ai blocks with ai:: prefix', () => {
+      const blocks: Record<string, Block> = {
+        'b1': createBlock({ id: 'b1', content: 'ai::summarize this', type: 'ai' }),
+      };
+      const selected = new Set(['b1']);
+      const visible = ['b1'];
+
+      const result = blocksToMarkdown(selected, blocks, visible);
+      expect(result).toBe('ai::summarize this');
+    });
+
+    it('exports ctx blocks with ctx:: prefix', () => {
+      const blocks: Record<string, Block> = {
+        'b1': createBlock({ id: 'b1', content: 'ctx::project::floatty mode::dev', type: 'ctx' }),
+      };
+      const selected = new Set(['b1']);
+      const visible = ['b1'];
+
+      const result = blocksToMarkdown(selected, blocks, visible);
+      expect(result).toBe('ctx::project::floatty mode::dev');
+    });
+
+    it('exports dispatch blocks with dispatch:: prefix', () => {
+      const blocks: Record<string, Block> = {
+        'b1': createBlock({ id: 'b1', content: 'dispatch::send to agent', type: 'dispatch' }),
+      };
+      const selected = new Set(['b1']);
+      const visible = ['b1'];
+
+      const result = blocksToMarkdown(selected, blocks, visible);
+      expect(result).toBe('dispatch::send to agent');
+    });
+
+    it('exports output blocks as code blocks', () => {
+      const blocks: Record<string, Block> = {
+        'b1': createBlock({ id: 'b1', content: 'command output here', type: 'output' }),
+      };
+      const selected = new Set(['b1']);
+      const visible = ['b1'];
+
+      const result = blocksToMarkdown(selected, blocks, visible);
+      expect(result).toBe('```\ncommand output here\n```');
+    });
+
+    it('exports error blocks as code blocks', () => {
+      const blocks: Record<string, Block> = {
+        'b1': createBlock({ id: 'b1', content: 'Error: something failed', type: 'error' }),
+      };
+      const selected = new Set(['b1']);
+      const visible = ['b1'];
+
+      const result = blocksToMarkdown(selected, blocks, visible);
+      expect(result).toBe('```\nError: something failed\n```');
+    });
+
+    it('indents multi-line output block content correctly', () => {
+      const blocks: Record<string, Block> = {
+        'parent': createBlock({ id: 'parent', content: 'Parent', childIds: ['output'] }),
+        'output': createBlock({ id: 'output', content: 'line1\nline2\nline3', type: 'output', parentId: 'parent' }),
+      };
+      const selected = new Set(['parent', 'output']);
+      const visible = ['parent', 'output'];
+
+      const result = blocksToMarkdown(selected, blocks, visible);
+      // Output block should have indented content and fences
+      expect(result).toBe('Parent\n  ```\n  line1\n  line2\n  line3\n  ```');
+    });
   });
 
   describe('multiple block export', () => {
