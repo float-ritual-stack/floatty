@@ -88,6 +88,8 @@ export interface UseSyncedYDocReturn {
   canUndo: () => boolean;
   /** Check if redo is available */
   canRedo: () => boolean;
+  /** Clear undo/redo stacks (call after initial setup) */
+  clearUndoStack: () => void;
 }
 
 export function useSyncedYDoc(
@@ -203,6 +205,9 @@ export function useSyncedYDoc(
               // Track all origins except 'remote' (which is from Rust)
               trackedOrigins: new Set([null, undefined]),
             });
+            // Clear stack so user can't undo past loaded state
+            // (prevents undoing the initial block creation)
+            sharedUndoManager.clear();
           }
         } catch (err) {
           console.error('Failed to load initial state:', err);
@@ -254,6 +259,12 @@ export function useSyncedYDoc(
     return sharedUndoManager ? sharedUndoManager.redoStack.length > 0 : false;
   };
 
+  const clearUndoStack = () => {
+    if (sharedUndoManager) {
+      sharedUndoManager.clear();
+    }
+  };
+
   return {
     doc,
     isLoaded,
@@ -263,5 +274,6 @@ export function useSyncedYDoc(
     redo,
     canUndo,
     canRedo,
+    clearUndoStack,
   };
 }

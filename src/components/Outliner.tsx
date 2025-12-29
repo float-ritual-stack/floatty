@@ -14,7 +14,7 @@ interface OutlinerProps {
 }
 
 export function Outliner(props: OutlinerProps) {
-  const { doc, isLoaded, undo, redo } = useSyncedYDoc();
+  const { doc, isLoaded, undo, redo, clearUndoStack } = useSyncedYDoc();
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock } = useBlockOperations();
@@ -310,7 +310,12 @@ export function Outliner(props: OutlinerProps) {
   createEffect(() => {
     if (isLoaded() && store.rootIds.length === 0) {
       const id = store.createInitialBlock();
-      if (id) setFocusedBlockId(id);
+      if (id) {
+        setFocusedBlockId(id);
+        // Clear undo stack so user can't undo past the initial block
+        // (prevents entering invalid zero-block state)
+        clearUndoStack();
+      }
     }
   });
 
