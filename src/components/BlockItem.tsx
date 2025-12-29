@@ -14,6 +14,11 @@ interface BlockItemProps {
   depth: number;
   focusedBlockId: string | null;
   onFocus: (id: string) => void;
+  // FLO-74: Multi-select
+  isBlockSelected?: (id: string) => boolean;
+  onSelect?: (id: string, mode: 'set' | 'toggle' | 'range') => void;
+  selectionAnchor?: string | null;
+  getVisibleBlockIds?: () => string[];
 }
 
 export function BlockItem(props: BlockItemProps) {
@@ -131,27 +136,53 @@ export function BlockItem(props: BlockItemProps) {
 
     // Non-action keybinds (navigation, editing)
     if (e.key === 'ArrowUp') {
-      // Only exit block if cursor is at absolute start of content
-      // Otherwise let browser handle multi-line navigation within block
-      if (cursor.isAtStart()) {
+      // FLO-74: Shift+Arrow always extends block selection (bypass cursor check)
+      // Plain navigation: only exit block if cursor is at absolute start
+      const shouldNavigate = e.shiftKey || cursor.isAtStart();
+
+      if (shouldNavigate) {
         e.preventDefault();
         const prev = findPrevVisibleBlock(props.id, props.paneId);
-        if (prev) props.onFocus(prev);
+        if (prev) {
+          if (e.shiftKey && props.onSelect) {
+            // If no anchor, set current block as anchor first
+            if (!props.selectionAnchor) {
+              props.onSelect(props.id, 'set');
+            }
+            props.onSelect(prev, 'range');
+          } else if (props.onSelect) {
+            // Plain navigation clears selection
+            props.onSelect(prev, 'set');
+          }
+          props.onFocus(prev);
+        }
       }
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'ArrowDown') {
-      // Only exit block if cursor is at absolute end of content
-      // Otherwise let browser handle multi-line navigation within block
-      if (cursor.isAtEnd()) {
+      // FLO-74: Shift+Arrow always extends block selection (bypass cursor check)
+      // Plain navigation: only exit block if cursor is at absolute end
+      const shouldNavigate = e.shiftKey || cursor.isAtEnd();
+
+      if (shouldNavigate) {
         e.preventDefault();
 
         const next = findNextVisibleBlock(props.id, props.paneId);
         if (next) {
-          // There's a visible block to navigate to
+          if (e.shiftKey && props.onSelect) {
+            // If no anchor, set current block as anchor first
+            if (!props.selectionAnchor) {
+              props.onSelect(props.id, 'set');
+            }
+            props.onSelect(next, 'range');
+          } else if (props.onSelect) {
+            // Plain navigation clears selection
+            props.onSelect(next, 'set');
+          }
           props.onFocus(next);
-        } else {
+        } else if (!e.shiftKey) {
           // FLO-92: No next visible block - create sibling for typeable target
           // BUT don't create if current block is already empty (avoid empty spam)
+          // Only on plain navigation, not Shift+Arrow
           const currentContent = block()?.content || '';
           if (currentContent === '') return;
 
@@ -342,10 +373,24 @@ export function BlockItem(props: BlockItemProps) {
 
   return (
     <div class="block-wrapper">
-      <div 
-        class="block-item" 
-        classList={{ 'block-focused': isFocused() }}
-        onClick={() => props.onFocus(props.id)}
+      <div
+        class="block-item"
+        role="option"
+        aria-selected={props.isBlockSelected?.(props.id) || false}
+        classList={{ 'block-focused': isFocused(), 'block-selected': props.isBlockSelected?.(props.id) }}
+        onClick={(e: MouseEvent) => {
+          // FLO-74: Handle selection modifiers
+          if (props.onSelect) {
+            if (e.shiftKey) {
+              props.onSelect(props.id, 'range');
+            } else if (e.metaKey || e.ctrlKey) {
+              props.onSelect(props.id, 'toggle');
+            } else {
+              props.onSelect(props.id, 'set');
+            }
+          }
+          props.onFocus(props.id);
+        }}
       >
         <div
           class={`block-bullet ${bulletClass()}`}
@@ -390,6 +435,10 @@ export function BlockItem(props: BlockItemProps) {
                   depth={props.depth + 1}
                   focusedBlockId={props.focusedBlockId}
                   onFocus={props.onFocus}
+                  isBlockSelected={props.isBlockSelected}
+                  onSelect={props.onSelect}
+                  selectionAnchor={props.selectionAnchor}
+                  getVisibleBlockIds={props.getVisibleBlockIds}
                 />
               );
             }}

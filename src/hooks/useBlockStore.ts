@@ -411,6 +411,68 @@ function createBlockStore() {
     return true;
   };
 
+  /**
+   * Delete multiple blocks atomically (single undo operation).
+   * Used by multi-select delete to ensure Cmd+Z undoes entire selection.
+   */
+  const deleteBlocks = (ids: string[]): boolean => {
+    if (!_doc || ids.length === 0) return false;
+
+    // Collect all blocks to delete (including descendants)
+    const toDelete = new Set<string>();
+    const blocksToRemoveFromParent: Array<{ id: string; parentId: string | undefined }> = [];
+
+    for (const id of ids) {
+      const block = state.blocks[id];
+      if (!block) continue;
+
+      // Track parent relationship for removal
+      blocksToRemoveFromParent.push({ id, parentId: block.parentId });
+
+      // Collect descendants
+      const stack = [id];
+      while (stack.length > 0) {
+        const currentId = stack.pop()!;
+        toDelete.add(currentId);
+        const currentBlock = state.blocks[currentId];
+        if (currentBlock && currentBlock.childIds.length > 0) {
+          stack.push(...currentBlock.childIds);
+        }
+      }
+    }
+
+    if (toDelete.size === 0) return false;
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      const rootIds = _doc.getArray<string>('rootIds');
+
+      // Remove each block from its parent's childIds (or rootIds)
+      for (const { id, parentId } of blocksToRemoveFromParent) {
+        if (parentId) {
+          // Skip if parent is also being deleted
+          if (toDelete.has(parentId)) continue;
+          const parentData = blocksMap.get(parentId);
+          const childIds = ((getValue(parentData, 'childIds') as string[]) || []).filter(cid => cid !== id);
+          setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
+        } else {
+          const arr = rootIds.toArray();
+          const index = arr.indexOf(id);
+          if (index >= 0) {
+            rootIds.delete(index, 1);
+          }
+        }
+      }
+
+      // Delete all collected blocks from the map
+      toDelete.forEach(delId => {
+        blocksMap.delete(delId);
+      });
+    });
+
+    return true;
+  };
+
   const clearWorkspace = () => {
     if (!_doc) return;
 
@@ -565,6 +627,7 @@ function createBlockStore() {
     splitBlock,
     splitBlockToFirstChild,
     deleteBlock,
+    deleteBlocks,
     indentBlock,
     outdentBlock,
     toggleCollapsed,

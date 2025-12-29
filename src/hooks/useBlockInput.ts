@@ -62,6 +62,8 @@ export type KeyboardAction =
   | { type: 'delete_block'; prevId: string | null }
   | { type: 'navigate_up'; prevId: string | null }
   | { type: 'navigate_down'; nextId: string | null }
+  | { type: 'navigate_up_with_selection'; prevId: string | null }  // FLO-74: Shift+ArrowUp
+  | { type: 'navigate_down_with_selection'; nextId: string | null }  // FLO-74: Shift+ArrowDown
   | { type: 'create_trailing_block'; parentId: string | null }  // FLO-92: Create sibling when at tree end
   | { type: 'execute_block' }
   | { type: 'create_block_before'; newId: string }
@@ -124,22 +126,35 @@ export function determineKeyAction(
 
   // Non-action keybinds
   if (key === 'ArrowUp') {
-    if (cursorAtStart) {
-      return { type: 'navigate_up', prevId: deps.findPrevId() };
+    // FLO-74: Shift+Arrow always navigates (bypasses cursor check for selection extension)
+    const shouldNavigate = shiftKey || cursorAtStart;
+    if (shouldNavigate) {
+      const prevId = deps.findPrevId();
+      if (shiftKey) {
+        return { type: 'navigate_up_with_selection', prevId };
+      }
+      return { type: 'navigate_up', prevId };
     }
     return { type: 'none' };
   }
 
   if (key === 'ArrowDown') {
-    if (cursorAtEnd) {
+    // FLO-74: Shift+Arrow always navigates (bypasses cursor check for selection extension)
+    const shouldNavigate = shiftKey || cursorAtEnd;
+    if (shouldNavigate) {
       const nextId = deps.findNextId();
       if (nextId) {
+        if (shiftKey) {
+          return { type: 'navigate_down_with_selection', nextId };
+        }
         return { type: 'navigate_down', nextId };
       }
       // FLO-92: No next block exists - create trailing sibling for typeable target
-      // When zoomed, create inside zoomed root (not at block's parent level)
-      const targetParent = zoomedRootId ?? block.parentId;
-      return { type: 'create_trailing_block', parentId: targetParent };
+      // Only for plain navigation, not Shift+Arrow selection
+      if (!shiftKey) {
+        const targetParent = zoomedRootId ?? block.parentId;
+        return { type: 'create_trailing_block', parentId: targetParent };
+      }
     }
     return { type: 'none' };
   }
@@ -269,6 +284,18 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'navigate_down':
         e.preventDefault();
+        if (keyAction.nextId) deps.onFocus(keyAction.nextId);
+        return;
+
+      case 'navigate_up_with_selection':
+        e.preventDefault();
+        // Selection logic is handled by caller (BlockItem/Outliner)
+        if (keyAction.prevId) deps.onFocus(keyAction.prevId);
+        return;
+
+      case 'navigate_down_with_selection':
+        e.preventDefault();
+        // Selection logic is handled by caller (BlockItem/Outliner)
         if (keyAction.nextId) deps.onFocus(keyAction.nextId);
         return;
 

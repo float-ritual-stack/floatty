@@ -42,7 +42,9 @@ export type KeyAction =
   | 'zoomOutBlock'   // Outliner: return to parent/full view (Escape at block level)
   | 'collapseBlock'  // Outliner: toggle block collapse (Cmd+. at block level)
   | 'deleteBlock'    // Outliner: delete block and subtree (Cmd+Backspace at block level)
-  | 'nextTheme';     // Cycle through available themes (Cmd+;)
+  | 'nextTheme'      // Cycle through available themes (Cmd+;)
+  | 'undo'           // Undo last block operation (Cmd+Z)
+  | 'redo';          // Redo last undone operation (Cmd+Shift+Z)
 
 // Modifier representation
 export interface Modifiers {
@@ -144,6 +146,10 @@ export const defaultKeybinds: Keybind[] = [
 
   // Theme (using ; to avoid conflict with command palette Cmd+K)
   { key: ';', modifiers: { mod: true }, action: 'nextTheme' },
+
+  // Undo/Redo (outliner operations)
+  { key: 'z', modifiers: { mod: true }, action: 'undo' },
+  { key: 'z', modifiers: { mod: true, shift: true }, action: 'redo' },
 ];
 
 // Find action for a keyboard event
