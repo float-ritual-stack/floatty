@@ -89,6 +89,56 @@ describe('determineKeyAction', () => {
       expect(action.nextId).toBe('next-block');
     });
 
+    // FLO-74: Shift+Arrow selection extension
+    describe('selection extension (FLO-74)', () => {
+      it('Shift+ArrowUp navigates regardless of cursor position', () => {
+        const result = determineKeyAction('ArrowUp', true, null, createDeps({
+          cursorAtStart: false,  // NOT at start - would block plain ArrowUp
+          cursorAtEnd: true,     // cursor at end
+        }));
+
+        const action = expectAction(result, 'navigate_up_with_selection');
+        expect(action.prevId).toBe('prev-block');
+      });
+
+      it('Shift+ArrowDown navigates regardless of cursor position', () => {
+        const result = determineKeyAction('ArrowDown', true, null, createDeps({
+          cursorAtEnd: false,    // NOT at end - would block plain ArrowDown
+          cursorAtStart: true,   // cursor at start
+        }));
+
+        const action = expectAction(result, 'navigate_down_with_selection');
+        expect(action.nextId).toBe('next-block');
+      });
+
+      it('Shift+ArrowUp at start still navigates with selection action', () => {
+        const result = determineKeyAction('ArrowUp', true, null, createDeps({
+          cursorAtStart: true,
+        }));
+
+        // Even at start, Shift changes the action type
+        expect(result.type).toBe('navigate_up_with_selection');
+      });
+
+      it('Shift+ArrowDown at end still navigates with selection action', () => {
+        const result = determineKeyAction('ArrowDown', true, null, createDeps({
+          cursorAtEnd: true,
+        }));
+
+        expect(result.type).toBe('navigate_down_with_selection');
+      });
+
+      it('Shift+ArrowDown does NOT create trailing block (FLO-92 only for plain nav)', () => {
+        const result = determineKeyAction('ArrowDown', true, null, createDeps({
+          cursorAtEnd: true,
+          findNextId: () => null,  // No next block
+        }));
+
+        // Should return none, not create_trailing_block
+        expect(result.type).toBe('none');
+      });
+    });
+
     it('creates trailing block when ArrowDown at end with no next block (FLO-92)', () => {
       const result = determineKeyAction('ArrowDown', false, null, createDeps({
         cursorAtEnd: true,

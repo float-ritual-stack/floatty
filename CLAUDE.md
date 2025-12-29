@@ -18,7 +18,7 @@ npm install           # Install JS dependencies
 npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
 npm run tauri build   # Production build
 npm run lint          # ESLint
-npm run test          # Run vitest (26 tests)
+npm run test          # Run vitest (261 tests)
 npm run test:watch    # Watch mode for TDD
 ```
 
@@ -35,7 +35,8 @@ npm run test:watch    # Watch mode for TDD
 | `src/context/WorkspaceContext.tsx` | DI context for block/pane stores; `createMockBlockStore()` factory |
 | `src/hooks/useCursor.ts` | Cursor abstraction; `createMockCursor()` for tests |
 | `src/hooks/useBlockInput.ts` | Pure `determineKeyAction()` function returns typed `KeyboardAction` |
-| `src/hooks/useBlockInput.test.ts` | 22 keyboard behavior tests (no DOM needed) |
+| `src/hooks/useBlockInput.test.ts` | 32 keyboard behavior tests (no DOM needed) |
+| `src/lib/blockContext.ts` | Explicit discrete state types for keyboard behavior |
 | `src/components/BlockItem.test.tsx` | Context injection tests |
 
 ### Testing Pattern

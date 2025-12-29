@@ -1,5 +1,6 @@
 import { createSignal, createEffect, createMemo, onMount, onCleanup, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
+import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -119,6 +120,55 @@ export function Outliner(props: OutlinerProps) {
     setSelectedBlockIds(new Set());
   };
 
+  // Progressive Cmd+A: select focused → expand to heading scope → select all
+  const selectFocused = () => {
+    const focused = focusedBlockId();
+    if (focused) {
+      setSelectedBlockIds(new Set([focused]));
+      setSelectionAnchor(focused);
+    }
+  };
+
+  const selectHeadingScope = () => {
+    const focused = focusedBlockId();
+    if (!focused) return;
+
+    const visibleIds = getVisibleBlockIds();
+    const focusedIdx = visibleIds.indexOf(focused);
+    if (focusedIdx === -1) return;
+
+    // Find the heading that scopes this block (walk up to find h1/h2/h3)
+    let scopeStart = focusedIdx;
+    for (let i = focusedIdx - 1; i >= 0; i--) {
+      const block = store.blocks[visibleIds[i]];
+      if (block && (block.type === 'h1' || block.type === 'h2' || block.type === 'h3')) {
+        scopeStart = i;
+        break;
+      }
+    }
+
+    // Find next heading of same or higher level (scope end)
+    const scopeBlock = store.blocks[visibleIds[scopeStart]];
+    const scopeLevel = scopeBlock?.type === 'h1' ? 1 : scopeBlock?.type === 'h2' ? 2 : 3;
+    let scopeEnd = visibleIds.length - 1;
+
+    for (let i = scopeStart + 1; i < visibleIds.length; i++) {
+      const block = store.blocks[visibleIds[i]];
+      if (block) {
+        const level = block.type === 'h1' ? 1 : block.type === 'h2' ? 2 : block.type === 'h3' ? 3 : 99;
+        if (level <= scopeLevel) {
+          scopeEnd = i - 1;
+          break;
+        }
+      }
+    }
+
+    // Select all blocks in scope
+    const scopeIds = visibleIds.slice(scopeStart, scopeEnd + 1);
+    setSelectedBlockIds(new Set(scopeIds));
+    setSelectionAnchor(visibleIds[scopeStart]);
+  };
+
   const selectAll = () => {
     const allIds = getVisibleBlockIds();
     setSelectedBlockIds(new Set(allIds));
@@ -194,12 +244,7 @@ export function Outliner(props: OutlinerProps) {
       return;
     }
 
-    // Cmd+A select all (only when focused in outliner)
-    if (modKey && e.key === 'a') {
-      e.preventDefault();
-      selectAll();
-      return;
-    }
+    // Progressive Cmd+A handled by tinykeys (see onMount)
 
     // Cmd+C copy selection
     if (modKey && e.key === 'c' && selected.size > 0) {
@@ -220,10 +265,36 @@ export function Outliner(props: OutlinerProps) {
     }
   };
 
+  // Container ref for tinykeys
+  let containerRef: HTMLDivElement | undefined;
+
   onMount(() => {
     console.log('Outliner mounted for pane:', props.paneId);
     const dispose = store.initFromYDoc(doc);
     onCleanup(dispose);
+
+    // Progressive Cmd+A sequences via tinykeys
+    // Pattern: Cmd+A enters selection mode, then plain A expands
+    if (containerRef) {
+      const unsubscribe = tinykeys(containerRef, {
+        // First Cmd+A: select focused block
+        '$mod+a': (e) => {
+          e.preventDefault();
+          selectFocused();
+        },
+        // Second A (after Cmd+A): expand to heading scope
+        '$mod+a a': (e) => {
+          e.preventDefault();
+          selectHeadingScope();
+        },
+        // Third A: select all
+        '$mod+a a a': (e) => {
+          e.preventDefault();
+          selectAll();
+        },
+      });
+      onCleanup(unsubscribe);
+    }
   });
 
   // Auto-create first block when workspace is empty
@@ -250,6 +321,7 @@ export function Outliner(props: OutlinerProps) {
 
   return (
     <div
+      ref={containerRef}
       class="outliner-container"
       role="listbox"
       aria-multiselectable="true"
