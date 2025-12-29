@@ -653,6 +653,7 @@ body.resizing .terminal-pane-positioned {
 .block-bullet-ctx { color: var(--color-ansi-yellow); }
 .block-bullet-output { color: var(--color-ansi-cyan); }
 .block-bullet-error { color: var(--color-error); }
+.block-bullet-picker { color: var(--color-ansi-cyan); }
 .block-bullet-h1 { color: var(--color-ansi-blue); }
 .block-bullet-h2 { color: var(--color-ansi-bright-blue); }
 .block-bullet-h3 { color: var(--color-ansi-bright-magenta); }
@@ -804,6 +805,40 @@ body.resizing .terminal-pane-positioned {
 .block-content-todo { color: var(--color-ansi-bright-green); }
 .block-content-bullet { color: var(--color-fg); }
 .block-content-text { color: var(--color-fg); }
+.block-content-picker { color: var(--color-ansi-bright-cyan); }
+
+/* ================================================
+   Picker Block - Temporary TV/Fuzzy Finder
+   ================================================ */
+
+.picker-block {
+  display: flex;
+  flex-direction: column;
+  min-height: 280px; /* 18 rows at ~15px each + padding */
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-dark);
+  overflow: hidden;
+}
+
+.picker-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 4px 8px;
+  color: var(--color-ansi-bright-cyan);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.picker-terminal {
+  flex: 1;
+  min-height: 250px; /* Ensure xterm has room */
+}
+
+.picker-terminal .xterm {
+  height: 100%;
+  width: 100%;
+}
 
 /* ================================================
    Breadcrumb - Zoomed Block Navigation

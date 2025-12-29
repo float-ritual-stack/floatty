@@ -754,6 +754,133 @@ class TerminalManager {
   }
 
   /**
+   * Spawn an interactive picker command (tv, fzf, etc.) and wait for completion.
+   *
+   * Unlike attach(), this is for temporary pickers that:
+   * 1. Run a single command
+   * 2. Wait for user interaction
+   * 3. Capture stdout
+   * 4. Clean up on exit
+   *
+   * @param id - Unique identifier for this picker instance
+   * @param container - DOM element to render xterm into
+   * @param command - Full command to execute (e.g., 'tv files --no-remote')
+   * @param onData - Callback for stdout data capture
+   * @returns Promise that resolves with exit code when command completes
+   */
+  async spawnInteractivePicker(
+    id: string,
+    container: HTMLElement,
+    command: string,
+    onData?: (data: string) => void,
+    cwd?: string
+  ): Promise<{ exitCode: number }> {
+    // Ensure config is loaded
+    await this.loadConfig();
+
+    // Create minimal xterm for picker
+    const term = new XTerm({
+      allowProposedApi: true,
+      convertEol: false,
+      cursorBlink: true,
+      fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
+      fontSize: this.config.font_size,
+      fontWeight: String(this.config.font_weight),
+      fontWeightBold: String(this.config.font_weight_bold),
+      lineHeight: this.config.line_height,
+      theme: toXtermTheme(defaultTheme),
+      rows: 18, // Fixed height for picker mode
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+
+    const unicodeAddon = new Unicode11Addon();
+    term.loadAddon(unicodeAddon);
+    term.unicode.activeVersion = '11';
+
+    term.open(container);
+
+    // Skip WebGL for picker terminals - we already have many terminals and
+    // WebGL contexts are limited. Canvas renderer is fine for short-lived pickers.
+    console.log('[TerminalManager] Picker using canvas renderer (skipping WebGL)');
+
+    fitAddon.fit();
+
+    return new Promise(async (resolve) => {
+      try {
+        const os = await platform();
+        const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
+
+        const onDataChannel = new Channel<string>();
+        onDataChannel.onmessage = (base64Data: string) => {
+          console.log('[TerminalManager] Picker received data, length:', base64Data.length);
+          const binaryString = atob(base64Data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          term.write(bytes);
+
+          // Also capture as text for the caller
+          if (onData) {
+            const text = new TextDecoder().decode(bytes);
+            onData(text);
+          }
+        };
+
+        const onExitChannel = new Channel<number>();
+        onExitChannel.onmessage = (exitCode: number) => {
+          console.log(`[TerminalManager] Picker ${id} exited with code ${exitCode}`);
+
+          // Cleanup
+          term.dispose();
+
+          resolve({ exitCode });
+        };
+
+        // Spawn PTY with the picker command
+        // Use -c to run command directly, not interactive shell
+        const args = os === 'windows' ? ['-Command', command] : ['-c', command];
+
+        console.log('[TerminalManager] Spawning picker PTY:', { shell, args, cols: term.cols, rows: 18, cwd });
+
+        const pid = await invoke<number>('plugin:pty|spawn', {
+          file: shell,
+          args,
+          cols: term.cols,
+          rows: 18, // Fixed height for picker
+          cwd,  // Pass through - Tauri PTY defaults to app cwd if undefined
+          env: {
+            TERM: 'xterm-256color',
+            COLORTERM: 'truecolor',
+          },
+          onData: onDataChannel,
+          onExit: onExitChannel,
+        });
+
+        console.log('[TerminalManager] Picker PTY spawned with pid:', pid);
+
+        // Wire up input from xterm to PTY
+        term.onData((data: string) => {
+          invoke('plugin:pty|write', { pid, data }).catch(console.error);
+        });
+
+        // Handle resize (though picker height is fixed)
+        term.onResize(({ cols, rows }) => {
+          invoke('plugin:pty|resize', { pid, cols, rows }).catch(() => {});
+        });
+
+        term.focus();
+      } catch (err) {
+        console.error(`[TerminalManager] Picker spawn failed for ${id}:`, err);
+        term.dispose();
+        resolve({ exitCode: -1 });
+      }
+    });
+  }
+
+  /**
    * Update theme for all terminal instances (hot-swap)
    */
   updateAllThemes(theme: {

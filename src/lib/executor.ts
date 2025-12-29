@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { parseMarkdownTree, type ParsedBlock } from './markdownParser';
+import { resolveTvVariables, hasTvVariables } from './tvResolver';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -130,10 +131,29 @@ export async function executeBlock(
   const handler = findHandler(content);
   if (!handler) return;
 
-  const extracted = extractContent(content, handler);
+  let extracted = extractContent(content, handler);
   const outputType = handler.outputType ?? 'output';
   const outputPrefix = `${outputType}::`;
   const pendingMessage = handler.pendingMessage ?? 'Running...';
+
+  // Resolve $tv() variables before execution
+  // This spawns picker blocks and waits for user selection
+  if (hasTvVariables(extracted)) {
+    try {
+      extracted = await resolveTvVariables(extracted, blockId, actions);
+      // If user cancelled all pickers, extracted might be empty or have empty substitutions
+      if (!extracted.trim()) {
+        return; // User cancelled, don't execute
+      }
+      // Note: We intentionally DON'T update the parent block content.
+      // Keeping $tv(...) makes the block a reusable "saved picker" -
+      // hit Enter again to select a different file.
+    } catch (err) {
+      console.error('[executor] TV resolution failed:', err);
+      // Fall through and try to execute with unresolved variables
+      // (will likely fail, but error message will be shown)
+    }
+  }
 
   // Create placeholder block immediately
   const outputId = actions.createBlockInsideAtTop?.(blockId) ?? actions.createBlockInside(blockId);
