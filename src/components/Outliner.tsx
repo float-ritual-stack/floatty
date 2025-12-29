@@ -233,7 +233,14 @@ export function Outliner(props: OutlinerProps) {
     }
 
     clearSelection();
-    if (nextFocusId) setFocusedBlockId(nextFocusId);
+
+    // Focus next block, or if all deleted, clear focus and let auto-create handle it
+    if (nextFocusId) {
+      setFocusedBlockId(nextFocusId);
+    } else {
+      // No blocks left - clear focus so auto-create effect can set it properly
+      setFocusedBlockId(null);
+    }
   };
 
   const getBlockDepth = (id: string): number => {
@@ -291,18 +298,25 @@ export function Outliner(props: OutlinerProps) {
     // Pattern: Cmd+A enters selection mode, then plain A expands
     if (containerRef) {
       const unsubscribe = tinykeys(containerRef, {
-        // First Cmd+A: select focused block
+        // Progressive Cmd+A: only intercept when NOT editing text
+        // When editing, let browser handle text selection
         '$mod+a': (e) => {
+          const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
+          if (isEditing) return; // Let browser select text
           e.preventDefault();
           selectFocused();
         },
         // Second A (after Cmd+A): expand to heading scope
         '$mod+a a': (e) => {
+          const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
+          if (isEditing) return;
           e.preventDefault();
           selectHeadingScope();
         },
         // Third A: select all
         '$mod+a a a': (e) => {
+          const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
+          if (isEditing) return;
           e.preventDefault();
           selectAll();
         },
