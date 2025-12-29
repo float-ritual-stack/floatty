@@ -136,13 +136,14 @@ export function BlockItem(props: BlockItemProps) {
 
     // Non-action keybinds (navigation, editing)
     if (e.key === 'ArrowUp') {
-      // Only exit block if cursor is at absolute start of content
-      // Otherwise let browser handle multi-line navigation within block
-      if (cursor.isAtStart()) {
+      // FLO-74: Shift+Arrow always extends block selection (bypass cursor check)
+      // Plain navigation: only exit block if cursor is at absolute start
+      const shouldNavigate = e.shiftKey || cursor.isAtStart();
+
+      if (shouldNavigate) {
         e.preventDefault();
         const prev = findPrevVisibleBlock(props.id, props.paneId);
         if (prev) {
-          // FLO-74: Shift+Arrow extends selection
           if (e.shiftKey && props.onSelect) {
             // If no anchor, set current block as anchor first
             if (!props.selectionAnchor) {
@@ -158,14 +159,15 @@ export function BlockItem(props: BlockItemProps) {
       }
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'ArrowDown') {
-      // Only exit block if cursor is at absolute end of content
-      // Otherwise let browser handle multi-line navigation within block
-      if (cursor.isAtEnd()) {
+      // FLO-74: Shift+Arrow always extends block selection (bypass cursor check)
+      // Plain navigation: only exit block if cursor is at absolute end
+      const shouldNavigate = e.shiftKey || cursor.isAtEnd();
+
+      if (shouldNavigate) {
         e.preventDefault();
 
         const next = findNextVisibleBlock(props.id, props.paneId);
         if (next) {
-          // FLO-74: Shift+Arrow extends selection
           if (e.shiftKey && props.onSelect) {
             // If no anchor, set current block as anchor first
             if (!props.selectionAnchor) {
@@ -177,9 +179,10 @@ export function BlockItem(props: BlockItemProps) {
             props.onSelect(next, 'set');
           }
           props.onFocus(next);
-        } else {
+        } else if (!e.shiftKey) {
           // FLO-92: No next visible block - create sibling for typeable target
           // BUT don't create if current block is already empty (avoid empty spam)
+          // Only on plain navigation, not Shift+Arrow
           const currentContent = block()?.content || '';
           if (currentContent === '') return;
 
