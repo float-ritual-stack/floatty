@@ -49,6 +49,20 @@ export function Outliner(props: OutlinerProps) {
     }
   });
 
+  // Cleanup focus when focused block is deleted (e.g., by undo)
+  createEffect(() => {
+    const focused = focusedBlockId();
+    if (focused && !store.blocks[focused]) {
+      // Focused block no longer exists - move to first visible block
+      const firstRoot = store.rootIds[0];
+      if (firstRoot) {
+        setFocusedBlockId(firstRoot);
+      } else {
+        setFocusedBlockId(null);
+      }
+    }
+  });
+
   // Get current zoomed root for this pane (null = show all roots)
   const zoomedRootId = () => paneStore.getZoomedRootId(props.paneId);
 
@@ -293,13 +307,35 @@ export function Outliner(props: OutlinerProps) {
           selectAll();
         },
         // Undo/Redo (Y.Doc UndoManager)
+        // Blur first so BlockItem syncs content from store on blur,
+        // then refocus to restore typing position
         '$mod+z': (e) => {
           e.preventDefault();
+          const activeEl = document.activeElement as HTMLElement;
+          activeEl?.blur?.();
           undo();
+          // Refocus after Y.Doc update settles
+          requestAnimationFrame(() => {
+            const focused = focusedBlockId();
+            if (focused && store.blocks[focused]) {
+              // Trigger refocus by resetting the signal
+              setFocusedBlockId(null);
+              setFocusedBlockId(focused);
+            }
+          });
         },
         '$mod+Shift+z': (e) => {
           e.preventDefault();
+          const activeEl = document.activeElement as HTMLElement;
+          activeEl?.blur?.();
           redo();
+          requestAnimationFrame(() => {
+            const focused = focusedBlockId();
+            if (focused && store.blocks[focused]) {
+              setFocusedBlockId(null);
+              setFocusedBlockId(focused);
+            }
+          });
         },
       });
       onCleanup(unsubscribe);
