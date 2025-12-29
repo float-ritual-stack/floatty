@@ -51,6 +51,9 @@ let sharedDocLoaded = false;
 let sharedDocError: string | null = null;
 let sharedDocLoadPromise: Promise<void> | null = null;
 
+// UndoManager for the blocks map (singleton, tied to shared doc)
+let sharedUndoManager: Y.UndoManager | null = null;
+
 // Sync machinery is also singleton (tied to the shared doc)
 let sharedPendingUpdates: Uint8Array[] = [];
 let sharedSyncTimer: number | null = null;
@@ -77,6 +80,14 @@ export interface UseSyncedYDocReturn {
   error: () => string | null;
   /** Force sync to Rust */
   forceSync: () => Promise<void>;
+  /** Undo last operation */
+  undo: () => void;
+  /** Redo last undone operation */
+  redo: () => void;
+  /** Check if undo is available */
+  canUndo: () => boolean;
+  /** Check if redo is available */
+  canRedo: () => boolean;
 }
 
 export function useSyncedYDoc(
@@ -184,6 +195,15 @@ export function useSyncedYDoc(
 
           sharedDocLoaded = true;
           sharedDocError = null;
+
+          // Initialize UndoManager for blocks map (after initial load)
+          if (!sharedUndoManager) {
+            const blocksMap = doc.getMap('blocks');
+            sharedUndoManager = new Y.UndoManager(blocksMap, {
+              // Track all origins except 'remote' (which is from Rust)
+              trackedOrigins: new Set([null, undefined]),
+            });
+          }
         } catch (err) {
           console.error('Failed to load initial state:', err);
           sharedDocError = String(err);
@@ -213,10 +233,35 @@ export function useSyncedYDoc(
     });
   });
 
+  // Undo/Redo functions
+  const undo = () => {
+    if (sharedUndoManager) {
+      sharedUndoManager.undo();
+    }
+  };
+
+  const redo = () => {
+    if (sharedUndoManager) {
+      sharedUndoManager.redo();
+    }
+  };
+
+  const canUndo = () => {
+    return sharedUndoManager ? sharedUndoManager.undoStack.length > 0 : false;
+  };
+
+  const canRedo = () => {
+    return sharedUndoManager ? sharedUndoManager.redoStack.length > 0 : false;
+  };
+
   return {
     doc,
     isLoaded,
     error,
     forceSync,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
   };
 }

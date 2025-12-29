@@ -14,7 +14,7 @@ interface OutlinerProps {
 }
 
 export function Outliner(props: OutlinerProps) {
-  const { doc, isLoaded } = useSyncedYDoc();
+  const { doc, isLoaded, undo, redo } = useSyncedYDoc();
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock } = useBlockOperations();
@@ -291,6 +291,15 @@ export function Outliner(props: OutlinerProps) {
         '$mod+a a a': (e) => {
           e.preventDefault();
           selectAll();
+        },
+        // Undo/Redo (Y.Doc UndoManager)
+        '$mod+z': (e) => {
+          e.preventDefault();
+          undo();
+        },
+        '$mod+Shift+z': (e) => {
+          e.preventDefault();
+          redo();
         },
       });
       onCleanup(unsubscribe);
