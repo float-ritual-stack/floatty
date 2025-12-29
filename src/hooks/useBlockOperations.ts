@@ -38,6 +38,10 @@ export function useBlockOperations() {
     let currentBlock = block;
 
     while (currentId) {
+      // Stop at zoom boundary BEFORE checking siblings
+      // (zoomed root's siblings are outside the zoom view)
+      if (currentId === zoomedRootId) break;
+
       const parentId = currentBlock.parentId;
       const siblings = parentId ? store.getBlock(parentId)?.childIds : store.rootIds;
 
@@ -47,9 +51,6 @@ export function useBlockOperations() {
           return siblings[index + 1];
         }
       }
-
-      // Stop at zoom boundary - don't climb above zoomed root
-      if (currentId === zoomedRootId) break;
 
       if (!parentId) break;
       currentId = parentId;
