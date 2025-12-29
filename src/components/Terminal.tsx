@@ -26,12 +26,13 @@ const ZOOM_MAX = 2.0;
 import type { SemanticState } from '../lib/terminalManager';
 
 function StatusBar(props: { semanticState?: SemanticState | null }) {
+  // Use getKeybindDisplay for platform-aware shortcuts (⌘ on Mac, Ctrl on Windows/Linux)
   const shortcuts = [
-    { label: 'Split', keys: '⌘D' },
-    { label: 'Focus', keys: '⌘⌥↑↓←→' },
-    { label: 'Outliner', keys: '⌘O' },
-    { label: 'Theme', keys: '⌘;' },
-    { label: 'Zoom', keys: '⌘+/-' },
+    { label: 'Split', keys: getKeybindDisplay('splitHorizontal') || '⌘D' },
+    { label: 'Focus', keys: `${getKeybindDisplay('focusLeft')?.replace('Left', '↑↓←→') || '⌘⌥↑↓←→'}` },
+    { label: 'Outliner', keys: getKeybindDisplay('splitHorizontalOutliner') || '⌘O' },
+    { label: 'Theme', keys: getKeybindDisplay('nextTheme') || '⌘;' },
+    { label: 'Zoom', keys: `${getKeybindDisplay('zoomIn')?.replace('+', '+/-') || '⌘+/-'}` },
   ];
 
   const formatDuration = (ms: number) => {
