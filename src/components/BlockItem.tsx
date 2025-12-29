@@ -81,8 +81,17 @@ export function BlockItem(props: BlockItemProps) {
       }
 
       case 'zoomInBlock': {
-        // Cmd+Enter: Always zoom into block's subtree
+        // Cmd+Enter: Toggle zoom - zoom out if at zoomed root, zoom in otherwise
         e.preventDefault();
+        const currentZoom = paneStore.getZoomedRootId(props.paneId);
+
+        if (currentZoom === props.id) {
+          // Already zoomed into this block - zoom out
+          paneStore.setZoomedRoot(props.paneId, null);
+          return;
+        }
+
+        // Zoom into this block's subtree
         // Auto-create child if block has none (avoids stuck-on-empty-block bug)
         if (block()!.childIds.length === 0) {
           const newChildId = store.createBlockInside(props.id);
