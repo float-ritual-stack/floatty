@@ -275,6 +275,18 @@ export function Outliner(props: OutlinerProps) {
 
     clearSelection();
 
+    // Edge case: if zoomed and zoomed root now has no children, unzoom
+    // (simpler than auto-creating, works for cross-pane deletes too)
+    const zoomedRoot = zoomedRootId();
+    if (zoomedRoot) {
+      const zoomedBlock = store.blocks[zoomedRoot];
+      if (zoomedBlock && zoomedBlock.childIds.length === 0) {
+        paneStore.setZoomedRoot(props.paneId, null);
+        setFocusedBlockId(zoomedRoot); // Focus the (now unzoomed) block
+        return;
+      }
+    }
+
     // Focus parent (or sibling fallback), or if all deleted, clear focus
     if (focusTarget) {
       setFocusedBlockId(focusTarget);
