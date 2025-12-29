@@ -654,6 +654,7 @@ body.resizing .terminal-pane-positioned {
 .block-bullet-output { color: var(--color-ansi-cyan); }
 .block-bullet-error { color: var(--color-error); }
 .block-bullet-picker { color: var(--color-ansi-cyan); }
+.block-bullet-ran { color: var(--color-ansi-bright-green); }
 .block-bullet-h1 { color: var(--color-ansi-blue); }
 .block-bullet-h2 { color: var(--color-ansi-bright-blue); }
 .block-bullet-h3 { color: var(--color-ansi-bright-magenta); }
@@ -806,19 +807,25 @@ body.resizing .terminal-pane-positioned {
 .block-content-bullet { color: var(--color-fg); }
 .block-content-text { color: var(--color-fg); }
 .block-content-picker { color: var(--color-ansi-bright-cyan); }
+.block-content-ran { color: var(--color-ansi-green); }  /* Muted green - resolved command */
 
 /* ================================================
    Picker Block - Temporary TV/Fuzzy Finder
    ================================================ */
 
 .picker-block {
-  display: flex;
+  display: none; /* Hidden by default - only show when terminal is active */
   flex-direction: column;
-  min-height: 280px; /* 18 rows at ~15px each + padding */
+  min-height: 400px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
   background: var(--color-bg-dark);
   overflow: hidden;
+}
+
+/* Show picker block only when terminal is active */
+.picker-block:has(.picker-terminal--active) {
+  display: flex;
 }
 
 .picker-label {
@@ -832,7 +839,14 @@ body.resizing .terminal-pane-positioned {
 
 .picker-terminal {
   flex: 1;
-  min-height: 250px; /* Ensure xterm has room */
+  min-height: 0; /* Start collapsed - only show when active */
+  height: 0;
+  overflow: hidden;
+}
+
+.picker-terminal--active {
+  min-height: 370px; /* Ensure xterm has room for ~24 rows */
+  height: auto;
 }
 
 .picker-terminal .xterm {

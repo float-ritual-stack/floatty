@@ -119,6 +119,12 @@ async function spawnTvPicker(pickerId: string, channel: string): Promise<string>
 
       console.log('[tvResolver] Found picker container, spawning tv...');
 
+      // Mark picker as active (CSS uses this for height - prevents black box on undo)
+      container.classList.add('picker-terminal--active');
+
+      // Scroll picker into view for better UX
+      container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
       try {
         // Use terminalManager's interactive picker spawn
         const result = await terminalManager.spawnInteractivePicker(
