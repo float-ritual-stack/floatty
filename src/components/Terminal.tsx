@@ -26,12 +26,17 @@ const ZOOM_MAX = 2.0;
 import type { SemanticState } from '../lib/terminalManager';
 
 function StatusBar(props: { semanticState?: SemanticState | null }) {
+  // Use getKeybindDisplay for platform-aware shortcuts (⌘ on Mac, Ctrl on Windows/Linux)
+  // Get modifier prefix from focusLeft, then append arrows (avoids broken replacement on Win/Linux)
+  const focusMod = getKeybindDisplay('focusLeft')?.replace(/Left$/, '').replace(/ArrowLeft$/, '') || '⌘⌥';
+  const zoomMod = getKeybindDisplay('zoomIn')?.replace(/[+=]$/, '') || '⌘';
+
   const shortcuts = [
-    { label: 'Split', keys: '⌘D' },
-    { label: 'Focus', keys: '⌘⌥↑↓←→' },
-    { label: 'Outliner', keys: '⌘O' },
-    { label: 'Theme', keys: '⌘;' },
-    { label: 'Zoom', keys: '⌘+/-' },
+    { label: 'Split', keys: getKeybindDisplay('splitHorizontal') || '⌘D' },
+    { label: 'Focus', keys: `${focusMod}↑↓←→` },
+    { label: 'Outliner', keys: getKeybindDisplay('splitHorizontalOutliner') || '⌘O' },
+    { label: 'Theme', keys: getKeybindDisplay('nextTheme') || '⌘;' },
+    { label: 'Zoom', keys: `${zoomMod}+/-` },
   ];
 
   const formatDuration = (ms: number) => {
@@ -53,7 +58,7 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
   };
 
   return (
-    <div class="status-bar">
+    <footer class="status-bar" role="contentinfo">
       {/* Semantic state (left side) */}
       <span
         class="status-item status-hooks"
@@ -98,7 +103,7 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
           </span>
         )}
       </For>
-    </div>
+    </footer>
   );
 }
 
@@ -111,8 +116,8 @@ function TabBar(props: {
   onNewTab: () => void;
 }) {
   return (
-    <div class="tab-bar">
-      <div class="tab-list">
+    <nav class="tab-bar" role="navigation" aria-label="Terminal tabs">
+      <div class="tab-list" role="tablist">
         <For each={props.tabs}>
           {(tab, index) => (
             <div
@@ -131,6 +136,7 @@ function TabBar(props: {
                     props.onCloseTab(tab.id);
                   }}
                   title={`Close tab (${getKeybindDisplay('closeTab') || 'Cmd+W'})`}
+                  aria-label={`Close tab ${tab.title}`}
                 >
                   ×
                 </button>
@@ -146,7 +152,7 @@ function TabBar(props: {
       >
         + New
       </button>
-    </div>
+    </nav>
   );
 }
 
@@ -507,7 +513,7 @@ export function Terminal() {
         onNewTab={() => handleNewTab()}
       />
       <div class="terminal-wrapper">
-        <div class="terminal-container">
+        <main class="terminal-container" role="main">
           {/* Layout layer - just placeholder divs */}
           <For each={tabStore.tabs}>
             {(tab) => {
@@ -584,7 +590,7 @@ export function Terminal() {
               />
             )}
           </For>
-        </div>
+        </main>
         <Show when={sidebarVisible()}>
           <ContextSidebar visible={sidebarVisible()} />
         </Show>

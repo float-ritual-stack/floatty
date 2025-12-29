@@ -131,30 +131,30 @@ export function ContextSidebar(props: { visible: boolean }) {
       <Show
         when={!loading()}
         fallback={
-          <div class="ctx-sidebar">
+          <aside class="ctx-sidebar" role="complementary" aria-label="Context stream">
             <div class="ctx-sidebar-header">Context Stream</div>
             <div class="ctx-empty-state">Loading...</div>
-          </div>
+          </aside>
         }
       >
         <Show
           when={!error()}
           fallback={
-            <div class="ctx-sidebar ctx-sidebar-error">
+            <aside class="ctx-sidebar ctx-sidebar-error" role="complementary" aria-label="Context stream">
               <div class="ctx-sidebar-header">Context Stream</div>
               <div class="ctx-error-state">
-                <div class="ctx-error-message">{error()}</div>
+                <div class="ctx-error-message" role="alert">{error()}</div>
                 <button class="ctx-retry-button" onClick={fetchMarkers}>
                   Retry
                 </button>
               </div>
-            </div>
+            </aside>
           }
         >
           <Show
             when={markers().length > 0}
             fallback={
-              <div class="ctx-sidebar ctx-sidebar-empty">
+              <aside class="ctx-sidebar ctx-sidebar-empty" role="complementary" aria-label="Context stream">
                 <div class="ctx-sidebar-header">Context Stream</div>
                 <div class="ctx-empty-state">
                   No ctx:: markers yet
@@ -162,14 +162,14 @@ export function ContextSidebar(props: { visible: boolean }) {
                     Watching ~/.claude/projects/*.jsonl
                   </div>
                 </div>
-              </div>
+              </aside>
             }
           >
-            <div class="ctx-sidebar">
+            <aside class="ctx-sidebar" role="complementary" aria-label="Context stream">
               <div class="ctx-sidebar-header">
                 Context Stream ({counts().total})
                 <Show when={counts().pending > 0}>
-                  <span class="ctx-pending-badge">{counts().pending} parsing...</span>
+                  <span class="ctx-pending-badge" aria-live="polite">{counts().pending} parsing...</span>
                 </Show>
               </div>
               <div class="ctx-markers-list">
@@ -177,7 +177,7 @@ export function ContextSidebar(props: { visible: boolean }) {
                   {(marker) => <MarkerCard marker={marker} />}
                 </For>
               </div>
-            </div>
+            </aside>
           </Show>
         </Show>
       </Show>
