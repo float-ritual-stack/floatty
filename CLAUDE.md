@@ -127,6 +127,7 @@ Critical rules:
 | `inlineParser.ts` | Tokenizes inline markdown (`**bold**`, `*italic*`, `` `code` ``) for overlay |
 | `cursorUtils.ts` | Cursor position utilities for keybind logic |
 | `executor.ts` | Command execution for `sh::` blocks (child_process via Tauri) |
+| `tvResolver.ts` | `$tv()` pattern resolution - spawns TV picker, captures selection |
 
 **State** (`src/hooks/`):
 

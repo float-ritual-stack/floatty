@@ -178,8 +178,9 @@ function extractSelection(captured: string): string {
     console.log('[tvResolver] Content after ?1049l:', JSON.stringify(afterExit));
 
     // Strip any remaining escape sequences and get the selection
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code stripping
     // eslint-disable-next-line no-control-regex
-    const cleaned = afterExit.replace(/\x1b\[[\?0-9;]*[a-zA-Z]|\x1b./g, '').trim();
+    const cleaned = afterExit.replace(/\x1b\[[?0-9;]*[a-zA-Z]|\x1b./g, '').trim();
     console.log('[tvResolver] Cleaned selection:', cleaned);
 
     if (cleaned) {
@@ -192,8 +193,9 @@ function extractSelection(captured: string): string {
   const tail = captured.slice(-200);
 
   // Strip all ANSI escape codes including DEC private mode ([?...)
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code stripping
   // eslint-disable-next-line no-control-regex
-  const stripped = tail.replace(/\x1b\[[\?0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b./g, '');
+  const stripped = tail.replace(/\x1b\[[?0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b./g, '');
 
   // Get the last non-empty line
   const lines = stripped.split('\n').map(l => l.trim()).filter(l => l.length > 0);
