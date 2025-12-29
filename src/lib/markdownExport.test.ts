@@ -33,9 +33,9 @@ describe('blocksToMarkdown', () => {
       expect(result).toBe('Hello world');
     });
 
-    it('exports h1 with # prefix', () => {
+    it('exports h1 (content already has # prefix)', () => {
       const blocks: Record<string, Block> = {
-        'b1': createBlock({ id: 'b1', content: 'Title', type: 'h1' }),
+        'b1': createBlock({ id: 'b1', content: '# Title', type: 'h1' }),
       };
       const selected = new Set(['b1']);
       const visible = ['b1'];
@@ -44,9 +44,9 @@ describe('blocksToMarkdown', () => {
       expect(result).toBe('# Title');
     });
 
-    it('exports h2 with ## prefix', () => {
+    it('exports h2 (content already has ## prefix)', () => {
       const blocks: Record<string, Block> = {
-        'b1': createBlock({ id: 'b1', content: 'Section', type: 'h2' }),
+        'b1': createBlock({ id: 'b1', content: '## Section', type: 'h2' }),
       };
       const selected = new Set(['b1']);
       const visible = ['b1'];
@@ -55,9 +55,9 @@ describe('blocksToMarkdown', () => {
       expect(result).toBe('## Section');
     });
 
-    it('exports bullet with - prefix', () => {
+    it('exports bullet (content already has - prefix)', () => {
       const blocks: Record<string, Block> = {
-        'b1': createBlock({ id: 'b1', content: 'Item', type: 'bullet' }),
+        'b1': createBlock({ id: 'b1', content: '- Item', type: 'bullet' }),
       };
       const selected = new Set(['b1']);
       const visible = ['b1'];
@@ -66,9 +66,9 @@ describe('blocksToMarkdown', () => {
       expect(result).toBe('- Item');
     });
 
-    it('exports todo with checkbox', () => {
+    it('exports todo (content already has checkbox)', () => {
       const blocks: Record<string, Block> = {
-        'b1': createBlock({ id: 'b1', content: 'Task', type: 'todo' }),
+        'b1': createBlock({ id: 'b1', content: '- [ ] Task', type: 'todo' }),
       };
       const selected = new Set(['b1']);
       const visible = ['b1'];
@@ -77,9 +77,9 @@ describe('blocksToMarkdown', () => {
       expect(result).toBe('- [ ] Task');
     });
 
-    it('exports quote with > prefix', () => {
+    it('exports quote (content already has > prefix)', () => {
       const blocks: Record<string, Block> = {
-        'b1': createBlock({ id: 'b1', content: 'Quote', type: 'quote' }),
+        'b1': createBlock({ id: 'b1', content: '> Quote', type: 'quote' }),
       };
       const selected = new Set(['b1']);
       const visible = ['b1'];

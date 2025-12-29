@@ -59,6 +59,10 @@ function getBlockDepth(id: string, blocks: Record<string, Block>): number {
 
 /**
  * Format a single block as a markdown line
+ *
+ * NOTE: Block content ALREADY includes prefix (## , - , etc.)
+ * parseBlockType() detects type FROM content, doesn't strip it.
+ * So we just add indentation, not prefixes.
  */
 function formatBlockLine(block: Block, indent: string): string {
   const content = block.content;
@@ -67,29 +71,23 @@ function formatBlockLine(block: Block, indent: string): string {
   // Handle different block types
   switch (type) {
     case 'h1':
-      return `${indent}# ${content}`;
     case 'h2':
-      return `${indent}## ${content}`;
     case 'h3':
-      return `${indent}### ${content}`;
     case 'bullet':
-      return `${indent}- ${content}`;
     case 'todo':
-      return `${indent}- [ ] ${content}`;
     case 'quote':
-      return `${indent}> ${content}`;
     case 'sh':
     case 'ai':
     case 'ctx':
     case 'dispatch':
-      // Preserve prefix as-is (these are special markers)
+      // Content already has prefix - just add indentation
       return `${indent}${content}`;
     case 'output':
     case 'error':
       // Output blocks as code blocks
       return `${indent}\`\`\`\n${content}\n\`\`\``;
     default:
-      // Plain text with bullet for hierarchy
+      // Plain text - add bullet only if nested (for hierarchy visibility)
       return indent ? `${indent}- ${content}` : content;
   }
 }
