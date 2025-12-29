@@ -7,6 +7,7 @@ import { useBlockOperations } from '../hooks/useBlockOperations';
 import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
 import { blocksToMarkdown } from '../lib/markdownExport';
+import { isMac } from '../lib/keybinds';
 
 interface OutlinerProps {
   paneId: string;
@@ -234,7 +235,6 @@ export function Outliner(props: OutlinerProps) {
   // FLO-74: Global keyboard handler for selection operations
   const handleOutlinerKeyDown = (e: KeyboardEvent) => {
     const selected = selectedBlockIds();
-    const isMac = navigator.platform.includes('Mac');
     const modKey = isMac ? e.metaKey : e.ctrlKey;
 
     // Escape clears selection
