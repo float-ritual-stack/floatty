@@ -130,7 +130,7 @@ export function useBlockOperations() {
    * Priority: parent → next sibling → prev sibling → zoomed root → null
    *
    * Rationale: Focusing parent (not sibling) after delete keeps undo context clearer.
-   * When user hits Cmd+Z, the restored block appears under the focused parent.
+   * When user undoes, the restored block appears under the focused parent.
    */
   const findFocusAfterDelete = (blockId: string, paneId: string): string | null => {
     const block = store.getBlock(blockId);

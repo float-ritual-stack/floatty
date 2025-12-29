@@ -360,16 +360,16 @@ export function Outliner(props: OutlinerProps) {
       };
 
       const unsubscribe = tinykeys(containerRef, {
-        // Cmd+A → level 1 (focused block only)
-        '$mod+a': (e) => expandToLevel(1, e),
-        // Cmd+A, then A → level 2 (siblings)
-        '$mod+a a': (e) => expandToLevel(2, e),
-        // Cmd+A, A, A → level 3 (parent scope)
-        '$mod+a a a': (e) => expandToLevel(3, e),
-        // Cmd+A, A, A, A → level 4 (grandparent scope)
-        '$mod+a a a a': (e) => expandToLevel(4, e),
-        // Cmd+A, A, A, A, A → level 5+ (select all)
-        '$mod+a a a a a': (e) => expandToLevel(5, e),
+        // Cmd+A → level 0 (focused block only)
+        '$mod+a': (e) => expandToLevel(0, e),
+        // Cmd+A, then A → level 1 (siblings)
+        '$mod+a a': (e) => expandToLevel(1, e),
+        // Cmd+A, A, A → level 2 (parent scope)
+        '$mod+a a a': (e) => expandToLevel(2, e),
+        // Cmd+A, A, A, A → level 3 (grandparent scope)
+        '$mod+a a a a': (e) => expandToLevel(3, e),
+        // Cmd+A, A, A, A, A → level 4+ (select all)
+        '$mod+a a a a a': (e) => expandToLevel(4, e),
         // Undo/Redo (Y.Doc UndoManager)
         // Blur first so BlockItem syncs content from store on blur,
         // then validate focus and refocus
