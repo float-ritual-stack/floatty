@@ -744,6 +744,23 @@ body.resizing .terminal-pane-positioned {
   background: color-mix(in srgb, var(--color-accent) 15%, transparent);
 }
 
+/* Multi-select: tint + ring (FLO-74) */
+.block-selected {
+  background: color-mix(in srgb, var(--color-ansi-blue) 10%, transparent);
+  border-radius: 3px;
+}
+
+.block-selected .block-content {
+  outline: 2px solid color-mix(in srgb, var(--color-ansi-blue) 40%, transparent);
+  outline-offset: -1px;
+}
+
+/* Selected + Focused: both rings visible */
+.block-selected.block-focused .block-content {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--color-ansi-blue) 50%, transparent);
+}
+
 /* ================================================
    Status Bar
    ================================================ */

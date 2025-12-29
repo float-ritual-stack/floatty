@@ -1,10 +1,11 @@
-import { createSignal, createEffect, onMount, onCleanup, Show } from 'solid-js';
+import { createSignal, createEffect, createMemo, onMount, onCleanup, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
+import { blocksToMarkdown } from '../lib/markdownExport';
 
 interface OutlinerProps {
   paneId: string;
@@ -18,8 +19,206 @@ export function Outliner(props: OutlinerProps) {
   const [focusedBlockId, setFocusedBlockId] = createSignal<string | null>(null);
   const [confirmClear, setConfirmClear] = createSignal(false);
 
+  // FLO-74: Multi-select state
+  const [selectedBlockIds, setSelectedBlockIds] = createSignal<Set<string>>(new Set());
+  const [selectionAnchor, setSelectionAnchor] = createSignal<string | null>(null);
+
+  // FLO-74: Cleanup deleted blocks from selection (prevents memory leak)
+  createEffect(() => {
+    const selected = selectedBlockIds();
+    const anchor = selectionAnchor();
+
+    // Filter out any block IDs that no longer exist
+    const validIds = new Set<string>();
+    for (const id of selected) {
+      if (store.blocks[id]) {
+        validIds.add(id);
+      }
+    }
+
+    // Only update if we removed any invalid IDs
+    if (validIds.size !== selected.size) {
+      setSelectedBlockIds(validIds);
+    }
+
+    // Clear anchor if it no longer exists
+    if (anchor && !store.blocks[anchor]) {
+      setSelectionAnchor(null);
+    }
+  });
+
   // Get current zoomed root for this pane (null = show all roots)
   const zoomedRootId = () => paneStore.getZoomedRootId(props.paneId);
+
+  // FLO-74: Get all visible block IDs in document order (for range selection)
+  const getVisibleBlockIds = createMemo(() => {
+    const result: string[] = [];
+    const rootsToWalk = zoomedRootId() ? [zoomedRootId()!] : store.rootIds;
+
+    const walk = (id: string) => {
+      const block = store.blocks[id];
+      if (!block) return;
+      result.push(id);
+      const collapsed = paneStore.isCollapsed(props.paneId, id, block.collapsed);
+      if (!collapsed && block.childIds.length > 0) {
+        for (const childId of block.childIds) {
+          walk(childId);
+        }
+      }
+    };
+
+    for (const rootId of rootsToWalk) {
+      walk(rootId);
+    }
+    return result;
+  });
+
+  // FLO-74: Selection handlers
+  const handleSelect = (blockId: string, mode: 'set' | 'toggle' | 'range') => {
+    if (mode === 'set') {
+      // Clear selection, set anchor
+      setSelectedBlockIds(new Set());
+      setSelectionAnchor(blockId);
+    } else if (mode === 'toggle') {
+      // Toggle block in selection
+      const current = new Set(selectedBlockIds());
+      if (current.has(blockId)) {
+        current.delete(blockId);
+      } else {
+        current.add(blockId);
+      }
+      setSelectedBlockIds(current);
+      setSelectionAnchor(blockId);
+    } else if (mode === 'range') {
+      // Select range from anchor to blockId
+      const anchor = selectionAnchor();
+      if (!anchor) {
+        setSelectedBlockIds(new Set([blockId]));
+        setSelectionAnchor(blockId);
+        return;
+      }
+
+      const visibleIds = getVisibleBlockIds();
+      const anchorIdx = visibleIds.indexOf(anchor);
+      const targetIdx = visibleIds.indexOf(blockId);
+
+      if (anchorIdx === -1 || targetIdx === -1) {
+        // Anchor or target not visible (collapsed/deleted) - reset to target
+        setSelectedBlockIds(new Set([blockId]));
+        setSelectionAnchor(blockId);
+        return;
+      }
+
+      const [from, to] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+      const rangeIds = visibleIds.slice(from, to + 1);
+      setSelectedBlockIds(new Set(rangeIds));
+    }
+  };
+
+  const clearSelection = () => {
+    setSelectedBlockIds(new Set());
+  };
+
+  const selectAll = () => {
+    const allIds = getVisibleBlockIds();
+    setSelectedBlockIds(new Set(allIds));
+    if (allIds.length > 0) {
+      setSelectionAnchor(allIds[0]);
+    }
+  };
+
+  const copySelection = async () => {
+    const selected = selectedBlockIds();
+    if (selected.size === 0) {
+      // Copy focused block if no selection
+      const focused = focusedBlockId();
+      if (focused) {
+        const block = store.blocks[focused];
+        if (block) {
+          await navigator.clipboard.writeText(block.content);
+        }
+      }
+      return;
+    }
+
+    const markdown = blocksToMarkdown(selected, store.blocks, getVisibleBlockIds());
+    await navigator.clipboard.writeText(markdown);
+  };
+
+  const deleteSelection = () => {
+    const selected = selectedBlockIds();
+    if (selected.size === 0) return;
+
+    // Find next block to focus after deletion
+    const visibleIds = getVisibleBlockIds();
+    const selectedArray = Array.from(selected);
+    const firstSelectedIdx = Math.min(...selectedArray.map(id => visibleIds.indexOf(id)));
+    const nextFocusId = visibleIds.find((id, idx) => idx > firstSelectedIdx && !selected.has(id))
+      ?? visibleIds.find((id, idx) => idx < firstSelectedIdx && !selected.has(id));
+
+    // Delete all selected blocks (deepest first to avoid orphans)
+    const sortedByDepth = [...selected].sort((a, b) => {
+      const depthA = getBlockDepth(a);
+      const depthB = getBlockDepth(b);
+      return depthB - depthA; // Deepest first
+    });
+
+    for (const id of sortedByDepth) {
+      store.deleteBlock(id);
+    }
+
+    clearSelection();
+    if (nextFocusId) setFocusedBlockId(nextFocusId);
+  };
+
+  const getBlockDepth = (id: string): number => {
+    let depth = 0;
+    let current = store.blocks[id];
+    while (current?.parentId) {
+      depth++;
+      current = store.blocks[current.parentId];
+    }
+    return depth;
+  };
+
+  // FLO-74: Global keyboard handler for selection operations
+  const handleOutlinerKeyDown = (e: KeyboardEvent) => {
+    const selected = selectedBlockIds();
+    const isMac = navigator.platform.includes('Mac');
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+    // Escape clears selection
+    if (e.key === 'Escape' && selected.size > 0) {
+      e.preventDefault();
+      clearSelection();
+      return;
+    }
+
+    // Cmd+A select all (only when focused in outliner)
+    if (modKey && e.key === 'a') {
+      e.preventDefault();
+      selectAll();
+      return;
+    }
+
+    // Cmd+C copy selection
+    if (modKey && e.key === 'c' && selected.size > 0) {
+      e.preventDefault();
+      copySelection();
+      return;
+    }
+
+    // Delete/Backspace on selection (only when not editing a block)
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selected.size > 0) {
+      // Check if we're actively editing (contentEditable focused)
+      const activeEl = document.activeElement;
+      const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+      if (!isEditing) {
+        e.preventDefault();
+        deleteSelection();
+      }
+    }
+  };
 
   onMount(() => {
     console.log('Outliner mounted for pane:', props.paneId);
@@ -50,7 +249,14 @@ export function Outliner(props: OutlinerProps) {
   };
 
   return (
-    <div class="outliner-container">
+    <div
+      class="outliner-container"
+      role="listbox"
+      aria-multiselectable="true"
+      aria-label="Block outliner"
+      onKeyDown={handleOutlinerKeyDown}
+      tabIndex={-1}
+    >
       <Show when={isLoaded()} fallback={<div class="ctx-empty-state">Loading workspace...</div>}>
         <Show when={store.rootIds.length > 0 || zoomedRootId()}>
           {/* Clear button - only show when not zoomed */}
@@ -98,6 +304,10 @@ export function Outliner(props: OutlinerProps) {
                       onFocus={handleFocus}
                       onNavigateUp={() => handleNavigateUp(id)}
                       onNavigateDown={() => handleNavigateDown(id)}
+                      isBlockSelected={(blockId) => selectedBlockIds().has(blockId)}
+                      onSelect={handleSelect}
+                      selectionAnchor={selectionAnchor()}
+                      getVisibleBlockIds={getVisibleBlockIds}
                     />
                   );
                 }}
@@ -114,6 +324,10 @@ export function Outliner(props: OutlinerProps) {
               onFocus={handleFocus}
               onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
               onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
+              isBlockSelected={(blockId) => selectedBlockIds().has(blockId)}
+              onSelect={handleSelect}
+              selectionAnchor={selectionAnchor()}
+              getVisibleBlockIds={getVisibleBlockIds}
             />
           </Show>
         </Show>

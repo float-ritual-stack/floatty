@@ -14,6 +14,11 @@ interface BlockItemProps {
   depth: number;
   focusedBlockId: string | null;
   onFocus: (id: string) => void;
+  // FLO-74: Multi-select
+  isBlockSelected?: (id: string) => boolean;
+  onSelect?: (id: string, mode: 'set' | 'toggle' | 'range') => void;
+  selectionAnchor?: string | null;
+  getVisibleBlockIds?: () => string[];
 }
 
 export function BlockItem(props: BlockItemProps) {
@@ -136,7 +141,20 @@ export function BlockItem(props: BlockItemProps) {
       if (cursor.isAtStart()) {
         e.preventDefault();
         const prev = findPrevVisibleBlock(props.id, props.paneId);
-        if (prev) props.onFocus(prev);
+        if (prev) {
+          // FLO-74: Shift+Arrow extends selection
+          if (e.shiftKey && props.onSelect) {
+            // If no anchor, set current block as anchor first
+            if (!props.selectionAnchor) {
+              props.onSelect(props.id, 'set');
+            }
+            props.onSelect(prev, 'range');
+          } else if (props.onSelect) {
+            // Plain navigation clears selection
+            props.onSelect(prev, 'set');
+          }
+          props.onFocus(prev);
+        }
       }
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'ArrowDown') {
@@ -147,7 +165,17 @@ export function BlockItem(props: BlockItemProps) {
 
         const next = findNextVisibleBlock(props.id, props.paneId);
         if (next) {
-          // There's a visible block to navigate to
+          // FLO-74: Shift+Arrow extends selection
+          if (e.shiftKey && props.onSelect) {
+            // If no anchor, set current block as anchor first
+            if (!props.selectionAnchor) {
+              props.onSelect(props.id, 'set');
+            }
+            props.onSelect(next, 'range');
+          } else if (props.onSelect) {
+            // Plain navigation clears selection
+            props.onSelect(next, 'set');
+          }
           props.onFocus(next);
         } else {
           // FLO-92: No next visible block - create sibling for typeable target
@@ -342,10 +370,24 @@ export function BlockItem(props: BlockItemProps) {
 
   return (
     <div class="block-wrapper">
-      <div 
-        class="block-item" 
-        classList={{ 'block-focused': isFocused() }}
-        onClick={() => props.onFocus(props.id)}
+      <div
+        class="block-item"
+        role="option"
+        aria-selected={props.isBlockSelected?.(props.id) || false}
+        classList={{ 'block-focused': isFocused(), 'block-selected': props.isBlockSelected?.(props.id) }}
+        onClick={(e: MouseEvent) => {
+          // FLO-74: Handle selection modifiers
+          if (props.onSelect) {
+            if (e.shiftKey) {
+              props.onSelect(props.id, 'range');
+            } else if (e.metaKey || e.ctrlKey) {
+              props.onSelect(props.id, 'toggle');
+            } else {
+              props.onSelect(props.id, 'set');
+            }
+          }
+          props.onFocus(props.id);
+        }}
       >
         <div
           class={`block-bullet ${bulletClass()}`}
@@ -390,6 +432,10 @@ export function BlockItem(props: BlockItemProps) {
                   depth={props.depth + 1}
                   focusedBlockId={props.focusedBlockId}
                   onFocus={props.onFocus}
+                  isBlockSelected={props.isBlockSelected}
+                  onSelect={props.onSelect}
+                  selectionAnchor={props.selectionAnchor}
+                  getVisibleBlockIds={props.getVisibleBlockIds}
                 />
               );
             }}
