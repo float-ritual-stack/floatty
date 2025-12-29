@@ -62,6 +62,7 @@ export type KeyboardAction =
   | { type: 'delete_block'; prevId: string | null }
   | { type: 'navigate_up'; prevId: string | null }
   | { type: 'navigate_down'; nextId: string | null }
+  | { type: 'create_trailing_block'; parentId: string | null }  // FLO-92: Create sibling when at tree end
   | { type: 'execute_block' }
   | { type: 'create_block_before'; newId: string }
   | { type: 'create_block_inside'; newId: string }
@@ -131,7 +132,14 @@ export function determineKeyAction(
 
   if (key === 'ArrowDown') {
     if (cursorAtEnd) {
-      return { type: 'navigate_down', nextId: deps.findNextId() };
+      const nextId = deps.findNextId();
+      if (nextId) {
+        return { type: 'navigate_down', nextId };
+      }
+      // FLO-92: No next block exists - create trailing sibling for typeable target
+      // When zoomed, create inside zoomed root (not at block's parent level)
+      const targetParent = zoomedRootId ?? block.parentId;
+      return { type: 'create_trailing_block', parentId: targetParent };
     }
     return { type: 'none' };
   }
@@ -263,6 +271,14 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         e.preventDefault();
         if (keyAction.nextId) deps.onFocus(keyAction.nextId);
         return;
+
+      case 'create_trailing_block': {
+        // FLO-92: Create sibling block after current when at tree end
+        e.preventDefault();
+        const newId = store.createBlockAfter(deps.blockId);
+        if (newId) deps.onFocus(newId);
+        return;
+      }
 
       case 'execute_block':
         e.preventDefault();

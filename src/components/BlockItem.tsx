@@ -81,17 +81,30 @@ export function BlockItem(props: BlockItemProps) {
       }
 
       case 'zoomInBlock': {
-        // Cmd+Enter: Always zoom into block's subtree
+        // Cmd+Enter: Toggle zoom - zoom out if at zoomed root, zoom in otherwise
         e.preventDefault();
+        const currentZoom = paneStore.getZoomedRootId(props.paneId);
+
+        if (currentZoom === props.id) {
+          // Already zoomed into this block - zoom out
+          paneStore.setZoomedRoot(props.paneId, null);
+          return;
+        }
+
+        // Zoom into this block's subtree
         // Auto-create child if block has none (avoids stuck-on-empty-block bug)
         if (block()!.childIds.length === 0) {
           const newChildId = store.createBlockInside(props.id);
+          paneStore.setZoomedRoot(props.paneId, props.id);
           if (newChildId) {
-            // Focus the new child after zoom
-            requestAnimationFrame(() => props.onFocus(newChildId));
+            // Double rAF: first for zoom render, second to focus after child mounts
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => props.onFocus(newChildId));
+            });
           }
+        } else {
+          paneStore.setZoomedRoot(props.paneId, props.id);
         }
-        paneStore.setZoomedRoot(props.paneId, props.id);
         return;
       }
 
@@ -131,8 +144,20 @@ export function BlockItem(props: BlockItemProps) {
       // Otherwise let browser handle multi-line navigation within block
       if (cursor.isAtEnd()) {
         e.preventDefault();
+
         const next = findNextVisibleBlock(props.id, props.paneId);
-        if (next) props.onFocus(next);
+        if (next) {
+          // There's a visible block to navigate to
+          props.onFocus(next);
+        } else {
+          // FLO-92: No next visible block - create sibling for typeable target
+          // BUT don't create if current block is already empty (avoid empty spam)
+          const currentContent = block()?.content || '';
+          if (currentContent === '') return;
+
+          const newId = store.createBlockAfter(props.id);
+          if (newId) props.onFocus(newId);
+        }
       }
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'Enter' && !e.shiftKey) {

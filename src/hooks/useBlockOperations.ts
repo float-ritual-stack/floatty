@@ -15,10 +15,14 @@ export function useBlockOperations() {
 
   /**
    * Find the next visible block in the tree (for arrow key navigation)
+   * Respects zoom boundary - won't navigate outside zoomed subtree
    */
   const findNextVisibleBlock = (id: string, paneId: string): string | null => {
     const block = store.getBlock(id);
     if (!block) return null;
+
+    // Get zoom boundary - stop climbing ancestors at this node
+    const zoomedRootId = paneStore.getZoomedRootId(paneId);
 
     // Check pane-specific collapse state
     const isCollapsed = paneStore.isCollapsed(paneId, id, block.collapsed);
@@ -29,13 +33,18 @@ export function useBlockOperations() {
     }
 
     // 2. Otherwise, find next sibling or ancestor's next sibling
+    // BUT stop at zoom boundary - don't climb above zoomed root
     let currentId = id;
     let currentBlock = block;
 
     while (currentId) {
+      // Stop at zoom boundary BEFORE checking siblings
+      // (zoomed root's siblings are outside the zoom view)
+      if (currentId === zoomedRootId) break;
+
       const parentId = currentBlock.parentId;
       const siblings = parentId ? store.getBlock(parentId)?.childIds : store.rootIds;
-      
+
       if (siblings) {
         const index = siblings.indexOf(currentId);
         if (index < siblings.length - 1) {
@@ -55,14 +64,21 @@ export function useBlockOperations() {
 
   /**
    * Find the previous visible block in the tree
+   * Respects zoom boundary - won't navigate above zoomed root
    */
   const findPrevVisibleBlock = (id: string, paneId: string): string | null => {
     const block = store.getBlock(id);
     if (!block) return null;
 
+    // Get zoom boundary - don't navigate above this node
+    const zoomedRootId = paneStore.getZoomedRootId(paneId);
+
+    // At zoomed root already? Can't go up further
+    if (id === zoomedRootId) return null;
+
     const parentId = block.parentId;
     const siblings = parentId ? store.getBlock(parentId)?.childIds : store.rootIds;
-    
+
     if (!siblings) return null;
 
     const index = siblings.indexOf(id);
@@ -86,7 +102,8 @@ export function useBlockOperations() {
       return prevSiblingId;
     }
 
-    // 2. If no previous sibling, go to parent
+    // 2. If no previous sibling, go to parent (but not above zoom boundary)
+    if (parentId === zoomedRootId) return zoomedRootId;  // Can navigate TO zoomed root
     return parentId;
   };
 
