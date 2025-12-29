@@ -95,12 +95,16 @@ export function BlockItem(props: BlockItemProps) {
         // Auto-create child if block has none (avoids stuck-on-empty-block bug)
         if (block()!.childIds.length === 0) {
           const newChildId = store.createBlockInside(props.id);
+          paneStore.setZoomedRoot(props.paneId, props.id);
           if (newChildId) {
-            // Focus the new child after zoom
-            requestAnimationFrame(() => props.onFocus(newChildId));
+            // Double rAF: first for zoom render, second to focus after child mounts
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => props.onFocus(newChildId));
+            });
           }
+        } else {
+          paneStore.setZoomedRoot(props.paneId, props.id);
         }
-        paneStore.setZoomedRoot(props.paneId, props.id);
         return;
       }
 
@@ -147,8 +151,10 @@ export function BlockItem(props: BlockItemProps) {
           props.onFocus(next);
         } else {
           // FLO-92: No next visible block - create sibling for typeable target
-          // This triggers when zoomed (zoom boundary blocks tree traversal)
-          // or at absolute end of full tree
+          // BUT don't create if current block is already empty (avoid empty spam)
+          const currentContent = block()?.content || '';
+          if (currentContent === '') return;
+
           const newId = store.createBlockAfter(props.id);
           if (newId) props.onFocus(newId);
         }
