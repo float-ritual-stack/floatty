@@ -54,7 +54,7 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
   };
 
   return (
-    <div class="status-bar">
+    <footer class="status-bar" role="contentinfo">
       {/* Semantic state (left side) */}
       <span
         class="status-item status-hooks"
@@ -99,7 +99,7 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
           </span>
         )}
       </For>
-    </div>
+    </footer>
   );
 }
 
@@ -112,8 +112,8 @@ function TabBar(props: {
   onNewTab: () => void;
 }) {
   return (
-    <div class="tab-bar">
-      <div class="tab-list">
+    <nav class="tab-bar" role="navigation" aria-label="Terminal tabs">
+      <div class="tab-list" role="tablist">
         <For each={props.tabs}>
           {(tab, index) => (
             <div
@@ -132,6 +132,7 @@ function TabBar(props: {
                     props.onCloseTab(tab.id);
                   }}
                   title={`Close tab (${getKeybindDisplay('closeTab') || 'Cmd+W'})`}
+                  aria-label={`Close tab ${tab.title}`}
                 >
                   ×
                 </button>
@@ -147,7 +148,7 @@ function TabBar(props: {
       >
         + New
       </button>
-    </div>
+    </nav>
   );
 }
 
@@ -508,7 +509,7 @@ export function Terminal() {
         onNewTab={() => handleNewTab()}
       />
       <div class="terminal-wrapper">
-        <div class="terminal-container">
+        <main class="terminal-container" role="main">
           {/* Layout layer - just placeholder divs */}
           <For each={tabStore.tabs}>
             {(tab) => {
@@ -585,7 +586,7 @@ export function Terminal() {
               />
             )}
           </For>
-        </div>
+        </main>
         <Show when={sidebarVisible()}>
           <ContextSidebar visible={sidebarVisible()} />
         </Show>
