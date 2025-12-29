@@ -164,7 +164,7 @@ export function Outliner(props: OutlinerProps) {
 
     // Level 2+: climb ancestors
     // level=2 → parent, level=3 → grandparent, etc.
-    const targetAncestorIdx = ancestors.length - 1 - level;
+    const targetAncestorIdx = ancestors.length - level;
 
     if (targetAncestorIdx < 0) {
       // Climbed past root - select all
