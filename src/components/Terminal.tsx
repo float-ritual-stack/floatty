@@ -27,12 +27,16 @@ import type { SemanticState } from '../lib/terminalManager';
 
 function StatusBar(props: { semanticState?: SemanticState | null }) {
   // Use getKeybindDisplay for platform-aware shortcuts (⌘ on Mac, Ctrl on Windows/Linux)
+  // Get modifier prefix from focusLeft, then append arrows (avoids broken replacement on Win/Linux)
+  const focusMod = getKeybindDisplay('focusLeft')?.replace(/Left$/, '').replace(/ArrowLeft$/, '') || '⌘⌥';
+  const zoomMod = getKeybindDisplay('zoomIn')?.replace(/[+=]$/, '') || '⌘';
+
   const shortcuts = [
     { label: 'Split', keys: getKeybindDisplay('splitHorizontal') || '⌘D' },
-    { label: 'Focus', keys: `${getKeybindDisplay('focusLeft')?.replace('Left', '↑↓←→') || '⌘⌥↑↓←→'}` },
+    { label: 'Focus', keys: `${focusMod}↑↓←→` },
     { label: 'Outliner', keys: getKeybindDisplay('splitHorizontalOutliner') || '⌘O' },
     { label: 'Theme', keys: getKeybindDisplay('nextTheme') || '⌘;' },
-    { label: 'Zoom', keys: `${getKeybindDisplay('zoomIn')?.replace('+', '+/-') || '⌘+/-'}` },
+    { label: 'Zoom', keys: `${zoomMod}+/-` },
   ];
 
   const formatDuration = (ms: number) => {
