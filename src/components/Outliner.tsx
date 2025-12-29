@@ -25,19 +25,8 @@ export function Outliner(props: OutlinerProps) {
   const [selectedBlockIds, setSelectedBlockIds] = createSignal<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = createSignal<string | null>(null);
 
-  // FLO-74 Refinement: Progressive Cmd+A expansion state
-  // Tracks how many times Cmd+A has been pressed (resets on focus change)
-  const [expansionLevel, setExpansionLevel] = createSignal(0);
-  const [lastFocusedForExpansion, setLastFocusedForExpansion] = createSignal<string | null>(null);
-
-  // Reset expansion level when focus changes
-  createEffect(() => {
-    const focused = focusedBlockId();
-    if (focused !== lastFocusedForExpansion()) {
-      setExpansionLevel(0);
-      setLastFocusedForExpansion(focused);
-    }
-  });
+  // Note: tinykeys handles Cmd+A sequence state internally
+  // (no need for expansion level tracking in component state)
 
   // FLO-74: Cleanup deleted blocks from selection (prevents memory leak)
   createEffect(() => {
@@ -253,7 +242,9 @@ export function Outliner(props: OutlinerProps) {
     if (selectedArray.length === 1) {
       focusTarget = findFocusAfterDelete(selectedArray[0], props.paneId);
     } else {
-      // Multi-select: find common ancestor, then find its parent
+      // Multi-select: find common ancestor
+      // If common ancestor is NOT being deleted → focus it directly
+      // If common ancestor IS being deleted → find its parent
       const ancestorLists = selectedArray.map(id => getAncestors(id));
       let commonDepth = 0;
       const firstList = ancestorLists[0];
@@ -269,7 +260,12 @@ export function Outliner(props: OutlinerProps) {
 
         if (commonDepth > 0) {
           const commonAncestor = firstList[commonDepth - 1];
-          focusTarget = findFocusAfterDelete(commonAncestor, props.paneId);
+          // Key fix: only climb to parent if ancestor itself is being deleted
+          if (selected.has(commonAncestor)) {
+            focusTarget = findFocusAfterDelete(commonAncestor, props.paneId);
+          } else {
+            focusTarget = commonAncestor;
+          }
         }
       }
     }
@@ -292,6 +288,16 @@ export function Outliner(props: OutlinerProps) {
   const handleOutlinerKeyDown = (e: KeyboardEvent) => {
     const selected = selectedBlockIds();
     const modKey = isMac ? e.metaKey : e.ctrlKey;
+    const activeEl = document.activeElement;
+    const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+
+    // FLO-74: Clear selection when typing starts (prevents accidental delete)
+    // Printable character while editing with multi-select → clear selection, continue typing
+    if (selected.size > 0 && isEditing && e.key.length === 1 && !modKey && !e.ctrlKey && !e.altKey) {
+      clearSelection();
+      // Don't preventDefault - let typing continue in focused block
+      return;
+    }
 
     // Escape clears selection
     if (e.key === 'Escape' && selected.size > 0) {
@@ -311,9 +317,6 @@ export function Outliner(props: OutlinerProps) {
 
     // Delete/Backspace on selection (only when not editing a block)
     if ((e.key === 'Delete' || e.key === 'Backspace') && selected.size > 0) {
-      // Check if we're actively editing (contentEditable focused)
-      const activeEl = document.activeElement;
-      const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
       if (!isEditing) {
         e.preventDefault();
         deleteSelection();
@@ -330,23 +333,31 @@ export function Outliner(props: OutlinerProps) {
     onCleanup(dispose);
 
     // FLO-74 Refinement: Progressive Cmd+A with indent-based expansion
-    // Each press increments level: focused → siblings → parent scope → grandparent → all
+    // Sequence pattern: Cmd+A, then tap A (no Cmd) to expand further
+    // Level progression: focused → siblings → parent scope → grandparent → ... → all
     if (containerRef) {
+      // Helper to handle expansion at given level
+      const expandToLevel = (level: number, e: KeyboardEvent) => {
+        const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
+        if (isEditing) return; // Let browser select text
+        e.preventDefault();
+
+        const idsToSelect = selectByIndentLevel(level);
+        setSelectedBlockIds(new Set(idsToSelect));
+        setSelectionAnchor(idsToSelect[0] ?? null);
+      };
+
       const unsubscribe = tinykeys(containerRef, {
-        // Single Cmd+A handler - increments expansion level each press
-        // When editing text, let browser handle text selection
-        '$mod+a': (e) => {
-          const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
-          if (isEditing) return; // Let browser select text
-          e.preventDefault();
-
-          const newLevel = expansionLevel() + 1;
-          setExpansionLevel(newLevel);
-
-          const idsToSelect = selectByIndentLevel(newLevel);
-          setSelectedBlockIds(new Set(idsToSelect));
-          setSelectionAnchor(idsToSelect[0] ?? null);
-        },
+        // Cmd+A → level 1 (focused block only)
+        '$mod+a': (e) => expandToLevel(1, e),
+        // Cmd+A, then A → level 2 (siblings)
+        '$mod+a a': (e) => expandToLevel(2, e),
+        // Cmd+A, A, A → level 3 (parent scope)
+        '$mod+a a a': (e) => expandToLevel(3, e),
+        // Cmd+A, A, A, A → level 4 (grandparent scope)
+        '$mod+a a a a': (e) => expandToLevel(4, e),
+        // Cmd+A, A, A, A, A → level 5+ (select all)
+        '$mod+a a a a a': (e) => expandToLevel(5, e),
         // Undo/Redo (Y.Doc UndoManager)
         // Blur first so BlockItem syncs content from store on blur,
         // then validate focus and refocus
