@@ -43,6 +43,8 @@ function createDeps(overrides: Partial<{
   selectionCollapsed: boolean;
   zoomedRootId: string | null;
   content: string;
+  findPrevId: () => string | null;
+  findNextId: () => string | null;
 }> = {}) {
   return {
     block: createBlock(),
@@ -85,6 +87,37 @@ describe('determineKeyAction', () => {
 
       const action = expectAction(result, 'navigate_down');
       expect(action.nextId).toBe('next-block');
+    });
+
+    it('creates trailing block when ArrowDown at end with no next block (FLO-92)', () => {
+      const result = determineKeyAction('ArrowDown', false, null, createDeps({
+        cursorAtEnd: true,
+        findNextId: () => null, // No next block exists
+      }));
+
+      expect(result.type).toBe('create_trailing_block');
+    });
+
+    it('creates trailing block with correct parent context (FLO-92)', () => {
+      const result = determineKeyAction('ArrowDown', false, null, createDeps({
+        cursorAtEnd: true,
+        findNextId: () => null,
+        block: createBlock({ parentId: 'parent-123' }),
+      }));
+
+      const action = expectAction(result, 'create_trailing_block');
+      expect(action.parentId).toBe('parent-123');
+    });
+
+    it('creates root-level trailing block when current block is root (FLO-92)', () => {
+      const result = determineKeyAction('ArrowDown', false, null, createDeps({
+        cursorAtEnd: true,
+        findNextId: () => null,
+        block: createBlock({ parentId: null }),
+      }));
+
+      const action = expectAction(result, 'create_trailing_block');
+      expect(action.parentId).toBeNull();
     });
   });
 
