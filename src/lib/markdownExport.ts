@@ -83,10 +83,11 @@ function formatBlockLine(block: Block, indent: string): string {
       // Content already has prefix - just add indentation
       return `${indent}${content}`;
     case 'output':
-    case 'error':
+    case 'error': {
       // Output blocks as code blocks with proper indentation
       const indentedContent = content.split('\n').map(line => `${indent}${line}`).join('\n');
       return `${indent}\`\`\`\n${indentedContent}\n${indent}\`\`\``;
+    }
     default:
       // Plain text - add bullet only if nested (for hierarchy visibility)
       return indent ? `${indent}- ${content}` : content;

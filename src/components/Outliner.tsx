@@ -159,7 +159,8 @@ export function Outliner(props: OutlinerProps) {
 
     // Find next heading of same or higher level (scope end)
     const scopeBlock = store.blocks[visibleIds[scopeStart]];
-    const scopeLevel = scopeBlock?.type === 'h1' ? 1 : scopeBlock?.type === 'h2' ? 2 : 3;
+    if (!scopeBlock) return; // Block was deleted
+    const scopeLevel = scopeBlock.type === 'h1' ? 1 : scopeBlock.type === 'h2' ? 2 : 3;
     let scopeEnd = visibleIds.length - 1;
 
     for (let i = scopeStart + 1; i < visibleIds.length; i++) {
@@ -216,16 +217,8 @@ export function Outliner(props: OutlinerProps) {
     const nextFocusId = visibleIds.find((id, idx) => idx > firstSelectedIdx && !selected.has(id))
       ?? visibleIds.find((id, idx) => idx < firstSelectedIdx && !selected.has(id));
 
-    // Delete all selected blocks (deepest first to avoid orphans)
-    const sortedByDepth = [...selected].sort((a, b) => {
-      const depthA = getBlockDepth(a);
-      const depthB = getBlockDepth(b);
-      return depthB - depthA; // Deepest first
-    });
-
-    for (const id of sortedByDepth) {
-      store.deleteBlock(id);
-    }
+    // Delete all selected blocks atomically (single undo operation)
+    store.deleteBlocks([...selected]);
 
     clearSelection();
 
@@ -236,16 +229,6 @@ export function Outliner(props: OutlinerProps) {
       // No blocks left - clear focus so auto-create effect can set it properly
       setFocusedBlockId(null);
     }
-  };
-
-  const getBlockDepth = (id: string): number => {
-    let depth = 0;
-    let current = store.blocks[id];
-    while (current?.parentId) {
-      depth++;
-      current = store.blocks[current.parentId];
-    }
-    return depth;
   };
 
   // FLO-74: Global keyboard handler for selection operations
