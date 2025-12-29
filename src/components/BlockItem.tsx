@@ -132,23 +132,16 @@ export function BlockItem(props: BlockItemProps) {
       if (cursor.isAtEnd()) {
         e.preventDefault();
 
-        // FLO-92: Check if we're at last sibling - if so, create new sibling
-        // (Don't jump to uncle/aunt - create typeable target instead)
-        const currentBlock = block();
-        const parentId = currentBlock?.parentId;
-        const siblings = parentId
-          ? store.blocks[parentId]?.childIds
-          : store.rootIds;
-        const isLastSibling = siblings && siblings[siblings.length - 1] === props.id;
-
-        if (isLastSibling) {
-          // At last sibling - create new sibling for typeable target
+        const next = findNextVisibleBlock(props.id, props.paneId);
+        if (next) {
+          // There's a visible block to navigate to
+          props.onFocus(next);
+        } else {
+          // FLO-92: No next visible block - create sibling for typeable target
+          // This triggers when zoomed (zoom boundary blocks tree traversal)
+          // or at absolute end of full tree
           const newId = store.createBlockAfter(props.id);
           if (newId) props.onFocus(newId);
-        } else {
-          // Not last sibling - navigate to next visible block
-          const next = findNextVisibleBlock(props.id, props.paneId);
-          if (next) props.onFocus(next);
         }
       }
       // No preventDefault = browser handles internal line navigation
