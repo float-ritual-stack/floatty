@@ -204,12 +204,22 @@ function extractSelection(captured: string): string {
   return lines.pop() || '';
 }
 
+// Whitelist regex: only letters, numbers, hyphens, underscores allowed in channel names
+const SAFE_CHANNEL_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
 /**
  * Build tv command with picker-mode flags
  */
 function buildTvCommand(channel: string): string {
   // Default channel is 'files' if not specified
-  const ch = channel.trim() || 'files';
+  let ch = channel.trim() || 'files';
+
+  // Validate channel to prevent command injection
+  // Only allow alphanumeric, hyphen, underscore
+  if (!SAFE_CHANNEL_PATTERN.test(ch)) {
+    console.warn(`[tvResolver] Invalid channel name "${ch}", falling back to 'files'`);
+    ch = 'files';
+  }
 
   // Built-in channels that benefit from cwd scoping
   const cwdChannels = ['files', 'text', 'gitlog', 'gitbranch', 'gitstatus'];
