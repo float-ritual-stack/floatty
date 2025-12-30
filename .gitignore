@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Rust build artifacts (plugins)
+src-tauri/plugins/*/target/
+src-tauri/plugins/*/Cargo.lock
