@@ -12,12 +12,49 @@ use std::{
 
 use base64::{engine::general_purpose, Engine as _};
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, PtyPair, PtySize};
+use serde::Serialize;
 use tauri::{
     async_runtime::{Mutex, RwLock},
     ipc::Channel,
     plugin::{Builder, TauriPlugin},
     Manager, Runtime,
 };
+
+/// Exit event sent via on_exit channel when PTY closes
+#[derive(Clone, Serialize)]
+pub struct PtyExitEvent {
+    /// Exit code from the child process
+    pub exit_code: u32,
+    /// Captured output (cleaned) when capture_output=true, None otherwise
+    pub output: Option<String>,
+}
+
+/// Extract selection from captured PTY output.
+///
+/// TV and similar pickers output escape codes for TUI, then the selection.
+/// The selection appears AFTER the "Exit Alternate Screen" sequence (\x1b[?1049l).
+///
+/// Algorithm:
+/// 1. Find the last occurrence of \x1b[?1049l (exit alternate screen marker)
+/// 2. Extract content after that marker
+/// 3. Strip remaining ANSI escape codes
+/// 4. Trim whitespace and return
+fn extract_selection(data: &[u8]) -> String {
+    // Exit Alternate Screen sequence
+    const MARKER: &[u8] = b"\x1b[?1049l";
+
+    // Find last occurrence of marker (there might be multiple alternate screen entries)
+    let relevant = data
+        .windows(MARKER.len())
+        .rposition(|w| w == MARKER)
+        .map(|idx| &data[idx + MARKER.len()..])
+        .unwrap_or(data);
+
+    // Strip ANSI codes using the dedicated crate
+    let clean = strip_ansi_escapes::strip(relevant);
+
+    String::from_utf8_lossy(&clean).trim().to_string()
+}
 
 #[derive(Default)]
 struct PluginState {
@@ -43,7 +80,8 @@ async fn spawn(
     cwd: Option<String>,
     env: BTreeMap<String, String>,
     on_data: Channel<String>,
-    on_exit: Channel<u32>,
+    on_exit: Channel<PtyExitEvent>,
+    #[serde(default)] capture_output: bool,
     state: tauri::State<'_, PluginState>,
 ) -> Result<PtyHandler, String> {
     let pty_system = native_pty_system();
@@ -70,8 +108,10 @@ async fn spawn(
     let child_killer = child.clone_killer();
     let handler = state.session_id.fetch_add(1, Ordering::Relaxed);
 
-    // Create internal channel for reader -> batcher communication
+    // Create internal channels for reader -> batcher communication
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    // Separate channel for captured output (reader -> batcher owns buffer, sends on close)
+    let (capture_tx, capture_rx) = mpsc::channel::<Option<String>>();
 
     // READER THREAD: Reads from PTY and pushes to internal channel
     // Notifies on_exit when PTY closes (EOF or error)
@@ -91,15 +131,29 @@ async fn spawn(
                 }
             }
         }
-        // PTY closed - notify frontend
-        if let Err(e) = on_exit.send(0) {
+        // Wait for batcher to send captured output (if capturing)
+        let captured = capture_rx.recv().unwrap_or(None);
+
+        // PTY closed - notify frontend with exit event
+        let exit_event = PtyExitEvent {
+            exit_code: 0,
+            output: captured,
+        };
+        if let Err(e) = on_exit.send(exit_event) {
             eprintln!("[PTY Reader] Failed to send exit notification: {}", e);
         }
     });
 
     // BATCHER THREAD: Greedy slurp pattern - collects data and sends via IPC Channel
+    // Also accumulates output buffer when capture_output=true
     thread::spawn(move || {
         let mut pending_data: Vec<u8> = Vec::with_capacity(65536);
+        // Output capture buffer (only used when capture_output=true)
+        let mut capture_buffer: Option<Vec<u8>> = if capture_output {
+            Some(Vec::with_capacity(65536))
+        } else {
+            None
+        };
 
         loop {
             // 1. Blocking wait for first chunk (0 CPU when idle)
@@ -107,12 +161,21 @@ async fn spawn(
                 Ok(d) => d,
                 Err(_) => break, // All senders disconnected
             };
+
+            // Append to capture buffer if capturing
+            if let Some(ref mut buf) = capture_buffer {
+                buf.extend_from_slice(&first_chunk);
+            }
             pending_data.extend_from_slice(&first_chunk);
 
             // 2. Greedy non-blocking slurp - grab everything queued
             loop {
                 match rx.try_recv() {
                     Ok(more_data) => {
+                        // Append to capture buffer if capturing
+                        if let Some(ref mut buf) = capture_buffer {
+                            buf.extend_from_slice(&more_data);
+                        }
                         pending_data.extend_from_slice(&more_data);
                         // Safety cap: send if buffer > 64KB to prevent lag
                         if pending_data.len() > 65536 {
@@ -137,6 +200,10 @@ async fn spawn(
                 }
             }
         }
+
+        // Extract selection from capture buffer and send to reader thread
+        let extracted = capture_buffer.map(|buf| extract_selection(&buf));
+        let _ = capture_tx.send(extracted);
     });
 
     let session = Arc::new(Session {
@@ -256,4 +323,73 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             Ok(())
         })
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_selection_with_marker() {
+        // Simulates TV outputting garbage, then exiting alternate screen, then selection
+        let data = b"garbage\x1b[?1049l/path/to/file.txt\n";
+        assert_eq!(extract_selection(data), "/path/to/file.txt");
+    }
+
+    #[test]
+    fn test_extract_selection_strips_ansi() {
+        // Selection wrapped in ANSI color codes after exit marker
+        let data = b"\x1b[?1049l\x1b[32m/path/file.txt\x1b[0m\n";
+        assert_eq!(extract_selection(data), "/path/file.txt");
+    }
+
+    #[test]
+    fn test_extract_selection_no_marker() {
+        // No exit alternate screen marker - should fall back to using entire buffer
+        let data = b"/fallback/path.txt\n";
+        assert_eq!(extract_selection(data), "/fallback/path.txt");
+    }
+
+    #[test]
+    fn test_extract_selection_empty() {
+        // Just the marker, nothing after
+        let data = b"\x1b[?1049l";
+        assert_eq!(extract_selection(data), "");
+    }
+
+    #[test]
+    fn test_extract_selection_empty_input() {
+        // Completely empty input
+        let data = b"";
+        assert_eq!(extract_selection(data), "");
+    }
+
+    #[test]
+    fn test_extract_selection_complex_path() {
+        // Path with spaces and special characters
+        let data = b"\x1b[?1049l/Users/test/My Documents/file (1).txt\n";
+        assert_eq!(extract_selection(data), "/Users/test/My Documents/file (1).txt");
+    }
+
+    #[test]
+    fn test_extract_selection_multiple_markers() {
+        // Multiple alternate screen enter/exits (nested TUI applications)
+        // Should use LAST marker
+        let data = b"\x1b[?1049l/wrong/path\n\x1b[?1049h...\x1b[?1049l/correct/path.txt\n";
+        assert_eq!(extract_selection(data), "/correct/path.txt");
+    }
+
+    #[test]
+    fn test_extract_selection_with_cursor_sequences() {
+        // Common cursor movement sequences after the marker
+        let data = b"\x1b[?1049l\x1b[H\x1b[2J\x1b[?25h/path/with/cursors.txt\n";
+        assert_eq!(extract_selection(data), "/path/with/cursors.txt");
+    }
+
+    #[test]
+    fn test_extract_selection_multiline_output() {
+        // Multiple lines after marker - takes full trimmed content
+        let data = b"\x1b[?1049l\n\n/path/to/file.txt\n\n";
+        assert_eq!(extract_selection(data), "/path/to/file.txt");
+    }
 }
