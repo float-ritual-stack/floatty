@@ -3,7 +3,7 @@ use std::{
     ffi::OsString,
     io::Read,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicI32, AtomicU32, Ordering},
         mpsc::{self, TryRecvError},
         Arc,
     },
@@ -64,7 +64,6 @@ struct PluginState {
 
 struct Session {
     pair: Mutex<PtyPair>,
-    child: Mutex<Box<dyn Child + Send + Sync>>,
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
 }
@@ -104,7 +103,7 @@ async fn spawn(
     for (k, v) in env.iter() {
         cmd.env(OsString::from(k), OsString::from(v));
     }
-    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     let child_killer = child.clone_killer();
     let handler = state.session_id.fetch_add(1, Ordering::Relaxed);
 
@@ -112,6 +111,24 @@ async fn spawn(
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     // Separate channel for captured output (reader -> batcher owns buffer, sends on close)
     let (capture_tx, capture_rx) = mpsc::channel::<Option<String>>();
+
+    // Shared exit code: -1 means "not yet exited", otherwise holds actual exit code
+    let exit_code = Arc::new(AtomicI32::new(-1));
+    let exit_code_for_reader = Arc::clone(&exit_code);
+
+    // WAITER THREAD: Waits for child to exit and stores the exit code
+    thread::spawn(move || {
+        match child.wait() {
+            Ok(status) => {
+                let code = status.exit_code() as i32;
+                exit_code.store(code, Ordering::SeqCst);
+            }
+            Err(e) => {
+                eprintln!("[PTY Waiter] Wait error: {}", e);
+                // Use -1 to indicate error (already the default)
+            }
+        }
+    });
 
     // READER THREAD: Reads from PTY and pushes to internal channel
     // Notifies on_exit when PTY closes (EOF or error)
@@ -134,9 +151,21 @@ async fn spawn(
         // Wait for batcher to send captured output (if capturing)
         let captured = capture_rx.recv().unwrap_or(None);
 
+        // Read actual exit code from waiter thread
+        // If waiter hasn't finished yet, briefly spin-wait (child.wait() should complete quickly after EOF)
+        let mut attempts = 0;
+        let code = loop {
+            let code = exit_code_for_reader.load(Ordering::SeqCst);
+            if code != -1 || attempts >= 100 {
+                break if code == -1 { 0 } else { code as u32 };
+            }
+            attempts += 1;
+            thread::sleep(std::time::Duration::from_millis(10));
+        };
+
         // PTY closed - notify frontend with exit event
         let exit_event = PtyExitEvent {
-            exit_code: 0,
+            exit_code: code,
             output: captured,
         };
         if let Err(e) = on_exit.send(exit_event) {
@@ -208,7 +237,6 @@ async fn spawn(
 
     let session = Arc::new(Session {
         pair: Mutex::new(pair),
-        child: Mutex::new(child),
         child_killer: Mutex::new(child_killer),
         writer: Mutex::new(writer),
     });
@@ -294,23 +322,11 @@ async fn dispose(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Resul
     Ok(())
 }
 
+/// Deprecated: Exit status is now delivered via the on_exit channel event.
+/// This command is kept for API compatibility but will return an error.
 #[tauri::command]
-async fn exitstatus(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<u32, String> {
-    let session = state
-        .sessions
-        .read()
-        .await
-        .get(&pid)
-        .ok_or("Unavailable pid")?
-        .clone();
-    let exitstatus = session
-        .child
-        .lock()
-        .await
-        .wait()
-        .map_err(|e| e.to_string())?
-        .exit_code();
-    Ok(exitstatus)
+async fn exitstatus(_pid: PtyHandler, _state: tauri::State<'_, PluginState>) -> Result<u32, String> {
+    Err("exitstatus command is deprecated: exit code is now delivered via the on_exit channel event".to_string())
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
