@@ -116,6 +116,10 @@ async fn spawn(
     // This prevents a race where reader reads capture_buffer before batcher finishes
     let (batcher_done_tx, batcher_done_rx) = mpsc::channel::<()>();
 
+    // Exit code channel: waiter thread sends actual exit code, reader receives
+    // This ensures we report the real exit status instead of hardcoding 0
+    let (exit_code_tx, exit_code_rx) = mpsc::channel::<u32>();
+
     // READER THREAD: Reads from PTY and pushes to internal channel
     // Notifies on_exit when PTY closes (EOF or error)
     // Also extracts selection and sends via on_capture if capturing
@@ -154,8 +158,11 @@ async fn spawn(
             }
         }
 
-        // Notify frontend of exit
-        if let Err(e) = on_exit.send(0) {
+        // Wait for actual exit code from waiter thread (default to 0 if waiter failed)
+        let exit_code = exit_code_rx.recv().unwrap_or(0);
+
+        // Notify frontend of exit with actual exit code
+        if let Err(e) = on_exit.send(exit_code) {
             eprintln!("[PTY Reader] Failed to send exit notification: {}", e);
         }
     });
@@ -224,7 +231,28 @@ async fn spawn(
         child_killer: Mutex::new(child_killer),
         writer: Mutex::new(writer),
     });
-    state.sessions.write().await.insert(handler, session);
+    state.sessions.write().await.insert(handler, session.clone());
+
+    // CHILD WAITER THREAD: Waits for child to exit and sends actual exit code
+    // Spawned after session storage so it can access the child via session Arc
+    let session_for_waiter = session;
+    thread::spawn(move || {
+        // Block until child exits and get its exit status
+        // Using blocking_lock since we're in a sync thread context
+        let exit_code = match session_for_waiter.child.blocking_lock().wait() {
+            Ok(status) => status.exit_code(),
+            Err(e) => {
+                eprintln!("[PTY Waiter] Failed to wait on child: {}", e);
+                1 // Default to error exit code
+            }
+        };
+
+        // Send exit code to reader thread
+        if exit_code_tx.send(exit_code).is_err() {
+            eprintln!("[PTY Waiter] Reader thread already exited");
+        }
+    });
+
     Ok(handler)
 }
 
