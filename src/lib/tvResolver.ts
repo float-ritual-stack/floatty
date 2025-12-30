@@ -84,14 +84,15 @@ export async function resolveTvVariables(
  * - --height 18: Limit viewport for inline display
  * - --source-output "{}": Output template (just the selected path)
  *
+ * Output capture happens in Rust (not JS) to avoid GC pressure from high-frequency
+ * TUI updates. The PTY plugin buffers all output and extracts the selection on exit.
+ *
  * @param pickerId - The picker block ID (for xterm container lookup)
  * @param channel - TV channel (files, text, git-log, etc.)
  * @returns The selected path, or empty string if cancelled
  */
 async function spawnTvPicker(pickerId: string, channel: string): Promise<string> {
   return new Promise((resolve) => {
-    let captured = '';
-
     // Wait for the picker block to render and get its container
     // Poll with timeout since SolidJS reactivity might not flush immediately
     const findContainer = (attempts = 0): HTMLElement | null => {
@@ -127,22 +128,17 @@ async function spawnTvPicker(pickerId: string, channel: string): Promise<string>
 
       try {
         // Use terminalManager's interactive picker spawn
+        // Output capture happens in Rust - no JS-side accumulation needed
         const result = await terminalManager.spawnInteractivePicker(
           pickerId,
           container,
-          buildTvCommand(channel),
-          (data) => {
-            // Capture stdout - tv outputs selection to stdout on exit
-            captured += data;
-          }
+          buildTvCommand(channel)
         );
 
-        if (result.exitCode === 0 && captured.trim()) {
-          // Extract selection from captured output
-          // tv outputs TUI escape codes + selection - we want just the selection
-          const selection = extractSelection(captured);
-          console.log('[tvResolver] Extracted selection:', selection);
-          resolve(selection);
+        if (result.exitCode === 0 && result.captured) {
+          // Rust already extracted and cleaned the selection
+          console.log('[tvResolver] Got selection from Rust:', result.captured);
+          resolve(result.captured);
         } else {
           // User cancelled (Escape) or tv failed
           console.log('[tvResolver] tv exited with code', result.exitCode);
@@ -157,51 +153,6 @@ async function spawnTvPicker(pickerId: string, channel: string): Promise<string>
     // Start the retry loop
     trySpawn(0);
   });
-}
-
-/**
- * Extract selection from captured PTY output.
- * tv outputs escape codes for TUI + the final selection.
- * The selection is typically the last non-empty, non-escape-sequence line.
- */
-function extractSelection(captured: string): string {
-  console.log('[tvResolver] Raw captured length:', captured.length);
-
-  // TV outputs selection AFTER exiting alternate screen (\x1b[?1049l)
-  // Look for content after this sequence
-  const exitScreenMarker = '\x1b[?1049l';
-  const exitIndex = captured.lastIndexOf(exitScreenMarker);
-
-  if (exitIndex !== -1) {
-    // Get everything after the exit screen sequence
-    const afterExit = captured.slice(exitIndex + exitScreenMarker.length);
-    console.log('[tvResolver] Content after ?1049l:', JSON.stringify(afterExit));
-
-    // Strip any remaining escape sequences and get the selection
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code stripping
-    // eslint-disable-next-line no-control-regex
-    const cleaned = afterExit.replace(/\x1b\[[?0-9;]*[a-zA-Z]|\x1b./g, '').trim();
-    console.log('[tvResolver] Cleaned selection:', cleaned);
-
-    if (cleaned) {
-      return cleaned;
-    }
-  }
-
-  // Fallback: try to find selection in the last part of the stream
-  console.log('[tvResolver] Fallback: searching last 200 chars');
-  const tail = captured.slice(-200);
-
-  // Strip all ANSI escape codes including DEC private mode ([?...)
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code stripping
-  // eslint-disable-next-line no-control-regex
-  const stripped = tail.replace(/\x1b\[[?0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b./g, '');
-
-  // Get the last non-empty line
-  const lines = stripped.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  console.log('[tvResolver] Fallback lines:', lines);
-
-  return lines.pop() || '';
 }
 
 // Whitelist regex: only letters, numbers, hyphens, underscores allowed in channel names

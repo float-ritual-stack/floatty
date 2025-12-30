@@ -760,22 +760,21 @@ class TerminalManager {
    * Unlike attach(), this is for temporary pickers that:
    * 1. Run a single command
    * 2. Wait for user interaction
-   * 3. Capture stdout
+   * 3. Capture stdout (in Rust, not JS - avoids GC pressure)
    * 4. Clean up on exit
    *
    * @param id - Unique identifier for this picker instance
    * @param container - DOM element to render xterm into
    * @param command - Full command to execute (e.g., 'tv files --no-remote')
-   * @param onData - Callback for stdout data capture
-   * @returns Promise that resolves with exit code when command completes
+   * @param cwd - Working directory for the command
+   * @returns Promise that resolves with exit code and captured output
    */
   async spawnInteractivePicker(
     id: string,
     container: HTMLElement,
     command: string,
-    onData?: (data: string) => void,
     cwd?: string
-  ): Promise<{ exitCode: number }> {
+  ): Promise<{ exitCode: number; captured: string }> {
     // Ensure config is loaded
     await this.loadConfig();
 
@@ -829,21 +828,24 @@ class TerminalManager {
     ].join(':');
 
     return new Promise((resolve) => {
+      // Channel for PTY data -> xterm (display only, no JS accumulation)
       const onDataChannel = new Channel<string>();
       onDataChannel.onmessage = (base64Data: string) => {
-        console.log('[TerminalManager] Picker received data, length:', base64Data.length);
         const binaryString = atob(base64Data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
         term.write(bytes);
+        // Note: No JS-side capture - Rust handles output buffering
+      };
 
-        // Also capture as text for the caller
-        if (onData) {
-          const text = new TextDecoder().decode(bytes);
-          onData(text);
-        }
+      // Channel for extracted selection from Rust (sent on exit)
+      let capturedOutput = '';
+      const onCaptureChannel = new Channel<string>();
+      onCaptureChannel.onmessage = (selection: string) => {
+        console.log('[TerminalManager] Picker captured:', selection);
+        capturedOutput = selection;
       };
 
       const onExitChannel = new Channel<number>();
@@ -853,7 +855,7 @@ class TerminalManager {
         // Cleanup
         term.dispose();
 
-        resolve({ exitCode });
+        resolve({ exitCode, captured: capturedOutput });
       };
 
       // Spawn PTY with the picker command
@@ -876,6 +878,9 @@ class TerminalManager {
         },
         onData: onDataChannel,
         onExit: onExitChannel,
+        // Enable Rust-side output capture and extraction
+        captureOutput: true,
+        onCapture: onCaptureChannel,
       }).then((pid) => {
         console.log('[TerminalManager] Picker PTY spawned with pid:', pid);
 
@@ -893,7 +898,7 @@ class TerminalManager {
       }).catch((err) => {
         console.error(`[TerminalManager] Picker spawn failed for ${id}:`, err);
         term.dispose();
-        resolve({ exitCode: -1 });
+        resolve({ exitCode: -1, captured: '' });
       });
     });
   }
