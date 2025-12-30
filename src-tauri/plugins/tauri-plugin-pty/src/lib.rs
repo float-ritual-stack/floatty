@@ -112,6 +112,10 @@ async fn spawn(
     };
     let capture_buffer_for_exit = capture_buffer.clone();
 
+    // Completion signal: batcher notifies reader when all data has been processed
+    // This prevents a race where reader reads capture_buffer before batcher finishes
+    let (batcher_done_tx, batcher_done_rx) = mpsc::channel::<()>();
+
     // READER THREAD: Reads from PTY and pushes to internal channel
     // Notifies on_exit when PTY closes (EOF or error)
     // Also extracts selection and sends via on_capture if capturing
@@ -131,6 +135,13 @@ async fn spawn(
                 }
             }
         }
+
+        // Drop tx to signal batcher that no more data is coming
+        drop(tx);
+
+        // Wait for batcher to finish processing all data before reading capture buffer
+        // This ensures the final chunks are in the buffer before we extract
+        let _ = batcher_done_rx.recv();
 
         // PTY closed - extract and send captured output if applicable
         if let Some(ref capture_buf) = capture_buffer_for_exit {
@@ -158,7 +169,7 @@ async fn spawn(
             // 1. Blocking wait for first chunk (0 CPU when idle)
             let first_chunk = match rx.recv() {
                 Ok(d) => d,
-                Err(_) => break, // All senders disconnected
+                Err(_) => break, // All senders disconnected - reader is done
             };
             pending_data.extend_from_slice(&first_chunk);
 
@@ -202,6 +213,9 @@ async fn spawn(
                 }
             }
         }
+
+        // Signal reader that all data has been processed and capture buffer is ready
+        let _ = batcher_done_tx.send(());
     });
 
     let session = Arc::new(Session {
