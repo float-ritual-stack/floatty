@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { parseMarkdownTree, type ParsedBlock } from './markdownParser';
+import { resolveTvVariables, hasTvVariables } from './tvResolver';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -130,13 +131,44 @@ export async function executeBlock(
   const handler = findHandler(content);
   if (!handler) return;
 
-  const extracted = extractContent(content, handler);
+  let extracted = extractContent(content, handler);
   const outputType = handler.outputType ?? 'output';
   const outputPrefix = `${outputType}::`;
   const pendingMessage = handler.pendingMessage ?? 'Running...';
 
+  // Resolve $tv() variables before execution
+  // This spawns picker blocks and waits for user selection
+  let resolvedFromTv = false;
+  if (hasTvVariables(extracted)) {
+    try {
+      const original = extracted;
+      extracted = await resolveTvVariables(extracted, blockId, actions);
+      // If user cancelled all pickers, extracted might be empty or have empty substitutions
+      if (!extracted.trim()) {
+        return; // User cancelled, don't execute
+      }
+      resolvedFromTv = extracted !== original;
+      // Note: We intentionally DON'T update the parent block content.
+      // Keeping $tv(...) makes the block a reusable "saved picker" -
+      // hit Enter again to select a different file.
+    } catch (err) {
+      console.error('[executor] TV resolution failed:', err);
+      // Fall through and try to execute with unresolved variables
+      // (will likely fail, but error message will be shown)
+    }
+  }
+
+  // If we resolved $tv(), create a "ran::" block showing the actual command
+  // Output will be nested under it so user can collapse the whole execution
+  let outputParentId = blockId;
+  if (resolvedFromTv) {
+    const ranId = actions.createBlockInsideAtTop?.(blockId) ?? actions.createBlockInside(blockId);
+    actions.updateBlockContent(ranId, `ran:: ${extracted}`);
+    outputParentId = ranId; // Output goes under ran:: block
+  }
+
   // Create placeholder block immediately
-  const outputId = actions.createBlockInsideAtTop?.(blockId) ?? actions.createBlockInside(blockId);
+  const outputId = actions.createBlockInsideAtTop?.(outputParentId) ?? actions.createBlockInside(outputParentId);
   actions.updateBlockContent(outputId, `${outputPrefix}${pendingMessage}`);
 
   try {
@@ -161,7 +193,7 @@ export async function executeBlock(
           // Fallback: clear placeholder if deleteBlock unavailable
           actions.updateBlockContent(outputId, `${outputPrefix}(output below)`);
         }
-        insertParsedBlocks(blockId, parsed, actions);
+        insertParsedBlocks(outputParentId, parsed, actions);
       } else {
         // Empty output
         actions.updateBlockContent(outputId, `${outputPrefix}(empty)`);

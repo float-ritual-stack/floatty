@@ -404,22 +404,33 @@ export function BlockItem(props: BlockItemProps) {
         </div>
 
         <div class={`block-content-wrapper ${contentClass()}`}>
-          {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
-          <BlockDisplay content={block()?.content || ''} />
+          {/* PICKER BLOCK: special rendering with terminal container */}
+          <Show when={block()?.type === 'picker'}>
+            <div class="picker-block">
+              <div class="picker-label">{block()?.content || 'picker::'}</div>
+              <div class="picker-terminal" data-block-id={props.id} />
+            </div>
+          </Show>
 
-          {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
-          <div
-            ref={contentRef}
-            contentEditable
-            class="block-content block-edit"
-            spellcheck={false}
-            autocapitalize="off"
-            autocorrect="off"
-            onInput={handleInput}
-            onKeyDown={handleKeyDown}
-            onFocus={() => props.onFocus(props.id)}
-            onBlur={handleBlur}
-          />
+          {/* REGULAR BLOCK: display + edit layers */}
+          <Show when={block()?.type !== 'picker'}>
+            {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
+            <BlockDisplay content={block()?.content || ''} />
+
+            {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
+            <div
+              ref={contentRef}
+              contentEditable
+              class="block-content block-edit"
+              spellcheck={false}
+              autocapitalize="off"
+              autocorrect="off"
+              onInput={handleInput}
+              onKeyDown={handleKeyDown}
+              onFocus={() => props.onFocus(props.id)}
+              onBlur={handleBlur}
+            />
+          </Show>
         </div>
       </div>
 

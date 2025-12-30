@@ -11,6 +11,8 @@ export type BlockType =
   | 'web'       // web:: or link:: - iframe embed
   | 'output'    // Output from sh:: or ai:: execution
   | 'error'     // Error output from execution
+  | 'picker'    // picker:: - temporary picker block (tv fuzzy finder)
+  | 'ran'       // ran:: - shows resolved command after $tv() substitution
   | 'h1'        // # heading
   | 'h2'        // ## heading
   | 'h3'        // ### heading
@@ -42,6 +44,8 @@ export function parseBlockType(content: string): BlockType {
   if (lower.startsWith('web::') || lower.startsWith('link::')) return 'web';
   if (lower.startsWith('output::')) return 'output';
   if (lower.startsWith('error::')) return 'error';
+  if (lower.startsWith('picker::')) return 'picker';
+  if (lower.startsWith('ran::')) return 'ran';
 
   // Markdown syntax (case-sensitive prefix matching)
   if (trimmed.startsWith('### ')) return 'h3';
