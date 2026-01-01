@@ -29,6 +29,10 @@ pub struct PtyExitEvent {
     pub output: Option<String>,
 }
 
+/// Max size for capture buffer (2MB). For long-running TUIs, we keep only the tail
+/// since selection/output appears after exit alternate screen marker at the end.
+const CAPTURE_BUFFER_CAP: usize = 2 * 1024 * 1024;
+
 /// Extract selection from captured PTY output.
 ///
 /// TV and similar pickers output escape codes for TUI, then the selection.
@@ -195,9 +199,14 @@ async fn spawn(
                 Err(_) => break, // All senders disconnected
             };
 
-            // Append to capture buffer if capturing
+            // Append to capture buffer if capturing (with size cap)
             if let Some(ref mut buf) = capture_buffer {
                 buf.extend_from_slice(&first_chunk);
+                // Cap buffer size - keep tail since selection appears at end
+                if buf.len() > CAPTURE_BUFFER_CAP {
+                    let drain_to = buf.len() - CAPTURE_BUFFER_CAP;
+                    buf.drain(..drain_to);
+                }
             }
             pending_data.extend_from_slice(&first_chunk);
 
@@ -205,9 +214,13 @@ async fn spawn(
             loop {
                 match rx.try_recv() {
                     Ok(more_data) => {
-                        // Append to capture buffer if capturing
+                        // Append to capture buffer if capturing (with size cap)
                         if let Some(ref mut buf) = capture_buffer {
                             buf.extend_from_slice(&more_data);
+                            if buf.len() > CAPTURE_BUFFER_CAP {
+                                let drain_to = buf.len() - CAPTURE_BUFFER_CAP;
+                                buf.drain(..drain_to);
+                            }
                         }
                         pending_data.extend_from_slice(&more_data);
                         // Safety cap: send if buffer > 64KB to prevent lag
