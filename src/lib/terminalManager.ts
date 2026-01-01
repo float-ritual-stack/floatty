@@ -381,9 +381,14 @@ class TerminalManager {
         };
 
         // Exit channel - notified when PTY closes (shell exits)
-        const onExit = new Channel<number>();
-        onExit.onmessage = (exitCode: number) => {
-          console.log(`[TerminalManager] PTY ${id} exited with code ${exitCode}`);
+        // Exit event contains exit_code and optional captured output
+        interface PtyExitEvent {
+          exit_code: number;
+          output?: string;
+        }
+        const onExit = new Channel<PtyExitEvent>();
+        onExit.onmessage = (event: PtyExitEvent) => {
+          console.log(`[TerminalManager] PTY ${id} exited with code ${event.exit_code}`);
 
           // Check if this exit was triggered by dispose() (keyboard-initiated close)
           // In that case, skip onPtyExit callback - dispose() already handled cleanup
@@ -397,7 +402,7 @@ class TerminalManager {
           if (inst) {
             inst.exitedNaturally = true;
           }
-          this.callbacks.get(id)?.onPtyExit?.(exitCode);
+          this.callbacks.get(id)?.onPtyExit?.(event.exit_code);
         };
 
         const pid = await invoke<number>('plugin:pty|spawn', {
@@ -766,16 +771,16 @@ class TerminalManager {
    * @param id - Unique identifier for this picker instance
    * @param container - DOM element to render xterm into
    * @param command - Full command to execute (e.g., 'tv files --no-remote')
-   * @param onData - Callback for stdout data capture
-   * @returns Promise that resolves with exit code when command completes
+   * @param _onData - DEPRECATED: Capture now happens in Rust. Kept for API compat.
+   * @returns Promise that resolves with exit code and captured output when command completes
    */
   async spawnInteractivePicker(
     id: string,
     container: HTMLElement,
     command: string,
-    onData?: (data: string) => void,
+    _onData?: (data: string) => void,
     cwd?: string
-  ): Promise<{ exitCode: number }> {
+  ): Promise<{ exitCode: number; output?: string }> {
     // Ensure config is loaded
     await this.loadConfig();
 
@@ -829,38 +834,38 @@ class TerminalManager {
     ].join(':');
 
     return new Promise((resolve) => {
+      // Data channel - for display only (capture happens in Rust)
       const onDataChannel = new Channel<string>();
       onDataChannel.onmessage = (base64Data: string) => {
-        console.log('[TerminalManager] Picker received data, length:', base64Data.length);
         const binaryString = atob(base64Data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
         term.write(bytes);
-
-        // Also capture as text for the caller
-        if (onData) {
-          const text = new TextDecoder().decode(bytes);
-          onData(text);
-        }
       };
 
-      const onExitChannel = new Channel<number>();
-      onExitChannel.onmessage = (exitCode: number) => {
-        console.log(`[TerminalManager] Picker ${id} exited with code ${exitCode}`);
+      // Exit channel - receives exit code and captured output from Rust
+      interface PtyExitEvent {
+        exit_code: number;
+        output?: string;
+      }
+      const onExitChannel = new Channel<PtyExitEvent>();
+      onExitChannel.onmessage = (event: PtyExitEvent) => {
+        console.log(`[TerminalManager] Picker ${id} exited with code ${event.exit_code}, output: ${event.output?.slice(0, 100) ?? '(none)'}`);
 
         // Cleanup
         term.dispose();
 
-        resolve({ exitCode });
+        resolve({ exitCode: event.exit_code, output: event.output });
       };
 
       // Spawn PTY with the picker command
       // Use -c to run command directly, not interactive shell
+      // capture_output: true tells Rust to buffer output and extract selection
       const args = os === 'windows' ? ['-Command', command] : ['-c', command];
 
-      console.log('[TerminalManager] Spawning picker PTY:', { shell, args, cols: term.cols, rows: 18, cwd });
+      console.log('[TerminalManager] Spawning picker PTY:', { shell, args, cols: term.cols, rows: 18, cwd, captureOutput: true });
 
       invoke<number>('plugin:pty|spawn', {
         file: shell,
@@ -876,6 +881,7 @@ class TerminalManager {
         },
         onData: onDataChannel,
         onExit: onExitChannel,
+        captureOutput: true, // Enable Rust-side output capture
       }).then((pid) => {
         console.log('[TerminalManager] Picker PTY spawned with pid:', pid);
 
