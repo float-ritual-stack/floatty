@@ -3,11 +3,12 @@ use std::{
     ffi::OsString,
     io::Read,
     sync::{
-        atomic::{AtomicI32, AtomicU32, Ordering},
+        atomic::{AtomicU32, Ordering},
         mpsc::{self, TryRecvError},
-        Arc,
+        Arc, Condvar, Mutex as StdMutex,
     },
     thread,
+    time::Duration,
 };
 
 use base64::{engine::general_purpose, Engine as _};
@@ -116,22 +117,24 @@ async fn spawn(
     // Separate channel for captured output (reader -> batcher owns buffer, sends on close)
     let (capture_tx, capture_rx) = mpsc::channel::<Option<String>>();
 
-    // Shared exit code: -1 means "not yet exited", otherwise holds actual exit code
-    let exit_code = Arc::new(AtomicI32::new(-1));
-    let exit_code_for_reader = Arc::clone(&exit_code);
+    // Shared exit code with condvar for efficient cross-thread signaling
+    // None = not yet exited, Some(code) = exit code available
+    let exit_state = Arc::new((StdMutex::new(None::<i32>), Condvar::new()));
+    let exit_state_for_reader = Arc::clone(&exit_state);
 
-    // WAITER THREAD: Waits for child to exit and stores the exit code
+    // WAITER THREAD: Waits for child to exit and signals via condvar
     thread::spawn(move || {
-        match child.wait() {
-            Ok(status) => {
-                let code = status.exit_code() as i32;
-                exit_code.store(code, Ordering::SeqCst);
-            }
+        let code = match child.wait() {
+            Ok(status) => status.exit_code() as i32,
             Err(e) => {
                 eprintln!("[PTY Waiter] Wait error: {}", e);
-                // Use -1 to indicate error (already the default)
+                -1 // Indicate error
             }
-        }
+        };
+        let (lock, cvar) = &*exit_state;
+        let mut exit_code = lock.lock().unwrap();
+        *exit_code = Some(code);
+        cvar.notify_all();
     });
 
     // READER THREAD: Reads from PTY and pushes to internal channel
@@ -159,16 +162,23 @@ async fn spawn(
         // Wait for batcher to send captured output (if capturing)
         let captured = capture_rx.recv().unwrap_or(None);
 
-        // Read actual exit code from waiter thread
-        // If waiter hasn't finished yet, briefly spin-wait (child.wait() should complete quickly after EOF)
-        let mut attempts = 0;
-        let code = loop {
-            let code = exit_code_for_reader.load(Ordering::SeqCst);
-            if code != -1 || attempts >= 100 {
-                break if code == -1 { 0 } else { code as u32 };
+        // Wait for exit code from waiter thread using condvar (no busy-wait)
+        let (lock, cvar) = &*exit_state_for_reader;
+        let code = {
+            let guard = lock.lock().unwrap();
+            // Wait up to 2s for exit code (should be near-instant after EOF)
+            let (guard, timeout_result) = cvar
+                .wait_timeout_while(guard, Duration::from_secs(2), |exit_code| {
+                    exit_code.is_none()
+                })
+                .unwrap();
+
+            if timeout_result.timed_out() {
+                eprintln!("[PTY Reader] Exit code timeout - assuming 0");
+                0u32
+            } else {
+                guard.map(|c| if c < 0 { 0 } else { c as u32 }).unwrap_or(0)
             }
-            attempts += 1;
-            thread::sleep(std::time::Duration::from_millis(10));
         };
 
         // PTY closed - notify frontend with exit event
