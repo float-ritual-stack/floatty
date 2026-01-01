@@ -11,7 +11,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose, Engine as _};
-use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, PtyPair, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, PtyPair, PtySize};
 use serde::Serialize;
 use tauri::{
     async_runtime::{Mutex, RwLock},
@@ -80,7 +80,7 @@ async fn spawn(
     env: BTreeMap<String, String>,
     on_data: Channel<String>,
     on_exit: Channel<PtyExitEvent>,
-    #[serde(default)] capture_output: bool,
+    capture_output: Option<bool>,
     state: tauri::State<'_, PluginState>,
 ) -> Result<PtyHandler, String> {
     let pty_system = native_pty_system();
@@ -148,6 +148,10 @@ async fn spawn(
                 }
             }
         }
+        // Drop tx to signal batcher that no more data is coming
+        // This unblocks batcher's rx.recv() so it can send captured output
+        drop(tx);
+
         // Wait for batcher to send captured output (if capturing)
         let captured = capture_rx.recv().unwrap_or(None);
 
@@ -178,7 +182,7 @@ async fn spawn(
     thread::spawn(move || {
         let mut pending_data: Vec<u8> = Vec::with_capacity(65536);
         // Output capture buffer (only used when capture_output=true)
-        let mut capture_buffer: Option<Vec<u8>> = if capture_output {
+        let mut capture_buffer: Option<Vec<u8>> = if capture_output.unwrap_or(false) {
             Some(Vec::with_capacity(65536))
         } else {
             None
