@@ -596,7 +596,6 @@ class TerminalManager {
           const instance = this.instances.get(id);
           if (!instance) continue;
 
-          const term = instance.term;
           instance.fitAddon.fit();
 
           // Restore after fit, with double-rAF for xterm internal sync
@@ -604,10 +603,11 @@ class TerminalManager {
           const terminalId = id; // Capture for closure
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-              // Defensive check: terminal may have been disposed during rAF delay (FLO-88)
-              if (!this.instances.has(terminalId) || this.disposing.has(terminalId)) return;
-              const maxScroll = term.buffer.active.baseY;
-              term.scrollToLine(Math.min(target, maxScroll));
+              // Re-fetch instance to avoid stale closure if disposed during rAF delay
+              const inst = this.instances.get(terminalId);
+              if (!inst || this.disposing.has(terminalId)) return;
+              const maxScroll = inst.term.buffer.active.baseY;
+              inst.term.scrollToLine(Math.min(target, maxScroll));
             });
           });
 
@@ -767,7 +767,7 @@ class TerminalManager {
     this.instances.delete(id);
     this.callbacks.delete(id);
     this.seenMarkers.delete(id);
-    this.savedScrollPositions.delete(id);
+    // Note: savedScrollPositions already cleared at line 731
     this.disposing.delete(id);
   }
 
