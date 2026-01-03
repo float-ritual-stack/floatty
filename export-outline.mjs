@@ -42,7 +42,16 @@ for (const [docKey, updates] of Object.entries(byDoc)) {
   const children = new Map();
   const blocks = new Map();
 
-  for (const [id, block] of blocksMap.entries()) {
+  for (const [id, blockMap] of blocksMap.entries()) {
+    // Defensive: handle both Y.Map and legacy plain object formats during migration
+    const isYMap = blockMap instanceof Y.Map;
+    const block = {
+      content: (isYMap ? blockMap.get('content') : blockMap.content) || '',
+      parentId: (isYMap ? blockMap.get('parentId') : blockMap.parentId) || null,
+      childIds: isYMap
+        ? (blockMap.get('childIds')?.toArray() || [])
+        : (Array.isArray(blockMap.childIds) ? blockMap.childIds : []),
+    };
     blocks.set(id, block);
     const parentId = block.parentId || 'ROOT';
     if (!children.has(parentId)) children.set(parentId, []);

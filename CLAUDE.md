@@ -16,11 +16,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm install           # Install JS dependencies
 npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
-npm run tauri build   # Production build
 npm run lint          # ESLint
 npm run test          # Run vitest (268 tests)
 npm run test:watch    # Watch mode for TDD
 ```
+
+### Release Build
+
+floatty uses a headless server architecture - the outliner CRDT state is managed by `floatty-server`, which runs as a sidecar process. For release builds:
+
+```bash
+# 1. Build the server sidecar (creates platform-specific binary)
+./scripts/build-server.sh
+
+# 2. Build the app (includes sidecar in bundle)
+npm run tauri build
+```
+
+The build script copies `floatty-server` to `src-tauri/binaries/floatty-server-{target-triple}`. Tauri bundles this into the `.app`/`.dmg` automatically.
+
+**Dev mode**: Server binary is found via workspace target paths (`target/debug/floatty-server`).
 
 ## Testing
 
@@ -167,6 +182,33 @@ max_age_hours = 72                      # Look back 3 days for markers
 ```
 
 Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
+
+### Logging
+
+**Log location**: `~/Library/Logs/dev.float.floatty/float-pty.log`
+
+Setup in `lib.rs` via `tauri_plugin_log`:
+```rust
+tauri_plugin_log::Builder::default()
+    .level(log::LevelFilter::Info)
+    .targets([
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+    ])
+```
+
+**When debugging ctx:: sidebar issues**, check for:
+```bash
+grep -i "ctx\|watcher\|parser\|ollama" ~/Library/Logs/dev.float.floatty/float-pty.log
+```
+
+**Common ctx:: issues**:
+- No ctx:: logs at all → watcher/parser not starting (check `CtxDatabase::open()` or config issues)
+- "Failed to watch directory" → `watch_path` in config doesn't exist (tilde not expanded?)
+- Parser errors → Ollama endpoint wrong or unreachable (check `ollama_endpoint` in config)
+
+**Note**: Early boot logging (before tauri_plugin_log init) uses `eprintln!` and goes to stderr, not the log file.
 
 ### Keyboard Shortcuts
 

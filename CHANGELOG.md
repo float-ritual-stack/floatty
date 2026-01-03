@@ -2,6 +2,44 @@
 
 All notable changes to floatty are documented here.
 
+## [0.2.0] - 2026-01-03
+
+### Headless Architecture (PR #47)
+
+Major architectural shift: floatty is now headless-first. The block store lives in a standalone HTTP server.
+
+#### floatty-core Extraction
+- Extracted `floatty-core` crate with Block types, YDocPersistence, YDocStore
+- Schema v2: Nested Y.Map structure for proper CRDT sync
+- Tauri commands are now thin wrappers over floatty-core
+
+#### floatty-server (HTTP API)
+- Standalone Axum HTTP server at `127.0.0.1:8765`
+- REST endpoints: `/blocks` (GET/POST), `/blocks/:id` (GET/PATCH/DELETE)
+- Y.Doc sync: `/state`, `/update`, `/health`
+- API key authentication via Bearer token
+- WebSocket broadcast for realtime sync across clients
+
+#### UI Wiring
+- Frontend uses HTTP client instead of Tauri IPC for Y.Doc sync
+- Server auto-spawned by Tauri on app start
+- Blocks created via curl appear instantly in UI
+
+#### Testing
+- 9 API tests for floatty-server (Axum tower ServiceExt pattern)
+- 283 frontend tests (Vitest)
+- 13 floatty-core tests
+
+#### Bug Fixes
+- Fixed Axum route syntax (`:id` not `{id}`)
+- Fixed tilde expansion in `watch_path` config
+- Fixed Ollama endpoint config (pointed to wrong host)
+
+### Linear Tickets Closed
+FLO-87 (External write API)
+
+---
+
 ## [0.1.0] - 2025-12-28
 
 ### 10-Day Sprint (Dec 19-28) - Foundation to Usable

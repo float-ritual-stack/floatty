@@ -24,8 +24,12 @@ const ZOOM_MAX = 2.0;
 
 // Status bar with semantic state (FLO-54) + keyboard shortcuts
 import type { SemanticState } from '../lib/terminalManager';
+import { getSyncStatus, getPendingCount, getLastSyncError } from '../hooks/useSyncedYDoc';
 
 function StatusBar(props: { semanticState?: SemanticState | null }) {
+  // Sync status for Y.Doc
+  const syncStatus = getSyncStatus;
+  const pendingCount = getPendingCount;
   // Use getKeybindDisplay for platform-aware shortcuts (⌘ on Mac, Ctrl on Windows/Linux)
   // Get modifier prefix from focusLeft, then append arrows (avoids broken replacement on Win/Linux)
   const focusMod = getKeybindDisplay('focusLeft')?.replace(/Left$/, '').replace(/ArrowLeft$/, '') || '⌘⌥';
@@ -59,6 +63,32 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
 
   return (
     <footer class="status-bar" role="contentinfo">
+      {/* Sync status indicator (leftmost) */}
+      <span
+        class="status-item status-sync"
+        classList={{
+          synced: syncStatus() === 'synced',
+          pending: syncStatus() === 'pending',
+          error: syncStatus() === 'error',
+        }}
+        title={
+          syncStatus() === 'error'
+            ? getLastSyncError() || 'Sync error'
+            : syncStatus() === 'pending'
+            ? `${pendingCount()} update(s) pending`
+            : 'All changes synced'
+        }
+        aria-live="polite"
+      >
+        <span class="status-dot" />
+        <Show when={syncStatus() === 'pending'}>
+          <span class="status-sync-count">{pendingCount()}</span>
+        </Show>
+        <Show when={syncStatus() === 'error'}>
+          <span class="status-sync-label">sync</span>
+        </Show>
+      </span>
+
       {/* Semantic state (left side) */}
       <span
         class="status-item status-hooks"

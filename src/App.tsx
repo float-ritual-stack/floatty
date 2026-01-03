@@ -2,6 +2,7 @@ import { onMount, onCleanup, createSignal, Show, createEffect } from 'solid-js';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { Terminal } from './components/Terminal';
 import { WorkspaceProvider } from './context/WorkspaceContext';
 import { themeStore } from './hooks/useThemeStore';
@@ -9,6 +10,8 @@ import { tabStore } from './hooks/useTabStore';
 import { layoutStore } from './hooks/useLayoutStore';
 import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
+import { initHttpClient } from './lib/httpClient';
+import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
 import './App.css';
 
 // Type for Tauri drag-drop event payload
@@ -19,13 +22,34 @@ interface DragDropPayload {
 
 function App() {
   let unlistenDragDrop: UnlistenFn | undefined;
+  const [serverConnected, setServerConnected] = createSignal(false);
+  const [serverError, setServerError] = createSignal<string | null>(null);
   const [workspaceLoaded, setWorkspaceLoaded] = createSignal(false);
   const persistence = getWorkspacePersistence();
 
-  // Load saved theme and terminal config on startup
+  // Phase 3: Initialize HTTP client before loading workspace
+  // The HTTP client connects to floatty-server (spawned by Tauri)
+  onMount(async () => {
+    try {
+      await initHttpClient();
+      console.log('[App] HTTP client connected to floatty-server');
+      setServerConnected(true);
+    } catch (err) {
+      console.error('[App] Failed to connect to floatty-server:', err);
+      setServerError(String(err));
+    }
+  });
+
+  // Load saved theme and terminal config on startup (after server connected)
   onMount(async () => {
     // Config loading moved to terminalManager.attach() to fix race condition
     themeStore.loadTheme();
+  });
+
+  // Load workspace once server is connected
+  createEffect(async () => {
+    if (!serverConnected()) return;
+    if (workspaceLoaded()) return; // Already loaded
 
     // Load workspace layout state (FLO-81)
     // This must happen before Terminal component renders to avoid flickering
@@ -35,8 +59,10 @@ function App() {
       console.error('[App] Failed to load workspace:', err);
     }
     setWorkspaceLoaded(true);
+  });
 
-    // Listen for file drag-drop from Finder
+  // Listen for file drag-drop from Finder
+  onMount(async () => {
     // When files are dropped, paste their paths into the active terminal
     unlistenDragDrop = await listen<DragDropPayload>('tauri://drag-drop', (event) => {
       const paths = event.payload.paths;
@@ -88,10 +114,66 @@ function App() {
   });
 
   // Save workspace on window close (Tauri's onCloseRequested properly awaits async)
+  // Includes sync gate to prevent data loss
   onMount(async () => {
     const currentWindow = getCurrentWindow();
     const unlisten = await currentWindow.onCloseRequested(async (event) => {
+      console.log('[App] onCloseRequested triggered');
       event.preventDefault(); // Block default close
+
+      // Check for pending Y.Doc updates - prevent data loss
+      const pending = hasPendingUpdates();
+      console.log('[App] hasPendingUpdates:', pending);
+      if (pending) {
+        const syncStatus = getSyncStatus();
+        console.log('[App] syncStatus:', syncStatus);
+        const message = syncStatus === 'error'
+          ? 'Sync is failing. Changes are saved locally but won\'t appear on other devices until sync recovers.'
+          : 'Changes haven\'t synced to the server yet. They\'re safe locally, but wait to ensure they reach other devices.';
+
+        console.log('[App] About to show confirm dialog...');
+        // Use Tauri native dialog (window.confirm fails silently in Tauri webview)
+        const proceed = await confirm(message, {
+          title: 'Unsynced Changes',
+          kind: 'warning',
+          okLabel: 'Close Anyway',
+          cancelLabel: 'Wait',
+        });
+        console.log('[App] User response:', proceed);
+        if (!proceed) {
+          return; // User cancelled close
+        }
+
+        // If not in error state, try one final sync (with timeout)
+        if (syncStatus !== 'error') {
+          try {
+            console.log('[App] Attempting final sync before close...');
+            // 3 second timeout - don't hang forever if server is dead
+            const syncPromise = forceSyncNow();
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Sync timeout')), 3000)
+            );
+            await Promise.race([syncPromise, timeoutPromise]);
+            console.log('[App] Final sync completed');
+          } catch (err) {
+            console.error('[App] Final sync failed:', err);
+            // Ask user again since sync failed
+            const closeAnyway = await confirm(
+              'Couldn\'t sync before closing. Changes are safe locally and will sync when the server is back.',
+              {
+                title: 'Sync Failed',
+                kind: 'warning',
+                okLabel: 'Close Anyway',
+                cancelLabel: 'Keep Trying',
+              }
+            );
+            if (!closeAnyway) {
+              return; // User cancelled
+            }
+          }
+        }
+      }
+
       // Kill all PTY processes to prevent zombies
       try {
         const count = await invoke<number>('plugin:pty|kill_all');
@@ -99,15 +181,30 @@ function App() {
       } catch (e) {
         console.warn('[App] Failed to kill PTY sessions:', e);
       }
-      await persistence.saveWorkspace();
-      await currentWindow.destroy(); // Now close after save completes
+
+      // Save workspace (best effort - don't block close if it fails)
+      try {
+        await persistence.saveWorkspace();
+      } catch (e) {
+        console.warn('[App] Failed to save workspace on close:', e);
+      }
+
+      // Always destroy - don't let anything block the close
+      await currentWindow.destroy();
     });
     onCleanup(() => unlisten());
   });
 
   // Kill PTY processes on browser refresh (Cmd+R) - beforeunload fires before Tauri close
+  // Also warn about unsaved changes
   onMount(() => {
-    const handleBeforeUnload = () => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Warn user about pending updates
+      if (hasPendingUpdates()) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes.';
+        return e.returnValue;
+      }
       // Synchronous invoke isn't possible, but we can fire-and-forget
       // The process cleanup is best-effort for reload scenarios
       invoke('plugin:pty|kill_all').catch(() => {});
@@ -121,10 +218,21 @@ function App() {
   });
 
   return (
-    <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
-      <WorkspaceProvider>
-        <Terminal />
-      </WorkspaceProvider>
+    <Show
+      when={!serverError()}
+      fallback={
+        <div class="error-screen">
+          <h2>Failed to connect to floatty-server</h2>
+          <pre>{serverError()}</pre>
+          <p>Check the logs and restart the application.</p>
+        </div>
+      }
+    >
+      <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
+        <WorkspaceProvider>
+          <Terminal />
+        </WorkspaceProvider>
+      </Show>
     </Show>
   );
 }

@@ -9,12 +9,16 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:dev": "pkill -f floatty-server 2>/dev/null || true; tauri dev",
+    "tauri:dev:fresh": "pkill -f floatty-server 2>/dev/null || true; cd src-tauri && cargo build -p floatty-server && cd .. && tauri dev",
+    "kill-server": "pkill -f floatty-server || echo 'No server running'",
     "test": "vitest",
     "test:run": "vitest run"
   },
   "dependencies": {
     "@solid-primitives/keyed": "^1.5.2",
     "@tauri-apps/api": "^2.9.1",
+    "@tauri-apps/plugin-dialog": "^2.4.2",
     "@tauri-apps/plugin-os": "^2.3.2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-ligatures": "^0.9.0",

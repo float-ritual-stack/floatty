@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "floatty-core", "floatty-server"]
+resolver = "2"
+
 [package]
 name = "float-pty"
 version = "0.1.0"
@@ -23,6 +27,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-pty = { path = "plugins/tauri-plugin-pty" }
 tauri-plugin-os = "2"
+floatty-core = { path = "floatty-core" }
 
 # Context aggregator dependencies
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -40,6 +45,7 @@ ollama-rs = "0.3.3"
 url = "2.5.7"
 shell-words = "1.1.1"
 tauri-plugin-clipboard = "2.1.11"
+tauri-plugin-dialog = "2"
 
 # macOS-only dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
