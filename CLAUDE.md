@@ -168,6 +168,33 @@ max_age_hours = 72                      # Look back 3 days for markers
 
 Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
 
+### Logging
+
+**Log location**: `~/Library/Logs/dev.float.floatty/float-pty.log`
+
+Setup in `lib.rs` via `tauri_plugin_log`:
+```rust
+tauri_plugin_log::Builder::default()
+    .level(log::LevelFilter::Info)
+    .targets([
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+    ])
+```
+
+**When debugging ctx:: sidebar issues**, check for:
+```bash
+grep -i "ctx\|watcher\|parser\|ollama" ~/Library/Logs/dev.float.floatty/float-pty.log
+```
+
+**Common ctx:: issues**:
+- No ctx:: logs at all → watcher/parser not starting (check `CtxDatabase::open()` or config issues)
+- "Failed to watch directory" → `watch_path` in config doesn't exist (tilde not expanded?)
+- Parser errors → Ollama endpoint wrong or unreachable (check `ollama_endpoint` in config)
+
+**Note**: Early boot logging (before tauri_plugin_log init) uses `eprintln!` and goes to stderr, not the log file.
+
 ### Keyboard Shortcuts
 
 **Terminal/Global:**
