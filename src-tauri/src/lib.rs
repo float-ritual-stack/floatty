@@ -39,6 +39,9 @@ pub struct AggregatorConfig {
     /// Terminal line height multiplier
     #[serde(default = "default_line_height")]
     pub line_height: f32,
+    /// Max bytes for sh:: block output before truncation (default 64KB)
+    #[serde(default = "default_max_shell_output")]
+    pub max_shell_output_bytes: usize,
 }
 
 fn default_theme() -> String {
@@ -61,6 +64,10 @@ fn default_line_height() -> f32 {
     1.2
 }
 
+fn default_max_shell_output() -> usize {
+    65536 // 64KB
+}
+
 impl Default for AggregatorConfig {
     fn default() -> Self {
         let default_watcher = WatcherConfig::default();
@@ -78,6 +85,7 @@ impl Default for AggregatorConfig {
             font_weight: default_font_weight(),
             font_weight_bold: default_font_weight_bold(),
             line_height: default_line_height(),
+            max_shell_output_bytes: default_max_shell_output(),
         }
     }
 }
@@ -323,6 +331,10 @@ async fn execute_shell_command(command: String) -> Result<String, String> {
         return Ok("".to_string());
     }
 
+    // Load config for output size limit
+    let config = AggregatorConfig::load();
+    let max_bytes = config.max_shell_output_bytes;
+
     tauri::async_runtime::spawn_blocking(move || {
         // Use user's shell to inherit PATH from .zshrc/.bashrc
         // This ensures commands like `floatctl` in ~/.cargo/bin work
@@ -338,10 +350,25 @@ async fn execute_shell_command(command: String) -> Result<String, String> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        if output.status.success() {
-            Ok(stdout.to_string())
+        let result = if output.status.success() {
+            stdout.to_string()
         } else {
-            Ok(format!("{}\nError: {}", stdout, stderr))
+            format!("{}\nError: {}", stdout, stderr)
+        };
+
+        // Truncate if output exceeds limit (prevents UI freeze on large output)
+        if result.len() > max_bytes {
+            let truncated = &result[..max_bytes];
+            // Find last newline to avoid cutting mid-line
+            let cut_point = truncated.rfind('\n').unwrap_or(max_bytes);
+            Ok(format!(
+                "{}\n\n... [truncated: {} → {} bytes]",
+                &result[..cut_point],
+                result.len(),
+                cut_point
+            ))
+        } else {
+            Ok(result)
         }
     }).await.map_err(|e| e.to_string())?
 }
@@ -367,10 +394,24 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
     let request = GenerationRequest::new(model, prompt);
 
     log::info!("ai:: sending request to Ollama...");
+    let max_bytes = config.max_shell_output_bytes;
+
     match ollama.generate(request).await {
         Ok(res) => {
             log::info!("ai:: got response ({} chars)", res.response.len());
-            Ok(res.response)
+            let result = res.response;
+            // Truncate if output exceeds limit
+            if result.len() > max_bytes {
+                let cut_point = result[..max_bytes].rfind('\n').unwrap_or(max_bytes);
+                Ok(format!(
+                    "{}\n\n... [truncated: {} → {} bytes]",
+                    &result[..cut_point],
+                    result.len(),
+                    cut_point
+                ))
+            } else {
+                Ok(result)
+            }
         },
         Err(e) => {
             log::error!("ai:: Ollama error: {}", e);
