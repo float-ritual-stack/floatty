@@ -710,10 +710,17 @@ class TerminalManager {
   async dispose(id: string) {
     // Guard against double-disposal race: if dispose() called twice rapidly,
     // both could pass instances.get() before either sets disposing flag
-    if (this.disposing.has(id)) return;
+    if (this.disposing.has(id)) {
+      console.log(`[TerminalManager] dispose(${id}) - already disposing, skipping`);
+      return;
+    }
 
     const instance = this.instances.get(id);
-    if (!instance) return;
+    if (!instance) {
+      console.log(`[TerminalManager] dispose(${id}) - no instance found`);
+      return;
+    }
+    console.log(`[TerminalManager] dispose(${id}) - ptyPid=${instance.ptyPid}, exitedNaturally=${instance.exitedNaturally}`);
 
     // Clear any pending restoration timeout to prevent post-disposal access (FLO-88)
     if (this.restorationTimeout) {

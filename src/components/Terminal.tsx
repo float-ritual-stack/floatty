@@ -232,6 +232,7 @@ export function Terminal() {
   const handleCloseTab = async (id: string) => {
     // Get all pane IDs in this tab's layout
     const paneIds = getAllPaneIds(id);
+    console.log(`[Terminal] handleCloseTab(${id}) - found ${paneIds.length} panes:`, paneIds);
     const failedDisposals: string[] = [];
 
     // Dispose each terminal

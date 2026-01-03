@@ -127,7 +127,7 @@ async fn spawn(
         let code = match child.wait() {
             Ok(status) => status.exit_code() as i32,
             Err(e) => {
-                eprintln!("[PTY Waiter] Wait error: {}", e);
+                log::error!("[PTY Waiter] Wait error: {}", e);
                 -1 // Indicate error
             }
         };
@@ -150,7 +150,7 @@ async fn spawn(
                     }
                 }
                 Err(e) => {
-                    eprintln!("[PTY Reader] Read error: {}", e);
+                    log::error!("[PTY Reader] Read error: {}", e);
                     break;
                 }
             }
@@ -174,7 +174,7 @@ async fn spawn(
                 .unwrap();
 
             if timeout_result.timed_out() {
-                eprintln!("[PTY Reader] Exit code timeout - assuming 0");
+                log::warn!("[PTY Reader] Exit code timeout - assuming 0");
                 0u32
             } else {
                 guard.map(|c| if c < 0 { 0 } else { c as u32 }).unwrap_or(0)
@@ -187,7 +187,7 @@ async fn spawn(
             output: captured,
         };
         if let Err(e) = on_exit.send(exit_event) {
-            eprintln!("[PTY Reader] Failed to send exit notification: {}", e);
+            log::error!("[PTY Reader] Failed to send exit notification: {}", e);
         }
     });
 
@@ -368,11 +368,11 @@ async fn kill_all(state: tauri::State<'_, PluginState>) -> Result<u32, String> {
         .collect();
 
     let count = sessions.len() as u32;
-    eprintln!("[PTY] Killing all {} active sessions", count);
+    log::info!("[PTY] Killing all {} active sessions", count);
 
     for (pid, session) in sessions {
         if let Err(e) = session.child_killer.lock().await.kill() {
-            eprintln!("[PTY] Failed to kill session {}: {}", pid, e);
+            log::warn!("[PTY] Failed to kill session {}: {}", pid, e);
         }
     }
 
