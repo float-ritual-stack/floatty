@@ -18,6 +18,7 @@ use tokio::sync::broadcast;
 
 /// Message format for WebSocket broadcasts
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BroadcastMessage {
     /// Transaction ID from the sender (for echo prevention)
     #[serde(skip_serializing_if = "Option::is_none")]
