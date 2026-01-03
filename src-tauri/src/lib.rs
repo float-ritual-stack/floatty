@@ -787,11 +787,20 @@ fn read_api_key_from_config() -> Option<String> {
     api_key
 }
 
-/// Find the floatty-server binary (checks exe dir, workspace paths, then PATH)
+/// Find the floatty-server binary (checks sidecar path, exe dir, workspace paths, then PATH)
 fn find_server_binary() -> Option<PathBuf> {
-    // First, try relative to current executable (dev mode)
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
+            // Check for Tauri sidecar (bundled with target triple suffix)
+            let target_triple = get_target_triple();
+            let sidecar_name = format!("floatty-server-{}", target_triple);
+            let sidecar_path = exe_dir.join(&sidecar_name);
+            if sidecar_path.exists() {
+                eprintln!("[floatty] Found sidecar at {:?}", sidecar_path);
+                return Some(sidecar_path);
+            }
+
+            // Check for plain binary next to exe (dev mode)
             let dev_path = exe_dir.join("floatty-server");
             if dev_path.exists() {
                 return Some(dev_path);
@@ -802,8 +811,11 @@ fn find_server_binary() -> Option<PathBuf> {
     // Try cargo target directory (running from workspace)
     let workspace_paths = [
         "target/debug/floatty-server",
+        "target/release/floatty-server",
         "src-tauri/target/debug/floatty-server",
+        "src-tauri/target/release/floatty-server",
         "../target/debug/floatty-server",
+        "../target/release/floatty-server",
     ];
     for path in workspace_paths {
         let p = PathBuf::from(path);
@@ -813,6 +825,7 @@ fn find_server_binary() -> Option<PathBuf> {
     }
 
     // Check if it's in PATH (installed globally)
+    #[cfg(unix)]
     if let Ok(output) = std::process::Command::new("which")
         .arg("floatty-server")
         .output()
@@ -827,6 +840,33 @@ fn find_server_binary() -> Option<PathBuf> {
 
     eprintln!("[floatty] ERROR: Could not find floatty-server binary");
     None
+}
+
+/// Get the target triple for the current platform (for sidecar binary name)
+fn get_target_triple() -> &'static str {
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    return "aarch64-apple-darwin";
+
+    #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+    return "x86_64-apple-darwin";
+
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    return "x86_64-unknown-linux-gnu";
+
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    return "aarch64-unknown-linux-gnu";
+
+    #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
+    return "x86_64-pc-windows-msvc";
+
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_os = "macos"),
+        all(target_arch = "x86_64", target_os = "macos"),
+        all(target_arch = "x86_64", target_os = "linux"),
+        all(target_arch = "aarch64", target_os = "linux"),
+        all(target_arch = "x86_64", target_os = "windows"),
+    )))]
+    return "unknown";
 }
 
 /// Wait for server health endpoint to respond (with retries)

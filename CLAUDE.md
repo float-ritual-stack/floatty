@@ -16,11 +16,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm install           # Install JS dependencies
 npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
-npm run tauri build   # Production build
 npm run lint          # ESLint
 npm run test          # Run vitest (268 tests)
 npm run test:watch    # Watch mode for TDD
 ```
+
+### Release Build
+
+floatty uses a headless server architecture - the outliner CRDT state is managed by `floatty-server`, which runs as a sidecar process. For release builds:
+
+```bash
+# 1. Build the server sidecar (creates platform-specific binary)
+./scripts/build-server.sh
+
+# 2. Build the app (includes sidecar in bundle)
+npm run tauri build
+```
+
+The build script copies `floatty-server` to `src-tauri/binaries/floatty-server-{target-triple}`. Tauri bundles this into the `.app`/`.dmg` automatically.
+
+**Dev mode**: Server binary is found via workspace target paths (`target/debug/floatty-server`).
 
 ## Testing
 
