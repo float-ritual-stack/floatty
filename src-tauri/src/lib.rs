@@ -845,6 +845,14 @@ pub fn run() {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
+                        .targets([
+                            // Terminal output (dev console)
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                            // Webview console.log/warn/error → Rust log
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                            // File: ~/Library/Logs/com.floatty.app/floatty.log
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                        ])
                         .build(),
                 )?;
             }
