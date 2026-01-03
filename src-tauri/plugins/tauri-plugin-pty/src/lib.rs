@@ -360,7 +360,7 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
             }
 
             // Brief grace period then SIGKILL
-            thread::sleep(Duration::from_millis(50));
+            tokio::time::sleep(Duration::from_millis(50)).await;
 
             let result = unsafe { libc::kill(-(real_pid as i32), libc::SIGKILL) };
             if result != 0 {
