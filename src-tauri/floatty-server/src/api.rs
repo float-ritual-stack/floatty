@@ -36,10 +36,10 @@ pub struct AppState {
 }
 
 /// Health check response
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct HealthResponse {
-    pub status: &'static str,
-    pub version: &'static str,
+    pub status: String,
+    pub version: String,
 }
 
 /// Full state response (for sync)
@@ -62,7 +62,7 @@ pub struct BlocksResponse {
 }
 
 /// Block DTO for API responses
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockDto {
     pub id: String,
@@ -135,17 +135,17 @@ pub fn create_router(store: Arc<YDocStore>, broadcaster: Arc<WsBroadcaster>) -> 
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
         .route("/api/v1/blocks", post(create_block))
-        .route("/api/v1/blocks/{id}", get(get_block))
-        .route("/api/v1/blocks/{id}", patch(update_block))
-        .route("/api/v1/blocks/{id}", delete(delete_block))
+        .route("/api/v1/blocks/:id", get(get_block))
+        .route("/api/v1/blocks/:id", patch(update_block))
+        .route("/api/v1/blocks/:id", delete(delete_block))
         .with_state(state)
 }
 
 /// GET /api/v1/health
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
-        status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
+        status: "ok".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
 
@@ -560,4 +560,321 @@ async fn delete_block(
     state.broadcaster.broadcast(update);
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use http_body_util::BodyExt;
+    use tempfile::tempdir;
+    use tower::{Service, ServiceExt};
+
+    fn test_app() -> (Router, tempfile::TempDir, Arc<YDocStore>) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let router = create_router(Arc::clone(&store), broadcaster);
+        (router, dir, store)
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        let (app, _dir, _store) = test_app();
+
+        let response = app
+            .oneshot(Request::get("/api/v1/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let health: HealthResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(health.status, "ok");
+    }
+
+    #[tokio::test]
+    async fn test_create_root_block() {
+        let (app, _dir, _store) = test_app();
+
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Test block"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert_eq!(block.content, "Test block");
+        assert!(block.parent_id.is_none());
+        assert!(block.child_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_child_block_updates_parent() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent block
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"content": "Parent"}"#))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let parent: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Create child block
+        let child_req = format!(r#"{{"content": "Child", "parentId": "{}"}}"#, parent.id);
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(child_req))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let child: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert_eq!(child.parent_id, Some(parent.id.clone()));
+
+        // Verify parent's childIds was updated
+        let request = Request::get(&format!("/api/v1/blocks/{}", parent.id))
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let updated_parent: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert!(updated_parent.child_ids.contains(&child.id));
+    }
+
+    #[tokio::test]
+    async fn test_delete_block_removes_from_parent_childids() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster));
+
+        // Create parent
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Parent"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let parent: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Create child
+        let child_req = format!(r#"{{"content": "Child", "parentId": "{}"}}"#, parent.id);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(child_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let child: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Delete child
+        let response = app
+            .clone()
+            .oneshot(
+                Request::delete(&format!("/api/v1/blocks/{}", child.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify parent's childIds no longer contains child
+        let response = app
+            .oneshot(
+                Request::get(&format!("/api/v1/blocks/{}", parent.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let updated_parent: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert!(!updated_parent.child_ids.contains(&child.id));
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_block_returns_404() {
+        let (app, _dir, _store) = test_app();
+
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/blocks/nonexistent-id")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_update_block_content() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster));
+
+        // Create block
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Original"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Update block
+        let response = app
+            .clone()
+            .oneshot(
+                Request::patch(&format!("/api/v1/blocks/{}", block.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Updated"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let updated: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert_eq!(updated.content, "Updated");
+    }
+
+    #[tokio::test]
+    async fn test_block_type_detection() {
+        let (app, _dir, _store) = test_app();
+
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "sh:: echo hello"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert_eq!(block.block_type, "sh");
+    }
+
+    #[tokio::test]
+    async fn test_get_route_works_after_create() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create a block
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"content": "Test"}"#))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Now GET that same block
+        let url = format!("/api/v1/blocks/{}", block.id);
+        eprintln!("GET URL: {}", url);
+        let request = Request::get(&url)
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        let status = response.status();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        eprintln!("Response status: {}, body len: {}", status, body.len());
+        assert_eq!(status, StatusCode::OK, "GET should return 200");
+    }
+
+    #[tokio::test]
+    async fn test_store_state_after_create() {
+        let (app, _dir, store) = test_app();
+
+        // Create a block via API
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Test"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Check store directly - is the block in the Y.Doc?
+        let doc = store.doc();
+        let doc_guard = doc.read().unwrap();
+        let txn = doc_guard.transact();
+
+        // Check if blocks map exists
+        let blocks_map = txn.get_map("blocks");
+        assert!(blocks_map.is_some(), "blocks map should exist after create");
+
+        let blocks_map = blocks_map.unwrap();
+        let block_in_doc = blocks_map.get(&txn, &block.id);
+        assert!(block_in_doc.is_some(), "created block should be in Y.Doc. Block ID: {}", block.id);
+    }
 }

@@ -45,3 +45,8 @@ path = "src/main.rs"
 [lib]
 name = "floatty_server"
 path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"
