@@ -266,7 +266,7 @@ pub fn get_ydoc_updates(&self, doc_key: &str) -> Result<Vec<Vec<u8>>>
 pub fn compact_ydoc(&self, doc_key: &str, snapshot: &[u8]) -> Result<()>
 ```
 
-### Sync Flow: Frontend → Rust
+### Sync Flow: Frontend → Server (HTTP)
 
 ```text
 Frontend Y.Doc change
@@ -277,13 +277,13 @@ queueUpdate(delta)            // Add to pending queue
     ↓
 scheduleFlush(50ms)           // Debounce
     ↓
-invoke('apply_update', { updateB64 })  // Tauri IPC
+POST /api/v1/update           // HTTP to floatty-server
     ↓
-Rust: persist first, then apply to memory
+Server: persist to SQLite, apply to Y.Doc, broadcast via WebSocket
 ```
 
 ```typescript
-// src/hooks/useSyncedYDoc.ts:117-151
+// src/hooks/useSyncedYDoc.ts
 const flushUpdates = async () => {
   if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
   sharedIsFlushing = true;
@@ -291,24 +291,44 @@ const flushUpdates = async () => {
   sharedPendingUpdates = [];
 
   for (const update of updates) {
-    const updateB64 = bytesToBase64(update);
-    await invoke('apply_update', { updateB64 });
+    await httpClient.applyUpdate(update);  // HTTP POST, not invoke()
   }
 };
 ```
 
-### Sync Flow: Rust → Frontend (Initial Load)
+### Sync Flow: Server → Frontend (Initial Load + WebSocket)
 
 ```typescript
-// src/hooks/useSyncedYDoc.ts:188-196
-const stateB64 = await invoke<string>('get_initial_state');
-if (stateB64) {
-  const stateBytes = base64ToBytes(stateB64);
-  isApplyingRemote = true;
-  Y.applyUpdate(doc, stateBytes);
-  isApplyingRemote = false;
-}
+// src/hooks/useSyncedYDoc.ts
+// Initial load via HTTP
+const stateBytes = await httpClient.getState();  // GET /api/v1/state
+Y.applyUpdate(doc, stateBytes);
+
+// Realtime updates via WebSocket
+ws.onmessage = (event) => {
+  const update = base64ToBytes(event.data);
+  Y.applyUpdate(doc, update);  // Apply broadcast from other clients
+};
 ```
+
+### Architecture: Headless-First
+
+```text
+┌──────────┐  ┌──────────┐  ┌──────────┐
+│ Desktop  │  │   CLI    │  │  Agent   │
+└────┬─────┘  └────┬─────┘  └────┬─────┘
+     └──────┬──────┴───────┬──────┘
+            │  HTTP/WS     │
+      ┌─────▼──────────────▼─────┐
+      │    floatty-server        │
+      │    (127.0.0.1:8765)      │
+      └──────────┬───────────────┘
+           ┌─────▼─────┐
+           │  SQLite   │
+           └───────────┘
+```
+
+Server is source of truth. UI is one client among many.
 
 ### Undo/Redo
 
@@ -488,20 +508,36 @@ src/
     └── terminalManager.ts     # xterm lifecycle (singleton)
 ```
 
-### Backend (`src-tauri/src/`)
+### Backend (`src-tauri/`)
 
 ```text
-src-tauri/src/
-├── lib.rs                     # Tauri commands, app setup
-├── main.rs                    # Entry point
-├── db.rs                      # SQLite schema, CRUD
-├── ctx_watcher.rs             # JSONL file watcher
-├── ctx_parser.rs              # Ollama API integration
-├── panel.rs                   # Panel window management
-└── sync_test.rs               # Y.Doc sync tests
-
-src-tauri/plugins/tauri-plugin-pty/src/
-└── lib.rs                     # PTY spawning, output capture for $tv()
+src-tauri/
+├── src/
+│   ├── lib.rs                 # Tauri commands, app setup, server spawn
+│   ├── main.rs                # Entry point
+│   ├── db.rs                  # SQLite schema, CRUD
+│   ├── ctx_watcher.rs         # JSONL file watcher
+│   ├── ctx_parser.rs          # Ollama API integration
+│   └── panel.rs               # Panel window management
+│
+├── floatty-core/              # Shared block store library
+│   └── src/
+│       ├── lib.rs             # Re-exports
+│       ├── block.rs           # Block types, BlockType enum
+│       ├── persistence.rs     # YDocPersistence (SQLite + WAL)
+│       └── store.rs           # YDocStore (thread-safe Y.Doc)
+│
+├── floatty-server/            # Standalone HTTP server
+│   └── src/
+│       ├── main.rs            # Axum server entry
+│       ├── lib.rs             # Re-exports
+│       ├── api.rs             # REST endpoints + WebSocket
+│       ├── auth.rs            # API key middleware
+│       ├── config.rs          # Config loading
+│       └── ws.rs              # WebSocket broadcaster
+│
+└── plugins/tauri-plugin-pty/src/
+    └── lib.rs                 # PTY spawning, output capture
 ```
 
 ### Key Tauri Commands
@@ -543,6 +579,9 @@ src-tauri/plugins/tauri-plugin-pty/src/
 | Multi-select | ✅ Complete (FLO-74) |
 | `$tv()` fuzzy picker | ✅ Complete |
 | Inline formatting (`**bold**`) | ✅ Complete |
+| **Headless architecture** | ✅ Complete (floatty-server) |
+| **HTTP REST API** | ✅ Complete (blocks CRUD) |
+| **WebSocket sync** | ✅ Complete (realtime broadcast) |
 | Wiki-links / backlinking | ❌ Not implemented |
 | Block references | ❌ Not implemented |
 | Block titles/aliases | ❌ Not implemented |

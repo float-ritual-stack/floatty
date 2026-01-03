@@ -86,12 +86,48 @@ Send structured context via escape sequence (invisible in terminal):
 printf '\e]7337;{"type":"ctx","line":"ctx::2025-12-16 @ 08:30 AM [project::x] message"}\a'
 ```
 
+## Headless Architecture (NEW)
+
+floatty is headless-first: the block store lives in a standalone HTTP server that desktop, CLI, and agents can all connect to.
+
+```
+┌──────────┐  ┌──────────┐  ┌──────────┐
+│ Desktop  │  │   CLI    │  │  Agent   │
+└────┬─────┘  └────┬─────┘  └────┬─────┘
+     └──────┬──────┴───────┬──────┘
+            │  HTTP/WS     │
+      ┌─────▼──────────────▼─────┐
+      │    floatty-server        │
+      │    (127.0.0.1:8765)      │
+      └──────────┬───────────────┘
+           ┌─────▼─────┐
+           │  SQLite   │
+           └───────────┘
+```
+
+### HTTP API
+
+```bash
+# Get all blocks
+curl -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8765/api/v1/blocks
+
+# Create block
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  -d '{"content": "Hello from CLI", "parentId": "..."}' \
+  http://127.0.0.1:8765/api/v1/blocks
+```
+
+Blocks created via API appear instantly in UI via WebSocket.
+
+API key is stored in `~/.floatty/config.toml`.
+
 ## Tech Stack
 
 - **Frontend**: SolidJS, TypeScript, Vite
 - **Terminal**: xterm.js + WebGL + Unicode11 + Ligatures addons
 - **Outliner**: Block tree with yjs CRDT, inline markdown formatting
 - **Backend**: Tauri v2, Rust
+- **Block Server**: floatty-server (Axum HTTP + WebSocket)
 - **PTY**: Vendored tauri-plugin-pty with custom batching
 - **Theming**: 5 bundled themes, hot-swap via ⌘;
 
