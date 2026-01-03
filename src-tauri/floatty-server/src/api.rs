@@ -357,6 +357,19 @@ async fn create_block(
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
 
+        // Validate parent exists before creating block
+        if let Some(ref parent_id) = req.parent_id {
+            match blocks.get(&txn, parent_id) {
+                Some(yrs::Value::YMap(_)) => {} // Parent exists, continue
+                _ => {
+                    return Err(ApiError::NotFound(format!(
+                        "Parent block not found: {}",
+                        parent_id
+                    )));
+                }
+            }
+        }
+
         // Create nested Y.Map for block with Y.Array for childIds
         let parent_id_value: yrs::Any = match &req.parent_id {
             Some(p) => yrs::Any::String(p.clone().into()),
@@ -380,7 +393,7 @@ async fn create_block(
 
         // Update parent's childIds or add to rootIds
         if let Some(ref parent_id) = req.parent_id {
-            // Add to parent's childIds array
+            // Add to parent's childIds array (already validated parent exists above)
             if let Some(yrs::Value::YMap(parent_map)) = blocks.get(&txn, parent_id) {
                 if let Some(yrs::Value::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
                     child_ids.push_back(&mut txn, id.as_str());

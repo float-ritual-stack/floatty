@@ -489,15 +489,9 @@ export function useSyncedYDoc(
               // Now get server's full state (which now includes our pushed changes)
               const serverState = await httpClient.getState();
 
-              // Apply server state to our doc
+              // Apply server state to our doc - this already contains our pushed diff
               isApplyingRemote = true;
               Y.applyUpdate(doc, serverState, 'remote');
-              isApplyingRemote = false;
-
-              // Apply our backup to merge any remaining local-only changes
-              // (CRDT ensures convergence even if there were concurrent edits)
-              isApplyingRemote = true;
-              Y.applyUpdate(doc, localBackup, 'remote');
               isApplyingRemote = false;
 
               console.log('[useSyncedYDoc] Reconciliation complete, clearing backup');
