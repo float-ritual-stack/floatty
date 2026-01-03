@@ -8,7 +8,7 @@
  */
 
 import { onMount, onCleanup, createSignal } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/tauriTypes';
 import * as Y from 'yjs';
 
 // ═══════════════════════════════════════════════════════════════
