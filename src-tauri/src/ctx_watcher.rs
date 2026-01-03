@@ -142,10 +142,9 @@ impl Drop for CtxWatcher {
         // Signal thread to stop
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
 
-        // Join the thread if it's running (wait up to 2 seconds for clean exit)
+        // Join the thread if it's running (thread checks running flag every ~1 second)
         if let Some(handle) = self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()).take() {
             log::info!("[CtxWatcher] Joining watcher thread on drop...");
-            // Thread checks running flag every 1 second, so 2 seconds is enough
             if handle.join().is_err() {
                 log::warn!("[CtxWatcher] Watcher thread panicked during join");
             }
