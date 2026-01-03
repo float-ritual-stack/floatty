@@ -10,15 +10,27 @@ use axum::{
     },
     response::Response,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use futures_util::{SinkExt, StreamExt};
+use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+
+/// Message format for WebSocket broadcasts
+#[derive(Clone, Serialize)]
+pub struct BroadcastMessage {
+    /// Transaction ID from the sender (for echo prevention)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_id: Option<String>,
+    /// Base64-encoded Y.Doc update bytes
+    pub data: String,
+}
 
 /// Shared state for WebSocket broadcasting
 #[derive(Clone)]
 pub struct WsBroadcaster {
     /// Channel for broadcasting Y.Doc updates to all connected clients
-    tx: broadcast::Sender<Vec<u8>>,
+    tx: broadcast::Sender<BroadcastMessage>,
 }
 
 impl WsBroadcaster {
@@ -29,9 +41,13 @@ impl WsBroadcaster {
     }
 
     /// Broadcast a Y.Doc update to all connected clients
-    pub fn broadcast(&self, update: Vec<u8>) {
+    pub fn broadcast(&self, update: Vec<u8>, tx_id: Option<String>) {
         let update_len = update.len();
-        match self.tx.send(update) {
+        let msg = BroadcastMessage {
+            tx_id,
+            data: BASE64.encode(&update),
+        };
+        match self.tx.send(msg) {
             Ok(receiver_count) => {
                 if receiver_count > 0 {
                     tracing::trace!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
@@ -46,7 +62,7 @@ impl WsBroadcaster {
     }
 
     /// Subscribe to updates (called by each WebSocket connection)
-    fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
+    fn subscribe(&self) -> broadcast::Receiver<BroadcastMessage> {
         self.tx.subscribe()
     }
 }
@@ -68,9 +84,16 @@ async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) {
 
     // Spawn task to forward broadcasts to this client
     let send_task = tokio::spawn(async move {
-        while let Ok(update) = rx.recv().await {
-            // Send as binary message (Y.Doc update bytes)
-            if sender.send(Message::Binary(update.into())).await.is_err() {
+        while let Ok(msg) = rx.recv().await {
+            // Send as JSON text message (includes txId for echo prevention)
+            let json = match serde_json::to_string(&msg) {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::error!("Failed to serialize broadcast: {}", e);
+                    continue;
+                }
+            };
+            if sender.send(Message::Text(json.into())).await.is_err() {
                 break; // Client disconnected
             }
         }

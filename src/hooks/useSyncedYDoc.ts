@@ -65,7 +65,8 @@ export async function forceSyncNow(): Promise<void> {
   try {
     const httpClient = getHttpClient();
     for (const update of updates) {
-      await httpClient.applyUpdate(update);
+      const txId = generateTxId();
+      await httpClient.applyUpdate(update, txId);
       sentCount++;
     }
     sharedRetryCount = 0;
@@ -144,6 +145,23 @@ let wsReconnectTimer: number | null = null;
 let wsRetryCount = 0;
 const WS_RECONNECT_DELAY = 2000;
 const WS_MAX_RECONNECT_DELAY = 30000;
+
+// Echo prevention: track txIds we sent to filter them from broadcasts
+const recentTxIds = new Set<string>();
+const MAX_RECENT_TX_IDS = 50; // Prevent unbounded growth
+let txIdCounter = 0;
+
+/** Generate a unique transaction ID */
+function generateTxId(): string {
+  const id = `${Date.now()}-${txIdCounter++}`;
+  recentTxIds.add(id);
+  // Trim old entries if set gets too large
+  if (recentTxIds.size > MAX_RECENT_TX_IDS) {
+    const iterator = recentTxIds.values();
+    recentTxIds.delete(iterator.next().value);
+  }
+  return id;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // LOCAL STORAGE BACKUP (crash resilience)
@@ -232,7 +250,8 @@ async function forceFlushOnReconnect() {
     const { getHttpClient } = await import('../lib/httpClient');
     const httpClient = getHttpClient();
     for (const update of updates) {
-      await httpClient.applyUpdate(update);
+      const txId = generateTxId();
+      await httpClient.applyUpdate(update, txId);
     }
     sharedRetryCount = 0;
     console.log('[WS] Successfully flushed pending updates on reconnect');
@@ -312,14 +331,25 @@ function connectWebSocket() {
     };
 
     sharedWebSocket.onmessage = (event) => {
-      // Server sends binary Y.Doc updates
-      if (event.data instanceof Blob) {
-        event.data.arrayBuffer().then((buffer) => {
-          const update = new Uint8Array(buffer);
+      // Server sends JSON text messages: { txId?: string, data: string (base64) }
+      if (typeof event.data === 'string') {
+        try {
+          const msg = JSON.parse(event.data) as { txId?: string; data: string };
+
+          // Echo prevention: skip if this is our own update
+          if (msg.txId && recentTxIds.has(msg.txId)) {
+            console.log('[WS] Skipping own update (txId:', msg.txId, ')');
+            recentTxIds.delete(msg.txId); // Clean up after filtering
+            return;
+          }
+
+          // Decode base64 and apply
+          const update = base64ToBytes(msg.data);
           console.log('[WS] Received update:', update.length, 'bytes');
-          // Apply with 'remote' origin so we don't echo it back
           Y.applyUpdate(sharedDoc, update, 'remote');
-        });
+        } catch (err) {
+          console.error('[WS] Failed to parse message:', err);
+        }
       }
     };
 
@@ -422,7 +452,8 @@ export function useSyncedYDoc(
       const httpClient = getHttpClient();
       // Send each delta individually - they're small and we want granular persistence
       for (const update of updates) {
-        await httpClient.applyUpdate(update);
+        const txId = generateTxId();
+        await httpClient.applyUpdate(update, txId);
         sentCount++;
       }
       sharedRetryCount = 0; // Reset on success

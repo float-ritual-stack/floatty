@@ -23,8 +23,8 @@ export interface FloattyHttpClient {
   getState(): Promise<Uint8Array>;
   /** Get state vector for reconciliation (what updates server has) */
   getStateVector(): Promise<Uint8Array>;
-  /** Send update delta to server */
-  applyUpdate(update: Uint8Array): Promise<void>;
+  /** Send update delta to server. Optional txId for echo prevention. */
+  applyUpdate(update: Uint8Array, txId?: string): Promise<void>;
   /** Health check */
   isHealthy(): Promise<boolean>;
 }
@@ -107,13 +107,18 @@ class HttpClient implements FloattyHttpClient {
     return base64ToBytes(data.state_vector);
   }
 
-  async applyUpdate(update: Uint8Array): Promise<void> {
+  async applyUpdate(update: Uint8Array, txId?: string): Promise<void> {
     const updateB64 = bytesToBase64(update);
+
+    const body: { update: string; tx_id?: string } = { update: updateB64 };
+    if (txId) {
+      body.tx_id = txId;
+    }
 
     const response = await fetch(`${this.url}/api/v1/update`, {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify({ update: updateB64 }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

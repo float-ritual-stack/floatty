@@ -58,6 +58,10 @@ pub struct StateVectorResponse {
 #[derive(Deserialize)]
 pub struct UpdateRequest {
     pub update: String, // base64 encoded Y.Doc update
+    /// Optional transaction ID for echo prevention.
+    /// If provided, broadcast will include it so sender can filter its own updates.
+    #[serde(default)]
+    pub tx_id: Option<String>,
 }
 
 /// Block list response
@@ -186,8 +190,8 @@ async fn apply_update(
 
     state.store.apply_update(&update_bytes)?;
 
-    // Broadcast to all WebSocket clients
-    state.broadcaster.broadcast(update_bytes);
+    // Broadcast to all WebSocket clients (include tx_id for echo prevention)
+    state.broadcaster.broadcast(update_bytes, req.tx_id);
 
     Ok(StatusCode::OK)
 }
@@ -411,7 +415,7 @@ async fn create_block(
 
     // Persist and broadcast to WebSocket clients
     state.store.persist_update(&update)?;
-    state.broadcaster.broadcast(update);
+    state.broadcaster.broadcast(update, None);
 
     let block_type = floatty_core::parse_block_type(&req.content);
 
@@ -503,7 +507,7 @@ async fn update_block(
 
     // Persist and broadcast to WebSocket clients
     state.store.persist_update(&update)?;
-    state.broadcaster.broadcast(update);
+    state.broadcaster.broadcast(update, None);
 
     let block_type = floatty_core::parse_block_type(&req.content);
 
@@ -588,7 +592,7 @@ async fn delete_block(
 
     // Persist and broadcast to WebSocket clients
     state.store.persist_update(&update)?;
-    state.broadcaster.broadcast(update);
+    state.broadcaster.broadcast(update, None);
 
     Ok(StatusCode::NO_CONTENT)
 }
