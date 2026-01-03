@@ -505,7 +505,10 @@ export function useSyncedYDoc(
                 Y.applyUpdate(doc, stateBytes, 'remote');
                 isApplyingRemote = false;
               }
-              // Keep the backup in case user wants to try again
+              // Clear the failing backup to prevent retry loops on every app start.
+              // The backup was already attempted and server state has been applied.
+              console.warn('[useSyncedYDoc] Clearing failed backup after server state fallback');
+              clearBackup();
             }
           } else {
             // Normal load - no local backup
