@@ -1284,6 +1284,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "dirs 5.0.1",
+ "floatty-core",
  "hex",
  "log",
  "notify",
@@ -1305,6 +1306,20 @@ dependencies = [
  "toml 0.8.2",
  "url",
  "walkdir",
+ "yrs",
+]
+
+[[package]]
+name = "floatty-core"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "log",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
  "yrs",
 ]
 

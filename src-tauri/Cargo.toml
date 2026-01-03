@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "floatty-core"]
+resolver = "2"
+
 [package]
 name = "float-pty"
 version = "0.1.0"
@@ -23,6 +27,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-pty = { path = "plugins/tauri-plugin-pty" }
 tauri-plugin-os = "2"
+floatty-core = { path = "floatty-core" }
 
 # Context aggregator dependencies
 rusqlite = { version = "0.32", features = ["bundled"] }
