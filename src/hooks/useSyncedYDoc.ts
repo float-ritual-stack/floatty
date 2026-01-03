@@ -70,6 +70,39 @@ let wsReconnectTimer: number | null = null;
 const WS_RECONNECT_DELAY = 2000;
 
 /**
+ * Force flush pending updates immediately.
+ * Used on WebSocket reconnect to sync state before receiving broadcasts.
+ */
+async function forceFlushOnReconnect() {
+  if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
+
+  if (!isClientInitialized()) {
+    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot flush');
+    return;
+  }
+
+  sharedIsFlushing = true;
+  const updates = sharedPendingUpdates;
+  sharedPendingUpdates = [];
+
+  try {
+    const { getHttpClient } = await import('../lib/httpClient');
+    const httpClient = getHttpClient();
+    for (const update of updates) {
+      await httpClient.applyUpdate(update);
+    }
+    sharedRetryCount = 0;
+    console.log('[WS] Successfully flushed pending updates on reconnect');
+  } catch (err) {
+    console.error('[WS] Failed to flush pending updates on reconnect:', err);
+    // Restore updates for retry
+    sharedPendingUpdates = [...updates, ...sharedPendingUpdates];
+  } finally {
+    sharedIsFlushing = false;
+  }
+}
+
+/**
  * Connect to WebSocket for real-time updates from server.
  * Called once after initial state load.
  */
@@ -96,6 +129,21 @@ function connectWebSocket() {
 
     sharedWebSocket.onopen = () => {
       console.log('[WS] Connected');
+      // Force flush any pending HTTP updates to ensure server has our latest state
+      // before we start receiving broadcasts. This prevents the "phantom data loss"
+      // scenario where local edits made during disconnect appear to vanish.
+      if (sharedPendingUpdates.length > 0) {
+        console.log('[WS] Flushing', sharedPendingUpdates.length, 'pending updates on reconnect');
+        // Clear any existing timer and flush immediately
+        if (sharedSyncTimer) {
+          clearTimeout(sharedSyncTimer);
+          sharedSyncTimer = null;
+        }
+        // Use a microtask to ensure flush happens after connection is fully established
+        queueMicrotask(async () => {
+          await forceFlushOnReconnect();
+        });
+      }
     };
 
     sharedWebSocket.onmessage = (event) => {

@@ -30,8 +30,19 @@ impl WsBroadcaster {
 
     /// Broadcast a Y.Doc update to all connected clients
     pub fn broadcast(&self, update: Vec<u8>) {
-        // Ignore send errors (no receivers connected)
-        let _ = self.tx.send(update);
+        let update_len = update.len();
+        match self.tx.send(update) {
+            Ok(receiver_count) => {
+                if receiver_count > 0 {
+                    tracing::trace!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
+                }
+            }
+            Err(_) => {
+                // No receivers connected - this is expected when no WebSocket clients
+                // are connected. Only log at trace level to avoid noise.
+                tracing::trace!("Broadcast skipped (no WebSocket clients connected)");
+            }
+        }
     }
 
     /// Subscribe to updates (called by each WebSocket connection)

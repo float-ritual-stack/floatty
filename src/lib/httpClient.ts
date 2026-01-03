@@ -107,8 +107,14 @@ class HttpClient implements FloattyHttpClient {
       const response = await fetch(`${this.url}/api/v1/health`, {
         method: 'GET',
       });
+      if (!response.ok) {
+        console.warn(`[httpClient] Health check returned ${response.status} ${response.statusText}`);
+      }
       return response.ok;
-    } catch {
+    } catch (err) {
+      // Log specific error for debugging - helps distinguish between
+      // "server not started yet" vs "server URL wrong" vs "network issue"
+      console.error('[httpClient] Health check failed:', err);
       return false;
     }
   }

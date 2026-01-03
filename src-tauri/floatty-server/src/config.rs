@@ -131,7 +131,10 @@ impl ServerConfig {
 
         // Ensure directory exists
         if let Some(parent) = config_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::error!("Failed to create config directory {:?}: {}", parent, e);
+                return; // Don't attempt write if directory creation failed
+            }
         }
 
         // Write back

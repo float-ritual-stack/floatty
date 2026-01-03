@@ -20,6 +20,14 @@ use yrs::{Array, Map, ReadTxn, Transact};
 /// Default server port (matches floatty-server)
 const DEFAULT_SERVER_PORT: u16 = 8765;
 
+/// PID file path for stale server detection
+fn pid_file_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".floatty")
+        .join("server.pid")
+}
+
 /// Server info returned to frontend for HTTP client initialization
 #[derive(Clone, Serialize)]
 pub struct ServerInfo {
@@ -192,6 +200,8 @@ impl Drop for ServerState {
             if let Ok(mut child) = process.lock() {
                 log::info!("Killing floatty-server subprocess (we spawned it)");
                 let _ = child.kill();
+                // Clean up PID file on graceful shutdown
+                remove_pid_file();
             }
         } else {
             log::info!("Not killing floatty-server (reusing existing instance)");
@@ -601,12 +611,105 @@ fn uninstall_shell_hooks() -> Result<(), String> {
     log::info!("Removed floatty hooks from {:?}", zshrc_path);
     Ok(())
 }
+/// Kill a stale server process using saved PID file.
+/// Returns true if a stale server was found and killed.
+fn kill_stale_server() -> bool {
+    let pid_path = pid_file_path();
+
+    if !pid_path.exists() {
+        return false;
+    }
+
+    // Read PID from file
+    let pid_str = match std::fs::read_to_string(&pid_path) {
+        Ok(s) => s.trim().to_string(),
+        Err(e) => {
+            eprintln!("[floatty] Failed to read PID file: {}", e);
+            let _ = std::fs::remove_file(&pid_path);
+            return false;
+        }
+    };
+
+    let pid: u32 = match pid_str.parse() {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("[floatty] Invalid PID in file: {}", pid_str);
+            let _ = std::fs::remove_file(&pid_path);
+            return false;
+        }
+    };
+
+    // Check if process is still running (using kill -0 which doesn't actually kill)
+    let is_running = std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !is_running {
+        eprintln!("[floatty] PID {} from file is not running (stale PID file)", pid);
+        let _ = std::fs::remove_file(&pid_path);
+        return false;
+    }
+
+    // Process exists - kill it
+    eprintln!("[floatty] Killing stale server process (PID {})", pid);
+    let killed = std::process::Command::new("kill")
+        .arg(&pid.to_string())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if killed {
+        // Wait a moment for process to exit
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let _ = std::fs::remove_file(&pid_path);
+        eprintln!("[floatty] Stale server killed successfully");
+        true
+    } else {
+        eprintln!("[floatty] Failed to kill stale server (PID {})", pid);
+        false
+    }
+}
+
+/// Write server PID to file for stale process detection
+fn write_pid_file(pid: u32) {
+    let pid_path = pid_file_path();
+
+    // Ensure directory exists
+    if let Some(parent) = pid_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("[floatty] Failed to create PID file directory: {}", e);
+            return;
+        }
+    }
+
+    if let Err(e) = std::fs::write(&pid_path, pid.to_string()) {
+        eprintln!("[floatty] Failed to write PID file: {}", e);
+    } else {
+        eprintln!("[floatty] Wrote server PID {} to {:?}", pid, pid_path);
+    }
+}
+
+/// Remove PID file on clean shutdown
+fn remove_pid_file() {
+    let pid_path = pid_file_path();
+    if pid_path.exists() {
+        if let Err(e) = std::fs::remove_file(&pid_path) {
+            log::warn!("Failed to remove PID file: {}", e);
+        }
+    }
+}
+
 /// Spawn the floatty-server subprocess and wait for it to be ready.
 /// If a server is already running on the port, connects to it instead.
 ///
 /// Returns `ServerState` on success, or None if spawn/health-check fails.
 /// Uses eprintln for early boot logging (before tauri_plugin_log is initialized).
 fn spawn_server(port: u16) -> Option<ServerState> {
+    // First, kill any stale server from previous crashes
+    kill_stale_server();
+
     let url = format!("http://127.0.0.1:{}", port);
 
     // Check if server is already running (from previous session or standalone)
@@ -633,6 +736,9 @@ fn spawn_server(port: u16) -> Option<ServerState> {
             e
         })
         .ok()?;
+
+    // Write PID file for stale process detection on next launch
+    write_pid_file(child.id());
 
     // Wait for server to be ready
     if !wait_for_server_health(&url) {
