@@ -36,12 +36,14 @@ export function hasTvVariables(command: string): boolean {
  * @param command - The extracted command (after prefix stripped)
  * @param blockId - The parent block ID (sh:: block)
  * @param actions - Block store actions for creating/deleting picker blocks
+ * @param paneId - Pane ID for scoping DOM queries in split layouts
  * @returns The command with all $tv() patterns replaced with selections
  */
 export async function resolveTvVariables(
   command: string,
   blockId: string,
-  actions: ExecutorActions
+  actions: ExecutorActions,
+  paneId?: string
 ): Promise<string> {
   // Reset regex state (global regex is stateful)
   TV_PATTERN.lastIndex = 0;
@@ -62,7 +64,7 @@ export async function resolveTvVariables(
 
     try {
       // Spawn tv in the picker block and wait for selection
-      const selection = await spawnTvPicker(pickerId, channel);
+      const selection = await spawnTvPicker(pickerId, channel, paneId);
 
       // Substitute the selection (or empty string if cancelled)
       result = result.replace(fullMatch, selection);
@@ -90,14 +92,20 @@ export async function resolveTvVariables(
  *
  * @param pickerId - The picker block ID (for xterm container lookup)
  * @param channel - TV channel (files, text, git-log, etc.)
+ * @param paneId - Pane ID for scoping DOM queries in split layouts
  * @returns The selected path, or empty string if cancelled
  */
-async function spawnTvPicker(pickerId: string, channel: string): Promise<string> {
+async function spawnTvPicker(pickerId: string, channel: string, paneId?: string): Promise<string> {
   return new Promise((resolve) => {
     // Wait for the picker block to render and get its container
     // Poll with timeout since SolidJS reactivity might not flush immediately
     const findContainer = (attempts = 0): HTMLElement | null => {
-      const container = document.querySelector(`.picker-terminal[data-block-id="${pickerId}"]`);
+      // Scope query to specific pane when in split layout (FLO-99)
+      // Without paneId, falls back to first match (legacy behavior)
+      const selector = paneId
+        ? `.picker-terminal[data-block-id="${pickerId}"][data-pane-id="${paneId}"]`
+        : `.picker-terminal[data-block-id="${pickerId}"]`;
+      const container = document.querySelector(selector);
       if (container instanceof HTMLElement) return container;
       if (attempts < 10) {
         // Retry after a short delay (SolidJS batch updates)

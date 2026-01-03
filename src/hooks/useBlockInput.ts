@@ -314,6 +314,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           createBlockInsideAtTop: store.createBlockInsideAtTop,
           updateBlockContent: store.updateBlockContent,
           deleteBlock: store.deleteBlock,
+          paneId: deps.paneId,
         });
         return;
 

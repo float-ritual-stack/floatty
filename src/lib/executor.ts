@@ -22,6 +22,8 @@ export interface ExecutorActions {
   updateBlockContent: (id: string, content: string) => void;
   /** Delete a block (optional - for replacing placeholder with structured output) */
   deleteBlock?: (id: string) => boolean;
+  /** Pane ID for scoping picker queries in split layouts */
+  paneId?: string;
 }
 
 export interface ExecutableBlockHandler {
@@ -142,7 +144,7 @@ export async function executeBlock(
   if (hasTvVariables(extracted)) {
     try {
       const original = extracted;
-      extracted = await resolveTvVariables(extracted, blockId, actions);
+      extracted = await resolveTvVariables(extracted, blockId, actions, actions.paneId);
       // If user cancelled all pickers, extracted might be empty or have empty substitutions
       if (!extracted.trim()) {
         return; // User cancelled, don't execute

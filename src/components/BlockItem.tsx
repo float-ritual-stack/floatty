@@ -206,6 +206,7 @@ export function BlockItem(props: BlockItemProps) {
             createBlockInsideAtTop: store.createBlockInsideAtTop,
             updateBlockContent: store.updateBlockContent,
             deleteBlock: store.deleteBlock,
+            paneId: props.paneId,
           });
           return;
         }
@@ -408,7 +409,7 @@ export function BlockItem(props: BlockItemProps) {
           <Show when={block()?.type === 'picker'}>
             <div class="picker-block">
               <div class="picker-label">{block()?.content || 'picker::'}</div>
-              <div class="picker-terminal" data-block-id={props.id} />
+              <div class="picker-terminal" data-block-id={props.id} data-pane-id={props.paneId} />
             </div>
           </Show>
 
