@@ -9,6 +9,7 @@ import { tabStore } from './hooks/useTabStore';
 import { layoutStore } from './hooks/useLayoutStore';
 import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
+import { initHttpClient } from './lib/httpClient';
 import './App.css';
 
 // Type for Tauri drag-drop event payload
@@ -19,13 +20,34 @@ interface DragDropPayload {
 
 function App() {
   let unlistenDragDrop: UnlistenFn | undefined;
+  const [serverConnected, setServerConnected] = createSignal(false);
+  const [serverError, setServerError] = createSignal<string | null>(null);
   const [workspaceLoaded, setWorkspaceLoaded] = createSignal(false);
   const persistence = getWorkspacePersistence();
 
-  // Load saved theme and terminal config on startup
+  // Phase 3: Initialize HTTP client before loading workspace
+  // The HTTP client connects to floatty-server (spawned by Tauri)
+  onMount(async () => {
+    try {
+      await initHttpClient();
+      console.log('[App] HTTP client connected to floatty-server');
+      setServerConnected(true);
+    } catch (err) {
+      console.error('[App] Failed to connect to floatty-server:', err);
+      setServerError(String(err));
+    }
+  });
+
+  // Load saved theme and terminal config on startup (after server connected)
   onMount(async () => {
     // Config loading moved to terminalManager.attach() to fix race condition
     themeStore.loadTheme();
+  });
+
+  // Load workspace once server is connected
+  createEffect(async () => {
+    if (!serverConnected()) return;
+    if (workspaceLoaded()) return; // Already loaded
 
     // Load workspace layout state (FLO-81)
     // This must happen before Terminal component renders to avoid flickering
@@ -35,8 +57,10 @@ function App() {
       console.error('[App] Failed to load workspace:', err);
     }
     setWorkspaceLoaded(true);
+  });
 
-    // Listen for file drag-drop from Finder
+  // Listen for file drag-drop from Finder
+  onMount(async () => {
     // When files are dropped, paste their paths into the active terminal
     unlistenDragDrop = await listen<DragDropPayload>('tauri://drag-drop', (event) => {
       const paths = event.payload.paths;
@@ -121,10 +145,21 @@ function App() {
   });
 
   return (
-    <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
-      <WorkspaceProvider>
-        <Terminal />
-      </WorkspaceProvider>
+    <Show
+      when={!serverError()}
+      fallback={
+        <div class="error-screen">
+          <h2>Failed to connect to floatty-server</h2>
+          <pre>{serverError()}</pre>
+          <p>Check the logs and restart the application.</p>
+        </div>
+      }
+    >
+      <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
+        <WorkspaceProvider>
+          <Terminal />
+        </WorkspaceProvider>
+      </Show>
     </Show>
   );
 }

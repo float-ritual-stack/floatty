@@ -103,7 +103,16 @@ interface TauriCommands {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // YDOC COMMANDS
+  // SERVER INFO (for HTTP client initialization)
+  // ─────────────────────────────────────────────────────────────
+  get_server_info: {
+    args: Record<string, never>;
+    returns: { url: string; api_key: string };
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // YDOC COMMANDS (LEGACY - migrating to HTTP)
+  // These remain for backwards compatibility during Phase 3 transition
   // ─────────────────────────────────────────────────────────────
   get_initial_state: {
     args: Record<string, never>;

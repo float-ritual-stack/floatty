@@ -11,10 +11,21 @@ use db::{CtxDatabase, CtxMarker};
 use floatty_core::YDocStore;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::process::Child;
 use std::sync::Arc;
 use tauri::{Manager, State};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use yrs::{Array, Map, ReadTxn, Transact};
+
+/// Default server port (matches floatty-server)
+const DEFAULT_SERVER_PORT: u16 = 8765;
+
+/// Server info returned to frontend for HTTP client initialization
+#[derive(Clone, Serialize)]
+pub struct ServerInfo {
+    pub url: String,
+    pub api_key: String,
+}
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)
 #[derive(Clone, Serialize, Deserialize)]
@@ -162,12 +173,37 @@ struct AppStateInner {
     #[allow(dead_code)]
     parser: CtxParser,
     /// Y.Doc store with integrated persistence (from floatty-core)
+    #[allow(dead_code)] // Y.Doc sync now via server, but store still needed for ctx_parser
     store: YDocStore,
+}
+
+/// State for the floatty-server subprocess
+struct ServerState {
+    /// Server info (URL + API key) for frontend
+    info: ServerInfo,
+    /// Child process handle - only Some if we spawned it (None = reusing existing server)
+    process: Option<std::sync::Mutex<Child>>,
+}
+
+impl Drop for ServerState {
+    fn drop(&mut self) {
+        // Only kill if we spawned it
+        if let Some(ref process) = self.process {
+            if let Ok(mut child) = process.lock() {
+                log::info!("Killing floatty-server subprocess (we spawned it)");
+                let _ = child.kill();
+            }
+        } else {
+            log::info!("Not killing floatty-server (reusing existing instance)");
+        }
+    }
 }
 
 /// Managed state wrapper - inner is None when DB initialization fails
 pub struct AppState {
     inner: Option<AppStateInner>,
+    /// Server subprocess state - None if server failed to spawn
+    server: Option<ServerState>,
 }
 
 /// Get ctx:: markers for sidebar display
@@ -237,6 +273,17 @@ fn clear_ctx_markers(state: State<AppState>) -> Result<(), String> {
         .ok_or_else(|| "ctx:: system unavailable: database failed to initialize".to_string())?;
 
     inner.db.clear_all().map_err(|e| e.to_string())
+}
+
+/// Get server info for HTTP client initialization
+///
+/// Returns the server URL and API key for the frontend to connect.
+/// Called once on app startup to initialize the HTTP client.
+#[tauri::command]
+fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
+    state.server.as_ref()
+        .map(|s| s.info.clone())
+        .ok_or_else(|| "Server not running".to_string())
 }
 
 /// Get the initial Yjs document state as Base64
@@ -554,12 +601,163 @@ fn uninstall_shell_hooks() -> Result<(), String> {
     log::info!("Removed floatty hooks from {:?}", zshrc_path);
     Ok(())
 }
+/// Spawn the floatty-server subprocess and wait for it to be ready.
+/// If a server is already running on the port, connects to it instead.
+///
+/// Returns `ServerState` on success, or None if spawn/health-check fails.
+/// Uses eprintln for early boot logging (before tauri_plugin_log is initialized).
+fn spawn_server(port: u16) -> Option<ServerState> {
+    let url = format!("http://127.0.0.1:{}", port);
+
+    // Check if server is already running (from previous session or standalone)
+    if wait_for_server_health(&url) {
+        eprintln!("[floatty] Reusing existing server at {}", url);
+        let api_key = read_api_key_from_config()?;
+        return Some(ServerState {
+            info: ServerInfo { url, api_key },
+            process: None, // We didn't spawn it, don't kill it
+        });
+    }
+
+    // No server running, spawn one
+    let server_binary = find_server_binary()?;
+    eprintln!("[floatty] Spawning server from {:?}", server_binary);
+
+    // Spawn server (it reads config for port/api_key itself)
+    let child = std::process::Command::new(&server_binary)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            log::error!("Failed to spawn floatty-server: {}", e);
+            e
+        })
+        .ok()?;
+
+    // Wait for server to be ready
+    if !wait_for_server_health(&url) {
+        log::error!("Server health check failed after timeout");
+        return None;
+    }
+
+    // Read API key from config (server generates and persists if needed)
+    let api_key = read_api_key_from_config()?;
+
+    log::info!("floatty-server ready at {}", url);
+
+    Some(ServerState {
+        info: ServerInfo { url, api_key },
+        process: Some(std::sync::Mutex::new(child)),
+    })
+}
+
+/// Read API key from ~/.floatty/config.toml [server].api_key
+fn read_api_key_from_config() -> Option<String> {
+    let config_path = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".floatty")
+        .join("config.toml");
+
+    if !config_path.exists() {
+        log::warn!("Config file not found at {:?}", config_path);
+        return None;
+    }
+
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let doc: toml::Table = content.parse().ok()?;
+
+    // Read from [server].api_key
+    let api_key = doc
+        .get("server")
+        .and_then(|s| s.as_table())
+        .and_then(|s| s.get("api_key"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    if api_key.is_none() {
+        log::warn!("No [server].api_key found in config");
+    }
+
+    api_key
+}
+
+/// Find the floatty-server binary (checks exe dir, workspace paths, then PATH)
+fn find_server_binary() -> Option<PathBuf> {
+    // First, try relative to current executable (dev mode)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let dev_path = exe_dir.join("floatty-server");
+            if dev_path.exists() {
+                return Some(dev_path);
+            }
+        }
+    }
+
+    // Try cargo target directory (running from workspace)
+    let workspace_paths = [
+        "target/debug/floatty-server",
+        "src-tauri/target/debug/floatty-server",
+        "../target/debug/floatty-server",
+    ];
+    for path in workspace_paths {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // Check if it's in PATH (installed globally)
+    if let Ok(output) = std::process::Command::new("which")
+        .arg("floatty-server")
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+    }
+
+    eprintln!("[floatty] ERROR: Could not find floatty-server binary");
+    None
+}
+
+/// Wait for server health endpoint to respond (with retries)
+fn wait_for_server_health(base_url: &str) -> bool {
+    let health_url = format!("{}/api/v1/health", base_url);
+    let max_attempts = 30; // 3 seconds total
+    let delay = std::time::Duration::from_millis(100);
+
+    for attempt in 1..=max_attempts {
+        match std::process::Command::new("curl")
+            .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &health_url])
+            .output()
+        {
+            Ok(output) => {
+                let status = String::from_utf8_lossy(&output.stdout);
+                if status.trim() == "200" {
+                    log::info!("Server health check passed (attempt {})", attempt);
+                    return true;
+                }
+            }
+            Err(_) => {}
+        }
+        std::thread::sleep(delay);
+    }
+
+    false
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
 
     // Load config from ~/.floatty/config.toml (or defaults)
     let config = AggregatorConfig::load();
+
+    // Spawn floatty-server subprocess
+    let server_state = spawn_server(DEFAULT_SERVER_PORT);
 
     // Try to initialize database and ctx aggregation
     let inner = match CtxDatabase::open() {
@@ -662,7 +860,14 @@ pub fn run() {
     };
 
     // Always register AppState - inner is None when initialization fails
-    let state = AppState { inner };
+    // Log server status
+    if server_state.is_some() {
+        log::info!("floatty-server subprocess ready");
+    } else {
+        log::warn!("floatty-server failed to start - Y.Doc sync will fail");
+    }
+
+    let state = AppState { inner, server: server_state };
 
     // Build app with platform-specific plugins and commands
     let mut builder = tauri::Builder::default()
@@ -690,6 +895,7 @@ pub fn run() {
                     get_theme,
                     set_theme,
                     clear_ctx_markers,
+                    get_server_info,
                     get_initial_state,
                     apply_update,
                     execute_shell_command,
@@ -714,6 +920,7 @@ pub fn run() {
                     get_theme,
                     set_theme,
                     clear_ctx_markers,
+                    get_server_info,
                     get_initial_state,
                     apply_update,
                     execute_shell_command,

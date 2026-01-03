@@ -85,16 +85,61 @@ impl ServerConfig {
             .join("config.toml")
     }
 
-    /// Get the API key, generating one if not set
+    /// Get the API key, generating and persisting one if not set
     pub fn get_or_generate_api_key(&self) -> String {
-        self.api_key.clone().unwrap_or_else(|| {
-            // Generate a random API key
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
+        if let Some(ref key) = self.api_key {
+            return key.clone();
+        }
+
+        // Generate a random API key
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let new_key = format!("floatty-{:x}", timestamp);
+
+        // Persist to config file so it survives restarts
+        Self::save_api_key(&new_key);
+
+        new_key
+    }
+
+    /// Save just the API key to config (preserves other settings)
+    fn save_api_key(api_key: &str) {
+        let config_path = Self::config_path();
+
+        // Read existing config as raw TOML to preserve unknown fields
+        let mut doc: toml::Table = if config_path.exists() {
+            std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|s| s.parse().ok())
                 .unwrap_or_default()
-                .as_nanos();
-            format!("floatty-{:x}", timestamp)
-        })
+        } else {
+            toml::Table::new()
+        };
+
+        // Get or create [server] section
+        let server = doc
+            .entry("server")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+            .as_table_mut();
+
+        if let Some(server) = server {
+            server.insert("api_key".to_string(), toml::Value::String(api_key.to_string()));
+        }
+
+        // Ensure directory exists
+        if let Some(parent) = config_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        // Write back
+        let toml_str = toml::to_string_pretty(&doc).unwrap_or_default();
+        if let Err(e) = std::fs::write(&config_path, toml_str) {
+            tracing::warn!("Failed to persist API key: {}", e);
+        } else {
+            tracing::info!("Persisted API key to {:?}", config_path);
+        }
     }
 }

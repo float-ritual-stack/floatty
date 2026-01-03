@@ -37,6 +37,12 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
+    // Skip auth for CORS preflight (OPTIONS) requests
+    // CorsLayer handles these; auth would block with 401
+    if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
     // Extract and validate Authorization header
     let auth_header = request
         .headers()

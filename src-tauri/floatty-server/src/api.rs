@@ -514,7 +514,7 @@ async fn delete_block(
                         }
                     }
                     if let Some(idx) = remove_idx {
-                        child_ids.remove(&mut txn, idx, 1);
+                        child_ids.remove(&mut txn, idx);
                     }
                 }
             }
@@ -536,7 +536,7 @@ async fn delete_block(
                 }
             }
             if let Some(idx) = remove_index {
-                root_ids.remove(&mut txn, idx, 1);
+                root_ids.remove(&mut txn, idx);
             }
         }
 

@@ -7,11 +7,12 @@
 //!   cargo install --path src-tauri/floatty-server
 //!   floatty-server
 
-use axum::middleware;
+use axum::{http::Method, middleware};
 use floatty_core::YDocStore;
 use floatty_server::{api, auth, config::ServerConfig};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -25,16 +26,25 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Load config
+    // Load config from file
     let config = ServerConfig::load();
 
-    if !config.enabled {
+    // Environment variables override config file (for Tauri spawn)
+    let port: u16 = std::env::var("FLOATTY_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(config.port);
+
+    let api_key = std::env::var("FLOATTY_API_KEY")
+        .ok()
+        .unwrap_or_else(|| config.get_or_generate_api_key());
+
+    // Check if server is disabled (only from config file, env spawned = always run)
+    if std::env::var("FLOATTY_API_KEY").is_err() && !config.enabled {
         tracing::info!("Server disabled in config. Exiting.");
         return;
     }
 
-    // Get or generate API key
-    let api_key = config.get_or_generate_api_key();
     tracing::info!("API key: {}", api_key);
 
     // Create the block store
@@ -46,13 +56,20 @@ async fn main() {
         }
     };
 
-    // Build router with auth middleware
+    // CORS layer - allow requests from Tauri webview (localhost origins)
+    let cors = CorsLayer::new()
+        .allow_origin(Any) // Tauri uses tauri://localhost or http://localhost
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        .allow_headers(Any);
+
+    // Build router with CORS and auth middleware
     let auth_state = auth::ApiKeyAuth::new(api_key.clone());
     let app = api::create_router(Arc::clone(&store))
-        .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware));
+        .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
+        .layer(cors);
 
-    // Bind and serve
-    let addr: SocketAddr = format!("{}:{}", config.bind, config.port)
+    // Bind and serve (port from env overrides config)
+    let addr: SocketAddr = format!("{}:{}", config.bind, port)
         .parse()
         .expect("Invalid bind address");
 

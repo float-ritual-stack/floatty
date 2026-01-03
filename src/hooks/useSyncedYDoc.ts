@@ -1,18 +1,20 @@
 /**
- * useSyncedYDoc - Bridge between Rust (yrs) and Frontend (yjs)
+ * useSyncedYDoc - Bridge between Server (floatty-server) and Frontend (yjs)
+ *
+ * Phase 3: Uses HTTP client to sync with floatty-server instead of Tauri IPC.
  *
  * Handles:
- * - Loading initial state from Rust on mount
- * - Observing local Y.Doc changes and syncing to Rust
- * - Applying updates from Rust to local Y.Doc
+ * - Loading initial state from server on mount
+ * - Observing local Y.Doc changes and syncing to server
+ * - Debounced batch updates with retry logic
  */
 
 import { onMount, onCleanup, createSignal } from 'solid-js';
-import { invoke } from '../lib/tauriTypes';
+import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import * as Y from 'yjs';
 
 // ═══════════════════════════════════════════════════════════════
-// BASE64 UTILITIES
+// BASE64 UTILITIES (exported for tests and other consumers)
 // ═══════════════════════════════════════════════════════════════
 
 export function base64ToBytes(base64: string): Uint8Array {
@@ -113,10 +115,16 @@ export function useSyncedYDoc(
     sharedSyncTimer = window.setTimeout(flushUpdates, delay ?? syncDebounce);
   };
 
-  // Send pending updates to Rust
+  // Send pending updates to server via HTTP
   const flushUpdates = async () => {
     // Guard against concurrent flushes
     if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
+
+    // Ensure HTTP client is initialized
+    if (!isClientInitialized()) {
+      console.warn('[useSyncedYDoc] HTTP client not initialized, skipping flush');
+      return;
+    }
 
     sharedIsFlushing = true;
     const updates = sharedPendingUpdates;
@@ -124,16 +132,16 @@ export function useSyncedYDoc(
 
     let sentCount = 0;
     try {
+      const httpClient = getHttpClient();
       // Send each delta individually - they're small and we want granular persistence
       for (const update of updates) {
-        const updateB64 = bytesToBase64(update);
-        await invoke('apply_update', { updateB64 });
+        await httpClient.applyUpdate(update);
         sentCount++;
       }
       sharedRetryCount = 0; // Reset on success
     } catch (err) {
       sharedRetryCount++;
-      console.error(`Failed to sync to Rust (attempt ${sharedRetryCount}/${MAX_RETRIES}):`, err);
+      console.error(`Failed to sync to server (attempt ${sharedRetryCount}/${MAX_RETRIES}):`, err);
       // Restore unsent updates to front of queue for retry
       sharedPendingUpdates = [...updates.slice(sentCount), ...sharedPendingUpdates];
 
@@ -186,10 +194,15 @@ export function useSyncedYDoc(
       // First load - do it
       sharedDocLoadPromise = (async () => {
         try {
-          const stateB64 = await invoke('get_initial_state', {});
-          if (stateB64) {
-            const stateBytes = base64ToBytes(stateB64);
+          // Ensure HTTP client is initialized
+          if (!isClientInitialized()) {
+            throw new Error('HTTP client not initialized');
+          }
 
+          const httpClient = getHttpClient();
+          const stateBytes = await httpClient.getState();
+
+          if (stateBytes && stateBytes.length > 0) {
             isApplyingRemote = true;
             Y.applyUpdate(doc, stateBytes);
             isApplyingRemote = false;
@@ -202,7 +215,7 @@ export function useSyncedYDoc(
           if (!sharedUndoManager) {
             const blocksMap = doc.getMap('blocks');
             sharedUndoManager = new Y.UndoManager(blocksMap, {
-              // Track all origins except 'remote' (which is from Rust)
+              // Track all origins except 'remote' (which is from server)
               trackedOrigins: new Set([null, undefined]),
             });
             // Clear stack so user can't undo past loaded state
@@ -210,7 +223,7 @@ export function useSyncedYDoc(
             sharedUndoManager.clear();
           }
         } catch (err) {
-          console.error('Failed to load initial state:', err);
+          console.error('Failed to load initial state from server:', err);
           sharedDocError = String(err);
         }
       })();
