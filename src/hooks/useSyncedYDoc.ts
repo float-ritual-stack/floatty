@@ -8,7 +8,7 @@
  */
 
 import { onMount, onCleanup, createSignal } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/tauriTypes';
 import * as Y from 'yjs';
 
 // ═══════════════════════════════════════════════════════════════
@@ -186,7 +186,7 @@ export function useSyncedYDoc(
       // First load - do it
       sharedDocLoadPromise = (async () => {
         try {
-          const stateB64 = await invoke<string>('get_initial_state');
+          const stateB64 = await invoke('get_initial_state', {});
           if (stateB64) {
             const stateBytes = base64ToBytes(stateB64);
 

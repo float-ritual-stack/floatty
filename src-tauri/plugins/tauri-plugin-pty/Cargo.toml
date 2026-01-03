@@ -17,6 +17,7 @@ serde_json = "1.0"
 tauri = { version = "^2" }
 base64 = "0.21"
 strip-ansi-escapes = "0.2"
+log = "0.4"
 
 [build-dependencies]
 tauri-plugin = { version = "^2", features = ["build"] }
