@@ -71,12 +71,20 @@ pub struct CtxMarker {
     pub retry_count: i32,
 }
 
-/// Database wrapper with connection pool
-pub struct CtxDatabase {
+/// Main application database.
+///
+/// Manages all persistent state for floatty:
+/// - ctx:: markers from JSONL session logs
+/// - Y.Doc append-only updates (CRDT persistence)
+/// - Workspace state (layout, tabs, etc.)
+/// - File watcher positions (resume support)
+///
+/// Location: ~/.floatty/ctx_markers.db (name kept for backwards compatibility)
+pub struct FloattyDb {
     conn: Mutex<Connection>,
 }
 
-impl CtxDatabase {
+impl FloattyDb {
     /// Open or create database at ~/.floatty/ctx_markers.db
     pub fn open() -> Result<Self> {
         let db_path = Self::db_path();

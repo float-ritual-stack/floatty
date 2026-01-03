@@ -55,6 +55,11 @@ export interface AggregatorConfig {
   max_retries: number;
   max_age_hours: number;
   theme: string;
+  font_size: number;
+  font_weight: number;
+  font_weight_bold: number;
+  line_height: number;
+  max_shell_output_bytes: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -108,19 +113,6 @@ interface TauriCommands {
   get_server_info: {
     args: Record<string, never>;
     returns: { url: string; api_key: string };
-  };
-
-  // ─────────────────────────────────────────────────────────────
-  // YDOC COMMANDS (LEGACY - migrating to HTTP)
-  // These remain for backwards compatibility during Phase 3 transition
-  // ─────────────────────────────────────────────────────────────
-  get_initial_state: {
-    args: Record<string, never>;
-    returns: string; // base64 encoded Y.Doc state
-  };
-  apply_update: {
-    args: { updateB64: string };
-    returns: void;
   };
 
   // ─────────────────────────────────────────────────────────────

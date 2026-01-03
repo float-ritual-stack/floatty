@@ -1,4 +1,4 @@
-use crate::db::{CtxDatabase, ParsedCtx};
+use crate::db::{FloattyDb, ParsedCtx};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ impl Default for ParserConfig {
     fn default() -> Self {
         Self {
             endpoint: "http://localhost:11434".to_string(),
-            model: "qwen2.5:7b".to_string(),
+            model: crate::config::DEFAULT_OLLAMA_MODEL.to_string(),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             timeout_ms: 30000,
             max_retries: 3,
@@ -112,7 +112,7 @@ struct RawParsedCtx {
 /// Background worker for parsing ctx:: markers via Ollama
 pub struct CtxParser {
     config: ParserConfig,
-    db: Arc<CtxDatabase>,
+    db: Arc<FloattyDb>,
     client: Client,
     running: Arc<std::sync::Mutex<bool>>,
     doc: Arc<RwLock<Doc>>,
@@ -121,7 +121,7 @@ pub struct CtxParser {
 }
 
 impl CtxParser {
-    pub fn new(db: Arc<CtxDatabase>, config: ParserConfig, doc: Arc<RwLock<Doc>>) -> Result<Self, String> {
+    pub fn new(db: Arc<FloattyDb>, config: ParserConfig, doc: Arc<RwLock<Doc>>) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms))
             .build()
