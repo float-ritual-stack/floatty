@@ -97,20 +97,6 @@ function toBlock(value: unknown): Block | null {
   };
 }
 
-function blockToPlainObject(block: Block): Record<string, unknown> {
-  return {
-    id: block.id,
-    parentId: block.parentId,
-    childIds: block.childIds,
-    content: block.content,
-    type: block.type,
-    metadata: block.metadata,
-    collapsed: block.collapsed,
-    createdAt: block.createdAt,
-    updatedAt: block.updatedAt,
-  };
-}
-
 /**
  * Create a nested Y.Map for a block with Y.Array for childIds.
  * This enables granular CRDT updates (no full-block rewrites).
@@ -149,7 +135,7 @@ function createBlockStore() {
 
   let _doc: Y.Doc | null = null;
   let _isInitializing = false; // Sync guard against race conditions
-  let _blocksObserver: ((events: Y.YEvent<any>[]) => void) | null = null;
+  let _blocksObserver: ((events: Y.YEvent<unknown>[]) => void) | null = null;
   let _rootIdsObserver: ((event: Y.YArrayEvent<string>) => void) | null = null;
 
   /**
@@ -188,7 +174,7 @@ function createBlockStore() {
     });
 
     // Observe Blocks Map (Deep - handles nested Y.Map property changes)
-    _blocksObserver = (events: Y.YEvent<any>[]) => {
+    _blocksObserver = (events: Y.YEvent<unknown>[]) => {
       batch(() => {
         // Track which blocks need refresh (deduped)
         const blocksToRefresh = new Set<string>();

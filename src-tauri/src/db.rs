@@ -492,6 +492,8 @@ impl CtxDatabase {
 
     /// Get all updates for a doc (replay on load)
     /// Returns updates in order (oldest first) for correct replay
+    /// NOTE: Not yet wired up - will be used when Y.Doc loading from DB is implemented
+    #[allow(dead_code)]
     pub fn get_ydoc_updates(&self, doc_key: &str) -> Result<Vec<Vec<u8>>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -513,6 +515,8 @@ impl CtxDatabase {
 
     /// Compact: delete all updates and replace with single snapshot
     /// This is a transaction to ensure atomicity
+    /// NOTE: Not yet wired up - will be used when Y.Doc compaction is implemented
+    #[allow(dead_code)]
     pub fn compact_ydoc(&self, doc_key: &str, snapshot: &[u8]) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;

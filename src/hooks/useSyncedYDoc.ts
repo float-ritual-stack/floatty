@@ -141,7 +141,9 @@ const DEFAULT_SYNC_DEBOUNCE = 50;
 // WebSocket for real-time sync from server
 let sharedWebSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
+let wsRetryCount = 0;
 const WS_RECONNECT_DELAY = 2000;
+const WS_MAX_RECONNECT_DELAY = 30000;
 
 // ═══════════════════════════════════════════════════════════════
 // LOCAL STORAGE BACKUP (crash resilience)
@@ -248,14 +250,15 @@ async function forceFlushOnReconnect() {
  * Called once after initial state load.
  */
 function connectWebSocket() {
-  // Already connected or connecting
+  // Already connected, connecting, or closing - avoid duplicate connections
   if (sharedWebSocket?.readyState === WebSocket.OPEN ||
-      sharedWebSocket?.readyState === WebSocket.CONNECTING) {
+      sharedWebSocket?.readyState === WebSocket.CONNECTING ||
+      sharedWebSocket?.readyState === WebSocket.CLOSING) {
     return;
   }
 
   // Get server URL from httpClient config
-  const serverUrl = (window as any).__FLOATTY_SERVER_URL__ as string | undefined;
+  const serverUrl = window.__FLOATTY_SERVER_URL__;
   if (!serverUrl) {
     console.warn('[WS] Server URL not set, skipping WebSocket');
     return;
@@ -270,6 +273,8 @@ function connectWebSocket() {
 
     sharedWebSocket.onopen = () => {
       console.log('[WS] Connected');
+      // Reset retry count on successful connection
+      wsRetryCount = 0;
       // Clear any previous connection error now that we're connected
       if (sharedPendingUpdates.length === 0) {
         setSyncStatus('synced');
@@ -307,9 +312,15 @@ function connectWebSocket() {
     sharedWebSocket.onclose = (event) => {
       console.log('[WS] Disconnected, code:', event.code);
       sharedWebSocket = null;
-      // Reconnect after delay
+      // Reconnect with exponential backoff
       if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
-      wsReconnectTimer = window.setTimeout(connectWebSocket, WS_RECONNECT_DELAY);
+      const backoffDelay = Math.min(
+        WS_RECONNECT_DELAY * Math.pow(2, wsRetryCount),
+        WS_MAX_RECONNECT_DELAY
+      );
+      wsRetryCount++;
+      console.log(`[WS] Reconnecting in ${backoffDelay}ms (attempt ${wsRetryCount})`);
+      wsReconnectTimer = window.setTimeout(connectWebSocket, backoffDelay);
     };
 
     sharedWebSocket.onerror = (error) => {

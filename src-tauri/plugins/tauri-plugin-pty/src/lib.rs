@@ -77,6 +77,13 @@ struct Session {
 
 type PtyHandler = u32;
 
+/// Safely convert a u32 PID to i32 for libc::kill().
+/// Returns None if PID exceeds i32::MAX (which would overflow on negation).
+#[cfg(unix)]
+fn safe_pid_to_i32(pid: u32) -> Option<i32> {
+    i32::try_from(pid).ok()
+}
+
 #[tauri::command]
 async fn spawn(
     file: String,
@@ -352,35 +359,42 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
         // Kill the process group (negative PID) to also kill child processes
         #[cfg(unix)]
         {
-            // First try SIGTERM for graceful shutdown
-            let result = unsafe { libc::kill(-(real_pid as i32), libc::SIGTERM) };
-            if result != 0 {
-                let err = std::io::Error::last_os_error();
-                // ESRCH means process already dead - that's fine
-                if err.raw_os_error() != Some(libc::ESRCH) {
-                    log::warn!("[PTY] kill: SIGTERM failed for PID {}: {}", real_pid, err);
-                }
-            }
-
-            // Brief grace period then SIGKILL
-            tokio::time::sleep(Duration::from_millis(50)).await;
-
-            let result = unsafe { libc::kill(-(real_pid as i32), libc::SIGKILL) };
-            if result != 0 {
-                let err = std::io::Error::last_os_error();
-                if err.raw_os_error() != Some(libc::ESRCH) {
-                    log::warn!("[PTY] kill: SIGKILL to process group failed for PID {}: {}", real_pid, err);
-                    // Fall back to killing just the process
-                    let result = unsafe { libc::kill(real_pid as i32, libc::SIGKILL) };
-                    if result != 0 {
-                        let err = std::io::Error::last_os_error();
-                        if err.raw_os_error() != Some(libc::ESRCH) {
-                            log::error!("[PTY] kill: SIGKILL failed for PID {}: {}", real_pid, err);
-                        }
+            if let Some(safe_pid) = safe_pid_to_i32(real_pid) {
+                // First try SIGTERM for graceful shutdown
+                let result = unsafe { libc::kill(-safe_pid, libc::SIGTERM) };
+                if result != 0 {
+                    let err = std::io::Error::last_os_error();
+                    // ESRCH means process already dead - that's fine
+                    if err.raw_os_error() != Some(libc::ESRCH) {
+                        log::warn!("[PTY] kill: SIGTERM failed for PID {}: {}", real_pid, err);
                     }
                 }
+
+                // Brief grace period then SIGKILL
+                tokio::time::sleep(Duration::from_millis(50)).await;
+
+                let result = unsafe { libc::kill(-safe_pid, libc::SIGKILL) };
+                if result != 0 {
+                    let err = std::io::Error::last_os_error();
+                    if err.raw_os_error() != Some(libc::ESRCH) {
+                        log::warn!("[PTY] kill: SIGKILL to process group failed for PID {}: {}", real_pid, err);
+                        // Fall back to killing just the process
+                        let result = unsafe { libc::kill(safe_pid, libc::SIGKILL) };
+                        if result != 0 {
+                            let err = std::io::Error::last_os_error();
+                            if err.raw_os_error() != Some(libc::ESRCH) {
+                                log::error!("[PTY] kill: SIGKILL failed for PID {}: {}", real_pid, err);
+                            }
+                        }
+                    }
+                } else {
+                    log::info!("[PTY] kill: SIGKILL sent successfully to process group for OS PID {}", real_pid);
+                }
             } else {
-                log::info!("[PTY] kill: SIGKILL sent successfully to process group for OS PID {}", real_pid);
+                log::warn!("[PTY] kill: PID {} too large for i32, using child_killer", real_pid);
+                if let Err(e) = session.child_killer.lock().await.kill() {
+                    log::error!("[PTY] kill: child_killer fallback failed: {}", e);
+                }
             }
         }
 
@@ -436,12 +450,19 @@ async fn kill_all(state: tauri::State<'_, PluginState>) -> Result<u32, String> {
     for (handler, session) in sessions {
         #[cfg(unix)]
         if let Some(real_pid) = session.real_pid {
-            // Send SIGKILL to process group
-            let result = unsafe { libc::kill(-(real_pid as i32), libc::SIGKILL) };
-            if result != 0 {
-                let err = std::io::Error::last_os_error();
-                if err.raw_os_error() != Some(libc::ESRCH) {
-                    log::warn!("[PTY] Failed to kill session {} (OS PID {}): {}", handler, real_pid, err);
+            // Send SIGKILL to process group with safe PID conversion
+            if let Some(safe_pid) = safe_pid_to_i32(real_pid) {
+                let result = unsafe { libc::kill(-safe_pid, libc::SIGKILL) };
+                if result != 0 {
+                    let err = std::io::Error::last_os_error();
+                    if err.raw_os_error() != Some(libc::ESRCH) {
+                        log::warn!("[PTY] Failed to kill session {} (OS PID {}): {}", handler, real_pid, err);
+                    }
+                }
+            } else {
+                log::warn!("[PTY] kill_all: PID {} too large for i32, using child_killer", real_pid);
+                if let Err(e) = session.child_killer.lock().await.kill() {
+                    log::warn!("[PTY] kill_all: child_killer fallback failed for session {}: {}", handler, e);
                 }
             }
         } else {
