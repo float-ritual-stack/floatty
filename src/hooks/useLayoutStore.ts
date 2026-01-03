@@ -78,6 +78,19 @@ function createLayoutStore() {
       return null;
     }
 
+    // FLO-77: Capture scroll position from source outliner pane (before DOM changes)
+    let initialScrollTop: number | undefined;
+    const isOutlinerSource = activePane.leafType === 'outliner';
+    const isOutlinerTarget = leafType === 'outliner';
+
+    if (isOutlinerSource && isOutlinerTarget) {
+      // Query DOM for current scroll position of source pane
+      const sourceEl = document.querySelector(`[data-pane-id="${activePane.id}"] .outliner-container`);
+      if (sourceEl) {
+        initialScrollTop = sourceEl.scrollTop;
+      }
+    }
+
     // Create new pane and split - inherit cwd from active pane
     const newPaneId = generatePaneId();
     const newSplit: PaneSplit = {
@@ -88,9 +101,14 @@ function createLayoutStore() {
       children: [
         // CLONE the leaf - don't use proxy directly (causes infinite recursion)
         { type: 'leaf', id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal' },
-        { type: 'leaf', id: newPaneId, cwd: activePane.cwd, leafType },
+        { type: 'leaf', id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop },
       ],
     };
+
+    // FLO-77: Clone pane state (zoom, collapsed, focused) when splitting outliner
+    if (isOutlinerSource && isOutlinerTarget) {
+      paneStore.clonePaneState(activePane.id, newPaneId);
+    }
 
     // Replace the active pane with the split
     const newRoot = replaceNode(layout.root, activePane.id, newSplit);

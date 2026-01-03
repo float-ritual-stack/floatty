@@ -42,6 +42,8 @@ export type KeyAction =
   | 'zoomOutBlock'   // Outliner: return to parent/full view (Escape at block level)
   | 'collapseBlock'  // Outliner: toggle block collapse (Cmd+. at block level)
   | 'deleteBlock'    // Outliner: delete block and subtree (Cmd+Backspace at block level)
+  | 'moveBlockUp'    // FLO-75: Move block before previous sibling (Cmd+Up)
+  | 'moveBlockDown'  // FLO-75: Move block after next sibling (Cmd+Down)
   | 'nextTheme'      // Cycle through available themes (Cmd+;)
   | 'undo'           // Undo last block operation (Cmd+Z)
   | 'redo';          // Redo last undone operation (Cmd+Shift+Z)
@@ -143,6 +145,9 @@ export const defaultKeybinds: Keybind[] = [
   { key: 'Escape', modifiers: {}, action: 'zoomOutBlock' },
   { key: '.', modifiers: { mod: true }, action: 'collapseBlock' },
   { key: 'Backspace', modifiers: { mod: true }, action: 'deleteBlock' },
+  // FLO-75: Block movement (Cmd+Up/Down)
+  { key: 'ArrowUp', modifiers: { mod: true }, action: 'moveBlockUp' },
+  { key: 'ArrowDown', modifiers: { mod: true }, action: 'moveBlockDown' },
 
   // Theme (using ; to avoid conflict with command palette Cmd+K)
   { key: ';', modifiers: { mod: true }, action: 'nextTheme' },

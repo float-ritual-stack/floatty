@@ -14,12 +14,15 @@ interface PaneState {
   collapsed: Record<string, Record<string, boolean>>;
   // Map of paneId -> zoomed root block ID (null = show all roots)
   zoomedRootId: Record<string, string | null>;
+  // FLO-77: Map of paneId -> focused block ID (for clone-on-split)
+  focusedBlockId: Record<string, string | null>;
 }
 
 function createPaneStore() {
   const [state, setState] = createStore<PaneState>({
     collapsed: {},
     zoomedRootId: {},
+    focusedBlockId: {},
   });
 
   const toggleCollapsed = (paneId: string, blockId: string) => {
@@ -58,6 +61,39 @@ function createPaneStore() {
     setState('zoomedRootId', paneId, blockId);
   };
 
+  // FLO-77: Focused block tracking for clone-on-split
+  const getFocusedBlockId = (paneId: string): string | null => {
+    return state.focusedBlockId[paneId] ?? null;
+  };
+
+  const setFocusedBlockId = (paneId: string, blockId: string | null) => {
+    setState('focusedBlockId', paneId, blockId);
+  };
+
+  /**
+   * FLO-77: Clone pane state from source to target
+   * Used when splitting an outliner pane to preserve view context
+   */
+  const clonePaneState = (sourcePaneId: string, targetPaneId: string) => {
+    // Clone zoomed root
+    const zoomedRoot = getZoomedRootId(sourcePaneId);
+    if (zoomedRoot) {
+      setState('zoomedRootId', targetPaneId, zoomedRoot);
+    }
+
+    // Clone focused block
+    const focusedBlock = getFocusedBlockId(sourcePaneId);
+    if (focusedBlock) {
+      setState('focusedBlockId', targetPaneId, focusedBlock);
+    }
+
+    // Deep clone collapsed state
+    const sourceCollapsed = state.collapsed[sourcePaneId];
+    if (sourceCollapsed && Object.keys(sourceCollapsed).length > 0) {
+      setState('collapsed', targetPaneId, { ...sourceCollapsed });
+    }
+  };
+
   /**
    * Clean up state for a deleted pane (prevents memory leak)
    * Should be called when a pane is closed to remove orphaned view state
@@ -70,6 +106,10 @@ function createPaneStore() {
     // Clean up zoomed state
     if (state.zoomedRootId[paneId] !== undefined) {
       setState('zoomedRootId', paneId, undefined!);
+    }
+    // FLO-77: Clean up focused block state
+    if (state.focusedBlockId[paneId] !== undefined) {
+      setState('focusedBlockId', paneId, undefined!);
     }
   };
 
@@ -87,7 +127,8 @@ function createPaneStore() {
    */
   const hydratePaneState = (
     restoredZoomedRootIds: Record<string, string | null>,
-    restoredCollapsed?: Record<string, Record<string, boolean>>
+    restoredCollapsed?: Record<string, Record<string, boolean>>,
+    restoredFocusedBlockId?: Record<string, string | null>
   ) => {
     // Validate zoomedRootIds structure
     if (typeof restoredZoomedRootIds !== 'object' || restoredZoomedRootIds === null) {
@@ -105,6 +146,15 @@ function createPaneStore() {
       }
       setState('collapsed', restoredCollapsed);
     }
+
+    // FLO-77: Restore focused block IDs
+    if (restoredFocusedBlockId) {
+      if (typeof restoredFocusedBlockId !== 'object' || restoredFocusedBlockId === null) {
+        console.warn('[PaneStore] Invalid focusedBlockId structure, skipping');
+        return;
+      }
+      setState('focusedBlockId', restoredFocusedBlockId);
+    }
   };
 
   /**
@@ -114,11 +164,14 @@ function createPaneStore() {
   const getPaneStateForPersistence = (): {
     zoomedRootId: Record<string, string | null>;
     collapsed: Record<string, Record<string, boolean>>;
+    focusedBlockId: Record<string, string | null>;
   } => {
     return {
       zoomedRootId: { ...state.zoomedRootId },
       // Deep clone nested structure to strip SolidJS proxies
       collapsed: JSON.parse(JSON.stringify(state.collapsed)),
+      // FLO-77: Include focused block IDs in persistence
+      focusedBlockId: { ...state.focusedBlockId },
     };
   };
 
@@ -128,6 +181,11 @@ function createPaneStore() {
     setCollapsed,
     getZoomedRootId,
     setZoomedRoot,
+    // FLO-77: Focused block tracking
+    getFocusedBlockId,
+    setFocusedBlockId,
+    clonePaneState,
+    // Cleanup
     removePane,
     removePanes,
     // Persistence
