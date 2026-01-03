@@ -139,6 +139,133 @@ let sharedRetryCount = 0;
 const MAX_RETRIES = 5;
 const DEFAULT_SYNC_DEBOUNCE = 50;
 
+// ═══════════════════════════════════════════════════════════════
+// REF-COUNTED HANDLER ATTACHMENT
+// ═══════════════════════════════════════════════════════════════
+// Multiple Outliner panes call useSyncedYDoc() - each would attach its own
+// update handler to the singleton doc. This caused 3x queueUpdate calls
+// with 3 panes open. Solution: attach handler once, ref-count consumers.
+
+let handlerRefCount = 0;
+let moduleUpdateHandler: ((update: Uint8Array, origin: unknown) => void) | null = null;
+let isApplyingRemoteGlobal = false; // Module-level flag for handler
+
+/**
+ * Module-level schedule flush - uses DEFAULT_SYNC_DEBOUNCE.
+ * Called by the singleton update handler.
+ */
+function scheduleFlushModule(delay?: number) {
+  if (sharedSyncTimer) {
+    clearTimeout(sharedSyncTimer);
+  }
+  sharedSyncTimer = window.setTimeout(flushUpdatesModule, delay ?? DEFAULT_SYNC_DEBOUNCE);
+}
+
+/**
+ * Module-level flush updates - same logic as hook's flushUpdates but without
+ * per-component error signal.
+ */
+async function flushUpdatesModule() {
+  if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
+
+  if (!isClientInitialized()) {
+    console.warn('[useSyncedYDoc] HTTP client not initialized, skipping flush');
+    return;
+  }
+
+  sharedIsFlushing = true;
+  const updates = sharedPendingUpdates;
+  sharedPendingUpdates = [];
+
+  let sentCount = 0;
+  try {
+    const httpClient = getHttpClient();
+    for (const update of updates) {
+      const txId = generateTxId();
+      await httpClient.applyUpdate(update, txId);
+      sentCount++;
+    }
+    sharedRetryCount = 0;
+
+    if (sharedPendingUpdates.length === 0) {
+      setSyncStatus('synced');
+      setLastSyncError(null);
+      clearBackup();
+    }
+    setPendingCount(sharedPendingUpdates.length);
+  } catch (err) {
+    sharedRetryCount++;
+    console.error(`Failed to sync to server (attempt ${sharedRetryCount}/${MAX_RETRIES}):`, err);
+    sharedPendingUpdates = [...updates.slice(sentCount), ...sharedPendingUpdates];
+    setPendingCount(sharedPendingUpdates.length);
+
+    if (sharedRetryCount >= MAX_RETRIES) {
+      setSyncStatus('error');
+      setLastSyncError(`Sync failed after ${MAX_RETRIES} attempts. Changes may not be saved.`);
+      sharedRetryCount = 0;
+    } else if (sharedPendingUpdates.length > 0) {
+      const backoffDelay = Math.min(DEFAULT_SYNC_DEBOUNCE * Math.pow(2, sharedRetryCount), 10000);
+      scheduleFlushModule(backoffDelay);
+    }
+  } finally {
+    sharedIsFlushing = false;
+  }
+}
+
+/**
+ * Module-level queue update - called by singleton handler.
+ */
+function queueUpdateModule(update: Uint8Array) {
+  sharedPendingUpdates.push(update);
+  setPendingCount(sharedPendingUpdates.length);
+  setSyncStatus('pending');
+  scheduleFlushModule();
+  scheduleBackup();
+}
+
+/**
+ * Attach the singleton update handler (ref-counted).
+ * Call in onMount - only first caller actually attaches.
+ */
+function attachHandler() {
+  handlerRefCount++;
+  if (handlerRefCount === 1) {
+    moduleUpdateHandler = (update: Uint8Array, origin: unknown) => {
+      if (origin === 'remote' || isApplyingRemoteGlobal) return;
+      queueUpdateModule(update);
+    };
+    sharedDoc.on('update', moduleUpdateHandler);
+    console.log('[useSyncedYDoc] Attached singleton update handler');
+  }
+}
+
+/**
+ * Detach the singleton update handler (ref-counted).
+ * Call in onCleanup - only last caller actually detaches.
+ */
+function detachHandler() {
+  handlerRefCount--;
+  if (handlerRefCount === 0 && moduleUpdateHandler) {
+    sharedDoc.off('update', moduleUpdateHandler);
+    moduleUpdateHandler = null;
+    console.log('[useSyncedYDoc] Detached singleton update handler');
+
+    // Also clean up sync timer since no consumers remain
+    if (sharedSyncTimer) {
+      clearTimeout(sharedSyncTimer);
+      sharedSyncTimer = null;
+    }
+  }
+}
+
+/**
+ * Set the global isApplyingRemote flag.
+ * Called during initial load and reconciliation.
+ */
+function setApplyingRemote(value: boolean) {
+  isApplyingRemoteGlobal = value;
+}
+
 // WebSocket for real-time sync from server
 let sharedWebSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
@@ -412,97 +539,24 @@ export interface UseSyncedYDocReturn {
 }
 
 export function useSyncedYDoc(
-  options: UseSyncedYDocOptions = {}
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _options: UseSyncedYDocOptions = {}
 ): UseSyncedYDocReturn {
-  const { syncDebounce = DEFAULT_SYNC_DEBOUNCE } = options;
+  // Note: syncDebounce option is now ignored - module-level DEFAULT_SYNC_DEBOUNCE is used
+  // for the singleton handler. Keeping options for API compatibility.
 
   // Use the singleton doc
   const doc = sharedDoc;
   const [isLoaded, setIsLoaded] = createSignal(sharedDocLoaded);
   const [error, setError] = createSignal<string | null>(sharedDocError);
 
-  // Track whether we're currently applying an update from Rust
-  let isApplyingRemote = false;
-
-  // Schedule a flush with optional delay override (for backoff)
-  const scheduleFlush = (delay?: number) => {
-    if (sharedSyncTimer) {
-      clearTimeout(sharedSyncTimer);
-    }
-    sharedSyncTimer = window.setTimeout(flushUpdates, delay ?? syncDebounce);
-  };
-
-  // Send pending updates to server via HTTP
-  const flushUpdates = async () => {
-    // Guard against concurrent flushes
-    if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
-
-    // Ensure HTTP client is initialized
-    if (!isClientInitialized()) {
-      console.warn('[useSyncedYDoc] HTTP client not initialized, skipping flush');
-      return;
-    }
-
-    sharedIsFlushing = true;
-    const updates = sharedPendingUpdates;
-    sharedPendingUpdates = [];
-
-    let sentCount = 0;
-    try {
-      const httpClient = getHttpClient();
-      // Send each delta individually - they're small and we want granular persistence
-      for (const update of updates) {
-        const txId = generateTxId();
-        await httpClient.applyUpdate(update, txId);
-        sentCount++;
-      }
-      sharedRetryCount = 0; // Reset on success
-
-      // Update sync status - only mark synced if queue is empty
-      if (sharedPendingUpdates.length === 0) {
-        setSyncStatus('synced');
-        setLastSyncError(null);
-        clearBackup(); // All synced - clear crash backup
-      }
-      setPendingCount(sharedPendingUpdates.length);
-    } catch (err) {
-      sharedRetryCount++;
-      console.error(`Failed to sync to server (attempt ${sharedRetryCount}/${MAX_RETRIES}):`, err);
-      // Restore unsent updates to front of queue for retry
-      sharedPendingUpdates = [...updates.slice(sentCount), ...sharedPendingUpdates];
-      setPendingCount(sharedPendingUpdates.length);
-
-      if (sharedRetryCount >= MAX_RETRIES) {
-        setSyncStatus('error');
-        setLastSyncError(`Sync failed after ${MAX_RETRIES} attempts. Changes may not be saved.`);
-        setError(`Sync failed after ${MAX_RETRIES} attempts. Changes may not be saved.`);
-        sharedRetryCount = 0; // Allow future attempts after user interaction
-      } else if (sharedPendingUpdates.length > 0) {
-        // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
-        const backoffDelay = Math.min(syncDebounce * Math.pow(2, sharedRetryCount), 10000);
-        scheduleFlush(backoffDelay);
-      }
-    } finally {
-      sharedIsFlushing = false;
-    }
-  };
-
-  // Queue an update and schedule flush
-  const queueUpdate = (update: Uint8Array) => {
-    sharedPendingUpdates.push(update);
-    setPendingCount(sharedPendingUpdates.length);
-    setSyncStatus('pending');
-    scheduleFlush();
-    scheduleBackup(); // Crash resilience - backup to localStorage
-  };
-
-  // Force sync (bypass debounce)
+  // Force sync (bypass debounce) - delegates to module-level function
   const forceSync = async () => {
     if (sharedSyncTimer) {
       clearTimeout(sharedSyncTimer);
       sharedSyncTimer = null;
     }
-    await flushUpdates();
+    await flushUpdatesModule();
   };
 
   onMount(() => {
@@ -539,6 +593,10 @@ export function useSyncedYDoc(
           if (localBackup) {
             console.log('[useSyncedYDoc] Found localStorage backup, attempting reconciliation...');
 
+            // Track whether local changes were successfully pushed
+            let hadLocalChanges = false;
+            let localChangesPushed = false;
+
             try {
               // Get server state vector to see what it has
               const serverSV = await httpClient.getStateVector();
@@ -548,43 +606,57 @@ export function useSyncedYDoc(
               const localDiff = Y.diffUpdate(localBackup, serverSV);
 
               // If diff is substantial (empty diff is ~2 bytes), push our changes first
-              if (localDiff.length > 2) {
+              hadLocalChanges = localDiff.length > 2;
+              if (hadLocalChanges) {
                 console.log('[useSyncedYDoc] Pushing local changes to server:', localDiff.length, 'bytes');
                 await httpClient.applyUpdate(localDiff);
+                localChangesPushed = true;
               }
 
               // Now get server's full state (which now includes our pushed changes)
               const serverState = await httpClient.getState();
 
               // Apply server state to our doc - this already contains our pushed diff
-              isApplyingRemote = true;
+              setApplyingRemote(true);
               Y.applyUpdate(doc, serverState, 'remote');
-              isApplyingRemote = false;
+              setApplyingRemote(false);
 
               console.log('[useSyncedYDoc] Reconciliation complete, clearing backup');
               clearBackup();
             } catch (reconcileErr) {
               console.error('[useSyncedYDoc] Reconciliation failed, falling back to server state:', reconcileErr);
-              // Fall back to just loading server state
-              const stateBytes = await httpClient.getState();
-              if (stateBytes && stateBytes.length > 0) {
-                isApplyingRemote = true;
-                Y.applyUpdate(doc, stateBytes, 'remote');
-                isApplyingRemote = false;
+
+              // Try to load server state as fallback
+              try {
+                const stateBytes = await httpClient.getState();
+                if (stateBytes && stateBytes.length > 0) {
+                  setApplyingRemote(true);
+                  Y.applyUpdate(doc, stateBytes, 'remote');
+                  setApplyingRemote(false);
+                }
+              } catch (stateErr) {
+                console.error('[useSyncedYDoc] Failed to load server state:', stateErr);
               }
-              // Clear the failing backup to prevent retry loops on every app start.
-              // The backup was already attempted and server state has been applied.
-              console.warn('[useSyncedYDoc] Clearing failed backup after server state fallback');
-              clearBackup();
+
+              // CRITICAL: Only clear backup if we successfully pushed local changes,
+              // or if there were no local changes to begin with.
+              // If push failed, preserve backup to retry next time.
+              if (!hadLocalChanges || localChangesPushed) {
+                console.warn('[useSyncedYDoc] Clearing backup (no local changes or already pushed)');
+                clearBackup();
+              } else {
+                console.warn('[useSyncedYDoc] PRESERVING backup - local changes failed to push, will retry next startup');
+                // Don't clear - user's local changes are still in localStorage
+              }
             }
           } else {
             // Normal load - no local backup
             const stateBytes = await httpClient.getState();
 
             if (stateBytes && stateBytes.length > 0) {
-              isApplyingRemote = true;
+              setApplyingRemote(true);
               Y.applyUpdate(doc, stateBytes, 'remote');
-              isApplyingRemote = false;
+              setApplyingRemote(false);
             }
           }
 
@@ -618,21 +690,13 @@ export function useSyncedYDoc(
       setError(sharedDocError);
     }
 
-    // Observe all changes - use the actual delta, not full state
-    const updateHandler = (update: Uint8Array, origin: unknown) => {
-      // Don't sync back changes that came from Rust
-      if (origin === 'remote' || isApplyingRemote) return;
-      queueUpdate(update);
-    };
-
-    doc.on('update', updateHandler);
+    // Attach singleton handler (ref-counted - only first caller actually attaches)
+    attachHandler();
     loadInitialState();
 
     onCleanup(() => {
-      // Only cleanup the observer, NOT the doc or sync machinery (singleton survives)
-      doc.off('update', updateHandler);
-      // NOTE: Don't clear sharedSyncTimer - other components may still need it
-      // NOTE: Don't destroy doc - it's shared across component lifecycles
+      // Detach singleton handler (ref-counted - only last caller actually detaches)
+      detachHandler();
     });
   });
 
