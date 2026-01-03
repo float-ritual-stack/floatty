@@ -534,7 +534,12 @@ class TerminalManager {
       term.write('\r\n\x1b[33m[Press Cmd+W to close this pane, or wait for auto-recovery...]\x1b[0m\r\n');
       instance.ptyPid = -1; // Sentinel for spawn failure
       // Notify parent that spawn failed - they can decide to close or retry
-      this.callbacks.get(id)?.onPtyExit?.(-1);
+      // Wrapped in try/catch to prevent callback errors from leaving instance in bad state
+      try {
+        this.callbacks.get(id)?.onPtyExit?.(-1);
+      } catch (callbackErr) {
+        console.error(`[TerminalManager] onPtyExit callback threw during spawn failure:`, callbackErr);
+      }
     }
   }
 
@@ -703,6 +708,10 @@ class TerminalManager {
    * Dispose terminal and kill PTY
    */
   async dispose(id: string) {
+    // Guard against double-disposal race: if dispose() called twice rapidly,
+    // both could pass instances.get() before either sets disposing flag
+    if (this.disposing.has(id)) return;
+
     const instance = this.instances.get(id);
     if (!instance) return;
 
