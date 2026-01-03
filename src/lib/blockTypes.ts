@@ -1,24 +1,13 @@
 /**
  * Block types for the integrated outliner
+ *
+ * BlockType is generated from Rust via ts-rs to ensure consistency.
+ * To regenerate: `cd src-tauri && cargo run --bin ts-gen`
  */
 
-export type BlockType =
-  | 'text'      // No prefix - inert text
-  | 'sh'        // sh:: or term:: - shell/terminal
-  | 'ai'        // ai:: or chat:: - LLM interface
-  | 'ctx'       // ctx:: - context scope
-  | 'dispatch'  // dispatch:: - agent execution
-  | 'web'       // web:: or link:: - iframe embed
-  | 'output'    // Output from sh:: or ai:: execution
-  | 'error'     // Error output from execution
-  | 'picker'    // picker:: - temporary picker block (tv fuzzy finder)
-  | 'ran'       // ran:: - shows resolved command after $tv() substitution
-  | 'h1'        // # heading
-  | 'h2'        // ## heading
-  | 'h3'        // ### heading
-  | 'bullet'    // - bullet point
-  | 'todo'      // - [ ] or - [x] checkbox
-  | 'quote';    // > blockquote
+// Re-export the generated BlockType (single source of truth from Rust)
+export type { BlockType } from '../generated/BlockType';
+import type { BlockType } from '../generated/BlockType';
 
 export interface Block {
   id: string;

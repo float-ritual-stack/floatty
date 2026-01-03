@@ -727,9 +727,11 @@ fn spawn_server(port: u16) -> Option<ServerState> {
     eprintln!("[floatty] Spawning server from {:?}", server_binary);
 
     // Spawn server (it reads config for port/api_key itself)
+    // Use null/inherit instead of piped to prevent deadlock when buffer fills
+    // (piped stdout/stderr would block writes if parent never reads - ~64KB buffer on Unix)
     let child = std::process::Command::new(&server_binary)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
         .spawn()
         .map_err(|e| {
             log::error!("Failed to spawn floatty-server: {}", e);
