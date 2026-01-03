@@ -250,9 +250,11 @@ export function Terminal() {
       console.warn(`[Terminal] ${failedDisposals.length} panes failed to dispose for tab ${id}`);
     }
 
-    // Remove layout and tab
-    layoutStore.removeLayout(id);
+    // Close tab FIRST, then remove layout
+    // Order matters: createEffect watches tabs and creates layouts for tabs without layouts
+    // If we remove layout before tab, the effect sees "tab exists, no layout" and re-creates one
     tabStore.closeTab(id);
+    layoutStore.removeLayout(id);
   };
 
   // Handle closing a single pane (not entire tab)

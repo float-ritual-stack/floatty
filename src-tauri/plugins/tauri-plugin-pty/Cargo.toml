@@ -19,5 +19,8 @@ base64 = "0.21"
 strip-ansi-escapes = "0.2"
 log = "0.4"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 tauri-plugin = { version = "^2", features = ["build"] }

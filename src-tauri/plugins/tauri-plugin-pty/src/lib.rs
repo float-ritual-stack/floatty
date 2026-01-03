@@ -71,6 +71,8 @@ struct Session {
     pair: Mutex<PtyPair>,
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
+    /// The actual OS process ID for SIGKILL fallback
+    real_pid: Option<u32>,
 }
 
 type PtyHandler = u32;
@@ -109,8 +111,10 @@ async fn spawn(
         cmd.env(OsString::from(k), OsString::from(v));
     }
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let real_pid = child.process_id();
     let child_killer = child.clone_killer();
     let handler = state.session_id.fetch_add(1, Ordering::Relaxed);
+    log::info!("[PTY] Spawned session {} with OS PID {:?}", handler, real_pid);
 
     // Create internal channels for reader -> batcher communication
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
@@ -266,6 +270,7 @@ async fn spawn(
         pair: Mutex::new(pair),
         child_killer: Mutex::new(child_killer),
         writer: Mutex::new(writer),
+        real_pid,
     });
     state.sessions.write().await.insert(handler, session);
     Ok(handler)
@@ -324,26 +329,81 @@ async fn resize(
 
 #[tauri::command]
 async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(), String> {
+    log::info!("[PTY] kill command invoked for session {}", pid);
     let session = state
         .sessions
         .read()
         .await
         .get(&pid)
-        .ok_or("Unavailable pid")?
+        .ok_or_else(|| {
+            log::warn!("[PTY] kill: session {} not found in map", pid);
+            "Unavailable pid".to_string()
+        })?
         .clone();
-    session
-        .child_killer
-        .lock()
-        .await
-        .kill()
-        .map_err(|e| e.to_string())?;
+
+    // Use direct SIGKILL via libc instead of portable-pty's child_killer
+    // (child_killer only sends SIGHUP which shells can ignore)
+    if let Some(real_pid) = session.real_pid {
+        log::info!("[PTY] kill: sending SIGKILL to OS PID {} (session {})", real_pid, pid);
+
+        // Kill the process group (negative PID) to also kill child processes
+        #[cfg(unix)]
+        {
+            // First try SIGTERM for graceful shutdown
+            let result = unsafe { libc::kill(-(real_pid as i32), libc::SIGTERM) };
+            if result != 0 {
+                let err = std::io::Error::last_os_error();
+                // ESRCH means process already dead - that's fine
+                if err.raw_os_error() != Some(libc::ESRCH) {
+                    log::warn!("[PTY] kill: SIGTERM failed for PID {}: {}", real_pid, err);
+                }
+            }
+
+            // Brief grace period then SIGKILL
+            thread::sleep(Duration::from_millis(50));
+
+            let result = unsafe { libc::kill(-(real_pid as i32), libc::SIGKILL) };
+            if result != 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() != Some(libc::ESRCH) {
+                    log::warn!("[PTY] kill: SIGKILL to process group failed for PID {}: {}", real_pid, err);
+                    // Fall back to killing just the process
+                    let result = unsafe { libc::kill(real_pid as i32, libc::SIGKILL) };
+                    if result != 0 {
+                        let err = std::io::Error::last_os_error();
+                        if err.raw_os_error() != Some(libc::ESRCH) {
+                            log::error!("[PTY] kill: SIGKILL failed for PID {}: {}", real_pid, err);
+                        }
+                    }
+                }
+            } else {
+                log::info!("[PTY] kill: SIGKILL sent successfully to process group for OS PID {}", real_pid);
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, use the child_killer as before
+            if let Err(e) = session.child_killer.lock().await.kill() {
+                log::error!("[PTY] kill: failed to kill session {}: {}", pid, e);
+            }
+        }
+    } else {
+        log::warn!("[PTY] kill: no real_pid for session {}, using child_killer", pid);
+        if let Err(e) = session.child_killer.lock().await.kill() {
+            log::error!("[PTY] kill: child_killer failed for session {}: {}", pid, e);
+        }
+    }
+
     // Clean up session from map to prevent memory leak
     state.sessions.write().await.remove(&pid);
+    log::info!("[PTY] kill: session {} removed from map", pid);
     Ok(())
 }
 
 #[tauri::command]
 async fn dispose(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(), String> {
+    log::info!("[PTY] dispose command invoked for pid {} (cleanup only, no kill)", pid);
     // Remove session from map without killing (for already-exited PTYs)
     state.sessions.write().await.remove(&pid);
     Ok(())
@@ -370,9 +430,28 @@ async fn kill_all(state: tauri::State<'_, PluginState>) -> Result<u32, String> {
     let count = sessions.len() as u32;
     log::info!("[PTY] Killing all {} active sessions", count);
 
-    for (pid, session) in sessions {
-        if let Err(e) = session.child_killer.lock().await.kill() {
-            log::warn!("[PTY] Failed to kill session {}: {}", pid, e);
+    for (handler, session) in sessions {
+        #[cfg(unix)]
+        if let Some(real_pid) = session.real_pid {
+            // Send SIGKILL to process group
+            let result = unsafe { libc::kill(-(real_pid as i32), libc::SIGKILL) };
+            if result != 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() != Some(libc::ESRCH) {
+                    log::warn!("[PTY] Failed to kill session {} (OS PID {}): {}", handler, real_pid, err);
+                }
+            }
+        } else {
+            if let Err(e) = session.child_killer.lock().await.kill() {
+                log::warn!("[PTY] Failed to kill session {}: {}", handler, e);
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            if let Err(e) = session.child_killer.lock().await.kill() {
+                log::warn!("[PTY] Failed to kill session {}: {}", handler, e);
+            }
         }
     }
 

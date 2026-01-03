@@ -743,8 +743,10 @@ class TerminalManager {
         }
       } else {
         // PTY still running - kill it (onExit callback will fire but check disposing flag)
+        console.log(`[TerminalManager] About to invoke plugin:pty|kill for ${id} (pid=${instance.ptyPid})`);
         try {
           await invoke('plugin:pty|kill', { pid: instance.ptyPid });
+          console.log(`[TerminalManager] plugin:pty|kill completed successfully for ${id}`);
         } catch (e) {
           console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
         }
