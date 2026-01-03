@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "floatty-core"]
+members = [".", "floatty-core", "floatty-server"]
 resolver = "2"
 
 [package]
