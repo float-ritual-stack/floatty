@@ -171,7 +171,9 @@ pub struct Block {
     pub child_ids: Vec<String>,
     pub content: String,
     pub collapsed: bool,
+    #[ts(type = "number")]
     pub created_at: i64,
+    #[ts(type = "number")]
     pub updated_at: i64,
     // metadata: Option<serde_json::Value>, // Future: currently unused
 }

@@ -156,7 +156,7 @@ function generateTxId(): string {
   const id = `${Date.now()}-${txIdCounter++}`;
   recentTxIds.add(id);
   // Trim old entries if set gets too large
-  if (recentTxIds.size > MAX_RECENT_TX_IDS) {
+  while (recentTxIds.size > MAX_RECENT_TX_IDS) {
     const iterator = recentTxIds.values();
     recentTxIds.delete(iterator.next().value);
   }

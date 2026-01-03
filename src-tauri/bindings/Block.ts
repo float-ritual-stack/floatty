@@ -5,4 +5,4 @@
  *
  * This is the Rust equivalent of the Block interface in `src/lib/blockTypes.ts`.
  */
-export type Block = { id: string, parentId: string | null, childIds: Array<string>, content: string, collapsed: boolean, createdAt: bigint, updatedAt: bigint, };
+export type Block = { id: string, parentId: string | null, childIds: Array<string>, content: string, collapsed: boolean, createdAt: number, updatedAt: number, };
