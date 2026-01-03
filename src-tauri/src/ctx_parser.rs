@@ -116,6 +116,8 @@ pub struct CtxParser {
     client: Client,
     running: Arc<std::sync::Mutex<bool>>,
     doc: Arc<RwLock<Doc>>,
+    /// Handle to the worker thread, joined on Drop
+    thread_handle: std::sync::Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl CtxParser {
@@ -131,6 +133,7 @@ impl CtxParser {
             client,
             running: Arc::new(std::sync::Mutex::new(false)),
             doc,
+            thread_handle: std::sync::Mutex::new(None),
         })
     }
 
@@ -153,7 +156,7 @@ impl CtxParser {
         let running = Arc::clone(&self.running);
         let _doc = Arc::clone(&self.doc); // Reserved for future Yjs sync
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             log::info!("Starting ctx:: parser worker");
 
             // Create tokio runtime for async HTTP
@@ -227,12 +230,30 @@ impl CtxParser {
 
             log::info!("ctx:: parser worker stopped");
         });
+
+        // Store handle for join on Drop
+        *self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     }
 
     /// Stop the parser worker
     #[allow(dead_code)]
     pub fn stop(&self) {
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
+}
+
+impl Drop for CtxParser {
+    fn drop(&mut self) {
+        // Signal thread to stop
+        *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
+
+        // Join the thread if it's running (thread checks running flag every poll_interval_ms)
+        if let Some(handle) = self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            log::info!("[CtxParser] Joining parser thread on drop...");
+            if handle.join().is_err() {
+                log::warn!("[CtxParser] Parser thread panicked during join");
+            }
+        }
     }
 }
 

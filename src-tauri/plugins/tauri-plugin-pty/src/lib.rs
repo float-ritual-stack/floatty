@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     ffi::OsString,
     io::Read,
     sync::{
@@ -200,8 +200,9 @@ async fn spawn(
     thread::spawn(move || {
         let mut pending_data: Vec<u8> = Vec::with_capacity(65536);
         // Output capture buffer (only used when capture_output=true)
-        let mut capture_buffer: Option<Vec<u8>> = if capture_output.unwrap_or(false) {
-            Some(Vec::with_capacity(65536))
+        // Uses VecDeque for O(1) front drain when capping buffer size
+        let mut capture_buffer: Option<VecDeque<u8>> = if capture_output.unwrap_or(false) {
+            Some(VecDeque::with_capacity(65536))
         } else {
             None
         };
@@ -215,8 +216,9 @@ async fn spawn(
 
             // Append to capture buffer if capturing (with size cap)
             if let Some(ref mut buf) = capture_buffer {
-                buf.extend_from_slice(&first_chunk);
+                buf.extend(first_chunk.iter().copied());
                 // Cap buffer size - keep tail since selection appears at end
+                // VecDeque::drain from front is O(1), unlike Vec which is O(n)
                 if buf.len() > CAPTURE_BUFFER_CAP {
                     let drain_to = buf.len() - CAPTURE_BUFFER_CAP;
                     buf.drain(..drain_to);
@@ -230,7 +232,7 @@ async fn spawn(
                     Ok(more_data) => {
                         // Append to capture buffer if capturing (with size cap)
                         if let Some(ref mut buf) = capture_buffer {
-                            buf.extend_from_slice(&more_data);
+                            buf.extend(more_data.iter().copied());
                             if buf.len() > CAPTURE_BUFFER_CAP {
                                 let drain_to = buf.len() - CAPTURE_BUFFER_CAP;
                                 buf.drain(..drain_to);
@@ -262,7 +264,8 @@ async fn spawn(
         }
 
         // Extract selection from capture buffer and send to reader thread
-        let extracted = capture_buffer.map(|buf| extract_selection(&buf));
+        // make_contiguous() converts VecDeque to contiguous slice for extract_selection
+        let extracted = capture_buffer.map(|mut buf| extract_selection(buf.make_contiguous()));
         let _ = capture_tx.send(extracted);
     });
 
@@ -360,7 +363,7 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
             }
 
             // Brief grace period then SIGKILL
-            thread::sleep(Duration::from_millis(50));
+            tokio::time::sleep(Duration::from_millis(50)).await;
 
             let result = unsafe { libc::kill(-(real_pid as i32), libc::SIGKILL) };
             if result != 0 {
