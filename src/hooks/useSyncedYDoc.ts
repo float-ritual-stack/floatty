@@ -270,6 +270,11 @@ function connectWebSocket() {
 
     sharedWebSocket.onopen = () => {
       console.log('[WS] Connected');
+      // Clear any previous connection error now that we're connected
+      if (sharedPendingUpdates.length === 0) {
+        setSyncStatus('synced');
+        setLastSyncError(null);
+      }
       // Force flush any pending HTTP updates to ensure server has our latest state
       // before we start receiving broadcasts. This prevents the "phantom data loss"
       // scenario where local edits made during disconnect appear to vanish.
@@ -309,6 +314,12 @@ function connectWebSocket() {
 
     sharedWebSocket.onerror = (error) => {
       console.error('[WS] Error:', error);
+      // Update sync status so UI can show error state
+      // Note: WebSocket error events don't contain useful details - the actual
+      // diagnostic info comes through onclose. Set generic message here.
+      setSyncStatus('error');
+      setLastSyncError('WebSocket connection error. Reconnecting...');
+      // onclose will fire next and handle reconnection
     };
   } catch (err) {
     console.error('[WS] Failed to connect:', err);
