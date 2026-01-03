@@ -24,7 +24,6 @@ use floatty_core::YDocStore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-use tower_http::cors::{Any, CorsLayer};
 use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
 use crate::WsBroadcaster;
@@ -114,7 +113,8 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status = match &self {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
-            _ => StatusCode::BAD_REQUEST,
+            ApiError::InvalidBase64(_) => StatusCode::BAD_REQUEST,
+            ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let body = Json(ErrorResponse {
             error: self.to_string(),
@@ -123,14 +123,9 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Create the API router
+/// Create the API router (CORS applied in main.rs)
 pub fn create_router(store: Arc<YDocStore>, broadcaster: Arc<WsBroadcaster>) -> Router {
     let state = AppState { store, broadcaster };
-
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
 
     Router::new()
         // Core sync endpoints
@@ -143,7 +138,6 @@ pub fn create_router(store: Arc<YDocStore>, broadcaster: Arc<WsBroadcaster>) -> 
         .route("/api/v1/blocks/{id}", get(get_block))
         .route("/api/v1/blocks/{id}", patch(update_block))
         .route("/api/v1/blocks/{id}", delete(delete_block))
-        .layer(cors)
         .with_state(state)
 }
 
@@ -366,8 +360,16 @@ async fn create_block(
         let empty: Vec<yrs::Any> = vec![];
         block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
 
-        // Add to rootIds if no parent
-        if req.parent_id.is_none() {
+        // Update parent's childIds or add to rootIds
+        if let Some(ref parent_id) = req.parent_id {
+            // Add to parent's childIds array
+            if let Some(yrs::Value::YMap(parent_map)) = blocks.get(&txn, parent_id) {
+                if let Some(yrs::Value::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+                    child_ids.push_back(&mut txn, id.as_str());
+                }
+            }
+        } else {
+            // No parent - add to rootIds
             let root_ids = txn.get_or_insert_array("rootIds");
             root_ids.push_back(&mut txn, id.as_str());
         }
