@@ -221,10 +221,11 @@ export function Terminal() {
     }
   });
 
-  // Handle creating a new tab - creates tab + layout
+  // Handle creating a new tab - layout is initialized by the createEffect above
   const handleNewTab = (cwd?: string) => {
     const tabId = tabStore.createTab(cwd);
-    layoutStore.initLayout(tabId);
+    // NOTE: Don't call layoutStore.initLayout here - the createEffect handles it
+    // Calling it here caused double-pane creation (2 terminals per tab)
     return tabId;
   };
 
