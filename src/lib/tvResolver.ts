@@ -102,9 +102,10 @@ async function spawnTvPicker(pickerId: string, channel: string, paneId?: string)
     const findContainer = (attempts = 0): HTMLElement | null => {
       // Scope query to specific pane when in split layout (FLO-99)
       // Without paneId, falls back to first match (legacy behavior)
+      // CSS.escape handles any special characters in IDs (defensive)
       const selector = paneId
-        ? `.picker-terminal[data-block-id="${pickerId}"][data-pane-id="${paneId}"]`
-        : `.picker-terminal[data-block-id="${pickerId}"]`;
+        ? `.picker-terminal[data-block-id="${CSS.escape(pickerId)}"][data-pane-id="${CSS.escape(paneId)}"]`
+        : `.picker-terminal[data-block-id="${CSS.escape(pickerId)}"]`;
       const container = document.querySelector(selector);
       if (container instanceof HTMLElement) return container;
       if (attempts < 10) {
