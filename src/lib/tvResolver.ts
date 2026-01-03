@@ -81,10 +81,8 @@ export async function resolveTvVariables(
  * Spawn tv in a temporary PTY and wait for selection.
  *
  * TV picker-mode flags:
- * - --no-remote: Don't spawn persistent server
- * - --no-help-panel: Clean interface
- * - --height 18: Limit viewport for inline display
- * - --source-output "{}": Output template (just the selected path)
+ * - --no-help-panel: Clean interface for embedded use
+ * - Remote control left enabled for channel switching
  *
  * Output capture now happens in Rust for better performance:
  * - No JS string accumulation (zero GC pressure)
@@ -189,5 +187,5 @@ function buildTvCommand(channel: string): string {
   // Only pass "." for built-in channels; custom cable channels handle their own paths
   // Don't use --source-output so cable config's [source].output field is respected
   const pathArg = useCwd ? ' .' : '';
-  return `tv ${ch}${pathArg} --no-remote --no-help-panel`;
+  return `tv ${ch}${pathArg} --no-help-panel`;
 }
