@@ -61,7 +61,7 @@ function toBlock(value: unknown): Block | null {
     childIds: (getValue(value, 'childIds') as string[]) || [],
     content: (getValue(value, 'content') as string) || '',
     type: (getValue(value, 'type') as BlockType) || 'text',
-    metadata: (getValue(value, 'metadata') as Record<string, any>) || undefined,
+    metadata: (getValue(value, 'metadata') as Record<string, unknown>) || undefined,
     collapsed: (getValue(value, 'collapsed') as boolean) || false,
     createdAt: getValue(value, 'createdAt') as number,
     updatedAt: getValue(value, 'updatedAt') as number,
