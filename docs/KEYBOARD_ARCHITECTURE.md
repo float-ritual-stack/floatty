@@ -100,7 +100,7 @@ interface TreePosition {
 - `Escape` → zoom out (only if zoomed)
 - `Backspace` at start → prevent merge if hasChildren
 
-### Selection State (FLO-74)
+### Selection State (FLO-74, FLO-95)
 ```typescript
 interface SelectionState {
   selectedBlockIds: Set<string>;
@@ -110,10 +110,50 @@ interface SelectionState {
 
 **Affects:**
 - `Shift+Arrow` → extend range selection (bypasses cursor check)
-- `Cmd+A` → select all visible blocks
+- `Cmd+A` → progressive selection (see sequence below)
 - `Cmd+C` → copy selected blocks as markdown
 - `Delete/Backspace` on selection → bulk delete
 - `Escape` → clear selection
+
+**Progressive Cmd+A Sequence (FLO-95):**
+| Sequence | Level | Scope |
+|----------|-------|-------|
+| `Cmd+A` | 0 | Focused block only |
+| `Cmd+A, A` | 1 | Siblings + all descendants |
+| `Cmd+A, A, A` | 2 | Parent scope + all descendants |
+| `Cmd+A, A, A, A` | 3 | Grandparent scope |
+| ... | ... | Continue climbing |
+| `Cmd+A × 10` | 9 | Select all |
+
+**FLO-95 Fix:** Selection now includes collapsed subtrees (for copy/delete operations).
+
+### Collapse State (FLO-66)
+
+Per-pane collapse state managed by `paneStore`:
+```typescript
+collapsed: Record<paneId, Record<blockId, boolean>>
+```
+
+**Affects:**
+- `Cmd+.` → toggle collapse on focused block
+- `Cmd+E` → progressive expand (see sequence below)
+- `Cmd+Shift+E` → progressive collapse (Shift inverts direction)
+
+**Progressive Expand/Collapse Sequences:**
+| Sequence | Action |
+|----------|--------|
+| `Cmd+E` | Expand to depth 1 (direct children visible) |
+| `Cmd+E, E` | Expand to depth 2 |
+| `Cmd+E, E, E` | Expand to depth 3 |
+| `Cmd+E, E, E, E` | Expand all |
+| `Cmd+Shift+E` | Collapse at depth 1 |
+| `Cmd+Shift+E, E` | Collapse at depth 2 |
+| `Cmd+Shift+E, E, E, E` | Collapse all |
+
+**Scope = zoom state:**
+- Not zoomed → affects full tree
+- Zoomed (`Cmd+Enter`) → affects zoomed subtree only
+- To scope without staying zoomed: zoom in, expand/collapse, `Esc` out
 
 ### Block Type
 ```typescript
@@ -157,11 +197,21 @@ Outliner handles document-level keyboard events that span multiple blocks:
 KeyboardEvent
      │
      ▼
-Check if selection exists
+tinykeys sequence matcher (handles multi-key sequences)
+     │
+     ├─► Cmd+A sequences → progressive selectByIndentLevel()
+     │
+     ├─► Cmd+E sequences → progressive expandToDepth() (FLO-66)
+     │
+     ├─► Cmd+Shift+E sequences → progressive collapseToDepth() (FLO-66)
+     │
+     └─► Cmd+Z / Cmd+Shift+Z → undo/redo
+
+     │ (not matched by tinykeys)
+     ▼
+handleOutlinerKeyDown (onKeyDown handler)
      │
      ├─► Escape + selection → clearSelection()
-     │
-     ├─► Cmd+A → selectAll()
      │
      ├─► Cmd+C + selection → copySelection() as markdown
      │
