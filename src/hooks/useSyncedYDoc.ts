@@ -521,10 +521,12 @@ export function useSyncedYDoc(
           sharedDocLoaded = true;
           sharedDocError = null;
 
-          // Initialize UndoManager for blocks map (after initial load)
+          // Initialize UndoManager for blocks map AND rootIds (after initial load)
+          // CRITICAL: Must track both structures to maintain consistency on undo/redo
           if (!sharedUndoManager) {
             const blocksMap = doc.getMap('blocks');
-            sharedUndoManager = new Y.UndoManager(blocksMap, {
+            const rootIds = doc.getArray('rootIds');
+            sharedUndoManager = new Y.UndoManager([blocksMap, rootIds], {
               // Track all origins except 'remote' (which is from server)
               trackedOrigins: new Set([null, undefined]),
             });
