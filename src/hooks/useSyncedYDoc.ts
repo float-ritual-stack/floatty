@@ -280,21 +280,35 @@ function connectWebSocket() {
         setSyncStatus('synced');
         setLastSyncError(null);
       }
-      // Force flush any pending HTTP updates to ensure server has our latest state
-      // before we start receiving broadcasts. This prevents the "phantom data loss"
-      // scenario where local edits made during disconnect appear to vanish.
-      if (sharedPendingUpdates.length > 0) {
-        console.log('[WS] Flushing', sharedPendingUpdates.length, 'pending updates on reconnect');
-        // Clear any existing timer and flush immediately
-        if (sharedSyncTimer) {
-          clearTimeout(sharedSyncTimer);
-          sharedSyncTimer = null;
+
+      // Reconnection sync: flush local pending, then fetch any missed server updates.
+      // This prevents stale state if server received updates while we were disconnected.
+      queueMicrotask(async () => {
+        try {
+          // 1. Flush local pending updates first
+          if (sharedPendingUpdates.length > 0) {
+            console.log('[WS] Flushing', sharedPendingUpdates.length, 'pending updates on reconnect');
+            if (sharedSyncTimer) {
+              clearTimeout(sharedSyncTimer);
+              sharedSyncTimer = null;
+            }
+            await forceFlushOnReconnect();
+          }
+
+          // 2. Fetch any updates we missed during disconnection
+          // Server state includes all updates; applyUpdate is idempotent (no-op for already-seen)
+          const { getHttpClient } = await import('../lib/httpClient');
+          const httpClient = getHttpClient();
+          const serverState = await httpClient.getState();
+          if (serverState && serverState.length > 2) {
+            console.log('[WS] Syncing server state after reconnect:', serverState.length, 'bytes');
+            Y.applyUpdate(sharedDoc, serverState, 'remote');
+          }
+        } catch (err) {
+          console.error('[WS] Reconnect sync failed:', err);
+          // Non-fatal: we'll receive live updates via WebSocket going forward
         }
-        // Use a microtask to ensure flush happens after connection is fully established
-        queueMicrotask(async () => {
-          await forceFlushOnReconnect();
-        });
-      }
+      });
     };
 
     sharedWebSocket.onmessage = (event) => {

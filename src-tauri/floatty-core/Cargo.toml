@@ -16,6 +16,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# TypeScript bindings generation
+ts-rs = "10"
+
 # Error handling
 thiserror = "2.0"
 

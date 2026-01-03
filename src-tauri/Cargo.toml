@@ -11,6 +11,7 @@ license = "MIT"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
+default-run = "float-pty"
 
 [lib]
 name = "float_pty_lib"
@@ -47,8 +48,16 @@ shell-words = "1.1.1"
 tauri-plugin-clipboard = "2.1.11"
 tauri-plugin-dialog = "2"
 
+# TypeScript bindings generation (for ts-gen binary)
+ts-rs = "10"
+
 # macOS-only dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
 # NSPanel floating window support
 # TODO: Replace with crates.io version when published (currently git-only, spike code)
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+
+# Binary for generating TypeScript types from Rust
+[[bin]]
+name = "ts-gen"
+path = "src/bin/ts-gen.rs"

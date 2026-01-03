@@ -2,12 +2,17 @@
 //!
 //! Block type is DERIVED from content on every access, never stored.
 //! This matches the frontend behavior in `src/lib/blockTypes.ts`.
+//!
+//! NOTE: BlockType is exported to TypeScript via ts-rs. Run `cargo run --bin ts-gen`
+//! after modifying this file to regenerate bindings.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Block types determine rendering and execution behavior.
 /// Derived from content prefix - NOT stored in the database.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export, rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum BlockType {
     #[default]
@@ -44,6 +49,50 @@ pub enum BlockType {
     Quote,
 }
 
+/// Check for bullet-style ctx marker: `- ctx::YYYY-MM-DD`
+/// Matches TS regex: `/^- ctx::\d{4}-\d{2}-\d{2}/i`
+fn is_bullet_ctx(s: &str) -> bool {
+    // Must start with "- ctx::" (case-insensitive)
+    let lower = s.to_lowercase();
+    if !lower.starts_with("- ctx::") {
+        return false;
+    }
+    // Then check for date pattern YYYY-MM-DD after "- ctx::"
+    let after_prefix = &s[7..]; // Skip "- ctx::"
+    if after_prefix.len() < 10 {
+        return false;
+    }
+    let date_part = &after_prefix[..10];
+    // Check format: 4 digits, dash, 2 digits, dash, 2 digits
+    let bytes = date_part.as_bytes();
+    bytes.len() == 10
+        && bytes[0..4].iter().all(|b| b.is_ascii_digit())
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(|b| b.is_ascii_digit())
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(|b| b.is_ascii_digit())
+}
+
+/// Check for todo item: `- [ ]` or `- [x]` (case-insensitive for x)
+/// Matches TS regex: `/^- \[[ x]\] /i`
+fn is_todo(s: &str) -> bool {
+    if s.len() < 6 {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    // Must start with "- ["
+    if bytes[0] != b'-' || bytes[1] != b' ' || bytes[2] != b'[' {
+        return false;
+    }
+    // Fourth char must be space, 'x', or 'X'
+    let checkbox = bytes[3];
+    if checkbox != b' ' && checkbox != b'x' && checkbox != b'X' {
+        return false;
+    }
+    // Must end with "] " (closing bracket + space)
+    bytes[4] == b']' && bytes[5] == b' '
+}
+
 /// Parse block type from content prefix.
 ///
 /// This is the Rust equivalent of `parseBlockType()` in `src/lib/blockTypes.ts`.
@@ -59,7 +108,9 @@ pub fn parse_block_type(content: &str) -> BlockType {
     if lower.starts_with("ai::") || lower.starts_with("chat::") {
         return BlockType::Ai;
     }
-    if lower.starts_with("ctx::") {
+    // ctx:: at line start OR bullet with ctx:: and date - block-level context marker
+    // Matches: "ctx::..." or "- ctx::2024-01-15 ..."
+    if lower.starts_with("ctx::") || is_bullet_ctx(trimmed) {
         return BlockType::Ctx;
     }
     if lower.starts_with("dispatch::") {
@@ -95,11 +146,8 @@ pub fn parse_block_type(content: &str) -> BlockType {
         return BlockType::Quote;
     }
 
-    // Todo: `- [ ]` or `- [x]` or `- [X]`
-    if trimmed.starts_with("- [ ] ")
-        || trimmed.starts_with("- [x] ")
-        || trimmed.starts_with("- [X] ")
-    {
+    // Todo: `- [ ]` or `- [x]` (case-insensitive for x, matches TS regex)
+    if is_todo(trimmed) {
         return BlockType::Todo;
     }
 
@@ -114,7 +162,8 @@ pub fn parse_block_type(content: &str) -> BlockType {
 /// A single block in the outliner tree.
 ///
 /// This is the Rust equivalent of the Block interface in `src/lib/blockTypes.ts`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, rename_all = "camelCase")]
 #[serde(rename_all = "camelCase")]
 pub struct Block {
     pub id: String,
