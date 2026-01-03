@@ -34,10 +34,13 @@ describe('parseBlockType', () => {
       expect(parseBlockType('CTX::2025-12-28')).toBe('ctx');
     });
 
-    it('detects ctx:: with timestamp anywhere in content (FLO-39)', () => {
+    it('detects ctx:: at line start or after bullet (FLO-39)', () => {
+      // Block-level ctx:: detection
+      expect(parseBlockType('ctx::2026-01-03 [project::floatty]')).toBe('ctx');
       expect(parseBlockType('- ctx::2026-01-03 [project::floatty]')).toBe('ctx');
-      expect(parseBlockType('some note ctx::2026-01-03 marker here')).toBe('ctx');
-      expect(parseBlockType('## heading ctx::2025-11-15 with marker')).toBe('ctx');
+      // Mid-content ctx:: keeps original type - inline parser handles styling
+      expect(parseBlockType('some note ctx::2026-01-03 marker here')).toBe('text');
+      expect(parseBlockType('## heading ctx::2025-11-15 with marker')).toBe('h2');
     });
 
     it('does NOT detect ctx:: without timestamp (abstract discussion)', () => {

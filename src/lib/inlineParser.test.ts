@@ -4,7 +4,7 @@
  * Tests parseInlineTokens which extracts **bold**, *italic*, `code` spans.
  */
 import { describe, it, expect } from 'vitest';
-import { parseInlineTokens, hasInlineFormatting, type InlineToken } from './inlineParser';
+import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, type InlineToken } from './inlineParser';
 
 // Helper to extract just types and content for easier assertions
 function tokenSummary(tokens: InlineToken[]): Array<{ type: string; content: string }> {
@@ -218,5 +218,101 @@ describe('hasInlineFormatting', () => {
   it('returns true for space between asterisks (matches as bold)', () => {
     // '** **' - the space is content, so it matches as bold
     expect(hasInlineFormatting('** **')).toBe(true);
+  });
+
+  it('returns true for ctx:: with timestamp', () => {
+    expect(hasInlineFormatting('ctx::2026-01-03 @ 02:50 AM')).toBe(true);
+    expect(hasInlineFormatting('- ctx::2026-01-03 [project::floatty]')).toBe(true);
+  });
+
+  it('returns false for ctx:: without timestamp', () => {
+    expect(hasInlineFormatting('talking about ctx:: in general')).toBe(false);
+  });
+});
+
+describe('ctx:: inline parsing', () => {
+  describe('hasCtxPatterns', () => {
+    it('returns true for ctx:: with timestamp', () => {
+      expect(hasCtxPatterns('ctx::2026-01-03')).toBe(true);
+      expect(hasCtxPatterns('- ctx::2026-01-03 @ 02:50:24 AM')).toBe(true);
+    });
+
+    it('returns false for ctx:: without timestamp', () => {
+      expect(hasCtxPatterns('ctx:: without date')).toBe(false);
+      expect(hasCtxPatterns('talking about ctx::')).toBe(false);
+    });
+  });
+
+  describe('parseAllInlineTokens for ctx::', () => {
+    it('parses ctx:: prefix', () => {
+      const tokens = parseAllInlineTokens('ctx::2026-01-03');
+      expect(tokens.find(t => t.type === 'ctx-prefix')).toBeDefined();
+      expect(tokens.find(t => t.type === 'ctx-prefix')?.raw).toBe('ctx::');
+    });
+
+    it('parses timestamp', () => {
+      const tokens = parseAllInlineTokens('ctx::2026-01-03');
+      expect(tokens.find(t => t.type === 'ctx-timestamp')).toBeDefined();
+      expect(tokens.find(t => t.type === 'ctx-timestamp')?.raw).toBe('2026-01-03');
+    });
+
+    it('parses timestamp with time', () => {
+      const tokens = parseAllInlineTokens('ctx::2026-01-03 @ 02:50:24 AM');
+      const timestamp = tokens.find(t => t.type === 'ctx-timestamp');
+      expect(timestamp).toBeDefined();
+      expect(timestamp?.raw).toBe('2026-01-03 @ 02:50:24 AM');
+    });
+
+    it('parses project tag', () => {
+      const tokens = parseAllInlineTokens('ctx::2026-01-03 [project::floatty]');
+      const tag = tokens.find(t => t.type === 'ctx-tag');
+      expect(tag).toBeDefined();
+      expect(tag?.tagType).toBe('project');
+      expect(tag?.content).toBe('floatty');
+      expect(tag?.raw).toBe('[project::floatty]');
+    });
+
+    it('parses multiple tags', () => {
+      const tokens = parseAllInlineTokens('ctx::2026-01-03 [project::floatty] [mode::build]');
+      const tags = tokens.filter(t => t.type === 'ctx-tag');
+      expect(tags).toHaveLength(2);
+      expect(tags[0].tagType).toBe('project');
+      expect(tags[1].tagType).toBe('mode');
+    });
+
+    it('parses issue tag', () => {
+      const tokens = parseAllInlineTokens('ctx::2026-01-03 [issue::FLO-39]');
+      const tag = tokens.find(t => t.type === 'ctx-tag');
+      expect(tag?.tagType).toBe('issue');
+      expect(tag?.content).toBe('FLO-39');
+    });
+
+    it('preserves surrounding text', () => {
+      const tokens = parseAllInlineTokens('- ctx::2026-01-03 summary text');
+      expect(tokens[0].type).toBe('text');
+      expect(tokens[0].raw).toBe('- ');
+      const lastTextToken = tokens.filter(t => t.type === 'text').pop();
+      expect(lastTextToken?.raw).toContain('summary text');
+    });
+
+    it('handles real-world ctx:: footer pattern', () => {
+      const input = '- ctx::2026-01-03 @ 02:36:23 AM - [project::floatty] - [issue::FLO-39]';
+      const tokens = parseAllInlineTokens(input);
+
+      expect(tokens.find(t => t.type === 'ctx-prefix')).toBeDefined();
+      expect(tokens.find(t => t.type === 'ctx-timestamp')).toBeDefined();
+      expect(tokens.filter(t => t.type === 'ctx-tag')).toHaveLength(2);
+    });
+  });
+
+  describe('mixed ctx:: and markdown', () => {
+    it('parses ctx:: with markdown in surrounding text', () => {
+      const input = '**heading** - ctx::2026-01-03 [project::floatty]';
+      const tokens = parseAllInlineTokens(input);
+
+      expect(tokens.find(t => t.type === 'bold')).toBeDefined();
+      expect(tokens.find(t => t.type === 'ctx-prefix')).toBeDefined();
+      expect(tokens.find(t => t.type === 'ctx-tag')).toBeDefined();
+    });
   });
 });
