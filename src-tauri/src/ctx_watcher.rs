@@ -38,6 +38,8 @@ pub struct CtxWatcher {
     db: Arc<CtxDatabase>,
     file_positions: Arc<Mutex<HashMap<PathBuf, u64>>>,
     running: Arc<Mutex<bool>>,
+    /// Handle to the watcher thread, joined on Drop
+    thread_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl CtxWatcher {
@@ -47,6 +49,7 @@ impl CtxWatcher {
             db,
             file_positions: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(Mutex::new(false)),
+            thread_handle: Mutex::new(None),
         }
     }
 
@@ -60,7 +63,7 @@ impl CtxWatcher {
         // Mark as running (tolerant of poison from other threads)
         *running.lock().unwrap_or_else(|e| e.into_inner()) = true;
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             log::info!("Starting ctx:: watcher on {:?} (max age: {} hours)",
                        config.watch_path, config.max_age_hours);
 
@@ -122,12 +125,31 @@ impl CtxWatcher {
 
             log::info!("ctx:: watcher stopped");
         });
+
+        // Store handle for join on Drop
+        *self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     }
 
     /// Stop the watcher
     #[allow(dead_code)]
     pub fn stop(&self) {
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
+}
+
+impl Drop for CtxWatcher {
+    fn drop(&mut self) {
+        // Signal thread to stop
+        *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
+
+        // Join the thread if it's running (wait up to 2 seconds for clean exit)
+        if let Some(handle) = self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            log::info!("[CtxWatcher] Joining watcher thread on drop...");
+            // Thread checks running flag every 1 second, so 2 seconds is enough
+            if handle.join().is_err() {
+                log::warn!("[CtxWatcher] Watcher thread panicked during join");
+            }
+        }
     }
 }
 
