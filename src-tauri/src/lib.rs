@@ -358,9 +358,15 @@ async fn execute_shell_command(command: String) -> Result<String, String> {
 
         // Truncate if output exceeds limit (prevents UI freeze on large output)
         if result.len() > max_bytes {
-            let truncated = &result[..max_bytes];
+            // Find safe UTF-8 boundary (avoids panic on multi-byte chars like emoji)
+            // Walk backwards from max_bytes to find a valid char boundary
+            let mut safe_max = max_bytes;
+            while safe_max > 0 && !result.is_char_boundary(safe_max) {
+                safe_max -= 1;
+            }
+            let truncated = &result[..safe_max];
             // Find last newline to avoid cutting mid-line
-            let cut_point = truncated.rfind('\n').unwrap_or(max_bytes);
+            let cut_point = truncated.rfind('\n').unwrap_or(safe_max);
             Ok(format!(
                 "{}\n\n... [truncated: {} → {} bytes]",
                 &result[..cut_point],
@@ -402,7 +408,12 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
             let result = res.response;
             // Truncate if output exceeds limit
             if result.len() > max_bytes {
-                let cut_point = result[..max_bytes].rfind('\n').unwrap_or(max_bytes);
+                // Find safe UTF-8 boundary (avoids panic on multi-byte chars)
+                let mut safe_max = max_bytes;
+                while safe_max > 0 && !result.is_char_boundary(safe_max) {
+                    safe_max -= 1;
+                }
+                let cut_point = result[..safe_max].rfind('\n').unwrap_or(safe_max);
                 Ok(format!(
                     "{}\n\n... [truncated: {} → {} bytes]",
                     &result[..cut_point],
