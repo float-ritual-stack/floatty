@@ -12,7 +12,7 @@
  */
 
 import { createMemo, For } from 'solid-js';
-import { parseInlineTokens, hasInlineFormatting, type InlineToken } from '../lib/inlineParser';
+import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../lib/inlineParser';
 
 interface BlockDisplayProps {
   content: string;
@@ -37,10 +37,22 @@ function InlineTokenSpan(props: { token: InlineToken }) {
     bold: 'md-bold',
     italic: 'md-italic',
     code: 'md-code',
+    'ctx-prefix': 'ctx-inline-prefix',
+    'ctx-timestamp': 'ctx-inline-timestamp',
+    'ctx-tag': 'ctx-inline-tag',
+  };
+
+  // For ctx-tag, add type-specific class for color coding
+  const getClass = () => {
+    const baseClass = classMap[props.token.type] || '';
+    if (props.token.type === 'ctx-tag' && props.token.tagType) {
+      return `${baseClass} ctx-inline-tag-${props.token.tagType}`;
+    }
+    return baseClass;
   };
 
   return (
-    <span class={classMap[props.token.type] || ''}>
+    <span class={getClass()}>
       {props.token.raw}
     </span>
   );
@@ -53,7 +65,7 @@ export function BlockDisplay(props: BlockDisplayProps) {
   // Parse tokens reactively - only recomputes when content changes
   const tokens = createMemo(() => {
     if (!hasFormatting()) return [];
-    return parseInlineTokens(props.content);
+    return parseAllInlineTokens(props.content);
   });
 
   return (

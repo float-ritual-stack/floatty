@@ -650,7 +650,7 @@ body.resizing .terminal-pane-positioned {
 /* Bullet colors by block type - using ANSI palette for consistency */
 .block-bullet-sh { color: var(--color-ansi-green); }
 .block-bullet-ai { color: var(--color-ansi-magenta); }
-.block-bullet-ctx { color: var(--color-ansi-yellow); }
+.block-bullet-ctx { color: var(--color-ansi-cyan); } /* Cyan matches timestamp color */
 .block-bullet-output { color: var(--color-ansi-cyan); }
 .block-bullet-error { color: var(--color-error); }
 .block-bullet-picker { color: var(--color-ansi-cyan); }
@@ -707,6 +707,53 @@ body.resizing .terminal-pane-positioned {
   cursor: pointer;
   color: var(--color-ansi-blue);
   text-decoration: underline;
+}
+
+/* ctx:: inline token styles - structured context markers */
+.block-display .ctx-inline-prefix {
+  color: var(--color-fg-muted);
+  opacity: 0.7;
+}
+
+.block-display .ctx-inline-timestamp {
+  color: var(--color-ansi-cyan);
+}
+
+.block-display .ctx-inline-tag {
+  font-size: 0.9em;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* Tag type colors - matching sidebar palette */
+.block-display .ctx-inline-tag-project {
+  color: var(--color-ansi-bright-cyan);
+  background: color-mix(in srgb, var(--color-ansi-bright-cyan) 15%, transparent);
+}
+
+.block-display .ctx-inline-tag-mode {
+  color: var(--color-ansi-bright-magenta);
+  background: color-mix(in srgb, var(--color-ansi-bright-magenta) 15%, transparent);
+}
+
+.block-display .ctx-inline-tag-issue {
+  color: var(--color-ansi-bright-yellow);
+  background: color-mix(in srgb, var(--color-ansi-bright-yellow) 15%, transparent);
+}
+
+.block-display .ctx-inline-tag-meeting {
+  color: var(--color-ansi-bright-green);
+  background: color-mix(in srgb, var(--color-ansi-bright-green) 15%, transparent);
+}
+
+.block-display .ctx-inline-tag-repo {
+  color: var(--color-ansi-magenta);
+  background: color-mix(in srgb, var(--color-ansi-magenta) 15%, transparent);
+}
+
+.block-display .ctx-inline-tag-branch {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
 }
 
 /* EDIT LAYER: transparent text, visible cursor */
@@ -799,7 +846,8 @@ body.resizing .terminal-pane-positioned {
 .block-content-h3 { color: var(--color-ansi-bright-magenta); }
 .block-content-sh { color: var(--color-ansi-bright-green); }
 .block-content-ai { color: var(--color-ansi-magenta); }
-.block-content-ctx { color: var(--color-ansi-bright-yellow); }
+/* ctx:: blocks: use foreground color, let inline tokens provide structure */
+.block-content-ctx { color: var(--color-fg); }
 .block-content-output { color: var(--color-ansi-bright-cyan); }
 .block-content-error { color: var(--color-ansi-bright-red); }
 .block-content-quote { color: var(--color-fg-muted); font-style: italic; }

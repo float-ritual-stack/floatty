@@ -39,7 +39,9 @@ export function parseBlockType(content: string): BlockType {
   // Magic triggers (case-insensitive)
   if (lower.startsWith('sh::') || lower.startsWith('term::')) return 'sh';
   if (lower.startsWith('ai::') || lower.startsWith('chat::')) return 'ai';
-  if (lower.startsWith('ctx::')) return 'ctx';
+  // ctx:: at line start OR bullet with ctx:: - block-level context marker
+  // Other ctx:: (mid-line in headings, etc) handled by inline parser
+  if (lower.startsWith('ctx::') || /^- ctx::\d{4}-\d{2}-\d{2}/i.test(trimmed)) return 'ctx';
   if (lower.startsWith('dispatch::')) return 'dispatch';
   if (lower.startsWith('web::') || lower.startsWith('link::')) return 'web';
   if (lower.startsWith('output::')) return 'output';
