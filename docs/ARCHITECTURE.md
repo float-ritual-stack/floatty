@@ -50,7 +50,7 @@ export type BlockType =
 
 Blocks form a tree structure:
 
-```
+```text
 rootIds: ['block-a', 'block-b']          // Y.Array<string>
 
 blocks: {                                 // Y.Map<Block>
@@ -200,8 +200,18 @@ const TV_PATTERN = /\$tv\(([^)]+)\)/g;
 - Pattern: `$tv(files)` in an `sh::` block
 - Creates temporary `picker::files` block with embedded terminal
 - Spawns `tv` CLI (external fuzzy finder)
-- Captures selection, substitutes into command
+- **Output capture happens in Rust** - zero GC pressure, ANSI stripping on PTY thread
+- Substitutes selection into command
 - Creates `ran::` block showing resolved command
+
+**Split pane support** (FLO-99): `paneId` is threaded through the execution path to scope DOM queries. Without it, `querySelector` would find the first picker element (wrong pane in splits).
+
+```typescript
+// src/lib/tvResolver.ts:106-108
+const selector = paneId
+  ? `.picker-terminal[data-block-id="${pickerId}"][data-pane-id="${paneId}"]`
+  : `.picker-terminal[data-block-id="${pickerId}"]`;
+```
 
 ---
 
@@ -258,7 +268,7 @@ pub fn compact_ydoc(&self, doc_key: &str, snapshot: &[u8]) -> Result<()>
 
 ### Sync Flow: Frontend → Rust
 
-```
+```text
 Frontend Y.Doc change
     ↓
 doc.on('update', handler)     // Capture delta
@@ -316,7 +326,7 @@ sharedUndoManager.clear();  // Can't undo past loaded state
 
 ### Outline Tree Component Hierarchy
 
-```
+```text
 Outliner (tree root, manages focus/selection)
   └─ <Key each={rootIds}>
        └─ BlockItem (recursive)
@@ -329,7 +339,7 @@ Outliner (tree root, manages focus/selection)
 
 ### Two-Layer Editing System
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │  .block-content-wrapper (position: relative)                │
 │  ┌────────────────────────────────────────────────────────┐ │
@@ -432,7 +442,7 @@ The codebase has **no** linking or reference features:
 
 ### Frontend (`src/`)
 
-```
+```text
 src/
 ├── App.tsx                    # Root component, providers
 ├── main.tsx                   # Entry point
@@ -480,7 +490,7 @@ src/
 
 ### Backend (`src-tauri/src/`)
 
-```
+```text
 src-tauri/src/
 ├── lib.rs                     # Tauri commands, app setup
 ├── main.rs                    # Entry point
@@ -489,6 +499,9 @@ src-tauri/src/
 ├── ctx_parser.rs              # Ollama API integration
 ├── panel.rs                   # Panel window management
 └── sync_test.rs               # Y.Doc sync tests
+
+src-tauri/plugins/tauri-plugin-pty/src/
+└── lib.rs                     # PTY spawning, output capture for $tv()
 ```
 
 ### Key Tauri Commands
