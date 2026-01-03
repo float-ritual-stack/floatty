@@ -27,10 +27,13 @@ use thiserror::Error;
 use tower_http::cors::{Any, CorsLayer};
 use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
+use crate::WsBroadcaster;
+
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<YDocStore>,
+    pub broadcaster: Arc<WsBroadcaster>,
 }
 
 /// Health check response
@@ -121,8 +124,8 @@ impl IntoResponse for ApiError {
 }
 
 /// Create the API router
-pub fn create_router(store: Arc<YDocStore>) -> Router {
-    let state = AppState { store };
+pub fn create_router(store: Arc<YDocStore>, broadcaster: Arc<WsBroadcaster>) -> Router {
+    let state = AppState { store, broadcaster };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -170,6 +173,10 @@ async fn apply_update(
         .map_err(|e| ApiError::InvalidBase64(e.to_string()))?;
 
     state.store.apply_update(&update_bytes)?;
+
+    // Broadcast to all WebSocket clients
+    state.broadcaster.broadcast(update_bytes);
+
     Ok(StatusCode::OK)
 }
 
@@ -369,8 +376,9 @@ async fn create_block(
     };
     drop(doc_guard);
 
-    // Persist only - memory already mutated by transaction above
+    // Persist and broadcast to WebSocket clients
     state.store.persist_update(&update)?;
+    state.broadcaster.broadcast(update);
 
     let block_type = floatty_core::parse_block_type(&req.content);
 
@@ -460,8 +468,9 @@ async fn update_block(
     };
     drop(doc_guard);
 
-    // Persist only - memory already mutated by transaction above
+    // Persist and broadcast to WebSocket clients
     state.store.persist_update(&update)?;
+    state.broadcaster.broadcast(update);
 
     let block_type = floatty_core::parse_block_type(&req.content);
 
@@ -544,8 +553,9 @@ async fn delete_block(
     };
     drop(doc_guard);
 
-    // Persist only - memory already mutated by transaction above
+    // Persist and broadcast to WebSocket clients
     state.store.persist_update(&update)?;
+    state.broadcaster.broadcast(update);
 
     Ok(StatusCode::NO_CONTENT)
 }

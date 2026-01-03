@@ -142,6 +142,9 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
     const serverInfo = await invoke('get_server_info', {});
     clientInstance = new HttpClient(serverInfo);
 
+    // Store URL globally for WebSocket connection
+    (window as any).__FLOATTY_SERVER_URL__ = serverInfo.url;
+
     // Verify connection
     const healthy = await clientInstance.isHealthy();
     if (!healthy) {

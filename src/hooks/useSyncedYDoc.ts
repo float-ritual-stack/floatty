@@ -64,6 +64,68 @@ let sharedRetryCount = 0;
 const MAX_RETRIES = 5;
 const DEFAULT_SYNC_DEBOUNCE = 50;
 
+// WebSocket for real-time sync from server
+let sharedWebSocket: WebSocket | null = null;
+let wsReconnectTimer: number | null = null;
+const WS_RECONNECT_DELAY = 2000;
+
+/**
+ * Connect to WebSocket for real-time updates from server.
+ * Called once after initial state load.
+ */
+function connectWebSocket() {
+  // Already connected or connecting
+  if (sharedWebSocket?.readyState === WebSocket.OPEN ||
+      sharedWebSocket?.readyState === WebSocket.CONNECTING) {
+    return;
+  }
+
+  // Get server URL from httpClient config
+  const serverUrl = (window as any).__FLOATTY_SERVER_URL__ as string | undefined;
+  if (!serverUrl) {
+    console.warn('[WS] Server URL not set, skipping WebSocket');
+    return;
+  }
+
+  // Convert http://localhost:8765 to ws://localhost:8765/ws
+  const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
+  console.log('[WS] Connecting to', wsUrl);
+
+  try {
+    sharedWebSocket = new WebSocket(wsUrl);
+
+    sharedWebSocket.onopen = () => {
+      console.log('[WS] Connected');
+    };
+
+    sharedWebSocket.onmessage = (event) => {
+      // Server sends binary Y.Doc updates
+      if (event.data instanceof Blob) {
+        event.data.arrayBuffer().then((buffer) => {
+          const update = new Uint8Array(buffer);
+          console.log('[WS] Received update:', update.length, 'bytes');
+          // Apply with 'remote' origin so we don't echo it back
+          Y.applyUpdate(sharedDoc, update, 'remote');
+        });
+      }
+    };
+
+    sharedWebSocket.onclose = (event) => {
+      console.log('[WS] Disconnected, code:', event.code);
+      sharedWebSocket = null;
+      // Reconnect after delay
+      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = window.setTimeout(connectWebSocket, WS_RECONNECT_DELAY);
+    };
+
+    sharedWebSocket.onerror = (error) => {
+      console.error('[WS] Error:', error);
+    };
+  } catch (err) {
+    console.error('[WS] Failed to connect:', err);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // HOOK
 // ═══════════════════════════════════════════════════════════════
@@ -222,6 +284,9 @@ export function useSyncedYDoc(
             // (prevents undoing the initial block creation)
             sharedUndoManager.clear();
           }
+
+          // Connect to WebSocket for real-time sync
+          connectWebSocket();
         } catch (err) {
           console.error('Failed to load initial state from server:', err);
           sharedDocError = String(err);

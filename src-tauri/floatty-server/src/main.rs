@@ -7,9 +7,9 @@
 //!   cargo install --path src-tauri/floatty-server
 //!   floatty-server
 
-use axum::{http::Method, middleware};
+use axum::{http::Method, middleware, routing::get, Router};
 use floatty_core::YDocStore;
-use floatty_server::{api, auth, config::ServerConfig};
+use floatty_server::{api, auth, config::ServerConfig, ws, WsBroadcaster};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -56,6 +56,9 @@ async fn main() {
         }
     };
 
+    // Create WebSocket broadcaster for real-time sync
+    let broadcaster = Arc::new(WsBroadcaster::new(64));
+
     // CORS layer - allow requests from Tauri webview (localhost origins)
     let cors = CorsLayer::new()
         .allow_origin(Any) // Tauri uses tauri://localhost or http://localhost
@@ -64,8 +67,20 @@ async fn main() {
 
     // Build router with CORS and auth middleware
     let auth_state = auth::ApiKeyAuth::new(api_key.clone());
-    let app = api::create_router(Arc::clone(&store))
-        .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
+
+    // API routes (with auth)
+    let api_routes = api::create_router(Arc::clone(&store), Arc::clone(&broadcaster))
+        .layer(middleware::from_fn_with_state(auth_state.clone(), auth::auth_middleware));
+
+    // WebSocket route (auth via query param since WS can't use headers easily)
+    let ws_routes = Router::new()
+        .route("/ws", get(ws::ws_handler))
+        .with_state(Arc::clone(&broadcaster));
+
+    // Combine routes
+    let app = Router::new()
+        .merge(api_routes)
+        .merge(ws_routes)
         .layer(cors);
 
     // Bind and serve (port from env overrides config)
