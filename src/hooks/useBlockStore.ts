@@ -649,6 +649,120 @@ function createBlockStore() {
     });
   };
 
+  /**
+   * FLO-75: Move block before its previous sibling
+   * Returns true if move happened, false if already first or escaped to parent level
+   * When at first sibling position, escapes to become sibling after parent (like outdent)
+   */
+  const moveBlockUp = (id: string): boolean => {
+    if (!_doc) { warnDocNotReady('moveBlockUp'); return false; }
+
+    const block = state.blocks[id];
+    if (!block) return false;
+
+    // Get siblings array
+    let siblings: string[];
+    if (block.parentId) {
+      const parent = state.blocks[block.parentId];
+      siblings = parent?.childIds || [];
+    } else {
+      siblings = state.rootIds;
+    }
+
+    const index = siblings.indexOf(id);
+    if (index < 0) return false;
+
+    // If already first sibling
+    if (index === 0) {
+      // Escape to parent level if has parent (mirrors outdent)
+      if (block.parentId) {
+        outdentBlock(id);
+        return true;
+      }
+      // Root level first - nowhere to go
+      return false;
+    }
+
+    // Swap with previous sibling
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      if (block.parentId) {
+        // Nested block - modify parent's childIds
+        const parentData = blocksMap.get(block.parentId);
+        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        [childIds[index - 1], childIds[index]] = [childIds[index], childIds[index - 1]];
+        setValueOnYMap(blocksMap, block.parentId, 'childIds', childIds);
+      } else {
+        // Root block - modify rootIds array
+        const rootIds = _doc.getArray<string>('rootIds');
+        rootIds.delete(index, 1);
+        rootIds.insert(index - 1, [id]);
+      }
+
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    });
+
+    return true;
+  };
+
+  /**
+   * FLO-75: Move block after its next sibling
+   * Returns true if move happened, false if already last or escaped to parent level
+   * When at last sibling position, escapes to become sibling after parent (like outdent)
+   */
+  const moveBlockDown = (id: string): boolean => {
+    if (!_doc) { warnDocNotReady('moveBlockDown'); return false; }
+
+    const block = state.blocks[id];
+    if (!block) return false;
+
+    // Get siblings array
+    let siblings: string[];
+    if (block.parentId) {
+      const parent = state.blocks[block.parentId];
+      siblings = parent?.childIds || [];
+    } else {
+      siblings = state.rootIds;
+    }
+
+    const index = siblings.indexOf(id);
+    if (index < 0) return false;
+
+    // If already last sibling
+    if (index >= siblings.length - 1) {
+      // Escape to parent level if has parent (mirrors outdent)
+      if (block.parentId) {
+        outdentBlock(id);
+        return true;
+      }
+      // Root level last - nowhere to go
+      return false;
+    }
+
+    // Swap with next sibling
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      if (block.parentId) {
+        // Nested block - modify parent's childIds
+        const parentData = blocksMap.get(block.parentId);
+        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        [childIds[index], childIds[index + 1]] = [childIds[index + 1], childIds[index]];
+        setValueOnYMap(blocksMap, block.parentId, 'childIds', childIds);
+      } else {
+        // Root block - modify rootIds array
+        const rootIds = _doc.getArray<string>('rootIds');
+        rootIds.delete(index, 1);
+        rootIds.insert(index + 1, [id]);
+      }
+
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    });
+
+    return true;
+  };
+
   const toggleCollapsed = (id: string) => {
     if (!_doc) { warnDocNotReady('toggleCollapsed'); return; }
 
@@ -695,6 +809,9 @@ function createBlockStore() {
     deleteBlocks,
     indentBlock,
     outdentBlock,
+    // FLO-75: Block movement
+    moveBlockUp,
+    moveBlockDown,
     toggleCollapsed,
     createInitialBlock,
     clearWorkspace,

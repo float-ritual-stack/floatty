@@ -530,6 +530,8 @@ export function Terminal() {
           tabId: tab.id,
           cwd: leaf?.cwd,
           leafType: leaf?.leafType || 'terminal',
+          // FLO-77: Pass initialScrollTop for cloned outliner panes
+          initialScrollTop: leaf?.initialScrollTop,
           isActivePane: paneId === activePaneId,
           isActiveTab: tab.id === activeId,
         };
@@ -584,6 +586,7 @@ export function Terminal() {
                     placeholderId={info().paneId}
                     isActive={info().isActivePane && info().isActiveTab}
                     isVisible={info().isActiveTab}
+                    initialScrollTop={info().initialScrollTop}
                     ref={(handle) => setPaneRef(info().paneId, handle)}
                     onPaneClick={() => handlePaneClick(info().paneId)}
                   />

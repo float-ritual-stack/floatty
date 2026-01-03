@@ -9,6 +9,8 @@ interface OutlinerPaneProps {
   placeholderId: string;
   isActive: boolean;
   isVisible: boolean;
+  // FLO-77: Initial scroll position for cloned panes
+  initialScrollTop?: number;
   onPaneClick?: () => void;  // Called when pane is clicked (for focus tracking)
   ref?: (handle: OutlinerPaneHandle) => void;
 }
@@ -42,6 +44,17 @@ export function OutlinerPane(props: OutlinerPaneProps) {
   onMount(() => {
     props.ref?.(handle);
     updatePosition();
+
+    // FLO-77: Apply initial scroll position for cloned panes
+    if (props.initialScrollTop !== undefined && props.initialScrollTop > 0) {
+      // Wait for Outliner to render, then apply scroll
+      requestAnimationFrame(() => {
+        const outlinerEl = containerRef?.querySelector('.outliner-container');
+        if (outlinerEl) {
+          outlinerEl.scrollTop = props.initialScrollTop!;
+        }
+      });
+    }
 
     // Watch for placeholder size/position changes (matches TerminalPane pattern)
     const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;

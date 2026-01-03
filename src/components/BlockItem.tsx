@@ -132,6 +132,27 @@ export function BlockItem(props: BlockItemProps) {
         if (focusTarget) props.onFocus(focusTarget);
         return;
       }
+
+      // FLO-75: Block movement via Cmd+Up/Down
+      case 'moveBlockUp': {
+        e.preventDefault();
+        store.moveBlockUp(props.id);
+        // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => contentRef?.focus());
+        });
+        return;
+      }
+
+      case 'moveBlockDown': {
+        e.preventDefault();
+        store.moveBlockDown(props.id);
+        // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => contentRef?.focus());
+        });
+        return;
+      }
     }
 
     // Non-action keybinds (navigation, editing)

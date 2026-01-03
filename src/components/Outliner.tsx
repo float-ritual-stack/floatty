@@ -18,7 +18,9 @@ export function Outliner(props: OutlinerProps) {
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete, getAncestors } = useBlockOperations();
-  const [focusedBlockId, setFocusedBlockId] = createSignal<string | null>(null);
+  // FLO-77: Use paneStore for focusedBlockId (enables clone-on-split)
+  const focusedBlockId = () => paneStore.getFocusedBlockId(props.paneId);
+  const setFocusedBlockId = (id: string | null) => paneStore.setFocusedBlockId(props.paneId, id);
   const [confirmClear, setConfirmClear] = createSignal(false);
 
   // FLO-74: Multi-select state
