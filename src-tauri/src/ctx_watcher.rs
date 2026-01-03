@@ -1,4 +1,4 @@
-use crate::db::{CtxDatabase, JsonlMetadata};
+use crate::db::{FloattyDb, JsonlMetadata};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ impl Default for WatcherConfig {
 /// JSONL file watcher for ctx:: markers
 pub struct CtxWatcher {
     config: WatcherConfig,
-    db: Arc<CtxDatabase>,
+    db: Arc<FloattyDb>,
     file_positions: Arc<Mutex<HashMap<PathBuf, u64>>>,
     running: Arc<Mutex<bool>>,
     /// Handle to the watcher thread, joined on Drop
@@ -43,7 +43,7 @@ pub struct CtxWatcher {
 }
 
 impl CtxWatcher {
-    pub fn new(db: Arc<CtxDatabase>, config: WatcherConfig) -> Self {
+    pub fn new(db: Arc<FloattyDb>, config: WatcherConfig) -> Self {
         Self {
             config,
             db,
@@ -155,7 +155,7 @@ impl Drop for CtxWatcher {
 /// Scan directory for all JSONL files modified within max_age_hours
 fn scan_directory(
     dir: &Path,
-    db: &Arc<CtxDatabase>,
+    db: &Arc<FloattyDb>,
     file_positions: &Arc<Mutex<HashMap<PathBuf, u64>>>,
     max_age_hours: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -201,7 +201,7 @@ fn scan_directory(
 /// Process a single JSONL file for ctx:: markers
 fn process_file(
     path: &Path,
-    db: &Arc<CtxDatabase>,
+    db: &Arc<FloattyDb>,
     file_positions: &Arc<Mutex<HashMap<PathBuf, u64>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path_str = path.to_string_lossy().to_string();

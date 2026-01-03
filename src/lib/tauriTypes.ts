@@ -111,19 +111,6 @@ interface TauriCommands {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // YDOC COMMANDS (LEGACY - migrating to HTTP)
-  // These remain for backwards compatibility during Phase 3 transition
-  // ─────────────────────────────────────────────────────────────
-  get_initial_state: {
-    args: Record<string, never>;
-    returns: string; // base64 encoded Y.Doc state
-  };
-  apply_update: {
-    args: { updateB64: string };
-    returns: void;
-  };
-
-  // ─────────────────────────────────────────────────────────────
   // WORKSPACE PERSISTENCE
   // ─────────────────────────────────────────────────────────────
   get_workspace_state: {
