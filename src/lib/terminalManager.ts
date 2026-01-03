@@ -733,7 +733,8 @@ class TerminalManager {
     // Mark as disposing BEFORE kill - prevents onExit callback from triggering closePane
     this.disposing.add(id);
 
-    if (instance.ptyPid !== null) {
+    // Guard: Only attempt PTY operations for valid PIDs (excludes sentinels: -1, -999)
+    if (instance.ptyPid !== null && instance.ptyPid > 0) {
       if (instance.exitedNaturally) {
         // PTY already exited - just clean up Rust session map
         try {
