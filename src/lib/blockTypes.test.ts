@@ -34,6 +34,12 @@ describe('parseBlockType', () => {
       expect(parseBlockType('CTX::2025-12-28')).toBe('ctx');
     });
 
+    it('detects ctx:: anywhere in content (FLO-39)', () => {
+      expect(parseBlockType('- ctx::2026-01-03 [project::floatty]')).toBe('ctx');
+      expect(parseBlockType('some note ctx::marker here')).toBe('ctx');
+      expect(parseBlockType('## heading ctx::with marker')).toBe('ctx');
+    });
+
     it('detects dispatch:: trigger', () => {
       expect(parseBlockType('dispatch:: summarize this')).toBe('dispatch');
       expect(parseBlockType('DISPATCH::run task')).toBe('dispatch');
