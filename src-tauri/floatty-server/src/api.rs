@@ -486,19 +486,27 @@ async fn delete_block(
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
 
+        // Verify block exists before deleting
+        if blocks.get(&txn, &id).is_none() {
+            return Err(ApiError::NotFound(id));
+        }
+
         // Remove from blocks map
         blocks.remove(&mut txn, &id);
 
         // Remove from rootIds if present
-        if let Some(root_ids) = txn.get_array("rootIds") {
-            // Find and remove the id from rootIds
-            for (_i, value) in root_ids.iter(&txn).enumerate() {
-                if value.to_string(&txn) == id {
-                    // Can't remove by index easily in yrs, so we'll skip this for now
-                    // A proper implementation would rebuild the array
+        let root_ids = txn.get_or_insert_array("rootIds");
+        let mut remove_index: Option<u32> = None;
+        for (i, value) in root_ids.iter(&txn).enumerate() {
+            if let yrs::Value::Any(yrs::Any::String(s)) = value {
+                if s.as_ref() == id {
+                    remove_index = Some(i as u32);
                     break;
                 }
             }
+        }
+        if let Some(idx) = remove_index {
+            root_ids.remove(&mut txn, idx, 1);
         }
 
         txn.encode_update_v1()
