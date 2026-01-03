@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
-use yrs::{Any, Array, Doc, Map, Transact, WriteTxn};
+use yrs::{Any, Array, ArrayPrelim, Doc, Map, MapPrelim, Transact, WriteTxn};
 
 /// Configuration for the Ollama parser
 #[derive(Clone, Serialize, Deserialize)]
@@ -277,7 +277,7 @@ pub fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Resu
         .as_millis() as f64;
     let content_id = format!("{}_content", id);
 
-    // 1. Create content child block
+    // 1. Create content child block as nested Y.Map with Y.Array for childIds
     let content_text = if let Some(summary) = &parsed.summary {
         summary.clone()
     } else if let Some(msg) = &parsed.message {
@@ -286,18 +286,24 @@ pub fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Resu
         String::new()
     };
 
-    let mut content_block_values = HashMap::new();
-    content_block_values.insert("id".to_string(), Any::from(content_id.clone()));
-    content_block_values.insert("parentId".to_string(), Any::from(id.to_string()));
-    content_block_values.insert("childIds".to_string(), Any::from(Vec::<String>::new()));
-    content_block_values.insert("content".to_string(), Any::from(content_text));
-    content_block_values.insert("type".to_string(), Any::from("text"));
-    content_block_values.insert("collapsed".to_string(), Any::from(false));
-    content_block_values.insert("createdAt".to_string(), Any::from(now));
-    content_block_values.insert("updatedAt".to_string(), Any::from(now));
-    blocks_map.insert(&mut txn, content_id.clone(), content_block_values);
+    let content_block = blocks_map.insert(
+        &mut txn,
+        content_id.clone(),
+        MapPrelim::from([
+            ("id".to_owned(), Any::from(content_id.clone())),
+            ("parentId".to_owned(), Any::from(id.to_string())),
+            ("content".to_owned(), Any::from(content_text)),
+            ("type".to_owned(), Any::from("text")),
+            ("collapsed".to_owned(), Any::from(false)),
+            ("createdAt".to_owned(), Any::from(now)),
+            ("updatedAt".to_owned(), Any::from(now)),
+        ]),
+    );
+    // childIds as nested Y.Array (empty for content block)
+    let empty_children: Vec<Any> = vec![];
+    content_block.insert(&mut txn, "childIds", ArrayPrelim::from(empty_children));
 
-    // 2. Create parent ctx block
+    // 2. Create parent ctx block as nested Y.Map
     let mut metadata = HashMap::new();
     if let Some(v) = &parsed.project { metadata.insert("project".to_string(), Any::from(v.to_string())); }
     if let Some(v) = &parsed.mode { metadata.insert("mode".to_string(), Any::from(v.to_string())); }
@@ -306,17 +312,23 @@ pub fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Resu
     if let Some(v) = &parsed.time { metadata.insert("time".to_string(), Any::from(v.to_string())); }
     if let Some(v) = &parsed.timestamp { metadata.insert("timestamp".to_string(), Any::from(v.to_string())); }
 
-    let mut parent_block_values = HashMap::new();
-    parent_block_values.insert("id".to_string(), Any::from(id.to_string()));
-    parent_block_values.insert("parentId".to_string(), Any::Null);
-    parent_block_values.insert("childIds".to_string(), Any::from(vec![content_id]));
-    parent_block_values.insert("content".to_string(), Any::from("")); // Header block has no text of its own
-    parent_block_values.insert("type".to_string(), Any::from("ctx"));
-    parent_block_values.insert("metadata".to_string(), Any::from(metadata));
-    parent_block_values.insert("collapsed".to_string(), Any::from(false));
-    parent_block_values.insert("createdAt".to_string(), Any::from(now));
-    parent_block_values.insert("updatedAt".to_string(), Any::from(now));
-    blocks_map.insert(&mut txn, id.to_string(), parent_block_values);
+    let parent_block = blocks_map.insert(
+        &mut txn,
+        id.to_string(),
+        MapPrelim::from([
+            ("id".to_owned(), Any::from(id.to_string())),
+            ("parentId".to_owned(), Any::Null),
+            ("content".to_owned(), Any::from("")), // Header block has no text of its own
+            ("type".to_owned(), Any::from("ctx")),
+            ("metadata".to_owned(), Any::from(metadata)),
+            ("collapsed".to_owned(), Any::from(false)),
+            ("createdAt".to_owned(), Any::from(now)),
+            ("updatedAt".to_owned(), Any::from(now)),
+        ]),
+    );
+    // childIds as Y.Array with content_id
+    let child_ids_vec: Vec<Any> = vec![Any::from(content_id)];
+    parent_block.insert(&mut txn, "childIds", ArrayPrelim::from(child_ids_vec));
 
     // 3. Prepend parent to rootIds
     root_ids.insert(&mut txn, 0, id.to_string());

@@ -13,6 +13,11 @@ use yrs::{Doc, ReadTxn, StateVector, Transact, Update, updates::decoder::Decode}
 /// Default doc key for the outliner.
 pub const DEFAULT_DOC_KEY: &str = "default";
 
+/// Schema version: bump when block format changes incompatibly.
+/// v1: Plain JSON objects in Y.Map
+/// v2: Nested Y.Map with Y.Array for childIds
+const SCHEMA_VERSION: i32 = 2;
+
 /// Compact when update count exceeds this threshold.
 const COMPACT_THRESHOLD: i64 = 100;
 
@@ -57,6 +62,26 @@ impl YDocStore {
     /// Open a store with a specific database path and doc key.
     pub fn open(db_path: &Path, doc_key: &str) -> Result<Self, StoreError> {
         let persistence = YDocPersistence::open(db_path)?;
+
+        // Check schema version - clear old data if incompatible
+        // Version 0 = legacy data from before schema tracking (plain JSON blocks)
+        // Version 2 = nested Y.Map with Y.Array childIds
+        let current_version = persistence.get_schema_version()?;
+        if current_version < SCHEMA_VERSION {
+            // Check if there's any data to clear (version 0 could be legacy OR fresh install)
+            let has_data = persistence.get_update_count(doc_key)? > 0;
+            if has_data {
+                log::warn!(
+                    "Schema upgrade: clearing old Y.Doc data (v{} -> v{})",
+                    current_version,
+                    SCHEMA_VERSION
+                );
+                persistence.clear_updates(doc_key)?;
+            }
+            persistence.set_schema_version(SCHEMA_VERSION)?;
+            log::info!("Schema version set to {}", SCHEMA_VERSION);
+        }
+
         let doc = Doc::new();
 
         // Replay persisted updates

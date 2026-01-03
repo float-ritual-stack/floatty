@@ -594,6 +594,8 @@ pub fn run() {
                             let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
                         } else {
                             log::info!("Successfully migrated Y.Doc from legacy to append-only format");
+                            // Clear legacy entry to prevent re-migration after schema upgrades
+                            let _ = db.set_system_state("ydoc", b"");
                             let _ = db.set_system_state("ydoc_migration_attempts", b"0");
                         }
                     }

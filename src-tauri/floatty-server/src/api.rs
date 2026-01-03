@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 use tower_http::cors::{Any, CorsLayer};
-use yrs::{Array, Map, ReadTxn, Transact, WriteTxn};
+use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
 /// Shared application state
 #[derive(Clone)]
@@ -185,8 +185,8 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
     // Get root IDs
     if let Some(root_ids_arr) = txn.get_array("rootIds") {
         for value in root_ids_arr.iter(&txn) {
-            if let Some(id) = value.to_string(&txn).into() {
-                root_ids.push(id);
+            if let yrs::Value::Any(yrs::Any::String(id)) = value {
+                root_ids.push(id.to_string());
             }
         }
     }
@@ -194,35 +194,53 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
     // Get all blocks from the map
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
-            if let Ok(block_json) = value.to_string(&txn).parse::<serde_json::Value>() {
-                let block_type = floatty_core::parse_block_type(
-                    block_json.get("content").and_then(|v| v.as_str()).unwrap_or(""),
-                );
+            // Handle nested Y.Map (new format)
+            if let yrs::Value::YMap(block_map) = value {
+                let content = block_map
+                    .get(&txn, "content")
+                    .and_then(|v| match v {
+                        yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
+                    yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    yrs::Value::Any(yrs::Any::Null) => None,
+                    _ => None,
+                });
+
+                let child_ids = block_map
+                    .get(&txn, "childIds")
+                    .and_then(|v| match v {
+                        yrs::Value::YArray(arr) => Some(
+                            arr.iter(&txn)
+                                .filter_map(|v| match v {
+                                    yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                    _ => None,
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                let collapsed = block_map
+                    .get(&txn, "collapsed")
+                    .and_then(|v| match v {
+                        yrs::Value::Any(yrs::Any::Bool(b)) => Some(b),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+
+                let block_type = floatty_core::parse_block_type(&content);
 
                 blocks.push(BlockDto {
                     id: key.to_string(),
-                    content: block_json
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    parent_id: block_json
-                        .get("parentId")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                    child_ids: block_json
-                        .get("childIds")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    collapsed: block_json
-                        .get("collapsed")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
+                    content,
+                    parent_id,
+                    child_ids,
+                    collapsed,
                     block_type: format!("{:?}", block_type).to_lowercase(),
                 });
             }
@@ -249,41 +267,58 @@ async fn get_block(
         .get(&txn, &id)
         .ok_or_else(|| ApiError::NotFound(id.clone()))?;
 
-    let block_json: serde_json::Value = value
-        .to_string(&txn)
-        .parse()
-        .map_err(|_| ApiError::NotFound(id.clone()))?;
-
-    let block_type = floatty_core::parse_block_type(
-        block_json.get("content").and_then(|v| v.as_str()).unwrap_or(""),
-    );
-
-    Ok(Json(BlockDto {
-        id: id.clone(),
-        content: block_json
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        parent_id: block_json
-            .get("parentId")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        child_ids: block_json
-            .get("childIds")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
+    // Handle nested Y.Map (new format)
+    if let yrs::Value::YMap(block_map) = value {
+        let content = block_map
+            .get(&txn, "content")
+            .and_then(|v| match v {
+                yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
             })
-            .unwrap_or_default(),
-        collapsed: block_json
-            .get("collapsed")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        block_type: format!("{:?}", block_type).to_lowercase(),
-    }))
+            .unwrap_or_default();
+
+        let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
+            yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+            yrs::Value::Any(yrs::Any::Null) => None,
+            _ => None,
+        });
+
+        let child_ids = block_map
+            .get(&txn, "childIds")
+            .and_then(|v| match v {
+                yrs::Value::YArray(arr) => Some(
+                    arr.iter(&txn)
+                        .filter_map(|v| match v {
+                            yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let collapsed = block_map
+            .get(&txn, "collapsed")
+            .and_then(|v| match v {
+                yrs::Value::Any(yrs::Any::Bool(b)) => Some(b),
+                _ => None,
+            })
+            .unwrap_or(false);
+
+        let block_type = floatty_core::parse_block_type(&content);
+
+        Ok(Json(BlockDto {
+            id: id.clone(),
+            content,
+            parent_id,
+            child_ids,
+            collapsed,
+            block_type: format!("{:?}", block_type).to_lowercase(),
+        }))
+    } else {
+        Err(ApiError::NotFound(id))
+    }
 }
 
 /// POST /api/v1/blocks - Create block
@@ -297,22 +332,32 @@ async fn create_block(
         .unwrap_or_default()
         .as_millis() as i64;
 
-    let block = serde_json::json!({
-        "id": id,
-        "content": req.content,
-        "parentId": req.parent_id,
-        "childIds": [],
-        "collapsed": false,
-        "createdAt": now,
-        "updatedAt": now,
-    });
-
     let doc = state.store.doc();
     let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
     let update = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
-        blocks.insert(&mut txn, id.as_str(), block.to_string().as_str());
+
+        // Create nested Y.Map for block with Y.Array for childIds
+        let parent_id_value: yrs::Any = match &req.parent_id {
+            Some(p) => yrs::Any::String(p.clone().into()),
+            None => yrs::Any::Null,
+        };
+        let block_map = blocks.insert(
+            &mut txn,
+            id.as_str(),
+            MapPrelim::from([
+                ("id".to_owned(), yrs::any!(id.clone())),
+                ("content".to_owned(), yrs::any!(req.content.clone())),
+                ("parentId".to_owned(), parent_id_value),
+                ("collapsed".to_owned(), yrs::any!(false)),
+                ("createdAt".to_owned(), yrs::any!(now as f64)),
+                ("updatedAt".to_owned(), yrs::any!(now as f64)),
+            ]),
+        );
+        // Insert childIds as nested Y.Array (empty)
+        let empty: Vec<yrs::Any> = vec![];
+        block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
 
         // Add to rootIds if no parent
         if req.parent_id.is_none() {
@@ -350,37 +395,67 @@ async fn update_block(
 ) -> Result<Json<BlockDto>, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
 
-    // Get current block
-    let blocks_map = txn
-        .get_map("blocks")
-        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
-
-    let value = blocks_map
-        .get(&txn, &id)
-        .ok_or_else(|| ApiError::NotFound(id.clone()))?;
-
-    let mut block_json: serde_json::Value = value
-        .to_string(&txn)
-        .parse()
-        .map_err(|_| ApiError::NotFound(id.clone()))?;
-
-    drop(txn);
-
-    // Update content
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
 
-    block_json["content"] = serde_json::Value::String(req.content.clone());
-    block_json["updatedAt"] = serde_json::Value::Number(now.into());
+    // Read existing block data and update in place (granular CRDT update)
+    let (parent_id, child_ids, collapsed) = {
+        let txn = doc_guard.transact();
+        let blocks_map = txn
+            .get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
 
+        let value = blocks_map
+            .get(&txn, &id)
+            .ok_or_else(|| ApiError::NotFound(id.clone()))?;
+
+        if let yrs::Value::YMap(block_map) = value {
+            let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
+                yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                yrs::Value::Any(yrs::Any::Null) => None,
+                _ => None,
+            });
+
+            let child_ids = block_map
+                .get(&txn, "childIds")
+                .and_then(|v| match v {
+                    yrs::Value::YArray(arr) => Some(
+                        arr.iter(&txn)
+                            .filter_map(|v| match v {
+                                yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                _ => None,
+                            })
+                            .collect(),
+                    ),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            let collapsed = block_map
+                .get(&txn, "collapsed")
+                .and_then(|v| match v {
+                    yrs::Value::Any(yrs::Any::Bool(b)) => Some(b),
+                    _ => None,
+                })
+                .unwrap_or(false);
+
+            (parent_id, child_ids, collapsed)
+        } else {
+            return Err(ApiError::NotFound(id));
+        }
+    };
+
+    // Update only content and updatedAt (granular - doesn't rewrite whole block)
     let update = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
-        blocks.insert(&mut txn, id.as_str(), block_json.to_string().as_str());
+        if let Some(yrs::Value::YMap(block_map)) = blocks.get(&txn, &id) {
+            block_map.insert(&mut txn, "content", req.content.clone());
+            block_map.insert(&mut txn, "updatedAt", now as f64);
+        }
         txn.encode_update_v1()
     };
     drop(doc_guard);
@@ -392,23 +467,9 @@ async fn update_block(
     Ok(Json(BlockDto {
         id: id.clone(),
         content: req.content,
-        parent_id: block_json
-            .get("parentId")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        child_ids: block_json
-            .get("childIds")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        collapsed: block_json
-            .get("collapsed")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+        parent_id,
+        child_ids,
+        collapsed,
         block_type: format!("{:?}", block_type).to_lowercase(),
     }))
 }

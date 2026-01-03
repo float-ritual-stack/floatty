@@ -91,8 +91,47 @@ impl YDocPersistence {
             );
 
             CREATE INDEX IF NOT EXISTS idx_ydoc_doc_key ON ydoc_updates(doc_key, id);
+
+            -- Schema version for detecting incompatible format changes
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         "#,
         )?;
+        Ok(())
+    }
+
+    /// Get the current schema version (0 if not set).
+    pub fn get_schema_version(&self) -> Result<i32, PersistenceError> {
+        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let result: Result<String, _> = conn.query_row(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(v) => Ok(v.parse().unwrap_or(0)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+            Err(e) => Err(PersistenceError::Sqlite(e)),
+        }
+    }
+
+    /// Set the schema version.
+    pub fn set_schema_version(&self, version: i32) -> Result<(), PersistenceError> {
+        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
+            [version.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Clear all updates for a document (for schema upgrades that require fresh start).
+    pub fn clear_updates(&self, doc_key: &str) -> Result<(), PersistenceError> {
+        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        conn.execute("DELETE FROM ydoc_updates WHERE doc_key = ?", [doc_key])?;
+        log::info!("Cleared all Y.Doc updates for '{}'", doc_key);
         Ok(())
     }
 

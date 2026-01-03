@@ -42,8 +42,29 @@ function setValueOnYMap(blocksMap: Y.Map<unknown>, blockId: string, key: string,
   const existing = blocksMap.get(blockId);
 
   if (existing instanceof Y.Map) {
-    existing.set(key, value);
+    if (key === 'childIds') {
+      // Mutate existing Y.Array in place (CRDT-safe)
+      const childIdsArr = existing.get('childIds');
+      if (childIdsArr instanceof Y.Array) {
+        const newChildIds = value as string[];
+        childIdsArr.delete(0, childIdsArr.length);  // Clear
+        if (newChildIds.length > 0) {
+          childIdsArr.push(newChildIds);  // Replace with new array
+        }
+      } else {
+        // Fallback: create new Y.Array if somehow missing
+        const newArr = new Y.Array<string>();
+        const newChildIds = value as string[];
+        if (newChildIds.length > 0) {
+          newArr.push(newChildIds);
+        }
+        existing.set('childIds', newArr);
+      }
+    } else {
+      existing.set(key, value);
+    }
   } else if (existing && typeof existing === 'object') {
+    // Legacy fallback for plain objects (migration period)
     const updated = { ...(existing as Record<string, unknown>), [key]: value };
     blocksMap.set(blockId, updated);
   }
@@ -90,6 +111,31 @@ function blockToPlainObject(block: Block): Record<string, unknown> {
   };
 }
 
+/**
+ * Create a nested Y.Map for a block with Y.Array for childIds.
+ * This enables granular CRDT updates (no full-block rewrites).
+ */
+function blockToYMap(block: Block): Y.Map<unknown> {
+  const blockMap = new Y.Map<unknown>();
+  blockMap.set('id', block.id);
+  blockMap.set('parentId', block.parentId);
+  blockMap.set('content', block.content);
+  blockMap.set('type', block.type);
+  blockMap.set('metadata', block.metadata);
+  blockMap.set('collapsed', block.collapsed);
+  blockMap.set('createdAt', block.createdAt);
+  blockMap.set('updatedAt', block.updatedAt);
+
+  // childIds as Y.Array for CRDT-safe ordered list
+  const childIdsArr = new Y.Array<string>();
+  if (block.childIds.length > 0) {
+    childIdsArr.push(block.childIds);
+  }
+  blockMap.set('childIds', childIdsArr);
+
+  return blockMap;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // STORE
 // ═══════════════════════════════════════════════════════════════
@@ -103,7 +149,7 @@ function createBlockStore() {
 
   let _doc: Y.Doc | null = null;
   let _isInitializing = false; // Sync guard against race conditions
-  let _blocksObserver: ((event: Y.YMapEvent<unknown>) => void) | null = null;
+  let _blocksObserver: ((events: Y.YEvent<any>[]) => void) | null = null;
   let _rootIdsObserver: ((event: Y.YArrayEvent<string>) => void) | null = null;
 
   /**
@@ -141,24 +187,48 @@ function createBlockStore() {
       setState('isInitialized', true);
     });
 
-    // Observe Blocks Map (Granular Updates)
-    _blocksObserver = (event: Y.YMapEvent<unknown>) => {
+    // Observe Blocks Map (Deep - handles nested Y.Map property changes)
+    _blocksObserver = (events: Y.YEvent<any>[]) => {
       batch(() => {
-        event.changes.keys.forEach((change, key) => {
-          if (change.action === 'add' || change.action === 'update') {
-            const block = toBlock(blocksMap.get(key));
-            if (block) {
-              setState('blocks', key, block);
-            }
-          } else if (change.action === 'delete') {
-            // SolidJS stores don't support key deletion directly.
-            // Setting to undefined! removes the key from the reactive store.
-            setState('blocks', key, undefined!);
+        // Track which blocks need refresh (deduped)
+        const blocksToRefresh = new Set<string>();
+        const blocksToDelete = new Set<string>();
+
+        for (const event of events) {
+          const path = event.path;
+
+          if (path.length === 0 && event instanceof Y.YMapEvent) {
+            // Top-level: block added/removed from blocksMap
+            event.changes.keys.forEach((change, key) => {
+              if (change.action === 'add' || change.action === 'update') {
+                blocksToRefresh.add(key);
+              } else if (change.action === 'delete') {
+                blocksToDelete.add(key);
+              }
+            });
+          } else if (path.length >= 1) {
+            // Nested: property changed on existing block
+            // path[0] is the block ID
+            const blockId = path[0] as string;
+            blocksToRefresh.add(blockId);
           }
-        });
+        }
+
+        // Apply refreshes
+        for (const key of blocksToRefresh) {
+          const block = toBlock(blocksMap.get(key));
+          if (block) {
+            setState('blocks', key, block);
+          }
+        }
+
+        // Apply deletes
+        for (const key of blocksToDelete) {
+          setState('blocks', key, undefined!);
+        }
       });
     };
-    blocksMap.observe(_blocksObserver);
+    blocksMap.observeDeep(_blocksObserver);
 
     // Observe Root IDs (Full sync for simplicity on list changes)
     _rootIdsObserver = () => {
@@ -198,7 +268,7 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      blocksMap.set(newId, blockToPlainObject(newBlock));
+      blocksMap.set(newId, blockToYMap(newBlock));
 
       if (beforeBlock.parentId) {
         const parentData = blocksMap.get(beforeBlock.parentId);
@@ -228,7 +298,7 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      blocksMap.set(newId, blockToPlainObject(newBlock));
+      blocksMap.set(newId, blockToYMap(newBlock));
 
       if (afterBlock.parentId) {
         const parentData = blocksMap.get(afterBlock.parentId);
@@ -258,7 +328,7 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      blocksMap.set(newId, blockToPlainObject(newBlock));
+      blocksMap.set(newId, blockToYMap(newBlock));
 
       const parentData = blocksMap.get(parentId);
       const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
@@ -281,7 +351,7 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      blocksMap.set(newId, blockToPlainObject(newBlock));
+      blocksMap.set(newId, blockToYMap(newBlock));
 
       const parentData = blocksMap.get(parentId);
       const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
@@ -313,7 +383,7 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
 
       // Create new block
-      blocksMap.set(newId, blockToPlainObject(newBlock));
+      blocksMap.set(newId, blockToYMap(newBlock));
 
       // Insert new block after current
       if (block.parentId) {
@@ -358,7 +428,7 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
 
       // Create new block
-      blocksMap.set(newId, blockToPlainObject(newBlock));
+      blocksMap.set(newId, blockToYMap(newBlock));
 
       // Insert as FIRST child (unshift, not push)
       const blockData = blocksMap.get(id);
@@ -503,7 +573,7 @@ function createBlockStore() {
       // Create initial empty block immediately (fixes SolidJS effect batching issue)
       const newId = crypto.randomUUID();
       const newBlock = createBlock(newId, '');
-      blocksMap.set(newId, blockToPlainObject(newBlock));
+      blocksMap.set(newId, blockToYMap(newBlock));
       rootIds.push([newId]);
     });
 
@@ -615,7 +685,7 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
       const rootIds = _doc.getArray<string>('rootIds');
       
-      blocksMap.set(newId, blockToPlainObject(newBlock));
+      blocksMap.set(newId, blockToYMap(newBlock));
       rootIds.push([newId]);
     });
 
