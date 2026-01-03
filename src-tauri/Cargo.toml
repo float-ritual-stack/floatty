@@ -45,6 +45,7 @@ ollama-rs = "0.3.3"
 url = "2.5.7"
 shell-words = "1.1.1"
 tauri-plugin-clipboard = "2.1.11"
+tauri-plugin-dialog = "2"
 
 # macOS-only dependencies
 [target.'cfg(target_os = "macos")'.dependencies]

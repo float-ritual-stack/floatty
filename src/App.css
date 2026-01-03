@@ -21,6 +21,39 @@
   gap: 4px;
 }
 
+/* Sync status indicator */
+.status-sync .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-ansi-green);
+  transition: background 0.2s ease;
+}
+
+.status-sync.pending .status-dot {
+  background: var(--color-ansi-yellow);
+  animation: sync-pulse 1s ease-in-out infinite;
+}
+
+.status-sync.error .status-dot {
+  background: var(--color-ansi-red);
+}
+
+.status-sync-count {
+  font-size: 10px;
+  color: var(--color-ansi-yellow);
+}
+
+.status-sync-label {
+  color: var(--color-ansi-red);
+}
+
+@keyframes sync-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Shell hooks indicator */
 .status-hooks .status-dot {
   width: 6px;
   height: 6px;

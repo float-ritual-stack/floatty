@@ -21,6 +21,8 @@ export interface ServerInfo {
 export interface FloattyHttpClient {
   /** Get full Y.Doc state from server */
   getState(): Promise<Uint8Array>;
+  /** Get state vector for reconciliation (what updates server has) */
+  getStateVector(): Promise<Uint8Array>;
   /** Send update delta to server */
   applyUpdate(update: Uint8Array): Promise<void>;
   /** Health check */
@@ -85,6 +87,24 @@ class HttpClient implements FloattyHttpClient {
     }
 
     return base64ToBytes(data.state);
+  }
+
+  async getStateVector(): Promise<Uint8Array> {
+    const response = await fetch(`${this.url}/api/v1/state-vector`, {
+      method: 'GET',
+      headers: this.headers(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to get state vector: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    if (!data.state_vector) {
+      throw new Error('Invalid response: missing state_vector field');
+    }
+
+    return base64ToBytes(data.state_vector);
   }
 
   async applyUpdate(update: Uint8Array): Promise<void> {

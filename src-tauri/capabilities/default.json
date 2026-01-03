@@ -17,6 +17,7 @@
     "pty:allow-exitstatus",
     "os:default",
     "clipboard:read-all",
-    "clipboard:write-all"
+    "clipboard:write-all",
+    "dialog:default"
   ]
 }

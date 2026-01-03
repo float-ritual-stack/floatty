@@ -987,7 +987,8 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
-        .plugin(tauri_plugin_clipboard::init());
+        .plugin(tauri_plugin_clipboard::init())
+        .plugin(tauri_plugin_dialog::init());
 
     // macOS-only: NSPanel floating window support
     #[cfg(target_os = "macos")]

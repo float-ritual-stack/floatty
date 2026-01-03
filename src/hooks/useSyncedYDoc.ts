@@ -9,9 +9,83 @@
  * - Debounced batch updates with retry logic
  */
 
-import { onMount, onCleanup, createSignal } from 'solid-js';
+import { onMount, onCleanup, createSignal, type Accessor } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import * as Y from 'yjs';
+
+// ═══════════════════════════════════════════════════════════════
+// SYNC STATUS (singleton signals for UI visibility)
+// ═══════════════════════════════════════════════════════════════
+
+export type SyncStatus = 'synced' | 'pending' | 'error';
+
+// Singleton signals - survive component remount like sharedDoc
+const [syncStatus, setSyncStatus] = createSignal<SyncStatus>('synced');
+const [pendingCount, setPendingCount] = createSignal(0);
+const [lastSyncError, setLastSyncError] = createSignal<string | null>(null);
+
+/** Get current sync status (reactive) */
+export const getSyncStatus: Accessor<SyncStatus> = syncStatus;
+
+/** Get pending update count (reactive) */
+export const getPendingCount: Accessor<number> = pendingCount;
+
+/** Get last sync error message (reactive) */
+export const getLastSyncError: Accessor<string | null> = lastSyncError;
+
+/** Check if there are pending updates (for close gate) */
+export function hasPendingUpdates(): boolean {
+  return sharedPendingUpdates.length > 0 || sharedIsFlushing;
+}
+
+/**
+ * Force sync pending updates immediately (module-level for close gate).
+ * This is a standalone function that can be called without the hook.
+ */
+export async function forceSyncNow(): Promise<void> {
+  // Cancel any pending debounced flush
+  if (sharedSyncTimer) {
+    clearTimeout(sharedSyncTimer);
+    sharedSyncTimer = null;
+  }
+
+  // If already flushing or nothing to flush, early return
+  if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
+
+  if (!isClientInitialized()) {
+    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot force sync');
+    return;
+  }
+
+  sharedIsFlushing = true;
+  const updates = sharedPendingUpdates;
+  sharedPendingUpdates = [];
+
+  let sentCount = 0;
+  try {
+    const httpClient = getHttpClient();
+    for (const update of updates) {
+      await httpClient.applyUpdate(update);
+      sentCount++;
+    }
+    sharedRetryCount = 0;
+    setSyncStatus('synced');
+    setLastSyncError(null);
+    setPendingCount(0);
+    clearBackup(); // All synced - clear crash backup
+    console.log('[useSyncedYDoc] Force sync completed successfully');
+  } catch (err) {
+    console.error('[useSyncedYDoc] Force sync failed:', err);
+    // Restore unsent updates
+    sharedPendingUpdates = [...updates.slice(sentCount), ...sharedPendingUpdates];
+    setPendingCount(sharedPendingUpdates.length);
+    setSyncStatus('error');
+    setLastSyncError(String(err));
+    throw err; // Re-throw so caller knows it failed
+  } finally {
+    sharedIsFlushing = false;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // BASE64 UTILITIES (exported for tests and other consumers)
@@ -68,6 +142,73 @@ const DEFAULT_SYNC_DEBOUNCE = 50;
 let sharedWebSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
 const WS_RECONNECT_DELAY = 2000;
+
+// ═══════════════════════════════════════════════════════════════
+// LOCAL STORAGE BACKUP (crash resilience)
+// ═══════════════════════════════════════════════════════════════
+
+const YDOC_BACKUP_KEY = 'floatty_ydoc_backup';
+const BACKUP_DEBOUNCE_MS = 1000;
+const BACKUP_MAX_SIZE = 5 * 1024 * 1024; // 5MB limit for localStorage
+let backupTimer: number | null = null;
+
+/**
+ * Schedule a backup of current Y.Doc state to localStorage.
+ * Called when local changes are queued, providing crash resilience.
+ */
+function scheduleBackup() {
+  if (backupTimer) clearTimeout(backupTimer);
+  backupTimer = window.setTimeout(() => {
+    try {
+      const state = Y.encodeStateAsUpdate(sharedDoc);
+      if (state.length > BACKUP_MAX_SIZE) {
+        console.warn('[useSyncedYDoc] Y.Doc too large for localStorage backup:', state.length, 'bytes');
+        return;
+      }
+      localStorage.setItem(YDOC_BACKUP_KEY, bytesToBase64(state));
+      console.debug('[useSyncedYDoc] Backed up Y.Doc to localStorage:', state.length, 'bytes');
+    } catch (err) {
+      console.warn('[useSyncedYDoc] Failed to backup Y.Doc:', err);
+    }
+  }, BACKUP_DEBOUNCE_MS);
+}
+
+/**
+ * Clear the localStorage backup (called when sync completes).
+ */
+function clearBackup() {
+  try {
+    localStorage.removeItem(YDOC_BACKUP_KEY);
+    console.debug('[useSyncedYDoc] Cleared localStorage backup (synced)');
+  } catch (err) {
+    console.warn('[useSyncedYDoc] Failed to clear backup:', err);
+  }
+}
+
+/**
+ * Check if a localStorage backup exists.
+ */
+export function hasLocalBackup(): boolean {
+  try {
+    return localStorage.getItem(YDOC_BACKUP_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the localStorage backup if it exists.
+ */
+export function getLocalBackup(): Uint8Array | null {
+  try {
+    const backup = localStorage.getItem(YDOC_BACKUP_KEY);
+    if (!backup) return null;
+    return base64ToBytes(backup);
+  } catch (err) {
+    console.warn('[useSyncedYDoc] Failed to read backup:', err);
+    return null;
+  }
+}
 
 /**
  * Force flush pending updates immediately.
@@ -249,13 +390,24 @@ export function useSyncedYDoc(
         sentCount++;
       }
       sharedRetryCount = 0; // Reset on success
+
+      // Update sync status - only mark synced if queue is empty
+      if (sharedPendingUpdates.length === 0) {
+        setSyncStatus('synced');
+        setLastSyncError(null);
+        clearBackup(); // All synced - clear crash backup
+      }
+      setPendingCount(sharedPendingUpdates.length);
     } catch (err) {
       sharedRetryCount++;
       console.error(`Failed to sync to server (attempt ${sharedRetryCount}/${MAX_RETRIES}):`, err);
       // Restore unsent updates to front of queue for retry
       sharedPendingUpdates = [...updates.slice(sentCount), ...sharedPendingUpdates];
+      setPendingCount(sharedPendingUpdates.length);
 
       if (sharedRetryCount >= MAX_RETRIES) {
+        setSyncStatus('error');
+        setLastSyncError(`Sync failed after ${MAX_RETRIES} attempts. Changes may not be saved.`);
         setError(`Sync failed after ${MAX_RETRIES} attempts. Changes may not be saved.`);
         sharedRetryCount = 0; // Allow future attempts after user interaction
       } else if (sharedPendingUpdates.length > 0) {
@@ -271,7 +423,10 @@ export function useSyncedYDoc(
   // Queue an update and schedule flush
   const queueUpdate = (update: Uint8Array) => {
     sharedPendingUpdates.push(update);
+    setPendingCount(sharedPendingUpdates.length);
+    setSyncStatus('pending');
     scheduleFlush();
+    scheduleBackup(); // Crash resilience - backup to localStorage
   };
 
   // Force sync (bypass debounce)
@@ -310,12 +465,63 @@ export function useSyncedYDoc(
           }
 
           const httpClient = getHttpClient();
-          const stateBytes = await httpClient.getState();
 
-          if (stateBytes && stateBytes.length > 0) {
-            isApplyingRemote = true;
-            Y.applyUpdate(doc, stateBytes);
-            isApplyingRemote = false;
+          // Check for localStorage backup (crash recovery)
+          const localBackup = getLocalBackup();
+
+          if (localBackup) {
+            console.log('[useSyncedYDoc] Found localStorage backup, attempting reconciliation...');
+
+            try {
+              // Get server state vector to see what it has
+              const serverSV = await httpClient.getStateVector();
+
+              // Compute diff: what we have that server doesn't
+              // diffUpdate returns an update containing only changes the server is missing
+              const localDiff = Y.diffUpdate(localBackup, serverSV);
+
+              // If diff is substantial (empty diff is ~2 bytes), push our changes first
+              if (localDiff.length > 2) {
+                console.log('[useSyncedYDoc] Pushing local changes to server:', localDiff.length, 'bytes');
+                await httpClient.applyUpdate(localDiff);
+              }
+
+              // Now get server's full state (which now includes our pushed changes)
+              const serverState = await httpClient.getState();
+
+              // Apply server state to our doc
+              isApplyingRemote = true;
+              Y.applyUpdate(doc, serverState, 'remote');
+              isApplyingRemote = false;
+
+              // Apply our backup to merge any remaining local-only changes
+              // (CRDT ensures convergence even if there were concurrent edits)
+              isApplyingRemote = true;
+              Y.applyUpdate(doc, localBackup, 'remote');
+              isApplyingRemote = false;
+
+              console.log('[useSyncedYDoc] Reconciliation complete, clearing backup');
+              clearBackup();
+            } catch (reconcileErr) {
+              console.error('[useSyncedYDoc] Reconciliation failed, falling back to server state:', reconcileErr);
+              // Fall back to just loading server state
+              const stateBytes = await httpClient.getState();
+              if (stateBytes && stateBytes.length > 0) {
+                isApplyingRemote = true;
+                Y.applyUpdate(doc, stateBytes, 'remote');
+                isApplyingRemote = false;
+              }
+              // Keep the backup in case user wants to try again
+            }
+          } else {
+            // Normal load - no local backup
+            const stateBytes = await httpClient.getState();
+
+            if (stateBytes && stateBytes.length > 0) {
+              isApplyingRemote = true;
+              Y.applyUpdate(doc, stateBytes, 'remote');
+              isApplyingRemote = false;
+            }
           }
 
           sharedDocLoaded = true;

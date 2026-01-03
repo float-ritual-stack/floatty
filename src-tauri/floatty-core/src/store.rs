@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
-use yrs::{Doc, ReadTxn, StateVector, Transact, Update, updates::decoder::Decode};
+use yrs::{Doc, ReadTxn, StateVector, Transact, Update, updates::decoder::Decode, updates::encoder::Encode};
 
 /// Default doc key for the outliner.
 pub const DEFAULT_DOC_KEY: &str = "default";
@@ -140,6 +140,16 @@ impl YDocStore {
         let state_vector = StateVector::default();
         let update = doc.transact().encode_state_as_update_v1(&state_vector);
         Ok(update)
+    }
+
+    /// Get the state vector (for reconciliation without full state transfer).
+    ///
+    /// The state vector encodes what updates are already in the doc.
+    /// Clients can use this to compute a diff (what they have that server doesn't).
+    pub fn get_state_vector(&self) -> Result<Vec<u8>, StoreError> {
+        let doc = self.doc.read().map_err(|_| StoreError::LockPoisoned)?;
+        let sv = doc.transact().state_vector().encode_v1();
+        Ok(sv)
     }
 
     /// Apply an update from a remote client.

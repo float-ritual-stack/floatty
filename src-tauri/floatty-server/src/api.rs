@@ -48,6 +48,12 @@ pub struct StateResponse {
     pub state: String, // base64 encoded Y.Doc state
 }
 
+/// State vector response (for reconciliation)
+#[derive(Serialize)]
+pub struct StateVectorResponse {
+    pub state_vector: String, // base64 encoded Y.Doc state vector
+}
+
 /// Apply update request
 #[derive(Deserialize)]
 pub struct UpdateRequest {
@@ -131,6 +137,7 @@ pub fn create_router(store: Arc<YDocStore>, broadcaster: Arc<WsBroadcaster>) -> 
         // Core sync endpoints
         .route("/api/v1/health", get(health))
         .route("/api/v1/state", get(get_state))
+        .route("/api/v1/state-vector", get(get_state_vector))
         .route("/api/v1/update", post(apply_update))
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
@@ -154,6 +161,17 @@ async fn get_state(State(state): State<AppState>) -> Result<Json<StateResponse>,
     let update = state.store.get_full_state()?;
     Ok(Json(StateResponse {
         state: BASE64.encode(update),
+    }))
+}
+
+/// GET /api/v1/state-vector - State vector for reconciliation
+///
+/// Returns the state vector which describes what updates the server has.
+/// Clients can use this to compute a diff of what they have that server doesn't.
+async fn get_state_vector(State(state): State<AppState>) -> Result<Json<StateVectorResponse>, ApiError> {
+    let sv = state.store.get_state_vector()?;
+    Ok(Json(StateVectorResponse {
+        state_vector: BASE64.encode(sv),
     }))
 }
 
