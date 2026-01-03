@@ -49,6 +49,14 @@ function setValueOnYMap(blocksMap: Y.Map<unknown>, blockId: string, key: string,
   }
 }
 
+/**
+ * Log warning when Y.Doc mutation is skipped because doc isn't ready.
+ * This catches silent data loss during initialization race conditions.
+ */
+function warnDocNotReady(operation: string): void {
+  console.warn(`[BlockStore] ${operation} skipped: Y.Doc not initialized. User edit may be lost.`);
+}
+
 function toBlock(value: unknown): Block | null {
   if (!value || typeof value !== 'object') return null;
 
@@ -169,7 +177,7 @@ function createBlockStore() {
   };
 
   const updateBlockContent = (id: string, content: string) => {
-    if (!_doc) return;
+    if (!_doc) { warnDocNotReady('updateBlockContent'); return; }
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
@@ -180,7 +188,7 @@ function createBlockStore() {
   };
 
   const createBlockBefore = (beforeId: string) => {
-    if (!_doc) return '';
+    if (!_doc) { warnDocNotReady('createBlockBefore'); return ''; }
 
     const beforeBlock = state.blocks[beforeId];
     if (!beforeBlock) return '';
@@ -210,7 +218,7 @@ function createBlockStore() {
   };
 
   const createBlockAfter = (afterId: string) => {
-    if (!_doc) return '';
+    if (!_doc) { warnDocNotReady('createBlockAfter'); return ''; }
 
     const afterBlock = state.blocks[afterId];
     if (!afterBlock) return '';
@@ -240,7 +248,7 @@ function createBlockStore() {
   };
 
   const createBlockInside = (parentId: string) => {
-    if (!_doc) return '';
+    if (!_doc) { warnDocNotReady('createBlockInside'); return ''; }
 
     const parentBlock = state.blocks[parentId];
     if (!parentBlock) return '';
@@ -263,7 +271,7 @@ function createBlockStore() {
   };
 
   const createBlockInsideAtTop = (parentId: string) => {
-    if (!_doc) return '';
+    if (!_doc) { warnDocNotReady('createBlockInsideAtTop'); return ''; }
 
     const parentBlock = state.blocks[parentId];
     if (!parentBlock) return '';
@@ -286,7 +294,7 @@ function createBlockStore() {
   };
 
   const splitBlock = (id: string, offset: number) => {
-    if (!_doc) return null;
+    if (!_doc) { warnDocNotReady('splitBlock'); return null; }
 
     const block = state.blocks[id];
     if (!block) return null;
@@ -330,7 +338,7 @@ function createBlockStore() {
    * Used when splitting in middle of an EXPANDED parent - content nests inside
    */
   const splitBlockToFirstChild = (id: string, offset: number) => {
-    if (!_doc) return null;
+    if (!_doc) { warnDocNotReady('splitBlockToFirstChild'); return null; }
 
     const block = state.blocks[id];
     if (!block) return null;
@@ -365,7 +373,7 @@ function createBlockStore() {
   };
 
   const deleteBlock = (id: string): boolean => {
-    if (!_doc) return false;
+    if (!_doc) { warnDocNotReady('deleteBlock'); return false; }
 
     const block = state.blocks[id];
     if (!block) return false;
@@ -474,7 +482,7 @@ function createBlockStore() {
   };
 
   const clearWorkspace = () => {
-    if (!_doc) return;
+    if (!_doc) { warnDocNotReady('clearWorkspace'); return; }
 
     console.log('[BlockStore] Clearing workspace locally...');
 
@@ -502,7 +510,7 @@ function createBlockStore() {
   };
 
   const indentBlock = (id: string) => {
-    if (!_doc) return;
+    if (!_doc) { warnDocNotReady('indentBlock'); return; }
 
     const block = state.blocks[id];
     if (!block) return;
@@ -547,7 +555,7 @@ function createBlockStore() {
   };
 
   const outdentBlock = (id: string) => {
-    if (!_doc) return;
+    if (!_doc) { warnDocNotReady('outdentBlock'); return; }
 
     const block = state.blocks[id];
     if (!block || !block.parentId) return;
@@ -585,7 +593,7 @@ function createBlockStore() {
   };
 
   const toggleCollapsed = (id: string) => {
-    if (!_doc) return;
+    if (!_doc) { warnDocNotReady('toggleCollapsed'); return; }
 
     const block = state.blocks[id];
     if (!block || block.childIds.length === 0) return;
@@ -597,7 +605,7 @@ function createBlockStore() {
   };
 
   const createInitialBlock = () => {
-    if (!_doc) return '';
+    if (!_doc) { warnDocNotReady('createInitialBlock'); return ''; }
     
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, '');
