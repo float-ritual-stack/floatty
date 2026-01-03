@@ -615,8 +615,8 @@ class TerminalManager {
           if (instance.ptyPid !== null && instance.ptyPid > 0) {
             invoke('plugin:pty|resize', {
               pid: instance.ptyPid,
-              cols: term.cols,
-              rows: term.rows,
+              cols: instance.term.cols,
+              rows: instance.term.rows,
             }).catch(() => { /* Resize failures during exit are expected */ });
           }
         }
