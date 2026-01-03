@@ -92,10 +92,28 @@ function App() {
     const currentWindow = getCurrentWindow();
     const unlisten = await currentWindow.onCloseRequested(async (event) => {
       event.preventDefault(); // Block default close
+      // Kill all PTY processes to prevent zombies
+      try {
+        const count = await invoke<number>('plugin:pty|kill_all');
+        console.log(`[App] Killed ${count} PTY sessions on close`);
+      } catch (e) {
+        console.warn('[App] Failed to kill PTY sessions:', e);
+      }
       await persistence.saveWorkspace();
       await currentWindow.destroy(); // Now close after save completes
     });
     onCleanup(() => unlisten());
+  });
+
+  // Kill PTY processes on browser refresh (Cmd+R) - beforeunload fires before Tauri close
+  onMount(() => {
+    const handleBeforeUnload = () => {
+      // Synchronous invoke isn't possible, but we can fire-and-forget
+      // The process cleanup is best-effort for reload scenarios
+      invoke('plugin:pty|kill_all').catch(() => {});
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    onCleanup(() => window.removeEventListener('beforeunload', handleBeforeUnload));
   });
 
   onCleanup(() => {

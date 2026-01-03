@@ -356,10 +356,36 @@ async fn exitstatus(_pid: PtyHandler, _state: tauri::State<'_, PluginState>) -> 
     Err("exitstatus command is deprecated: exit code is now delivered via the on_exit channel event".to_string())
 }
 
+/// Kill all active PTY sessions. Called during window close/reload to prevent zombie processes.
+#[tauri::command]
+async fn kill_all(state: tauri::State<'_, PluginState>) -> Result<u32, String> {
+    let sessions: Vec<(PtyHandler, Arc<Session>)> = state
+        .sessions
+        .read()
+        .await
+        .iter()
+        .map(|(pid, session)| (*pid, session.clone()))
+        .collect();
+
+    let count = sessions.len() as u32;
+    eprintln!("[PTY] Killing all {} active sessions", count);
+
+    for (pid, session) in sessions {
+        if let Err(e) = session.child_killer.lock().await.kill() {
+            eprintln!("[PTY] Failed to kill session {}: {}", pid, e);
+        }
+    }
+
+    // Clear all sessions from map
+    state.sessions.write().await.clear();
+
+    Ok(count)
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::<R>::new("pty")
         .invoke_handler(tauri::generate_handler![
-            spawn, write, resize, kill, dispose, exitstatus
+            spawn, write, resize, kill, dispose, exitstatus, kill_all
         ])
         .setup(|app_handle, _api| {
             app_handle.manage(PluginState::default());
