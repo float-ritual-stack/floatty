@@ -424,7 +424,8 @@ function createBlockStore() {
    * Used by multi-select delete to ensure Cmd+Z undoes entire selection.
    */
   const deleteBlocks = (ids: string[]): boolean => {
-    if (!_doc || ids.length === 0) return false;
+    if (!_doc) { warnDocNotReady('deleteBlocks'); return false; }
+    if (ids.length === 0) return false;
 
     // Collect all blocks to delete (including descendants)
     const toDelete = new Set<string>();
