@@ -186,7 +186,7 @@ export function useSyncedYDoc(
       // First load - do it
       sharedDocLoadPromise = (async () => {
         try {
-          const stateB64 = await invoke<string>('get_initial_state');
+          const stateB64 = await invoke('get_initial_state', {});
           if (stateB64) {
             const stateBytes = base64ToBytes(stateB64);
 
