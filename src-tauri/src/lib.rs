@@ -814,8 +814,16 @@ pub fn run() {
             };
 
             // Create watcher and parser with loaded config
+            // Expand ~ in watch_path (PathBuf::from doesn't do this)
+            let watch_path = if config.watch_path.starts_with("~/") {
+                dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join(&config.watch_path[2..])
+            } else {
+                std::path::PathBuf::from(&config.watch_path)
+            };
             let watcher_config = WatcherConfig {
-                watch_path: std::path::PathBuf::from(&config.watch_path),
+                watch_path,
                 poll_interval_ms: config.poll_interval_ms,
                 max_age_hours: config.max_age_hours,
             };
