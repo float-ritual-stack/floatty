@@ -18,7 +18,7 @@ import { createContext, useContext } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { blockStore as realBlockStore } from '../hooks/useBlockStore';
 import { paneStore as realPaneStore } from '../hooks/usePaneStore';
-import type { Block, BlockType } from '../lib/blockTypes';
+import type { Block } from '../lib/blockTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPE INTERFACES

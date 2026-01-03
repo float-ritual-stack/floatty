@@ -8,10 +8,13 @@ import { describe, it, expect } from 'vitest';
 import { parseMarkdownTree, detackify, type ParsedBlock } from './markdownParser';
 
 // Helper to extract content tree (for cleaner assertions)
-function contentTree(blocks: ParsedBlock[]): any[] {
+// Currently unused but kept for future test debugging
+interface ContentNode { content: string; children: ContentNode[] }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for future test debugging
+function _contentTree(blocks: ParsedBlock[]): ContentNode[] {
   return blocks.map(b => ({
     content: b.content,
-    children: b.children.length > 0 ? contentTree(b.children) : [],
+    children: b.children.length > 0 ? _contentTree(b.children) : [],
   }));
 }
 

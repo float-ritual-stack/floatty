@@ -236,6 +236,7 @@ describe('getKeybindDisplay', () => {
   });
 
   it('returns null for non-existent action', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentionally testing invalid action name
     expect(getKeybindDisplay('nonexistent' as any, binds)).toBeNull();
   });
 });

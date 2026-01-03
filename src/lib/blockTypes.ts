@@ -26,7 +26,7 @@ export interface Block {
   childIds: string[];
   content: string;
   type: BlockType;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   collapsed: boolean;
   createdAt: number;
   updatedAt: number;
