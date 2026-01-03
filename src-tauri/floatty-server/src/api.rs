@@ -369,8 +369,8 @@ async fn create_block(
     };
     drop(doc_guard);
 
-    // Persist the update
-    state.store.apply_update(&update)?;
+    // Persist only - memory already mutated by transaction above
+    state.store.persist_update(&update)?;
 
     let block_type = floatty_core::parse_block_type(&req.content);
 
@@ -460,7 +460,8 @@ async fn update_block(
     };
     drop(doc_guard);
 
-    state.store.apply_update(&update)?;
+    // Persist only - memory already mutated by transaction above
+    state.store.persist_update(&update)?;
 
     let block_type = floatty_core::parse_block_type(&req.content);
 
@@ -486,34 +487,65 @@ async fn delete_block(
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
 
-        // Verify block exists before deleting
-        if blocks.get(&txn, &id).is_none() {
-            return Err(ApiError::NotFound(id));
+        // Get block and its parentId before deleting
+        let parent_id: Option<String> = match blocks.get(&txn, &id) {
+            Some(yrs::Value::YMap(block_map)) => {
+                block_map.get(&txn, "parentId").and_then(|v| match v {
+                    yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                })
+            }
+            Some(_) => return Err(ApiError::NotFound(id)), // Wrong format
+            None => return Err(ApiError::NotFound(id)),
+        };
+
+        // Remove from parent's childIds if this block has a parent
+        if let Some(ref pid) = parent_id {
+            if let Some(yrs::Value::YMap(parent_map)) = blocks.get(&txn, pid) {
+                if let Some(yrs::Value::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+                    // Find index of this id in parent's childIds
+                    let mut remove_idx: Option<u32> = None;
+                    for (i, value) in child_ids.iter(&txn).enumerate() {
+                        if let yrs::Value::Any(yrs::Any::String(s)) = value {
+                            if s.as_ref() == id {
+                                remove_idx = Some(i as u32);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(idx) = remove_idx {
+                        child_ids.remove(&mut txn, idx, 1);
+                    }
+                }
+            }
         }
 
         // Remove from blocks map
         blocks.remove(&mut txn, &id);
 
-        // Remove from rootIds if present
-        let root_ids = txn.get_or_insert_array("rootIds");
-        let mut remove_index: Option<u32> = None;
-        for (i, value) in root_ids.iter(&txn).enumerate() {
-            if let yrs::Value::Any(yrs::Any::String(s)) = value {
-                if s.as_ref() == id {
-                    remove_index = Some(i as u32);
-                    break;
+        // Remove from rootIds if present (only if no parent)
+        if parent_id.is_none() {
+            let root_ids = txn.get_or_insert_array("rootIds");
+            let mut remove_index: Option<u32> = None;
+            for (i, value) in root_ids.iter(&txn).enumerate() {
+                if let yrs::Value::Any(yrs::Any::String(s)) = value {
+                    if s.as_ref() == id {
+                        remove_index = Some(i as u32);
+                        break;
+                    }
                 }
             }
-        }
-        if let Some(idx) = remove_index {
-            root_ids.remove(&mut txn, idx, 1);
+            if let Some(idx) = remove_index {
+                root_ids.remove(&mut txn, idx, 1);
+            }
         }
 
         txn.encode_update_v1()
     };
     drop(doc_guard);
 
-    state.store.apply_update(&update)?;
+    // Persist only - memory already mutated by transaction above
+    state.store.persist_update(&update)?;
 
     Ok(StatusCode::NO_CONTENT)
 }

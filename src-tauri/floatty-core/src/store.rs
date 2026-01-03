@@ -146,6 +146,8 @@ impl YDocStore {
     ///
     /// Persists first, then applies to memory. This prevents memory/DB divergence
     /// if the DB write fails.
+    ///
+    /// Use this for updates received from external sources (HTTP POST /update).
     pub fn apply_update(&self, update_bytes: &[u8]) -> Result<(), StoreError> {
         // Validate update format before any mutations
         let update = Update::decode_v1(update_bytes)
@@ -164,6 +166,26 @@ impl YDocStore {
         }
 
         // Check for compaction (periodic, not on every update)
+        self.maybe_compact(&doc)?;
+
+        Ok(())
+    }
+
+    /// Persist an update that was already applied to the in-memory doc.
+    ///
+    /// Use this when you've already mutated the Y.Doc via transact_mut() and
+    /// just need to persist the encoded update. Avoids double-application.
+    pub fn persist_update(&self, update_bytes: &[u8]) -> Result<(), StoreError> {
+        // Validate update format
+        let _ = Update::decode_v1(update_bytes)
+            .map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
+
+        // Persist only - memory already has the changes
+        self.persistence
+            .append_update(&self.doc_key, update_bytes)?;
+
+        // Check for compaction using current doc state
+        let doc = self.doc.read().map_err(|_| StoreError::LockPoisoned)?;
         self.maybe_compact(&doc)?;
 
         Ok(())
