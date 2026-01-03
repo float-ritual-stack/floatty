@@ -42,7 +42,13 @@ for (const [docKey, updates] of Object.entries(byDoc)) {
   const children = new Map();
   const blocks = new Map();
 
-  for (const [id, block] of blocksMap.entries()) {
+  for (const [id, blockMap] of blocksMap.entries()) {
+    // Phase 2.5: blocks are now Y.Map instances, not plain objects
+    const block = {
+      content: blockMap.get('content') || '',
+      parentId: blockMap.get('parentId') || null,
+      childIds: blockMap.get('childIds')?.toArray() || [],
+    };
     blocks.set(id, block);
     const parentId = block.parentId || 'ROOT';
     if (!children.has(parentId)) children.set(parentId, []);
