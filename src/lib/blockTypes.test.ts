@@ -29,15 +29,20 @@ describe('parseBlockType', () => {
       expect(parseBlockType('CHAT::hello')).toBe('ai');
     });
 
-    it('detects ctx:: trigger', () => {
-      expect(parseBlockType('ctx:: project=floatty')).toBe('ctx');
+    it('detects ctx:: with timestamp trigger', () => {
+      expect(parseBlockType('ctx::2025-12-28 project=floatty')).toBe('ctx');
       expect(parseBlockType('CTX::2025-12-28')).toBe('ctx');
     });
 
-    it('detects ctx:: anywhere in content (FLO-39)', () => {
+    it('detects ctx:: with timestamp anywhere in content (FLO-39)', () => {
       expect(parseBlockType('- ctx::2026-01-03 [project::floatty]')).toBe('ctx');
-      expect(parseBlockType('some note ctx::marker here')).toBe('ctx');
-      expect(parseBlockType('## heading ctx::with marker')).toBe('ctx');
+      expect(parseBlockType('some note ctx::2026-01-03 marker here')).toBe('ctx');
+      expect(parseBlockType('## heading ctx::2025-11-15 with marker')).toBe('ctx');
+    });
+
+    it('does NOT detect ctx:: without timestamp (abstract discussion)', () => {
+      expect(parseBlockType('talking about ctx:: in general')).toBe('text');
+      expect(parseBlockType('the ctx:: marker is useful')).toBe('text');
     });
 
     it('detects dispatch:: trigger', () => {
@@ -161,7 +166,7 @@ describe('parseBlockType', () => {
     it('trigger takes precedence over markdown', () => {
       // If someone writes "sh:: # this", it's still sh
       expect(parseBlockType('sh:: # comment')).toBe('sh');
-      expect(parseBlockType('ctx:: - item')).toBe('ctx');
+      expect(parseBlockType('ctx::2026-01-03 - item')).toBe('ctx');
     });
   });
 });
