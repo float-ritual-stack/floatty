@@ -6,6 +6,10 @@
 use crate::ctx_parser::ParserConfig;
 use crate::ctx_watcher::WatcherConfig;
 use serde::{Deserialize, Serialize};
+
+/// Default Ollama model used for ctx:: marker parsing.
+/// Shared between AggregatorConfig (user-facing) and ParserConfig (internal).
+pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:7b";
 use std::path::PathBuf;
 
 /// Server info returned to frontend for HTTP client initialization
@@ -76,7 +80,7 @@ impl Default for AggregatorConfig {
         Self {
             watch_path: default_watcher.watch_path.to_string_lossy().to_string(),
             ollama_endpoint: "http://localhost:11434".to_string(),
-            ollama_model: "llama3.2:latest".to_string(),
+            ollama_model: DEFAULT_OLLAMA_MODEL.to_string(),
             poll_interval_ms: default_parser.poll_interval_ms,
             max_retries: default_parser.max_retries,
             max_age_hours: 72, // Default: last 3 days (matches CLAUDE.md docs)

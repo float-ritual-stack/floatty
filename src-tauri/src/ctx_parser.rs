@@ -22,7 +22,7 @@ impl Default for ParserConfig {
     fn default() -> Self {
         Self {
             endpoint: "http://localhost:11434".to_string(),
-            model: "qwen2.5:7b".to_string(),
+            model: crate::config::DEFAULT_OLLAMA_MODEL.to_string(),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             timeout_ms: 30000,
             max_retries: 3,

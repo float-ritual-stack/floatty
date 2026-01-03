@@ -55,6 +55,11 @@ export interface AggregatorConfig {
   max_retries: number;
   max_age_hours: number;
   theme: string;
+  font_size: number;
+  font_weight: number;
+  font_weight_bold: number;
+  line_height: number;
+  max_shell_output_bytes: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
