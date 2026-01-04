@@ -16,7 +16,7 @@ interface BlockItemProps {
   onFocus: (id: string) => void;
   // FLO-74: Multi-select
   isBlockSelected?: (id: string) => boolean;
-  onSelect?: (id: string, mode: 'set' | 'toggle' | 'range') => void;
+  onSelect?: (id: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => void;
   selectionAnchor?: string | null;
   getVisibleBlockIds?: () => string[];
 }
@@ -166,11 +166,16 @@ export function BlockItem(props: BlockItemProps) {
         const prev = findPrevVisibleBlock(props.id, props.paneId);
         if (prev) {
           if (e.shiftKey && props.onSelect) {
-            // If no anchor, set current block as anchor first
             if (!props.selectionAnchor) {
-              props.onSelect(props.id, 'set');
+              // First Shift+Arrow: select current, set anchor, move focus only
+              props.onSelect(props.id, 'anchor');
+              props.onFocus(prev);
+              return;
             }
-            props.onSelect(prev, 'range');
+            // Subsequent: extend range to include THIS block, then move focus
+            props.onSelect(props.id, 'range');
+            props.onFocus(prev);
+            return;
           } else if (props.onSelect) {
             // Plain navigation clears selection
             props.onSelect(prev, 'set');
@@ -190,11 +195,16 @@ export function BlockItem(props: BlockItemProps) {
         const next = findNextVisibleBlock(props.id, props.paneId);
         if (next) {
           if (e.shiftKey && props.onSelect) {
-            // If no anchor, set current block as anchor first
             if (!props.selectionAnchor) {
-              props.onSelect(props.id, 'set');
+              // First Shift+Arrow: select current, set anchor, move focus only
+              props.onSelect(props.id, 'anchor');
+              props.onFocus(next);
+              return;
             }
-            props.onSelect(next, 'range');
+            // Subsequent: extend range to include THIS block, then move focus
+            props.onSelect(props.id, 'range');
+            props.onFocus(next);
+            return;
           } else if (props.onSelect) {
             // Plain navigation clears selection
             props.onSelect(next, 'set');
@@ -323,9 +333,9 @@ export function BlockItem(props: BlockItemProps) {
       // NOTE: Cmd+. (collapseBlock) handled above via getActionForEvent()
       // NOTE: Cmd+Backspace (deleteBlock) handled above via getActionForEvent()
     } else if (e.key === 'Backspace') {
-      // CRITICAL: Use absolute offset for multi-line content
+      // CRITICAL: Use cursor.isAtStart() for robust start detection (handles edge cases)
       // Also check isCollapsed - if text is selected (Cmd+A), let browser handle delete
-      const isAtStart = cursor.isSelectionCollapsed() && cursor.getOffset() === 0;
+      const isAtStart = cursor.isAtStart() && cursor.isSelectionCollapsed();
 
       if (isAtStart) {
           // Only merge if no children to avoid deleting subtree accidentally

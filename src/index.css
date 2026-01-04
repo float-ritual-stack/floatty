@@ -789,25 +789,22 @@ body.resizing .terminal-pane-positioned {
   padding-left: 2px;
 }
 
-.block-focused .block-content {
-  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+/* Editing (NOT selected): accent border when cursor is in block */
+.block-item:not(.block-selected):focus-within .block-content {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
 }
 
-/* Multi-select: tint + ring (FLO-74) */
+/* Selected for operations (Cmd+A, Shift+Arrow): CYAN - always wins over focus */
 .block-selected {
-  background: color-mix(in srgb, var(--color-ansi-blue) 10%, transparent);
+  background: color-mix(in srgb, var(--color-ansi-cyan) 15%, transparent);
   border-radius: 3px;
 }
 
 .block-selected .block-content {
-  outline: 2px solid color-mix(in srgb, var(--color-ansi-blue) 40%, transparent);
+  outline: 2px solid var(--color-ansi-cyan);
   outline-offset: -1px;
-}
-
-/* Selected + Focused: both rings visible */
-.block-selected.block-focused .block-content {
-  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
-  outline: 2px solid color-mix(in srgb, var(--color-ansi-blue) 50%, transparent);
 }
 
 /* ================================================

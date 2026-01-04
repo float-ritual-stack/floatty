@@ -129,15 +129,39 @@ export function Outliner(props: OutlinerProps) {
       // Helper to set selection from list of IDs
       const setSelectionFromIds = (ids: string[]) => {
         if (ids.length === 0) return;
-        selection.handleSelect(ids[0], 'set');
+        // Use 'anchor' not 'set' - 'set' clears selection, 'anchor' actually selects
+        selection.handleSelect(ids[0], 'anchor');
         for (let i = 1; i < ids.length; i++) {
           selection.handleSelect(ids[i], 'toggle');
         }
       };
 
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
-        const isEditing = document.activeElement?.getAttribute('contenteditable') === 'true';
-        if (isEditing) return;
+        const activeEl = document.activeElement as HTMLElement;
+        const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+
+        if (isEditing) {
+          // Check if all text is already selected
+          const sel = window.getSelection();
+          const textContent = activeEl.textContent || '';
+          const allTextSelected = sel && !sel.isCollapsed &&
+            sel.toString().length >= textContent.length;
+
+          if (!allTextSelected) {
+            // First Cmd+A: select all text in the block (native selection)
+            e.preventDefault();
+            const range = document.createRange();
+            range.selectNodeContents(activeEl);
+            sel?.removeAllRanges();
+            sel?.addRange(range);
+            return;
+          }
+
+          // Text already selected → exit text mode, do block selection
+          activeEl.blur();
+          containerRef?.focus();
+        }
+
         e.preventDefault();
         const ids = selection.selectByIndentLevel(level);
         setSelectionFromIds(ids);
