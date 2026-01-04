@@ -4,7 +4,15 @@
  * Tests parseInlineTokens which extracts **bold**, *italic*, `code` spans.
  */
 import { describe, it, expect } from 'vitest';
-import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, type InlineToken } from './inlineParser';
+import {
+  parseInlineTokens,
+  parseAllInlineTokens,
+  hasInlineFormatting,
+  hasCtxPatterns,
+  isMarkdownTable,
+  parseMarkdownTable,
+  type InlineToken,
+} from './inlineParser';
 
 // Helper to extract just types and content for easier assertions
 function tokenSummary(tokens: InlineToken[]): Array<{ type: string; content: string }> {
@@ -313,6 +321,223 @@ describe('ctx:: inline parsing', () => {
       expect(tokens.find(t => t.type === 'bold')).toBeDefined();
       expect(tokens.find(t => t.type === 'ctx-prefix')).toBeDefined();
       expect(tokens.find(t => t.type === 'ctx-tag')).toBeDefined();
+    });
+  });
+});
+
+describe('isMarkdownTable', () => {
+  describe('valid tables', () => {
+    it('returns true for simple table', () => {
+      const table = `| Header 1 | Header 2 |
+| --- | --- |
+| Cell 1 | Cell 2 |`;
+      expect(isMarkdownTable(table)).toBe(true);
+    });
+
+    it('returns true for table without leading pipes', () => {
+      const table = `Header 1 | Header 2
+--- | ---
+Cell 1 | Cell 2`;
+      expect(isMarkdownTable(table)).toBe(true);
+    });
+
+    it('returns true for table with alignment markers', () => {
+      const table = `| Left | Center | Right |
+| :--- | :---: | ---: |
+| A | B | C |`;
+      expect(isMarkdownTable(table)).toBe(true);
+    });
+
+    it('returns true for header and separator only', () => {
+      const table = `| Header |
+| --- |`;
+      expect(isMarkdownTable(table)).toBe(true);
+    });
+  });
+
+  describe('invalid tables', () => {
+    it('returns false for single line', () => {
+      expect(isMarkdownTable('| Just | One | Line |')).toBe(false);
+    });
+
+    it('returns false for missing separator', () => {
+      const notTable = `| Header 1 | Header 2 |
+| Cell 1 | Cell 2 |`;
+      expect(isMarkdownTable(notTable)).toBe(false);
+    });
+
+    it('returns false for invalid separator', () => {
+      const notTable = `| Header 1 | Header 2 |
+| abc | def |
+| Cell 1 | Cell 2 |`;
+      expect(isMarkdownTable(notTable)).toBe(false);
+    });
+
+    it('returns false for text without pipes', () => {
+      expect(isMarkdownTable('just some text\nwith newlines')).toBe(false);
+    });
+
+    it('returns false for empty string', () => {
+      expect(isMarkdownTable('')).toBe(false);
+    });
+  });
+});
+
+describe('parseMarkdownTable', () => {
+  describe('basic parsing', () => {
+    it('parses simple table', () => {
+      const table = `| Header 1 | Header 2 |
+| --- | --- |
+| Cell 1 | Cell 2 |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result).not.toBeNull();
+      expect(result!.headers).toHaveLength(2);
+      expect(result!.headers[0].content).toBe('Header 1');
+      expect(result!.headers[1].content).toBe('Header 2');
+      expect(result!.rows).toHaveLength(1);
+      expect(result!.rows[0][0].content).toBe('Cell 1');
+      expect(result!.rows[0][1].content).toBe('Cell 2');
+    });
+
+    it('parses table with multiple rows', () => {
+      const table = `| Name | Age |
+| --- | --- |
+| Alice | 30 |
+| Bob | 25 |
+| Charlie | 35 |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result).not.toBeNull();
+      expect(result!.rows).toHaveLength(3);
+      expect(result!.rows[0][0].content).toBe('Alice');
+      expect(result!.rows[1][0].content).toBe('Bob');
+      expect(result!.rows[2][0].content).toBe('Charlie');
+    });
+
+    it('returns null for non-table content', () => {
+      expect(parseMarkdownTable('just text')).toBeNull();
+      expect(parseMarkdownTable('')).toBeNull();
+    });
+  });
+
+  describe('alignment', () => {
+    it('parses left alignment (default)', () => {
+      const table = `| Header |
+| --- |
+| Cell |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result!.alignments[0]).toBe('left');
+      expect(result!.headers[0].alignment).toBe('left');
+    });
+
+    it('parses explicit left alignment', () => {
+      const table = `| Header |
+| :--- |
+| Cell |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result!.alignments[0]).toBe('left');
+    });
+
+    it('parses center alignment', () => {
+      const table = `| Header |
+| :---: |
+| Cell |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result!.alignments[0]).toBe('center');
+      expect(result!.headers[0].alignment).toBe('center');
+    });
+
+    it('parses right alignment', () => {
+      const table = `| Header |
+| ---: |
+| Cell |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result!.alignments[0]).toBe('right');
+      expect(result!.headers[0].alignment).toBe('right');
+    });
+
+    it('parses mixed alignments', () => {
+      const table = `| Left | Center | Right |
+| :--- | :---: | ---: |
+| A | B | C |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result!.alignments).toEqual(['left', 'center', 'right']);
+    });
+  });
+
+  describe('edge cases', () => {
+    it('handles cells with inline formatting markers', () => {
+      const table = `| Type | Example |
+| --- | --- |
+| Bold | **text** |
+| Code | \`code\` |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result).not.toBeNull();
+      expect(result!.rows[0][1].content).toBe('**text**');
+      expect(result!.rows[1][1].content).toBe('`code`');
+    });
+
+    it('handles empty cells', () => {
+      const table = `| A | B |
+| --- | --- |
+| | value |
+| value | |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result).not.toBeNull();
+      expect(result!.rows[0][0].content).toBe('');
+      expect(result!.rows[0][1].content).toBe('value');
+      expect(result!.rows[1][0].content).toBe('value');
+      expect(result!.rows[1][1].content).toBe('');
+    });
+
+    it('handles table without leading/trailing pipes', () => {
+      const table = `Header 1 | Header 2
+--- | ---
+Cell 1 | Cell 2`;
+      const result = parseMarkdownTable(table);
+
+      expect(result).not.toBeNull();
+      expect(result!.headers[0].content).toBe('Header 1');
+      expect(result!.rows[0][0].content).toBe('Cell 1');
+    });
+
+    it('trims whitespace from cells', () => {
+      const table = `|   Header   |
+| --- |
+|   Cell   |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result!.headers[0].content).toBe('Header');
+      expect(result!.rows[0][0].content).toBe('Cell');
+    });
+
+    it('handles header-only table (no data rows)', () => {
+      const table = `| Header 1 | Header 2 |
+| --- | --- |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result).not.toBeNull();
+      expect(result!.headers).toHaveLength(2);
+      expect(result!.rows).toHaveLength(0);
+    });
+
+    it('skips blank lines in body', () => {
+      const table = `| A |
+| --- |
+| 1 |
+
+| 2 |`;
+      const result = parseMarkdownTable(table);
+
+      expect(result!.rows).toHaveLength(2);
     });
   });
 });

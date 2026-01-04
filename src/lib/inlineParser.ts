@@ -244,3 +244,130 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
 
   return mergedTokens;
 }
+
+/**
+ * Markdown Table Parser
+ *
+ * Detects and parses pipe-delimited markdown tables.
+ * A valid table requires:
+ *   - At least 2 lines (header + separator)
+ *   - Separator line with dashes and optional colons for alignment
+ *   - Consistent column count across rows
+ */
+
+export type TableAlignment = 'left' | 'center' | 'right';
+
+export interface TableCell {
+  content: string;
+  alignment: TableAlignment;
+}
+
+export interface ParsedTable {
+  headers: TableCell[];
+  rows: TableCell[][];
+  alignments: TableAlignment[];
+}
+
+/**
+ * Check if content is a markdown table.
+ * Requires header row, separator row with |---|, and consistent pipe delimiters.
+ */
+export function isMarkdownTable(content: string): boolean {
+  const lines = content.trim().split('\n');
+  if (lines.length < 2) return false;
+
+  // Check for pipe characters in first line (header)
+  const headerLine = lines[0].trim();
+  if (!headerLine.includes('|')) return false;
+
+  // Check for separator line (second line with |---|)
+  const separatorLine = lines[1].trim();
+  if (!isSeparatorLine(separatorLine)) return false;
+
+  return true;
+}
+
+/**
+ * Check if a line is a valid table separator (e.g., |---|---|)
+ */
+function isSeparatorLine(line: string): boolean {
+  // Remove leading/trailing pipes and spaces
+  const trimmed = line.replace(/^\||\|$/g, '').trim();
+  if (!trimmed) return false;
+
+  // Split by pipe and check each segment is valid separator
+  const segments = trimmed.split('|');
+  return segments.every(seg => {
+    const s = seg.trim();
+    // Valid separators: ---, :---, ---:, :---:
+    return /^:?-{1,}:?$/.test(s);
+  });
+}
+
+/**
+ * Parse alignment from separator segment
+ */
+function parseAlignment(segment: string): TableAlignment {
+  const s = segment.trim();
+  const leftColon = s.startsWith(':');
+  const rightColon = s.endsWith(':');
+
+  if (leftColon && rightColon) return 'center';
+  if (rightColon) return 'right';
+  return 'left';
+}
+
+/**
+ * Parse a table row into cells
+ */
+function parseTableRow(line: string): string[] {
+  // Remove leading/trailing pipes
+  let trimmed = line.trim();
+  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+
+  // Split by pipe and trim each cell
+  return trimmed.split('|').map(cell => cell.trim());
+}
+
+/**
+ * Parse markdown table content into structured data.
+ * Returns null if content is not a valid table.
+ */
+export function parseMarkdownTable(content: string): ParsedTable | null {
+  if (!isMarkdownTable(content)) return null;
+
+  const lines = content.trim().split('\n');
+  const headerCells = parseTableRow(lines[0]);
+  const separatorCells = parseTableRow(lines[1]);
+
+  // Parse alignments from separator
+  const alignments: TableAlignment[] = separatorCells.map(parseAlignment);
+
+  // Ensure alignments array matches header column count
+  while (alignments.length < headerCells.length) {
+    alignments.push('left');
+  }
+
+  // Build headers with alignment
+  const headers: TableCell[] = headerCells.map((content, i) => ({
+    content,
+    alignment: alignments[i] || 'left',
+  }));
+
+  // Parse data rows (skip header and separator)
+  const rows: TableCell[][] = [];
+  for (let i = 2; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || !line.includes('|')) continue;
+
+    const cells = parseTableRow(line);
+    const row: TableCell[] = cells.map((content, j) => ({
+      content,
+      alignment: alignments[j] || 'left',
+    }));
+    rows.push(row);
+  }
+
+  return { headers, rows, alignments };
+}
