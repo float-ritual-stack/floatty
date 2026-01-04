@@ -310,7 +310,7 @@ The outliner has four selection modes in `handleSelect()`:
 
 ### Shift+Arrow Selection Pattern
 
-```
+```text
 1. Focus A, no selection
 2. Shift+Down → onSelect(A, 'anchor'), focus(B)  // A selected, B focused
 3. Shift+Down → onSelect(B, 'range'), focus(C)   // A,B selected, C focused
