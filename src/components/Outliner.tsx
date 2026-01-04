@@ -145,8 +145,12 @@ export function Outliner(props: OutlinerProps) {
         const allIdsSet = new Set(allIds);
         const markdown = blocksToMarkdown(allIdsSet, store.blocks, allIds);
 
-        await navigator.clipboard.writeText(markdown);
-        console.log(`[FLO-102] Exported ${allIds.length} blocks to clipboard`);
+        try {
+          await navigator.clipboard.writeText(markdown);
+          console.log(`[FLO-102] Exported ${allIds.length} blocks to clipboard`);
+        } catch (err) {
+          console.error('[FLO-102] Failed to write to clipboard:', err);
+        }
       };
 
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
