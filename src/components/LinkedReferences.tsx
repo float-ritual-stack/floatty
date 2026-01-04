@@ -12,7 +12,7 @@
 
 import { createMemo, For, Show } from 'solid-js';
 import { useWorkspace } from '../context/WorkspaceContext';
-import { findBacklinks, getBlockTitle } from '../hooks/useBacklinkNavigation';
+import { findBacklinks, getBlockTitle } from '../hooks/backlinkNavigation';
 import type { Block } from '../lib/blockTypes';
 
 interface LinkedReferencesProps {

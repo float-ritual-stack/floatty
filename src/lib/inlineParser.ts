@@ -21,6 +21,16 @@ export interface InlineToken {
 // Example: "ctx::2026-01-03 @ 02:50:24 AM [project::floatty]"
 
 /**
+ * Wikilink pattern: [[Target]] or [[Target|Alias]]
+ * - Group 1: Target (the page name)
+ * - Group 2: Alias (optional display text)
+ *
+ * Limitations: Does not handle nested brackets [[outer [[inner]] outer]]
+ * or escaped brackets. This is acceptable for simple wikilink syntax.
+ */
+export const WIKILINK_PATTERN = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+
+/**
  * Check if content contains ctx:: patterns worth parsing.
  */
 export function hasCtxPatterns(content: string): boolean {

@@ -1,23 +1,26 @@
 /**
- * useBacklinkNavigation - Handles [[wikilink]] click navigation
+ * backlinkNavigation - Handles [[wikilink]] click navigation
  *
  * Logic:
  * 1. Search blockStore for a root block matching the target (as heading)
  * 2. If missing: create new root block with "# Target" content
  * 3. Zoom the pane to that block
  *
- * This hook encapsulates all navigation logic for wikilinks,
+ * This module encapsulates all navigation logic for wikilinks,
  * keeping components (BlockItem, BlockDisplay) focused on rendering.
+ *
+ * Note: This exports pure functions, not hooks. Named without "use" prefix
+ * to follow React/SolidJS naming conventions.
  */
 
 import type { Block } from '../lib/blockTypes';
+import { WIKILINK_PATTERN } from '../lib/inlineParser';
 
 interface BacklinkNavigationOptions {
   blockStore: {
     blocks: Record<string, Block>;
     rootIds: string[];
-    createBlockAfter: (afterId: string) => string;
-    updateBlockContent: (id: string, content: string) => void;
+    createBlockAfterWithContent: (afterId: string, content: string) => string;
   };
   paneStore: {
     setZoomedRoot: (paneId: string, blockId: string | null) => void;
@@ -89,6 +92,7 @@ function findBlockByTitle(
 /**
  * Create a new root block for the given target.
  * Creates it as a heading: "# Target"
+ * Uses atomic createBlockAfterWithContent for single Yjs transaction.
  */
 function createPageBlock(
   blockStore: BacklinkNavigationOptions['blockStore'],
@@ -98,11 +102,8 @@ function createPageBlock(
   const lastRootId = blockStore.rootIds[blockStore.rootIds.length - 1];
 
   if (lastRootId) {
-    const newId = blockStore.createBlockAfter(lastRootId);
-    if (newId) {
-      blockStore.updateBlockContent(newId, `# ${target}`);
-      return newId;
-    }
+    // Single atomic transaction: create block with content
+    return blockStore.createBlockAfterWithContent(lastRootId, `# ${target}`);
   }
 
   // Fallback: if no roots exist, this shouldn't happen but handle gracefully
@@ -162,17 +163,16 @@ export function findBacklinks(
   blocks: Record<string, Block>,
   target: string
 ): Block[] {
+  // TODO: O(n) full scan - consider building reverse index for large documents
+  // See https://github.com/float-file/floatty/issues/XXX for optimization tracking
   const normalizedTarget = target.trim().toLowerCase();
   const backlinks: Block[] = [];
-
-  // Wikilink pattern: [[Target]] or [[Target|Alias]]
-  const wikilinkPattern = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
   for (const block of Object.values(blocks)) {
     if (!block) continue;
 
-    // Extract all wikilink targets from this block
-    const matches = [...block.content.matchAll(wikilinkPattern)];
+    // Extract all wikilink targets from this block using shared pattern
+    const matches = [...block.content.matchAll(WIKILINK_PATTERN)];
 
     for (const match of matches) {
       const linkTarget = match[1].trim().toLowerCase();

@@ -7,7 +7,7 @@ import { findHandler, executeBlock } from '../lib/executor';
 import { getActionForEvent } from '../lib/keybinds';
 import { BlockDisplay } from './BlockDisplay';
 import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
-import { navigateToWikilink } from '../hooks/useBacklinkNavigation';
+import { navigateToWikilink } from '../hooks/backlinkNavigation';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { tabStore } from '../hooks/useTabStore';
 

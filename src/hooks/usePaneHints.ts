@@ -16,15 +16,14 @@
 import { onMount, onCleanup } from 'solid-js';
 import { layoutStore } from './useLayoutStore';
 import { paneStore } from './usePaneStore';
-import { navigateToWikilink } from './useBacklinkNavigation';
+import { navigateToWikilink } from './backlinkNavigation';
 import type { Block } from '../lib/blockTypes';
 
 interface UsePaneHintsOptions {
   blockStore: {
     blocks: Record<string, Block>;
     rootIds: string[];
-    createBlockAfter: (afterId: string) => string;
-    updateBlockContent: (id: string, content: string) => void;
+    createBlockAfterWithContent: (afterId: string, content: string) => string;
   };
 }
 

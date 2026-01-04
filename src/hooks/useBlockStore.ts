@@ -303,6 +303,42 @@ function createBlockStore() {
     return newId;
   };
 
+  /**
+   * Create a block after another with initial content (atomic operation).
+   * Used for wikilink navigation when creating new page blocks.
+   */
+  const createBlockAfterWithContent = (afterId: string, content: string) => {
+    if (!_doc) { warnDocNotReady('createBlockAfterWithContent'); return ''; }
+
+    const afterBlock = state.blocks[afterId];
+    if (!afterBlock) return '';
+
+    const newId = crypto.randomUUID();
+    const newBlock = createBlock(newId, content, afterBlock.parentId);
+    // Update type based on content (e.g., heading detection)
+    newBlock.type = parseBlockType(content);
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      blocksMap.set(newId, blockToYMap(newBlock));
+
+      if (afterBlock.parentId) {
+        const parentData = blocksMap.get(afterBlock.parentId);
+        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const afterIndex = childIds.indexOf(afterId);
+        childIds.splice(afterIndex + 1, 0, newId);
+        setValueOnYMap(blocksMap, afterBlock.parentId, 'childIds', childIds);
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        const arr = rootIds.toArray();
+        const afterIndex = arr.indexOf(afterId);
+        rootIds.insert(afterIndex + 1, [newId]);
+      }
+    });
+
+    return newId;
+  };
+
   const createBlockInside = (parentId: string) => {
     if (!_doc) { warnDocNotReady('createBlockInside'); return ''; }
 
@@ -801,6 +837,7 @@ function createBlockStore() {
     updateBlockContent,
     createBlockBefore,
     createBlockAfter,
+    createBlockAfterWithContent,
     createBlockInside,
     createBlockInsideAtTop,
     splitBlock,

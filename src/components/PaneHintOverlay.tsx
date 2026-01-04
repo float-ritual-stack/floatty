@@ -63,11 +63,12 @@ interface PaneHintProps {
 
 /**
  * Individual hint badge that positions itself over the pane.
+ * Computes position each render since hint mode is transient.
  */
 function PaneHint(props: PaneHintProps) {
-  // Position hint over the pane using DOM query
-  // We use createMemo to only query once and cache the position
-  const position = createMemo(() => {
+  // Query DOM for pane position - runs on each render since hint mode is short-lived
+  // Not memoized because DOM position isn't reactive to resize/layout changes
+  const getPosition = () => {
     const paneElement = document.querySelector(`[data-pane-id="${props.paneId}"]`);
     if (!paneElement) return null;
 
@@ -76,19 +77,21 @@ function PaneHint(props: PaneHintProps) {
       top: rect.top + rect.height / 2,
       left: rect.left + rect.width / 2,
     };
-  });
+  };
+
+  const position = getPosition();
+
+  if (!position) return null;
 
   return (
-    <Show when={position()}>
-      <div
-        class="pane-hint-badge"
-        style={{
-          top: `${position()!.top}px`,
-          left: `${position()!.left}px`,
-        }}
-      >
-        {props.letter}
-      </div>
-    </Show>
+    <div
+      class="pane-hint-badge"
+      style={{
+        top: `${position.top}px`,
+        left: `${position.left}px`,
+      }}
+    >
+      {props.letter}
+    </div>
   );
 }
