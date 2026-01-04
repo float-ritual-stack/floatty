@@ -8,7 +8,7 @@
  */
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'table-pipe' | 'table-separator' | 'table-header' | 'table-cell';
   content: string;  // inner text without markers
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
@@ -370,4 +370,101 @@ export function parseMarkdownTable(content: string): ParsedTable | null {
   }
 
   return { headers, rows, alignments };
+}
+
+/**
+ * Parse markdown table into tokens for syntax highlighting.
+ * Preserves exact character positions for overlay alignment.
+ * Returns null if content is not a table.
+ */
+export function parseTableTokens(content: string): InlineToken[] | null {
+  if (!isMarkdownTable(content)) return null;
+
+  const tokens: InlineToken[] = [];
+  const lines = content.split('\n');
+  let pos = 0;
+
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
+    const isHeader = lineIdx === 0;
+    const isSeparator = lineIdx === 1;
+
+    // Track position within line
+    let linePos = 0;
+
+    // Parse each character/segment
+    while (linePos < line.length) {
+      const char = line[linePos];
+
+      if (char === '|') {
+        // Pipe delimiter
+        tokens.push({
+          type: 'table-pipe',
+          content: '|',
+          raw: '|',
+          start: pos + linePos,
+          end: pos + linePos + 1,
+        });
+        linePos++;
+      } else if (isSeparator) {
+        // Find separator segment (until next pipe or end)
+        let endPos = linePos;
+        while (endPos < line.length && line[endPos] !== '|') {
+          endPos++;
+        }
+        const segment = line.slice(linePos, endPos);
+        if (segment.trim()) {
+          tokens.push({
+            type: 'table-separator',
+            content: segment.trim(),
+            raw: segment,
+            start: pos + linePos,
+            end: pos + endPos,
+          });
+        } else if (segment) {
+          // Whitespace-only segment
+          tokens.push({
+            type: 'text',
+            content: segment,
+            raw: segment,
+            start: pos + linePos,
+            end: pos + endPos,
+          });
+        }
+        linePos = endPos;
+      } else {
+        // Cell content (until next pipe or end)
+        let endPos = linePos;
+        while (endPos < line.length && line[endPos] !== '|') {
+          endPos++;
+        }
+        const segment = line.slice(linePos, endPos);
+        if (segment) {
+          tokens.push({
+            type: isHeader ? 'table-header' : 'table-cell',
+            content: segment.trim(),
+            raw: segment,
+            start: pos + linePos,
+            end: pos + endPos,
+          });
+        }
+        linePos = endPos;
+      }
+    }
+
+    // Add newline token (except for last line)
+    if (lineIdx < lines.length - 1) {
+      tokens.push({
+        type: 'text',
+        content: '\n',
+        raw: '\n',
+        start: pos + line.length,
+        end: pos + line.length + 1,
+      });
+    }
+
+    pos += line.length + 1; // +1 for newline
+  }
+
+  return tokens;
 }

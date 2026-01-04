@@ -11,6 +11,7 @@ import {
   hasCtxPatterns,
   isMarkdownTable,
   parseMarkdownTable,
+  parseTableTokens,
   type InlineToken,
 } from './inlineParser';
 
@@ -538,6 +539,107 @@ Cell 1 | Cell 2`;
       const result = parseMarkdownTable(table);
 
       expect(result!.rows).toHaveLength(2);
+    });
+  });
+});
+
+describe('parseTableTokens', () => {
+  describe('basic tokenization', () => {
+    it('returns null for non-table content', () => {
+      expect(parseTableTokens('just text')).toBeNull();
+      expect(parseTableTokens('')).toBeNull();
+    });
+
+    it('tokenizes simple table', () => {
+      const table = `| A | B |
+| --- | --- |
+| 1 | 2 |`;
+      const tokens = parseTableTokens(table);
+
+      expect(tokens).not.toBeNull();
+      expect(tokens!.some(t => t.type === 'table-pipe')).toBe(true);
+      expect(tokens!.some(t => t.type === 'table-header')).toBe(true);
+      expect(tokens!.some(t => t.type === 'table-separator')).toBe(true);
+      expect(tokens!.some(t => t.type === 'table-cell')).toBe(true);
+    });
+
+    it('preserves raw text exactly', () => {
+      const table = `| Header |
+| --- |
+| Cell |`;
+      const tokens = parseTableTokens(table);
+      const reconstructed = tokens!.map(t => t.raw).join('');
+
+      expect(reconstructed).toBe(table);
+    });
+  });
+
+  describe('token types', () => {
+    it('marks pipes as table-pipe', () => {
+      const table = `| A |
+| --- |`;
+      const tokens = parseTableTokens(table);
+      const pipes = tokens!.filter(t => t.type === 'table-pipe');
+
+      expect(pipes.length).toBeGreaterThan(0);
+      expect(pipes.every(t => t.raw === '|')).toBe(true);
+    });
+
+    it('marks first row cells as table-header', () => {
+      const table = `| Header1 | Header2 |
+| --- | --- |
+| Data1 | Data2 |`;
+      const tokens = parseTableTokens(table);
+      const headers = tokens!.filter(t => t.type === 'table-header');
+
+      expect(headers).toHaveLength(2);
+      expect(headers[0].content).toBe('Header1');
+      expect(headers[1].content).toBe('Header2');
+    });
+
+    it('marks separator row segments as table-separator', () => {
+      const table = `| A |
+| --- |`;
+      const tokens = parseTableTokens(table);
+      const separators = tokens!.filter(t => t.type === 'table-separator');
+
+      expect(separators).toHaveLength(1);
+      expect(separators[0].content).toBe('---');
+    });
+
+    it('marks data row cells as table-cell', () => {
+      const table = `| A |
+| --- |
+| Data |`;
+      const tokens = parseTableTokens(table);
+      const cells = tokens!.filter(t => t.type === 'table-cell');
+
+      expect(cells).toHaveLength(1);
+      expect(cells[0].content).toBe('Data');
+    });
+  });
+
+  describe('position tracking', () => {
+    it('tracks positions correctly', () => {
+      const table = `| A |
+| --- |`;
+      const tokens = parseTableTokens(table);
+
+      // Verify positions are sequential and non-overlapping
+      for (let i = 0; i < tokens!.length - 1; i++) {
+        const curr = tokens![i];
+        const next = tokens![i + 1];
+        expect(curr.end).toBeLessThanOrEqual(next.start);
+      }
+    });
+
+    it('covers entire input', () => {
+      const table = `| A | B |
+| --- | --- |`;
+      const tokens = parseTableTokens(table);
+
+      expect(tokens![0].start).toBe(0);
+      expect(tokens![tokens!.length - 1].end).toBe(table.length);
     });
   });
 });

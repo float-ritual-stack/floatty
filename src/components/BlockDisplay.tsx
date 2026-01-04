@@ -15,10 +15,9 @@ import { createMemo, For, Show } from 'solid-js';
 import {
   parseAllInlineTokens,
   hasInlineFormatting,
-  parseMarkdownTable,
-  parseInlineTokens,
+  parseTableTokens,
+  isMarkdownTable,
   type InlineToken,
-  type ParsedTable,
 } from '../lib/inlineParser';
 
 interface BlockDisplayProps {
@@ -47,6 +46,10 @@ function InlineTokenSpan(props: { token: InlineToken }) {
     'ctx-prefix': 'ctx-inline-prefix',
     'ctx-timestamp': 'ctx-inline-timestamp',
     'ctx-tag': 'ctx-inline-tag',
+    'table-pipe': 'md-table-pipe',
+    'table-separator': 'md-table-separator',
+    'table-header': 'md-table-header',
+    'table-cell': 'md-table-cell',
   };
 
   // For ctx-tag, add type-specific class for color coding
@@ -65,79 +68,28 @@ function InlineTokenSpan(props: { token: InlineToken }) {
   );
 }
 
-/**
- * Render cell content with inline markdown formatting
- */
-function CellContent(props: { content: string }) {
-  const tokens = createMemo(() => {
-    if (!props.content || !hasInlineFormatting(props.content)) return [];
-    return parseInlineTokens(props.content);
-  });
-
-  return (
-    <Show when={tokens().length > 0} fallback={props.content}>
-      <For each={tokens()}>
-        {(token) => <InlineTokenSpan token={token} />}
-      </For>
-    </Show>
-  );
-}
-
-/**
- * Render a markdown table as an HTML table element
- */
-function TableDisplay(props: { table: ParsedTable }) {
-  return (
-    <table class="md-table">
-      <thead>
-        <tr>
-          <For each={props.table.headers}>
-            {(cell) => (
-              <th class={`md-table-cell md-table-align-${cell.alignment}`}>
-                <CellContent content={cell.content} />
-              </th>
-            )}
-          </For>
-        </tr>
-      </thead>
-      <tbody>
-        <For each={props.table.rows}>
-          {(row) => (
-            <tr>
-              <For each={row}>
-                {(cell) => (
-                  <td class={`md-table-cell md-table-align-${cell.alignment}`}>
-                    <CellContent content={cell.content} />
-                  </td>
-                )}
-              </For>
-            </tr>
-          )}
-        </For>
-      </tbody>
-    </table>
-  );
-}
-
 export function BlockDisplay(props: BlockDisplayProps) {
-  // Check if content is a markdown table (parseMarkdownTable returns null if not)
-  const tableData = createMemo(() => {
-    if (!props.content) return null;
-    return parseMarkdownTable(props.content);
+  // Check if content is a markdown table - uses token-based highlighting
+  const isTable = createMemo(() => props.content && isMarkdownTable(props.content));
+
+  // Parse table tokens if it's a table
+  const tableTokens = createMemo(() => {
+    if (!isTable()) return null;
+    return parseTableTokens(props.content);
   });
 
-  // Early exit optimization - if no formatting, just render plain text
+  // Early exit optimization - if no formatting and not a table, just render plain text
   const hasFormatting = createMemo(() => hasInlineFormatting(props.content));
 
-  // Parse tokens reactively - only recomputes when content changes
+  // Parse inline tokens reactively - only for non-table content
   const tokens = createMemo(() => {
-    if (!hasFormatting()) return [];
+    if (isTable() || !hasFormatting()) return [];
     return parseAllInlineTokens(props.content);
   });
 
   return (
     <div class="block-display" aria-hidden="true">
-      <Show when={tableData()} fallback={
+      <Show when={tableTokens()} fallback={
         hasFormatting() ? (
           <For each={tokens()}>
             {(token) => <InlineTokenSpan token={token} />}
@@ -147,7 +99,11 @@ export function BlockDisplay(props: BlockDisplayProps) {
           props.content
         )
       }>
-        {(table) => <TableDisplay table={table()} />}
+        {(tblTokens) => (
+          <For each={tblTokens()}>
+            {(token) => <InlineTokenSpan token={token} />}
+          </For>
+        )}
       </Show>
     </div>
   );
