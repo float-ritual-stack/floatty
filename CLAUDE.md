@@ -235,6 +235,7 @@ Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, 
 | `⇧Tab` | Outdent (at line start) or remove spaces | Outdent (at line start) or remove spaces |
 | `⌘.` | Toggle collapse | Toggle collapse |
 | `⌘⌫` | Delete block and subtree | Delete block and subtree |
+| `⌘⇧M` | Export outline to clipboard (markdown) | Export outline to clipboard (markdown) |
 
 ### Terminal Manager Architecture
 
