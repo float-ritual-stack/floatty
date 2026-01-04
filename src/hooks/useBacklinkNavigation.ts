@@ -16,6 +16,7 @@ import { blockStore } from './useBlockStore';
 import { paneStore } from './usePaneStore';
 import { layoutStore } from './useLayoutStore';
 import { collectPaneIds } from '../lib/layoutTypes';
+import { extractAllWikilinkTargets } from '../lib/wikilinkUtils';
 import type { Block } from '../lib/blockTypes';
 
 const PAGES_PREFIX = 'pages::';
@@ -94,84 +95,6 @@ export function findPage(pageName: string): Block | null {
   }
 
   return null;
-}
-
-/**
- * Extract all wikilink targets from content, including nested ones.
- * Uses bracket counting for proper nesting support.
- *
- * For `[[outer [[inner]]]]`, returns: ["outer [[inner]]", "inner"]
- * This enables backlinks to both the outer and inner targets.
- */
-function extractAllWikilinkTargets(content: string): string[] {
-  const targets: string[] = [];
-
-  // Find all top-level wikilinks using bracket counting
-  let i = 0;
-  while (i < content.length - 1) {
-    const openIdx = content.indexOf('[[', i);
-    if (openIdx === -1) break;
-
-    // Find matching close with bracket counting
-    let depth = 0;
-    let j = openIdx;
-    let endIdx = -1;
-
-    while (j < content.length - 1) {
-      const twoChars = content.slice(j, j + 2);
-      if (twoChars === '[[') {
-        depth++;
-        j += 2;
-      } else if (twoChars === ']]') {
-        depth--;
-        j += 2;
-        if (depth === 0) {
-          endIdx = j;
-          break;
-        }
-      } else {
-        j++;
-      }
-    }
-
-    if (endIdx === -1) {
-      // Unbalanced - skip this [[
-      i = openIdx + 2;
-      continue;
-    }
-
-    // Extract inner content (strip outer [[ ]])
-    const inner = content.slice(openIdx + 2, endIdx - 2);
-
-    // Parse for alias (top-level pipe only)
-    let target = inner;
-    let pipeDepth = 0;
-    for (let k = 0; k < inner.length - 1; k++) {
-      const tc = inner.slice(k, k + 2);
-      if (tc === '[[') {
-        pipeDepth++;
-        k++;
-      } else if (tc === ']]') {
-        pipeDepth--;
-        k++;
-      } else if (inner[k] === '|' && pipeDepth === 0) {
-        target = inner.slice(0, k);
-        break;
-      }
-    }
-
-    if (target.trim()) {
-      targets.push(target.trim());
-
-      // Recursively extract from the target (for nested wikilinks)
-      const nestedTargets = extractAllWikilinkTargets(target);
-      targets.push(...nestedTargets);
-    }
-
-    i = endIdx;
-  }
-
-  return targets;
 }
 
 /**

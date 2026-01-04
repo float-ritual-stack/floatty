@@ -7,6 +7,8 @@
  * Display shows raw text but with styling on the content portion.
  */
 
+import { findWikilinkEnd, parseWikilinkInner } from './wikilinkUtils';
+
 export interface InlineToken {
   type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink';
   content: string;  // inner text without markers (for wikilink: display text)
@@ -35,89 +37,6 @@ export function hasWikilinkPatterns(content: string): boolean {
   const openIdx = content.indexOf('[[');
   if (openIdx === -1) return false;
   return content.indexOf(']]', openIdx + 2) !== -1;
-}
-
-/**
- * Find the end of a wikilink starting at position `start`.
- * Uses bracket counting to handle nested [[brackets]].
- *
- * @param content - Full string
- * @param start - Position of opening `[[`
- * @returns Position after closing `]]`, or -1 if unbalanced
- */
-function findWikilinkEnd(content: string, start: number): number {
-  let depth = 0;
-  let i = start;
-
-  while (i < content.length - 1) {
-    const twoChars = content.slice(i, i + 2);
-
-    if (twoChars === '[[') {
-      depth++;
-      i += 2;
-    } else if (twoChars === ']]') {
-      depth--;
-      i += 2;
-      if (depth === 0) {
-        return i; // Balanced close
-      }
-    } else {
-      i++;
-    }
-  }
-
-  // Check last character edge case
-  if (i === content.length - 1) {
-    i++;
-  }
-
-  return -1; // Unbalanced
-}
-
-/**
- * Parse the inside of a wikilink for target and optional alias.
- * Format: `target` or `target|alias`
- *
- * For nested wikilinks like `[[meeting:: [[nick]]]]`:
- * - inner = "meeting:: [[nick]]"
- * - target = "meeting:: [[nick]]" (full thing)
- * - alias = undefined (no top-level pipe)
- *
- * For aliased: `[[target|display text]]`:
- * - target = "target"
- * - alias = "display text"
- */
-function parseWikilinkInner(inner: string): { target: string; alias?: string } {
-  // Find top-level pipe (not inside nested brackets)
-  let depth = 0;
-  let pipeIdx = -1;
-
-  for (let i = 0; i < inner.length - 1; i++) {
-    const twoChars = inner.slice(i, i + 2);
-    if (twoChars === '[[') {
-      depth++;
-      i++; // Skip next char
-    } else if (twoChars === ']]') {
-      depth--;
-      i++;
-    } else if (inner[i] === '|' && depth === 0) {
-      pipeIdx = i;
-      break;
-    }
-  }
-  // Check last char for pipe
-  if (pipeIdx === -1 && inner[inner.length - 1] === '|' && depth === 0) {
-    pipeIdx = inner.length - 1;
-  }
-
-  if (pipeIdx !== -1) {
-    return {
-      target: inner.slice(0, pipeIdx).trim(),
-      alias: inner.slice(pipeIdx + 1).trim() || undefined,
-    };
-  }
-
-  return { target: inner.trim() };
 }
 
 /**

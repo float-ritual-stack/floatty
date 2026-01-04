@@ -13,6 +13,7 @@
 
 import { createMemo, For } from 'solid-js';
 import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../lib/inlineParser';
+import { findWikilinkEnd, parseWikilinkInner } from '../lib/wikilinkUtils';
 
 interface BlockDisplayProps {
   content: string;
@@ -42,7 +43,7 @@ function renderWikilinkContent(
     return [raw];
   }
 
-  // Find nested wikilinks using bracket counting
+  // Find nested wikilinks using shared utility
   let i = 0;
   let lastEnd = 0;
 
@@ -57,27 +58,7 @@ function renderWikilinkContent(
     }
 
     // Find matching ]] with bracket counting
-    let depth = 0;
-    let j = openIdx;
-    let endIdx = -1;
-
-    while (j < raw.length - 1) {
-      const twoChars = raw.slice(j, j + 2);
-      if (twoChars === '[[') {
-        depth++;
-        j += 2;
-      } else if (twoChars === ']]') {
-        depth--;
-        j += 2;
-        if (depth === 0) {
-          endIdx = j;
-          break;
-        }
-      } else {
-        j++;
-      }
-    }
-
+    const endIdx = findWikilinkEnd(raw, openIdx);
     if (endIdx === -1) {
       i = openIdx + 2;
       continue;
@@ -92,32 +73,18 @@ function renderWikilinkContent(
     const nestedRaw = raw.slice(openIdx, endIdx);
     const nestedInner = raw.slice(openIdx + 2, endIdx - 2);
 
-    // Parse target (handle alias)
-    let nestedTarget = nestedInner;
-    let pipeDepth = 0;
-    for (let k = 0; k < nestedInner.length - 1; k++) {
-      const tc = nestedInner.slice(k, k + 2);
-      if (tc === '[[') {
-        pipeDepth++;
-        k++;
-      } else if (tc === ']]') {
-        pipeDepth--;
-        k++;
-      } else if (nestedInner[k] === '|' && pipeDepth === 0) {
-        nestedTarget = nestedInner.slice(0, k);
-        break;
-      }
-    }
+    // Parse target (handle alias) using shared utility
+    const { target: nestedTarget } = parseWikilinkInner(nestedInner);
 
     // Render nested wikilink as clickable span
     parts.push(
       <span
         class="md-wikilink md-wikilink-nested"
-        data-target={nestedTarget.trim()}
+        data-target={nestedTarget}
         onClick={(e: MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();
-          onWikilinkClick?.(nestedTarget.trim(), e);
+          onWikilinkClick?.(nestedTarget, e);
         }}
       >
         {nestedRaw}
