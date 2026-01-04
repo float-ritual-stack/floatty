@@ -2,6 +2,51 @@
 
 All notable changes to floatty are documented here.
 
+## [0.2.1] - 2026-01-03
+
+### Keyboard Navigation & Selection (PR #54)
+
+Major improvements to outliner keyboard behavior and visual feedback.
+
+#### Bug Fixes
+- **Backspace merge** - Fixed cursor detection using `cursor.isAtStart()` instead of unreliable `getOffset()===0`
+- **Cmd+A selection** - First press selects text, second press selects block (progressive expansion)
+- **Shift+Arrow** - New 'anchor' mode properly selects starting block on first press
+
+#### Visual Distinction
+- Editing blocks show accent border (`:focus-within`)
+- Selected blocks show cyan border (`.block-selected`)
+- Clear separation prevents confusion between states
+
+#### New Features
+- **⌘⇧M Export** (FLO-102) - Export outline to clipboard as markdown
+- Clipboard error handling with graceful fallback (#55)
+
+### Outliner Improvements (PR #50, #51)
+
+- **Block movement** (FLO-75) - ⌘⇧↑/↓ to move blocks within siblings
+- **Pane state cloning** (FLO-77) - Clone-on-split preserves focused block + zoom
+- **Progressive expand/collapse** (FLO-66) - ⌘E/⌘⇧E with depth sequences
+- **Extended Cmd+A** (FLO-95) - Selection includes collapsed subtrees, 10 indent levels
+
+### Sync Reliability (PR #48, #49)
+
+- **Ref-counted handlers** - Fixed multiple handlers per pane causing 3x network traffic
+- **Backup preservation** - Partial sync failures no longer clear local backup
+- **Echo prevention** - Transaction ID tracking prevents broadcast loops
+- **WS reconnect sync** - Proper state fetch after reconnection
+
+### Backend Cleanup (PR #53)
+
+- Modularized `lib.rs` (1141→648 lines)
+- Extracted `config.rs` (154 lines) + `server.rs` (327 lines)
+- Renamed `CtxDatabase` → `FloattyDb` (reflects actual scope)
+
+### Linear Tickets Closed
+FLO-66, FLO-75, FLO-77, FLO-95, FLO-102
+
+---
+
 ## [0.2.0] - 2026-01-03
 
 ### Headless Architecture (PR #47)
