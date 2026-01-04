@@ -17,3 +17,10 @@ Critical anti-patterns that will break floatty.
 - Put store proxies directly in new data structures (clone instead)
 - Clear refs in `onCleanup` for components that might re-render
 - Use `<Show>` for heavy components that should survive visibility changes
+
+## Keyboard/Selection
+
+- Use `cursor.getOffset() === 0` for start detection (use `cursor.isAtStart()` instead)
+- Use `'set'` mode when you want to select a block (use `'anchor'` - 'set' only clears)
+- Forget `containerRef?.focus()` after blurring contentEditable (tinykeys needs focus)
+- Use `next` in Shift+Arrow range extension (use `props.id`, then move focus)

@@ -69,10 +69,14 @@ export function useOutlinerSelection(params: UseOutlinerSelectionParams) {
   });
 
   // Selection handlers
-  const handleSelect = (blockId: string, mode: 'set' | 'toggle' | 'range') => {
+  const handleSelect = (blockId: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => {
     if (mode === 'set') {
-      // Clear selection, set anchor
+      // Plain click/navigation: clear selection, set anchor
       setSelectedBlockIds(new Set());
+      setSelectionAnchor(blockId);
+    } else if (mode === 'anchor') {
+      // First Shift+Arrow: select this block AND set as anchor
+      setSelectedBlockIds(new Set([blockId]));
       setSelectionAnchor(blockId);
     } else if (mode === 'toggle') {
       // Toggle block in selection
