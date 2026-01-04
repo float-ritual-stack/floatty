@@ -4,7 +4,7 @@
  * Tests parseInlineTokens which extracts **bold**, *italic*, `code` spans.
  */
 import { describe, it, expect } from 'vitest';
-import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, type InlineToken } from './inlineParser';
+import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, hasWikilinks, type InlineToken } from './inlineParser';
 
 // Helper to extract just types and content for easier assertions
 function tokenSummary(tokens: InlineToken[]): Array<{ type: string; content: string }> {
@@ -313,6 +313,139 @@ describe('ctx:: inline parsing', () => {
       expect(tokens.find(t => t.type === 'bold')).toBeDefined();
       expect(tokens.find(t => t.type === 'ctx-prefix')).toBeDefined();
       expect(tokens.find(t => t.type === 'ctx-tag')).toBeDefined();
+    });
+  });
+});
+
+describe('wikilink parsing', () => {
+  describe('hasWikilinks', () => {
+    it('returns true for simple wikilink', () => {
+      expect(hasWikilinks('Check out [[My Page]]')).toBe(true);
+    });
+
+    it('returns true for wikilink with alias', () => {
+      expect(hasWikilinks('See [[Target Page|displayed text]]')).toBe(true);
+    });
+
+    it('returns false for text without wikilinks', () => {
+      expect(hasWikilinks('Just regular text')).toBe(false);
+    });
+
+    it('returns false for unclosed brackets', () => {
+      expect(hasWikilinks('[[unclosed')).toBe(false);
+      expect(hasWikilinks('just [single]')).toBe(false);
+    });
+
+    it('returns true for wikilinks with spaces', () => {
+      expect(hasWikilinks('[[Page With Spaces]]')).toBe(true);
+    });
+  });
+
+  describe('parseInlineTokens for wikilinks', () => {
+    it('parses simple wikilink', () => {
+      const tokens = parseInlineTokens('Check out [[My Page]]');
+      expect(tokenSummary(tokens)).toEqual([
+        { type: 'text', content: 'Check out ' },
+        { type: 'wikilink', content: 'My Page' },
+      ]);
+    });
+
+    it('parses wikilink with alias', () => {
+      const tokens = parseInlineTokens('See [[Target|display]]');
+      const wikilink = tokens.find(t => t.type === 'wikilink');
+      expect(wikilink).toBeDefined();
+      expect(wikilink?.content).toBe('display');  // Display text is the alias
+      expect(wikilink?.linkTarget).toBe('Target');  // Target is stored separately
+    });
+
+    it('parses multiple wikilinks', () => {
+      const tokens = parseInlineTokens('[[First]] and [[Second]]');
+      const wikilinks = tokens.filter(t => t.type === 'wikilink');
+      expect(wikilinks).toHaveLength(2);
+      expect(wikilinks[0].content).toBe('First');
+      expect(wikilinks[1].content).toBe('Second');
+    });
+
+    it('preserves raw text with brackets', () => {
+      const tokens = parseInlineTokens('[[Link]]');
+      expect(tokens[0].raw).toBe('[[Link]]');
+      expect(tokens[0].content).toBe('Link');
+    });
+
+    it('tracks positions correctly', () => {
+      const tokens = parseInlineTokens('a [[b]] c');
+      // 'a ' -> 0-2
+      // '[[b]]' -> 2-7
+      // ' c' -> 7-9
+      expect(tokens[0].start).toBe(0);
+      expect(tokens[0].end).toBe(2);
+      expect(tokens[1].start).toBe(2);
+      expect(tokens[1].end).toBe(7);
+      expect(tokens[2].start).toBe(7);
+      expect(tokens[2].end).toBe(9);
+    });
+
+    it('handles wikilinks with spaces in target', () => {
+      const tokens = parseInlineTokens('[[Page With Spaces]]');
+      expect(tokens[0].type).toBe('wikilink');
+      expect(tokens[0].content).toBe('Page With Spaces');
+      expect(tokens[0].linkTarget).toBe('Page With Spaces');
+    });
+
+    it('handles alias with spaces', () => {
+      const tokens = parseInlineTokens('[[Target|Link Text Here]]');
+      const wikilink = tokens[0];
+      expect(wikilink.type).toBe('wikilink');
+      expect(wikilink.content).toBe('Link Text Here');
+      expect(wikilink.linkTarget).toBe('Target');
+    });
+  });
+
+  describe('mixed wikilinks and markdown', () => {
+    it('parses wikilinks alongside bold', () => {
+      const tokens = parseInlineTokens('**bold** and [[link]]');
+      expect(tokenSummary(tokens)).toEqual([
+        { type: 'bold', content: 'bold' },
+        { type: 'text', content: ' and ' },
+        { type: 'wikilink', content: 'link' },
+      ]);
+    });
+
+    it('parses wikilinks alongside italic', () => {
+      const tokens = parseInlineTokens('*italic* [[Page Name]]');
+      expect(tokens.find(t => t.type === 'italic')).toBeDefined();
+      expect(tokens.find(t => t.type === 'wikilink')).toBeDefined();
+    });
+
+    it('parses wikilinks alongside code', () => {
+      const tokens = parseInlineTokens('`code` and [[link]]');
+      expect(tokens.find(t => t.type === 'code')).toBeDefined();
+      expect(tokens.find(t => t.type === 'wikilink')).toBeDefined();
+    });
+
+    it('handles bold inside wikilink alias (renders as plain)', () => {
+      // Nested formatting not supported - bold markers become part of content
+      const tokens = parseInlineTokens('[[Target|**bold alias**]]');
+      const wikilink = tokens.find(t => t.type === 'wikilink');
+      expect(wikilink?.content).toBe('**bold alias**');
+    });
+  });
+
+  describe('wikilinks with ctx:: patterns', () => {
+    it('parses wikilinks in ctx:: context', () => {
+      const tokens = parseAllInlineTokens('ctx::2026-01-03 [[Related Page]]');
+      expect(tokens.find(t => t.type === 'ctx-prefix')).toBeDefined();
+      expect(tokens.find(t => t.type === 'wikilink')).toBeDefined();
+    });
+  });
+
+  describe('hasInlineFormatting with wikilinks', () => {
+    it('returns true for wikilinks', () => {
+      expect(hasInlineFormatting('text with [[link]]')).toBe(true);
+    });
+
+    it('returns true for aliased wikilinks', () => {
+      expect(hasInlineFormatting('[[target|alias]]')).toBe(true);
     });
   });
 });

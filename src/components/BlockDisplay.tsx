@@ -16,16 +16,20 @@ import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../
 
 interface BlockDisplayProps {
   content: string;
-  // Future: wikilink interactions
-  // onWikilinkHover?: (link: string, rect: DOMRect) => void;
-  // onWikilinkClick?: (link: string) => void;
+  /** Called when a wikilink is clicked. Target is the link destination (before alias). */
+  onLinkClick?: (target: string, event: MouseEvent) => void;
+}
+
+interface InlineTokenSpanProps {
+  token: InlineToken;
+  onLinkClick?: (target: string, event: MouseEvent) => void;
 }
 
 /**
  * Render a single inline token with appropriate styling.
  * Shows the RAW text (with markers) but applies class for styling.
  */
-function InlineTokenSpan(props: { token: InlineToken }) {
+function InlineTokenSpan(props: InlineTokenSpanProps) {
   // For styled tokens, we show the raw text but wrap inner content in styled span
   // Example: **bold** → <span class="md-bold">**<span class="md-bold-inner">bold</span>**</span>
   //
@@ -40,6 +44,7 @@ function InlineTokenSpan(props: { token: InlineToken }) {
     'ctx-prefix': 'ctx-inline-prefix',
     'ctx-timestamp': 'ctx-inline-timestamp',
     'ctx-tag': 'ctx-inline-tag',
+    'wikilink': 'md-wikilink',
   };
 
   // For ctx-tag, add type-specific class for color coding
@@ -50,6 +55,28 @@ function InlineTokenSpan(props: { token: InlineToken }) {
     }
     return baseClass;
   };
+
+  // Wikilinks are interactive - render with click handler
+  if (props.token.type === 'wikilink') {
+    const handleClick = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (props.onLinkClick && props.token.linkTarget) {
+        props.onLinkClick(props.token.linkTarget, e);
+      }
+    };
+
+    return (
+      <span
+        class={getClass()}
+        onClick={handleClick}
+        style={{ cursor: 'pointer', "pointer-events": 'auto' }}
+        title={`Navigate to "${props.token.linkTarget}"`}
+      >
+        {props.token.raw}
+      </span>
+    );
+  }
 
   return (
     <span class={getClass()}>
@@ -72,7 +99,7 @@ export function BlockDisplay(props: BlockDisplayProps) {
     <div class="block-display" aria-hidden="true">
       {hasFormatting() ? (
         <For each={tokens()}>
-          {(token) => <InlineTokenSpan token={token} />}
+          {(token) => <InlineTokenSpan token={token} onLinkClick={props.onLinkClick} />}
         </For>
       ) : (
         // No formatting - render plain text directly

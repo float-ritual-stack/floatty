@@ -8,6 +8,7 @@ import { useOutlinerSelection } from '../hooks/useOutlinerSelection';
 import { useTreeCollapse } from '../hooks/useTreeCollapse';
 import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
+import { LinkedReferences } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
 
@@ -379,6 +380,17 @@ export function Outliner(props: OutlinerProps) {
               onSelect={selection.handleSelect}
               selectionAnchor={selection.selectionAnchor()}
               getVisibleBlockIds={getVisibleBlockIds}
+            />
+
+            {/* Linked References: show blocks linking to this page */}
+            <LinkedReferences
+              targetBlockId={zoomedRootId()!}
+              paneId={props.paneId}
+              onNavigate={(blockId) => {
+                // Zoom out to show the backlink in context
+                paneStore.setZoomedRoot(props.paneId, blockId);
+                setFocusedBlockId(blockId);
+              }}
             />
           </Show>
         </Show>

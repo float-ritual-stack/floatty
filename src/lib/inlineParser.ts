@@ -8,12 +8,13 @@
  */
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink';
   content: string;  // inner text without markers
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
   end: number;      // end position (for future selection sync)
   tagType?: string; // For ctx-tag: 'project', 'mode', 'issue', etc.
+  linkTarget?: string; // For wikilink: the actual link target (differs from content when alias is used)
 }
 
 // ctx:: pattern: timestamp required to distinguish from abstract discussion
@@ -108,8 +109,9 @@ function parseCtxTokens(content: string): InlineToken[] {
  *
  * Order of precedence (longer patterns first):
  * 1. `code` - backtick code spans
- * 2. **bold** - double asterisk
- * 3. *italic* - single asterisk
+ * 2. [[Link]] or [[Link|Alias]] - wikilinks
+ * 3. **bold** - double asterisk
+ * 4. *italic* - single asterisk
  *
  * Returns array of tokens covering the entire input string.
  */
@@ -118,9 +120,10 @@ export function parseInlineTokens(content: string): InlineToken[] {
 
   const tokens: InlineToken[] = [];
 
-  // Combined regex - order matters: code first, then bold (** before *)
+  // Combined regex - order matters: code first, wikilinks, then bold (** before *)
+  // Wikilink pattern: [[Target]] or [[Target|Alias]]
   // Using non-greedy matches and avoiding empty content
-  const PATTERN = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
+  const PATTERN = /(`[^`]+`)|(\[\[([^\]|]+)(?:\|([^\]]+))?\]\])|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
 
   let lastIndex = 0;
 
@@ -153,6 +156,19 @@ export function parseInlineTokens(content: string): InlineToken[] {
         end,
       });
     } else if (match[2]) {
+      // [[Link]] or [[Link|Alias]] - wikilink
+      // match[3] is the target, match[4] is the alias (optional)
+      const target = match[3];
+      const alias = match[4];
+      tokens.push({
+        type: 'wikilink',
+        content: alias || target,  // Display alias if present, otherwise target
+        raw,
+        start,
+        end,
+        linkTarget: target,  // Always store the actual target
+      });
+    } else if (match[5]) {
       // **bold** - strip double asterisks
       tokens.push({
         type: 'bold',
@@ -161,7 +177,7 @@ export function parseInlineTokens(content: string): InlineToken[] {
         start,
         end,
       });
-    } else if (match[3]) {
+    } else if (match[6]) {
       // *italic* - strip single asterisks
       tokens.push({
         type: 'italic',
@@ -191,43 +207,53 @@ export function parseInlineTokens(content: string): InlineToken[] {
 }
 
 /**
+ * Check if content contains wikilink patterns.
+ * Matches [[Target]] and [[Target|Alias]] syntax.
+ */
+export function hasWikilinks(content: string): boolean {
+  return /\[\[[^\]|]+(?:\|[^\]]+)?\]\]/.test(content);
+}
+
+/**
  * Check if content has any inline formatting worth parsing.
  * Use for early-exit optimization in rendering.
  */
 export function hasInlineFormatting(content: string): boolean {
-  // Standard markdown OR ctx:: patterns
-  return /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content) || hasCtxPatterns(content);
+  // Standard markdown OR ctx:: patterns OR wikilinks
+  return /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content) || hasCtxPatterns(content) || hasWikilinks(content);
 }
 
 /**
- * Parse all inline patterns (markdown + ctx::).
+ * Parse all inline patterns (markdown + ctx:: + wikilinks).
  * Returns unified token array for rendering.
  */
 export function parseAllInlineTokens(content: string): InlineToken[] {
   const hasMarkdown = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content);
   const hasCtx = hasCtxPatterns(content);
+  const hasLinks = hasWikilinks(content);
 
-  if (!hasMarkdown && !hasCtx) return [];
+  if (!hasMarkdown && !hasCtx && !hasLinks) return [];
 
   // If only ctx patterns, use ctx-specific parser
-  if (hasCtx && !hasMarkdown) {
+  if (hasCtx && !hasMarkdown && !hasLinks) {
     return parseCtxTokens(content);
   }
 
-  // If only markdown, use markdown parser
-  if (hasMarkdown && !hasCtx) {
+  // If only markdown/wikilinks (no ctx), use markdown parser (handles wikilinks too)
+  if ((hasMarkdown || hasLinks) && !hasCtx) {
     return parseInlineTokens(content);
   }
 
-  // Both: need to merge. For simplicity, prioritize ctx parsing,
-  // then apply markdown parsing to text segments
+  // Both ctx and markdown/wikilinks: need to merge. For simplicity, prioritize ctx parsing,
+  // then apply markdown/wikilink parsing to text segments
   const ctxTokens = parseCtxTokens(content);
 
-  // Apply markdown parsing to 'text' tokens from ctx parsing
+  // Apply markdown/wikilink parsing to 'text' tokens from ctx parsing
   const mergedTokens: InlineToken[] = [];
+  const mdPattern = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[\[[^\]|]+(?:\|[^\]]+)?\]\]/;
   for (const token of ctxTokens) {
-    if (token.type === 'text' && /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(token.raw)) {
-      // Parse markdown within this text segment
+    if (token.type === 'text' && mdPattern.test(token.raw)) {
+      // Parse markdown/wikilinks within this text segment
       const mdTokens = parseInlineTokens(token.raw);
       // Adjust positions to be relative to original content
       for (const mdToken of mdTokens) {

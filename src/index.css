@@ -701,12 +701,19 @@ body.resizing .terminal-pane-positioned {
   margin: 0 1px;
 }
 
-/* Future: wikilinks get pointer-events back for hover/click */
+/* Wikilinks: [[Link]] and [[Link|Alias]] - interactive backlink navigation */
 .block-display .md-wikilink {
   pointer-events: auto;
   cursor: pointer;
   color: var(--color-ansi-blue);
   text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 2px;
+  transition: background-color 0.1s ease;
+}
+
+.block-display .md-wikilink:hover {
+  background: color-mix(in srgb, var(--color-ansi-blue) 15%, transparent);
 }
 
 /* ctx:: inline token styles - structured context markers */
@@ -951,5 +958,126 @@ body.resizing .terminal-pane-positioned {
   color: var(--color-accent-muted);
   font-size: 10px;
   margin: 0 2px;
+}
+
+/* ================================================
+   Linked References - Backlinks Display
+   ================================================ */
+
+.linked-references {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.linked-references-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.linked-references-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-ansi-blue) 20%, transparent);
+  color: var(--color-ansi-blue);
+  border-radius: 10px;
+  padding: 0 6px;
+}
+
+.linked-references-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.linked-references-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.linked-reference-item {
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 50%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.linked-reference-item:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-ansi-blue);
+}
+
+.linked-reference-context {
+  font-size: 10px;
+  color: var(--color-fg-muted);
+  margin-bottom: 4px;
+  opacity: 0.8;
+}
+
+.linked-reference-content {
+  font-size: 12px;
+  color: var(--color-fg);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* ================================================
+   Pane Hint Overlay - Vimium-style Pane Selection
+   ================================================ */
+
+.pane-hint-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
+}
+
+.pane-hint-badge {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 16px;
+  font-weight: 700;
+  color: #000;
+  background: linear-gradient(135deg, #ffdd00 0%, #ffa500 100%);
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(255, 255, 255, 0.1);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+  animation: pane-hint-pop 0.15s ease-out;
+}
+
+@keyframes pane-hint-pop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
 }
 

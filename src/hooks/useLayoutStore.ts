@@ -35,12 +35,27 @@ interface LayoutState {
   layouts: Record<string, TabLayout>;
   // Currently dragging split handle (null when not dragging)
   draggingSplitId: string | null;
+  // Hint mode state (Vimium-style pane selection)
+  hintMode: {
+    active: boolean;
+    tabId: string | null;  // Which tab is showing hints
+    hints: Record<string, string>;  // paneId -> hint letter
+    pendingLinkTarget: string | null;  // Wikilink target for after selection
+    sourcePaneId: string | null;  // Where the link was clicked (for Alt+Click fallback)
+  };
 }
 
 function createLayoutStore() {
   const [state, setState] = createStore<LayoutState>({
     layouts: {},
     draggingSplitId: null,
+    hintMode: {
+      active: false,
+      tabId: null,
+      hints: {},
+      pendingLinkTarget: null,
+      sourcePaneId: null,
+    },
   });
 
   const initLayout = (tabId: string): string => {
@@ -265,6 +280,91 @@ function createLayoutStore() {
     setState('draggingSplitId', splitId);
   };
 
+  // ─────────────────────────────────────────────────────────────
+  // Hint Mode (Vimium-style pane selection)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Generate hint letters for visible panes in a tab.
+   * Uses single letters A-Z for up to 26 panes.
+   */
+  const generateHints = (paneIds: string[]): Record<string, string> => {
+    const hints: Record<string, string> = {};
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+    paneIds.forEach((paneId, index) => {
+      if (index < letters.length) {
+        hints[paneId] = letters[index];
+      }
+    });
+
+    return hints;
+  };
+
+  /**
+   * Enter hint mode for a given tab.
+   * Shows letter hints over all panes to allow keyboard selection.
+   */
+  const enterHintMode = (tabId: string, linkTarget: string, sourcePaneId: string) => {
+    const paneIds = getAllPaneIds(tabId);
+    if (paneIds.length === 0) return;
+
+    const hints = generateHints(paneIds);
+
+    batch(() => {
+      setState('hintMode', {
+        active: true,
+        tabId,
+        hints,
+        pendingLinkTarget: linkTarget,
+        sourcePaneId,
+      });
+    });
+  };
+
+  /**
+   * Exit hint mode without taking action.
+   */
+  const exitHintMode = () => {
+    setState('hintMode', {
+      active: false,
+      tabId: null,
+      hints: {},
+      pendingLinkTarget: null,
+      sourcePaneId: null,
+    });
+  };
+
+  /**
+   * Get pane ID by hint letter.
+   * Returns null if letter doesn't match any hint.
+   */
+  const getPaneByHint = (letter: string): string | null => {
+    const upperLetter = letter.toUpperCase();
+
+    for (const [paneId, hint] of Object.entries(state.hintMode.hints)) {
+      if (hint === upperLetter) {
+        return paneId;
+      }
+    }
+
+    return null;
+  };
+
+  /**
+   * Check if hint mode is active.
+   */
+  const isHintModeActive = (): boolean => {
+    return state.hintMode.active;
+  };
+
+  /**
+   * Get current hint mode state.
+   */
+  const getHintModeState = () => {
+    return state.hintMode;
+  };
+
   /**
    * Hydrate layouts from persisted state
    * Replaces current layouts with restored data
@@ -312,6 +412,12 @@ function createLayoutStore() {
     // Persistence
     hydrateLayouts,
     getLayoutsForPersistence,
+    // Hint Mode (Vimium-style pane selection)
+    enterHintMode,
+    exitHintMode,
+    getPaneByHint,
+    isHintModeActive,
+    getHintModeState,
   };
 }
 

@@ -7,6 +7,9 @@ import { findHandler, executeBlock } from '../lib/executor';
 import { getActionForEvent } from '../lib/keybinds';
 import { BlockDisplay } from './BlockDisplay';
 import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
+import { navigateToWikilink } from '../hooks/useBacklinkNavigation';
+import { layoutStore } from '../hooks/useLayoutStore';
+import { tabStore } from '../hooks/useTabStore';
 
 interface BlockItemProps {
   id: string;
@@ -32,6 +35,24 @@ export function BlockItem(props: BlockItemProps) {
 
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
+
+  // Handle wikilink clicks - navigate to target page
+  // Alt+Click triggers hint mode for pane selection
+  const handleLinkClick = (target: string, event: MouseEvent) => {
+    const activeTabId = tabStore.activeTabId();
+
+    // Alt+Click: Enter hint mode to select target pane
+    if (event.altKey && activeTabId) {
+      layoutStore.enterHintMode(activeTabId, target, props.paneId);
+      return;
+    }
+
+    // Normal click: Navigate in same pane
+    navigateToWikilink(target, props.paneId, {
+      blockStore: store,
+      paneStore,
+    });
+  };
 
   // Handle focus changes from props
   createEffect(() => {
@@ -447,7 +468,10 @@ export function BlockItem(props: BlockItemProps) {
           {/* REGULAR BLOCK: display + edit layers */}
           <Show when={block()?.type !== 'picker'}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
-            <BlockDisplay content={block()?.content || ''} />
+            <BlockDisplay
+              content={block()?.content || ''}
+              onLinkClick={handleLinkClick}
+            />
 
             {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
             <div

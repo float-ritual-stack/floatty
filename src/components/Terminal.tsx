@@ -7,6 +7,7 @@ import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
 import { ResizeOverlay } from './ResizeOverlay';
 import { ContextSidebar } from './ContextSidebar';
+import { PaneHintOverlay } from './PaneHintOverlay';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -15,6 +16,8 @@ import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib
 import type { FocusDirection, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
+import { usePaneHints } from '../hooks/usePaneHints';
+import { blockStore } from '../hooks/useBlockStore';
 
 // Zoom state
 let currentZoom = 1.0;
@@ -189,6 +192,9 @@ function TabBar(props: {
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
+
+  // Initialize hint mode keyboard handling
+  usePaneHints({ blockStore });
 
   // Pane refs for imperative control
   const paneRefs = new Map<string, PaneHandle>();
@@ -627,6 +633,11 @@ export function Terminal() {
               />
             )}
           </For>
+
+          {/* Hint overlay - Vimium-style pane selection for wikilinks */}
+          <Show when={tabStore.activeTabId()}>
+            <PaneHintOverlay tabId={tabStore.activeTabId()!} />
+          </Show>
         </main>
         <Show when={sidebarVisible()}>
           <ContextSidebar visible={sidebarVisible()} />
