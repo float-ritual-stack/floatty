@@ -250,12 +250,16 @@ export function BlockItem(props: BlockItemProps) {
       if (block()) {
         const content = block()!.content;
 
-        // Daily:: blocks: execute via dedicated handler (inline view output)
+        // Daily:: blocks: execute via dedicated handler (child-output pattern)
         if (isDailyBlock(content)) {
           e.preventDefault();
           executeDailyBlock(props.id, content, {
+            createBlockInside: store.createBlockInside,
+            updateContent: store.updateBlockContent,
             setBlockOutput: store.setBlockOutput,
             setBlockStatus: store.setBlockStatus,
+            deleteBlock: store.deleteBlock,
+            getBlock: (id) => store.blocks[id],
           });
           return;
         }
@@ -430,9 +434,7 @@ export function BlockItem(props: BlockItemProps) {
 
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-    // Daily blocks with output also have collapsible content (not stored as childIds)
-    const hasDailyOutput = block()?.type === 'daily' && (block()?.outputStatus || block()?.output);
-    if (hasChildren || hasDailyOutput) {
+    if (hasChildren) {
       return isCollapsed() ? '▸' : '▾';
     }
     return '•';
@@ -520,27 +522,8 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* DAILY BLOCK: editable content only (output renders in children area) */}
-          <Show when={block()?.type === 'daily'}>
-            <div class="daily-block">
-              <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
-              <div
-                ref={contentRef}
-                contentEditable
-                class="block-content block-edit"
-                spellcheck={false}
-                autocapitalize="off"
-                autocorrect="off"
-                onInput={handleInput}
-                onKeyDown={handleKeyDown}
-                onFocus={() => props.onFocus(props.id)}
-                onBlur={handleBlur}
-              />
-            </div>
-          </Show>
-
           {/* REGULAR BLOCK: display + edit layers */}
-          <Show when={block()?.type !== 'picker' && block()?.type !== 'daily'}>
+          <Show when={block()?.type !== 'picker'}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
             <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
 
@@ -561,16 +544,16 @@ export function BlockItem(props: BlockItemProps) {
         </div>
       </div>
 
-      {/* DAILY OUTPUT: renders in children area for indentation + collapse */}
-      <Show when={block()?.type === 'daily' && !isCollapsed()}>
-        <div class="block-children daily-output">
+      {/* DAILY OUTPUT VIEW: rendered for blocks with daily-view outputType (child-output pattern) */}
+      <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
+        <div class="daily-output">
           <Show when={block()?.outputStatus === 'running'}>
             <div class="daily-running">
               <span class="daily-running-spinner">◐</span>
               <span class="daily-running-text">Extracting...</span>
             </div>
           </Show>
-          <Show when={block()?.outputType === 'daily-view'}>
+          <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
             <DailyView data={block()!.output as DailyNoteData} />
           </Show>
           <Show when={block()?.outputType === 'daily-error'}>

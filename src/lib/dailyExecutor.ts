@@ -1,11 +1,10 @@
 /**
  * Daily View Executor
  *
- * Handles `daily::` blocks - extracts structured data from daily notes
- * and stores it in the block's output field for inline rendering.
+ * Handles `daily::` blocks - extracts structured data from daily notes.
+ * Uses child-output pattern (like sh::, ai::) - output renders in a child block.
  *
- * Unlike sh::/ai:: which create child output blocks, daily:: blocks
- * render their structured data INLINE using a custom component.
+ * See docs/BLOCK_TYPE_PATTERNS.md for pattern details.
  */
 
 import { invoke } from './tauriTypes';
@@ -48,17 +47,41 @@ export function extractDateArg(content: string): string {
 import type { Block } from './blockTypes';
 
 export interface DailyExecutorActions {
+  /** Create a child block inside parent */
+  createBlockInside: (parentId: string) => string;
+  /** Update block content */
+  updateContent: (id: string, content: string) => void;
   /** Set the output data on a block */
   setBlockOutput: (id: string, output: unknown, outputType: string) => void;
   /** Set the loading status on a block */
   setBlockStatus: (id: string, status: Block['outputStatus']) => void;
+  /** Delete a block */
+  deleteBlock: (id: string) => void;
+  /** Get block by ID */
+  getBlock: (id: string) => Block | undefined;
+}
+
+/**
+ * Find existing output child block (for re-run replacement)
+ */
+function findOutputChild(parentId: string, actions: DailyExecutorActions): string | null {
+  const parent = actions.getBlock(parentId);
+  if (!parent) return null;
+
+  for (const childId of parent.childIds) {
+    const child = actions.getBlock(childId);
+    if (child?.outputType === 'daily-view' || child?.outputType === 'daily-error') {
+      return childId;
+    }
+  }
+  return null;
 }
 
 /**
  * Execute a daily:: block
  *
- * Calls the Rust command to extract structured data from the daily note,
- * then stores it in the block's output field.
+ * Creates a child block for output (child-output pattern).
+ * Re-running replaces existing output child.
  */
 export async function executeDailyBlock(
   blockId: string,
@@ -67,25 +90,36 @@ export async function executeDailyBlock(
 ): Promise<void> {
   const dateArg = extractDateArg(content);
 
+  // Find or create output child
+  let outputId = findOutputChild(blockId, actions);
+  if (!outputId) {
+    outputId = actions.createBlockInside(blockId);
+  }
+
   if (!dateArg) {
-    // No date specified - show error inline
-    actions.setBlockOutput(blockId, { error: 'No date specified. Use daily::today or daily::2026-01-03' }, 'daily-error');
-    actions.setBlockStatus(blockId, 'error');
+    // No date specified - show error in child
+    actions.updateContent(outputId, 'error::No date specified. Use daily::today or daily::2026-01-03');
+    actions.setBlockOutput(outputId, { error: 'No date specified' }, 'daily-error');
+    actions.setBlockStatus(outputId, 'error');
     return;
   }
 
-  // Show loading indicator
-  actions.setBlockStatus(blockId, 'running');
+  // Show loading indicator in child
+  actions.updateContent(outputId, 'output::Extracting...');
+  actions.setBlockStatus(outputId, 'running');
 
   try {
     // Call Rust command to extract structured data
     const data = await invoke<DailyNoteData>('execute_daily_command', { dateArg });
 
-    // Store structured output in block (automatically sets status to 'complete')
-    actions.setBlockOutput(blockId, data, 'daily-view');
+    // Store structured output in child block
+    actions.updateContent(outputId, ''); // Clear loading text, view renders from output
+    actions.setBlockOutput(outputId, data, 'daily-view');
+    actions.setBlockStatus(outputId, 'complete');
   } catch (err) {
     console.error('[dailyExecutor] Error:', err);
-    actions.setBlockOutput(blockId, { error: String(err) }, 'daily-error');
-    actions.setBlockStatus(blockId, 'error');
+    actions.updateContent(outputId, `error::${String(err)}`);
+    actions.setBlockOutput(outputId, { error: String(err) }, 'daily-error');
+    actions.setBlockStatus(outputId, 'error');
   }
 }
