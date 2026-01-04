@@ -39,6 +39,33 @@ describe('parseInlineTokens', () => {
         { type: 'text', content: ' command' },
       ]);
     });
+
+    it('parses [[Simple]] links', () => {
+      const tokens = parseInlineTokens('see [[Simple]] link');
+      expect(tokenSummary(tokens)).toEqual([
+        { type: 'text', content: 'see ' },
+        { type: 'link', content: 'Simple' },
+        { type: 'text', content: ' link' },
+      ]);
+    });
+
+    it('parses [[With Space]] links', () => {
+      const tokens = parseInlineTokens('open [[With Space]] now');
+      expect(tokenSummary(tokens)).toEqual([
+        { type: 'text', content: 'open ' },
+        { type: 'link', content: 'With Space' },
+        { type: 'text', content: ' now' },
+      ]);
+    });
+
+    it('parses [[Alias|Target]] links', () => {
+      const tokens = parseInlineTokens('alias [[Target|Alias]] here');
+      expect(tokenSummary(tokens)).toEqual([
+        { type: 'text', content: 'alias ' },
+        { type: 'link', content: 'Alias' },
+        { type: 'text', content: ' here' },
+      ]);
+    });
   });
 
   describe('precedence', () => {
@@ -69,6 +96,11 @@ describe('parseInlineTokens', () => {
         { type: 'text', content: ' and ' },
         { type: 'code', content: 'code' },
       ]);
+    });
+
+    it('handles links alongside formatting', () => {
+      const tokens = parseInlineTokens('**Bold [[Link]]**');
+      expect(tokens.some((token) => token.type === 'link')).toBe(true);
     });
 
     it('handles adjacent formatting', () => {
@@ -104,6 +136,12 @@ describe('parseInlineTokens', () => {
       const tokens = parseInlineTokens('plain text');
       expect(tokens[0].raw).toBe('plain text');
       expect(tokens[0].content).toBe('plain text');
+    });
+
+    it('preserves raw for link tokens', () => {
+      const tokens = parseInlineTokens('[[Link|Alias]]');
+      expect(tokens[0].raw).toBe('[[Link|Alias]]');
+      expect(tokens[0].content).toBe('Alias');
     });
   });
 
@@ -172,6 +210,11 @@ describe('parseInlineTokens', () => {
       expect(tokens2[0].type).toBe('bold');
     });
 
+    it('keeps link markers when nested in bold text', () => {
+      const tokens = parseInlineTokens('**Bold [[Link]]**');
+      expect(tokens.some((token) => token.raw.includes('[[Link]]'))).toBe(true);
+    });
+
     it('handles consecutive bold without space', () => {
       // **one****two** - the [^*]+ prevents matching across ****
       const tokens = parseInlineTokens('**one****two**');
@@ -200,6 +243,10 @@ describe('hasInlineFormatting', () => {
 
   it('returns true for code', () => {
     expect(hasInlineFormatting('has `code` text')).toBe(true);
+  });
+
+  it('returns true for link syntax', () => {
+    expect(hasInlineFormatting('has [[Link]] here')).toBe(true);
   });
 
   it('returns false for plain text', () => {

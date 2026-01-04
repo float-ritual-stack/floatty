@@ -6,8 +6,10 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useOutlinerSelection } from '../hooks/useOutlinerSelection';
 import { useTreeCollapse } from '../hooks/useTreeCollapse';
+import { useBacklinkNavigation } from '../hooks/useBacklinkNavigation';
 import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
+import { LinkedReferences } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
 
@@ -20,6 +22,7 @@ export function Outliner(props: OutlinerProps) {
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete, getAncestors } = useBlockOperations();
+  const backlinkNavigation = useBacklinkNavigation(props.paneId);
 
   // FLO-77: Use paneStore for focusedBlockId (enables clone-on-split)
   const focusedBlockId = () => paneStore.getFocusedBlockId(props.paneId);
@@ -355,6 +358,8 @@ export function Outliner(props: OutlinerProps) {
                       onFocus={handleFocus}
                       onNavigateUp={() => handleNavigateUp(id)}
                       onNavigateDown={() => handleNavigateDown(id)}
+                      onLinkClick={backlinkNavigation.handleLinkClick}
+                      onLinkKeyTrigger={backlinkNavigation.handleLinkKeyTrigger}
                       isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
                       onSelect={selection.handleSelect}
                       selectionAnchor={selection.selectionAnchor()}
@@ -375,11 +380,14 @@ export function Outliner(props: OutlinerProps) {
               onFocus={handleFocus}
               onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
               onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
+              onLinkClick={backlinkNavigation.handleLinkClick}
+              onLinkKeyTrigger={backlinkNavigation.handleLinkKeyTrigger}
               isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
               onSelect={selection.handleSelect}
               selectionAnchor={selection.selectionAnchor()}
               getVisibleBlockIds={getVisibleBlockIds}
             />
+            <LinkedReferences zoomedRootId={zoomedRootId()!} />
           </Show>
         </Show>
       </Show>

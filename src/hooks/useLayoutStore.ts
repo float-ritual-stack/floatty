@@ -35,12 +35,17 @@ interface LayoutState {
   layouts: Record<string, TabLayout>;
   // Currently dragging split handle (null when not dragging)
   draggingSplitId: string | null;
+  // Hint mode for pane targeting
+  hintModeActive: boolean;
+  validPaneHints: Record<string, string>;
 }
 
 function createLayoutStore() {
   const [state, setState] = createStore<LayoutState>({
     layouts: {},
     draggingSplitId: null,
+    hintModeActive: false,
+    validPaneHints: {},
   });
 
   const initLayout = (tabId: string): string => {
@@ -265,6 +270,19 @@ function createLayoutStore() {
     setState('draggingSplitId', splitId);
   };
 
+  const setHintModeActive = (active: boolean) => {
+    setState('hintModeActive', active);
+  };
+
+  const setValidPaneHints = (hints: Record<string, string>) => {
+    setState('validPaneHints', hints);
+  };
+
+  const clearHintMode = () => {
+    setState('hintModeActive', false);
+    setState('validPaneHints', {});
+  };
+
   /**
    * Hydrate layouts from persisted state
    * Replaces current layouts with restored data
@@ -293,6 +311,8 @@ function createLayoutStore() {
     // State (reactive getters preserve store reactivity)
     get layouts() { return state.layouts; },
     get draggingSplitId() { return state.draggingSplitId; },
+    get hintModeActive() { return state.hintModeActive; },
+    get validPaneHints() { return state.validPaneHints; },
     // Actions
     initLayout,
     removeLayout,
@@ -302,6 +322,9 @@ function createLayoutStore() {
     setActivePaneId,
     setRatio,
     setDraggingSplitId,
+    setHintModeActive,
+    setValidPaneHints,
+    clearHintMode,
     focusDirection,
     // Getters
     getActivePaneId,

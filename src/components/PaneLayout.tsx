@@ -15,6 +15,7 @@
 import { Show, createMemo } from 'solid-js';
 import { type LayoutNode, type PaneSplit } from '../lib/layoutTypes';
 import { layoutStore } from '../hooks/useLayoutStore';
+import { PaneHintOverlay } from './PaneHintOverlay';
 
 interface PaneLayoutProps {
   tabId: string;
@@ -128,6 +129,7 @@ export function PaneLayout(props: PaneLayoutProps) {
         activePaneId={props.activePaneId}
         onPaneClick={props.onPaneClick}
       />
+      <PaneHintOverlay tabId={props.tabId} />
     </div>
   );
 }

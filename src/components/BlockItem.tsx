@@ -14,6 +14,8 @@ interface BlockItemProps {
   depth: number;
   focusedBlockId: string | null;
   onFocus: (id: string) => void;
+  onLinkClick?: (target: string, event?: MouseEvent) => void;
+  onLinkKeyTrigger?: (content: string, cursorOffset: number) => boolean;
   // FLO-74: Multi-select
   isBlockSelected?: (id: string) => boolean;
   onSelect?: (id: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => void;
@@ -69,6 +71,15 @@ export function BlockItem(props: BlockItemProps) {
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!block()) return;
+
+    if (e.key === 'Enter' && e.shiftKey && (e.metaKey || e.ctrlKey)) {
+      const content = block()?.content ?? '';
+      const handled = props.onLinkKeyTrigger?.(content, cursor.getOffset());
+      if (handled) {
+        e.preventDefault();
+        return;
+      }
+    }
 
     // Check centralized keybind system first for block-level actions
     const action = getActionForEvent(e);
@@ -447,7 +458,7 @@ export function BlockItem(props: BlockItemProps) {
           {/* REGULAR BLOCK: display + edit layers */}
           <Show when={block()?.type !== 'picker'}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
-            <BlockDisplay content={block()?.content || ''} />
+            <BlockDisplay content={block()?.content || ''} onLinkClick={props.onLinkClick} />
 
             {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
             <div
@@ -478,6 +489,8 @@ export function BlockItem(props: BlockItemProps) {
                   depth={props.depth + 1}
                   focusedBlockId={props.focusedBlockId}
                   onFocus={props.onFocus}
+                  onLinkClick={props.onLinkClick}
+                  onLinkKeyTrigger={props.onLinkKeyTrigger}
                   isBlockSelected={props.isBlockSelected}
                   onSelect={props.onSelect}
                   selectionAnchor={props.selectionAnchor}

@@ -16,6 +16,7 @@ import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../
 
 interface BlockDisplayProps {
   content: string;
+  onLinkClick?: (target: string, event?: MouseEvent) => void;
   // Future: wikilink interactions
   // onWikilinkHover?: (link: string, rect: DOMRect) => void;
   // onWikilinkClick?: (link: string) => void;
@@ -25,7 +26,7 @@ interface BlockDisplayProps {
  * Render a single inline token with appropriate styling.
  * Shows the RAW text (with markers) but applies class for styling.
  */
-function InlineTokenSpan(props: { token: InlineToken }) {
+function InlineTokenSpan(props: { token: InlineToken; onLinkClick?: (target: string, event?: MouseEvent) => void }) {
   // For styled tokens, we show the raw text but wrap inner content in styled span
   // Example: **bold** → <span class="md-bold">**<span class="md-bold-inner">bold</span>**</span>
   //
@@ -37,6 +38,7 @@ function InlineTokenSpan(props: { token: InlineToken }) {
     bold: 'md-bold',
     italic: 'md-italic',
     code: 'md-code',
+    link: 'md-wikilink',
     'ctx-prefix': 'ctx-inline-prefix',
     'ctx-timestamp': 'ctx-inline-timestamp',
     'ctx-tag': 'ctx-inline-tag',
@@ -50,6 +52,23 @@ function InlineTokenSpan(props: { token: InlineToken }) {
     }
     return baseClass;
   };
+
+  if (props.token.type === 'link') {
+    const linkTarget = props.token.linkTarget ?? props.token.content;
+    return (
+      <a
+        class={getClass()}
+        href="#"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          props.onLinkClick?.(linkTarget, event);
+        }}
+      >
+        {props.token.raw}
+      </a>
+    );
+  }
 
   return (
     <span class={getClass()}>
@@ -72,7 +91,7 @@ export function BlockDisplay(props: BlockDisplayProps) {
     <div class="block-display" aria-hidden="true">
       {hasFormatting() ? (
         <For each={tokens()}>
-          {(token) => <InlineTokenSpan token={token} />}
+          {(token) => <InlineTokenSpan token={token} onLinkClick={props.onLinkClick} />}
         </For>
       ) : (
         // No formatting - render plain text directly

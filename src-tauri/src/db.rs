@@ -187,6 +187,8 @@ impl FloattyDb {
             );
         "#)?;
 
+        // TODO: Future optimization: Create SQLite view or FTS5 index for 'backlinks' to allow efficient graph queries server-side.
+
         // Migrations: add columns if they don't exist (for existing DBs)
         // Expected error: "duplicate column name" when column already exists
         Self::migrate_add_column(&conn, "sort_key TEXT")?;

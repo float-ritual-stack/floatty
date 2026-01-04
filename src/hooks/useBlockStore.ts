@@ -349,6 +349,23 @@ function createBlockStore() {
     return newId;
   };
 
+  const createRootBlock = (content: string) => {
+    if (!_doc) { warnDocNotReady('createRootBlock'); return ''; }
+
+    const newId = crypto.randomUUID();
+    const newBlock = createBlock(newId, content);
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      const rootIds = _doc.getArray<string>('rootIds');
+
+      blocksMap.set(newId, blockToYMap(newBlock));
+      rootIds.push([newId]);
+    });
+
+    return newId;
+  };
+
   const splitBlock = (id: string, offset: number) => {
     if (!_doc) { warnDocNotReady('splitBlock'); return null; }
 
@@ -814,6 +831,7 @@ function createBlockStore() {
     moveBlockDown,
     toggleCollapsed,
     createInitialBlock,
+    createRootBlock,
     clearWorkspace,
   };
 }

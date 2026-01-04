@@ -8,12 +8,14 @@
  */
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'link' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag';
   content: string;  // inner text without markers
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
   end: number;      // end position (for future selection sync)
   tagType?: string; // For ctx-tag: 'project', 'mode', 'issue', etc.
+  linkTarget?: string; // For link: target page name
+  linkAlias?: string; // For link: alias label
 }
 
 // ctx:: pattern: timestamp required to distinguish from abstract discussion
@@ -108,8 +110,9 @@ function parseCtxTokens(content: string): InlineToken[] {
  *
  * Order of precedence (longer patterns first):
  * 1. `code` - backtick code spans
- * 2. **bold** - double asterisk
- * 3. *italic* - single asterisk
+ * 2. [[link]] - double bracket links
+ * 3. **bold** - double asterisk
+ * 4. *italic* - single asterisk
  *
  * Returns array of tokens covering the entire input string.
  */
@@ -118,9 +121,9 @@ export function parseInlineTokens(content: string): InlineToken[] {
 
   const tokens: InlineToken[] = [];
 
-  // Combined regex - order matters: code first, then bold (** before *)
+  // Combined regex - order matters: code first, then link, then bold (** before *)
   // Using non-greedy matches and avoiding empty content
-  const PATTERN = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
+  const PATTERN = /(`[^`]+`)|(\[\[[^\]]+\]\])|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
 
   let lastIndex = 0;
 
@@ -153,6 +156,18 @@ export function parseInlineTokens(content: string): InlineToken[] {
         end,
       });
     } else if (match[2]) {
+      const inner = raw.slice(2, -2);
+      const [target, alias] = inner.split('|');
+      tokens.push({
+        type: 'link',
+        content: (alias ?? target).trim(),
+        raw,
+        start,
+        end,
+        linkTarget: target.trim(),
+        linkAlias: alias?.trim(),
+      });
+    } else if (match[3]) {
       // **bold** - strip double asterisks
       tokens.push({
         type: 'bold',
@@ -161,7 +176,7 @@ export function parseInlineTokens(content: string): InlineToken[] {
         start,
         end,
       });
-    } else if (match[3]) {
+    } else if (match[4]) {
       // *italic* - strip single asterisks
       tokens.push({
         type: 'italic',
@@ -196,7 +211,7 @@ export function parseInlineTokens(content: string): InlineToken[] {
  */
 export function hasInlineFormatting(content: string): boolean {
   // Standard markdown OR ctx:: patterns
-  return /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content) || hasCtxPatterns(content);
+  return /`[^`]+`|\[\[[^\]]+\]\]|\*\*[^*]+\*\*|\*[^*]+\*/.test(content) || hasCtxPatterns(content);
 }
 
 /**
@@ -204,7 +219,7 @@ export function hasInlineFormatting(content: string): boolean {
  * Returns unified token array for rendering.
  */
 export function parseAllInlineTokens(content: string): InlineToken[] {
-  const hasMarkdown = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content);
+  const hasMarkdown = /`[^`]+`|\[\[[^\]]+\]\]|\*\*[^*]+\*\*|\*[^*]+\*/.test(content);
   const hasCtx = hasCtxPatterns(content);
 
   if (!hasMarkdown && !hasCtx) return [];
@@ -226,7 +241,7 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
   // Apply markdown parsing to 'text' tokens from ctx parsing
   const mergedTokens: InlineToken[] = [];
   for (const token of ctxTokens) {
-    if (token.type === 'text' && /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(token.raw)) {
+    if (token.type === 'text' && /`[^`]+`|\[\[[^\]]+\]\]|\*\*[^*]+\*\*|\*[^*]+\*/.test(token.raw)) {
       // Parse markdown within this text segment
       const mdTokens = parseInlineTokens(token.raw);
       // Adjust positions to be relative to original content

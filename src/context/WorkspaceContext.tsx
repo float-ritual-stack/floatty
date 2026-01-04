@@ -38,6 +38,7 @@ export interface BlockStoreInterface {
   createBlockAfter: (afterId: string) => string;
   createBlockInside: (parentId: string) => string;
   createBlockInsideAtTop: (parentId: string) => string;
+  createRootBlock: (content: string) => string;
   splitBlock: (id: string, offset: number) => string | null;
   splitBlockToFirstChild: (id: string, offset: number) => string | null;
   deleteBlock: (id: string) => boolean;
@@ -134,6 +135,7 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     createBlockAfter: () => '',
     createBlockInside: () => '',
     createBlockInsideAtTop: () => '',
+    createRootBlock: () => '',
     splitBlock: () => null,
     splitBlockToFirstChild: () => null,
     deleteBlock: () => false,
