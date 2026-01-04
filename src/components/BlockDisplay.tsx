@@ -16,27 +16,138 @@ import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../
 
 interface BlockDisplayProps {
   content: string;
-  // Future: wikilink interactions
-  // onWikilinkHover?: (link: string, rect: DOMRect) => void;
-  // onWikilinkClick?: (link: string) => void;
+  /** Called when a [[wikilink]] is clicked. Receives target page name and mouse event. */
+  onWikilinkClick?: (target: string, event: MouseEvent) => void;
+}
+
+interface TokenSpanProps {
+  token: InlineToken;
+  onWikilinkClick?: (target: string, event: MouseEvent) => void;
+}
+
+/**
+ * Render wikilink content with nested wikilinks as clickable children.
+ * For `[[outer [[inner]]]]`, renders "[[outer " + clickable [[inner]] + "]]"
+ */
+function renderWikilinkContent(
+  raw: string,
+  onWikilinkClick?: (target: string, event: MouseEvent) => void
+): (string | Element)[] {
+  const parts: (string | Element)[] = [];
+
+  // Quick check - no nested brackets means just return raw
+  // Count [[ occurrences - if only one pair, no nesting
+  const openCount = (raw.match(/\[\[/g) || []).length;
+  if (openCount <= 1) {
+    return [raw];
+  }
+
+  // Find nested wikilinks using bracket counting
+  let i = 0;
+  let lastEnd = 0;
+
+  while (i < raw.length - 1) {
+    const openIdx = raw.indexOf('[[', i);
+    if (openIdx === -1) break;
+
+    // Skip the outermost [[ (at position 0)
+    if (openIdx === 0) {
+      i = 2;
+      continue;
+    }
+
+    // Find matching ]] with bracket counting
+    let depth = 0;
+    let j = openIdx;
+    let endIdx = -1;
+
+    while (j < raw.length - 1) {
+      const twoChars = raw.slice(j, j + 2);
+      if (twoChars === '[[') {
+        depth++;
+        j += 2;
+      } else if (twoChars === ']]') {
+        depth--;
+        j += 2;
+        if (depth === 0) {
+          endIdx = j;
+          break;
+        }
+      } else {
+        j++;
+      }
+    }
+
+    if (endIdx === -1) {
+      i = openIdx + 2;
+      continue;
+    }
+
+    // Add text before this nested link
+    if (openIdx > lastEnd) {
+      parts.push(raw.slice(lastEnd, openIdx));
+    }
+
+    // Extract nested wikilink
+    const nestedRaw = raw.slice(openIdx, endIdx);
+    const nestedInner = raw.slice(openIdx + 2, endIdx - 2);
+
+    // Parse target (handle alias)
+    let nestedTarget = nestedInner;
+    let pipeDepth = 0;
+    for (let k = 0; k < nestedInner.length - 1; k++) {
+      const tc = nestedInner.slice(k, k + 2);
+      if (tc === '[[') {
+        pipeDepth++;
+        k++;
+      } else if (tc === ']]') {
+        pipeDepth--;
+        k++;
+      } else if (nestedInner[k] === '|' && pipeDepth === 0) {
+        nestedTarget = nestedInner.slice(0, k);
+        break;
+      }
+    }
+
+    // Render nested wikilink as clickable span
+    parts.push(
+      <span
+        class="md-wikilink md-wikilink-nested"
+        data-target={nestedTarget.trim()}
+        onClick={(e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onWikilinkClick?.(nestedTarget.trim(), e);
+        }}
+      >
+        {nestedRaw}
+      </span> as Element
+    );
+
+    lastEnd = endIdx;
+    i = endIdx;
+  }
+
+  // Add remaining text (including final ]])
+  if (lastEnd < raw.length) {
+    parts.push(raw.slice(lastEnd));
+  }
+
+  return parts.length > 0 ? parts : [raw];
 }
 
 /**
  * Render a single inline token with appropriate styling.
  * Shows the RAW text (with markers) but applies class for styling.
+ * Wikilinks get special handling with pointer-events: auto for interactivity.
  */
-function InlineTokenSpan(props: { token: InlineToken }) {
-  // For styled tokens, we show the raw text but wrap inner content in styled span
-  // Example: **bold** → <span class="md-bold">**<span class="md-bold-inner">bold</span>**</span>
-  //
-  // Simpler approach for now: just color the whole thing including markers
-  // This matches the "markers visible, text colored" requirement
-
+function InlineTokenSpan(props: TokenSpanProps) {
   const classMap: Record<string, string> = {
     text: '',
     bold: 'md-bold',
     italic: 'md-italic',
     code: 'md-code',
+    wikilink: 'md-wikilink',
     'ctx-prefix': 'ctx-inline-prefix',
     'ctx-timestamp': 'ctx-inline-timestamp',
     'ctx-tag': 'ctx-inline-tag',
@@ -50,6 +161,25 @@ function InlineTokenSpan(props: { token: InlineToken }) {
     }
     return baseClass;
   };
+
+  // Wikilinks get special rendering with click handler and nested link support
+  if (props.token.type === 'wikilink' && props.token.target) {
+    const contentParts = renderWikilinkContent(props.token.raw, props.onWikilinkClick);
+
+    return (
+      <span
+        class={getClass()}
+        data-target={props.token.target}
+        onClick={(e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          props.onWikilinkClick?.(props.token.target!, e);
+        }}
+      >
+        {contentParts}
+      </span>
+    );
+  }
 
   return (
     <span class={getClass()}>
@@ -72,7 +202,12 @@ export function BlockDisplay(props: BlockDisplayProps) {
     <div class="block-display" aria-hidden="true">
       {hasFormatting() ? (
         <For each={tokens()}>
-          {(token) => <InlineTokenSpan token={token} />}
+          {(token) => (
+            <InlineTokenSpan
+              token={token}
+              onWikilinkClick={props.onWikilinkClick}
+            />
+          )}
         </For>
       ) : (
         // No formatting - render plain text directly

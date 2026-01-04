@@ -668,10 +668,11 @@ body.resizing .terminal-pane-positioned {
   color: var(--color-fg);  /* Default color, overridden by block-content-* classes */
 }
 
-/* DISPLAY LAYER: styled tokens, no pointer events */
+/* DISPLAY LAYER: styled tokens, no pointer events (except wikilinks) */
 .block-display {
   position: absolute;
   inset: 0;
+  z-index: 1;  /* Above edit layer - clicks pass through via pointer-events: none */
   pointer-events: none;
   white-space: pre-wrap;
   word-break: break-word;
@@ -701,12 +702,32 @@ body.resizing .terminal-pane-positioned {
   margin: 0 1px;
 }
 
-/* Future: wikilinks get pointer-events back for hover/click */
+/* Wikilinks: clickable even above edit layer */
 .block-display .md-wikilink {
+  position: relative;
+  z-index: 10;  /* Pop above the contentEditable edit layer */
   pointer-events: auto;
   cursor: pointer;
   color: var(--color-ansi-blue);
   text-decoration: underline;
+  border-radius: 2px;
+  transition: background-color 0.1s ease;
+}
+
+/* Outer wikilink hover - subtle background */
+.block-display .md-wikilink:hover {
+  background-color: color-mix(in srgb, var(--color-ansi-blue) 15%, transparent);
+}
+
+/* Nested wikilink - slightly different base to hint it's clickable separately */
+.block-display .md-wikilink-nested {
+  text-decoration-style: dotted;
+}
+
+/* Nested hover - brighter to show you're targeting the inner link */
+.block-display .md-wikilink-nested:hover {
+  background-color: color-mix(in srgb, var(--color-ansi-cyan) 25%, transparent);
+  text-decoration-style: solid;
 }
 
 /* ctx:: inline token styles - structured context markers */
@@ -1330,5 +1351,82 @@ body.resizing .terminal-pane-positioned {
 
 .daily-running-text {
   color: var(--color-fg-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LINKED REFERENCES - Backlinks display for [[wikilinks]]
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.linked-references {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.linked-references-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-left: 8px;
+}
+
+.linked-references-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--color-ansi-blue);
+  color: var(--color-bg);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.linked-references-label {
+  color: var(--color-fg-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.linked-references-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.linked-reference-item {
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-fg) 5%, transparent);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.linked-reference-item:hover {
+  background: color-mix(in srgb, var(--color-ansi-blue) 15%, transparent);
+}
+
+.linked-reference-content {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-fg);
+}
+
+/* LinkedReferences uses BlockDisplay in standalone mode (no overlay) */
+.linked-reference-content .block-display {
+  position: relative;
+  inset: unset;
+  pointer-events: auto;  /* Allow all clicks in backlinks */
+  color: var(--color-fg);
+}
+
+/* Let wikilinks in backlinks be clickable too */
+.linked-reference-content .md-wikilink {
+  pointer-events: auto;
 }
 

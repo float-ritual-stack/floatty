@@ -3,8 +3,10 @@ import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
+import { navigateToPage } from '../hooks/useBacklinkNavigation';
 import { findHandler, executeBlock } from '../lib/executor';
-import { getActionForEvent } from '../lib/keybinds';
+import { getActionForEvent, isMac } from '../lib/keybinds';
+import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
 import { BlockDisplay } from './BlockDisplay';
 import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
 import { isDailyBlock, executeDailyBlock } from '../lib/dailyExecutor';
@@ -89,8 +91,24 @@ export function BlockItem(props: BlockItemProps) {
       }
 
       case 'zoomInBlock': {
-        // Cmd+Enter: Toggle zoom - zoom out if at zoomed root, zoom in otherwise
+        // Cmd+Enter: Navigate wikilink OR toggle zoom
         e.preventDefault();
+
+        // Check if cursor is inside a [[wikilink]] - navigate instead of zoom
+        const wikilinkTarget = getWikilinkAtCursor();
+        if (wikilinkTarget) {
+          console.log('[Wikilink] Keyboard nav to:', wikilinkTarget);
+          const result = navigateToPage(wikilinkTarget, props.paneId, false);
+          // Focus first child of page
+          if (result.success && result.focusTargetId) {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
+            });
+          }
+          return;
+        }
+
+        // No wikilink at cursor - normal zoom behavior
         const currentZoom = paneStore.getZoomedRootId(props.paneId);
 
         if (currentZoom === props.id) {
@@ -420,6 +438,47 @@ export function BlockItem(props: BlockItemProps) {
     return '•';
   };
 
+  // [[Wikilink]] click handler - navigate to page
+  // Cmd+Click → horizontal split, Cmd+Shift+Click → vertical split
+  const handleWikilinkClick = (target: string, e: MouseEvent) => {
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
+    const splitDirection = modKey
+      ? (e.shiftKey ? 'vertical' : 'horizontal')
+      : 'none';
+    console.log('[Wikilink] Click:', { target, modKey, shiftKey: e.shiftKey, splitDirection });
+    const result = navigateToPage(target, props.paneId, splitDirection);
+    if (!result.success) {
+      console.warn('[BlockItem] Wikilink navigation failed:', result.error);
+    } else {
+      console.log('[Wikilink] Navigation result:', result);
+      // Focus first child of page (or newly created empty child)
+      if (result.focusTargetId) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
+        });
+      }
+    }
+  };
+
+  // Find wikilink at cursor position (for keyboard navigation)
+  const getWikilinkAtCursor = (): string | null => {
+    const content = block()?.content || '';
+    if (!hasWikilinkPatterns(content)) return null;
+
+    const cursorOffset = cursor.getOffset();
+    const tokens = parseAllInlineTokens(content);
+
+    for (const token of tokens) {
+      if (token.type === 'wikilink' && token.target) {
+        // Check if cursor is within this wikilink's range
+        if (cursorOffset >= token.start && cursorOffset <= token.end) {
+          return token.target;
+        }
+      }
+    }
+    return null;
+  };
+
   return (
     <div class="block-wrapper">
       <div
@@ -464,7 +523,7 @@ export function BlockItem(props: BlockItemProps) {
           {/* DAILY BLOCK: editable content only (output renders in children area) */}
           <Show when={block()?.type === 'daily'}>
             <div class="daily-block">
-              <BlockDisplay content={block()?.content || ''} />
+              <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
               <div
                 ref={contentRef}
                 contentEditable
@@ -483,7 +542,7 @@ export function BlockItem(props: BlockItemProps) {
           {/* REGULAR BLOCK: display + edit layers */}
           <Show when={block()?.type !== 'picker' && block()?.type !== 'daily'}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
-            <BlockDisplay content={block()?.content || ''} />
+            <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
 
             {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
             <div

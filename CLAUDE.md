@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **floatty** - A Tauri v2 terminal emulator with integrated outliner and consciousness siphon:
 1. **High-performance PTY** - handles 4000+ redraws/sec from tools like Claude Code
 2. **Multi-tab terminals** - independent PTY per tab, platform-aware keybinds (⌘ on macOS)
-3. **Block-based outliner** - CRDT-backed (yjs), inline markdown formatting, zoom navigation
+3. **Block-based outliner** - CRDT-backed (yjs), inline markdown formatting, zoom navigation, [[wikilinks]] for page navigation
 4. **ctx:: Aggregation** - watches JSONL session logs, extracts markers, parses via Ollama, displays in sidebar
 5. **Theming system** - 5 bundled themes (Dark, Light, Solarized Dark/Light, High Contrast), hot-swap via ⌘;
 
@@ -129,6 +129,7 @@ Critical rules:
 | `BlockItem.tsx` | Individual block with keybinds (Enter, Tab, etc.) |
 | `BlockDisplay.tsx` | Display layer for inline formatting overlay |
 | `Breadcrumb.tsx` | Navigation trail for zoomed block view |
+| `LinkedReferences.tsx` | Backlinks display when zoomed into a page under `pages::` |
 
 **Frontend modules** (`src/lib/`):
 
@@ -139,7 +140,7 @@ Critical rules:
 | `layoutTypes.ts` | Layout tree types and pure manipulation functions |
 | `blockTypes.ts` | Block type definitions and prefix detection (`sh::`, `ai::`, etc.) |
 | `markdownParser.ts` | Parses markdown output into block hierarchy (headings, lists, fences) |
-| `inlineParser.ts` | Tokenizes inline markdown (`**bold**`, `*italic*`, `` `code` ``) for overlay |
+| `inlineParser.ts` | Tokenizes inline markdown (`**bold**`, `*italic*`, `` `code` ``, `[[wikilinks]]`) for overlay |
 | `cursorUtils.ts` | Cursor position utilities for keybind logic |
 | `executor.ts` | Command execution for `sh::` blocks (child_process via Tauri) |
 | `tvResolver.ts` | `$tv()` pattern resolution - spawns TV picker, receives selection from Rust |
@@ -155,6 +156,7 @@ Critical rules:
 | `useBlockOperations.ts` | Navigation helpers (findNext/Prev, getAncestors) |
 | `useCursor.ts` | DOM cursor abstraction for testability |
 | `useBlockInput.ts` | Pure keyboard logic extraction (`determineKeyAction`) |
+| `useBacklinkNavigation.ts` | Page navigation, `pages::` container lookup, backlinks extraction |
 
 ### Key Data Flows
 
@@ -236,6 +238,9 @@ Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, 
 | `⌘.` | Toggle collapse | Toggle collapse |
 | `⌘⌫` | Delete block and subtree | Delete block and subtree |
 | `⌘⇧M` | Export outline to clipboard (markdown) | Export outline to clipboard (markdown) |
+| `Click [[link]]` | Navigate to page | Navigate to page |
+| `⌘Click [[link]]` | Open page in horizontal split | Open page in horizontal split |
+| `⌘⇧Click [[link]]` | Open page in vertical split | Open page in vertical split |
 
 ### Terminal Manager Architecture
 
@@ -278,6 +283,39 @@ Two-layer technique for styled inline markdown while preserving cursor behavior:
 - Uses `<For>` for token iteration (lightweight, no identity issues)
 
 **Theme-awareness:** All colors use CSS variables (`--color-ansi-*`), auto-adapting on theme switch.
+
+### Wikilinks & Page Navigation
+
+Roam-style `[[wikilinks]]` with a `pages::` container architecture:
+
+```
+Root blocks
+├── some block with [[Page Name]] link
+├── pages::                          ← Container (like sh::, ai::)
+│   ├── # Page Name                  ← Pages are children of pages::
+│   ├── # Another Page
+│   └── # meeting:: [[nick <--> evan]]  ← Nested brackets supported
+└── more blocks
+```
+
+**Key mechanics:**
+- `pages::` block at root level contains all linkable pages
+- Pages stored with `# ` prefix for heading styling when zoomed
+- Matching strips heading prefix (case-insensitive): `[[My Page]]` matches `# My Page`
+- Clicking `[[link]]` creates page under `pages::` if missing, then zooms to it
+- `LinkedReferences` component shows backlinks when zoomed into a page
+
+**Nested wikilinks:**
+- Parser uses bracket-counting (not regex) for proper nesting
+- `[[outer [[inner]]]]` is one link with target `outer [[inner]]`
+- Inner `[[inner]]` is separately clickable (dotted underline, cyan hover)
+- Backlinks extracted recursively: `[[outer [[inner]]]]` creates backlinks to both targets
+
+**Files:**
+- `inlineParser.ts` - Bracket-counting tokenizer for `[[Target]]` and `[[Target|Alias]]`
+- `useBacklinkNavigation.ts` - Navigation logic, page creation, backlink extraction
+- `LinkedReferences.tsx` - Displays backlinks when zoomed into page
+- `BlockDisplay.tsx` - Renders nested wikilinks with separate click handlers
 
 ## SolidJS Mental Models (CRITICAL)
 

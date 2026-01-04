@@ -316,3 +316,165 @@ describe('ctx:: inline parsing', () => {
     });
   });
 });
+
+// ctx::2026-01-04 @ 11:57 AM [project::floatty] [mode::build] wikilink parser tests
+describe('wikilink parsing', () => {
+  describe('basic patterns', () => {
+    it('parses [[Simple]] wikilink', () => {
+      const tokens = parseAllInlineTokens('check [[Simple]] page');
+      expect(tokens.find(t => t.type === 'wikilink')).toBeDefined();
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.target).toBe('Simple');
+      expect(wikilink.content).toBe('Simple');
+      expect(wikilink.raw).toBe('[[Simple]]');
+    });
+
+    it('parses [[Target|Alias]] with display alias', () => {
+      const tokens = parseAllInlineTokens('see [[Project Alpha|the project]]');
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.target).toBe('Project Alpha');
+      expect(wikilink.content).toBe('the project');
+      expect(wikilink.raw).toBe('[[Project Alpha|the project]]');
+    });
+
+    it('parses [[Multi Word Page]] names', () => {
+      const tokens = parseAllInlineTokens('[[Multi Word Page]]');
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.target).toBe('Multi Word Page');
+    });
+
+    it('parses multiple wikilinks in same content', () => {
+      const tokens = parseAllInlineTokens('link [[A]] and [[B]] here');
+      const wikilinks = tokens.filter(t => t.type === 'wikilink');
+      expect(wikilinks).toHaveLength(2);
+      expect(wikilinks[0].target).toBe('A');
+      expect(wikilinks[1].target).toBe('B');
+    });
+  });
+
+  describe('edge cases', () => {
+    it('ignores empty [[]] brackets', () => {
+      const tokens = parseAllInlineTokens('empty [[]] should not match');
+      const wikilinks = tokens.filter(t => t.type === 'wikilink');
+      expect(wikilinks).toHaveLength(0);
+    });
+
+    it('handles wikilink at start of content', () => {
+      const tokens = parseAllInlineTokens('[[Start]] of line');
+      expect(tokens[0].type).toBe('wikilink');
+    });
+
+    it('handles wikilink at end of content', () => {
+      const tokens = parseAllInlineTokens('end of [[Line]]');
+      const wikilinks = tokens.filter(t => t.type === 'wikilink');
+      expect(wikilinks).toHaveLength(1);
+      expect(wikilinks[0].target).toBe('Line');
+    });
+
+    it('trims whitespace from target and alias', () => {
+      const tokens = parseAllInlineTokens('[[  spaced  |  alias  ]]');
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.target).toBe('spaced');
+      expect(wikilink.content).toBe('alias');
+    });
+  });
+
+  describe('mixed with other formatting', () => {
+    it('parses wikilink with **bold** text around it', () => {
+      const tokens = parseAllInlineTokens('**bold** and [[link]]');
+      expect(tokens.find(t => t.type === 'bold')).toBeDefined();
+      expect(tokens.find(t => t.type === 'wikilink')).toBeDefined();
+    });
+
+    it('parses wikilink with ctx:: markers', () => {
+      const input = '[[My Page]] - ctx::2026-01-04 [project::floatty]';
+      const tokens = parseAllInlineTokens(input);
+      expect(tokens.find(t => t.type === 'wikilink')).toBeDefined();
+      expect(tokens.find(t => t.type === 'ctx-prefix')).toBeDefined();
+      expect(tokens.find(t => t.type === 'ctx-tag')).toBeDefined();
+    });
+
+    it('wikilinks take priority (highest precedence)', () => {
+      // Wikilinks should be extracted first, before other patterns
+      const tokens = parseAllInlineTokens('see [[Page]] and **bold**');
+      const types = tokens.map(t => t.type);
+      // Wikilink should appear before bold in token order
+      const wikilinkIdx = types.indexOf('wikilink');
+      const boldIdx = types.indexOf('bold');
+      expect(wikilinkIdx).toBeLessThan(boldIdx);
+    });
+  });
+
+  describe('position tracking', () => {
+    it('tracks start/end positions correctly', () => {
+      const tokens = parseAllInlineTokens('abc [[link]] xyz');
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.start).toBe(4);  // After "abc "
+      expect(wikilink.end).toBe(12);   // After "[[link]]"
+    });
+  });
+
+  describe('nested brackets', () => {
+    it('handles [[meeting:: [[person]]]] nested wikilinks', () => {
+      const tokens = parseAllInlineTokens('[[meeting:: [[nick <--> evan]]]]');
+      const wikilinks = tokens.filter(t => t.type === 'wikilink');
+      expect(wikilinks).toHaveLength(1);
+      expect(wikilinks[0].target).toBe('meeting:: [[nick <--> evan]]');
+      expect(wikilinks[0].raw).toBe('[[meeting:: [[nick <--> evan]]]]');
+    });
+
+    it('handles [[outer [[inner]]]] two levels deep', () => {
+      const tokens = parseAllInlineTokens('see [[outer [[inner]]]] here');
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.target).toBe('outer [[inner]]');
+    });
+
+    it('handles [[a [[b [[c]]]]]] three levels deep', () => {
+      const tokens = parseAllInlineTokens('[[a [[b [[c]]]]]]');
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.target).toBe('a [[b [[c]]]]');
+    });
+
+    it('handles nested with alias [[outer [[inner]]|display]]', () => {
+      const tokens = parseAllInlineTokens('[[outer [[inner]]|display]]');
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.target).toBe('outer [[inner]]');
+      expect(wikilink.content).toBe('display');
+    });
+
+    it('handles pipe inside nested brackets [[a|b [[c|d]]]]', () => {
+      // Top-level pipe splits: target="a", but inner [[c|d]] is part of alias
+      // Wait, no - the inner brackets protect the inner pipe
+      // Actually: [[a|b [[c|d]]]] - first top-level | is at position 2
+      // target = "a", alias = "b [[c|d]]"
+      const tokens = parseAllInlineTokens('[[target|alias [[nested|stuff]]]]');
+      const wikilink = tokens.find(t => t.type === 'wikilink')!;
+      expect(wikilink.target).toBe('target');
+      expect(wikilink.content).toBe('alias [[nested|stuff]]');
+    });
+
+    it('handles unbalanced opening bracket gracefully', () => {
+      // [[missing close - should not crash, skip the unbalanced link
+      const tokens = parseAllInlineTokens('[[missing close and [[valid]]');
+      // The first [[ is unbalanced so it should be skipped
+      // [[valid]] should still be found
+      const wikilinks = tokens.filter(t => t.type === 'wikilink');
+      expect(wikilinks).toHaveLength(1);
+      expect(wikilinks[0].target).toBe('valid');
+    });
+
+    it('handles multiple nested wikilinks in same line', () => {
+      const tokens = parseAllInlineTokens('[[a [[b]]]] and [[c [[d]]]]');
+      const wikilinks = tokens.filter(t => t.type === 'wikilink');
+      expect(wikilinks).toHaveLength(2);
+      expect(wikilinks[0].target).toBe('a [[b]]');
+      expect(wikilinks[1].target).toBe('c [[d]]');
+    });
+
+    it('preserves text between nested wikilinks', () => {
+      const tokens = parseAllInlineTokens('start [[a [[b]]]] middle [[c]] end');
+      const text = tokens.filter(t => t.type === 'text').map(t => t.content).join('');
+      expect(text).toBe('start  middle  end');
+    });
+  });
+});
