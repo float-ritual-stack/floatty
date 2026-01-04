@@ -35,6 +35,8 @@ pub enum BlockType {
     Picker,
     /// Resolved command after $tv() substitution: prefix `ran::`
     Ran,
+    /// Daily note view: prefix `daily::` (e.g., `daily::2026-01-03`)
+    Daily,
     /// Heading level 1: `# `
     H1,
     /// Heading level 2: `## `
@@ -130,6 +132,9 @@ pub fn parse_block_type(content: &str) -> BlockType {
     }
     if lower.starts_with("ran::") {
         return BlockType::Ran;
+    }
+    if lower.starts_with("daily::") {
+        return BlockType::Daily;
     }
 
     // Markdown syntax (case-sensitive for headings)

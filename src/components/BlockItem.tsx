@@ -7,6 +7,9 @@ import { findHandler, executeBlock } from '../lib/executor';
 import { getActionForEvent } from '../lib/keybinds';
 import { BlockDisplay } from './BlockDisplay';
 import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
+import { isDailyBlock, executeDailyBlock } from '../lib/dailyExecutor';
+import { DailyView, DailyErrorView } from './views/DailyView';
+import type { DailyNoteData } from '../lib/dailyExecutor';
 
 interface BlockItemProps {
   id: string;
@@ -228,6 +231,18 @@ export function BlockItem(props: BlockItemProps) {
       // Plain Enter on executable blocks = execute (unified handler)
       if (block()) {
         const content = block()!.content;
+
+        // Daily:: blocks: execute via dedicated handler (inline view output)
+        if (isDailyBlock(content)) {
+          e.preventDefault();
+          executeDailyBlock(props.id, content, {
+            setBlockOutput: store.setBlockOutput,
+            setBlockStatus: store.setBlockStatus,
+          });
+          return;
+        }
+
+        // Other executable blocks (sh::, ai::, etc.)
         const handler = findHandler(content);
 
         if (handler) {
@@ -397,7 +412,9 @@ export function BlockItem(props: BlockItemProps) {
 
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-    if (hasChildren) {
+    // Daily blocks with output also have collapsible content (not stored as childIds)
+    const hasDailyOutput = block()?.type === 'daily' && (block()?.outputStatus || block()?.output);
+    if (hasChildren || hasDailyOutput) {
       return isCollapsed() ? '▸' : '▾';
     }
     return '•';
@@ -444,8 +461,27 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
+          {/* DAILY BLOCK: editable content only (output renders in children area) */}
+          <Show when={block()?.type === 'daily'}>
+            <div class="daily-block">
+              <BlockDisplay content={block()?.content || ''} />
+              <div
+                ref={contentRef}
+                contentEditable
+                class="block-content block-edit"
+                spellcheck={false}
+                autocapitalize="off"
+                autocorrect="off"
+                onInput={handleInput}
+                onKeyDown={handleKeyDown}
+                onFocus={() => props.onFocus(props.id)}
+                onBlur={handleBlur}
+              />
+            </div>
+          </Show>
+
           {/* REGULAR BLOCK: display + edit layers */}
-          <Show when={block()?.type !== 'picker'}>
+          <Show when={block()?.type !== 'picker' && block()?.type !== 'daily'}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
             <BlockDisplay content={block()?.content || ''} />
 
@@ -465,6 +501,24 @@ export function BlockItem(props: BlockItemProps) {
           </Show>
         </div>
       </div>
+
+      {/* DAILY OUTPUT: renders in children area for indentation + collapse */}
+      <Show when={block()?.type === 'daily' && !isCollapsed()}>
+        <div class="block-children daily-output">
+          <Show when={block()?.outputStatus === 'running'}>
+            <div class="daily-running">
+              <span class="daily-running-spinner">◐</span>
+              <span class="daily-running-text">Extracting...</span>
+            </div>
+          </Show>
+          <Show when={block()?.outputType === 'daily-view'}>
+            <DailyView data={block()!.output as DailyNoteData} />
+          </Show>
+          <Show when={block()?.outputType === 'daily-error'}>
+            <DailyErrorView error={(block()!.output as { error: string }).error} />
+          </Show>
+        </div>
+      </Show>
 
       <Show when={!isCollapsed() && block()?.childIds.length}>
         <div class="block-children">
