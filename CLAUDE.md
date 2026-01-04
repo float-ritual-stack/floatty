@@ -287,6 +287,70 @@ See @.claude/rules/solidjs-patterns.md for detailed patterns on:
 - `<Show>` vs CSS display
 - Ref cleanup timing
 
+## Keyboard & Selection Architecture
+
+### Cursor Detection
+
+**Use `cursor.isAtStart()` not `cursor.getOffset() === 0`**
+
+The `isAtStart()` method uses `isCursorAtContentStart()` which properly handles empty text nodes, leading `<br>` elements, and other contentEditable edge cases. The `getOffset()` approach uses range cloning and innerText measurement which can disagree in edge cases.
+
+### Selection Modes
+
+The outliner has four selection modes in `handleSelect()`:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `'set'` | Clear selection, set anchor only | Plain click/navigation |
+| `'anchor'` | Select block AND set as anchor | First Shift+Arrow, Cmd+A |
+| `'toggle'` | Toggle block in/out of selection | Cmd+Click |
+| `'range'` | Select from anchor to target | Subsequent Shift+Arrow |
+
+**Common bug**: Using `'set'` when you mean `'anchor'` - 'set' clears selection without adding the block.
+
+### Shift+Arrow Selection Pattern
+
+```
+1. Focus A, no selection
+2. Shift+Down → onSelect(A, 'anchor'), focus(B)  // A selected, B focused
+3. Shift+Down → onSelect(B, 'range'), focus(C)   // A,B selected, C focused
+```
+
+Key insight: `'range'` uses `props.id` (current block), not `next`. The range extends TO where you are, THEN focus moves.
+
+### Focus Transitions (Text Mode → Block Mode)
+
+When exiting contentEditable to do block operations (e.g., Cmd+A):
+
+```typescript
+if (isEditing) {
+  (document.activeElement as HTMLElement)?.blur();
+  containerRef?.focus();  // CRITICAL: keeps keyboard events flowing to tinykeys
+}
+```
+
+The outliner container has `tabIndex={-1}` for this purpose.
+
+### CSS Selection States
+
+```css
+/* Editing: cursor in block (DOM focus) - accent border */
+.block-item:not(.block-selected):focus-within .block-content { ... }
+
+/* Selected for operations (Cmd+A, Shift+Arrow) - cyan border */
+.block-selected .block-content { ... }
+```
+
+These are independent states. Selection always wins visually (`:not(.block-selected)` on focus rule).
+
+### Intentional Safeguards
+
+**Deleting blocks with children** requires explicit selection:
+1. Backspace at start of parent → does nothing (protection)
+2. Cmd+A → Backspace → deletes block + subtree
+
+This prevents accidental deletion of large branches. Document as intentional, not a bug.
+
 ## Known Issues
 
 1. **xterm decorations** - `term.registerDecoration()` for highlighting ctx:: lines crashed with renderer errors. Removed. Could try debounced viewport-only approach.
