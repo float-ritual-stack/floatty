@@ -142,7 +142,7 @@ export function DailyView(props: DailyViewProps) {
             <span class="daily-pill">{timelogs().length} entries</span>
           </div>
         </div>
-        <Show when={stats()}>
+        <Show when={props.data.stats}>
           <div class="daily-stats">
             <div class="daily-stat">
               <div class="daily-stat-value">{stats().sessions}</div>

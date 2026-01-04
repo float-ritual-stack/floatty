@@ -122,6 +122,9 @@ function blockToYMap(block: Block): Y.Map<unknown> {
   if (block.outputType !== undefined) {
     blockMap.set('outputType', block.outputType);
   }
+  if (block.outputStatus !== undefined) {
+    blockMap.set('outputStatus', block.outputStatus);
+  }
 
   // childIds as Y.Array for CRDT-safe ordered list
   const childIdsArr = new Y.Array<string>();

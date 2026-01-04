@@ -8,47 +8,16 @@
  * render their structured data INLINE using a custom component.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './tauriTypes';
 
-// ═══════════════════════════════════════════════════════════════
-// TYPES (matches Rust DailyNoteData)
-// ═══════════════════════════════════════════════════════════════
-
-export interface PrInfo {
-  num: number;
-  status: 'open' | 'merged' | 'closed';
-}
-
-export interface TimelogEntry {
-  time: string;
-  project: string | null;
-  mode: string | null;
-  issue: string | null;
-  meeting: string | null;
-  summary: string;
-  details: string[];
-  phases: string[];
-  prs: PrInfo[];
-}
-
-export interface ScatteredThought {
-  title: string;
-  content: string;
-}
-
-export interface DayStats {
-  sessions: number;
-  hours: string;
-  prs: number;
-}
-
-export interface DailyNoteData {
-  date: string;
-  day_of_week: string;
-  stats: DayStats;
-  timelogs: TimelogEntry[];
-  scattered_thoughts: ScatteredThought[];
-}
+// Re-export types for component use
+export type {
+  PrInfo,
+  TimelogEntry,
+  ScatteredThought,
+  DayStats,
+  DailyNoteData
+} from './tauriTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // DETECTION
@@ -101,6 +70,7 @@ export async function executeDailyBlock(
   if (!dateArg) {
     // No date specified - show error inline
     actions.setBlockOutput(blockId, { error: 'No date specified. Use daily::today or daily::2026-01-03' }, 'daily-error');
+    actions.setBlockStatus(blockId, 'error');
     return;
   }
 
@@ -116,5 +86,6 @@ export async function executeDailyBlock(
   } catch (err) {
     console.error('[dailyExecutor] Error:', err);
     actions.setBlockOutput(blockId, { error: String(err) }, 'daily-error');
+    actions.setBlockStatus(blockId, 'error');
   }
 }
