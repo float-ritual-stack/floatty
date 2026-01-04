@@ -57,7 +57,7 @@ export function LinkedReferences(props: LinkedReferencesProps) {
 
   // Handle clicking a backlink item to navigate to its parent context
   // Cmd+Click → horizontal split, Cmd+Shift+Click → vertical split
-  const handleBacklinkClick = (backlinkBlock: Block, e: MouseEvent) => {
+  const handleBacklinkClick = (backlinkBlock: Block, e: MouseEvent | KeyboardEvent) => {
     e.stopPropagation();
     // Navigate to the backlink's parent (or the block itself if no parent)
     // This gives the user the surrounding context of the reference
@@ -79,6 +79,14 @@ export function LinkedReferences(props: LinkedReferencesProps) {
     paneStore.setZoomedRoot(props.paneId, targetId);
   };
 
+  // Keyboard handler for backlink items (Enter/Space to activate)
+  const handleBacklinkKeyDown = (backlinkBlock: Block, e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleBacklinkClick(backlinkBlock, e);
+    }
+  };
+
   return (
     <Show when={backlinks().length > 0}>
       <div class="linked-references">
@@ -91,7 +99,11 @@ export function LinkedReferences(props: LinkedReferencesProps) {
             {(backlinkBlock) => (
               <div
                 class="linked-reference-item"
+                role="button"
+                tabIndex={0}
                 onClick={(e) => handleBacklinkClick(backlinkBlock, e)}
+                onKeyDown={(e) => handleBacklinkKeyDown(backlinkBlock, e)}
+                aria-label={`Navigate to block: ${backlinkBlock.content.slice(0, 50)}`}
               >
                 <div class="linked-reference-content">
                   <BlockDisplay
