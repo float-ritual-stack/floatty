@@ -15,7 +15,6 @@ import { createMemo, For, Show } from 'solid-js';
 import {
   parseAllInlineTokens,
   hasInlineFormatting,
-  isMarkdownTable,
   parseMarkdownTable,
   parseInlineTokens,
   type InlineToken,
@@ -71,16 +70,12 @@ function InlineTokenSpan(props: { token: InlineToken }) {
  */
 function CellContent(props: { content: string }) {
   const tokens = createMemo(() => {
-    if (!props.content) return [];
+    if (!props.content || !hasInlineFormatting(props.content)) return [];
     return parseInlineTokens(props.content);
   });
 
-  const hasFormatting = createMemo(() =>
-    /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(props.content)
-  );
-
   return (
-    <Show when={hasFormatting()} fallback={props.content}>
+    <Show when={tokens().length > 0} fallback={props.content}>
       <For each={tokens()}>
         {(token) => <InlineTokenSpan token={token} />}
       </For>
@@ -125,9 +120,9 @@ function TableDisplay(props: { table: ParsedTable }) {
 }
 
 export function BlockDisplay(props: BlockDisplayProps) {
-  // Check if content is a markdown table
+  // Check if content is a markdown table (parseMarkdownTable returns null if not)
   const tableData = createMemo(() => {
-    if (!props.content || !isMarkdownTable(props.content)) return null;
+    if (!props.content) return null;
     return parseMarkdownTable(props.content);
   });
 
