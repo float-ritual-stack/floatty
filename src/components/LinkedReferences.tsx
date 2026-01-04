@@ -63,9 +63,9 @@ export function LinkedReferences(props: LinkedReferencesProps) {
     // This gives the user the surrounding context of the reference
     const targetId = backlinkBlock.parentId || backlinkBlock.id;
     const modKey = isMac ? e.metaKey : e.ctrlKey;
-    const splitDir = modKey ? (e.shiftKey ? 'vertical' : 'horizontal') : null;
 
-    if (splitDir) {
+    if (modKey) {
+      const splitDir = e.shiftKey ? 'vertical' : 'horizontal';
       const tabId = findTabIdByPaneId(props.paneId);
       if (tabId) {
         const newPaneId = layoutStore.splitPane(tabId, splitDir, 'outliner');
