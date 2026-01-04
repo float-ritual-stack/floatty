@@ -1,6 +1,7 @@
 mod config;
 mod ctx_parser;
 mod ctx_watcher;
+mod daily_view;
 mod db;
 #[cfg(target_os = "macos")]
 mod panel;
@@ -566,6 +567,7 @@ pub fn run() {
                     get_server_info,
                     execute_shell_command,
                     execute_ai_command,
+                    daily_view::execute_daily_command,
                     clear_workspace,
                     save_clipboard_image,
                     check_hooks_installed,
@@ -589,6 +591,7 @@ pub fn run() {
                     get_server_info,
                     execute_shell_command,
                     execute_ai_command,
+                    daily_view::execute_daily_command,
                     clear_workspace,
                     save_clipboard_image,
                     check_hooks_installed,

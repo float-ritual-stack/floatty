@@ -19,6 +19,10 @@ export interface Block {
   collapsed: boolean;
   createdAt: number;
   updatedAt: number;
+  // Execution output (for daily::, ai::, etc.)
+  output?: unknown;
+  outputType?: string;  // 'daily-view', 'kanban-view', etc.
+  outputStatus?: 'running' | 'complete' | 'error';
 }
 
 export function parseBlockType(content: string): BlockType {
@@ -37,6 +41,7 @@ export function parseBlockType(content: string): BlockType {
   if (lower.startsWith('error::')) return 'error';
   if (lower.startsWith('picker::')) return 'picker';
   if (lower.startsWith('ran::')) return 'ran';
+  if (lower.startsWith('daily::')) return 'daily';
 
   // Markdown syntax (case-sensitive prefix matching)
   if (trimmed.startsWith('### ')) return 'h3';

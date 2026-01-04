@@ -46,6 +46,47 @@ export interface MarkerCounts {
   failed: number;
 }
 
+/** PR info from daily note extraction */
+export interface PrInfo {
+  num: number;
+  status: 'open' | 'merged' | 'closed';
+}
+
+/** Timelog entry from daily note */
+export interface TimelogEntry {
+  time: string;
+  project: string | null;
+  mode: string | null;
+  issue: string | null;
+  meeting: string | null;
+  summary: string;
+  details: string[];
+  phases: string[];
+  prs: PrInfo[];
+}
+
+/** Scattered thought from daily note */
+export interface ScatteredThought {
+  title: string;
+  content: string;
+}
+
+/** Day statistics from daily note */
+export interface DayStats {
+  sessions: number;
+  hours: string;
+  prs: number;
+}
+
+/** Extracted daily note data from Ollama */
+export interface DailyNoteData {
+  date: string;
+  day_of_week: string;
+  stats: DayStats;
+  timelogs: TimelogEntry[];
+  scattered_thoughts: ScatteredThought[];
+}
+
 /** Aggregator configuration from ~/.floatty/config.toml */
 export interface AggregatorConfig {
   watch_path: string;
@@ -157,6 +198,14 @@ interface TauriCommands {
   uninstall_shell_hooks: {
     args: Record<string, never>;
     returns: void;
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // DAILY VIEW
+  // ─────────────────────────────────────────────────────────────
+  execute_daily_command: {
+    args: { dateArg: string };
+    returns: DailyNoteData;
   };
 
   // ─────────────────────────────────────────────────────────────

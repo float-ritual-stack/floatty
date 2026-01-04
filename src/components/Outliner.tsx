@@ -8,6 +8,7 @@ import { useOutlinerSelection } from '../hooks/useOutlinerSelection';
 import { useTreeCollapse } from '../hooks/useTreeCollapse';
 import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
+import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
 
@@ -380,6 +381,10 @@ export function Outliner(props: OutlinerProps) {
               selectionAnchor={selection.selectionAnchor()}
               getVisibleBlockIds={getVisibleBlockIds}
             />
+            {/* LinkedReferences: show when zoomed into a page under pages:: */}
+            <Show when={isPageBlock(zoomedRootId()!)}>
+              <LinkedReferences pageBlockId={zoomedRootId()!} paneId={props.paneId} />
+            </Show>
           </Show>
         </Show>
       </Show>

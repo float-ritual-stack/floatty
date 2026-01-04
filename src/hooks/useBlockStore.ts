@@ -94,6 +94,10 @@ function toBlock(value: unknown): Block | null {
     collapsed: (getValue(value, 'collapsed') as boolean) || false,
     createdAt: getValue(value, 'createdAt') as number,
     updatedAt: getValue(value, 'updatedAt') as number,
+    // Execution output fields
+    output: getValue(value, 'output') as unknown,
+    outputType: getValue(value, 'outputType') as string | undefined,
+    outputStatus: getValue(value, 'outputStatus') as Block['outputStatus'],
   };
 }
 
@@ -111,6 +115,16 @@ function blockToYMap(block: Block): Y.Map<unknown> {
   blockMap.set('collapsed', block.collapsed);
   blockMap.set('createdAt', block.createdAt);
   blockMap.set('updatedAt', block.updatedAt);
+  // Execution output fields (may be undefined)
+  if (block.output !== undefined) {
+    blockMap.set('output', block.output);
+  }
+  if (block.outputType !== undefined) {
+    blockMap.set('outputType', block.outputType);
+  }
+  if (block.outputStatus !== undefined) {
+    blockMap.set('outputStatus', block.outputStatus);
+  }
 
   // childIds as Y.Array for CRDT-safe ordered list
   const childIdsArr = new Y.Array<string>();
@@ -239,6 +253,35 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
       setValueOnYMap(blocksMap, id, 'content', content);
       setValueOnYMap(blocksMap, id, 'type', parseBlockType(content));
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    });
+  };
+
+  /**
+   * Set execution output on a block (for daily::, ai::, etc.)
+   * Automatically sets outputStatus to 'complete'
+   */
+  const setBlockOutput = (id: string, output: unknown, outputType: string, status: Block['outputStatus'] = 'complete') => {
+    if (!_doc) { warnDocNotReady('setBlockOutput'); return; }
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      setValueOnYMap(blocksMap, id, 'output', output);
+      setValueOnYMap(blocksMap, id, 'outputType', outputType);
+      setValueOnYMap(blocksMap, id, 'outputStatus', status);
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    });
+  };
+
+  /**
+   * Set output status on a block (for loading indicators)
+   */
+  const setBlockStatus = (id: string, status: Block['outputStatus']) => {
+    if (!_doc) { warnDocNotReady('setBlockStatus'); return; }
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      setValueOnYMap(blocksMap, id, 'outputStatus', status);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
     });
   };
@@ -799,6 +842,8 @@ function createBlockStore() {
     initFromYDoc,
     getBlock,
     updateBlockContent,
+    setBlockOutput,  // For daily::, ai:: execution output
+    setBlockStatus,  // For loading indicators
     createBlockBefore,
     createBlockAfter,
     createBlockInside,
