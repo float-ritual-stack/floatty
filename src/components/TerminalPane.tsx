@@ -41,6 +41,11 @@ export function TerminalPane(props: TerminalPaneProps) {
   // Debounce state for fit() - CSS updates are immediate, fit() is debounced
   let fitTimeout: ReturnType<typeof setTimeout> | undefined;
 
+  // Component-level cleanup - ensures fitTimeout is cleared even if onMount exits early
+  onCleanup(() => {
+    if (fitTimeout) clearTimeout(fitTimeout);
+  });
+
   // Schedule a debounced fit() call - expensive operation, rate-limited
   const scheduleFit = () => {
     if (fitTimeout) clearTimeout(fitTimeout);

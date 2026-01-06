@@ -80,12 +80,17 @@ function createLayoutStore() {
     // FLO-136: If creating ephemeral split, close existing ephemeral for this direction first
     if (ephemeral) {
       const existingEphemeralId = layout.ephemeralPaneIds?.[direction];
+      console.debug(`[LayoutStore] splitPane: ephemeral=${ephemeral}, direction=${direction}, existingEphemeralId=${existingEphemeralId}`);
       if (existingEphemeralId) {
         // Close the existing ephemeral pane (will collapse its split)
+        console.debug(`[LayoutStore] splitPane: closing existing ephemeral pane ${existingEphemeralId}`);
         closePane(tabId, existingEphemeralId);
         // Re-fetch layout after close
         const updatedLayout = state.layouts[tabId];
-        if (!updatedLayout) return null;
+        if (!updatedLayout) {
+          console.warn(`[LayoutStore] splitPane: layout disappeared after closing ephemeral`);
+          return null;
+        }
       }
     }
 
@@ -151,6 +156,7 @@ function createLayoutStore() {
       }
     });
 
+    console.debug(`[LayoutStore] splitPane: created newPaneId=${newPaneId}, direction=${direction}, ephemeral=${ephemeral}, splitId=${newSplit.id}`);
     return newPaneId;
   };
 
