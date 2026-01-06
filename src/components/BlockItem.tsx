@@ -10,6 +10,7 @@ import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
 import { BlockDisplay } from './BlockDisplay';
 import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
 import { isDailyBlock, executeDailyBlock } from '../lib/dailyExecutor';
+import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
 import type { DailyNoteData } from '../lib/dailyExecutor';
 
@@ -75,6 +76,34 @@ export function BlockItem(props: BlockItemProps) {
         contentRef.innerText = currentBlock.content;
       }
     }
+  };
+
+  // FLO-62, FLO-128: Smart paste with markdown structure parsing
+  const handlePaste = (e: ClipboardEvent) => {
+    // Get plain text only (fixes FLO-62: rich text causing duplicates)
+    const text = e.clipboardData?.getData('text/plain');
+    if (!text) return;
+
+    // Try structured paste (FLO-128: structure like sh:: cat output)
+    const result = handleStructuredPaste(props.id, text, {
+      getBlock: (id) => store.blocks[id],
+      createBlockAfter: store.createBlockAfter,
+      createBlockInside: store.createBlockInside,
+      updateBlockContent: store.updateBlockContent,
+    });
+
+    if (result.handled) {
+      e.preventDefault();
+      // Focus last inserted block after DOM settles
+      if (result.focusId) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            props.onFocus(result.focusId!);
+          });
+        });
+      }
+    }
+    // If not handled, browser does default plain text paste
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -568,6 +597,7 @@ export function BlockItem(props: BlockItemProps) {
               autocorrect="off"
               onInput={handleInput}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               onFocus={() => props.onFocus(props.id)}
               onBlur={handleBlur}
             />

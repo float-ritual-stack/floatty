@@ -26,7 +26,7 @@ export interface ParsedBlock {
 /**
  * Detect if content has markdown structure worth parsing
  */
-function hasMarkdownStructure(content: string): boolean {
+export function hasMarkdownStructure(content: string): boolean {
   // Check for headings, bold headings, or lists (bulleted, numbered, indented)
   return /^#{1,6}\s/m.test(content) ||
          /^\*\*[^*]+\*\*[:\s]*$/m.test(content) ||
