@@ -548,17 +548,18 @@ html, body, #root {
 /* FLO-136: Ephemeral pane styling (preview/quick-peek mode) */
 .pane-layout-leaf.pane-ephemeral {
   /* Dashed border indicates "temporary" state */
-  outline: 1px dashed var(--color-border);
+  outline: 1px dashed var(--color-accent-muted);
   outline-offset: -1px;
-  /* Subtle opacity reduction */
-  opacity: 0.92;
+  /* Subtle background tint - "preview mode" feel */
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg));
 }
 
 .pane-layout-leaf.pane-ephemeral.pane-active {
-  /* Slightly stronger indicator when active */
+  /* Stronger indicator when active */
   outline-color: var(--color-accent);
   outline-width: 2px;
   outline-offset: -2px;
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg));
 }
 
 /* ================================================
