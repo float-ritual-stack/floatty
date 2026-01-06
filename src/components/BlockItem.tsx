@@ -461,6 +461,12 @@ export function BlockItem(props: BlockItemProps) {
     // textContent ignores <div> and <br> elements, losing line breaks.
     // innerText respects visual line breaks and converts them to \n.
     store.updateBlockContent(props.id, target.innerText || '');
+
+    // FLO-136: Typing pins ephemeral panes (user is engaging with content)
+    const tabId = findTabIdByPaneId(props.paneId);
+    if (tabId) {
+      layoutStore.pinPane(tabId, props.paneId);
+    }
   };
 
   const bulletClass = () => {
@@ -484,14 +490,26 @@ export function BlockItem(props: BlockItemProps) {
   };
 
   // [[Wikilink]] click handler - navigate to page
-  // Cmd+Click → horizontal split, Cmd+Shift+Click → vertical split
+  // Cmd+Click → permanent horizontal split, Cmd+Shift+Click → permanent vertical split
+  // Opt+Click → ephemeral horizontal split, Shift+Opt+Click → ephemeral vertical split (FLO-136)
   const handleWikilinkClick = (target: string, e: MouseEvent) => {
     const modKey = isMac ? e.metaKey : e.ctrlKey;
-    const splitDirection = modKey
-      ? (e.shiftKey ? 'vertical' : 'horizontal')
-      : 'none';
-    console.log('[Wikilink] Click:', { target, modKey, shiftKey: e.shiftKey, splitDirection });
-    const result = navigateToPage(target, props.paneId, splitDirection);
+    const optKey = e.altKey;
+
+    let splitDirection: 'none' | 'horizontal' | 'vertical' = 'none';
+    let ephemeral = false;
+
+    if (optKey) {
+      // Opt+Click = ephemeral split (preview mode)
+      splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
+      ephemeral = true;
+    } else if (modKey) {
+      // Cmd+Click = permanent split (existing behavior)
+      splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
+    }
+
+    console.log('[Wikilink] Click:', { target, modKey, optKey, shiftKey: e.shiftKey, splitDirection, ephemeral });
+    const result = navigateToPage(target, props.paneId, splitDirection, ephemeral);
     if (!result.success) {
       console.warn('[BlockItem] Wikilink navigation failed:', result.error);
     } else {

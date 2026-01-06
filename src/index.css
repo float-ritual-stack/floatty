@@ -545,6 +545,22 @@ html, body, #root {
   background: color-mix(in srgb, var(--color-accent) 5%, transparent);
 }
 
+/* FLO-136: Ephemeral pane styling (preview/quick-peek mode) */
+.pane-layout-leaf.pane-ephemeral {
+  /* Dashed border indicates "temporary" state */
+  outline: 1px dashed var(--color-border);
+  outline-offset: -1px;
+  /* Subtle opacity reduction */
+  opacity: 0.92;
+}
+
+.pane-layout-leaf.pane-ephemeral.pane-active {
+  /* Slightly stronger indicator when active */
+  outline-color: var(--color-accent);
+  outline-width: 2px;
+  outline-offset: -2px;
+}
+
 /* ================================================
    Resize System
    ================================================ */

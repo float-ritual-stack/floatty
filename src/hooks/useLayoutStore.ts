@@ -65,14 +65,35 @@ function createLayoutStore() {
     return paneIds;
   };
 
-  const splitPane = (tabId: string, direction: 'horizontal' | 'vertical', leafType: 'terminal' | 'outliner' = 'terminal'): string | null => {
+  const splitPane = (
+    tabId: string,
+    direction: 'horizontal' | 'vertical',
+    leafType: 'terminal' | 'outliner' = 'terminal',
+    ephemeral: boolean = false
+  ): string | null => {
     const layout = state.layouts[tabId];
     if (!layout) {
       console.warn(`[LayoutStore] splitPane: no layout for tab ${tabId}`);
       return null;
     }
 
-    const activePane = findNode(layout.root, layout.activePaneId);
+    // FLO-136: If creating ephemeral split, close existing ephemeral for this direction first
+    if (ephemeral) {
+      const existingEphemeralId = layout.ephemeralPaneIds?.[direction];
+      if (existingEphemeralId) {
+        // Close the existing ephemeral pane (will collapse its split)
+        closePane(tabId, existingEphemeralId);
+        // Re-fetch layout after close
+        const updatedLayout = state.layouts[tabId];
+        if (!updatedLayout) return null;
+      }
+    }
+
+    // Re-fetch layout in case ephemeral close modified it
+    const currentLayout = state.layouts[tabId];
+    if (!currentLayout) return null;
+
+    const activePane = findNode(currentLayout.root, currentLayout.activePaneId);
     if (!activePane || activePane.type !== 'leaf') {
       console.warn(`[LayoutStore] splitPane: active pane not found or not a leaf for tab ${tabId}`);
       return null;
@@ -101,7 +122,8 @@ function createLayoutStore() {
       children: [
         // CLONE the leaf - don't use proxy directly (causes infinite recursion)
         { type: 'leaf', id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal' },
-        { type: 'leaf', id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop },
+        // FLO-136: Mark new pane as ephemeral if requested
+        { type: 'leaf', id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop, ephemeral },
       ],
     };
 
@@ -111,12 +133,16 @@ function createLayoutStore() {
     }
 
     // Replace the active pane with the split
-    const newRoot = replaceNode(layout.root, activePane.id, newSplit);
+    const newRoot = replaceNode(currentLayout.root, activePane.id, newSplit);
 
     // Atomic update - batch prevents partial state during tree mutation
     batch(() => {
       setState('layouts', tabId, 'root', newRoot);
       setState('layouts', tabId, 'activePaneId', newPaneId);
+      // FLO-136: Track ephemeral pane by direction
+      if (ephemeral) {
+        setState('layouts', tabId, 'ephemeralPaneIds', direction, newPaneId);
+      }
     });
 
     return newPaneId;
@@ -266,6 +292,50 @@ function createLayoutStore() {
   };
 
   /**
+   * FLO-136: Pin an ephemeral pane (make it permanent)
+   * Called when user interacts in a way that indicates they want to keep the pane.
+   * Returns true if the pane was ephemeral and is now pinned.
+   */
+  const pinPane = (tabId: string, paneId: string): boolean => {
+    const layout = state.layouts[tabId];
+    if (!layout) return false;
+
+    const pane = findNode(layout.root, paneId);
+    if (!pane || pane.type !== 'leaf' || !pane.ephemeral) {
+      return false; // Not ephemeral, nothing to pin
+    }
+
+    // Find which direction this ephemeral pane belongs to
+    const ephemeralIds = layout.ephemeralPaneIds;
+    const direction = ephemeralIds?.horizontal === paneId ? 'horizontal'
+      : ephemeralIds?.vertical === paneId ? 'vertical'
+      : null;
+
+    // Update pane in tree to remove ephemeral flag
+    const pinnedPane: PaneLeaf = { ...pane, ephemeral: false };
+    const newRoot = replaceNode(layout.root, paneId, pinnedPane);
+
+    batch(() => {
+      setState('layouts', tabId, 'root', newRoot);
+      // Clear from ephemeral tracking
+      if (direction) {
+        setState('layouts', tabId, 'ephemeralPaneIds', direction, undefined);
+      }
+    });
+
+    console.debug(`[LayoutStore] pinPane: pinned ${paneId} (was ${direction} ephemeral)`);
+    return true;
+  };
+
+  /**
+   * FLO-136: Check if a pane is ephemeral
+   */
+  const isEphemeral = (tabId: string, paneId: string): boolean => {
+    const pane = getPaneLeaf(tabId, paneId);
+    return pane?.ephemeral === true;
+  };
+
+  /**
    * Hydrate layouts from persisted state
    * Replaces current layouts with restored data
    */
@@ -309,6 +379,9 @@ function createLayoutStore() {
     getTabLayout,
     getAllPaneIds,
     getPaneLeaf,
+    // Ephemeral panes (FLO-136)
+    pinPane,
+    isEphemeral,
     // Persistence
     hydrateLayouts,
     getLayoutsForPersistence,

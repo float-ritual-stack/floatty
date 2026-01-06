@@ -13,7 +13,7 @@
  */
 
 import { Show, createMemo } from 'solid-js';
-import { type LayoutNode, type PaneSplit } from '../lib/layoutTypes';
+import { type LayoutNode, type PaneSplit, type PaneLeaf } from '../lib/layoutTypes';
 import { layoutStore } from '../hooks/useLayoutStore';
 
 interface PaneLayoutProps {
@@ -57,11 +57,14 @@ function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
         const currentNode = node()!;
 
         if (currentNode.type === 'leaf') {
+          const leaf = currentNode as PaneLeaf;
+          const isActive = leaf.id === props.activePaneId;
+          const isEphemeral = leaf.ephemeral === true;
           return (
             <div
-              class={`pane-layout-leaf pane-placeholder ${currentNode.id === props.activePaneId ? 'pane-active' : ''}`}
-              data-pane-id={currentNode.id}
-              onClick={() => props.onPaneClick(currentNode.id)}
+              class={`pane-layout-leaf pane-placeholder ${isActive ? 'pane-active' : ''} ${isEphemeral ? 'pane-ephemeral' : ''}`}
+              data-pane-id={leaf.id}
+              onClick={() => props.onPaneClick(leaf.id)}
             />
           );
         }
