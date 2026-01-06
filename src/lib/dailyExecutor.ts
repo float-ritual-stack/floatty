@@ -110,7 +110,7 @@ export async function executeDailyBlock(
 
   try {
     // Call Rust command to extract structured data
-    const data = await invoke<DailyNoteData>('execute_daily_command', { dateArg });
+    const data = await invoke('execute_daily_command', { dateArg });
 
     // Store structured output in child block
     actions.updateContent(outputId, ''); // Clear loading text, view renders from output
