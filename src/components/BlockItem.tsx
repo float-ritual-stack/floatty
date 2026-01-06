@@ -47,6 +47,11 @@ export function BlockItem(props: BlockItemProps) {
     }
   });
 
+  // TODO: AUTO-EXECUTE for external blocks (API/CRDT sync)
+  // Pattern documented in docs/BLOCK_TYPE_PATTERNS.md
+  // Needs: track locally-modified blocks to distinguish from external
+  // For now: Enter-to-execute only
+
   // Sync content from store to DOM, but respect focus to prevent cursor jumps
   // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
   createEffect(() => {
@@ -250,12 +255,16 @@ export function BlockItem(props: BlockItemProps) {
       if (block()) {
         const content = block()!.content;
 
-        // Daily:: blocks: execute via dedicated handler (inline view output)
+        // Daily:: blocks: execute via dedicated handler (child-output pattern)
         if (isDailyBlock(content)) {
           e.preventDefault();
           executeDailyBlock(props.id, content, {
+            createBlockInside: store.createBlockInside,
+            updateContent: store.updateBlockContent,
             setBlockOutput: store.setBlockOutput,
             setBlockStatus: store.setBlockStatus,
+            deleteBlock: store.deleteBlock,
+            getBlock: (id) => store.blocks[id],
           });
           return;
         }
@@ -328,6 +337,14 @@ export function BlockItem(props: BlockItemProps) {
           store.outdentBlock(props.id);
         } else {
           store.indentBlock(props.id);
+          // FLO-61: After indent, ensure new parent is expanded in this pane
+          // indentBlock sets block.collapsed=false on Y.Doc, but paneStore may have override
+          requestAnimationFrame(() => {
+            const updatedBlock = store.blocks[props.id];
+            if (updatedBlock?.parentId) {
+              paneStore.setCollapsed(props.paneId, updatedBlock.parentId, false);
+            }
+          });
         }
       } else {
         // Anywhere else: Tab/Shift+Tab works on LINE content (inline indentation)
@@ -430,9 +447,7 @@ export function BlockItem(props: BlockItemProps) {
 
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-    // Daily blocks with output also have collapsible content (not stored as childIds)
-    const hasDailyOutput = block()?.type === 'daily' && (block()?.outputStatus || block()?.output);
-    if (hasChildren || hasDailyOutput) {
+    if (hasChildren) {
       return isCollapsed() ? '▸' : '▾';
     }
     return '•';
@@ -520,27 +535,26 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* DAILY BLOCK: editable content only (output renders in children area) */}
-          <Show when={block()?.type === 'daily'}>
-            <div class="daily-block">
-              <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
-              <div
-                ref={contentRef}
-                contentEditable
-                class="block-content block-edit"
-                spellcheck={false}
-                autocapitalize="off"
-                autocorrect="off"
-                onInput={handleInput}
-                onKeyDown={handleKeyDown}
-                onFocus={() => props.onFocus(props.id)}
-                onBlur={handleBlur}
-              />
+          {/* DAILY OUTPUT VIEW: replaces normal content when outputType is daily-* */}
+          <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
+            <div class="daily-output">
+              <Show when={block()?.outputStatus === 'running'}>
+                <div class="daily-running">
+                  <span class="daily-running-spinner">◐</span>
+                  <span class="daily-running-text">Extracting...</span>
+                </div>
+              </Show>
+              <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
+                <DailyView data={block()!.output as DailyNoteData} />
+              </Show>
+              <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running'}>
+                <DailyErrorView error={(block()!.output as { error: string }).error} />
+              </Show>
             </div>
           </Show>
 
-          {/* REGULAR BLOCK: display + edit layers */}
-          <Show when={block()?.type !== 'picker' && block()?.type !== 'daily'}>
+          {/* REGULAR BLOCK: display + edit layers (hidden when daily output) */}
+          <Show when={block()?.type !== 'picker' && !block()?.outputType?.startsWith('daily-')}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
             <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
 
@@ -560,24 +574,6 @@ export function BlockItem(props: BlockItemProps) {
           </Show>
         </div>
       </div>
-
-      {/* DAILY OUTPUT: renders in children area for indentation + collapse */}
-      <Show when={block()?.type === 'daily' && !isCollapsed()}>
-        <div class="block-children daily-output">
-          <Show when={block()?.outputStatus === 'running'}>
-            <div class="daily-running">
-              <span class="daily-running-spinner">◐</span>
-              <span class="daily-running-text">Extracting...</span>
-            </div>
-          </Show>
-          <Show when={block()?.outputType === 'daily-view'}>
-            <DailyView data={block()!.output as DailyNoteData} />
-          </Show>
-          <Show when={block()?.outputType === 'daily-error'}>
-            <DailyErrorView error={(block()!.output as { error: string }).error} />
-          </Show>
-        </div>
-      </Show>
 
       <Show when={!isCollapsed() && block()?.childIds.length}>
         <div class="block-children">
