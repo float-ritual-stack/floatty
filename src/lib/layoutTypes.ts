@@ -15,6 +15,8 @@ export interface PaneLeaf {
   cwd?: string;  // Working directory for the terminal (if terminal)
   // FLO-77: Initial scroll position for cloned outliner panes
   initialScrollTop?: number;
+  // FLO-136: Ephemeral panes are replaced by next same-direction split
+  ephemeral?: boolean;
 }
 
 // A split containing two children
@@ -34,6 +36,11 @@ export interface TabLayout {
   tabId: string;
   root: LayoutNode;
   activePaneId: string;  // Which pane has focus
+  // FLO-136: Track ephemeral panes per direction (at most one each)
+  ephemeralPaneIds?: {
+    horizontal?: string;
+    vertical?: string;
+  };
 }
 
 // Direction for focus navigation

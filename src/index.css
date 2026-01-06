@@ -545,6 +545,22 @@ html, body, #root {
   background: color-mix(in srgb, var(--color-accent) 5%, transparent);
 }
 
+/* FLO-136: Ephemeral pane styling (preview/quick-peek mode) */
+.pane-layout-leaf.pane-ephemeral {
+  /* Dashed border indicates "temporary" state */
+  outline: 1px dashed var(--color-border);
+  outline-offset: -1px;
+  /* Subtle opacity reduction */
+  opacity: 0.92;
+}
+
+.pane-layout-leaf.pane-ephemeral.pane-active {
+  /* Slightly stronger indicator when active */
+  outline-color: var(--color-accent);
+  outline-width: 2px;
+  outline-offset: -2px;
+}
+
 /* ================================================
    Resize System
    ================================================ */
@@ -808,6 +824,13 @@ body.resizing .terminal-pane-positioned {
   border-left: 1px solid var(--color-border);
   margin-left: 6px;
   padding-left: 2px;
+  /* CSS containment - skip rendering offscreen subtrees */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 100px;
+}
+
+.block-item {
+  contain: layout style paint;
 }
 
 /* Editing (NOT selected): accent border when cursor is in block */

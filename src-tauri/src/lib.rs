@@ -627,6 +627,13 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Set window title with build mode indicator
+            if let Some(window) = app.get_webview_window("main") {
+                let build_mode = if cfg!(debug_assertions) { "dev" } else { "release" };
+                let title = format!("floatty ({})", build_mode);
+                let _ = window.set_title(&title);
+            }
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

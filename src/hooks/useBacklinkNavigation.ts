@@ -206,18 +206,19 @@ export type SplitDirection = 'none' | 'horizontal' | 'vertical';
  *   - 'none': navigate in current pane
  *   - 'horizontal': split side-by-side (Cmd+Click)
  *   - 'vertical': split above/below (Cmd+Shift+Click)
+ * - ephemeral (FLO-136): if true, pane is preview-only until pinned
  *
  * @param pageName - The target page name
  * @param paneId - The current pane ID (tabId derived automatically)
  * @param splitDirection - How to split the pane (default: 'none')
+ * @param ephemeral - Create ephemeral/preview pane (default: false)
  */
 export function navigateToPage(
   pageName: string,
   paneId: string,
-  splitDirection: SplitDirection = 'none'
+  splitDirection: SplitDirection = 'none',
+  ephemeral: boolean = false
 ): NavigationResult {
-  console.log('[navigateToPage] Called:', { pageName, paneId, splitDirection });
-
   // Normalize page name
   const normalizedName = pageName.trim();
   if (!normalizedName) {
@@ -248,8 +249,8 @@ export function navigateToPage(
     if (!tabId) {
       console.warn('[BacklinkNavigation] Could not find tabId for pane, using current pane');
     } else {
-      // Split in requested direction
-      const newPaneId = layoutStore.splitPane(tabId, splitDirection, 'outliner');
+      // Split in requested direction (FLO-136: pass ephemeral flag)
+      const newPaneId = layoutStore.splitPane(tabId, splitDirection, 'outliner', ephemeral);
       if (newPaneId) {
         targetPaneId = newPaneId;
       } else {
