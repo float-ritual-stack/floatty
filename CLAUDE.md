@@ -317,6 +317,31 @@ Root blocks
 - `LinkedReferences.tsx` - Displays backlinks when zoomed into page
 - `BlockDisplay.tsx` - Renders nested wikilinks with separate click handlers
 
+## The Pattern (40 Years Deep)
+
+Everything is: **Event → Handler → Transform → Project**
+
+```text
+Block created  →  Handler matches prefix  →  Transform (execute)  →  Project to UI/index
+Y.Doc update   →  Observer fires          →  Transform (sync)     →  Project to signals
+User input     →  Keybind matches         →  Transform (action)   →  Project to state
+```
+
+This is store-and-forward. BBS message handlers. mIRC bots. Redux middleware. Same shape.
+
+See `docs/ARCHITECTURE_LINEAGE.md` for the full philosophy.
+
+## Four Bug Categories
+
+When debugging or reviewing code, check for these patterns:
+
+| Category | Symptoms | Fix |
+|----------|----------|-----|
+| **Re-Parenting Trap** | xterm WebGL errors on tab/split change | Dispose WebGL addon BEFORE DOM reparent |
+| **Sync Loop** | Infinite updates, frozen UI | Add origin filtering in Y.Doc observers |
+| **PTY Zombies** | Orphan processes after close/crash | Guard disposal with `disposing` Set, `kill_all` on window close |
+| **Split Brain** | Stale data after sync, wrong block selected | Use ID-based lookups (not index), re-fetch after CRDT update |
+
 ## SolidJS Mental Models (CRITICAL)
 
 See @.claude/rules/solidjs-patterns.md for detailed patterns on:

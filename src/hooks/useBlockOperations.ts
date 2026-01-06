@@ -14,8 +14,21 @@ export function useBlockOperations() {
   const store = blockStore;
 
   /**
+   * Check if a block is editable (has contentEditable)
+   * Blocks with outputType (like daily-view) render custom views, not contentEditable
+   */
+  const isEditableBlock = (blockId: string): boolean => {
+    const b = store.getBlock(blockId);
+    if (!b) return false;
+    // Output blocks (daily-view, daily-error, etc.) are not editable
+    if (b.outputType) return false;
+    return true;
+  };
+
+  /**
    * Find the next visible block in the tree (for arrow key navigation)
    * Respects zoom boundary - won't navigate outside zoomed subtree
+   * Skips non-editable blocks (like daily output views)
    */
   const findNextVisibleBlock = (id: string, paneId: string): string | null => {
     const block = store.getBlock(id);
@@ -27,9 +40,11 @@ export function useBlockOperations() {
     // Check pane-specific collapse state
     const isCollapsed = paneStore.isCollapsed(paneId, id, block.collapsed);
 
-    // 1. If has children and not collapsed, go to first child
+    // 1. If has children and not collapsed, go to first EDITABLE child
     if (block.childIds.length > 0 && !isCollapsed) {
-      return block.childIds[0];
+      const firstEditableChild = block.childIds.find(isEditableBlock);
+      if (firstEditableChild) return firstEditableChild;
+      // No editable children - fall through to find next sibling
     }
 
     // 2. Otherwise, find next sibling or ancestor's next sibling
@@ -65,6 +80,7 @@ export function useBlockOperations() {
   /**
    * Find the previous visible block in the tree
    * Respects zoom boundary - won't navigate above zoomed root
+   * Skips non-editable blocks (like daily output views)
    */
   const findPrevVisibleBlock = (id: string, paneId: string): string | null => {
     const block = store.getBlock(id);
@@ -83,23 +99,42 @@ export function useBlockOperations() {
 
     const index = siblings.indexOf(id);
 
-    // 1. If has previous sibling, go to its last visible descendant
-    if (index > 0) {
-      let prevSiblingId = siblings[index - 1];
-      let prevSibling = store.getBlock(prevSiblingId);
-      if (!prevSibling) return null;
+    // Helper to find last editable descendant (skipping output blocks)
+    const findLastEditableDescendant = (startId: string): string | null => {
+      let currentId = startId;
+      let current = store.getBlock(currentId);
+      if (!current) return null;
 
       // Check pane-specific collapse state
-      let isPrevCollapsed = paneStore.isCollapsed(paneId, prevSiblingId, prevSibling.collapsed);
+      let isCollapsed = paneStore.isCollapsed(paneId, currentId, current.collapsed);
 
-      while (prevSibling.childIds.length > 0 && !isPrevCollapsed) {
-        prevSiblingId = prevSibling.childIds[prevSibling.childIds.length - 1];
-        const nextSibling = store.getBlock(prevSiblingId);
-        if (!nextSibling) break;
-        prevSibling = nextSibling;
-        isPrevCollapsed = paneStore.isCollapsed(paneId, prevSiblingId, prevSibling.collapsed);
+      // Drill down to last visible descendant
+      while (current.childIds.length > 0 && !isCollapsed) {
+        currentId = current.childIds[current.childIds.length - 1];
+        const next = store.getBlock(currentId);
+        if (!next) break;
+        current = next;
+        isCollapsed = paneStore.isCollapsed(paneId, currentId, current.collapsed);
       }
-      return prevSiblingId;
+
+      // If the descendant is editable, return it
+      if (isEditableBlock(currentId)) return currentId;
+
+      // Otherwise, recursively find previous from this position
+      return findPrevVisibleBlock(currentId, paneId);
+    };
+
+    // 1. If has previous sibling, go to its last editable descendant
+    if (index > 0) {
+      const prevSiblingId = siblings[index - 1];
+
+      // Check if sibling itself is editable
+      if (isEditableBlock(prevSiblingId)) {
+        return findLastEditableDescendant(prevSiblingId);
+      }
+
+      // Sibling not editable, keep looking
+      return findPrevVisibleBlock(prevSiblingId, paneId);
     }
 
     // 2. If no previous sibling, go to parent (but not above zoom boundary)

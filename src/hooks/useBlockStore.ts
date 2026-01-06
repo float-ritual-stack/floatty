@@ -7,6 +7,28 @@ import { createStore } from 'solid-js/store';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
 import type { Block, BlockType } from '../lib/blockTypes';
+import { isDailyBlock } from '../lib/dailyExecutor';
+
+// ═══════════════════════════════════════════════════════════════
+// AUTO-EXECUTE CALLBACK (for external block creation via API)
+// ═══════════════════════════════════════════════════════════════
+
+type AutoExecuteHandler = (blockId: string, content: string) => void;
+let _autoExecuteHandler: AutoExecuteHandler | null = null;
+
+/**
+ * Register handler for auto-executing blocks created externally (API/CRDT sync).
+ * Called when a block is ADDED with non-empty executable content.
+ */
+export function setAutoExecuteHandler(handler: AutoExecuteHandler | null) {
+  _autoExecuteHandler = handler;
+}
+
+function isAutoExecutable(content: string): boolean {
+  // Only auto-execute idempotent view blocks, not side-effect ones like sh::
+  return isDailyBlock(content);
+  // Future: add web::, query::, etc.
+}
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPES
@@ -200,7 +222,20 @@ function createBlockStore() {
           if (path.length === 0 && event instanceof Y.YMapEvent) {
             // Top-level: block added/removed from blocksMap
             event.changes.keys.forEach((change, key) => {
-              if (change.action === 'add' || change.action === 'update') {
+              if (change.action === 'add') {
+                blocksToRefresh.add(key);
+
+                // AUTO-EXECUTE: Block added with executable content = external origin
+                // Local creates use empty content, so non-empty + executable = API/sync
+                if (_autoExecuteHandler) {
+                  const blockData = blocksMap.get(key);
+                  const content = getValue(blockData, 'content') as string;
+                  if (content && isAutoExecutable(content)) {
+                    // Queue for next tick to let state settle
+                    setTimeout(() => _autoExecuteHandler!(key, content), 0);
+                  }
+                }
+              } else if (change.action === 'update') {
                 blocksToRefresh.add(key);
               } else if (change.action === 'delete') {
                 blocksToDelete.add(key);
