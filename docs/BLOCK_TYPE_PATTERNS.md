@@ -123,6 +123,48 @@ If your output needs special rendering beyond `output::` text:
 </Show>
 ```
 
+## Pattern B Variant: Auto-Execute on Appear
+
+For **idempotent, display-only** blocks, skip the Enter key entirely. Execute when the content pattern is complete.
+
+**Use when**: Block just fetches/renders data, no side effects
+
+**Example**: `daily::today` → auto-executes when argument is present
+
+**Implementation** (in BlockItem.tsx):
+
+```typescript
+createEffect(() => {
+  const currentBlock = block();
+  if (!currentBlock) return;
+
+  // Only auto-execute matching blocks with an argument
+  if (!isMyTypeBlock(currentBlock.content)) return;
+
+  const arg = extractArg(currentBlock.content);
+  if (!arg) return;  // Still typing
+
+  // Check for existing output (prevents re-execution loop)
+  const hasOutput = currentBlock.childIds.some((id) => {
+    const child = store.blocks[id];
+    return child?.outputType === 'mytype-view';
+  });
+  if (hasOutput) return;
+
+  executeMyTypeBlock(props.id, currentBlock.content, actions);
+});
+```
+
+**When to use**:
+- `daily::` - just displays daily note data
+- `web::` / `embed::` - just renders iframe
+- `query::` - just fetches and displays results
+
+**When NOT to use** (keep Enter-to-execute):
+- `sh::` - runs shell commands (side effects!)
+- `ai::` - expensive API calls
+- `dispatch::` - triggers agent actions
+
 ## Decision Tree
 
 ```
@@ -131,8 +173,16 @@ Is this prefix typed once and left alone?
 │        Examples: # heading, > quote, - bullet
 │
 └─ No, user might type it mid-edit OR it has async output
+   │
    └─ Pattern B (child-output)
-      Examples: sh::, ai::, daily::, dispatch::
+      │
+      ├─ Is it idempotent (safe to run automatically)?
+      │  └─ Yes → Auto-execute on appear
+      │           Examples: daily::, web::, query::
+      │
+      └─ Has side effects or expensive?
+         └─ No → Require Enter to execute
+                 Examples: sh::, ai::, dispatch::
 ```
 
 ## Focus Loss Gotcha

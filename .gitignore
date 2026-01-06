@@ -29,3 +29,6 @@ src-tauri/plugins/*/Cargo.lock
 
 # Sidecar binaries (built at release time, platform-specific)
 src-tauri/binaries/
+
+# Session exports (conversation artifacts)
+.exports/
