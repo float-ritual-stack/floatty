@@ -219,8 +219,6 @@ export function navigateToPage(
   splitDirection: SplitDirection = 'none',
   ephemeral: boolean = false
 ): NavigationResult {
-  console.log('[navigateToPage] Called:', { pageName, paneId, splitDirection, ephemeral });
-
   // Normalize page name
   const normalizedName = pageName.trim();
   if (!normalizedName) {

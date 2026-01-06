@@ -508,12 +508,10 @@ export function BlockItem(props: BlockItemProps) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
-    console.log('[Wikilink] Click:', { target, modKey, optKey, shiftKey: e.shiftKey, splitDirection, ephemeral });
     const result = navigateToPage(target, props.paneId, splitDirection, ephemeral);
     if (!result.success) {
       console.warn('[BlockItem] Wikilink navigation failed:', result.error);
     } else {
-      console.log('[Wikilink] Navigation result:', result);
       // FLO-135: Focus in the CORRECT pane (new split, not source)
       if (result.focusTargetId && result.targetPaneId) {
         // Set focus on the target pane directly (not via source pane's callback)
