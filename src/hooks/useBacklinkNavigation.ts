@@ -187,6 +187,8 @@ export interface NavigationResult {
   pageId: string | null;
   /** ID of the block to focus (first child of page, created if needed) */
   focusTargetId: string | null;
+  /** The pane where navigation occurred (new pane if split, else source pane) */
+  targetPaneId: string | null;
   created: boolean;
   error?: string;
 }
@@ -219,7 +221,7 @@ export function navigateToPage(
   // Normalize page name
   const normalizedName = pageName.trim();
   if (!normalizedName) {
-    return { success: false, pageId: null, created: false, error: 'Empty page name' };
+    return { success: false, pageId: null, focusTargetId: null, targetPaneId: null, created: false, error: 'Empty page name' };
   }
 
   // Find or create the page
@@ -229,11 +231,11 @@ export function navigateToPage(
   if (!page) {
     const pageId = createPage(normalizedName);
     if (!pageId) {
-      return { success: false, pageId: null, created: false, error: 'Failed to create page' };
+      return { success: false, pageId: null, focusTargetId: null, targetPaneId: null, created: false, error: 'Failed to create page' };
     }
     page = blockStore.getBlock(pageId);
     if (!page) {
-      return { success: false, pageId: null, created: false, error: 'Created page not found' };
+      return { success: false, pageId: null, focusTargetId: null, targetPaneId: null, created: false, error: 'Created page not found' };
     }
   }
 
@@ -278,6 +280,7 @@ export function navigateToPage(
     success: true,
     pageId: page.id,
     focusTargetId,
+    targetPaneId,
     created,
   };
 }

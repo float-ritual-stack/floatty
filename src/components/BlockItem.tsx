@@ -3,7 +3,8 @@ import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
-import { navigateToPage } from '../hooks/useBacklinkNavigation';
+import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { layoutStore } from '../hooks/useLayoutStore';
 import { findHandler, executeBlock } from '../lib/executor';
 import { getActionForEvent, isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
@@ -132,8 +133,8 @@ export function BlockItem(props: BlockItemProps) {
         const wikilinkTarget = getWikilinkAtCursor();
         if (wikilinkTarget) {
           console.log('[Wikilink] Keyboard nav to:', wikilinkTarget);
-          const result = navigateToPage(wikilinkTarget, props.paneId, false);
-          // Focus first child of page
+          const result = navigateToPage(wikilinkTarget, props.paneId, 'none');
+          // Focus first child of page (in current pane)
           if (result.success && result.focusTargetId) {
             requestAnimationFrame(() => {
               requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
@@ -495,11 +496,23 @@ export function BlockItem(props: BlockItemProps) {
       console.warn('[BlockItem] Wikilink navigation failed:', result.error);
     } else {
       console.log('[Wikilink] Navigation result:', result);
-      // Focus first child of page (or newly created empty child)
-      if (result.focusTargetId) {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
-        });
+      // FLO-135: Focus in the CORRECT pane (new split, not source)
+      if (result.focusTargetId && result.targetPaneId) {
+        // Set focus on the target pane directly (not via source pane's callback)
+        paneStore.setFocusedBlockId(result.targetPaneId, result.focusTargetId);
+
+        // Also set active pane so keyboard focus follows
+        const tabId = findTabIdByPaneId(result.targetPaneId);
+        if (tabId) {
+          layoutStore.setActivePaneId(tabId, result.targetPaneId);
+        }
+
+        // If navigating within current pane, still call onFocus for DOM focus
+        if (result.targetPaneId === props.paneId) {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
+          });
+        }
       }
     }
   };
