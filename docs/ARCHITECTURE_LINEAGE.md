@@ -4,13 +4,13 @@
 
 ## The Core Pattern
 
-```
+```text
 Event → Handler → Transform → Project
 ```
 
 This pattern has been constant since 1985. The substrate changes, the shape remains.
 
-```
+```text
 1985  BBS       → message handlers
 1995  mIRC      → on(event) { ... }
 2015  Redux     → dispatch(action) → reducer → store
@@ -40,7 +40,7 @@ blocksMap.observeDeep((events) => {
 });
 ```
 
-```
+```text
 on *:TEXT:*:#float:{
   if ($regex($1-,/^daily::/)) {
     .timer 1 0 daily_handler $nick $1-
@@ -65,7 +65,7 @@ function findPage(pageName: string): Block | null {
 }
 ```
 
-```
+```text
 ; mIRC hash table lookup
 alias findpage {
   return $hget(pages, $1)
@@ -107,7 +107,7 @@ The `findHandler` loop is `applyMiddleware`. The prefixes are action types. The 
 
 ### The Safety Tier IS Just `halt` With UX
 
-```
+```text
 ; mIRC 1997
 on *:TEXT:*rm -rf*:#channel:{
   echo -a *** BLOCKED: $nick tried dangerous command
@@ -165,7 +165,7 @@ type Middleware = (ctx) => (next) => (event) => Result;
 
 ## The ctx:: Sidebar Is Store-and-Forward
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  1985 BBS:                                                      │
 │    Message arrives → store to .MSG file → forward to readers    │
@@ -211,7 +211,7 @@ The answer is already in your hands.
 
 ## The Implication
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  FROM: 40 years of pattern recognition in your nervous system  │
 │  TO:   TypeScript interfaces and Rust traits                   │

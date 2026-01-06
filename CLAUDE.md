@@ -321,7 +321,7 @@ Root blocks
 
 Everything is: **Event → Handler → Transform → Project**
 
-```
+```text
 Block created  →  Handler matches prefix  →  Transform (execute)  →  Project to UI/index
 Y.Doc update   →  Observer fires          →  Transform (sync)     →  Project to signals
 User input     →  Keybind matches         →  Transform (action)   →  Project to state
