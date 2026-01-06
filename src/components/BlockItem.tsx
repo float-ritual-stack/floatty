@@ -547,7 +547,7 @@ export function BlockItem(props: BlockItemProps) {
               <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
                 <DailyView data={block()!.output as DailyNoteData} />
               </Show>
-              <Show when={block()?.outputType === 'daily-error'}>
+              <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running'}>
                 <DailyErrorView error={(block()!.output as { error: string }).error} />
               </Show>
             </div>

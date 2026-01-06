@@ -55,8 +55,8 @@ export interface DailyExecutorActions {
   setBlockOutput: (id: string, output: unknown, outputType: string) => void;
   /** Set the loading status on a block */
   setBlockStatus: (id: string, status: Block['outputStatus']) => void;
-  /** Delete a block */
-  deleteBlock: (id: string) => void;
+  /** Delete a block (optional - for cleanup if needed) */
+  deleteBlock?: (id: string) => boolean;
   /** Get block by ID */
   getBlock: (id: string) => Block | undefined;
 }

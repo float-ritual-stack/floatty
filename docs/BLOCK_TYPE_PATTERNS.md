@@ -167,7 +167,7 @@ createEffect(() => {
 
 ## Decision Tree
 
-```
+```text
 Is this prefix typed once and left alone?
 ├─ Yes → Pattern A (type-based)
 │        Examples: # heading, > quote, - bullet
@@ -189,7 +189,7 @@ Is this prefix typed once and left alone?
 
 If you use Pattern A for something users type mid-edit:
 
-```
+```text
 User types: "daily::"
 → parseBlockType() returns 'daily'
 → block.type changes from 'text' to 'daily'
