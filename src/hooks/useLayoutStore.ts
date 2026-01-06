@@ -189,6 +189,12 @@ function createLayoutStore() {
       return null;
     }
 
+    // FLO-136: Check if this pane is ephemeral (need to clear tracking)
+    const ephemeralIds = layout.ephemeralPaneIds;
+    const ephemeralDirection = ephemeralIds?.horizontal === paneId ? 'horizontal'
+      : ephemeralIds?.vertical === paneId ? 'vertical'
+      : null;
+
     // Find parent split and sibling
     const parent = findParent(layout.root, paneId);
     if (!parent) {
@@ -214,6 +220,14 @@ function createLayoutStore() {
     batch(() => {
       setState('layouts', tabId, 'root', newRoot);
       setState('layouts', tabId, 'activePaneId', newActivePaneId);
+      // FLO-136: Clear ephemeral tracking if this pane was ephemeral
+      if (ephemeralDirection) {
+        setState('layouts', tabId, produce((l: TabLayout) => {
+          if (l.ephemeralPaneIds) {
+            delete l.ephemeralPaneIds[ephemeralDirection];
+          }
+        }));
+      }
     });
 
     // Clean up pane view state (prevents memory leak)
