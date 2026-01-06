@@ -14,11 +14,12 @@
  *     </WorkspaceProvider>
  *   ));
  */
-import { createContext, useContext } from 'solid-js';
+import { createContext, useContext, onMount, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
-import { blockStore as realBlockStore } from '../hooks/useBlockStore';
+import { blockStore as realBlockStore, setAutoExecuteHandler } from '../hooks/useBlockStore';
 import { paneStore as realPaneStore } from '../hooks/usePaneStore';
 import type { Block } from '../lib/blockTypes';
+import { isDailyBlock, executeDailyBlock } from '../lib/dailyExecutor';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPE INTERFACES
@@ -34,6 +35,8 @@ export interface BlockStoreInterface {
   readonly isInitialized: boolean;
   getBlock: (id: string) => Block | undefined;
   updateBlockContent: (id: string, content: string) => void;
+  setBlockOutput: (id: string, output: unknown, outputType: string, status?: Block['outputStatus']) => void;
+  setBlockStatus: (id: string, status: Block['outputStatus']) => void;
   createBlockBefore: (beforeId: string) => string;
   createBlockAfter: (afterId: string) => string;
   createBlockInside: (parentId: string) => string;
@@ -85,10 +88,34 @@ interface WorkspaceProviderProps {
  * In tests: accepts mock stores via props
  */
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
+  const store = props.blockStore ?? realBlockStore;
   const value: WorkspaceContextValue = {
-    blockStore: props.blockStore ?? realBlockStore,
+    blockStore: store,
     paneStore: props.paneStore ?? realPaneStore,
   };
+
+  // Wire up auto-execute handler for externally-created blocks (API/CRDT sync)
+  onMount(() => {
+    setAutoExecuteHandler((blockId: string, content: string) => {
+      console.log('[AutoExecute] External block detected:', blockId, content);
+
+      if (isDailyBlock(content)) {
+        executeDailyBlock(blockId, content, {
+          createBlockInside: store.createBlockInside,
+          updateContent: store.updateBlockContent,
+          setBlockOutput: store.setBlockOutput,
+          setBlockStatus: store.setBlockStatus,
+          deleteBlock: store.deleteBlock,
+          getBlock: store.getBlock,
+        });
+      }
+      // Future: handle other auto-executable types (web::, query::, etc.)
+    });
+  });
+
+  onCleanup(() => {
+    setAutoExecuteHandler(null);
+  });
 
   return (
     <WorkspaceContext.Provider value={value}>
@@ -130,6 +157,8 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     isInitialized: true,
     getBlock: () => undefined,
     updateBlockContent: () => {},
+    setBlockOutput: () => {},
+    setBlockStatus: () => {},
     createBlockBefore: () => '',
     createBlockAfter: () => '',
     createBlockInside: () => '',

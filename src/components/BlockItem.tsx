@@ -47,6 +47,11 @@ export function BlockItem(props: BlockItemProps) {
     }
   });
 
+  // TODO: AUTO-EXECUTE for external blocks (API/CRDT sync)
+  // Pattern documented in docs/BLOCK_TYPE_PATTERNS.md
+  // Needs: track locally-modified blocks to distinguish from external
+  // For now: Enter-to-execute only
+
   // Sync content from store to DOM, but respect focus to prevent cursor jumps
   // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
   createEffect(() => {
@@ -332,6 +337,14 @@ export function BlockItem(props: BlockItemProps) {
           store.outdentBlock(props.id);
         } else {
           store.indentBlock(props.id);
+          // FLO-61: After indent, ensure new parent is expanded in this pane
+          // indentBlock sets block.collapsed=false on Y.Doc, but paneStore may have override
+          requestAnimationFrame(() => {
+            const updatedBlock = store.blocks[props.id];
+            if (updatedBlock?.parentId) {
+              paneStore.setCollapsed(props.paneId, updatedBlock.parentId, false);
+            }
+          });
         }
       } else {
         // Anywhere else: Tab/Shift+Tab works on LINE content (inline indentation)
@@ -522,8 +535,26 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* REGULAR BLOCK: display + edit layers */}
-          <Show when={block()?.type !== 'picker'}>
+          {/* DAILY OUTPUT VIEW: replaces normal content when outputType is daily-* */}
+          <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
+            <div class="daily-output">
+              <Show when={block()?.outputStatus === 'running'}>
+                <div class="daily-running">
+                  <span class="daily-running-spinner">◐</span>
+                  <span class="daily-running-text">Extracting...</span>
+                </div>
+              </Show>
+              <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
+                <DailyView data={block()!.output as DailyNoteData} />
+              </Show>
+              <Show when={block()?.outputType === 'daily-error'}>
+                <DailyErrorView error={(block()!.output as { error: string }).error} />
+              </Show>
+            </div>
+          </Show>
+
+          {/* REGULAR BLOCK: display + edit layers (hidden when daily output) */}
+          <Show when={block()?.type !== 'picker' && !block()?.outputType?.startsWith('daily-')}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
             <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
 
@@ -543,24 +574,6 @@ export function BlockItem(props: BlockItemProps) {
           </Show>
         </div>
       </div>
-
-      {/* DAILY OUTPUT VIEW: rendered for blocks with daily-view outputType (child-output pattern) */}
-      <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
-        <div class="daily-output">
-          <Show when={block()?.outputStatus === 'running'}>
-            <div class="daily-running">
-              <span class="daily-running-spinner">◐</span>
-              <span class="daily-running-text">Extracting...</span>
-            </div>
-          </Show>
-          <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
-            <DailyView data={block()!.output as DailyNoteData} />
-          </Show>
-          <Show when={block()?.outputType === 'daily-error'}>
-            <DailyErrorView error={(block()!.output as { error: string }).error} />
-          </Show>
-        </div>
-      </Show>
 
       <Show when={!isCollapsed() && block()?.childIds.length}>
         <div class="block-children">

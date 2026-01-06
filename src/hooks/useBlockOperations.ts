@@ -14,8 +14,21 @@ export function useBlockOperations() {
   const store = blockStore;
 
   /**
+   * Check if a block is editable (has contentEditable)
+   * Blocks with outputType (like daily-view) render custom views, not contentEditable
+   */
+  const isEditableBlock = (blockId: string): boolean => {
+    const b = store.getBlock(blockId);
+    if (!b) return false;
+    // Output blocks (daily-view, daily-error, etc.) are not editable
+    if (b.outputType) return false;
+    return true;
+  };
+
+  /**
    * Find the next visible block in the tree (for arrow key navigation)
    * Respects zoom boundary - won't navigate outside zoomed subtree
+   * Skips non-editable blocks (like daily output views)
    */
   const findNextVisibleBlock = (id: string, paneId: string): string | null => {
     const block = store.getBlock(id);
@@ -27,9 +40,11 @@ export function useBlockOperations() {
     // Check pane-specific collapse state
     const isCollapsed = paneStore.isCollapsed(paneId, id, block.collapsed);
 
-    // 1. If has children and not collapsed, go to first child
+    // 1. If has children and not collapsed, go to first EDITABLE child
     if (block.childIds.length > 0 && !isCollapsed) {
-      return block.childIds[0];
+      const firstEditableChild = block.childIds.find(isEditableBlock);
+      if (firstEditableChild) return firstEditableChild;
+      // No editable children - fall through to find next sibling
     }
 
     // 2. Otherwise, find next sibling or ancestor's next sibling

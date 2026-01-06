@@ -349,6 +349,13 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       case 'indent':
         e.preventDefault();
         store.indentBlock(deps.blockId);
+        // FLO-61: After indent, ensure new parent is expanded in this pane
+        requestAnimationFrame(() => {
+          const updatedBlock = store.blocks[deps.blockId];
+          if (updatedBlock?.parentId) {
+            deps.paneStore.setCollapsed(deps.paneId, updatedBlock.parentId, false);
+          }
+        });
         return;
 
       case 'outdent':
