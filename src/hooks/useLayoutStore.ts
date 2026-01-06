@@ -141,7 +141,13 @@ function createLayoutStore() {
       setState('layouts', tabId, 'activePaneId', newPaneId);
       // FLO-136: Track ephemeral pane by direction
       if (ephemeral) {
-        setState('layouts', tabId, 'ephemeralPaneIds', direction, newPaneId);
+        // Use produce to safely create nested object if it doesn't exist
+        setState('layouts', tabId, produce((layout: TabLayout) => {
+          if (!layout.ephemeralPaneIds) {
+            layout.ephemeralPaneIds = {};
+          }
+          layout.ephemeralPaneIds[direction] = newPaneId;
+        }));
       }
     });
 
@@ -318,8 +324,12 @@ function createLayoutStore() {
     batch(() => {
       setState('layouts', tabId, 'root', newRoot);
       // Clear from ephemeral tracking
-      if (direction) {
-        setState('layouts', tabId, 'ephemeralPaneIds', direction, undefined);
+      if (direction && layout.ephemeralPaneIds) {
+        setState('layouts', tabId, produce((l: TabLayout) => {
+          if (l.ephemeralPaneIds) {
+            delete l.ephemeralPaneIds[direction];
+          }
+        }));
       }
     });
 
