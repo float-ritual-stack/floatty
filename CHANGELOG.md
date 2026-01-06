@@ -2,6 +2,45 @@
 
 All notable changes to floatty are documented here.
 
+## [0.2.3] - 2026-01-06
+
+### Ephemeral Panes / Quick Peek (FLO-136, PR #64)
+
+Preview panes that auto-replace until you engage with content.
+
+#### Click Behaviors
+- **Opt+Click** on [[wikilink]] → ephemeral horizontal split (replaces previous)
+- **Shift+Opt+Click** → ephemeral vertical split
+- **Cmd+Click** → permanent horizontal split (unchanged)
+- **Cmd+Shift+Click** → permanent vertical split (unchanged)
+
+#### Pin Triggers (ephemeral → permanent)
+- Typing in the pane
+- 5-second timeout
+
+#### Visual
+- Dashed border indicates ephemeral state
+- Stronger accent when active
+
+### Performance
+
+- **CSS containment** - `content-visibility: auto` on block children, `contain: layout style paint` on blocks
+- Large documents significantly faster (poor man's virtualization)
+
+### Developer Experience
+
+- **Window title** shows `(dev)` or `(release)` build mode
+- No more guessing which floatty instance you're testing
+
+### Documentation
+
+- **FLO-137 spec** - Pinned panes design document for future implementation
+
+### Linear Tickets Closed
+FLO-135, FLO-136
+
+---
+
 ## [0.2.1] - 2026-01-03
 
 ### Keyboard Navigation & Selection (PR #54)
