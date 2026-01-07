@@ -43,6 +43,10 @@
   --color-ansi-bright-magenta: #a78bfa;
   --color-ansi-bright-cyan: #22d3ee;
   --color-ansi-bright-white: #ffffff;
+
+  /* Typography */
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace,
+               SFMono-Regular, Menlo, Monaco, "Courier New", monospace;
 }
 
 * {
@@ -479,13 +483,6 @@ html, body, #root {
   pointer-events: none;
 }
 
-/* Terminal pane fills its wrapper */
-.terminal-pane {
-  width: 100%;
-  height: 100%;
-  padding: 4px;
-}
-
 .terminal-pane-positioned.active {
   box-shadow: inset 0 0 0 1px var(--color-accent); /* Accent border inside */
 }
@@ -634,6 +631,28 @@ body.resizing .terminal-pane-positioned {
   background: var(--color-bg);
 }
 
+/* Outliner clear button - uses CSS variables instead of hardcoded colors */
+.outliner-clear-button {
+  font-size: 10px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  color: var(--color-fg-muted);
+  background: transparent;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s ease;
+}
+
+.outliner-clear-button:hover {
+  border-color: var(--color-fg-muted);
+}
+
+.outliner-clear-button.outliner-clear-confirm {
+  color: var(--color-error);
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
 .block-item {
   display: flex;
   align-items: flex-start;
@@ -714,8 +733,12 @@ body.resizing .terminal-pane-positioned {
   color: var(--color-ansi-bright-green);
   background: color-mix(in srgb, var(--color-fg) 8%, transparent);
   border-radius: 2px;
-  padding: 0 2px;
-  margin: 0 1px;
+  /* FIX: Use box-shadow for visual padding that doesn't affect layout width.
+     Prevents cursor drift between edit layer (no padding) and display layer. */
+  padding: 0;
+  margin: 0;
+  box-shadow: -2px 0 0 color-mix(in srgb, var(--color-fg) 8%, transparent),
+              2px 0 0 color-mix(in srgb, var(--color-fg) 8%, transparent);
 }
 
 /* Wikilinks: clickable even above edit layer */

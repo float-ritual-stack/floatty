@@ -45,6 +45,7 @@ function createDeps(overrides: Partial<{
   content: string;
   findPrevId: () => string | null;
   findNextId: () => string | null;
+  findFocusAfterDelete: () => string | null;
 }> = {}) {
   return {
     block: createBlock(),
@@ -56,6 +57,7 @@ function createDeps(overrides: Partial<{
     zoomedRootId: null,
     findPrevId: () => 'prev-block',
     findNextId: () => 'next-block',
+    findFocusAfterDelete: () => 'focus-after-delete',
     content: 'test content',
     ...overrides,
   };
@@ -356,10 +358,12 @@ describe('determineKeyAction', () => {
       expect(result.type).toBe('toggle_collapse');
     });
 
-    it('deletes block for deleteBlock action', () => {
+    it('deletes block for deleteBlock action using findFocusAfterDelete', () => {
       const result = determineKeyAction('Backspace', false, 'deleteBlock', createDeps());
 
-      expect(result.type).toBe('delete_block');
+      const action = expectAction(result, 'delete_block');
+      // Should use findFocusAfterDelete (zoom-aware), not findPrevId
+      expect(action.prevId).toBe('focus-after-delete');
     });
   });
 

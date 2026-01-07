@@ -15,7 +15,7 @@
  * - PTY processes (need respawn)
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/tauriTypes';
 import { createSignal } from 'solid-js';
 import { tabStore, type Tab } from './useTabStore';
 import { layoutStore } from './useLayoutStore';

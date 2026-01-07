@@ -1,5 +1,5 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/tauriTypes';
 
 // Check if running in Tauri environment (Tauri 2 uses '__TAURI_INTERNALS__')
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;

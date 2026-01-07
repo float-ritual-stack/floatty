@@ -38,6 +38,7 @@ export interface BlockInputDependencies {
   // Navigation
   findNextVisibleBlock: (id: string, paneId: string) => string | null;
   findPrevVisibleBlock: (id: string, paneId: string) => string | null;
+  findFocusAfterDelete: (id: string, paneId: string) => string | null;
 
   // Callbacks
   onFocus: (id: string) => void;
@@ -98,6 +99,7 @@ export function determineKeyAction(
     zoomedRootId: string | null;
     findPrevId: () => string | null;
     findNextId: () => string | null;
+    findFocusAfterDelete: () => string | null;
     content: string;
   }
 ): KeyboardAction {
@@ -121,7 +123,8 @@ export function determineKeyAction(
       break;
 
     case 'deleteBlock':
-      return { type: 'delete_block', prevId: deps.findPrevId() };
+      // Use findFocusAfterDelete which respects zoom boundaries
+      return { type: 'delete_block', prevId: deps.findFocusAfterDelete() };
   }
 
   // Non-action keybinds
@@ -241,6 +244,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         zoomedRootId: paneStore.getZoomedRootId(deps.paneId),
         findPrevId: () => deps.findPrevVisibleBlock(deps.blockId, deps.paneId),
         findNextId: () => deps.findNextVisibleBlock(deps.blockId, deps.paneId),
+        findFocusAfterDelete: () => deps.findFocusAfterDelete(deps.blockId, deps.paneId),
         content: block.content,
       }
     );
@@ -373,7 +377,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         e.preventDefault();
         const contentRef = deps.getContentRef();
         if (contentRef) {
-          const text = contentRef.textContent || '';
+          // Use innerText for reading - textContent ignores <div>/<br>, losing line breaks
+          const text = contentRef.innerText || '';
           const pos = deps.cursor.getOffset();
           const lineStart = text.lastIndexOf('\n', pos - 1) + 1;
 
@@ -385,7 +390,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           const toRemove = Math.min(spaces, 2);
           if (toRemove > 0) {
             const newText = text.slice(0, lineStart) + text.slice(lineStart + toRemove);
-            contentRef.textContent = newText;
+            contentRef.innerText = newText;
             store.updateBlockContent(deps.blockId, newText);
             deps.cursor.setOffset(Math.max(lineStart, pos - toRemove));
           }

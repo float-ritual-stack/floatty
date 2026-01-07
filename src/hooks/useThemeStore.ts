@@ -6,7 +6,7 @@
  */
 
 import { createSignal, createRoot } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/tauriTypes';
 import {
   getTheme,
   themeNames,

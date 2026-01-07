@@ -6,6 +6,7 @@
  */
 
 import { invoke } from './tauriTypes';
+import { base64ToBytes, bytesToBase64 } from './encoding';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -27,27 +28,6 @@ export interface FloattyHttpClient {
   applyUpdate(update: Uint8Array, txId?: string): Promise<void>;
   /** Health check */
   isHealthy(): Promise<boolean>;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// BASE64 UTILITIES
-// ═══════════════════════════════════════════════════════════════
-
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
 }
 
 // ═══════════════════════════════════════════════════════════════

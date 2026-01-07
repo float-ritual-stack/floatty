@@ -315,15 +315,8 @@ export function Outliner(props: OutlinerProps) {
           <Show when={!zoomedRootId()}>
             <div style={{ display: 'flex', "justify-content": 'flex-end', "margin-bottom": '4px', "padding-right": '4px' }}>
               <button
-                class="ctx-retry-button"
-                style={{
-                  "font-size": "10px",
-                  padding: "2px 6px",
-                  border: '1px solid',
-                  color: confirmClear() ? '#ef4444' : '#888',
-                  "border-color": confirmClear() ? '#ef4444' : '#555',
-                  background: confirmClear() ? 'rgba(239, 68, 68, 0.1)' : 'transparent'
-                }}
+                class="outliner-clear-button"
+                classList={{ 'outliner-clear-confirm': confirmClear() }}
                 title="Clear entire workspace"
                 onClick={() => {
                   if (confirmClear()) {

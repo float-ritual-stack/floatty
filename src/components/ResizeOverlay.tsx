@@ -131,6 +131,8 @@ function ResizeHitArea(props: {
         isDragging = false;
         layoutStore.setDraggingSplitId(null);
         document.body.classList.remove('resizing');
+        // FIX: Reset terminal manager drag state to unblock fit() calls
+        terminalManager.setDragging(false);
       }
     });
   });
