@@ -129,8 +129,9 @@ export function determineKeyAction(
 
   // Non-action keybinds
   if (key === 'ArrowUp') {
-    // FLO-74: Shift+Arrow always navigates (bypasses cursor check for selection extension)
-    const shouldNavigate = shiftKey || cursorAtStart;
+    // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
+    // This allows browser to handle text selection within block
+    const shouldNavigate = cursorAtStart;
     if (shouldNavigate) {
       const prevId = deps.findPrevId();
       if (shiftKey) {
@@ -142,8 +143,9 @@ export function determineKeyAction(
   }
 
   if (key === 'ArrowDown') {
-    // FLO-74: Shift+Arrow always navigates (bypasses cursor check for selection extension)
-    const shouldNavigate = shiftKey || cursorAtEnd;
+    // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
+    // This allows browser to handle text selection within block
+    const shouldNavigate = cursorAtEnd;
     if (shouldNavigate) {
       const nextId = deps.findNextId();
       if (nextId) {

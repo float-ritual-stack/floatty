@@ -213,9 +213,9 @@ export function BlockItem(props: BlockItemProps) {
 
     // Non-action keybinds (navigation, editing)
     if (e.key === 'ArrowUp') {
-      // FLO-74: Shift+Arrow always extends block selection (bypass cursor check)
-      // Plain navigation: only exit block if cursor is at absolute start
-      const shouldNavigate = e.shiftKey || cursor.isAtStart();
+      // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
+      // This allows browser to handle text selection within block
+      const shouldNavigate = cursor.isAtStart();
 
       if (shouldNavigate) {
         e.preventDefault();
@@ -241,9 +241,9 @@ export function BlockItem(props: BlockItemProps) {
       }
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'ArrowDown') {
-      // FLO-74: Shift+Arrow always extends block selection (bypass cursor check)
-      // Plain navigation: only exit block if cursor is at absolute end
-      const shouldNavigate = e.shiftKey || cursor.isAtEnd();
+      // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
+      // This allows browser to handle text selection within block
+      const shouldNavigate = cursor.isAtEnd();
 
       if (shouldNavigate) {
         e.preventDefault();
