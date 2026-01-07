@@ -91,46 +91,49 @@ describe('determineKeyAction', () => {
       expect(action.nextId).toBe('next-block');
     });
 
-    // FLO-74: Shift+Arrow selection extension
-    describe('selection extension (FLO-74)', () => {
-      it('Shift+ArrowUp navigates regardless of cursor position', () => {
+    // FLO-74 + FLO-145: Shift+Arrow selection extension (only at boundaries)
+    describe('selection extension (FLO-74, FLO-145)', () => {
+      it('Shift+ArrowUp at start navigates with selection action', () => {
+        // FLO-145: Only navigate when at boundary
         const result = determineKeyAction('ArrowUp', true, null, createDeps({
-          cursorAtStart: false,  // NOT at start - would block plain ArrowUp
-          cursorAtEnd: true,     // cursor at end
+          cursorAtStart: true,  // AT start - ok to navigate
         }));
 
         const action = expectAction(result, 'navigate_up_with_selection');
         expect(action.prevId).toBe('prev-block');
       });
 
-      it('Shift+ArrowDown navigates regardless of cursor position', () => {
+      it('Shift+ArrowDown at end navigates with selection action', () => {
+        // FLO-145: Only navigate when at boundary
         const result = determineKeyAction('ArrowDown', true, null, createDeps({
-          cursorAtEnd: false,    // NOT at end - would block plain ArrowDown
-          cursorAtStart: true,   // cursor at start
+          cursorAtEnd: true,    // AT end - ok to navigate
         }));
 
         const action = expectAction(result, 'navigate_down_with_selection');
         expect(action.nextId).toBe('next-block');
       });
 
-      it('Shift+ArrowUp at start still navigates with selection action', () => {
+      it('Shift+ArrowUp NOT at start returns none (browser handles text selection)', () => {
+        // FLO-145: Browser should handle mid-block text selection
         const result = determineKeyAction('ArrowUp', true, null, createDeps({
-          cursorAtStart: true,
+          cursorAtStart: false,  // NOT at start
+          cursorOffset: 5,
         }));
 
-        // Even at start, Shift changes the action type
-        expect(result.type).toBe('navigate_up_with_selection');
+        expect(result.type).toBe('none');
       });
 
-      it('Shift+ArrowDown at end still navigates with selection action', () => {
+      it('Shift+ArrowDown NOT at end returns none (browser handles text selection)', () => {
+        // FLO-145: Browser should handle mid-block text selection
         const result = determineKeyAction('ArrowDown', true, null, createDeps({
-          cursorAtEnd: true,
+          cursorAtEnd: false,    // NOT at end
+          cursorOffset: 5,
         }));
 
-        expect(result.type).toBe('navigate_down_with_selection');
+        expect(result.type).toBe('none');
       });
 
-      it('Shift+ArrowDown does NOT create trailing block (FLO-92 only for plain nav)', () => {
+      it('Shift+ArrowDown at end with no next block returns none (FLO-92 trailing block is plain nav only)', () => {
         const result = determineKeyAction('ArrowDown', true, null, createDeps({
           cursorAtEnd: true,
           findNextId: () => null,  // No next block
@@ -380,6 +383,67 @@ describe('determineKeyAction', () => {
     it('returns none for unhandled keys', () => {
       const result = determineKeyAction('a', false, null, createDeps());
 
+      expect(result.type).toBe('none');
+    });
+  });
+
+  // FLO-145: Text selection should NOT bleed across block boundaries
+  describe('text selection boundary bugs (FLO-145)', () => {
+    it('Shift+ArrowDown should NOT navigate when cursor is NOT at block end', () => {
+      // User is mid-block, using Shift+Down to extend text selection
+      // Should allow browser to handle text selection, NOT navigate to next block
+      const result = determineKeyAction('ArrowDown', true, null, createDeps({
+        cursorAtEnd: false,    // NOT at end - extending text selection within block
+        cursorAtStart: false,
+        cursorOffset: 5,       // mid-block
+      }));
+
+      // Should return 'none' to let browser handle text selection
+      expect(result.type).toBe('none');
+    });
+
+    it('Shift+ArrowUp should NOT navigate when cursor is NOT at block start', () => {
+      // User is mid-block, using Shift+Up to extend text selection
+      // Should allow browser to handle text selection, NOT navigate to prev block
+      const result = determineKeyAction('ArrowUp', true, null, createDeps({
+        cursorAtStart: false,  // NOT at start - extending text selection within block
+        cursorAtEnd: false,
+        cursorOffset: 5,       // mid-block
+      }));
+
+      // Should return 'none' to let browser handle text selection
+      expect(result.type).toBe('none');
+    });
+
+    it('Shift+ArrowDown at block end SHOULD navigate with selection', () => {
+      // User is at block end - Shift+Down should extend selection to next block
+      const result = determineKeyAction('ArrowDown', true, null, createDeps({
+        cursorAtEnd: true,     // AT end - ok to navigate
+      }));
+
+      const action = expectAction(result, 'navigate_down_with_selection');
+      expect(action.nextId).toBe('next-block');
+    });
+
+    it('Shift+ArrowUp at block start SHOULD navigate with selection', () => {
+      // User is at block start - Shift+Up should extend selection to prev block
+      const result = determineKeyAction('ArrowUp', true, null, createDeps({
+        cursorAtStart: true,   // AT start - ok to navigate
+      }));
+
+      const action = expectAction(result, 'navigate_up_with_selection');
+      expect(action.prevId).toBe('prev-block');
+    });
+
+    it('Backspace with text selected should return none (let browser handle)', () => {
+      // User has text selected (not at position 0, but selection exists)
+      // Backspace should delete selected text, not trigger block merge
+      const result = determineKeyAction('Backspace', false, null, createDeps({
+        cursorOffset: 5,           // cursor at position 5
+        selectionCollapsed: false, // but text IS selected
+      }));
+
+      // Should return none - browser will delete selected text
       expect(result.type).toBe('none');
     });
   });
