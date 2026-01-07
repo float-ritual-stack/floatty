@@ -708,8 +708,7 @@ body.resizing .terminal-pane-positioned {
   color: var(--color-ansi-bright-green);
   background: color-mix(in srgb, var(--color-fg) 8%, transparent);
   border-radius: 2px;
-  padding: 0 2px;
-  margin: 0 1px;
+  /* NO padding/margin - would desync from edit layer */
 }
 
 /* Wikilinks: clickable even above edit layer */
@@ -751,8 +750,7 @@ body.resizing .terminal-pane-positioned {
 }
 
 .block-display .ctx-inline-tag {
-  font-size: 0.9em;
-  padding: 0 2px;
+  /* NO font-size/padding changes - would desync from edit layer */
   border-radius: 2px;
 }
 
@@ -844,9 +842,9 @@ body.resizing .terminal-pane-positioned {
   content-visibility: visible;
 }
 
-/* Full containment - ephemeral background is on .outliner-container, not block items */
+/* Containment for performance - NO paint (breaks display layer updates) */
 .block-item {
-  contain: layout style paint;
+  contain: layout style;
 }
 
 /* Editing (NOT selected): accent border when cursor is in block */
