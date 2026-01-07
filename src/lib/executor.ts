@@ -5,7 +5,7 @@
  * Each handler defines prefixes, execution, and optional output parsing.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './tauriTypes';
 import { parseMarkdownTree, type ParsedBlock } from './markdownParser';
 import { resolveTvVariables, hasTvVariables } from './tvResolver';
 

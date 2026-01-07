@@ -381,7 +381,8 @@ export function BlockItem(props: BlockItemProps) {
         if (e.shiftKey) {
           // Shift+Tab: remove up to 2 leading spaces from current line
           if (contentRef) {
-            const text = contentRef.textContent || '';
+            // Use innerText for reading - textContent ignores <div>/<br>, losing line breaks
+            const text = contentRef.innerText || '';
             const pos = cursor.getOffset();
 
             // Find line start (look backwards for newline)
@@ -397,7 +398,7 @@ export function BlockItem(props: BlockItemProps) {
             const toRemove = Math.min(spaces, 2);
             if (toRemove > 0) {
               const newText = text.slice(0, lineStart) + text.slice(lineStart + toRemove);
-              contentRef.textContent = newText;
+              contentRef.innerText = newText;
               store.updateBlockContent(props.id, newText);
 
               // Restore cursor position using proper utility
