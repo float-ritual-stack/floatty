@@ -80,6 +80,20 @@ In `hydrateLayouts()`, walk tree and set `ephemeral: false` on all leaves.
 5. [ ] Typing in ephemeral pane → pins
 6. [ ] App restart with ephemeral → becomes permanent
 
+## Observed Post-Revert (v0.2.4)
+
+**Text still vanishing intermittently** (reported 2026-01-07 @ 03:47 AM):
+- Blocks randomly show blank content
+- Collapse/expand parent forces re-render → text reappears
+- Happening "fairly often" during normal use
+
+**Hypothesis**: Display layer `createMemo` for inline tokens has a stale dependency or missing reactive trigger. The collapse/expand workaround confirms the data exists in store - it's a rendering/reactivity issue.
+
+**Investigation path**:
+1. Check `BlockDisplay.tsx` - is `props.content` reactive or captured once?
+2. Check if Y.Doc observer properly triggers SolidJS signals
+3. Look for `untrack()` or other reactivity-breaking patterns
+
 ## Related Issues
 
 - #67 - FLO-136: Ephemeral panes (clean reimplementation)
