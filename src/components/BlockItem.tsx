@@ -103,7 +103,7 @@ export function BlockItem(props: BlockItemProps) {
       if (result.focusId) {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            props.onFocus(result.focusId!);
+            if (isMounted) props.onFocus(result.focusId!);
           });
         });
       }
@@ -535,9 +535,7 @@ export function BlockItem(props: BlockItemProps) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
-    console.debug(`[BlockItem] handleWikilinkClick: target=${target}, splitDirection=${splitDirection}, ephemeral=${ephemeral}, sourcePaneId=${props.paneId}`);
     const result = navigateToPage(target, props.paneId, splitDirection, ephemeral);
-    console.debug(`[BlockItem] navigateToPage result:`, result);
     if (!result.success) {
       console.warn('[BlockItem] Wikilink navigation failed:', result.error);
     } else {

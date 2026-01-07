@@ -541,8 +541,8 @@ export function Terminal() {
     });
   });
 
-  // FLO-136: Ephemeral panes are pinned by typing (in BlockItem.handleInput)
-  // No auto-pin timeout - simpler mental model: "type to keep it"
+  // FLO-136: Ephemeral panes (outliner-only - terminals don't support ephemeral)
+  // Pinned by typing (in BlockItem.handleInput), no auto-pin timeout
 
   return (
     <div class="terminal-root">
@@ -592,6 +592,7 @@ export function Terminal() {
                     isActive={info().isActivePane && info().isActiveTab}
                     isVisible={info().isActiveTab}
                     initialScrollTop={info().initialScrollTop}
+                    ephemeral={info().ephemeral}
                     ref={(handle) => setPaneRef(info().paneId, handle)}
                     onPaneClick={() => handlePaneClick(info().paneId)}
                   />

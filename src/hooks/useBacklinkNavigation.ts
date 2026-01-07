@@ -246,13 +246,11 @@ export function navigateToPage(
   if (splitDirection !== 'none') {
     // Derive tabId from paneId for split operation
     const tabId = findTabIdByPaneId(paneId);
-    console.debug(`[BacklinkNavigation] Split requested: direction=${splitDirection}, ephemeral=${ephemeral}, tabId=${tabId}, sourcePaneId=${paneId}`);
     if (!tabId) {
       console.warn('[BacklinkNavigation] Could not find tabId for pane, using current pane');
     } else {
       // Split in requested direction (FLO-136: pass ephemeral flag)
       const newPaneId = layoutStore.splitPane(tabId, splitDirection, 'outliner', ephemeral);
-      console.debug(`[BacklinkNavigation] splitPane returned: ${newPaneId}`);
       if (newPaneId) {
         targetPaneId = newPaneId;
       } else {
