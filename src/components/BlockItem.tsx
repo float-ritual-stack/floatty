@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect } from 'solid-js';
+import { Show, createMemo, createEffect, onCleanup } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -37,6 +37,10 @@ export function BlockItem(props: BlockItemProps) {
   const isCollapsed = createMemo(() => paneStore.isCollapsed(props.paneId, props.id, block()?.collapsed || false));
   let contentRef: HTMLDivElement | undefined;
 
+  // Guard flag for rAF callbacks - prevents focus operations after unmount
+  let isMounted = true;
+  onCleanup(() => { isMounted = false; });
+
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
 
@@ -44,7 +48,7 @@ export function BlockItem(props: BlockItemProps) {
   createEffect(() => {
     if (isFocused() && contentRef) {
       requestAnimationFrame(() => {
-        contentRef?.focus();
+        if (isMounted && contentRef) contentRef.focus();
       });
     }
   });
@@ -99,12 +103,30 @@ export function BlockItem(props: BlockItemProps) {
       if (result.focusId) {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            props.onFocus(result.focusId!);
+            if (isMounted) props.onFocus(result.focusId!);
           });
         });
       }
+    } else {
+      // ALWAYS prevent default - browser paste inserts HTML which breaks cursor/display
+      // Instead, manually insert plain text at cursor position
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+        const textNode = document.createTextNode(text);
+        range.insertNode(textNode);
+        // Move cursor to end of inserted text
+        range.setStartAfter(textNode);
+        range.setEndAfter(textNode);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        // Trigger input event so store updates
+        const target = e.target as HTMLElement;
+        target.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      }
     }
-    // If not handled, browser does default plain text paste
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -195,7 +217,9 @@ export function BlockItem(props: BlockItemProps) {
         store.moveBlockUp(props.id);
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => contentRef?.focus());
+          requestAnimationFrame(() => {
+            if (isMounted && contentRef) contentRef.focus();
+          });
         });
         return;
       }
@@ -205,7 +229,9 @@ export function BlockItem(props: BlockItemProps) {
         store.moveBlockDown(props.id);
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => contentRef?.focus());
+          requestAnimationFrame(() => {
+            if (isMounted && contentRef) contentRef.focus();
+          });
         });
         return;
       }
@@ -444,6 +470,7 @@ export function BlockItem(props: BlockItemProps) {
                 
                 // Restore cursor position using proper utility
                 requestAnimationFrame(() => {
+                   if (!isMounted) return;
                    const el = document.activeElement as HTMLElement;
                    if (el && el.textContent === prevContent + oldContent) {
                       setCursorAtOffset(el, prevContentLength);

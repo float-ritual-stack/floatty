@@ -11,6 +11,8 @@ interface OutlinerPaneProps {
   isVisible: boolean;
   // FLO-77: Initial scroll position for cloned panes
   initialScrollTop?: number;
+  // FLO-136: Ephemeral pane indicator (preview mode)
+  ephemeral?: boolean;
   onPaneClick?: () => void;  // Called when pane is clicked (for focus tracking)
   ref?: (handle: OutlinerPaneHandle) => void;
 }
@@ -46,14 +48,26 @@ export function OutlinerPane(props: OutlinerPaneProps) {
     updatePosition();
 
     // FLO-77: Apply initial scroll position for cloned panes
+    // Use requestIdleCallback to avoid blocking initial render
+    let scrollIdleId: number | undefined;
+    let scrollRafId: number | undefined;
+    let scrollTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
     if (props.initialScrollTop !== undefined && props.initialScrollTop > 0) {
-      // Wait for Outliner to render, then apply scroll
-      requestAnimationFrame(() => {
+      const applyScroll = () => {
         const outlinerEl = containerRef?.querySelector('.outliner-container');
         if (outlinerEl) {
           outlinerEl.scrollTop = props.initialScrollTop!;
         }
-      });
+      };
+      // Prefer idle callback, fallback to rAF with delay
+      if ('requestIdleCallback' in window) {
+        scrollIdleId = requestIdleCallback(applyScroll, { timeout: 100 });
+      } else {
+        scrollRafId = requestAnimationFrame(() => {
+          scrollTimeoutId = setTimeout(applyScroll, 16);
+        });
+      }
     }
 
     // Watch for placeholder size/position changes (matches TerminalPane pattern)
@@ -71,6 +85,11 @@ export function OutlinerPane(props: OutlinerPaneProps) {
     window.addEventListener('resize', updatePosition);
 
     onCleanup(() => {
+      // Cancel pending scroll restoration
+      if (scrollIdleId !== undefined) cancelIdleCallback(scrollIdleId);
+      if (scrollRafId !== undefined) cancelAnimationFrame(scrollRafId);
+      if (scrollTimeoutId !== undefined) clearTimeout(scrollTimeoutId);
+      // Disconnect observers
       resizeObserver?.disconnect();
       window.removeEventListener('resize', updatePosition);
     });
@@ -114,6 +133,7 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       class="terminal-pane-positioned"
       classList={{
         'pane-active': props.isActive,
+        'pane-ephemeral': props.ephemeral,
       }}
       onMouseDown={() => props.onPaneClick?.()}
       style={{

@@ -85,7 +85,10 @@ function createLayoutStore() {
         closePane(tabId, existingEphemeralId);
         // Re-fetch layout after close
         const updatedLayout = state.layouts[tabId];
-        if (!updatedLayout) return null;
+        if (!updatedLayout) {
+          console.warn(`[LayoutStore] splitPane: layout disappeared after closing ephemeral`);
+          return null;
+        }
       }
     }
 
@@ -347,7 +350,6 @@ function createLayoutStore() {
       }
     });
 
-    console.debug(`[LayoutStore] pinPane: pinned ${paneId} (was ${direction} ephemeral)`);
     return true;
   };
 
@@ -360,11 +362,40 @@ function createLayoutStore() {
   };
 
   /**
+   * Clear ephemeral flags from all leaves in a tree.
+   * Ephemeral is a preview mode - if app restarts, panes become permanent.
+   */
+  const clearEphemeralFlags = (node: LayoutNode): LayoutNode => {
+    if (node.type === 'leaf') {
+      if (node.ephemeral) {
+        return { ...node, ephemeral: false };
+      }
+      return node;
+    }
+    // Recurse into split children
+    const newChildren = node.children.map(clearEphemeralFlags) as [LayoutNode, LayoutNode];
+    if (newChildren[0] !== node.children[0] || newChildren[1] !== node.children[1]) {
+      return { ...node, children: newChildren };
+    }
+    return node;
+  };
+
+  /**
    * Hydrate layouts from persisted state
-   * Replaces current layouts with restored data
+   * Replaces current layouts with restored data.
+   * Clears ephemeral flags - if you quit with ephemeral panes, they become permanent.
    */
   const hydrateLayouts = (restoredLayouts: Record<string, TabLayout>) => {
-    setState('layouts', restoredLayouts);
+    // Clear ephemeral flags and ephemeralPaneIds tracking
+    const cleanedLayouts: Record<string, TabLayout> = {};
+    for (const [tabId, layout] of Object.entries(restoredLayouts)) {
+      cleanedLayouts[tabId] = {
+        ...layout,
+        root: clearEphemeralFlags(layout.root),
+        ephemeralPaneIds: undefined, // Clear stale tracking
+      };
+    }
+    setState('layouts', cleanedLayouts);
   };
 
   /**

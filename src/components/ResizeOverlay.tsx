@@ -83,6 +83,7 @@ function ResizeHitArea(props: {
     let retryCount = 0;
     const maxRetries = 10;
     const retryDelay = 50; // ms
+    let retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     // Try to find and observe the split container, with retries for timing issues
     const trySetupObserver = () => {
@@ -99,7 +100,7 @@ function ResizeHitArea(props: {
       // Retry if DOM not ready yet (happens after layout changes)
       if (retryCount < maxRetries) {
         retryCount++;
-        setTimeout(trySetupObserver, retryDelay);
+        retryTimeoutId = setTimeout(trySetupObserver, retryDelay);
         return false;
       }
 
@@ -115,6 +116,12 @@ function ResizeHitArea(props: {
     }
 
     onCleanup(() => {
+      // Clean up retry timeout if still pending
+      if (retryTimeoutId) {
+        clearTimeout(retryTimeoutId);
+        retryTimeoutId = null;
+      }
+
       observer.disconnect();
 
       // CRITICAL: Clean up window listeners if unmount happens mid-drag
@@ -125,12 +132,15 @@ function ResizeHitArea(props: {
       }
       if (activePointerUpListener) {
         window.removeEventListener('pointerup', activePointerUpListener);
+        window.removeEventListener('pointercancel', activePointerUpListener);
         activePointerUpListener = null;
       }
+
+      // ALWAYS remove resizing class - even if isDragging seems false (race condition safety)
+      document.body.classList.remove('resizing');
       if (isDragging) {
         isDragging = false;
         layoutStore.setDraggingSplitId(null);
-        document.body.classList.remove('resizing');
       }
     });
   });
@@ -202,6 +212,7 @@ function ResizeHitArea(props: {
     }
     if (activePointerUpListener) {
       window.removeEventListener('pointerup', activePointerUpListener);
+      window.removeEventListener('pointercancel', activePointerUpListener);  // Clean up cancel too
       activePointerUpListener = null;
     }
 
@@ -231,9 +242,10 @@ function ResizeHitArea(props: {
     activePointerMoveListener = onWindowPointerMove;
     activePointerUpListener = onWindowPointerUp;
 
-    // Add window listeners for move/up
+    // Add window listeners for move/up/cancel
     window.addEventListener('pointermove', onWindowPointerMove);
     window.addEventListener('pointerup', onWindowPointerUp);
+    window.addEventListener('pointercancel', onWindowPointerUp);  // Safety: treat cancel like up
   };
 
   return (
