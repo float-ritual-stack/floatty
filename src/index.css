@@ -842,9 +842,9 @@ body.resizing .terminal-pane-positioned {
   content-visibility: visible;
 }
 
-/* Full containment - ephemeral background is on .outliner-container, not block items */
+/* Containment for performance - NO paint (breaks display layer updates) */
 .block-item {
-  contain: layout style paint;
+  contain: layout style;
 }
 
 /* Editing (NOT selected): accent border when cursor is in block */
