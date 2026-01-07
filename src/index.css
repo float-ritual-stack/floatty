@@ -824,13 +824,6 @@ body.resizing .terminal-pane-positioned {
   border-left: 1px solid var(--color-border);
   margin-left: 6px;
   padding-left: 2px;
-  /* CSS containment - skip rendering offscreen subtrees */
-  content-visibility: auto;
-  contain-intrinsic-block-size: auto 100px;
-}
-
-.block-item {
-  contain: layout style paint;
 }
 
 /* Editing (NOT selected): accent border when cursor is in block */
