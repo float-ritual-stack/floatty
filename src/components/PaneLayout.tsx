@@ -59,11 +59,10 @@ function PaneLayoutNodeById(props: PaneLayoutNodeProps) {
         if (currentNode.type === 'leaf') {
           const leaf = currentNode as PaneLeaf;
           const isActive = leaf.id === props.activePaneId;
-          // Note: ephemeral styling is applied on OutlinerPane (the positioned overlay),
-          // not here on the placeholder. CSS can't bridge the two-layer architecture.
+          const isEphemeral = leaf.ephemeral === true;
           return (
             <div
-              class={`pane-layout-leaf pane-placeholder ${isActive ? 'pane-active' : ''}`}
+              class={`pane-layout-leaf pane-placeholder ${isActive ? 'pane-active' : ''} ${isEphemeral ? 'pane-ephemeral' : ''}`}
               data-pane-id={leaf.id}
               onClick={() => props.onPaneClick(leaf.id)}
             />

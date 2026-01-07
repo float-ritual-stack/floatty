@@ -217,6 +217,11 @@ export function Terminal() {
     return node?.type === 'leaf' ? node : null;
   };
 
+  // FLO-136: Pin ephemeral pane (make permanent)
+  const pinPane = (tabId: string, paneId: string) => {
+    return layoutStore.pinPane(tabId, paneId);
+  };
+
   // Helper to split pane and handle post-split fitting/focusing
   const handleSplit = (direction: 'horizontal' | 'vertical', leafType?: 'terminal' | 'outliner') => {
     const activeId = tabStore.activeTabId();
@@ -541,8 +546,46 @@ export function Terminal() {
     });
   });
 
-  // FLO-136: Ephemeral panes (outliner-only - terminals don't support ephemeral)
-  // Pinned by typing (in BlockItem.handleInput), no auto-pin timeout
+  // FLO-136: Auto-pin ephemeral panes after timeout (5 seconds)
+  const EPHEMERAL_TIMEOUT_MS = 5000;
+  const ephemeralTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  createEffect(() => {
+    const infos = allPaneInfo();
+    const currentEphemeralIds = new Set<string>();
+
+    // Set up timers for ephemeral panes
+    for (const info of infos) {
+      if (info.ephemeral) {
+        currentEphemeralIds.add(info.paneId);
+        // Only create timer if not already tracking
+        if (!ephemeralTimers.has(info.paneId)) {
+          const timer = setTimeout(() => {
+            console.debug(`[Terminal] Auto-pinning ephemeral pane ${info.paneId} after ${EPHEMERAL_TIMEOUT_MS}ms`);
+            pinPane(info.tabId, info.paneId);
+            ephemeralTimers.delete(info.paneId);
+          }, EPHEMERAL_TIMEOUT_MS);
+          ephemeralTimers.set(info.paneId, timer);
+        }
+      }
+    }
+
+    // Clean up timers for panes that are no longer ephemeral
+    for (const [paneId, timer] of ephemeralTimers.entries()) {
+      if (!currentEphemeralIds.has(paneId)) {
+        clearTimeout(timer);
+        ephemeralTimers.delete(paneId);
+      }
+    }
+  });
+
+  // Cleanup all timers on unmount
+  onCleanup(() => {
+    for (const timer of ephemeralTimers.values()) {
+      clearTimeout(timer);
+    }
+    ephemeralTimers.clear();
+  });
 
   return (
     <div class="terminal-root">
@@ -592,7 +635,6 @@ export function Terminal() {
                     isActive={info().isActivePane && info().isActiveTab}
                     isVisible={info().isActiveTab}
                     initialScrollTop={info().initialScrollTop}
-                    ephemeral={info().ephemeral}
                     ref={(handle) => setPaneRef(info().paneId, handle)}
                     onPaneClick={() => handlePaneClick(info().paneId)}
                   />
