@@ -11,7 +11,7 @@
  *   </div>
  */
 
-import { createMemo, For } from 'solid-js';
+import { createMemo, createEffect, For } from 'solid-js';
 import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../lib/inlineParser';
 import { findWikilinkEnd, parseWikilinkInner } from '../lib/wikilinkUtils';
 
@@ -156,6 +156,11 @@ function InlineTokenSpan(props: TokenSpanProps) {
 }
 
 export function BlockDisplay(props: BlockDisplayProps) {
+  // DEBUG: Log when content changes
+  createEffect(() => {
+    console.log('[BlockDisplay] content updated:', props.content?.slice(0, 30));
+  });
+
   // Early exit optimization - if no formatting, just render plain text
   const hasFormatting = createMemo(() => hasInlineFormatting(props.content));
 

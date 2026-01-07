@@ -490,7 +490,9 @@ export function BlockItem(props: BlockItemProps) {
     // CRITICAL: Use innerText, not textContent!
     // textContent ignores <div> and <br> elements, losing line breaks.
     // innerText respects visual line breaks and converts them to \n.
-    store.updateBlockContent(props.id, target.innerText || '');
+    const newContent = target.innerText || '';
+    console.log('[BlockItem] handleInput:', props.id, newContent.slice(0, 30));
+    store.updateBlockContent(props.id, newContent);
 
     // FLO-136: Typing pins ephemeral panes (user is engaging with content)
     const tabId = findTabIdByPaneId(props.paneId);
