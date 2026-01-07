@@ -73,12 +73,15 @@ export function BlockItem(props: BlockItemProps) {
     }
   });
 
-  // CRITICAL: Sync DOM when focus leaves (catches splits where store updated while focused)
+  // CRITICAL: Sync DOM→store when focus leaves
+  // This captures changes from snippet expanders, dictation, etc. that bypass onInput
+  // The createEffect above handles store→DOM sync when NOT focused (for external updates)
   const handleBlur = () => {
     const currentBlock = block();
     if (contentRef && currentBlock) {
-      if (contentRef.innerText !== currentBlock.content) {
-        contentRef.innerText = currentBlock.content;
+      const domContent = contentRef.innerText || '';
+      if (domContent !== currentBlock.content) {
+        store.updateBlockContent(props.id, domContent);
       }
     }
   };
@@ -654,7 +657,12 @@ export function BlockItem(props: BlockItemProps) {
               onInput={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              onFocus={() => props.onFocus(props.id)}
+              onFocus={() => {
+                // Clear any block selection when starting text edit
+                // Prevents Backspace from deleting block instead of selected text
+                props.onSelect?.(props.id, 'set');
+                props.onFocus(props.id);
+              }}
               onBlur={handleBlur}
             />
           </Show>
