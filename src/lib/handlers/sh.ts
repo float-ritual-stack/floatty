@@ -54,6 +54,7 @@ export const shHandler: BlockHandler = {
   prefixes: ['sh::', 'term::'],
 
   async execute(blockId: string, content: string, actions: ExecutorActions): Promise<void> {
+    const startTime = performance.now();
     let extracted = extractContent(content, this.prefixes);
     const outputPrefix = 'output::';
     const pendingMessage = 'Running...';

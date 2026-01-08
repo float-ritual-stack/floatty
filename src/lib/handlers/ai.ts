@@ -54,6 +54,7 @@ export const aiHandler: BlockHandler = {
   prefixes: ['ai::', 'chat::'],
 
   async execute(blockId: string, content: string, actions: ExecutorActions): Promise<void> {
+    const startTime = performance.now();
     let extracted = extractContent(content, this.prefixes);
     const outputPrefix = 'ai::';
     const pendingMessage = 'Thinking...';

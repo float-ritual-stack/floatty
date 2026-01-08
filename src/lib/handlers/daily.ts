@@ -58,6 +58,7 @@ export const dailyHandler: BlockHandler = {
   prefixes: ['daily::'],
 
   async execute(blockId: string, content: string, actions: ExecutorActions): Promise<void> {
+    const startTime = performance.now();
     const dateArg = extractDateArg(content);
 
     // Find or create output child
