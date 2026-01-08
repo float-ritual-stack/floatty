@@ -9,42 +9,7 @@ import { invoke } from '../tauriTypes';
 import { parseMarkdownTree } from '../markdownParser';
 import { resolveTvVariables, hasTvVariables } from '../tvResolver';
 import type { BlockHandler, ExecutorActions } from './types';
-import type { ParsedBlock } from '../markdownParser';
-
-// ═══════════════════════════════════════════════════════════════
-// HELPER FUNCTIONS
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Extract content after handler prefix
- */
-function extractContent(content: string, prefixes: string[]): string {
-  const trimmed = content.trim();
-  for (const prefix of prefixes) {
-    if (trimmed.toLowerCase().startsWith(prefix)) {
-      return trimmed.slice(prefix.length).trim();
-    }
-  }
-  return trimmed;
-}
-
-/**
- * Insert parsed blocks recursively as children of parentId
- */
-function insertParsedBlocks(
-  parentId: string,
-  blocks: ParsedBlock[],
-  actions: ExecutorActions
-): void {
-  for (const block of blocks) {
-    const newId = actions.createBlockInside(parentId);
-    actions.updateBlockContent(newId, block.content);
-
-    if (block.children.length > 0) {
-      insertParsedBlocks(newId, block.children, actions);
-    }
-  }
-}
+import { extractContent, insertParsedBlocks } from './utils';
 
 // ═══════════════════════════════════════════════════════════════
 // HANDLER IMPLEMENTATION
