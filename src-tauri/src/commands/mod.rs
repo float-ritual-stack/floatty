@@ -7,6 +7,8 @@
 /// 3. Add to generate_handler![] in lib.rs
 
 pub mod execution;
+pub mod hooks;
 
 // Re-export command functions for registration
 pub use execution::{execute_shell_command, execute_ai_command};
+pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};

@@ -10,14 +10,16 @@ mod server;
 mod services;
 mod sync_test;
 
-use commands::{execute_ai_command, execute_shell_command};
+use commands::{
+    check_hooks_installed, execute_ai_command, execute_shell_command,
+    install_shell_hooks, uninstall_shell_hooks,
+};
 use config::{AggregatorConfig, MarkerCounts, ServerInfo};
 use server::{spawn_server, ServerState};
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::{FloattyDb, CtxMarker};
 use floatty_core::YDocStore;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Manager, State};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -278,91 +280,6 @@ fn clear_workspace(state: State<AppState>) -> Result<(), String> {
     // Persist empty state via store's compaction
     inner.store.force_compact().map_err(|e| e.to_string())?;
 
-    Ok(())
-}
-
-// Shell Hooks Management (FLO-55) - TEMP: Appended, needs proper placement
-// ============================================================================
-
-const SHELL_HOOKS_SCRIPT: &str = r#"# Floatty Shell Hooks - OSC 133/1337 Semantic Prompts
-[[ -n "$FLOATTY_HOOKS_ACTIVE" ]] && return
-export FLOATTY_HOOKS_ACTIVE=1
-_floatty_cmd_started=0
-_floatty_last_exit=0
-_floatty_osc() { printf '\e]%s\a' "$1"; }
-_floatty_precmd() {
-    _floatty_last_exit=$?
-    if [[ $_floatty_cmd_started -eq 1 ]]; then
-        _floatty_osc "133;D;$_floatty_last_exit"
-        _floatty_cmd_started=0
-    fi
-    _floatty_osc "1337;CurrentDir=$PWD"
-    _floatty_osc "133;A"
-}
-_floatty_preexec() {
-    _floatty_cmd_started=1
-    _floatty_osc "133;C"
-    _floatty_osc "1337;Command=${1//;/\;}"
-}
-_floatty_chpwd() { _floatty_osc "1337;CurrentDir=$PWD"; }
-autoload -Uz add-zsh-hook
-add-zsh-hook precmd _floatty_precmd
-add-zsh-hook preexec _floatty_preexec
-add-zsh-hook chpwd _floatty_chpwd
-_floatty_osc "1337;CurrentDir=$PWD"
-"#;
-
-const ZSHRC_SOURCE_LINE: &str = "\n# Floatty shell hooks\n[[ -f ~/.floatty/shell-hooks.zsh ]] && source ~/.floatty/shell-hooks.zsh\n";
-
-/// Check if shell hooks are installed in .zshrc
-#[tauri::command]
-fn check_hooks_installed() -> Result<bool, String> {
-    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let zshrc_path = PathBuf::from(&home).join(".zshrc");
-    if !zshrc_path.exists() { return Ok(false); }
-    let content = std::fs::read_to_string(&zshrc_path).map_err(|e| e.to_string())?;
-    Ok(content.contains("floatty/shell-hooks.zsh"))
-}
-
-/// Install shell hooks: write script and patch .zshrc
-#[tauri::command]
-fn install_shell_hooks() -> Result<(), String> {
-    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let floatty_dir = PathBuf::from(&home).join(".floatty");
-    let hooks_path = floatty_dir.join("shell-hooks.zsh");
-    let zshrc_path = PathBuf::from(&home).join(".zshrc");
-    
-    std::fs::create_dir_all(&floatty_dir).map_err(|e| e.to_string())?;
-    std::fs::write(&hooks_path, SHELL_HOOKS_SCRIPT).map_err(|e| e.to_string())?;
-    log::info!("Wrote shell hooks to {:?}", hooks_path);
-    
-    let zshrc_content = if zshrc_path.exists() {
-        std::fs::read_to_string(&zshrc_path).map_err(|e| e.to_string())?
-    } else { String::new() };
-    
-    if !zshrc_content.contains("floatty/shell-hooks.zsh") {
-        let mut file = std::fs::OpenOptions::new()
-            .create(true).append(true).open(&zshrc_path).map_err(|e| e.to_string())?;
-        use std::io::Write;
-        file.write_all(ZSHRC_SOURCE_LINE.as_bytes()).map_err(|e| e.to_string())?;
-        log::info!("Added source line to {:?}", zshrc_path);
-    }
-    Ok(())
-}
-
-/// Uninstall shell hooks: remove source line from .zshrc  
-#[tauri::command]
-fn uninstall_shell_hooks() -> Result<(), String> {
-    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let zshrc_path = PathBuf::from(&home).join(".zshrc");
-    if !zshrc_path.exists() { return Ok(()); }
-    
-    let content = std::fs::read_to_string(&zshrc_path).map_err(|e| e.to_string())?;
-    let filtered: Vec<&str> = content.lines()
-        .filter(|line| !line.contains("floatty/shell-hooks.zsh") && !line.contains("# Floatty shell hooks"))
-        .collect();
-    std::fs::write(&zshrc_path, filtered.join("\n")).map_err(|e| e.to_string())?;
-    log::info!("Removed floatty hooks from {:?}", zshrc_path);
     Ok(())
 }
 
