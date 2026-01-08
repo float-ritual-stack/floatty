@@ -6,9 +6,16 @@
 /// 2. Add thin wrapper here in commands/{feature}.rs  
 /// 3. Add to generate_handler![] in lib.rs
 
+pub mod clipboard;
+pub mod ctx;
 pub mod execution;
 pub mod hooks;
 
 // Re-export command functions for registration
-pub use execution::{execute_shell_command, execute_ai_command};
+pub use clipboard::save_clipboard_image;
+pub use ctx::{
+    clear_ctx_markers, get_ctx_config, get_ctx_counts, get_ctx_markers,
+    get_theme, set_ctx_config, set_theme,
+};
+pub use execution::{execute_ai_command, execute_shell_command};
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};

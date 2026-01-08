@@ -11,18 +11,19 @@ mod services;
 mod sync_test;
 
 use commands::{
-    check_hooks_installed, execute_ai_command, execute_shell_command,
-    install_shell_hooks, uninstall_shell_hooks,
+    check_hooks_installed, clear_ctx_markers, execute_ai_command, execute_shell_command,
+    get_ctx_config, get_ctx_counts, get_ctx_markers, get_theme,
+    install_shell_hooks, save_clipboard_image, set_ctx_config, set_theme,
+    uninstall_shell_hooks,
 };
-use config::{AggregatorConfig, MarkerCounts, ServerInfo};
+use config::{AggregatorConfig, ServerInfo};
 use server::{spawn_server, ServerState};
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
-use db::{FloattyDb, CtxMarker};
+use db::FloattyDb;
 use floatty_core::YDocStore;
 use std::sync::Arc;
 use tauri::{Manager, State};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use yrs::{Array, Map, ReadTxn, Transact};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -47,75 +48,6 @@ pub struct AppState {
     inner: Option<AppStateInner>,
     /// Server subprocess state - None if server failed to spawn
     server: Option<ServerState>,
-}
-
-/// Get ctx:: markers for sidebar display
-#[tauri::command]
-fn get_ctx_markers(
-    state: State<AppState>,
-    limit: Option<i32>,
-    offset: Option<i32>,
-) -> Result<Vec<CtxMarker>, String> {
-    let inner = state.inner.as_ref()
-        .ok_or_else(|| "ctx:: system unavailable: database failed to initialize".to_string())?;
-
-    let limit = limit.unwrap_or(100);
-    let offset = offset.unwrap_or(0);
-
-    inner
-        .db
-        .get_all(limit, offset)
-        .map_err(|e| e.to_string())
-}
-
-/// Get marker counts by status
-#[tauri::command]
-fn get_ctx_counts(state: State<AppState>) -> Result<MarkerCounts, String> {
-    let inner = state.inner.as_ref()
-        .ok_or_else(|| "ctx:: system unavailable: database failed to initialize".to_string())?;
-
-    let (pending, parsed, error) = inner.db.get_counts().map_err(|e| e.to_string())?;
-    Ok(MarkerCounts {
-        pending,
-        parsed,
-        error,
-        total: pending + parsed + error,
-    })
-}
-
-/// Get current configuration
-#[tauri::command]
-fn get_ctx_config() -> AggregatorConfig {
-    AggregatorConfig::load()
-}
-
-/// Update configuration (requires restart to take effect)
-#[tauri::command]
-fn set_ctx_config(config: AggregatorConfig) -> Result<(), String> {
-    config.save()
-}
-
-/// Get current theme name
-#[tauri::command]
-fn get_theme() -> String {
-    AggregatorConfig::load().theme
-}
-
-/// Set theme name (persists to config.toml)
-#[tauri::command]
-fn set_theme(theme: String) -> Result<(), String> {
-    let mut config = AggregatorConfig::load();
-    config.theme = theme;
-    config.save()
-}
-
-/// Clear all ctx:: markers and reset database
-#[tauri::command]
-fn clear_ctx_markers(state: State<AppState>) -> Result<(), String> {
-    let inner = state.inner.as_ref()
-        .ok_or_else(|| "ctx:: system unavailable: database failed to initialize".to_string())?;
-
-    inner.db.clear_all().map_err(|e| e.to_string())
 }
 
 /// Get server info for HTTP client initialization
@@ -194,33 +126,6 @@ fn setup_logging() {
         .with(file_layer)
         .with(stdout_layer)
         .init();
-}
-
-use std::time::{SystemTime, UNIX_EPOCH};
-
-/// Save clipboard image (base64) to temp file and return path
-/// Used for pasting screenshots - saves to /tmp/floatty-clipboard-{timestamp}.png
-#[tauri::command]
-fn save_clipboard_image(base64: String) -> Result<String, String> {
-    // Decode base64 to bytes
-    let bytes = BASE64.decode(&base64).map_err(|e| format!("Base64 decode failed: {}", e))?;
-
-    // Generate unique filename with timestamp
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_millis();
-
-    let temp_dir = std::env::temp_dir();
-    let filename = format!("floatty-clipboard-{}.png", timestamp);
-    let path = temp_dir.join(&filename);
-
-    // Write image to temp file
-    std::fs::write(&path, bytes).map_err(|e| format!("Failed to write image: {}", e))?;
-
-    log::info!("Saved clipboard image to {:?}", path);
-
-    Ok(path.to_string_lossy().to_string())
 }
 
 // Workspace Layout Persistence (FLO-81)
