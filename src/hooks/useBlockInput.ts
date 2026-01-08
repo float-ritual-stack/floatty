@@ -313,16 +313,23 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         return;
       }
 
-      case 'execute_block':
+      case 'execute_block': {
         e.preventDefault();
-        executeBlock(deps.blockId, block.content, {
-          createBlockInside: store.createBlockInside,
-          createBlockInsideAtTop: store.createBlockInsideAtTop,
-          updateBlockContent: store.updateBlockContent,
-          deleteBlock: store.deleteBlock,
-          paneId: deps.paneId,
-        });
+        const handler = registry.findHandler(block.content);
+        if (handler) {
+          handler.execute(deps.blockId, block.content, {
+            createBlockInside: store.createBlockInside,
+            createBlockInsideAtTop: store.createBlockInsideAtTop,
+            updateBlockContent: store.updateBlockContent,
+            deleteBlock: store.deleteBlock,
+            setBlockOutput: store.setBlockOutput,
+            setBlockStatus: store.setBlockStatus,
+            getBlock: store.getBlock,
+            paneId: deps.paneId,
+          });
+        }
         return;
+      }
 
       case 'create_block_before': {
         e.preventDefault();
