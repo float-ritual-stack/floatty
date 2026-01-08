@@ -38,11 +38,11 @@ function extractDateArg(content: string): string {
 function findOutputChild(parentId: string, actions: ExecutorActions): string | null {
   if (!actions.getBlock) return null;
   
-  const parent = actions.getBlock(parentId) as any;
-  if (!parent) return null;
+  const parent = actions.getBlock(parentId) as { childIds?: string[] };
+  if (!parent || !parent.childIds) return null;
 
   for (const childId of parent.childIds) {
-    const child = actions.getBlock(childId) as any;
+    const child = actions.getBlock(childId) as { outputType?: string };
     if (child?.outputType === 'daily-view' || child?.outputType === 'daily-error') {
       return childId;
     }
