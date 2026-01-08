@@ -208,7 +208,7 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
     // Get root IDs
     if let Some(root_ids_arr) = txn.get_array("rootIds") {
         for value in root_ids_arr.iter(&txn) {
-            if let yrs::Value::Any(yrs::Any::String(id)) = value {
+            if let yrs::Out::Any(yrs::Any::String(id)) = value {
                 root_ids.push(id.to_string());
             }
         }
@@ -218,28 +218,28 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
             // Handle nested Y.Map (new format)
-            if let yrs::Value::YMap(block_map) = value {
+            if let yrs::Out::YMap(block_map) = value {
                 let content = block_map
                     .get(&txn, "content")
                     .and_then(|v| match v {
-                        yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                         _ => None,
                     })
                     .unwrap_or_default();
 
                 let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
-                    yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                    yrs::Value::Any(yrs::Any::Null) => None,
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    yrs::Out::Any(yrs::Any::Null) => None,
                     _ => None,
                 });
 
                 let child_ids = block_map
                     .get(&txn, "childIds")
                     .and_then(|v| match v {
-                        yrs::Value::YArray(arr) => Some(
+                        yrs::Out::YArray(arr) => Some(
                             arr.iter(&txn)
                                 .filter_map(|v| match v {
-                                    yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                                     _ => None,
                                 })
                                 .collect(),
@@ -251,7 +251,7 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
                 let collapsed = block_map
                     .get(&txn, "collapsed")
                     .and_then(|v| match v {
-                        yrs::Value::Any(yrs::Any::Bool(b)) => Some(b),
+                        yrs::Out::Any(yrs::Any::Bool(b)) => Some(b),
                         _ => None,
                     })
                     .unwrap_or(false);
@@ -291,28 +291,28 @@ async fn get_block(
         .ok_or_else(|| ApiError::NotFound(id.clone()))?;
 
     // Handle nested Y.Map (new format)
-    if let yrs::Value::YMap(block_map) = value {
+    if let yrs::Out::YMap(block_map) = value {
         let content = block_map
             .get(&txn, "content")
             .and_then(|v| match v {
-                yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                 _ => None,
             })
             .unwrap_or_default();
 
         let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
-            yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
-            yrs::Value::Any(yrs::Any::Null) => None,
+            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+            yrs::Out::Any(yrs::Any::Null) => None,
             _ => None,
         });
 
         let child_ids = block_map
             .get(&txn, "childIds")
             .and_then(|v| match v {
-                yrs::Value::YArray(arr) => Some(
+                yrs::Out::YArray(arr) => Some(
                     arr.iter(&txn)
                         .filter_map(|v| match v {
-                            yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                             _ => None,
                         })
                         .collect(),
@@ -324,7 +324,7 @@ async fn get_block(
         let collapsed = block_map
             .get(&txn, "collapsed")
             .and_then(|v| match v {
-                yrs::Value::Any(yrs::Any::Bool(b)) => Some(b),
+                yrs::Out::Any(yrs::Any::Bool(b)) => Some(b),
                 _ => None,
             })
             .unwrap_or(false);
@@ -364,7 +364,7 @@ async fn create_block(
         // Validate parent exists before creating block
         if let Some(ref parent_id) = req.parent_id {
             match blocks.get(&txn, parent_id) {
-                Some(yrs::Value::YMap(_)) => {} // Parent exists, continue
+                Some(yrs::Out::YMap(_)) => {} // Parent exists, continue
                 _ => {
                     return Err(ApiError::NotFound(format!(
                         "Parent block not found: {}",
@@ -398,8 +398,8 @@ async fn create_block(
         // Update parent's childIds or add to rootIds
         if let Some(ref parent_id) = req.parent_id {
             // Add to parent's childIds array (already validated parent exists above)
-            if let Some(yrs::Value::YMap(parent_map)) = blocks.get(&txn, parent_id) {
-                if let Some(yrs::Value::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+            if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id) {
+                if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
                     child_ids.push_back(&mut txn, id.as_str());
                 }
             }
@@ -457,20 +457,20 @@ async fn update_block(
             .get(&txn, &id)
             .ok_or_else(|| ApiError::NotFound(id.clone()))?;
 
-        if let yrs::Value::YMap(block_map) = value {
+        if let yrs::Out::YMap(block_map) = value {
             let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
-                yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                yrs::Value::Any(yrs::Any::Null) => None,
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                yrs::Out::Any(yrs::Any::Null) => None,
                 _ => None,
             });
 
             let child_ids = block_map
                 .get(&txn, "childIds")
                 .and_then(|v| match v {
-                    yrs::Value::YArray(arr) => Some(
+                    yrs::Out::YArray(arr) => Some(
                         arr.iter(&txn)
                             .filter_map(|v| match v {
-                                yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                                 _ => None,
                             })
                             .collect(),
@@ -482,7 +482,7 @@ async fn update_block(
             let collapsed = block_map
                 .get(&txn, "collapsed")
                 .and_then(|v| match v {
-                    yrs::Value::Any(yrs::Any::Bool(b)) => Some(b),
+                    yrs::Out::Any(yrs::Any::Bool(b)) => Some(b),
                     _ => None,
                 })
                 .unwrap_or(false);
@@ -497,7 +497,7 @@ async fn update_block(
     let update = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
-        if let Some(yrs::Value::YMap(block_map)) = blocks.get(&txn, &id) {
+        if let Some(yrs::Out::YMap(block_map)) = blocks.get(&txn, &id) {
             block_map.insert(&mut txn, "content", req.content.clone());
             block_map.insert(&mut txn, "updatedAt", now as f64);
         }
@@ -535,9 +535,9 @@ async fn delete_block(
 
         // Get block and its parentId before deleting
         let parent_id: Option<String> = match blocks.get(&txn, &id) {
-            Some(yrs::Value::YMap(block_map)) => {
+            Some(yrs::Out::YMap(block_map)) => {
                 block_map.get(&txn, "parentId").and_then(|v| match v {
-                    yrs::Value::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                     _ => None,
                 })
             }
@@ -547,12 +547,12 @@ async fn delete_block(
 
         // Remove from parent's childIds if this block has a parent
         if let Some(ref pid) = parent_id {
-            if let Some(yrs::Value::YMap(parent_map)) = blocks.get(&txn, pid) {
-                if let Some(yrs::Value::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+            if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, pid) {
+                if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
                     // Find index of this id in parent's childIds
                     let mut remove_idx: Option<u32> = None;
                     for (i, value) in child_ids.iter(&txn).enumerate() {
-                        if let yrs::Value::Any(yrs::Any::String(s)) = value {
+                        if let yrs::Out::Any(yrs::Any::String(s)) = value {
                             if s.as_ref() == id {
                                 remove_idx = Some(i as u32);
                                 break;
@@ -574,7 +574,7 @@ async fn delete_block(
             let root_ids = txn.get_or_insert_array("rootIds");
             let mut remove_index: Option<u32> = None;
             for (i, value) in root_ids.iter(&txn).enumerate() {
-                if let yrs::Value::Any(yrs::Any::String(s)) = value {
+                if let yrs::Out::Any(yrs::Any::String(s)) = value {
                     if s.as_ref() == id {
                         remove_index = Some(i as u32);
                         break;
