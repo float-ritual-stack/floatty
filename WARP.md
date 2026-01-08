@@ -2,7 +2,9 @@
 
 ## Rust Backend Modularization
 
-**CRITICAL**: `src-tauri/src/lib.rs` must stay under 150 lines.
+**STATUS**: ✅ Completed in PR #76 (lib.rs: 778 → 370 lines, 52% reduction)
+
+**TARGET**: `src-tauri/src/lib.rs` should stay ~370 lines (core infrastructure only)
 
 ### When adding Tauri commands:
 
@@ -45,6 +47,9 @@ See `docs/architecture/RUST_MODULARIZATION_GUIDE.md` for full details.
 ---
 
 ## Frontend Handler Pattern
+
+**STATUS**: ⏳ Planned (see plan: feat/handler-registry)
+**BENEFIT**: Reduce ceremony from 4-7 files → 2 files for new handlers
 
 **When adding block handlers** (sh::, ai::, door::, etc.):
 
