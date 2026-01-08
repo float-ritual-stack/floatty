@@ -17,12 +17,16 @@ pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
 
-    /// API key for authentication (required)
+    /// API key for authentication (required when auth_enabled=true)
     pub api_key: Option<String>,
 
     /// Bind address (default: 127.0.0.1 for local only)
     #[serde(default = "default_bind")]
     pub bind: String,
+
+    /// Enable API key authentication (default: true)
+    #[serde(default = "default_auth_enabled")]
+    pub auth_enabled: bool,
 }
 
 fn default_enabled() -> bool {
@@ -37,6 +41,10 @@ fn default_bind() -> String {
     "127.0.0.1".to_string()
 }
 
+fn default_auth_enabled() -> bool {
+    true
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -44,6 +52,7 @@ impl Default for ServerConfig {
             port: default_port(),
             api_key: None,
             bind: default_bind(),
+            auth_enabled: default_auth_enabled(),
         }
     }
 }

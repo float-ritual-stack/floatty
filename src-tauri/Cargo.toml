@@ -23,12 +23,16 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-log = "0.4"
+log = "0.4"  # Keep for compatibility during migration
 tauri = { version = "2", features = [] }
-tauri-plugin-log = "2"
 tauri-plugin-pty = { path = "plugins/tauri-plugin-pty" }
 tauri-plugin-os = "2"
 floatty-core = { path = "floatty-core" }
+
+# Structured logging with tracing (replaces tauri-plugin-log)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-appender = "0.2"
 
 # Context aggregator dependencies
 rusqlite = { version = "0.32", features = ["bundled"] }

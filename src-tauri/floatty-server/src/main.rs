@@ -65,12 +65,16 @@ async fn main() {
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::OPTIONS])
         .allow_headers(Any);
 
-    // Build router with CORS and auth middleware
-    let auth_state = auth::ApiKeyAuth::new(api_key.clone());
-
-    // API routes (with auth)
-    let api_routes = api::create_router(Arc::clone(&store), Arc::clone(&broadcaster))
-        .layer(middleware::from_fn_with_state(auth_state.clone(), auth::auth_middleware));
+    // Build router with CORS and optional auth middleware
+    let api_routes = if config.auth_enabled {
+        let auth_state = auth::ApiKeyAuth::new(api_key.clone());
+        tracing::info!("API authentication enabled");
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster))
+            .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
+    } else {
+        tracing::warn!("API authentication DISABLED (auth_enabled = false in config)");
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster))
+    };
 
     // WebSocket route (auth via query param since WS can't use headers easily)
     let ws_routes = Router::new()
@@ -90,11 +94,15 @@ async fn main() {
 
     tracing::info!("floatty-server listening on http://{}", addr);
     tracing::info!("Health check: curl http://{}/api/v1/health", addr);
-    tracing::info!(
-        "Authenticated: curl -H 'Authorization: Bearer {}' http://{}/api/v1/state",
-        api_key,
-        addr
-    );
+    if config.auth_enabled {
+        tracing::info!(
+            "Authenticated: curl -H 'Authorization: Bearer {}' http://{}/api/v1/state",
+            api_key,
+            addr
+        );
+    } else {
+        tracing::info!("No auth: curl http://{}/api/v1/blocks", addr);
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

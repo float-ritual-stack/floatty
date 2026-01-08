@@ -19,6 +19,8 @@ use std::sync::Arc;
 use tauri::{Manager, State};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use yrs::{Array, Map, ReadTxn, Transact};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 /// Default server port (matches floatty-server)
 const DEFAULT_SERVER_PORT: u16 = 8765;
@@ -120,6 +122,73 @@ fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
     state.server.as_ref()
         .map(|s| s.info.clone())
         .ok_or_else(|| "Server not running".to_string())
+}
+
+/// Initialize structured logging with tracing
+/// 
+/// Logs are written to:
+/// - File: ~/.floatty/logs/floatty-{date}.jsonl (structured JSON, daily rotation)
+/// - Stdout: Human-readable format (dev builds only)
+/// 
+/// Configure via RUST_LOG env var, defaults to INFO level
+fn setup_logging() {
+    let log_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".floatty")
+        .join("logs");
+    
+    // Create log directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("Failed to create log directory: {}", e);
+        return;
+    }
+    
+    // File appender: ~/.floatty/logs/floatty-{date}.jsonl
+    let file_appender = match RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("floatty")
+        .filename_suffix("jsonl")
+        .build(log_dir) {
+            Ok(appender) => appender,
+            Err(e) => {
+                eprintln!("Failed to create log appender: {}", e);
+                return;
+            }
+        };
+    
+    // Structured JSON logs to file (always enabled)
+    let file_layer = fmt::layer()
+        .json()
+        .with_writer(file_appender)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .with_file(true)
+        .with_line_number(true);
+    
+    // Human-readable logs to stdout (dev only)
+    let stdout_layer = if cfg!(debug_assertions) {
+        Some(fmt::layer()
+            .with_writer(std::io::stdout)
+            .with_target(true)
+            .with_level(true)
+            .with_ansi(true)
+            .pretty())
+    } else {
+        None
+    };
+    
+    // ENV filter: RUST_LOG=debug or default to info
+    let filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+    
+    // Initialize tracing subscriber
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(file_layer)
+        .with(stdout_layer)
+        .init();
 }
 
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
@@ -411,6 +480,11 @@ fn uninstall_shell_hooks() -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize structured logging FIRST (before any other operations)
+    setup_logging();
+    
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Floatty starting");
+    
     let context = tauri::generate_context!();
 
     // Load config from ~/.floatty/config.toml (or defaults)
@@ -632,22 +706,11 @@ pub fn run() {
                 let build_mode = if cfg!(debug_assertions) { "dev" } else { "release" };
                 let title = format!("floatty ({})", build_mode);
                 let _ = window.set_title(&title);
-            }
-
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .targets([
-                            // Terminal output (dev console)
-                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                            // Webview console.log/warn/error → Rust log
-                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
-                            // File: ~/Library/Logs/com.floatty.app/floatty.log
-                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
-                        ])
-                        .build(),
-                )?;
+                tracing::info!(
+                    window_title = %title,
+                    debug_mode = cfg!(debug_assertions),
+                    "Window title set"
+                );
             }
             Ok(())
         })
