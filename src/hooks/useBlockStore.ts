@@ -7,7 +7,7 @@ import { createStore } from 'solid-js/store';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
 import type { Block, BlockType } from '../lib/blockTypes';
-import { isDailyBlock } from '../lib/dailyExecutor';
+import { registry } from '../lib/handlers';
 
 // ═══════════════════════════════════════════════════════════════
 // AUTO-EXECUTE CALLBACK (for external block creation via API)
@@ -26,7 +26,9 @@ export function setAutoExecuteHandler(handler: AutoExecuteHandler | null) {
 
 function isAutoExecutable(content: string): boolean {
   // Only auto-execute idempotent view blocks, not side-effect ones like sh::
-  return isDailyBlock(content);
+  const handler = registry.findHandler(content);
+  // For now, only daily:: is idempotent (safe to auto-execute)
+  return handler !== null && handler.prefixes.includes('daily::');
   // Future: add web::, query::, etc.
 }
 

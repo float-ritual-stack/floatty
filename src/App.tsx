@@ -12,6 +12,7 @@ import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { initHttpClient } from './lib/httpClient';
 import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
+import { registerHandlers } from './lib/handlers';
 import './App.css';
 
 // Type for Tauri drag-drop event payload
@@ -38,6 +39,11 @@ function App() {
       console.error('[App] Failed to connect to floatty-server:', err);
       setServerError(String(err));
     }
+  });
+
+  // Register block handlers (sh::, ai::, daily::)
+  onMount(() => {
+    registerHandlers();
   });
 
   // Load saved theme and terminal config on startup (after server connected)

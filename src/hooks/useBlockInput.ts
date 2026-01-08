@@ -11,7 +11,7 @@
  */
 
 import { getActionForEvent } from '../lib/keybinds';
-import { findHandler, executeBlock } from '../lib/executor';
+import { registry } from '../lib/handlers';
 import { setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
@@ -166,7 +166,7 @@ export function determineKeyAction(
 
   if (key === 'Enter' && !shiftKey) {
     const content = block.content;
-    const handler = findHandler(content);
+    const handler = registry.findHandler(content);
 
     if (handler) {
       return { type: 'execute_block' };
@@ -313,16 +313,23 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         return;
       }
 
-      case 'execute_block':
+      case 'execute_block': {
         e.preventDefault();
-        executeBlock(deps.blockId, block.content, {
-          createBlockInside: store.createBlockInside,
-          createBlockInsideAtTop: store.createBlockInsideAtTop,
-          updateBlockContent: store.updateBlockContent,
-          deleteBlock: store.deleteBlock,
-          paneId: deps.paneId,
-        });
+        const handler = registry.findHandler(block.content);
+        if (handler) {
+          handler.execute(deps.blockId, block.content, {
+            createBlockInside: store.createBlockInside,
+            createBlockInsideAtTop: store.createBlockInsideAtTop,
+            updateBlockContent: store.updateBlockContent,
+            deleteBlock: store.deleteBlock,
+            setBlockOutput: store.setBlockOutput,
+            setBlockStatus: store.setBlockStatus,
+            getBlock: store.getBlock,
+            paneId: deps.paneId,
+          });
+        }
         return;
+      }
 
       case 'create_block_before': {
         e.preventDefault();

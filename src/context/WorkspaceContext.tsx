@@ -19,7 +19,7 @@ import type { JSX } from 'solid-js';
 import { blockStore as realBlockStore, setAutoExecuteHandler } from '../hooks/useBlockStore';
 import { paneStore as realPaneStore } from '../hooks/usePaneStore';
 import type { Block } from '../lib/blockTypes';
-import { isDailyBlock, executeDailyBlock } from '../lib/dailyExecutor';
+import { registry } from '../lib/handlers';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPE INTERFACES
@@ -99,13 +99,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     setAutoExecuteHandler((blockId: string, content: string) => {
       console.log('[AutoExecute] External block detected:', blockId, content);
 
-      if (isDailyBlock(content)) {
-        executeDailyBlock(blockId, content, {
+      const handler = registry.findHandler(content);
+      if (handler) {
+        handler.execute(blockId, content, {
           createBlockInside: store.createBlockInside,
-          updateContent: store.updateBlockContent,
+          createBlockInsideAtTop: store.createBlockInsideAtTop,
+          updateBlockContent: store.updateBlockContent,
+          deleteBlock: store.deleteBlock,
           setBlockOutput: store.setBlockOutput,
           setBlockStatus: store.setBlockStatus,
-          deleteBlock: store.deleteBlock,
           getBlock: store.getBlock,
         });
       }

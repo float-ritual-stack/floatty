@@ -10,7 +10,7 @@
  */
 
 import { terminalManager } from './terminalManager';
-import type { ExecutorActions } from './executor';
+import type { ExecutorActions } from './handlers';
 
 // Pattern to detect $tv(channel) in command strings
 const TV_PATTERN = /\$tv\(([^)]+)\)/g;

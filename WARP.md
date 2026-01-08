@@ -48,8 +48,8 @@ See `docs/architecture/RUST_MODULARIZATION_GUIDE.md` for full details.
 
 ## Frontend Handler Pattern
 
-**STATUS**: ⏳ Planned (see plan: feat/handler-registry)
-**BENEFIT**: Reduce ceremony from 4-7 files → 2 files for new handlers
+**STATUS**: ✅ Completed in PR #77 (executor.ts + dailyExecutor.ts → handlers/ directory)
+**BENEFIT**: Reduced ceremony from 4-7 files → 2 files for new handlers (71% reduction)
 
 **When adding block handlers** (sh::, ai::, door::, etc.):
 
@@ -68,6 +68,15 @@ See `docs/architecture/RUST_MODULARIZATION_GUIDE.md` for full details.
    ```
 
 **Result**: 2 files touched instead of 4-7.
+
+**Frontend Logging**: Handlers use structured console.log for observability:
+```typescript
+console.log('[sh] Executing:', { commandLen, hasTvResolution });
+const startTime = performance.now();
+// ... execute ...
+const duration = performance.now() - startTime;
+console.log('[sh] Complete:', { duration: `${duration.toFixed(1)}ms`, outputBytes });
+```
 
 See `docs/architecture/HANDLER_REGISTRY_IMPLEMENTATION.md` for details.
 
