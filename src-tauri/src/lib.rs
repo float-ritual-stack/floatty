@@ -204,28 +204,41 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Runs command through user's shell to inherit PATH and other environment setup.
 #[tauri::command]
 async fn execute_shell_command(command: String) -> Result<String, String> {
+    use std::time::Instant;
+    
     if command.trim().is_empty() {
         return Ok("".to_string());
     }
+
+    let start = Instant::now();
+    let command_len = command.len();
+    
+    tracing::info!(command_len = command_len, "Shell command requested");
 
     // Load config for output size limit
     let config = AggregatorConfig::load();
     let max_bytes = config.max_shell_output_bytes;
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         // Use user's shell to inherit PATH from .zshrc/.bashrc
         // This ensures commands like `floatctl` in ~/.cargo/bin work
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+        tracing::debug!(shell = %shell, "Executing shell command");
 
         let output = std::process::Command::new(&shell)
             .arg("-l")  // Login shell to source profile
             .arg("-c")  // Execute command string
             .arg(&command)
             .output()
-            .map_err(|e| format!("Failed to execute shell: {}", e))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to spawn shell");
+                format!("Failed to execute shell: {}", e)
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let exit_code = output.status.code().unwrap_or(-1);
 
         let result = if output.status.success() {
             stdout.to_string()
@@ -234,7 +247,7 @@ async fn execute_shell_command(command: String) -> Result<String, String> {
         };
 
         // Truncate if output exceeds limit (prevents UI freeze on large output)
-        if result.len() > max_bytes {
+        let final_result = if result.len() > max_bytes {
             // Find safe UTF-8 boundary (avoids panic on multi-byte chars like emoji)
             // Walk backwards from max_bytes to find a valid char boundary
             let mut safe_max = max_bytes;
@@ -244,21 +257,46 @@ async fn execute_shell_command(command: String) -> Result<String, String> {
             let truncated = &result[..safe_max];
             // Find last newline to avoid cutting mid-line
             let cut_point = truncated.rfind('\n').unwrap_or(safe_max);
-            Ok(format!(
+            format!(
                 "{}\n\n... [truncated: {} → {} bytes]",
                 &result[..cut_point],
                 result.len(),
                 cut_point
-            ))
+            )
         } else {
-            Ok(result)
-        }
-    }).await.map_err(|e| e.to_string())?
+            result
+        };
+        
+        Ok::<(String, i32), String>((final_result, exit_code))
+    }).await.map_err(|e| e.to_string())??;
+    
+    let duration_ms = start.elapsed().as_millis() as u64;
+    
+    if result.1 == 0 {
+        tracing::info!(
+            exit_code = result.1,
+            duration_ms = duration_ms,
+            output_bytes = result.0.len(),
+            "Shell command succeeded"
+        );
+    } else {
+        tracing::warn!(
+            exit_code = result.1,
+            duration_ms = duration_ms,
+            "Shell command failed"
+        );
+    }
+    
+    Ok(result.0)
 }
 
 /// Execute an AI prompt using Ollama
 #[tauri::command]
 async fn execute_ai_command(prompt: String) -> Result<String, String> {
+    use std::time::Instant;
+    
+    let start = Instant::now();
+    
     // Get config for endpoint/model
     let config = AggregatorConfig::load();
 
@@ -269,19 +307,32 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
     let port = url.port().unwrap_or(11434);
     let host_with_scheme = format!("{}://{}", scheme, host);
 
-    log::info!("ai:: executing prompt on {}:{} model={}", host_with_scheme, port, &config.ollama_model);
+    tracing::info!(
+        model = %config.ollama_model,
+        host = %host_with_scheme,
+        port = port,
+        prompt_len = prompt.len(),
+        "AI command requested"
+    );
 
     let ollama = Ollama::new(host_with_scheme, port);
-    let model = config.ollama_model;
+    let model = config.ollama_model.clone();
 
-    let request = GenerationRequest::new(model, prompt);
-
-    log::info!("ai:: sending request to Ollama...");
+    let request = GenerationRequest::new(model.clone(), prompt);
     let max_bytes = config.max_shell_output_bytes;
 
     match ollama.generate(request).await {
         Ok(res) => {
-            log::info!("ai:: got response ({} chars)", res.response.len());
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let response_bytes = res.response.len();
+            
+            tracing::info!(
+                model = %model,
+                duration_ms = duration_ms,
+                response_bytes = response_bytes,
+                "AI command succeeded"
+            );
+            
             let result = res.response;
             // Truncate if output exceeds limit
             if result.len() > max_bytes {
@@ -302,7 +353,13 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
             }
         },
         Err(e) => {
-            log::error!("ai:: Ollama error: {}", e);
+            let duration_ms = start.elapsed().as_millis() as u64;
+            tracing::error!(
+                error = %e,
+                model = %model,
+                duration_ms = duration_ms,
+                "AI command failed"
+            );
             Err(format!("Ollama error: {}", e))
         },
     }
@@ -690,7 +747,7 @@ pub fn run() {
                         // Hide instead of destroy to preserve state/memory
                         let _ = window.hide();
                         api.prevent_close();
-                        log::info!("[panel] Intercepted close for {}, hiding instead", window.label());
+                        tracing::info!(window_label = %window.label(), "Panel close intercepted, hiding instead");
                     }
                 }
             }

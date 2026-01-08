@@ -29,13 +29,13 @@ impl Drop for ServerState {
         // Only kill if we spawned it
         if let Some(ref process) = self.process {
             if let Ok(mut child) = process.lock() {
-                log::info!("Killing floatty-server subprocess (we spawned it)");
+                tracing::info!("Killing floatty-server subprocess (we spawned it)");
                 let _ = child.kill();
                 // Clean up PID file on graceful shutdown
                 remove_pid_file();
             }
         } else {
-            log::info!("Not killing floatty-server (reusing existing instance)");
+            tracing::info!("Not killing floatty-server (reusing existing instance)");
         }
     }
 }
@@ -53,7 +53,7 @@ fn kill_stale_server() -> bool {
     let pid_str = match std::fs::read_to_string(&pid_path) {
         Ok(s) => s.trim().to_string(),
         Err(e) => {
-            eprintln!("[floatty] Failed to read PID file: {}", e);
+            tracing::error!(error = %e, "Failed to read PID file");
             let _ = std::fs::remove_file(&pid_path);
             return false;
         }
@@ -62,7 +62,7 @@ fn kill_stale_server() -> bool {
     let pid: u32 = match pid_str.parse() {
         Ok(p) => p,
         Err(_) => {
-            eprintln!("[floatty] Invalid PID in file: {}", pid_str);
+            tracing::warn!(pid_str = %pid_str, "Invalid PID in file");
             let _ = std::fs::remove_file(&pid_path);
             return false;
         }
@@ -76,13 +76,13 @@ fn kill_stale_server() -> bool {
         .unwrap_or(false);
 
     if !is_running {
-        eprintln!("[floatty] PID {} from file is not running (stale PID file)", pid);
+        tracing::info!(pid = pid, "PID from file is not running (stale PID file)");
         let _ = std::fs::remove_file(&pid_path);
         return false;
     }
 
     // Process exists - kill it
-    eprintln!("[floatty] Killing stale server process (PID {})", pid);
+    tracing::warn!(pid = pid, "Killing stale server process");
     let killed = std::process::Command::new("kill")
         .arg(&pid.to_string())
         .status()
@@ -93,10 +93,10 @@ fn kill_stale_server() -> bool {
         // Wait a moment for process to exit
         std::thread::sleep(std::time::Duration::from_millis(200));
         let _ = std::fs::remove_file(&pid_path);
-        eprintln!("[floatty] Stale server killed successfully");
+        tracing::info!(pid = pid, "Stale server killed successfully");
         true
     } else {
-        eprintln!("[floatty] Failed to kill stale server (PID {})", pid);
+        tracing::error!(pid = pid, "Failed to kill stale server");
         false
     }
 }
@@ -108,15 +108,15 @@ fn write_pid_file(pid: u32) {
     // Ensure directory exists
     if let Some(parent) = pid_path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("[floatty] Failed to create PID file directory: {}", e);
+            tracing::error!(error = %e, "Failed to create PID file directory");
             return;
         }
     }
 
     if let Err(e) = std::fs::write(&pid_path, pid.to_string()) {
-        eprintln!("[floatty] Failed to write PID file: {}", e);
+        tracing::error!(error = %e, "Failed to write PID file");
     } else {
-        eprintln!("[floatty] Wrote server PID {} to {:?}", pid, pid_path);
+        tracing::info!(pid = pid, path = ?pid_path, "Wrote server PID to file");
     }
 }
 
@@ -125,7 +125,7 @@ fn remove_pid_file() {
     let pid_path = pid_file_path();
     if pid_path.exists() {
         if let Err(e) = std::fs::remove_file(&pid_path) {
-            log::warn!("Failed to remove PID file: {}", e);
+            tracing::warn!(error = %e, "Failed to remove PID file");
         }
     }
 }
@@ -143,7 +143,7 @@ pub fn spawn_server(port: u16) -> Option<ServerState> {
 
     // Check if server is already running (from previous session or standalone)
     if wait_for_server_health(&url) {
-        eprintln!("[floatty] Reusing existing server at {}", url);
+        tracing::info!(url = %url, "Reusing existing server");
         let api_key = read_api_key_from_config()?;
         return Some(ServerState {
             info: ServerInfo { url, api_key },
@@ -153,7 +153,7 @@ pub fn spawn_server(port: u16) -> Option<ServerState> {
 
     // No server running, spawn one
     let server_binary = find_server_binary()?;
-    eprintln!("[floatty] Spawning server from {:?}", server_binary);
+    tracing::info!(binary = ?server_binary, "Spawning floatty-server");
 
     // Spawn server (it reads config for port/api_key itself)
     // Use null/inherit instead of piped to prevent deadlock when buffer fills
@@ -163,24 +163,27 @@ pub fn spawn_server(port: u16) -> Option<ServerState> {
         .stderr(std::process::Stdio::inherit())
         .spawn()
         .map_err(|e| {
-            log::error!("Failed to spawn floatty-server: {}", e);
+            tracing::error!(error = %e, "Failed to spawn floatty-server");
             e
         })
         .ok()?;
 
+    let pid = child.id();
+    tracing::info!(pid = pid, "floatty-server subprocess launched");
+    
     // Write PID file for stale process detection on next launch
-    write_pid_file(child.id());
+    write_pid_file(pid);
 
     // Wait for server to be ready
     if !wait_for_server_health(&url) {
-        log::error!("Server health check failed after timeout");
+        tracing::error!("Server health check failed after timeout");
         return None;
     }
 
     // Read API key from config (server generates and persists if needed)
     let api_key = read_api_key_from_config()?;
 
-    log::info!("floatty-server ready at {}", url);
+    tracing::info!(url = %url, pid = pid, "floatty-server ready");
 
     Some(ServerState {
         info: ServerInfo { url, api_key },
@@ -196,7 +199,7 @@ fn read_api_key_from_config() -> Option<String> {
         .join("config.toml");
 
     if !config_path.exists() {
-        log::warn!("Config file not found at {:?}", config_path);
+        tracing::warn!(path = ?config_path, "Config file not found");
         return None;
     }
 
