@@ -120,7 +120,7 @@ async fn extract_daily_data(content: &str, date: &str) -> Result<DailyNoteData, 
     let port = url.port().unwrap_or(11434);
     let host_with_scheme = format!("{}://{}", scheme, host);
 
-    log::info!(
+    tracing::info!(
         "daily:: extracting from date={} on {}:{} model={}",
         date,
         host_with_scheme,
@@ -182,20 +182,20 @@ Return JSON matching the schema. Use {} for day_of_week.",
             JsonStructure::new::<DailyNoteData>(),
         )));
 
-    log::info!("daily:: sending request to Ollama...");
+    tracing::info!("daily:: sending request to Ollama...");
 
     match ollama.generate(request).await {
         Ok(res) => {
-            log::info!("daily:: got response ({} chars)", res.response.len());
+            tracing::info!("daily:: got response ({} chars)", res.response.len());
 
             // Parse the JSON response
             serde_json::from_str::<DailyNoteData>(&res.response).map_err(|e| {
-                log::error!("daily:: JSON parse error: {} response: {}", e, res.response);
+                tracing::error!("daily:: JSON parse error: {} response: {}", e, res.response);
                 format!("Failed to parse LLM response: {}", e)
             })
         }
         Err(e) => {
-            log::error!("daily:: Ollama error: {}", e);
+            tracing::error!("daily:: Ollama error: {}", e);
             Err(format!("Ollama error: {}", e))
         }
     }
@@ -213,7 +213,7 @@ Return JSON matching the schema. Use {} for day_of_week.",
 pub async fn execute_daily_command(date_arg: String) -> Result<DailyNoteData, String> {
     // Resolve date to file path
     let path = resolve_daily_path(&date_arg);
-    log::info!("daily:: resolved {} -> {}", date_arg, path);
+    tracing::info!("daily:: resolved {} -> {}", date_arg, path);
 
     // Read file content
     let content = std::fs::read_to_string(&path)
