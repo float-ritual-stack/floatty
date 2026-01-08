@@ -1,3 +1,4 @@
+mod commands;
 mod config;
 mod ctx_parser;
 mod ctx_watcher;
@@ -6,8 +7,10 @@ mod db;
 #[cfg(target_os = "macos")]
 mod panel;
 mod server;
+mod services;
 mod sync_test;
 
+use commands::{execute_ai_command, execute_shell_command};
 use config::{AggregatorConfig, MarkerCounts, ServerInfo};
 use server::{spawn_server, ServerState};
 use ctx_parser::{CtxParser, ParserConfig};
@@ -191,179 +194,7 @@ fn setup_logging() {
         .init();
 }
 
-use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-/// Execute a shell command and return stdout/stderr
-///
-/// # Security Model
-/// This command is intentionally exposed for the outliner's `sh::` block feature,
-/// which allows users to execute arbitrary shell commands from within blocks.
-/// This is a power-user feature - commands run with the user's shell privileges.
-/// No validation/allowlist is applied since this is equivalent to the user's terminal.
-/// Runs command through user's shell to inherit PATH and other environment setup.
-#[tauri::command]
-async fn execute_shell_command(command: String) -> Result<String, String> {
-    use std::time::Instant;
-    
-    if command.trim().is_empty() {
-        return Ok("".to_string());
-    }
-
-    let start = Instant::now();
-    let command_len = command.len();
-    
-    tracing::info!(command_len = command_len, "Shell command requested");
-
-    // Load config for output size limit
-    let config = AggregatorConfig::load();
-    let max_bytes = config.max_shell_output_bytes;
-
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        // Use user's shell to inherit PATH from .zshrc/.bashrc
-        // This ensures commands like `floatctl` in ~/.cargo/bin work
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-
-        tracing::debug!(shell = %shell, "Executing shell command");
-
-        let output = std::process::Command::new(&shell)
-            .arg("-l")  // Login shell to source profile
-            .arg("-c")  // Execute command string
-            .arg(&command)
-            .output()
-            .map_err(|e| {
-                tracing::error!(error = %e, "Failed to spawn shell");
-                format!("Failed to execute shell: {}", e)
-            })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let exit_code = output.status.code().unwrap_or(-1);
-
-        let result = if output.status.success() {
-            stdout.to_string()
-        } else {
-            format!("{}\nError: {}", stdout, stderr)
-        };
-
-        // Truncate if output exceeds limit (prevents UI freeze on large output)
-        let final_result = if result.len() > max_bytes {
-            // Find safe UTF-8 boundary (avoids panic on multi-byte chars like emoji)
-            // Walk backwards from max_bytes to find a valid char boundary
-            let mut safe_max = max_bytes;
-            while safe_max > 0 && !result.is_char_boundary(safe_max) {
-                safe_max -= 1;
-            }
-            let truncated = &result[..safe_max];
-            // Find last newline to avoid cutting mid-line
-            let cut_point = truncated.rfind('\n').unwrap_or(safe_max);
-            format!(
-                "{}\n\n... [truncated: {} → {} bytes]",
-                &result[..cut_point],
-                result.len(),
-                cut_point
-            )
-        } else {
-            result
-        };
-        
-        Ok::<(String, i32), String>((final_result, exit_code))
-    }).await.map_err(|e| e.to_string())??;
-    
-    let duration_ms = start.elapsed().as_millis() as u64;
-    
-    if result.1 == 0 {
-        tracing::info!(
-            exit_code = result.1,
-            duration_ms = duration_ms,
-            output_bytes = result.0.len(),
-            "Shell command succeeded"
-        );
-    } else {
-        tracing::warn!(
-            exit_code = result.1,
-            duration_ms = duration_ms,
-            "Shell command failed"
-        );
-    }
-    
-    Ok(result.0)
-}
-
-/// Execute an AI prompt using Ollama
-#[tauri::command]
-async fn execute_ai_command(prompt: String) -> Result<String, String> {
-    use std::time::Instant;
-    
-    let start = Instant::now();
-    
-    // Get config for endpoint/model
-    let config = AggregatorConfig::load();
-
-    // Parse endpoint - ollama-rs expects "http://host" format, not just hostname
-    let url = url::Url::parse(&config.ollama_endpoint).map_err(|e| e.to_string())?;
-    let scheme = url.scheme();
-    let host = url.host_str().unwrap_or("localhost");
-    let port = url.port().unwrap_or(11434);
-    let host_with_scheme = format!("{}://{}", scheme, host);
-
-    tracing::info!(
-        model = %config.ollama_model,
-        host = %host_with_scheme,
-        port = port,
-        prompt_len = prompt.len(),
-        "AI command requested"
-    );
-
-    let ollama = Ollama::new(host_with_scheme, port);
-    let model = config.ollama_model.clone();
-
-    let request = GenerationRequest::new(model.clone(), prompt);
-    let max_bytes = config.max_shell_output_bytes;
-
-    match ollama.generate(request).await {
-        Ok(res) => {
-            let duration_ms = start.elapsed().as_millis() as u64;
-            let response_bytes = res.response.len();
-            
-            tracing::info!(
-                model = %model,
-                duration_ms = duration_ms,
-                response_bytes = response_bytes,
-                "AI command succeeded"
-            );
-            
-            let result = res.response;
-            // Truncate if output exceeds limit
-            if result.len() > max_bytes {
-                // Find safe UTF-8 boundary (avoids panic on multi-byte chars)
-                let mut safe_max = max_bytes;
-                while safe_max > 0 && !result.is_char_boundary(safe_max) {
-                    safe_max -= 1;
-                }
-                let cut_point = result[..safe_max].rfind('\n').unwrap_or(safe_max);
-                Ok(format!(
-                    "{}\n\n... [truncated: {} → {} bytes]",
-                    &result[..cut_point],
-                    result.len(),
-                    cut_point
-                ))
-            } else {
-                Ok(result)
-            }
-        },
-        Err(e) => {
-            let duration_ms = start.elapsed().as_millis() as u64;
-            tracing::error!(
-                error = %e,
-                model = %model,
-                duration_ms = duration_ms,
-                "AI command failed"
-            );
-            Err(format!("Ollama error: {}", e))
-        },
-    }
-}
 
 /// Save clipboard image (base64) to temp file and return path
 /// Used for pasting screenshots - saves to /tmp/floatty-clipboard-{timestamp}.png
