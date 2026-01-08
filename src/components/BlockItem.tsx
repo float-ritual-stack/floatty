@@ -5,15 +5,13 @@ import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { layoutStore } from '../hooks/useLayoutStore';
-import { findHandler, executeBlock } from '../lib/executor';
 import { getActionForEvent, isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
 import { BlockDisplay } from './BlockDisplay';
 import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
-import { isDailyBlock, executeDailyBlock } from '../lib/dailyExecutor';
+import { registry, type DailyNoteData } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
-import type { DailyNoteData } from '../lib/dailyExecutor';
 
 interface BlockItemProps {
   id: string;
@@ -281,34 +279,21 @@ export function BlockItem(props: BlockItemProps) {
     } else if (e.key === 'Enter' && !e.shiftKey) {
       // NOTE: Cmd+Enter (zoomInBlock) is handled above via getActionForEvent()
 
-      // Plain Enter on executable blocks = execute (unified handler)
+      // Plain Enter on executable blocks = execute via handler registry
       if (block()) {
         const content = block()!.content;
-
-        // Daily:: blocks: execute via dedicated handler (child-output pattern)
-        if (isDailyBlock(content)) {
-          e.preventDefault();
-          executeDailyBlock(props.id, content, {
-            createBlockInside: store.createBlockInside,
-            updateContent: store.updateBlockContent,
-            setBlockOutput: store.setBlockOutput,
-            setBlockStatus: store.setBlockStatus,
-            deleteBlock: store.deleteBlock,
-            getBlock: (id) => store.blocks[id],
-          });
-          return;
-        }
-
-        // Other executable blocks (sh::, ai::, etc.)
-        const handler = findHandler(content);
+        const handler = registry.findHandler(content);
 
         if (handler) {
           e.preventDefault();
-          executeBlock(props.id, content, {
+          handler.execute(props.id, content, {
             createBlockInside: store.createBlockInside,
             createBlockInsideAtTop: store.createBlockInsideAtTop,
             updateBlockContent: store.updateBlockContent,
             deleteBlock: store.deleteBlock,
+            setBlockOutput: store.setBlockOutput,
+            setBlockStatus: store.setBlockStatus,
+            getBlock: (id) => store.blocks[id],
             paneId: props.paneId,
           });
           return;

@@ -11,7 +11,7 @@
  */
 
 import { getActionForEvent } from '../lib/keybinds';
-import { findHandler, executeBlock } from '../lib/executor';
+import { registry } from '../lib/handlers';
 import { setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
@@ -166,7 +166,7 @@ export function determineKeyAction(
 
   if (key === 'Enter' && !shiftKey) {
     const content = block.content;
-    const handler = findHandler(content);
+    const handler = registry.findHandler(content);
 
     if (handler) {
       return { type: 'execute_block' };

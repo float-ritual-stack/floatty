@@ -6,7 +6,7 @@
  */
 
 import { For, Show } from 'solid-js';
-import type { DailyNoteData, TimelogEntry, PrInfo, ScatteredThought } from '../../lib/dailyExecutor';
+import type { DailyNoteData, TimelogEntry, PrInfo, ScatteredThought } from '../../lib/handlers';
 
 interface DailyViewProps {
   data: DailyNoteData;
