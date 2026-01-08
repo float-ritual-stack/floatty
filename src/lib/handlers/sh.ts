@@ -55,7 +55,7 @@ export const shHandler: BlockHandler = {
     actions.updateBlockContent(outputId, `${outputPrefix}${pendingMessage}`);
 
     try {
-      const rawOutput = await invoke<string>('execute_shell_command', { command: extracted });
+      const rawOutput = await invoke('execute_shell_command', { command: extracted });
       const duration = performance.now() - startTime;
       const cleanOutput = rawOutput.trimEnd();
       console.log('[sh] Complete:', { duration: `${duration.toFixed(1)}ms`, outputBytes: cleanOutput.length });

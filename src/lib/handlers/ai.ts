@@ -55,7 +55,7 @@ export const aiHandler: BlockHandler = {
     actions.updateBlockContent(outputId, `${outputPrefix}${pendingMessage}`);
 
     try {
-      const rawOutput = await invoke<string>('execute_ai_command', { prompt: extracted });
+      const rawOutput = await invoke('execute_ai_command', { prompt: extracted });
       const duration = performance.now() - startTime;
       const cleanOutput = rawOutput.trimEnd();
       console.log('[ai] Complete:', { duration: `${duration.toFixed(1)}ms`, outputBytes: cleanOutput.length });
