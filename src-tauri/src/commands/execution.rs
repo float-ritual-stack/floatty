@@ -13,7 +13,13 @@ pub async fn execute_shell_command(command: String) -> Result<String, String> {
     let config = AggregatorConfig::load();
     let max_bytes = config.max_shell_output_bytes;
     
-    let (output, _exit_code) = execution::execute_shell(command, max_bytes).await?;
+    let (output, exit_code) = execution::execute_shell(command, max_bytes).await?;
+    
+    // Log exit code for debugging (output already contains errors if non-zero)
+    if exit_code != 0 {
+        tracing::debug!(exit_code = exit_code, "Shell command returned non-zero exit code");
+    }
+    
     Ok(output)
 }
 

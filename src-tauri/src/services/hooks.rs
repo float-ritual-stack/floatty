@@ -111,7 +111,14 @@ pub fn uninstall(home_dir: PathBuf) -> Result<(), String> {
         })
         .collect();
     
-    std::fs::write(&zshrc_path, filtered.join("\n"))
+    // Preserve trailing newline if original had one
+    let output = if content.ends_with('\n') {
+        format!("{}\n", filtered.join("\n"))
+    } else {
+        filtered.join("\n")
+    };
+    
+    std::fs::write(&zshrc_path, output)
         .map_err(|e| e.to_string())?;
     
     tracing::info!(path = ?zshrc_path, "Removed floatty hooks from .zshrc");

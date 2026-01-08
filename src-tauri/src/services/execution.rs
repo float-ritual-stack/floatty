@@ -29,7 +29,7 @@ pub async fn execute_shell(command: String, max_bytes: usize) -> Result<(String,
     
     tracing::info!(command_len = command_len, "Shell command requested");
 
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         // Use user's shell to inherit PATH from .zshrc/.bashrc
         // This ensures commands like `floatctl` in ~/.cargo/bin work
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());

@@ -15,7 +15,7 @@ pub fn get_workspace_state(
     let inner = state
         .inner
         .as_ref()
-        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+        .ok_or_else(|| "Workspace system unavailable: database not initialized".to_string())?;
 
     workspace::get_state(&inner.db, &key)
 }
@@ -30,7 +30,7 @@ pub fn save_workspace_state(
     let inner = state
         .inner
         .as_ref()
-        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+        .ok_or_else(|| "Workspace system unavailable: database not initialized".to_string())?;
 
     workspace::set_state(&inner.db, &key, &state_json)
 }
@@ -41,7 +41,7 @@ pub fn clear_workspace(state: State<AppState>) -> Result<(), String> {
     let inner = state
         .inner
         .as_ref()
-        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
+        .ok_or_else(|| "Workspace system unavailable: database not initialized".to_string())?;
 
     workspace::clear(&inner.store)
 }
