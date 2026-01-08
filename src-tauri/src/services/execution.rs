@@ -1,7 +1,7 @@
 /// Shell and AI command execution services
 /// 
-/// Pure business logic for executing commands - no Tauri dependencies.
-/// Testable without Tauri runtime.
+/// Pure business logic for executing commands - minimal external dependencies.
+/// Uses tokio for async execution. Testable without Tauri runtime.
 
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
 use std::time::Instant;
