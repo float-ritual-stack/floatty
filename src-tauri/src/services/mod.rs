@@ -4,3 +4,4 @@ pub mod clipboard;
 pub mod ctx;
 pub mod execution;
 pub mod hooks;
+pub mod workspace;

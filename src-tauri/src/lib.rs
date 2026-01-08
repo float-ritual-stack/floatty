@@ -11,10 +11,10 @@ mod services;
 mod sync_test;
 
 use commands::{
-    check_hooks_installed, clear_ctx_markers, execute_ai_command, execute_shell_command,
-    get_ctx_config, get_ctx_counts, get_ctx_markers, get_theme,
-    install_shell_hooks, save_clipboard_image, set_ctx_config, set_theme,
-    uninstall_shell_hooks,
+    check_hooks_installed, clear_ctx_markers, clear_workspace, execute_ai_command,
+    execute_shell_command, get_ctx_config, get_ctx_counts, get_ctx_markers, get_theme,
+    get_workspace_state, install_shell_hooks, save_clipboard_image, save_workspace_state,
+    set_ctx_config, set_theme, uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
 use server::{spawn_server, ServerState};
@@ -24,7 +24,6 @@ use db::FloattyDb;
 use floatty_core::YDocStore;
 use std::sync::Arc;
 use tauri::{Manager, State};
-use yrs::{Array, Map, ReadTxn, Transact};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
@@ -126,66 +125,6 @@ fn setup_logging() {
         .with(file_layer)
         .with(stdout_layer)
         .init();
-}
-
-// Workspace Layout Persistence (FLO-81)
-// ============================================================================
-
-/// Get persisted workspace layout state (JSON blob)
-#[tauri::command]
-fn get_workspace_state(state: State<AppState>, key: String) -> Result<Option<String>, String> {
-    let inner = state.inner.as_ref()
-        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
-
-    inner.db.get_workspace_state(&key).map_err(|e| e.to_string())
-}
-
-/// Save workspace layout state (JSON blob)
-#[tauri::command]
-fn save_workspace_state(state: State<AppState>, key: String, state_json: String) -> Result<(), String> {
-    let inner = state.inner.as_ref()
-        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
-
-    inner.db.set_workspace_state(&key, &state_json).map_err(|e| e.to_string())
-}
-
-/// Clear the entire workspace (blocks and rootIds) efficiently
-#[tauri::command]
-fn clear_workspace(state: State<AppState>) -> Result<(), String> {
-    let inner = state.inner.as_ref()
-        .ok_or_else(|| "ctx:: system unavailable".to_string())?;
-
-    let doc = inner.store.doc();
-    let doc_guard = doc.write().map_err(|e| e.to_string())?;
-
-    // Scope mutable transaction to drop before creating read transaction
-    {
-        let mut txn = doc_guard.transact_mut();
-
-        // Clear rootIds
-        let root_ids = txn.get_array("rootIds");
-        if let Some(root_ids) = root_ids {
-            let len = root_ids.len(&txn);
-            if len > 0 {
-                root_ids.remove_range(&mut txn, 0, len);
-            }
-        }
-
-        // Clear blocks map
-        let blocks = txn.get_map("blocks");
-        if let Some(blocks) = blocks {
-            let keys: Vec<String> = blocks.keys(&txn).map(|k| k.to_string()).collect();
-            for key in keys {
-                blocks.remove(&mut txn, &key);
-            }
-        }
-    } // txn dropped here
-    drop(doc_guard);
-
-    // Persist empty state via store's compaction
-    inner.store.force_compact().map_err(|e| e.to_string())?;
-
-    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

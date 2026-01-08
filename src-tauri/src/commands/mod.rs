@@ -10,6 +10,7 @@ pub mod clipboard;
 pub mod ctx;
 pub mod execution;
 pub mod hooks;
+pub mod workspace;
 
 // Re-export command functions for registration
 pub use clipboard::save_clipboard_image;
@@ -19,3 +20,4 @@ pub use ctx::{
 };
 pub use execution::{execute_ai_command, execute_shell_command};
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
+pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};
