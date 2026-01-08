@@ -191,32 +191,50 @@ Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
 - WebSocket: `ws://127.0.0.1:8765/ws`
 - REST API: `http://127.0.0.1:8765/api/v1/blocks`
 
-### Logging
+### Logging (NEW: Structured with tracing)
 
-**Log location**: `~/Library/Logs/dev.float.floatty/float-pty.log`
+**Log location**: `~/.floatty/logs/floatty-YYYY-MM-DD.jsonl` (JSON lines, rotates daily)
 
-Setup in `lib.rs` via `tauri_plugin_log`:
+Setup in `lib.rs` via `tracing`:
 ```rust
-tauri_plugin_log::Builder::default()
-    .level(log::LevelFilter::Info)
-    .targets([
-        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
-        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
-    ])
+tracing_subscriber::fmt()
+    .json()  // Structured JSON for LLM parsing
+    .with_writer(tracing_appender::rolling::daily(log_dir, "floatty"))
 ```
 
-**When debugging ctx:: sidebar issues**, check for:
+**Query logs with jq**:
 ```bash
-grep -i "ctx\|watcher\|parser\|ollama" ~/Library/Logs/dev.float.floatty/float-pty.log
+# Find slow shell commands (>1s)
+jq 'select(.fields.duration_ms > 1000)' ~/.floatty/logs/*.jsonl
+
+# Trace a specific ctx:: marker parse
+jq 'select(.span.marker_id == "ctx_abc123")' ~/.floatty/logs/*.jsonl
+
+# AI command errors only
+jq 'select(.level == "ERROR" and .target == "floatty::commands::ai")' ~/.floatty/logs/*.jsonl
+
+# All operations with their performance
+jq 'select(.fields.duration_ms) | {target, duration_ms, fields}' ~/.floatty/logs/*.jsonl
+```
+
+**Example structured log entry**:
+```json
+{"timestamp":"2026-01-08T10:15:42.123Z","level":"INFO","target":"floatty::commands::shell","fields":{"command_len":42,"duration_ms":1234,"exit_code":0,"output_bytes":5678},"span":{"request_id":"req_xyz"}}
+```
+
+**When debugging ctx:: sidebar issues**, query structured logs:
+```bash
+jq 'select(.target | test("ctx|watcher|parser"))' ~/.floatty/logs/*.jsonl
 ```
 
 **Common ctx:: issues**:
-- No ctx:: logs at all → watcher/parser not starting (check `CtxDatabase::open()` or config issues)
-- "Failed to watch directory" → `watch_path` in config doesn't exist (tilde not expanded?)
-- Parser errors → Ollama endpoint wrong or unreachable (check `ollama_endpoint` in config)
+- No ctx:: logs at all → check `jq 'select(.target | test("ctx"))' ~/.floatty/logs/*.jsonl` for errors
+- "Failed to watch directory" → `jq 'select(.fields.error and (.target == "floatty::ctx_watcher"))' ~/.floatty/logs/*.jsonl`
+- Parser errors → `jq 'select(.level == "ERROR" and (.target == "floatty::ctx_parser"))' ~/.floatty/logs/*.jsonl`
 
-**Note**: Early boot logging (before tauri_plugin_log init) uses `eprintln!` and goes to stderr, not the log file.
+**Dev builds**: Pretty-printed to stdout (human-readable), production writes JSON to file.
+
+See `docs/architecture/LOGGING_STRATEGY.md` for complete guide and LLM integration patterns.
 
 ### Keyboard Shortcuts
 
