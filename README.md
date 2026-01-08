@@ -121,6 +121,39 @@ Blocks created via API appear instantly in UI via WebSocket.
 
 API key is stored in `~/.floatty/config.toml`.
 
+## Structured Logging (NEW)
+
+Floatty uses structured logging with `tracing` for LLM-parseable observability.
+
+**Log location**: `~/.floatty/logs/floatty-{date}.jsonl` (daily rotation)
+
+**JSON format** - every operation logs structured fields:
+```json
+{
+  "timestamp": "2026-01-08T08:00:00.000Z",
+  "level": "INFO",
+  "target": "float_pty_lib",
+  "fields": {
+    "duration_ms": 42,
+    "output_bytes": 1024,
+    "exit_code": 0
+  }
+}
+```
+
+**Query logs with jq**:
+```bash
+# Find slow operations
+jq 'select(.fields.duration_ms > 1000)' ~/.floatty/logs/floatty-*.jsonl
+
+# Trace specific operations
+jq 'select(.span.marker_id == "ctx_abc123")' ~/.floatty/logs/*.jsonl
+```
+
+**Enable verbose logging**: `RUST_LOG=debug`
+
+See `docs/CHANGELOG_STRUCTURED_LOGGING.md` for details.
+
 ## Tech Stack
 
 - **Frontend**: SolidJS, TypeScript, Vite
@@ -130,6 +163,7 @@ API key is stored in `~/.floatty/config.toml`.
 - **Block Server**: floatty-server (Axum HTTP + WebSocket)
 - **PTY**: Vendored tauri-plugin-pty with custom batching
 - **Theming**: 5 bundled themes, hot-swap via ⌘;
+- **Logging**: Structured tracing with JSON output for LLM observability
 
 ## Known Issues
 

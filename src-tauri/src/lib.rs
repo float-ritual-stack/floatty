@@ -19,6 +19,8 @@ use std::sync::Arc;
 use tauri::{Manager, State};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use yrs::{Array, Map, ReadTxn, Transact};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 /// Default server port (matches floatty-server)
 const DEFAULT_SERVER_PORT: u16 = 8765;
@@ -122,6 +124,73 @@ fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
         .ok_or_else(|| "Server not running".to_string())
 }
 
+/// Initialize structured logging with tracing
+/// 
+/// Logs are written to:
+/// - File: ~/.floatty/logs/floatty-{date}.jsonl (structured JSON, daily rotation)
+/// - Stdout: Human-readable format (dev builds only)
+/// 
+/// Configure via RUST_LOG env var, defaults to INFO level
+fn setup_logging() {
+    let log_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".floatty")
+        .join("logs");
+    
+    // Create log directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("Failed to create log directory: {}", e);
+        return;
+    }
+    
+    // File appender: ~/.floatty/logs/floatty-{date}.jsonl
+    let file_appender = match RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("floatty")
+        .filename_suffix("jsonl")
+        .build(log_dir) {
+            Ok(appender) => appender,
+            Err(e) => {
+                eprintln!("Failed to create log appender: {}", e);
+                return;
+            }
+        };
+    
+    // Structured JSON logs to file (always enabled)
+    let file_layer = fmt::layer()
+        .json()
+        .with_writer(file_appender)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .with_file(true)
+        .with_line_number(true);
+    
+    // Human-readable logs to stdout (dev only)
+    let stdout_layer = if cfg!(debug_assertions) {
+        Some(fmt::layer()
+            .with_writer(std::io::stdout)
+            .with_target(true)
+            .with_level(true)
+            .with_ansi(true)
+            .pretty())
+    } else {
+        None
+    };
+    
+    // ENV filter: RUST_LOG=debug or default to info
+    let filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+    
+    // Initialize tracing subscriber
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(file_layer)
+        .with(stdout_layer)
+        .init();
+}
+
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -135,28 +204,41 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Runs command through user's shell to inherit PATH and other environment setup.
 #[tauri::command]
 async fn execute_shell_command(command: String) -> Result<String, String> {
+    use std::time::Instant;
+    
     if command.trim().is_empty() {
         return Ok("".to_string());
     }
+
+    let start = Instant::now();
+    let command_len = command.len();
+    
+    tracing::info!(command_len = command_len, "Shell command requested");
 
     // Load config for output size limit
     let config = AggregatorConfig::load();
     let max_bytes = config.max_shell_output_bytes;
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         // Use user's shell to inherit PATH from .zshrc/.bashrc
         // This ensures commands like `floatctl` in ~/.cargo/bin work
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+        tracing::debug!(shell = %shell, "Executing shell command");
 
         let output = std::process::Command::new(&shell)
             .arg("-l")  // Login shell to source profile
             .arg("-c")  // Execute command string
             .arg(&command)
             .output()
-            .map_err(|e| format!("Failed to execute shell: {}", e))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to spawn shell");
+                format!("Failed to execute shell: {}", e)
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let exit_code = output.status.code().unwrap_or(-1);
 
         let result = if output.status.success() {
             stdout.to_string()
@@ -165,7 +247,7 @@ async fn execute_shell_command(command: String) -> Result<String, String> {
         };
 
         // Truncate if output exceeds limit (prevents UI freeze on large output)
-        if result.len() > max_bytes {
+        let final_result = if result.len() > max_bytes {
             // Find safe UTF-8 boundary (avoids panic on multi-byte chars like emoji)
             // Walk backwards from max_bytes to find a valid char boundary
             let mut safe_max = max_bytes;
@@ -175,21 +257,46 @@ async fn execute_shell_command(command: String) -> Result<String, String> {
             let truncated = &result[..safe_max];
             // Find last newline to avoid cutting mid-line
             let cut_point = truncated.rfind('\n').unwrap_or(safe_max);
-            Ok(format!(
+            format!(
                 "{}\n\n... [truncated: {} → {} bytes]",
                 &result[..cut_point],
                 result.len(),
                 cut_point
-            ))
+            )
         } else {
-            Ok(result)
-        }
-    }).await.map_err(|e| e.to_string())?
+            result
+        };
+        
+        Ok::<(String, i32), String>((final_result, exit_code))
+    }).await.map_err(|e| e.to_string())??;
+    
+    let duration_ms = start.elapsed().as_millis() as u64;
+    
+    if result.1 == 0 {
+        tracing::info!(
+            exit_code = result.1,
+            duration_ms = duration_ms,
+            output_bytes = result.0.len(),
+            "Shell command succeeded"
+        );
+    } else {
+        tracing::warn!(
+            exit_code = result.1,
+            duration_ms = duration_ms,
+            "Shell command failed"
+        );
+    }
+    
+    Ok(result.0)
 }
 
 /// Execute an AI prompt using Ollama
 #[tauri::command]
 async fn execute_ai_command(prompt: String) -> Result<String, String> {
+    use std::time::Instant;
+    
+    let start = Instant::now();
+    
     // Get config for endpoint/model
     let config = AggregatorConfig::load();
 
@@ -200,19 +307,32 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
     let port = url.port().unwrap_or(11434);
     let host_with_scheme = format!("{}://{}", scheme, host);
 
-    log::info!("ai:: executing prompt on {}:{} model={}", host_with_scheme, port, &config.ollama_model);
+    tracing::info!(
+        model = %config.ollama_model,
+        host = %host_with_scheme,
+        port = port,
+        prompt_len = prompt.len(),
+        "AI command requested"
+    );
 
     let ollama = Ollama::new(host_with_scheme, port);
-    let model = config.ollama_model;
+    let model = config.ollama_model.clone();
 
-    let request = GenerationRequest::new(model, prompt);
-
-    log::info!("ai:: sending request to Ollama...");
+    let request = GenerationRequest::new(model.clone(), prompt);
     let max_bytes = config.max_shell_output_bytes;
 
     match ollama.generate(request).await {
         Ok(res) => {
-            log::info!("ai:: got response ({} chars)", res.response.len());
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let response_bytes = res.response.len();
+            
+            tracing::info!(
+                model = %model,
+                duration_ms = duration_ms,
+                response_bytes = response_bytes,
+                "AI command succeeded"
+            );
+            
             let result = res.response;
             // Truncate if output exceeds limit
             if result.len() > max_bytes {
@@ -233,7 +353,13 @@ async fn execute_ai_command(prompt: String) -> Result<String, String> {
             }
         },
         Err(e) => {
-            log::error!("ai:: Ollama error: {}", e);
+            let duration_ms = start.elapsed().as_millis() as u64;
+            tracing::error!(
+                error = %e,
+                model = %model,
+                duration_ms = duration_ms,
+                "AI command failed"
+            );
             Err(format!("Ollama error: {}", e))
         },
     }
@@ -411,6 +537,11 @@ fn uninstall_shell_hooks() -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize structured logging FIRST (before any other operations)
+    setup_logging();
+    
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Floatty starting");
+    
     let context = tauri::generate_context!();
 
     // Load config from ~/.floatty/config.toml (or defaults)
@@ -616,7 +747,7 @@ pub fn run() {
                         // Hide instead of destroy to preserve state/memory
                         let _ = window.hide();
                         api.prevent_close();
-                        log::info!("[panel] Intercepted close for {}, hiding instead", window.label());
+                        tracing::info!(window_label = %window.label(), "Panel close intercepted, hiding instead");
                     }
                 }
             }
@@ -632,22 +763,11 @@ pub fn run() {
                 let build_mode = if cfg!(debug_assertions) { "dev" } else { "release" };
                 let title = format!("floatty ({})", build_mode);
                 let _ = window.set_title(&title);
-            }
-
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .targets([
-                            // Terminal output (dev console)
-                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                            // Webview console.log/warn/error → Rust log
-                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
-                            // File: ~/Library/Logs/com.floatty.app/floatty.log
-                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
-                        ])
-                        .build(),
-                )?;
+                tracing::info!(
+                    window_title = %title,
+                    debug_mode = cfg!(debug_assertions),
+                    "Window title set"
+                );
             }
             Ok(())
         })

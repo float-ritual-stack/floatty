@@ -64,12 +64,12 @@ impl CtxWatcher {
         *running.lock().unwrap_or_else(|e| e.into_inner()) = true;
 
         let handle = thread::spawn(move || {
-            log::info!("Starting ctx:: watcher on {:?} (max age: {} hours)",
+            tracing::info!("Starting ctx:: watcher on {:?} (max age: {} hours)",
                        config.watch_path, config.max_age_hours);
 
             // Initial scan of existing files (only recent ones)
             if let Err(e) = scan_directory(&config.watch_path, &db, &file_positions, config.max_age_hours) {
-                log::error!("Initial scan failed: {}", e);
+                tracing::error!("Initial scan failed: {}", e);
             }
 
             // Set up file watcher
@@ -79,11 +79,11 @@ impl CtxWatcher {
                     match res {
                         Ok(event) => {
                             if let Err(e) = tx.send(event) {
-                                log::error!("File watcher channel disconnected: {}", e);
+                                tracing::error!("File watcher channel disconnected: {}", e);
                             }
                         }
                         Err(e) => {
-                            log::error!("File watcher error: {:?}", e);
+                            tracing::error!("File watcher error: {:?}", e);
                         }
                     }
                 },
@@ -91,14 +91,14 @@ impl CtxWatcher {
             ) {
                 Ok(w) => w,
                 Err(e) => {
-                    log::error!("Failed to create watcher: {}", e);
+                    tracing::error!("Failed to create watcher: {}", e);
                     return;
                 }
             };
 
             // Start watching
             if let Err(e) = watcher.watch(&config.watch_path, RecursiveMode::Recursive) {
-                log::error!("Failed to watch directory: {}", e);
+                tracing::error!("Failed to watch directory: {}", e);
                 return;
             }
 
@@ -113,7 +113,7 @@ impl CtxWatcher {
                         for path in event.paths {
                             if path.extension().map_or(false, |ext| ext == "jsonl") {
                                 if let Err(e) = process_file(&path, &db, &file_positions) {
-                                    log::error!("Failed to process {:?}: {}", path, e);
+                                    tracing::error!("Failed to process {:?}: {}", path, e);
                                 }
                             }
                         }
@@ -123,7 +123,7 @@ impl CtxWatcher {
                 }
             }
 
-            log::info!("ctx:: watcher stopped");
+            tracing::info!("ctx:: watcher stopped");
         });
 
         // Store handle for join on Drop
@@ -144,9 +144,9 @@ impl Drop for CtxWatcher {
 
         // Join the thread if it's running (thread checks running flag every ~1 second)
         if let Some(handle) = self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            log::info!("[CtxWatcher] Joining watcher thread on drop...");
+            tracing::info!("[CtxWatcher] Joining watcher thread on drop...");
             if handle.join().is_err() {
-                log::warn!("[CtxWatcher] Watcher thread panicked during join");
+                tracing::warn!("[CtxWatcher] Watcher thread panicked during join");
             }
         }
     }
@@ -160,8 +160,8 @@ fn scan_directory(
     max_age_hours: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !dir.exists() {
-        log::error!("Watch directory does not exist: {:?}", dir);
-        log::error!("Check 'watch_path' in ~/.floatty/config.toml");
+        tracing::error!("Watch directory does not exist: {:?}", dir);
+        tracing::error!("Check 'watch_path' in ~/.floatty/config.toml");
         return Err(format!("Watch directory {:?} does not exist", dir).into());
     }
 
@@ -192,7 +192,7 @@ fn scan_directory(
         }
     }
 
-    log::info!("Scanned {} recent files, skipped {} old files (>{} hours)",
+    tracing::info!("Scanned {} recent files, skipped {} old files (>{} hours)",
                processed, skipped, max_age_hours);
 
     Ok(())
@@ -260,7 +260,7 @@ fn process_file(
         }
 
         if new_markers > 0 {
-            log::info!("Found {} new ctx:: markers in {:?}", new_markers, path);
+            tracing::info!("Found {} new ctx:: markers in {:?}", new_markers, path);
         }
     }
 

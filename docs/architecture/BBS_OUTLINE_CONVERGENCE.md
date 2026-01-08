@@ -504,11 +504,56 @@ Key outputs: Hook interface definition, execution flow (BEFORE → HANDLER → A
 Related: [[hook-system]], [[hook-system-conversation]]
 
 ## headless-server
-Jan 3 conversation exploring BBS→outline convergence. Conversation: https://claude.ai/chat/1477f161-eea8-4145-acf9-0bfc4bc6a19f
+The architectural pattern that made BBS→outline convergence possible. Emerged Jan 3, solidified through Jan 7.
 
-Key question: "/inbox/daddy/msg-001.md = blocks[inbox-daddy].children[msg-001]?" - Are BBS files and outline nodes the same thing? Answer resolved in Jan 7 convergence: Yes, they're projections of same substrate.
+**What It Is**: floatty-server - a standalone Rust binary (Axum + yrs) serving the block CRDT over HTTP/WebSocket. Desktop GUI becomes "one client among many."
 
-Related: [[headless-server-conversation]], [[projection]], [[root-nodes]]
+**Why It Matters**: Before headless-server, the outline lived inside the Tauri app. Blocks were accessed through Tauri IPC. Agents couldn't participate. CLI couldn't participate. The outline was a desktop-only artifact.
+
+After headless-server:
+```
+┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+│ Desktop  │  │   CLI    │  │  Agent   │  │  Files   │
+│ (GUI)    │  │ (curl)   │  │ (API)    │  │ (watch)  │
+└────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘
+     └───────┬─────┴──────┬──────┴──────┬──────┘
+             │   HTTP/WS  │             │
+       ┌─────▼────────────▼─────────────▼─────┐
+       │         floatty-server               │
+       │         (yrs + axum + sqlite)        │
+       └──────────────────────────────────────┘
+```
+
+**The API Surface**:
+- `GET /api/v1/blocks` - full block tree
+- `POST /api/v1/blocks` - create block
+- `PATCH /api/v1/blocks/:id` - update block
+- `DELETE /api/v1/blocks/:id` - delete block
+- `GET /api/v1/state-vector` - CRDT sync negotiation
+- `WS /ws` - realtime bidirectional sync
+
+**The Convergence Key**: Once agents could POST blocks to the same substrate that the desktop reads, the question became obvious: "If `/inbox/daddy/msg-001.md` writes to the filesystem, and file-watchers sync to floatty-server, and floatty-server updates Y.Doc, and desktop reads Y.Doc... aren't BBS files just another access pattern to the outline?"
+
+Answer: Yes. That's the whole insight.
+
+**Technical Proof** (Jan 3 @ 9:20am):
+```bash
+# Agent writes via API
+curl -X POST http://localhost:8765/api/v1/blocks \
+  -H "Content-Type: application/json" \
+  -d '{"content": "ctx::2026-01-03 agent test", "parentId": null}'
+
+# Desktop sees it instantly (WebSocket push)
+# No sync layer. Same substrate. Different view.
+```
+
+**Implementation Files**:
+- `floatty-server/src/main.rs` - Axum server, WS handler
+- `floatty-server/src/config.rs` - Port, data dir, Ollama settings
+- `floatty-core/src/lib.rs` - Y.Doc operations extracted from db.rs
+- `src-tauri/src/server.rs` - Sidecar spawning, health checks
+
+Related: [[headless-server-conversation]], [[projection]], [[root-nodes]], [[file-watchers]], [[floatty-sprint]]
 
 ## async-agents
 Nov 15 BBS architectural pivot. Conversation: https://claude.ai/chat/dc73c0c1-d635-4aa2-93de-08b95136f731
@@ -541,9 +586,52 @@ Related: [[async-agents]], [[root-nodes]]
 ## headless-server-conversation
 Jan 3 BBS→outline convergence question. URL: https://claude.ai/chat/1477f161-eea8-4145-acf9-0bfc4bc6a19f
 
-Exploring relationship between BBS files and outline nodes. Question resolved Jan 7: same substrate, multiple views.
+**The Scene**: Saturday Jan 3 @ 10:12 AM. Starting `/feature-dev:feature-dev` for headless server spike. Bootstrap command: `floatctl bbs get floatty-architecture -n 1`. The question that surfaced:
 
-Related: [[headless-server]], [[projection]]
+> "/inbox/daddy/msg-001.md = blocks[inbox-daddy].children[msg-001]?"
+
+**Translation**: When an agent writes to `/inbox/daddy/msg-001.md` (BBS file), is that the same thing as creating a block under the `inbox-daddy` node in the outline? Or are these two separate systems that need sync?
+
+**The Architecture Question Being Drawn**:
+```
+Current: Two systems needing sync?
+┌────────────────┐     ?????     ┌────────────────┐
+│  BBS Files     │◄────────────►│  Outline Nodes │
+│  /inbox/*.md   │              │  blocks[...]   │
+└────────────────┘              └────────────────┘
+
+Or: Same substrate, different access patterns?
+┌────────────────┐  ┌────────────┐  ┌────────────┐
+│ BBS Files      │  │ Outline UI │  │ Agents     │
+│ (file system)  │  │ (desktop)  │  │ (API)      │
+└───────┬────────┘  └─────┬──────┘  └─────┬──────┘
+        │                 │               │
+        └────────┬────────┴───────────────┘
+                 │
+           ┌─────▼─────┐
+           │ Y.Doc     │  ← Single source of truth
+           │ (CRDT)    │
+           └───────────┘
+```
+
+**The Work That Followed**:
+- 06:15am-09:20am: Headless architecture Phase 3+3.5 complete
+- Phase 3: UI ↔ floatty-server HTTP sync (replaced Tauri IPC)
+- Phase 3.5: WebSocket bidirectional sync
+- Key proof: `curl POST → instant UI update` (agents write, desktop sees)
+
+**The Question Left Open**: If agents can POST to floatty-server and blocks appear in the outline, and if file watchers can sync filesystem changes into the outline... are "BBS files" and "outline nodes" actually different things? Or just different access patterns to the same CRDT substrate?
+
+**Resolution** (Jan 7 @ 3:50 PM): They're the same thing. [[root-nodes]] = boards. [[blocks]] = posts. [[activity-feed]] = projection. [[file-watchers]] = bidirectional sync. One substrate, multiple views.
+
+**Karen's Passenger List For This Conversation**:
+- Primary decision: Extract floatty-server as standalone binary
+- Key files touched: db.rs → floatty-core extraction, config.rs, server.rs, api.rs
+- Architecture diagrams: Before (Tauri IPC) → After (HTTP/WS multi-client)
+- The question that haunted: "Is a BBS post a block, or does it become a block?"
+- The answer that emerged: "It IS a block. Always was."
+
+Related: [[headless-server]], [[projection]], [[file-watchers]], [[floatty-sprint]]
 
 ## middleware-conversation
 Jan 1 hook layer distinction. URL: https://claude.ai/chat/c5732e8d-1f7b-4814-a8bb-01772a1be8e4

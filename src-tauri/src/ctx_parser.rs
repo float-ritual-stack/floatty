@@ -144,7 +144,7 @@ impl CtxParser {
         {
             let mut guard = self.running.lock().unwrap_or_else(|e| e.into_inner());
             if *guard {
-                log::warn!("ctx:: parser already running, ignoring duplicate start()");
+                tracing::warn!("ctx parser already running, ignoring duplicate start()");
                 return;
             }
             *guard = true;
@@ -157,14 +157,14 @@ impl CtxParser {
         let _doc = Arc::clone(&self.doc); // Reserved for future Yjs sync
 
         let handle = thread::spawn(move || {
-            log::info!("Starting ctx:: parser worker");
+            tracing::info!("Starting ctx parser worker");
 
             // Create tokio runtime for async HTTP
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(e) => {
-                    log::error!("Failed to create tokio runtime for parser: {}", e);
-                    log::error!("ctx:: parser will not function - markers will remain pending");
+                    tracing::error!(error = %e, "Failed to create tokio runtime for parser");
+                    tracing::error!("ctx parser will not function - markers will remain pending");
                     return;
                 }
             };
@@ -177,9 +177,13 @@ impl CtxParser {
                 // Get pending markers
                 match db.get_pending(10) {
                     Ok(markers) if !markers.is_empty() => {
-                        log::info!("Processing {} pending markers", markers.len());
+                        let marker_count = markers.len();
+                        tracing::info!(marker_count = marker_count, "Processing pending markers");
 
                         for marker in markers {
+                            let marker_span = tracing::info_span!("parse_marker", marker_id = %marker.id);
+                            let _guard = marker_span.enter();
+                            
                             let result = rt.block_on(parse_marker(&client, &config, &marker.raw_line));
 
                             match result {
@@ -187,28 +191,33 @@ impl CtxParser {
                                     match serde_json::to_string(&parsed) {
                                         Ok(json) => {
                                             if let Err(e) = db.update_parsed(&marker.id, &json) {
-                                                log::error!("Failed to update marker {}: {}", marker.id, e);
+                                                tracing::error!(error = %e, "Failed to update marker");
                                             } else {
+                                                tracing::debug!(
+                                                    timestamp = ?parsed.timestamp,
+                                                    project = ?parsed.project,
+                                                    "Marker parsed successfully"
+                                                );
                                                 // Sync to Yjs (DISABLED for now)
                                                 /*
                                                 if let Err(e) = sync_to_yjs(&doc, &marker.id, &parsed) {
-                                                    log::error!("Failed to sync marker {} to Yjs: {}", marker.id, e);
+                                                    tracing::error!(error = %e, "Failed to sync marker to Yjs");
                                                 }
                                                 */
                                             }
                                         }
                                         Err(e) => {
-                                            log::error!("Failed to serialize parsed ctx for {}: {}", marker.id, e);
+                                            tracing::error!(error = %e, "Failed to serialize parsed ctx");
                                             if let Err(e) = db.mark_error(&marker.id) {
-                                                log::error!("Failed to mark error: {}", e);
+                                                tracing::error!(error = %e, "Failed to mark error");
                                             }
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    log::warn!("Failed to parse marker {}: {}", marker.id, e);
+                                    tracing::warn!(error = %e, "Failed to parse marker");
                                     if let Err(e) = db.mark_error(&marker.id) {
-                                        log::error!("Failed to mark error: {}", e);
+                                        tracing::error!(error = %e, "Failed to mark error");
                                     }
                                 }
                             }
@@ -217,18 +226,18 @@ impl CtxParser {
                     Ok(_) => {
                         // No pending markers, check for error retries
                         if let Err(e) = db.reset_errors_for_retry(config.max_retries) {
-                            log::error!("Failed to reset errors: {}", e);
+                            tracing::error!(error = %e, "Failed to reset errors");
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to get pending markers: {}", e);
+                        tracing::error!(error = %e, "Failed to get pending markers");
                     }
                 }
 
                 thread::sleep(Duration::from_millis(config.poll_interval_ms));
             }
 
-            log::info!("ctx:: parser worker stopped");
+            tracing::info!("ctx parser worker stopped");
         });
 
         // Store handle for join on Drop
@@ -249,9 +258,9 @@ impl Drop for CtxParser {
 
         // Join the thread if it's running (thread checks running flag every poll_interval_ms)
         if let Some(handle) = self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            log::info!("[CtxParser] Joining parser thread on drop...");
+            tracing::info!("Joining ctx parser thread on drop");
             if handle.join().is_err() {
-                log::warn!("[CtxParser] Parser thread panicked during join");
+                tracing::warn!("ctx parser thread panicked during join");
             }
         }
     }
