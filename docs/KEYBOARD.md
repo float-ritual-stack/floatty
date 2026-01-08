@@ -1,6 +1,6 @@
-# Keyboard Architecture
+# Keyboard Reference
 
-This document describes floatty's outliner keyboard handling architecture, designed for testability and potential extraction as a reusable component.
+This document describes floatty's outliner keyboard handling architecture.
 
 ## 5-Layer Architecture
 
@@ -62,16 +62,9 @@ This document describes floatty's outliner keyboard handling architecture, desig
 
 ## State That Affects Keyboard Behavior
 
-Keyboard actions depend on these discrete states:
-
 ### Cursor Position (Discrete)
 ```typescript
 type CursorAt = 'start' | 'middle' | 'end';
-
-// Derived from:
-// - cursor.isAtStart() → 'start'
-// - cursor.isAtEnd() → 'end'
-// - otherwise → 'middle'
 ```
 
 **Affects:**
@@ -100,7 +93,7 @@ interface TreePosition {
 - `Escape` → zoom out (only if zoomed)
 - `Backspace` at start → prevent merge if hasChildren
 
-### Selection State (FLO-74, FLO-95)
+### Selection State
 ```typescript
 interface SelectionState {
   selectedBlockIds: Set<string>;
@@ -109,51 +102,11 @@ interface SelectionState {
 ```
 
 **Affects:**
-- `Shift+Arrow` → extend range selection (bypasses cursor check)
-- `Cmd+A` → progressive selection (see sequence below)
+- `Shift+Arrow` → extend range selection
+- `Cmd+A` → progressive selection (see below)
 - `Cmd+C` → copy selected blocks as markdown
 - `Delete/Backspace` on selection → bulk delete
 - `Escape` → clear selection
-
-**Progressive Cmd+A Sequence (FLO-95):**
-| Sequence | Level | Scope |
-|----------|-------|-------|
-| `Cmd+A` | 0 | Focused block only |
-| `Cmd+A, A` | 1 | Siblings + all descendants |
-| `Cmd+A, A, A` | 2 | Parent scope + all descendants |
-| `Cmd+A, A, A, A` | 3 | Grandparent scope |
-| ... | ... | Continue climbing |
-| `Cmd+A × 10` | 9 | Select all |
-
-**FLO-95 Fix:** Selection now includes collapsed subtrees (for copy/delete operations).
-
-### Collapse State (FLO-66)
-
-Per-pane collapse state managed by `paneStore`:
-```typescript
-collapsed: Record<paneId, Record<blockId, boolean>>
-```
-
-**Affects:**
-- `Cmd+.` → toggle collapse on focused block
-- `Cmd+E` → progressive expand (see sequence below)
-- `Cmd+Shift+E` → progressive collapse (Shift inverts direction)
-
-**Progressive Expand/Collapse Sequences:**
-| Sequence | Action |
-|----------|--------|
-| `Cmd+E` | Expand to depth 1 (direct children visible) |
-| `Cmd+E, E` | Expand to depth 2 |
-| `Cmd+E, E, E` | Expand to depth 3 |
-| `Cmd+E, E, E, E` | Expand all |
-| `Cmd+Shift+E` | Collapse at depth 1 |
-| `Cmd+Shift+E, E` | Collapse at depth 2 |
-| `Cmd+Shift+E, E, E, E` | Collapse all |
-
-**Scope = zoom state:**
-- Not zoomed → affects full tree
-- Zoomed (`Cmd+Enter`) → affects zoomed subtree only
-- To scope without staying zoomed: zoom in, expand/collapse, `Esc` out
 
 ### Block Type
 ```typescript
@@ -163,64 +116,88 @@ type BlockType = 'text' | 'h1' | 'h2' | 'h3' | 'bullet' | 'todo' | 'quote' | 'sh
 **Affects:**
 - `Enter` on `sh::`/`ai::` block → execute command (not split)
 
-## Event Flow: BlockItem KeyDown
+---
 
+## Key Bindings
+
+### Block-Level (BlockItem.tsx)
+
+| Key | At Start | At Middle | At End |
+|-----|----------|-----------|--------|
+| `ArrowUp` | Exit to prev block | Move within block | Move within block |
+| `ArrowDown` | Move within block | Move within block | Exit to next block |
+| `Enter` | Create sibling before | Split block | Create sibling/child after |
+| `Tab` | Indent block | Insert 2 spaces | Insert 2 spaces |
+| `Shift+Tab` | Outdent block | Outdent block | Outdent block |
+| `Backspace` | Merge with prev (if no children) | Delete char | Delete char |
+
+### Document-Level (Outliner.tsx)
+
+| Key | Action |
+|-----|--------|
+| `Cmd+.` | Toggle collapse focused block |
+| `Cmd+Enter` | Zoom into subtree |
+| `Escape` | Zoom out / clear selection |
+| `Cmd+A` | Progressive select (expand on repeat) |
+| `Cmd+E` | Progressive expand (depth +1 on repeat) |
+| `Cmd+Shift+E` | Progressive collapse |
+| `Cmd+C` | Copy selection as markdown |
+| `Cmd+Shift+M` | Export outline to clipboard |
+| `Cmd+Backspace` | Delete block + subtree |
+
+### Progressive Cmd+A Sequence
+
+| Presses | Scope |
+|---------|-------|
+| 1 | Focused block only |
+| 2 | Siblings + all descendants |
+| 3 | Parent scope + all descendants |
+| 4+ | Continue climbing tree |
+| 10 | Select all |
+
+### Progressive Expand/Collapse (Cmd+E)
+
+| Sequence | Action |
+|----------|--------|
+| `Cmd+E` | Expand to depth 1 |
+| `Cmd+E, E` | Expand to depth 2 |
+| `Cmd+E, E, E` | Expand to depth 3 |
+| `Cmd+E, E, E, E` | Expand all |
+| `Cmd+Shift+E` | Collapse at depth 1 |
+| `Cmd+Shift+E, E, E, E` | Collapse all |
+
+---
+
+## Cursor Detection
+
+Use `cursor.isAtStart()` not `cursor.getOffset() === 0`.
+
+The `isAtStart()` method uses `isCursorAtContentStart()` which properly handles:
+- Empty text nodes
+- Leading `<br>` elements
+- Other contentEditable edge cases
+
+```typescript
+function isCursorAtContentStart(element: HTMLElement): boolean {
+  const selection = window.getSelection();
+  if (!selection || !selection.isCollapsed) return false;
+  if (selection.anchorOffset !== 0) return false;
+
+  // Handle empty blocks, BR nodes, etc.
+  const firstChild = element.firstChild;
+  if (!firstChild) return true;
+  if (firstChild.nodeName === 'BR') return true;
+
+  return selection.anchorNode === firstChild ||
+         selection.anchorNode === element;
+}
 ```
-KeyboardEvent
-     │
-     ▼
-getActionForEvent(e)  ─────► Action matched? ──► Handle centralized action
-     │                              │              (zoom, collapse, delete)
-     │ null                         │
-     ▼                              │
-Key-specific handler                │
-(ArrowUp, ArrowDown, Enter, etc.)   │
-     │                              │
-     ▼                              │
-Check cursor/selection state ◄──────┘
-     │
-     ▼
-Determine action (navigate, split, indent, etc.)
-     │
-     ▼
-Execute via store methods
-     │
-     ▼
-Update focus if needed (props.onFocus)
-```
 
-## Event Flow: Outliner KeyDown
-
-Outliner handles document-level keyboard events that span multiple blocks:
-
-```
-KeyboardEvent
-     │
-     ▼
-tinykeys sequence matcher (handles multi-key sequences)
-     │
-     ├─► Cmd+A sequences → progressive selectByIndentLevel()
-     │
-     ├─► Cmd+E sequences → progressive expandToDepth() (FLO-66)
-     │
-     ├─► Cmd+Shift+E sequences → progressive collapseToDepth() (FLO-66)
-     │
-     └─► Cmd+Z / Cmd+Shift+Z → undo/redo
-
-     │ (not matched by tinykeys)
-     ▼
-handleOutlinerKeyDown (onKeyDown handler)
-     │
-     ├─► Escape + selection → clearSelection()
-     │
-     ├─► Cmd+C + selection → copySelection() as markdown
-     │
-     └─► Delete/Backspace + selection (not editing) → deleteSelection()
-```
+---
 
 ## Testing Strategy
 
-See [TESTING_PATTERNS.md](./TESTING_PATTERNS.md) for detailed testing patterns.
+See [TESTING_PATTERNS.md](./TESTING_PATTERNS.md) for detailed patterns.
 
 ### Quick Summary
 
@@ -228,20 +205,9 @@ See [TESTING_PATTERNS.md](./TESTING_PATTERNS.md) for detailed testing patterns.
 2. **Component tests**: Use `createMockBlockStore()` and `createMockCursor()`
 3. **Integration tests**: Full keyboard flows with real stores
 
-## Pain Points (Areas for Improvement)
+---
 
-1. **Selection logic split**: Multi-select state in Outliner, but selection-aware navigation in BlockItem
-2. **Focus management races**: Double `requestAnimationFrame` needed for zoom+create
-3. **Navigation helpers hidden**: `findNextVisibleBlock`/`findPrevVisibleBlock` in useBlockOperations
-4. **Execute check duplication**: `findHandler()` called in both BlockItem and determineKeyAction
+## Related
 
-## Extraction Considerations
-
-To make this outliner keyboard handling reusable (shadcn-style "copy the component"):
-
-1. **Generic store interface**: Replace floatty-specific `blockStore` with minimal interface
-2. **Callback props for execution**: `onExecute?`, `isExecutable?` instead of importing executor
-3. **Configurable class names**: Props for styling customization
-4. **Separate outliner keybinds**: Split app-level keys from outliner-specific keys
-
-See Phase 4 of the refactor plan for implementation details.
+- [TESTING_PATTERNS.md](./TESTING_PATTERNS.md) - Test patterns
+- CLAUDE.md `.claude/rules/solidjs-patterns.md` - SolidJS gotchas

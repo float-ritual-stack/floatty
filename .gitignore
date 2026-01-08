@@ -32,3 +32,8 @@ src-tauri/binaries/
 
 # Session exports (conversation artifacts)
 .exports/
+
+# Claude Code local config (hooks and settings are personal)
+.claude/hooks/
+.claude/settings.json
+.claude/settings.local.json

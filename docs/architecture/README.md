@@ -19,12 +19,27 @@
 │  DONE                                                            │
 │  ├─ Y.Doc sync (floatty-server)                                 │
 │  ├─ Auto-execute spike for external blocks                      │
-│  └─ See: ../EXTERNAL_BLOCK_EXECUTION.md                         │
+│  ├─ Wikilinks & backlinks                                       │
+│  ├─ Multi-pane splits                                           │
+│  └─ FLO-145: Text selection boundary fix                        │
 │                                                                  │
 ├─────────────────────────────────────────────────────────────────┤
-│  NEXT                                                            │
-│  ├─ Handler registry (FLOATTY_HANDLER_REGISTRY.md)              │
-│  └─ Context assembly hook (FLOATTY_HOOK_SYSTEM.md)              │
+│  NOW (Navigation Polish)                                         │
+│  └─ FLO-137: Pinned panes & preview navigation                  │
+│     See: ../FLO-137-PINNED-PANES-SPEC.md                        │
+│                                                                  │
+├─────────────────────────────────────────────────────────────────┤
+│  PARALLEL (Infrastructure - Phase 0)                             │
+│  ├─ Event types (src/lib/events/types.ts)                       │
+│  ├─ EventBus (sync pub/sub)                                     │
+│  ├─ Wire to Y.Doc observer                                      │
+│  └─ See: FLOATTY_HOOK_SYSTEM.md, floatty-foundation/STATE.md    │
+│                                                                  │
+├─────────────────────────────────────────────────────────────────┤
+│  AFTER INFRASTRUCTURE                                            │
+│  ├─ Subdocuments (zoom = mount different Y.Doc)                 │
+│  ├─ Tantivy indexing                                            │
+│  └─ Handler registry (FLOATTY_HANDLER_REGISTRY.md)              │
 │                                                                  │
 ├─────────────────────────────────────────────────────────────────┤
 │  WHEN NEEDED                                                     │
@@ -44,4 +59,6 @@ Shacks, not cathedrals. Walls that can move.
 
 - [../EXTERNAL_BLOCK_EXECUTION.md](../EXTERNAL_BLOCK_EXECUTION.md) - Auto-execute spike (implemented)
 - [../BLOCK_TYPE_PATTERNS.md](../BLOCK_TYPE_PATTERNS.md) - Child-output pattern
-- [../RECON_BLOCK_SYSTEM.md](../RECON_BLOCK_SYSTEM.md) - Block system archaeology
+- [../KEYBOARD.md](../KEYBOARD.md) - Keyboard architecture & bindings
+- [../FLO-137-PINNED-PANES-SPEC.md](../FLO-137-PINNED-PANES-SPEC.md) - Pinned panes feature spec
+- [../RESUME-EPHEMERAL-PANES.md](../RESUME-EPHEMERAL-PANES.md) - Critical safety doc for input handling
