@@ -185,6 +185,12 @@ max_age_hours = 72                      # Look back 3 days for markers
 
 Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
 
+**floatty-server** (headless CRDT sync):
+- Default port: `8765` (http://127.0.0.1:8765)
+- Override: `FLOATTY_PORT` env var
+- WebSocket: `ws://127.0.0.1:8765/ws`
+- REST API: `http://127.0.0.1:8765/api/v1/blocks`
+
 ### Logging
 
 **Log location**: `~/Library/Logs/dev.float.floatty/float-pty.log`
