@@ -14,16 +14,28 @@ import type { BlockHandler, ExecutorActions } from './types';
 import { extractContent, insertParsedBlocks } from './utils';
 
 // ═══════════════════════════════════════════════════════════════
+// TYPE-SAFE COMMAND MAPPING
+// ═══════════════════════════════════════════════════════════════
+
+/** Commands that take a single string arg and return string */
+type StringCommands = {
+  execute_shell_command: 'command';
+  execute_ai_command: 'prompt';
+};
+
+type StringCommandKey = keyof StringCommands;
+
+// ═══════════════════════════════════════════════════════════════
 // FACTORY CONFIG
 // ═══════════════════════════════════════════════════════════════
 
-export interface CommandHandlerConfig {
+export interface CommandHandlerConfig<K extends StringCommandKey> {
   /** Block prefixes that trigger this handler (e.g., ['sh::', 'term::']) */
   prefixes: string[];
-  /** Tauri command to invoke (e.g., 'execute_shell_command') */
-  tauriCommand: string;
-  /** Argument name for the command payload (e.g., 'command' or 'prompt') */
-  argName: string;
+  /** Tauri command to invoke */
+  tauriCommand: K;
+  /** Argument name for the command payload (must match command's expected arg) */
+  argName: StringCommands[K];
   /** Prefix for output blocks (e.g., 'output::' or 'ai::') */
   outputPrefix: string;
   /** Message shown while executing (e.g., 'Running...' or 'Thinking...') */
@@ -40,7 +52,9 @@ export interface CommandHandlerConfig {
  * Create a command handler with the given configuration.
  * Shared logic for sh::, ai::, and similar command-style blocks.
  */
-export function createCommandHandler(config: CommandHandlerConfig): BlockHandler {
+export function createCommandHandler<K extends StringCommandKey>(
+  config: CommandHandlerConfig<K>
+): BlockHandler {
   const { prefixes, tauriCommand, argName, outputPrefix, pendingMessage, logPrefix } = config;
 
   return {
@@ -81,7 +95,7 @@ export function createCommandHandler(config: CommandHandlerConfig): BlockHandler
       actions.updateBlockContent(outputId, `${outputPrefix}${pendingMessage}`);
 
       try {
-        const rawOutput = await invoke(tauriCommand, { [argName]: extracted });
+        const rawOutput = await invoke(tauriCommand, { [argName]: extracted } as { command: string } | { prompt: string });
         const duration = performance.now() - startTime;
         const cleanOutput = rawOutput.trimEnd();
         console.log(`[${logPrefix}] Complete:`, { duration: `${duration.toFixed(1)}ms`, outputBytes: cleanOutput.length });
