@@ -6,7 +6,7 @@ These patterns apply to all Y.Doc/CRDT code in floatty.
 
 Tantivy (and any future search index) is for **discovery**, Y.Doc is for **retrieval**.
 
-```
+```typescript
 Query → Tantivy → [block_ids] → Y.Doc → [full blocks with metadata]
 ```
 
