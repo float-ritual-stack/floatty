@@ -458,20 +458,29 @@ const updateBlockContent = (id: string, content: string) => {
 
 ## 6. Current Bottlenecks
 
-### HIGH PRIORITY: Input Lag
+### ✅ RESOLVED: Input Lag (Fixed 2026-01-10)
 
-**File**: `/home/user/floatty/src/components/BlockItem.tsx` (lines 444-456)
+**File**: `/home/user/floatty/src/components/BlockItem.tsx` (lines 510-527)
 
 ```typescript
 const handleInput = (e: InputEvent) => {
   const target = e.target as HTMLDivElement;
-  store.updateBlockContent(props.id, target.innerText || '');  // NO DEBOUNCE
+  const content = target.innerText || '';
+
+  // DOM is already updated by contentEditable (immediate feedback)
+  // Debounce Y.Doc/store update to reduce sync overhead
+  // Cursor/selection remain live (not affected by this debounce)
+  debouncedUpdateContent(props.id, content);  // 150ms debounce
 };
 ```
 
-**Impact**: Every keystroke → Y.Doc update → server sync. 10+ updates/sec at 100 WPM.
-
-**Recommendation**: Add 100-200ms debounce, or optimistic UI with background sync.
+**Solution implemented**:
+- `createDebouncedUpdater()` utility with flush/cancel capabilities
+- DOM updates remain immediate (contentEditable handles it)
+- Y.Doc/store updates debounced to 150ms
+- Flush on blur ensures content is saved when focus leaves
+- Cancel on unmount prevents stale updates
+- Cursor/caret tracking remains live (not debounced)
 
 ### HIGH PRIORITY: Full Tree Walk per Keystroke
 
@@ -564,7 +573,7 @@ No major discrepancies found between comments and actual code behavior.
 4. **Transaction batching** - `doc.transact()` for multi-field updates
 
 ### Patterns to EVOLVE (Current Bottlenecks)
-1. **No input debouncing** → Add 100-200ms debounce or optimistic UI
+1. ~~**No input debouncing**~~ → ✅ FIXED: 150ms debounce with flush/cancel
 2. **Full tree walk** → Virtual scrolling or incremental visibility
 3. **fit() all terminals** → Skip invisible panes
 4. **Sync on keystroke** → Worker thread for serialization
@@ -579,7 +588,7 @@ No major discrepancies found between comments and actual code behavior.
 | Terminal Integration | ✅ Solid | Greedy slurp, singleton outside SolidJS |
 | Layout Management | ✅ Solid | Immutable binary tree, drag-aware fit suppression |
 | CRDT Sync | ✅ Solid | Origin filtering, transaction batching, 50ms debounce |
-| Input Performance | ⚠️ Needs Work | No debounce, O(n) visibility calculation |
+| Input Performance | ✅ Fixed | 150ms debounce with flush/cancel; O(n) visibility still pending |
 | Resize Performance | ⚠️ Needs Work | Event spam, fit() on all terminals |
 
 **Stress Test Results** (from 2026-01-08 6-agent test):

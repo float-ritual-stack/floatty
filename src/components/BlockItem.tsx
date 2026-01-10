@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect } from 'solid-js';
+import { Show, createMemo, createEffect, onCleanup } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -12,6 +12,56 @@ import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor rest
 import { registry, type DailyNoteData } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
+
+// Debounce delay for Y.Doc updates (ms)
+// Keeps typing responsive while reducing sync overhead
+const UPDATE_DEBOUNCE_MS = 150;
+
+/**
+ * Creates a debounced function with flush and cancel capabilities.
+ * - Immediate DOM updates happen outside this (contentEditable handles it)
+ * - Only Y.Doc/store updates are debounced
+ */
+function createDebouncedUpdater<T extends (...args: Parameters<T>) => void>(
+  fn: T,
+  delay: number
+): { debounced: T; flush: () => void; cancel: () => void } {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let pendingArgs: Parameters<T> | null = null;
+
+  const debounced = ((...args: Parameters<T>) => {
+    pendingArgs = args;
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => {
+      if (pendingArgs) {
+        fn(...pendingArgs);
+        pendingArgs = null;
+      }
+      timeoutId = null;
+    }, delay);
+  }) as T;
+
+  const flush = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    if (pendingArgs) {
+      fn(...pendingArgs);
+      pendingArgs = null;
+    }
+  };
+
+  const cancel = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    pendingArgs = null;
+  };
+
+  return { debounced, flush, cancel };
+}
 
 interface BlockItemProps {
   id: string;
@@ -37,6 +87,18 @@ export function BlockItem(props: BlockItemProps) {
 
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
+
+  // Debounced Y.Doc updates - DOM stays immediate via contentEditable
+  // Flush on blur, cancel on unmount
+  const { debounced: debouncedUpdateContent, flush: flushContentUpdate, cancel: cancelContentUpdate } =
+    createDebouncedUpdater((id: string, content: string) => {
+      store.updateBlockContent(id, content);
+    }, UPDATE_DEBOUNCE_MS);
+
+  // Cleanup: cancel pending debounced updates on unmount
+  onCleanup(() => {
+    cancelContentUpdate();
+  });
 
   // Handle focus changes from props
   createEffect(() => {
@@ -69,6 +131,10 @@ export function BlockItem(props: BlockItemProps) {
 
   // CRITICAL: Sync DOM when focus leaves (catches splits where store updated while focused)
   const handleBlur = () => {
+    // Flush any pending debounced content updates to Y.Doc before blur completes
+    // This ensures the store has the final content when focus leaves
+    flushContentUpdate();
+
     const currentBlock = block();
     if (contentRef && currentBlock) {
       if (contentRef.innerText !== currentBlock.content) {
@@ -446,7 +512,12 @@ export function BlockItem(props: BlockItemProps) {
     // CRITICAL: Use innerText, not textContent!
     // textContent ignores <div> and <br> elements, losing line breaks.
     // innerText respects visual line breaks and converts them to \n.
-    store.updateBlockContent(props.id, target.innerText || '');
+    const content = target.innerText || '';
+
+    // DOM is already updated by contentEditable (immediate feedback)
+    // Debounce Y.Doc/store update to reduce sync overhead
+    // Cursor/selection remain live (not affected by this debounce)
+    debouncedUpdateContent(props.id, content);
 
     // FLO-136: Typing pins ephemeral panes (user is engaging with content)
     const tabId = findTabIdByPaneId(props.paneId);
