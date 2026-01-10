@@ -445,4 +445,8 @@ This prevents accidental deletion of large branches. Document as intentional, no
 
 ## Do NOT
 
-See @.claude/rules/do-not.md for critical anti-patterns (PTY/Rust and SolidJS).
+See @.claude/rules/do-not.md for critical anti-patterns (PTY/Rust, SolidJS, Y.Doc/Search, Rust Backend).
+
+## Y.Doc Patterns
+
+See @.claude/rules/ydoc-patterns.md for CRDT architecture patterns (source of truth, metadata storage, observer wrapping, origin filtering).

@@ -871,9 +871,54 @@ These are explicitly deferred:
 5. **Priority hooks** - Simple ordering, sync/async distinction
 6. **Origin prevents loops** - Hook writes don't trigger hooks
 
+---
+
+## Part 8: Claude Code Integration
+
+### 8.1 What Became Rules (Extracted)
+
+These patterns are universally true and live in `.claude/rules/`:
+
+| Rule File | Content |
+|-----------|---------|
+| `ydoc-patterns.md` | Y.Doc source of truth, metadata in CRDT, wrap observers |
+| `do-not.md` | Extended with Y.Doc/Search and Rust Backend anti-patterns |
+
+### 8.2 What Was Deferred (Validate First)
+
+**Search-specific slash commands** (e.g., `/search-unit:start`):
+- Defer until Units 0.1 → 1.3 completed manually
+- Existing floatty-foundation pattern may need adjustment for search
+- Different test suites, scopes, handoff needs
+
+**Scope-guard hooks** (PreToolUse blocking out-of-scope edits):
+- Defer until unit boundaries validated through practice
+- Adding friction before knowing if scopes are right
+- Manual discipline sufficient for initial units
+
+**Skills for search operations**:
+- No search exists yet to operate on
+- Skills should emerge from repeated patterns, not upfront design
+
+### 8.3 Why This Approach
+
+**Simple primitives that compound** > **Perfect harness upfront**
+
+1. Rules are universal invariants - always apply, low friction
+2. Commands should encode validated workflows - not speculative ones
+3. Hooks should address observed pain points - not imagined ones
+
+After Phase 0-1:
+- Evaluate if handoff format worked
+- Identify repeated friction points
+- Then extract commands/hooks for those specific patterns
+
+---
+
 ### Next Step
 
 Start Unit 0.1: Origin Enum
 - Read this document
 - Read SEARCH_ARCHITECTURE_SNAPSHOT.md
+- Read `.claude/rules/ydoc-patterns.md` (new)
 - Follow entry/exit protocol
