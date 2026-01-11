@@ -52,10 +52,10 @@ Every work unit follows this lifecycle:
 | 0.3 | API Origin + Metadata | 0.1 | API accepts origin, exposes metadata | Medium | ✅ Done |
 | 1.1 | BlockChange Types | 0.3 | Event types | Small | ✅ Done |
 | 1.2 | Change Emitter | 1.1 | Broadcast channel + emit | Medium | ✅ Done |
-| **1.3** | **Debounce + Dedupe** | 1.2 | Batched changes | Small | **Next** |
-| 1.5.1 | Hook Interface | **0.3** | Trait definition | Small | Pending |
-| 1.5.2 | Registry Implementation | 1.5.1 | Registration + dispatch | Medium | Pending |
-| 1.5.3 | Origin Filtering | 1.5.2 | Loop prevention | Small | Pending |
+| 1.3 | Debounce + Dedupe | 1.2 | Batched changes | Small | ✅ Done |
+| 1.5.1 | Hook Interface | 0.3 | Trait definition | Small | ✅ Done |
+| **1.5.2** | **Registry Implementation** | 1.5.1 | Registration + dispatch | Medium | **✅ Done** |
+| 1.5.3 | Origin Filtering | 1.5.2 | Loop prevention | Small | ⏭️ Merged into 2.1 |
 | 2.1 | Metadata Schema | 1.3 + 1.5.3 | Type definitions | Small |
 | 2.2 | Marker Extraction | 2.1 | :: parser hook | Medium |
 | 2.3 | Wikilink Extraction | 2.2 | [[]] parser hook | Medium |
@@ -1061,6 +1061,66 @@ These would use the Origin enum defined in Unit 0.1.
 **Status**: Documented, not blocking current search work. Origin enum is still valid scaffolding regardless of where mutations originate.
 
 **Notes**: The current TypeScript-driven architecture is simpler and may be sufficient for v1. Rust mutation methods would enable true headless operation but add complexity.
+
+### Gap: Frontend Origin Exposure
+
+**Discovered**: 2026-01-10 during undo/redo debugging
+**Surfaced by**: BlockItem sync effect couldn't distinguish user echo vs undo
+**Status**: ✅ Resolved in commit 9fa7338
+
+**Problem**: Y.Doc observer in `useBlockStore` wasn't capturing transaction origin. BlockItem sync effect blocked ALL updates when focused, including undo/redo.
+
+**Solution implemented**:
+- `useBlockStore`: Added `lastUpdateOrigin` to state, captured in Y.Doc observer
+- `BlockItem`: Origin-aware sync gate - 'user' skipped when focused, undo/remote always sync
+
+**Pattern established**:
+```
+Focused + user origin  → skip (handleInput handles it)
+Focused + non-user     → sync (undo, remote are authoritative)
+Not focused            → sync always
+```
+
+**Files changed**: `useBlockStore.ts`, `WorkspaceContext.tsx`, `BlockItem.tsx`, `useSyncedYDoc.ts`
+
+---
+
+### Gap: Cold Start Index Rehydration
+
+**Discovered**: 2026-01-10 during gap analysis
+**Surfaced by**: Architecture review - hooks only fire on mutations
+**Status**: Open - add to Phase 3 planning
+
+**Problem**: Hooks fire on `BlockChange` events. On app startup, Y.Doc loads from persistence but no mutations occur. Indexes (PageNameIndex, Tantivy) remain empty until user edits blocks.
+
+**Impact**: Search returns nothing after restart until blocks are touched.
+
+**Suggested Resolution**: Add startup rehydration logic (Unit 2.5 or part of Unit 3.1):
+1. After Y.Doc loads, iterate all blocks
+2. Extract metadata + outlinks
+3. Populate indexes before hook pipeline activates
+
+---
+
+### Gap: Backend-Driven Layout Events
+
+**Discovered**: 2026-01-10 during gap analysis
+**Surfaced by**: Agent integration vision - agents need to show results
+**Status**: Open - Phase 3+ (not blocking search work)
+
+**Problem**: Layout lives only in frontend `useLayoutStore` (SQLite local). Backend agents cannot request pane operations like "open this block in a split".
+
+**Impact**: Agents can mutate data but cannot present it to user. Blocks "Answer vs Chirp" distinction.
+
+**Suggested Resolution**: Unit 3.5 expansion - add `PushLayoutEvent` channel:
+```rust
+// Server can push layout requests
+PushLayoutEvent::OpenPane { block_id, mode: SplitRight }
+```
+
+Frontend subscribes and applies to layoutStore.
+
+---
 
 ### Gap: API Origin + Metadata
 

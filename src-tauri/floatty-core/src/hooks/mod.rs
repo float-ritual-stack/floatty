@@ -35,7 +35,7 @@
 //!   Use for expensive operations like search indexing.
 
 use crate::{BlockChangeBatch, Origin, YDocStore};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// A hook that processes block changes.
 ///
@@ -127,6 +127,138 @@ pub fn should_process(hook: &dyn BlockHook, origin: Origin) -> bool {
     match hook.accepts_origins() {
         None => true, // Accept all origins
         Some(accepted) => accepted.contains(&origin),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HOOK REGISTRY
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A registry that stores and dispatches hooks in priority order.
+///
+/// # Thread Safety
+///
+/// HookRegistry uses `RwLock` for interior mutability, allowing registration
+/// and dispatch from multiple threads. Hooks are stored as `Arc<dyn BlockHook>`
+/// to support async spawning (tasks need owned references that outlive the
+/// read guard).
+///
+/// # Usage Pattern
+///
+/// ```rust,ignore
+/// let registry = HookRegistry::new();
+///
+/// // Register hooks at startup (before dispatching)
+/// registry.register(Arc::new(MetadataHook));
+/// registry.register(Arc::new(TantivyIndexHook));
+///
+/// // Dispatch during operation
+/// registry.dispatch(&batch, store.clone());
+/// ```
+///
+/// # Priority Ordering
+///
+/// Hooks are dispatched in priority order (lower = earlier). Register hooks
+/// in any order; the registry maintains sorted order internally.
+///
+/// # Origin Filtering
+///
+/// Each hook specifies which origins it responds to. The registry filters
+/// the batch per-hook, so hooks only receive changes they care about.
+pub struct HookRegistry {
+    /// Hooks stored in priority order (lower priority first).
+    /// Arc enables cloning for async spawn.
+    hooks: RwLock<Vec<Arc<dyn BlockHook>>>,
+}
+
+impl HookRegistry {
+    /// Create a new empty registry.
+    pub fn new() -> Self {
+        Self {
+            hooks: RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Register a hook. Hooks are kept sorted by priority (lower = earlier).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock is poisoned.
+    pub fn register(&self, hook: Arc<dyn BlockHook>) {
+        let priority = hook.priority();
+        let mut hooks = self.hooks.write().expect("lock poisoned");
+
+        // Find insertion point to maintain sorted order
+        let pos = hooks
+            .iter()
+            .position(|h| h.priority() > priority)
+            .unwrap_or(hooks.len());
+
+        hooks.insert(pos, hook);
+    }
+
+    /// Get the number of registered hooks.
+    pub fn len(&self) -> usize {
+        self.hooks.read().expect("lock poisoned").len()
+    }
+
+    /// Check if the registry has no hooks.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Dispatch a batch of changes to all registered hooks.
+    ///
+    /// For each hook:
+    /// 1. Filter changes by origin (using `should_process`)
+    /// 2. If filtered batch is non-empty:
+    ///    - Sync hooks: call `process()` directly
+    ///    - Async hooks: spawn a task via tokio
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock is poisoned.
+    pub fn dispatch(&self, batch: &BlockChangeBatch, store: Arc<YDocStore>) {
+        let hooks = self.hooks.read().expect("lock poisoned");
+
+        for hook in hooks.iter() {
+            // Filter changes by origin for this hook
+            let accepted_changes: Vec<_> = batch
+                .changes
+                .iter()
+                .filter(|c| should_process(hook.as_ref(), c.origin()))
+                .cloned()
+                .collect();
+
+            if accepted_changes.is_empty() {
+                continue;
+            }
+
+            // Create filtered batch preserving metadata
+            let filtered_batch = BlockChangeBatch {
+                changes: accepted_changes,
+                timestamp: batch.timestamp,
+                transaction_id: batch.transaction_id.clone(),
+            };
+
+            if hook.is_sync() {
+                // Sync hook: call directly
+                hook.process(&filtered_batch, store.clone());
+            } else {
+                // Async hook: spawn task
+                let hook = Arc::clone(hook);
+                let store = Arc::clone(&store);
+                tokio::spawn(async move {
+                    hook.process(&filtered_batch, store);
+                });
+            }
+        }
+    }
+}
+
+impl Default for HookRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -389,5 +521,421 @@ mod tests {
 
         assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 1);
         assert_eq!(CHANGE_COUNT.load(Ordering::SeqCst), 3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // HOOK REGISTRY TESTS
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_registry_empty() {
+        let registry = HookRegistry::new();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn test_register_single() {
+        struct SimpleHook;
+        impl BlockHook for SimpleHook {
+            fn name(&self) -> &'static str {
+                "simple"
+            }
+            fn priority(&self) -> i32 {
+                10
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {}
+        }
+
+        let registry = HookRegistry::new();
+        registry.register(Arc::new(SimpleHook));
+
+        assert!(!registry.is_empty());
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn test_register_priority_order() {
+        // Create hooks with different priorities
+        struct PriorityHook {
+            prio: i32,
+            name: &'static str,
+        }
+
+        impl BlockHook for PriorityHook {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+            fn priority(&self) -> i32 {
+                self.prio
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {}
+        }
+
+        let registry = HookRegistry::new();
+
+        // Register in non-sorted order
+        registry.register(Arc::new(PriorityHook {
+            prio: 50,
+            name: "middle",
+        }));
+        registry.register(Arc::new(PriorityHook {
+            prio: 10,
+            name: "first",
+        }));
+        registry.register(Arc::new(PriorityHook {
+            prio: 100,
+            name: "last",
+        }));
+
+        // Verify sorted order
+        let hooks = registry.hooks.read().unwrap();
+        assert_eq!(hooks[0].name(), "first");
+        assert_eq!(hooks[1].name(), "middle");
+        assert_eq!(hooks[2].name(), "last");
+    }
+
+    #[test]
+    fn test_dispatch_calls_process() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static CALLED: AtomicBool = AtomicBool::new(false);
+
+        struct TrackingHook;
+        impl BlockHook for TrackingHook {
+            fn name(&self) -> &'static str {
+                "tracking"
+            }
+            fn priority(&self) -> i32 {
+                0
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
+                CALLED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let registry = HookRegistry::new();
+        registry.register(Arc::new(TrackingHook));
+
+        let store = create_test_store();
+        let mut batch = BlockChangeBatch::new();
+        batch.push(crate::BlockChange::Created {
+            id: "b1".to_string(),
+            content: "test".to_string(),
+            parent_id: None,
+            origin: Origin::User,
+        });
+
+        registry.dispatch(&batch, store);
+
+        assert!(CALLED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_dispatch_origin_filtering() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static CHANGES_RECEIVED: AtomicUsize = AtomicUsize::new(0);
+
+        struct UserOnlyHook;
+        impl BlockHook for UserOnlyHook {
+            fn name(&self) -> &'static str {
+                "user_only"
+            }
+            fn priority(&self) -> i32 {
+                0
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                Some(vec![Origin::User]) // Only accept User origin
+            }
+            fn process(&self, batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
+                CHANGES_RECEIVED.fetch_add(batch.len(), Ordering::SeqCst);
+            }
+        }
+
+        // Reset for this test
+        CHANGES_RECEIVED.store(0, Ordering::SeqCst);
+
+        let registry = HookRegistry::new();
+        registry.register(Arc::new(UserOnlyHook));
+
+        let store = create_test_store();
+        let mut batch = BlockChangeBatch::new();
+
+        // Add one User change and one Hook change
+        batch.push(crate::BlockChange::Created {
+            id: "b1".to_string(),
+            content: "user change".to_string(),
+            parent_id: None,
+            origin: Origin::User,
+        });
+        batch.push(crate::BlockChange::Created {
+            id: "b2".to_string(),
+            content: "hook change".to_string(),
+            parent_id: None,
+            origin: Origin::Hook,
+        });
+
+        registry.dispatch(&batch, store);
+
+        // Only the User change should have been received
+        assert_eq!(CHANGES_RECEIVED.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_dispatch_sync_blocks() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static COMPLETED: AtomicBool = AtomicBool::new(false);
+
+        struct SlowSyncHook;
+        impl BlockHook for SlowSyncHook {
+            fn name(&self) -> &'static str {
+                "slow_sync"
+            }
+            fn priority(&self) -> i32 {
+                0
+            }
+            fn is_sync(&self) -> bool {
+                true // Sync hook
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
+                // Simulate some work
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                COMPLETED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        // Reset for this test
+        COMPLETED.store(false, Ordering::SeqCst);
+
+        let registry = HookRegistry::new();
+        registry.register(Arc::new(SlowSyncHook));
+
+        let store = create_test_store();
+        let mut batch = BlockChangeBatch::new();
+        batch.push(crate::BlockChange::Created {
+            id: "b1".to_string(),
+            content: "test".to_string(),
+            parent_id: None,
+            origin: Origin::User,
+        });
+
+        registry.dispatch(&batch, store);
+
+        // After dispatch returns, sync hook should have completed
+        assert!(COMPLETED.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_async_spawns() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        static ASYNC_STARTED: AtomicBool = AtomicBool::new(false);
+
+        struct AsyncHook;
+        impl BlockHook for AsyncHook {
+            fn name(&self) -> &'static str {
+                "async"
+            }
+            fn priority(&self) -> i32 {
+                0
+            }
+            fn is_sync(&self) -> bool {
+                false // Async hook
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
+                ASYNC_STARTED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        // Reset for this test
+        ASYNC_STARTED.store(false, Ordering::SeqCst);
+
+        let registry = HookRegistry::new();
+        registry.register(Arc::new(AsyncHook));
+
+        let store = create_test_store();
+        let mut batch = BlockChangeBatch::new();
+        batch.push(crate::BlockChange::Created {
+            id: "b1".to_string(),
+            content: "test".to_string(),
+            parent_id: None,
+            origin: Origin::User,
+        });
+
+        registry.dispatch(&batch, store);
+
+        // Dispatch returns immediately for async hooks
+        // Give the spawned task time to run
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Now it should have started
+        assert!(ASYNC_STARTED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_dispatch_empty_batch_no_call() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static CALLED: AtomicBool = AtomicBool::new(false);
+
+        struct NeverCalledHook;
+        impl BlockHook for NeverCalledHook {
+            fn name(&self) -> &'static str {
+                "never_called"
+            }
+            fn priority(&self) -> i32 {
+                0
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
+                CALLED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        // Reset for this test
+        CALLED.store(false, Ordering::SeqCst);
+
+        let registry = HookRegistry::new();
+        registry.register(Arc::new(NeverCalledHook));
+
+        let store = create_test_store();
+        let batch = BlockChangeBatch::new(); // Empty batch
+
+        registry.dispatch(&batch, store);
+
+        // Hook should not be called for empty batch
+        assert!(!CALLED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_dispatch_priority_order_execution() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Use atomic counters to track execution order
+        static FIRST_ORDER: AtomicUsize = AtomicUsize::new(0);
+        static SECOND_ORDER: AtomicUsize = AtomicUsize::new(0);
+        static THIRD_ORDER: AtomicUsize = AtomicUsize::new(0);
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+        struct FirstHook;
+        impl BlockHook for FirstHook {
+            fn name(&self) -> &'static str {
+                "first"
+            }
+            fn priority(&self) -> i32 {
+                10
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
+                FIRST_ORDER.store(COUNTER.fetch_add(1, Ordering::SeqCst), Ordering::SeqCst);
+            }
+        }
+
+        struct SecondHook;
+        impl BlockHook for SecondHook {
+            fn name(&self) -> &'static str {
+                "second"
+            }
+            fn priority(&self) -> i32 {
+                50
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
+                SECOND_ORDER.store(COUNTER.fetch_add(1, Ordering::SeqCst), Ordering::SeqCst);
+            }
+        }
+
+        struct ThirdHook;
+        impl BlockHook for ThirdHook {
+            fn name(&self) -> &'static str {
+                "third"
+            }
+            fn priority(&self) -> i32 {
+                100
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
+            fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
+                THIRD_ORDER.store(COUNTER.fetch_add(1, Ordering::SeqCst), Ordering::SeqCst);
+            }
+        }
+
+        // Reset counters for this test
+        FIRST_ORDER.store(0, Ordering::SeqCst);
+        SECOND_ORDER.store(0, Ordering::SeqCst);
+        THIRD_ORDER.store(0, Ordering::SeqCst);
+        COUNTER.store(0, Ordering::SeqCst);
+
+        let registry = HookRegistry::new();
+
+        // Register in random order
+        registry.register(Arc::new(ThirdHook)); // priority 100
+        registry.register(Arc::new(FirstHook)); // priority 10
+        registry.register(Arc::new(SecondHook)); // priority 50
+
+        let store = create_test_store();
+        let mut batch = BlockChangeBatch::new();
+        batch.push(crate::BlockChange::Created {
+            id: "b1".to_string(),
+            content: "test".to_string(),
+            parent_id: None,
+            origin: Origin::User,
+        });
+
+        registry.dispatch(&batch, store);
+
+        // Verify execution order: first(10) < second(50) < third(100)
+        assert_eq!(FIRST_ORDER.load(Ordering::SeqCst), 0, "first should execute 0th");
+        assert_eq!(SECOND_ORDER.load(Ordering::SeqCst), 1, "second should execute 1st");
+        assert_eq!(THIRD_ORDER.load(Ordering::SeqCst), 2, "third should execute 2nd");
     }
 }

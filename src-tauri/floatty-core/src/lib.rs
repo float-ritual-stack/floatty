@@ -38,7 +38,7 @@ pub use batcher::BatchedChangeCollector;
 pub use block::{Block, BlockType, parse_block_type};
 pub use emitter::{ChangeEmitter, ChangeBuilder, parse_origin};
 pub use events::{BlockChange, BlockChangeBatch};
-pub use hooks::{BlockHook, should_process};
+pub use hooks::{BlockHook, HookRegistry, should_process};
 pub use origin::Origin;
 pub use persistence::{PersistenceError, YDocPersistence, default_db_path};
 pub use store::{StoreError, YDocStore, DEFAULT_DOC_KEY};
