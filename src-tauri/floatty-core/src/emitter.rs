@@ -36,6 +36,7 @@ use crate::events::{BlockChange, BlockChangeBatch};
 use crate::Origin;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use tracing::trace;
 
 /// Default channel capacity - allows buffering during burst writes.
 const CHANNEL_CAPACITY: usize = 256;
@@ -110,13 +111,19 @@ impl ChangeEmitter {
             return Ok(0);
         }
 
+        let change_count = batch.changes.len();
+
         // Wrap in Arc for efficient cloning across subscribers
         let batch = Arc::new(batch);
 
         match self.sender.send(batch) {
-            Ok(count) => Ok(count),
+            Ok(count) => {
+                trace!(changes = change_count, subscribers = count, "Emitted batch");
+                Ok(count)
+            }
             Err(_) => {
                 // No receivers - this is OK, just means no one is listening
+                trace!(changes = change_count, "Batch emitted but no subscribers");
                 Ok(0)
             }
         }

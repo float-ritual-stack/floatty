@@ -59,6 +59,18 @@ async fn main() {
     // Initialize hook system (MetadataExtractionHook + PageNameIndexHook registered, cold start rehydration)
     let hook_system = Arc::new(HookSystem::initialize(Arc::clone(&store)));
 
+    // Wire Y.Doc observation to hook system
+    // This makes ALL Y.Doc mutations (including frontend sync) trigger hooks
+    {
+        let hook_system_clone = Arc::clone(&hook_system);
+        store.set_change_callback(move |changes| {
+            for change in changes {
+                let _ = hook_system_clone.emit_change(change);
+            }
+        });
+    }
+    tracing::info!("Y.Doc change observation wired to hook system");
+
     // Create WebSocket broadcaster for real-time sync
     let broadcaster = Arc::new(WsBroadcaster::new(64));
 

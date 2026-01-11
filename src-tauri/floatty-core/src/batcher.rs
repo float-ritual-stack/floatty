@@ -45,6 +45,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
+use tracing::{debug, trace};
 
 /// Default flush interval in milliseconds.
 const DEFAULT_FLUSH_INTERVAL_MS: u64 = 1000;
@@ -152,10 +153,12 @@ impl BatchedChangeCollector {
         let mut pending = self.pending.lock().await;
         let block_id = change.block_id().to_string();
 
+        trace!(block_id = %block_id, change_type = ?std::mem::discriminant(&change), "Batcher received change");
         Self::merge_change(&mut pending, block_id, change);
 
         // Check threshold
         if pending.changes.len() >= self.threshold {
+            debug!(pending = pending.changes.len(), threshold = self.threshold, "Threshold flush triggered");
             let batch = Self::take_batch(&mut pending);
             drop(pending);
             if !batch.is_empty() {
@@ -193,6 +196,7 @@ impl BatchedChangeCollector {
         drop(pending);
 
         if !batch.is_empty() {
+            debug!(changes = batch.changes.len(), "Batcher flushing batch");
             let _ = self.emitter.emit_batch(batch);
         }
     }

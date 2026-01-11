@@ -61,9 +61,9 @@ Every work unit follows this lifecycle:
 | 2.3 | Wikilink Extraction | 2.2 | [[]] parser hook | Medium | ⏭️ Merged into 2.2 |
 | 2.2.3 | Hook System Wiring | 2.2 | Runtime hook chain | Medium | ✅ Done |
 | 2.4 | PageNameIndex | 2.2.3 | Autocomplete structure | Small | ✅ Done |
-| **3.1** | **Tantivy Setup** | **2.4** | **Index + schema** | **Medium** | **← NEXT** |
-| 3.2 | Writer Actor | 3.1 | Bounded channel + backpressure | Medium |
-| 3.3 | TantivyIndexHook | 3.2 | Delete+Add update logic | Medium |
+| 3.1 | Tantivy Setup | 2.4 | Index + schema | Medium | ✅ Done |
+| 3.2 | Writer Actor | 3.1 | Bounded channel + backpressure | Medium | ✅ Done |
+| **3.3** | **TantivyIndexHook** | **3.2** | **Delete+Add update logic** | **Medium** | **← NEXT** |
 | 3.4 | Search Service | 3.3 | Query primitives | Medium |
 | 3.5 | Tauri Commands | 3.4 | Frontend API | Small |
 

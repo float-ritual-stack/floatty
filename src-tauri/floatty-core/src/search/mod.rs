@@ -36,9 +36,11 @@
 
 mod index_manager;
 mod schema;
+mod writer;
 
 pub use index_manager::{IndexManager, SchemaFields};
 pub use schema::build_schema;
+pub use writer::{TantivyWriter, WriterHandle, WriterMessage};
 
 /// Errors that can occur during search operations.
 #[derive(Debug, thiserror::Error)]
@@ -62,4 +64,8 @@ pub enum SearchError {
     /// Index directory could not be determined.
     #[error("Could not determine index directory")]
     NoIndexDir,
+
+    /// Writer actor channel closed.
+    #[error("Writer actor channel closed")]
+    WriterClosed,
 }

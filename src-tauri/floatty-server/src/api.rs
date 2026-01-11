@@ -20,7 +20,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use floatty_core::{HookSystem, PageNameIndex, YDocStore};
+use floatty_core::{events::BlockChange, HookSystem, Origin, PageNameIndex, YDocStore};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
@@ -34,6 +34,7 @@ pub struct AppState {
     pub store: Arc<YDocStore>,
     pub broadcaster: Arc<WsBroadcaster>,
     pub page_name_index: Arc<RwLock<PageNameIndex>>,
+    pub hook_system: Arc<HookSystem>,
 }
 
 /// Health check response
@@ -154,7 +155,7 @@ pub fn create_router(
     hook_system: Arc<HookSystem>,
 ) -> Router {
     let page_name_index = hook_system.page_name_index();
-    let state = AppState { store, broadcaster, page_name_index };
+    let state = AppState { store, broadcaster, page_name_index, hook_system };
 
     Router::new()
         // Core sync endpoints
@@ -456,6 +457,14 @@ async fn create_block(
     state.store.persist_update(&update)?;
     state.broadcaster.broadcast(update, None);
 
+    // Emit to hook system for metadata extraction
+    let _ = state.hook_system.emit_change(BlockChange::Created {
+        id: id.clone(),
+        content: req.content.clone(),
+        parent_id: req.parent_id.clone(),
+        origin: Origin::User,
+    });
+
     let block_type = floatty_core::parse_block_type(&req.content);
 
     Ok((
@@ -467,7 +476,7 @@ async fn create_block(
             child_ids: vec![],
             collapsed: false,
             block_type: format!("{:?}", block_type).to_lowercase(),
-            metadata: None, // New blocks start without metadata
+            metadata: None, // Hooks will populate async
         }),
     ))
 }
@@ -547,7 +556,9 @@ async fn update_block(
     };
 
     // Determine final values
+    let old_content = existing_content.clone();
     let final_content = req.content.clone().unwrap_or(existing_content);
+    let content_changed = req.content.is_some() && old_content != final_content;
     let final_metadata = if req.metadata.is_some() {
         req.metadata.clone()
     } else {
@@ -578,6 +589,16 @@ async fn update_block(
     state.store.persist_update(&update)?;
     state.broadcaster.broadcast(update, None);
 
+    // Emit to hook system for metadata extraction (only if content changed)
+    if content_changed {
+        let _ = state.hook_system.emit_change(BlockChange::ContentChanged {
+            id: id.clone(),
+            old_content,
+            new_content: final_content.clone(),
+            origin: Origin::User,
+        });
+    }
+
     let block_type = floatty_core::parse_block_type(&final_content);
 
     Ok(Json(BlockDto {
@@ -599,17 +620,25 @@ async fn delete_block(
     let doc = state.store.doc();
     let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
 
-    let update = {
+    let (update, deleted_content) = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
 
-        // Get block and its parentId before deleting
-        let parent_id: Option<String> = match blocks.get(&txn, &id) {
+        // Get block's parentId and content before deleting
+        let (parent_id, content): (Option<String>, String) = match blocks.get(&txn, &id) {
             Some(yrs::Out::YMap(block_map)) => {
-                block_map.get(&txn, "parentId").and_then(|v| match v {
+                let pid = block_map.get(&txn, "parentId").and_then(|v| match v {
                     yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                     _ => None,
-                })
+                });
+                let content = block_map
+                    .get(&txn, "content")
+                    .and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                (pid, content)
             }
             Some(_) => return Err(ApiError::NotFound(id)), // Wrong format
             None => return Err(ApiError::NotFound(id)),
@@ -656,13 +685,20 @@ async fn delete_block(
             }
         }
 
-        txn.encode_update_v1()
+        (txn.encode_update_v1(), content)
     };
     drop(doc_guard);
 
     // Persist and broadcast to WebSocket clients
     state.store.persist_update(&update)?;
     state.broadcaster.broadcast(update, None);
+
+    // Emit to hook system for cleanup (search index removal, etc.)
+    let _ = state.hook_system.emit_change(BlockChange::Deleted {
+        id: id.clone(),
+        content: deleted_content,
+        origin: Origin::User,
+    });
 
     Ok(StatusCode::NO_CONTENT)
 }

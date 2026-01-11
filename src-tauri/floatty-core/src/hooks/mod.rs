@@ -47,6 +47,7 @@ pub use system::HookSystem;
 
 use crate::{BlockChangeBatch, Origin, YDocStore};
 use std::sync::{Arc, RwLock};
+use tracing::{debug, trace};
 
 /// A hook that processes block changes.
 ///
@@ -232,6 +233,12 @@ impl HookRegistry {
     pub fn dispatch(&self, batch: &BlockChangeBatch, store: Arc<YDocStore>) {
         let hooks = self.hooks.read().expect("lock poisoned");
 
+        trace!(
+            batch_size = batch.changes.len(),
+            hook_count = hooks.len(),
+            "Dispatching batch to hooks"
+        );
+
         for hook in hooks.iter() {
             // Filter changes by origin for this hook
             let accepted_changes: Vec<_> = batch
@@ -242,8 +249,17 @@ impl HookRegistry {
                 .collect();
 
             if accepted_changes.is_empty() {
+                trace!(hook = hook.name(), "Hook skipped - no matching changes");
                 continue;
             }
+
+            debug!(
+                hook = hook.name(),
+                priority = hook.priority(),
+                changes = accepted_changes.len(),
+                sync = hook.is_sync(),
+                "Hook processing"
+            );
 
             // Create filtered batch preserving metadata
             let filtered_batch = BlockChangeBatch {
@@ -255,12 +271,15 @@ impl HookRegistry {
             if hook.is_sync() {
                 // Sync hook: call directly
                 hook.process(&filtered_batch, store.clone());
+                trace!(hook = hook.name(), "Sync hook completed");
             } else {
                 // Async hook: spawn task
                 let hook = Arc::clone(hook);
                 let store = Arc::clone(&store);
+                let hook_name = hook.name().to_string();
                 tokio::spawn(async move {
                     hook.process(&filtered_batch, store);
+                    trace!(hook = %hook_name, "Async hook completed");
                 });
             }
         }

@@ -2,13 +2,32 @@
 //!
 //! This provides the core block operations for Floatty, independent of Tauri.
 //! The frontend Y.Doc (yjs) syncs with this via update deltas.
+//!
+//! # Change Observation
+//!
+//! The store can emit BlockChange events when blocks are created, modified, or deleted.
+//! This enables hooks (like metadata extraction) to react to all mutations,
+//! regardless of whether they came from the REST API or Y.Doc sync.
+//!
+//! ```rust,ignore
+//! let store = YDocStore::open(path, key)?;
+//! store.set_change_callback(|changes| {
+//!     for change in changes {
+//!         hook_system.emit_change(change);
+//!     }
+//! });
+//! ```
 
+use crate::events::BlockChange;
 use crate::persistence::{PersistenceError, YDocPersistence};
+use crate::Origin;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
-use yrs::{Doc, Map, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
+use tracing::{debug, trace};
+use yrs::{Doc, Map, Out, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
 
 /// Default doc key for the outliner.
 pub const DEFAULT_DOC_KEY: &str = "default";
@@ -23,6 +42,18 @@ const COMPACT_THRESHOLD: i64 = 100;
 
 /// Only check DB for compaction every N updates (avoid SELECT per keystroke).
 const COMPACT_CHECK_INTERVAL: i64 = 10;
+
+/// Callback type for change notifications.
+pub type ChangeCallback = Arc<dyn Fn(Vec<BlockChange>) + Send + Sync>;
+
+/// Minimal block snapshot for change detection.
+/// Only stores fields needed for BlockChange generation.
+#[derive(Clone, Debug)]
+struct BlockSnapshot {
+    content: String,
+    parent_id: Option<String>,
+    collapsed: bool,
+}
 
 /// Errors that can occur in the block store.
 #[derive(Error, Debug)]
@@ -49,6 +80,9 @@ pub struct YDocStore {
     doc_key: String,
     /// Counter to avoid SELECT on every keystroke
     updates_since_compact_check: AtomicI64,
+    /// Optional callback for block change notifications.
+    /// Set via `set_change_callback()` to enable hook integration.
+    change_callback: RwLock<Option<ChangeCallback>>,
 }
 
 impl YDocStore {
@@ -124,6 +158,7 @@ impl YDocStore {
             persistence,
             doc_key: doc_key.to_string(),
             updates_since_compact_check: AtomicI64::new(0),
+            change_callback: RwLock::new(None),
         })
     }
 
@@ -132,6 +167,155 @@ impl YDocStore {
     /// This is used by systems that need direct Y.Doc access (e.g., Tauri commands).
     pub fn doc(&self) -> Arc<RwLock<Doc>> {
         Arc::clone(&self.doc)
+    }
+
+    /// Set a callback to receive block change notifications.
+    ///
+    /// This callback is invoked after each `apply_update()` with the list of
+    /// BlockChange events detected. Use this to wire up the HookSystem for
+    /// metadata extraction, search indexing, etc.
+    ///
+    /// The callback is called synchronously after the update is applied and persisted.
+    pub fn set_change_callback<F>(&self, callback: F)
+    where
+        F: Fn(Vec<BlockChange>) + Send + Sync + 'static,
+    {
+        if let Ok(mut cb) = self.change_callback.write() {
+            *cb = Some(Arc::new(callback));
+        }
+    }
+
+    /// Take a snapshot of all blocks for change detection.
+    ///
+    /// Returns a map of block_id -> BlockSnapshot.
+    fn snapshot_blocks(&self, doc: &Doc) -> HashMap<String, BlockSnapshot> {
+        let txn = doc.transact();
+        let mut snapshots = HashMap::new();
+
+        if let Some(blocks_map) = txn.get_map("blocks") {
+            for (key, value) in blocks_map.iter(&txn) {
+                if let Out::YMap(block_map) = value {
+                    let content = block_map
+                        .get(&txn, "content")
+                        .and_then(|v| match v {
+                            Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+
+                    let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
+                        Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    });
+
+                    let collapsed = block_map
+                        .get(&txn, "collapsed")
+                        .and_then(|v| match v {
+                            Out::Any(yrs::Any::Bool(b)) => Some(b),
+                            _ => None,
+                        })
+                        .unwrap_or(false);
+
+                    snapshots.insert(
+                        key.to_string(),
+                        BlockSnapshot {
+                            content,
+                            parent_id,
+                            collapsed,
+                        },
+                    );
+                }
+            }
+        }
+
+        snapshots
+    }
+
+    /// Compute BlockChange events by diffing before/after snapshots.
+    fn compute_changes(
+        &self,
+        before: &HashMap<String, BlockSnapshot>,
+        after: &HashMap<String, BlockSnapshot>,
+    ) -> Vec<BlockChange> {
+        let mut changes = Vec::new();
+
+        // Check for created and modified blocks
+        for (id, after_snap) in after {
+            match before.get(id) {
+                None => {
+                    // New block created
+                    changes.push(BlockChange::Created {
+                        id: id.clone(),
+                        content: after_snap.content.clone(),
+                        parent_id: after_snap.parent_id.clone(),
+                        origin: Origin::User, // Updates from frontend are "remote" to server
+                    });
+                    trace!(block_id = %id, "Detected block created");
+                }
+                Some(before_snap) => {
+                    // Check for content change
+                    if before_snap.content != after_snap.content {
+                        changes.push(BlockChange::ContentChanged {
+                            id: id.clone(),
+                            old_content: before_snap.content.clone(),
+                            new_content: after_snap.content.clone(),
+                            origin: Origin::User,
+                        });
+                        trace!(block_id = %id, "Detected content change");
+                    }
+
+                    // Check for parent change (move)
+                    if before_snap.parent_id != after_snap.parent_id {
+                        changes.push(BlockChange::Moved {
+                            id: id.clone(),
+                            old_parent_id: before_snap.parent_id.clone(),
+                            new_parent_id: after_snap.parent_id.clone(),
+                            origin: Origin::User,
+                        });
+                        trace!(block_id = %id, "Detected block moved");
+                    }
+
+                    // Check for collapsed change
+                    if before_snap.collapsed != after_snap.collapsed {
+                        changes.push(BlockChange::CollapsedChanged {
+                            id: id.clone(),
+                            collapsed: after_snap.collapsed,
+                            origin: Origin::User,
+                        });
+                        trace!(block_id = %id, collapsed = after_snap.collapsed, "Detected collapsed change");
+                    }
+                }
+            }
+        }
+
+        // Check for deleted blocks
+        for (id, before_snap) in before {
+            if !after.contains_key(id) {
+                changes.push(BlockChange::Deleted {
+                    id: id.clone(),
+                    content: before_snap.content.clone(),
+                    origin: Origin::User,
+                });
+                trace!(block_id = %id, "Detected block deleted");
+            }
+        }
+
+        changes
+    }
+
+    /// Emit changes through the registered callback.
+    fn emit_changes(&self, changes: Vec<BlockChange>) {
+        if changes.is_empty() {
+            return;
+        }
+
+        debug!(change_count = changes.len(), "Emitting block changes from Y.Doc update");
+
+        if let Ok(cb_guard) = self.change_callback.read() {
+            if let Some(callback) = cb_guard.as_ref() {
+                callback(changes);
+            }
+        }
     }
 
     /// Get the full document state as an update (for sync).
@@ -251,6 +435,12 @@ impl YDocStore {
     /// if the DB write fails.
     ///
     /// Use this for updates received from external sources (HTTP POST /update).
+    ///
+    /// If a change callback is registered, this method will:
+    /// 1. Snapshot current block state
+    /// 2. Apply the update
+    /// 3. Diff to detect changes
+    /// 4. Invoke the callback with BlockChange events
     pub fn apply_update(&self, update_bytes: &[u8]) -> Result<(), StoreError> {
         // Validate update format before any mutations
         let update = Update::decode_v1(update_bytes)
@@ -262,6 +452,25 @@ impl YDocStore {
 
         // Now apply to in-memory doc
         let doc = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
+
+        // Check if we have a callback - only snapshot if needed
+        let has_callback = self
+            .change_callback
+            .read()
+            .map(|cb| cb.is_some())
+            .unwrap_or(false);
+
+        trace!(has_callback = has_callback, "apply_update: checking for change callback");
+
+        let before_snapshot = if has_callback {
+            let snap = self.snapshot_blocks(&doc);
+            trace!(block_count = snap.len(), "apply_update: took before snapshot");
+            Some(snap)
+        } else {
+            None
+        };
+
+        // Apply the update
         {
             let mut txn = doc.transact_mut();
             txn.apply_update(update)
@@ -270,6 +479,18 @@ impl YDocStore {
 
         // Check for compaction (periodic, not on every update)
         self.maybe_compact(&doc)?;
+
+        // Compute and emit changes if callback is registered
+        if let Some(before) = before_snapshot {
+            let after = self.snapshot_blocks(&doc);
+            trace!(before_count = before.len(), after_count = after.len(), "apply_update: comparing snapshots");
+            let changes = self.compute_changes(&before, &after);
+            if !changes.is_empty() {
+                debug!(change_count = changes.len(), "apply_update: detected changes, emitting to hooks");
+            }
+            drop(doc); // Release lock before callback
+            self.emit_changes(changes);
+        }
 
         Ok(())
     }
