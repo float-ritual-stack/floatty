@@ -1380,6 +1380,7 @@ dependencies = [
  "log",
  "notify",
  "ollama-rs",
+ "parking_lot",
  "reqwest",
  "rusqlite",
  "schemars 1.1.0",

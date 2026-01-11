@@ -52,6 +52,14 @@ pub enum Origin {
 }
 
 impl Origin {
+    /// Convert to bytes for Y.Doc transaction origin tagging.
+    ///
+    /// Used with `doc.transact_mut_with(origin.as_bytes())` to tag mutations
+    /// with their source, enabling downstream filtering.
+    pub fn as_bytes(&self) -> std::sync::Arc<[u8]> {
+        std::sync::Arc::from(self.to_string().as_bytes())
+    }
+
     /// Returns true if this origin should trigger metadata extraction hooks.
     ///
     /// Remote and Hook origins are excluded:

@@ -136,6 +136,13 @@ impl HookSystem {
         // Spawn the writer actor
         let writer_handle = TantivyWriter::spawn(&index_manager)?;
 
+        // Verify writer is accepting messages before registering hook
+        // Prevents silent empty index if writer panics immediately after spawn
+        if let Err(e) = writer_handle.try_send_ping() {
+            warn!("Writer actor not responding after spawn: {}", e);
+            return Err(e);
+        }
+
         // Register TantivyIndexHook
         registry.register(Arc::new(TantivyIndexHook::new(writer_handle.clone())));
         info!("TantivyIndexHook registered with priority 50");

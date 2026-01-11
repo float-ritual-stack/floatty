@@ -571,16 +571,19 @@ impl YDocStore {
     /// Serializes the metadata to JSON and stores it in the block's Y.Map.
     /// Used by hooks to write extracted metadata (markers, outlinks, etc.).
     ///
-    /// Note: This creates a Y.Doc transaction with no origin tracking.
-    /// Hooks should handle their own infinite loop prevention via `accepts_origins()`.
+    /// The origin parameter tags the Y.Doc transaction so downstream observers
+    /// can filter by source. Hooks should pass `Origin::Hook` to prevent
+    /// infinite loops (hook writes triggering the same hook).
     pub fn update_block_metadata(
         &self,
         block_id: &str,
         metadata: crate::metadata::BlockMetadata,
+        origin: crate::Origin,
     ) -> Result<(), StoreError> {
         let doc = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
+        let origin_str = origin.to_string();
         let update = {
-            let mut txn = doc.transact_mut();
+            let mut txn = doc.transact_mut_with(origin_str.as_str());
             let blocks = txn.get_or_insert_map("blocks");
 
             // Find the block

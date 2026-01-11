@@ -1,7 +1,7 @@
 use rusqlite::{Connection, Result, params};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 /// Status of a ctx:: marker parsing
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -129,7 +129,7 @@ impl FloattyDb {
 
     /// Initialize database schema
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
 
         // Create tables first (without sort_key index)
         conn.execute_batch(r#"
@@ -237,7 +237,7 @@ impl FloattyDb {
     /// Check if a marker with this ID already exists
     #[allow(dead_code)]
     pub fn marker_exists(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM ctx_markers WHERE id = ?",
             [id],
@@ -250,7 +250,7 @@ impl FloattyDb {
     /// Metadata comes from JSONL fields - authoritative source of truth
     #[allow(dead_code)]
     pub fn insert_raw(&self, id: &str, session_file: &str, raw_line: &str, meta: &JsonlMetadata) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR IGNORE INTO ctx_markers (id, session_file, raw_line, status, sort_key, cwd, git_branch, session_id, msg_type)
              VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
@@ -271,7 +271,7 @@ impl FloattyDb {
     /// Update marker with parsed JSON (status = parsed)
     /// Note: sort_key is set at insert time from JSONL timestamp, not here
     pub fn update_parsed(&self, id: &str, parsed_json: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE ctx_markers SET status = 'parsed', parsed_json = ? WHERE id = ?",
             params![parsed_json, id],
@@ -281,7 +281,7 @@ impl FloattyDb {
 
     /// Mark marker as error, increment retry count
     pub fn mark_error(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE ctx_markers SET status = 'error', retry_count = retry_count + 1 WHERE id = ?",
             [id],
@@ -291,7 +291,7 @@ impl FloattyDb {
 
     /// Reset error markers to pending for retry (if retry_count < max)
     pub fn reset_errors_for_retry(&self, max_retries: i32) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let updated = conn.execute(
             "UPDATE ctx_markers SET status = 'pending' WHERE status = 'error' AND retry_count < ?",
             [max_retries],
@@ -301,7 +301,7 @@ impl FloattyDb {
 
     /// Get all pending markers for parsing
     pub fn get_pending(&self, limit: i32) -> Result<Vec<CtxMarker>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, session_file, raw_line, status, parsed_json, cwd, git_branch, session_id, msg_type, created_at, retry_count
              FROM ctx_markers WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?"
@@ -333,7 +333,7 @@ impl FloattyDb {
     /// Get all markers for sidebar display
     /// Sorted by parsed timestamp (sort_key), falling back to created_at for unparsed entries
     pub fn get_all(&self, limit: i32, offset: i32) -> Result<Vec<CtxMarker>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, session_file, raw_line, status, parsed_json, cwd, git_branch, session_id, msg_type, created_at, retry_count
              FROM ctx_markers ORDER BY COALESCE(sort_key, created_at) DESC LIMIT ? OFFSET ?"
@@ -364,7 +364,7 @@ impl FloattyDb {
 
     /// Get file position for resume after restart
     pub fn get_file_position(&self, file_path: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let pos: Result<i64, _> = conn.query_row(
             "SELECT last_position FROM file_positions WHERE file_path = ?",
             [file_path],
@@ -376,7 +376,7 @@ impl FloattyDb {
     /// Update file position after reading
     #[allow(dead_code)]
     pub fn set_file_position(&self, file_path: &str, position: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO file_positions (file_path, last_position, updated_at)
              VALUES (?, ?, CURRENT_TIMESTAMP)",
@@ -387,7 +387,7 @@ impl FloattyDb {
 
     /// Get count of markers by status
     pub fn get_counts(&self) -> Result<(i32, i32, i32)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let pending: i32 = conn.query_row(
             "SELECT COUNT(*) FROM ctx_markers WHERE status = 'pending'",
             [],
@@ -414,7 +414,7 @@ impl FloattyDb {
         markers: &[(String, String, JsonlMetadata)], // (id, raw_line, metadata)
         new_position: i64,
     ) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
         let mut inserted = 0;
@@ -448,7 +448,7 @@ impl FloattyDb {
 
     /// Clear all markers and file positions (reset database)
     pub fn clear_all(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute("DELETE FROM ctx_markers", [])?;
         conn.execute("DELETE FROM file_positions", [])?;
         // We do not delete system_state (Yjs doc) on clear_all unless explicitly requested, 
@@ -459,7 +459,7 @@ impl FloattyDb {
 
     /// Get serialized Yjs state
     pub fn get_system_state(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM system_state WHERE key = ?")?;
         let mut rows = stmt.query([key])?;
         
@@ -472,7 +472,7 @@ impl FloattyDb {
 
     /// Set serialized Yjs state
     pub fn set_system_state(&self, key: &str, value: &[u8]) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
             params![key, value],
@@ -486,7 +486,7 @@ impl FloattyDb {
 
     /// Append a Y.Doc update delta (fast, single row insert)
     pub fn append_ydoc_update(&self, doc_key: &str, update: &[u8]) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -503,7 +503,7 @@ impl FloattyDb {
     /// NOTE: Not yet wired up - will be used when Y.Doc loading from DB is implemented
     #[allow(dead_code)]
     pub fn get_ydoc_updates(&self, doc_key: &str) -> Result<Vec<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT update_data FROM ydoc_updates WHERE doc_key = ? ORDER BY id ASC"
         )?;
@@ -513,7 +513,7 @@ impl FloattyDb {
 
     /// Get count of updates for a doc (to decide when to compact)
     pub fn get_ydoc_update_count(&self, doc_key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.query_row(
             "SELECT COUNT(*) FROM ydoc_updates WHERE doc_key = ?",
             [doc_key],
@@ -526,7 +526,7 @@ impl FloattyDb {
     /// NOTE: Not yet wired up - will be used when Y.Doc compaction is implemented
     #[allow(dead_code)]
     pub fn compact_ydoc(&self, doc_key: &str, snapshot: &[u8]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
         // Delete all existing updates for this doc
@@ -553,7 +553,7 @@ impl FloattyDb {
 
     /// Get workspace state JSON (returns None if not found)
     pub fn get_workspace_state(&self, key: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT state_json FROM workspace_state WHERE key = ?")?;
         let mut rows = stmt.query([key])?;
 
@@ -566,7 +566,7 @@ impl FloattyDb {
 
     /// Save workspace state JSON
     pub fn set_workspace_state(&self, key: &str, state_json: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

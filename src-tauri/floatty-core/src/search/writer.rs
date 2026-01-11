@@ -53,6 +53,8 @@ pub enum WriterMessage {
     Commit,
     /// Shutdown the actor.
     Shutdown,
+    /// Health check ping (no-op, just verifies channel is open).
+    Ping,
 }
 
 /// Handle for sending messages to the writer actor.
@@ -124,6 +126,16 @@ impl WriterHandle {
     /// Check if channel has capacity (non-blocking).
     pub fn has_capacity(&self) -> bool {
         self.tx.capacity() > 0
+    }
+
+    /// Non-blocking health check - verifies writer actor is alive.
+    ///
+    /// Returns Ok if the message was queued, Err if channel is closed.
+    /// Use this after spawn() to verify the actor is accepting messages.
+    pub fn try_send_ping(&self) -> Result<(), SearchError> {
+        self.tx
+            .try_send(WriterMessage::Ping)
+            .map_err(|_| SearchError::WriterClosed)
     }
 }
 
@@ -215,6 +227,11 @@ impl TantivyWriter {
                         }
                     }
                     break;
+                }
+
+                WriterMessage::Ping => {
+                    // Health check - no-op, just proves channel is open
+                    trace!("Writer actor received ping");
                 }
             }
         }

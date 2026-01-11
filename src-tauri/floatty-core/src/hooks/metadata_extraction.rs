@@ -105,8 +105,8 @@ impl MetadataExtractionHook {
             id
         );
 
-        // Write metadata to store
-        if let Err(e) = store.update_block_metadata(id, metadata) {
+        // Write metadata to store with Origin::Hook to prevent infinite loops
+        if let Err(e) = store.update_block_metadata(id, metadata, Origin::Hook) {
             warn!("Failed to update metadata for block {}: {}", id, e);
         }
     }
