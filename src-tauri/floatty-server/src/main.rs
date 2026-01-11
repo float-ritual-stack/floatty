@@ -8,7 +8,7 @@
 //!   floatty-server
 
 use axum::{http::Method, middleware, routing::get, Router};
-use floatty_core::YDocStore;
+use floatty_core::{HookSystem, YDocStore};
 use floatty_server::{api, auth, config::ServerConfig, ws, WsBroadcaster};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -55,6 +55,10 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    // Initialize hook system (MetadataExtractionHook registered, cold start rehydration)
+    // Keep _hook_system alive for server lifetime - dropping it stops the dispatch task
+    let _hook_system = HookSystem::initialize(Arc::clone(&store));
 
     // Create WebSocket broadcaster for real-time sync
     let broadcaster = Arc::new(WsBroadcaster::new(64));

@@ -56,10 +56,11 @@ Every work unit follows this lifecycle:
 | 1.5.1 | Hook Interface | 0.3 | Trait definition | Small | ✅ Done |
 | **1.5.2** | **Registry Implementation** | 1.5.1 | Registration + dispatch | Medium | **✅ Done** |
 | 1.5.3 | Origin Filtering | 1.5.2 | Loop prevention | Small | ⏭️ Merged into 2.1 |
-| 2.1 | Metadata Schema | 1.3 + 1.5.3 | Type definitions | Small |
-| 2.2 | Marker Extraction | 2.1 | :: parser hook | Medium |
-| 2.3 | Wikilink Extraction | 2.2 | [[]] parser hook | Medium |
-| 2.4 | PageNameIndex | 2.3 | Autocomplete structure | Small |
+| 2.1 | Metadata Schema | 1.3 + 1.5.3 | Type definitions | Small | ✅ Done |
+| 2.2 | Marker Extraction | 2.1 | :: parser hook + wikilinks | Medium | ✅ Done |
+| 2.3 | Wikilink Extraction | 2.2 | [[]] parser hook | Medium | ⏭️ Merged into 2.2 |
+| **2.2.3** | **Hook System Wiring** | **2.2** | **Runtime hook chain** | **Medium** | **← NEXT** |
+| 2.4 | PageNameIndex | 2.2.3 | Autocomplete structure | Small |
 | 3.1 | Tantivy Setup | 2.4 | Index + schema | Medium |
 | 3.2 | Writer Actor | 3.1 | Bounded channel + backpressure | Medium |
 | 3.3 | TantivyIndexHook | 3.2 | Delete+Add update logic | Medium |
@@ -416,39 +417,103 @@ A subscriber that extracts :: markers and writes to block.metadata.
 
 ## Unit 2.3: Wikilink Extraction
 
+**Status**: ⏭️ Merged into Unit 2.2 - wikilink parsing was natural to include with marker parsing.
+See handoff `docs/handoffs/unit-2.2.md` for details.
+
+---
+
+## Unit 2.2.3: Hook System Wiring
+
 ### Entry Prompt
 
 ```markdown
-# Work Unit 2.3: Wikilink Extraction Hook
+# Work Unit 2.2.3: Hook System Wiring
 
 ## Context
-You are implementing [[wikilink]] extraction for backlinks.
-Read: docs/SEARCH_ARCHITECTURE_SNAPSHOT.md
-Read: Handoff from Unit 2.2
+You are wiring the hook system so hooks actually run at runtime.
+All infrastructure exists but nothing connects:
+- HookRegistry never instantiated
+- MetadataExtractionHook never registered
+- ChangeEmitter has no subscribers
+
+Read: docs/handoffs/unit-2.2.md
+Read: floatty-core/src/hooks/mod.rs
+Read: floatty-core/src/emitter.rs
 
 ## Preconditions
-- Unit 2.2 complete: Marker extraction works
+- Unit 2.2 complete: MetadataExtractionHook exists, parsing functions work
 
 ## Deliverable
-Wikilinks extracted to block.metadata.outlinks.
+Hook system runs at runtime:
+1. HookRegistry created at startup
+2. MetadataExtractionHook registered
+3. Block changes trigger hook dispatch
+4. Cold start populates metadata (BulkImport origin)
 
 ## Entry Checklist
 - [ ] Read Unit 2.2 handoff
-- [ ] Code review: inlineParser.ts wikilink parsing
-- [ ] Understand nested [[outer [[inner]]]] handling
+- [ ] Verify MetadataExtractionHook compiles and tests pass
+- [ ] Review floatty-server/src/main.rs startup sequence
+- [ ] Review emitter.rs broadcast channel pattern
 
 ## Implementation
-1. Extend metadata hook to extract [[targets]]
-2. Handle aliases: [[Target|Display]]
-3. Handle nested brackets
-4. Write to metadata.outlinks array
+1. Create `floatty-core/src/hooks/system.rs`:
+   - `fn initialize_hook_system(store: Arc<YDocStore>) -> HookSystem`
+   - `HookSystem` owns registry + spawns emitter subscriber task
+2. In `initialize_hook_system()`:
+   - Create HookRegistry
+   - Register MetadataExtractionHook
+   - Create ChangeEmitter subscriber task that calls registry.dispatch()
+3. Add cold-start rehydration:
+   - After Y.Doc loads, iterate all blocks
+   - Emit `BlockChange::ContentChanged` with `Origin::BulkImport`
+   - Hooks process these, populating metadata
+4. Integrate into floatty-server/src/main.rs:
+   - Call `initialize_hook_system()` after store creation
+   - Hold HookSystem for lifetime of server
+5. Add integration test: create block → verify metadata populated
 
 ## Exit Checklist
 - [ ] `cargo test -p floatty-core` passes
-- [ ] Typing `[[Page Name]]` populates metadata.outlinks
-- [ ] Nested brackets handled correctly
-- [ ] Code review: reuse inlineParser logic?
+- [ ] `cargo test -p floatty-server` passes
+- [ ] floatty-server startup creates HookRegistry with MetadataExtractionHook
+- [ ] Block creation triggers MetadataExtractionHook
+- [ ] Restart loads blocks with populated metadata (cold start)
 - [ ] Write handoff for Unit 2.4
+```
+
+### Exit Template
+
+```markdown
+# Handoff: Unit 2.2.3 - Hook System Wiring
+
+**Completed**: [timestamp]
+**Status**: ✅ Complete
+
+## What Was Done
+- Created hooks/system.rs with initialize_hook_system()
+- HookRegistry created and MetadataExtractionHook registered at startup
+- ChangeEmitter subscriber wired to registry dispatch
+- Cold-start rehydration emits BulkImport changes for existing blocks
+
+## Files Changed
+- floatty-core/src/hooks/system.rs (NEW)
+- floatty-core/src/hooks/mod.rs (export)
+- floatty-core/src/lib.rs (re-export)
+- floatty-server/src/main.rs (integration)
+
+## Tests Added
+- Integration test: block creation triggers hook
+- Integration test: cold start rehydrates metadata
+
+## Setup for Next Unit
+Unit 2.4 (PageNameIndex) can now:
+- Subscribe to ChangeEmitter for block changes
+- Read metadata.outlinks populated by MetadataExtractionHook
+- Build page name index at startup via cold start mechanism
+
+## Blockers for Next Unit
+- None expected
 ```
 
 ---
@@ -1140,3 +1205,43 @@ Frontend subscribes and applies to layoutStore.
 
 **Resolution**:
 Created Unit 0.3 with Entry/Exit Protocol. Dependencies updated (1.1 and 1.5.1 now depend on 0.3).
+
+---
+
+### Gap: Hook System Wiring
+
+**Discovered**: 2026-01-10 during Unit 2.2 exit review
+**Surfaced by**: Verification that HookRegistry is never instantiated
+**Status**: BLOCKING - requires new Unit 2.2.3
+
+**Current State**:
+All hook infrastructure exists but is never connected:
+- `HookRegistry` - defined in `hooks/mod.rs`, never created
+- `MetadataExtractionHook` - defined in `metadata_extraction.rs`, never registered
+- `ChangeEmitter` - defined in `emitter.rs`, never has subscribers
+- `YDocStore::update_block_metadata()` - ready but hooks never call it
+
+**Evidence**: Zero calls to `registry.register()` outside test files.
+
+**Impact**:
+- Metadata extraction never runs
+- Block content changes don't populate `metadata.markers` or `metadata.outlinks`
+- PageNameIndex (Unit 2.4) has nothing to index
+- Search can't work until this is fixed
+
+**Architecture Flow (Currently Broken)**:
+```
+Block Change → ??? → HookRegistry.dispatch() → MetadataExtractionHook → metadata
+                ↑
+            MISSING: Nothing creates registry or wires the chain
+```
+
+**Suggested Resolution**:
+Insert Unit 2.2.3 (Hook System Wiring):
+1. Create `hooks/system.rs` with `initialize_hook_system()`
+2. Register `MetadataExtractionHook` at startup
+3. Wire emitter to registry
+4. Add cold-start rehydration (emit BulkImport changes after Y.Doc load)
+5. Integrate into `floatty-server/src/main.rs`
+
+**Related Gap**: Cold Start Index Rehydration should be part of this unit.

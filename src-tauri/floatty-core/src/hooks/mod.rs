@@ -37,9 +37,11 @@
 // Submodules
 pub mod metadata_extraction;
 pub mod parsing;
+pub mod system;
 
 // Re-exports
 pub use metadata_extraction::MetadataExtractionHook;
+pub use system::HookSystem;
 
 use crate::{BlockChangeBatch, Origin, YDocStore};
 use std::sync::{Arc, RwLock};
