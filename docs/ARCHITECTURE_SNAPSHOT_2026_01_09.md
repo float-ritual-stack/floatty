@@ -8,7 +8,7 @@
 
 ### Current Y.Doc Structure
 
-**File**: `/home/user/floatty/src/hooks/useSyncedYDoc.ts` (lines 113-116)
+**File**: `src/hooks/useSyncedYDoc.ts` (lines 113-116)
 
 ```typescript
 // Singleton Y.Doc pattern
@@ -21,7 +21,7 @@ export function getSharedDoc(): Y.Doc {
 }
 ```
 
-**File**: `/home/user/floatty/src/hooks/useBlockStore.ts` (lines 196-197)
+**File**: `src/hooks/useBlockStore.ts` (lines 196-197)
 
 The Y.Doc contains two top-level structures:
 
@@ -57,7 +57,7 @@ blockMap.set('childIds', childIdsArr);
 
 ### Mutation Pattern: `setValueOnYMap()`
 
-**File**: `/home/user/floatty/src/hooks/useBlockStore.ts` (lines 65-95)
+**File**: `src/hooks/useBlockStore.ts` (lines 65-95)
 
 ```typescript
 function setValueOnYMap(blocksMap: Y.Map<unknown>, blockId: string, key: string, value: unknown): void {
@@ -86,7 +86,7 @@ function setValueOnYMap(blocksMap: Y.Map<unknown>, blockId: string, key: string,
 
 ### Observer Attachment: Ref-Counted Singleton
 
-**File**: `/home/user/floatty/src/hooks/useSyncedYDoc.ts` (lines 136-246)
+**File**: `src/hooks/useSyncedYDoc.ts` (lines 136-246)
 
 **Problem solved**: Multiple Outliner panes calling `useSyncedYDoc()` would attach 3x handlers → 3x duplicate work.
 
@@ -139,7 +139,7 @@ function detachHandler() {
 
 ### PTY Lifecycle: terminalManager Singleton
 
-**File**: `/home/user/floatty/src/lib/terminalManager.ts` (lines 92-96)
+**File**: `src/lib/terminalManager.ts` (lines 92-96)
 
 ```typescript
 class TerminalManager {
@@ -160,7 +160,7 @@ export const terminalManager = new TerminalManager();  // Singleton
 
 ### PTY Batching Pattern (4000+ redraws/sec)
 
-**File**: `/home/user/floatty/src-tauri/plugins/tauri-plugin-pty/src/lib.rs` (lines 205-277)
+**File**: `src-tauri/plugins/tauri-plugin-pty/src/lib.rs` (lines 205-277)
 
 ```rust
 // BATCHER THREAD: Greedy slurp pattern
@@ -208,7 +208,7 @@ thread::spawn(move || {
 
 Terminal output flows **only** to xterm display. Block output goes through handler system:
 
-**File**: `/home/user/floatty/src/lib/handlers/sh.ts` (lines 1-95)
+**File**: `src/lib/handlers/sh.ts` (lines 1-95)
 
 ```typescript
 export const shHandler: BlockHandler = {
@@ -226,7 +226,7 @@ export const shHandler: BlockHandler = {
 
 ### Input Routing: Pure `determineKeyAction()`
 
-**File**: `/home/user/floatty/src/hooks/useBlockInput.ts` (lines 88-216)
+**File**: `src/hooks/useBlockInput.ts` (lines 88-216)
 
 ```typescript
 // Testable pure function - no DOM
@@ -263,7 +263,7 @@ export type KeyboardAction =
 
 ### Split Pane: Binary Tree Structure
 
-**File**: `/home/user/floatty/src/lib/layoutTypes.ts` (lines 1-50)
+**File**: `src/lib/layoutTypes.ts` (lines 1-50)
 
 ```typescript
 // Leaf node - terminal or outliner pane
@@ -295,7 +295,7 @@ export type LayoutNode = PaneLeaf | PaneSplit;
 
 ### Resize Operations
 
-**File**: `/home/user/floatty/src/components/ResizeOverlay.tsx` (lines 50-239)
+**File**: `src/components/ResizeOverlay.tsx` (lines 50-239)
 
 ```typescript
 const RESIZE_THROTTLE_MS = 50;  // 20 events/sec max
@@ -321,7 +321,7 @@ const onWindowPointerMove = (e: PointerEvent) => {
 
 ### Terminal Manager: Drag-Aware fit() Suppression
 
-**File**: `/home/user/floatty/src/lib/terminalManager.ts` (lines 560-674)
+**File**: `src/lib/terminalManager.ts` (lines 560-674)
 
 ```typescript
 setDragging(dragging: boolean) {
@@ -367,7 +367,7 @@ Layout state is **app-local**, not collaborative:
 
 ### Granular Updates via Nested Y.Map
 
-**File**: `/home/user/floatty/src/hooks/useBlockStore.ts` (lines 129-161)
+**File**: `src/hooks/useBlockStore.ts` (lines 129-161)
 
 - Each block is a Y.Map (not plain object)
 - `childIds` stored as nested Y.Array
@@ -376,7 +376,7 @@ Layout state is **app-local**, not collaborative:
 
 ### Origin Filtering
 
-**File**: `/home/user/floatty/src/hooks/useSyncedYDoc.ts` (lines 217-254)
+**File**: `src/hooks/useSyncedYDoc.ts` (lines 217-254)
 
 ```typescript
 moduleUpdateHandler = (update: Uint8Array, origin: unknown) => {
@@ -390,7 +390,7 @@ Y.applyUpdate(sharedDoc, serverState, 'remote');  // Tagged as remote
 
 ### Update Batching: 50ms Debounce
 
-**File**: `/home/user/floatty/src/hooks/useSyncedYDoc.ts` (lines 122-149)
+**File**: `src/hooks/useSyncedYDoc.ts` (lines 122-149)
 
 ```typescript
 const DEFAULT_SYNC_DEBOUNCE = 50;
@@ -404,7 +404,7 @@ function queueUpdateModule(update: Uint8Array) {
 
 ### Transaction Batching
 
-**File**: `/home/user/floatty/src/hooks/useBlockStore.ts` (lines 286-295)
+**File**: `src/hooks/useBlockStore.ts` (lines 286-295)
 
 ```typescript
 const updateBlockContent = (id: string, content: string) => {
@@ -460,7 +460,7 @@ const updateBlockContent = (id: string, content: string) => {
 
 ### ✅ RESOLVED: Input Lag (Fixed 2026-01-10)
 
-**File**: `/home/user/floatty/src/components/BlockItem.tsx` (lines 510-527)
+**File**: `src/components/BlockItem.tsx` (lines 510-527)
 
 ```typescript
 const handleInput = (e: InputEvent) => {
@@ -484,7 +484,7 @@ const handleInput = (e: InputEvent) => {
 
 ### HIGH PRIORITY: Full Tree Walk per Keystroke
 
-**File**: `/home/user/floatty/src/components/Outliner.tsx` (lines 37-57)
+**File**: `src/components/Outliner.tsx` (lines 37-57)
 
 ```typescript
 const getVisibleBlockIds = createMemo(() => {
@@ -504,9 +504,18 @@ const getVisibleBlockIds = createMemo(() => {
 
 **Recommendation**: Virtual scrolling (render 50-100 blocks only).
 
+**Virtual Scrolling Architecture (Future)**:
+- Fixed item height assumption: 24px (collapsed block), variable when expanded
+- Viewport buffer: 20 items above/below visible area for smooth scrolling
+- Measure phase: First render calculates block heights, caches for reuse
+- Integration with zoom: Virtual root changes when zoomed into subtree
+- Integration with collapse: Collapsed blocks skip children entirely
+- Performance target: Maintain 60fps during fast scroll with 10K+ blocks
+- Implementation path: React-window or custom virtualizer with Y.Doc integration
+
 ### MEDIUM: Resize Event Spam
 
-**File**: `/home/user/floatty/src/components/ResizeOverlay.tsx` (line 189)
+**File**: `src/components/ResizeOverlay.tsx` (line 189)
 
 ```typescript
 window.dispatchEvent(new Event('resize'));  // 20x/sec during drag
@@ -516,7 +525,7 @@ window.dispatchEvent(new Event('resize'));  // 20x/sec during drag
 
 ### MEDIUM: fit() Called on ALL Terminals
 
-**File**: `/home/user/floatty/src/lib/terminalManager.ts` (line 591)
+**File**: `src/lib/terminalManager.ts` (line 591)
 
 ```typescript
 for (const [id, savedY] of this.savedScrollPositions) {
@@ -528,7 +537,7 @@ for (const [id, savedY] of this.savedScrollPositions) {
 
 ### LOWER: Y.Doc Serialization Every Keystroke
 
-**File**: `/home/user/floatty/src/hooks/useSyncedYDoc.ts` (lines 293-308)
+**File**: `src/hooks/useSyncedYDoc.ts` (lines 293-308)
 
 ```typescript
 const state = Y.encodeStateAsUpdate(sharedDoc);  // CPU-intensive

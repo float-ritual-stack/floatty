@@ -34,7 +34,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 use yrs::{Doc, Map, Out, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
 
 /// Default doc key for the outliner.
@@ -184,13 +184,19 @@ impl YDocStore {
     /// metadata extraction, search indexing, etc.
     ///
     /// The callback is called synchronously after the update is applied and persisted.
-    pub fn set_change_callback<F>(&self, callback: F)
+    ///
+    /// # Errors
+    /// Returns an error if the internal lock is poisoned.
+    pub fn set_change_callback<F>(&self, callback: F) -> Result<(), String>
     where
         F: Fn(Vec<BlockChange>) + Send + Sync + 'static,
     {
         match self.change_callback.write() {
-            Ok(mut cb) => *cb = Some(Arc::new(callback)),
-            Err(e) => warn!("Failed to set change callback (lock poisoned): {}", e),
+            Ok(mut cb) => {
+                *cb = Some(Arc::new(callback));
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to set change callback (lock poisoned): {}", e)),
         }
     }
 
@@ -755,9 +761,11 @@ mod tests {
         // Capture changes via callback
         let captured: Arc<Mutex<Vec<BlockChange>>> = Arc::new(Mutex::new(Vec::new()));
         let captured_clone = Arc::clone(&captured);
-        store.set_change_callback(move |changes| {
-            captured_clone.lock().unwrap().extend(changes);
-        });
+        store
+            .set_change_callback(move |changes| {
+                captured_clone.lock().unwrap().extend(changes);
+            })
+            .expect("Failed to set change callback");
 
         // Create a Y.Doc update from a SEPARATE doc (simulates receiving from another client)
         // This is critical: if we mutate the store's own doc, the change is already there
@@ -1001,9 +1009,11 @@ mod tests {
 
         let call_count = Arc::new(Mutex::new(0));
         let call_count_clone = Arc::clone(&call_count);
-        store.set_change_callback(move |_| {
-            *call_count_clone.lock().unwrap() += 1;
-        });
+        store
+            .set_change_callback(move |_| {
+                *call_count_clone.lock().unwrap() += 1;
+            })
+            .expect("Failed to set change callback");
 
         // Emit empty vec - callback should NOT be invoked
         store.emit_changes(vec![]);

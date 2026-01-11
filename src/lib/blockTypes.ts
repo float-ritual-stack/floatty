@@ -13,6 +13,23 @@ export type { Marker } from '../generated/Marker';
 import type { BlockType } from '../generated/BlockType';
 import type { BlockMetadata } from '../generated/BlockMetadata';
 
+/**
+ * Block interface for the outliner.
+ *
+ * **Core fields** (id through updatedAt) are synced to Rust via ts-rs generated types
+ * and persisted in Y.Doc. See `src-tauri/floatty-core/src/block.rs` for Rust definition.
+ *
+ * **Execution output fields** (output, outputType, outputStatus) are client-only state
+ * stored in Y.Doc but NOT synced to Rust. These track the transient state of executable
+ * blocks (sh::, ai::, daily::) and are intentionally excluded from the Rust Block struct
+ * because:
+ *   1. Execution is frontend-only (no server-side execution yet)
+ *   2. Output can be large and is ephemeral (regenerated on re-run)
+ *   3. Status is UI-only state (pending/running/complete/error)
+ *
+ * Future consideration: If server-side execution is added, these fields should move
+ * to `metadata.execution` to maintain the metadata-as-extensible-storage pattern.
+ */
 export interface Block {
   id: string;
   parentId: string | null;
@@ -23,9 +40,15 @@ export interface Block {
   collapsed: boolean;
   createdAt: number;
   updatedAt: number;
-  // Execution output (for daily::, ai::, etc.)
+
+  /**
+   * Execution output for executable blocks (sh::, ai::, daily::).
+   * Client-only state, stored in Y.Doc but not synced to Rust.
+   */
   output?: unknown;
-  outputType?: string;  // 'daily-view', 'kanban-view', etc.
+  /** Output view type: 'daily-view', 'kanban-view', etc. */
+  outputType?: string;
+  /** Execution status for UI feedback. */
   outputStatus?: 'pending' | 'running' | 'complete' | 'error';
 }
 

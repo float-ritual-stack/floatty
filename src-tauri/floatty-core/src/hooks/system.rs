@@ -322,6 +322,7 @@ fn rehydrate_existing_blocks(emitter: &ChangeEmitter, store: &YDocStore) -> usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
     use yrs::{Map, MapPrelim, Transact, WriteTxn};
 
@@ -431,6 +432,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_dispatch_task_receives_changes() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::Duration;

@@ -63,13 +63,15 @@ async fn main() {
     // This makes ALL Y.Doc mutations (including frontend sync) trigger hooks
     {
         let hook_system_clone = Arc::clone(&hook_system);
-        store.set_change_callback(move |changes| {
-            for change in changes {
-                if let Err(e) = hook_system_clone.emit_change(change) {
-                    tracing::error!("Hook emission failed: {}", e);
+        store
+            .set_change_callback(move |changes| {
+                for change in changes {
+                    if let Err(e) = hook_system_clone.emit_change(change) {
+                        tracing::error!("Hook emission failed: {}", e);
+                    }
                 }
-            }
-        });
+            })
+            .expect("Failed to register change callback - hooks will not fire");
     }
     tracing::info!("Y.Doc change observation wired to hook system");
 

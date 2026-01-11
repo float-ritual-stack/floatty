@@ -297,6 +297,7 @@ impl Default for HookRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     /// Helper to create a YDocStore for tests.
@@ -499,6 +500,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════
 
     #[test]
+    #[serial]
     fn test_process_receives_batch() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -640,6 +642,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dispatch_calls_process() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -682,6 +685,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dispatch_origin_filtering() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -736,6 +740,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dispatch_sync_blocks() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -784,6 +789,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_dispatch_async_spawns() {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::Duration;
@@ -835,6 +841,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dispatch_empty_batch_no_call() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -875,6 +882,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dispatch_priority_order_execution() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
