@@ -85,9 +85,11 @@ cmd_find() {
     echo "Finding: $query (limit: $limit)"
     echo "═══════════════════════════════════════════════════════════════════"
 
-    # Get search hits
-    local hits=$(api GET "/search?q=$(urlencode "$query")&limit=$limit")
-    local count=$(echo "$hits" | jq '.hits | length')
+    # Get search hits (SC2155: split declaration from assignment)
+    local hits
+    hits="$(api GET "/search?q=$(urlencode "$query")&limit=$limit")"
+    local count
+    count="$(jq '.hits | length' <<<"$hits")"
 
     if [[ "$count" == "0" ]]; then
         echo "No results found."
@@ -98,18 +100,22 @@ cmd_find() {
     echo ""
 
     # Hydrate each block
-    echo "$hits" | jq -r '.hits[].blockId' | while read -r block_id; do
-        local block=$(api GET "/blocks/$block_id" 2>/dev/null)
+    jq -r '.hits[].blockId' <<<"$hits" | while read -r block_id; do
+        local block
+        block="$(api GET "/blocks/$block_id" 2>/dev/null || true)"
         if [[ -n "$block" && "$block" != "null" ]]; then
-            local content=$(echo "$block" | jq -r '.content // "(no content)"')
-            local block_type=$(echo "$block" | jq -r '.blockType // "text"')
-            local score=$(echo "$hits" | jq -r ".hits[] | select(.blockId == \"$block_id\") | .score")
+            local content block_type score
+            content="$(jq -r '.content // "(no content)"' <<<"$block")"
+            block_type="$(jq -r '.blockType // "text"' <<<"$block")"
+            # Use --arg to safely pass block_id (avoids quote injection)
+            score="$(jq -r --arg id "$block_id" '.hits[] | select(.blockId == $id) | .score' <<<"$hits")"
 
             echo "┌─ [$block_type] score: $score"
             echo "│  $block_id"
             echo "├──────────────────────────────────────────────────────────────"
-            echo "$content" | head -5 | sed 's/^/│  /'
-            local lines=$(($(echo "$content" | wc -l)))
+            head -5 <<<"$content" | sed 's/^/│  /'
+            local lines
+            lines="$(($(wc -l <<<"$content")))"
             if (( lines > 5 )); then
                 echo "│  ... ($lines lines total)"
             fi
@@ -173,10 +179,10 @@ cmd_list() {
 cmd_health() {
     echo "Checking floatty-server health..."
     echo "─────────────────────────────────────"
-    local status
     if curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/blocks" -H "$AUTH_HEADER" | grep -q "200"; then
         echo "✓ Server responding on port $FLOATTY_PORT"
-        local block_count=$(api GET "/blocks" | jq 'length')
+        local block_count
+        block_count="$(api GET "/blocks" | jq 'length')"
         echo "  Blocks: $block_count"
     else
         echo "✗ Server not responding on port $FLOATTY_PORT"
