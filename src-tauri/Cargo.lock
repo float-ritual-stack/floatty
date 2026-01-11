@@ -1352,14 +1352,17 @@ dependencies = [
 name = "floatty-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dirs 5.0.1",
  "log",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tracing",
  "ts-rs",
  "yrs",
 ]

@@ -34,6 +34,13 @@
 //! - **Async hooks** (`is_sync() = false`): Spawn and return immediately.
 //!   Use for expensive operations like search indexing.
 
+// Submodules
+pub mod metadata_extraction;
+pub mod parsing;
+
+// Re-exports
+pub use metadata_extraction::MetadataExtractionHook;
+
 use crate::{BlockChangeBatch, Origin, YDocStore};
 use std::sync::{Arc, RwLock};
 

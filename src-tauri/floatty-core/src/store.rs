@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
-use yrs::{Doc, ReadTxn, StateVector, Transact, Update, updates::decoder::Decode, updates::encoder::Encode};
+use yrs::{Doc, Map, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
 
 /// Default doc key for the outliner.
 pub const DEFAULT_DOC_KEY: &str = "default";
@@ -236,6 +236,50 @@ impl YDocStore {
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
         self.persistence.compact(&self.doc_key, &full_state)?;
+        Ok(())
+    }
+
+    /// Update metadata for a block.
+    ///
+    /// Serializes the metadata to JSON and stores it in the block's Y.Map.
+    /// Used by hooks to write extracted metadata (markers, outlinks, etc.).
+    ///
+    /// Note: This creates a Y.Doc transaction with no origin tracking.
+    /// Hooks should handle their own infinite loop prevention via `accepts_origins()`.
+    pub fn update_block_metadata(
+        &self,
+        block_id: &str,
+        metadata: crate::metadata::BlockMetadata,
+    ) -> Result<(), StoreError> {
+        let doc = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
+        let update = {
+            let mut txn = doc.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+
+            // Find the block
+            let block_map = match blocks.get(&txn, block_id) {
+                Some(yrs::Out::YMap(map)) => map,
+                _ => {
+                    return Err(StoreError::UpdateApply(format!(
+                        "Block not found: {}",
+                        block_id
+                    )));
+                }
+            };
+
+            // Serialize metadata to JSON string (matches API pattern)
+            let metadata_json = serde_json::to_string(&metadata)
+                .map_err(|e| StoreError::UpdateApply(format!("Metadata serialization failed: {}", e)))?;
+
+            block_map.insert(&mut txn, "metadata", metadata_json);
+
+            txn.encode_update_v1()
+        };
+        drop(doc);
+
+        // Persist the update
+        self.persist_update(&update)?;
+
         Ok(())
     }
 }
