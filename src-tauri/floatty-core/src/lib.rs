@@ -24,6 +24,7 @@
 //! let full_state = store.get_full_state().expect("Failed to get state");
 //! ```
 
+pub mod batcher;
 pub mod block;
 pub mod emitter;
 pub mod events;
@@ -32,6 +33,7 @@ pub mod persistence;
 pub mod store;
 
 // Re-exports for convenience
+pub use batcher::BatchedChangeCollector;
 pub use block::{Block, BlockType, parse_block_type};
 pub use emitter::{ChangeEmitter, ChangeBuilder, parse_origin};
 pub use events::{BlockChange, BlockChangeBatch};

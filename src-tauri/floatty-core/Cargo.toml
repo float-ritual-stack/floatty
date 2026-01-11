@@ -28,8 +28,8 @@ log = "0.4"
 # Utilities
 dirs = "5"
 
-# Async runtime (for broadcast channel)
-tokio = { version = "1", features = ["sync"] }
+# Async runtime (for broadcast channel, timer, spawn)
+tokio = { version = "1", features = ["sync", "time", "rt"] }
 
 [dev-dependencies]
 tempfile = "3"
