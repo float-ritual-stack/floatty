@@ -1,13 +1,17 @@
 /**
  * Block types for the integrated outliner
  *
- * BlockType is generated from Rust via ts-rs to ensure consistency.
+ * BlockType, BlockMetadata, and Marker are generated from Rust via ts-rs.
  * To regenerate: `cd src-tauri && cargo run --bin ts-gen`
  */
 
-// Re-export the generated BlockType (single source of truth from Rust)
+// Re-export generated types (single source of truth from Rust)
 export type { BlockType } from '../generated/BlockType';
+export type { BlockMetadata } from '../generated/BlockMetadata';
+export type { Marker } from '../generated/Marker';
+
 import type { BlockType } from '../generated/BlockType';
+import type { BlockMetadata } from '../generated/BlockMetadata';
 
 export interface Block {
   id: string;
@@ -15,7 +19,7 @@ export interface Block {
   childIds: string[];
   content: string;
   type: BlockType;
-  metadata?: Record<string, unknown>;
+  metadata?: BlockMetadata | null;
   collapsed: boolean;
   createdAt: number;
   updatedAt: number;

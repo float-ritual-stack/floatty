@@ -9,6 +9,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::metadata::BlockMetadata;
+
 /// Block types determine rendering and execution behavior.
 /// Derived from content prefix - NOT stored in the database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -183,8 +185,7 @@ pub struct Block {
     /// Block metadata for markers, wikilinks, and other extracted data.
     /// Populated by hooks, exposed via API for external agent integration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(type = "Record<string, unknown> | null")]
-    pub metadata: Option<serde_json::Value>,
+    pub metadata: Option<BlockMetadata>,
 }
 
 impl Block {
