@@ -566,6 +566,29 @@ impl YDocStore {
         Ok(())
     }
 
+    /// Get block metadata as JSON Value (for change events).
+    ///
+    /// Used to capture the old metadata state before mutations.
+    fn get_block_metadata_json(&self, block_id: &str) -> Option<serde_json::Value> {
+        let doc = self.doc.read().ok()?;
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks")?;
+
+        let block_map = match blocks_map.get(&txn, block_id)? {
+            Out::YMap(map) => map,
+            _ => return None,
+        };
+
+        block_map
+            .get(&txn, "metadata")
+            .and_then(|v| match v {
+                Out::Any(yrs::Any::String(s)) => {
+                    serde_json::from_str::<serde_json::Value>(&s).ok()
+                }
+                _ => None,
+            })
+    }
+
     /// Update metadata for a block.
     ///
     /// Serializes the metadata to JSON and stores it in the block's Y.Map.
@@ -574,12 +597,18 @@ impl YDocStore {
     /// The origin parameter tags the Y.Doc transaction so downstream observers
     /// can filter by source. Hooks should pass `Origin::Hook` to prevent
     /// infinite loops (hook writes triggering the same hook).
+    ///
+    /// After persisting, emits a `MetadataChanged` event so downstream hooks
+    /// (like TantivyIndexHook) can react to the metadata update.
     pub fn update_block_metadata(
         &self,
         block_id: &str,
         metadata: crate::metadata::BlockMetadata,
         origin: crate::Origin,
     ) -> Result<(), StoreError> {
+        // Capture old metadata before mutation (for change event)
+        let old_metadata = self.get_block_metadata_json(block_id);
+
         let doc = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
         let origin_str = origin.to_string();
         let update = {
@@ -588,7 +617,7 @@ impl YDocStore {
 
             // Find the block
             let block_map = match blocks.get(&txn, block_id) {
-                Some(yrs::Out::YMap(map)) => map,
+                Some(Out::YMap(map)) => map,
                 _ => {
                     return Err(StoreError::UpdateApply(format!(
                         "Block not found: {}",
@@ -609,6 +638,15 @@ impl YDocStore {
 
         // Persist the update
         self.persist_update(&update)?;
+
+        // Emit MetadataChanged event so downstream hooks (TantivyIndexHook) are notified
+        let new_metadata = serde_json::to_value(&metadata).ok();
+        self.emit_changes(vec![BlockChange::MetadataChanged {
+            id: block_id.to_string(),
+            old_metadata,
+            new_metadata,
+            origin,
+        }]);
 
         Ok(())
     }
@@ -700,5 +738,276 @@ mod tests {
             let value = blocks.get(&txn, key.as_str()).map(|v| v.to_string(&txn));
             assert_eq!(value, Some(format!("value-{}", i)));
         }
+    }
+
+    // =========================================================================
+    // Change-Observation Flow Tests
+    // =========================================================================
+
+    #[test]
+    fn test_set_change_callback_receives_changes() {
+        use std::sync::Mutex;
+        use yrs::{Doc, MapPrelim, Transact};
+
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Capture changes via callback
+        let captured: Arc<Mutex<Vec<BlockChange>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = Arc::clone(&captured);
+        store.set_change_callback(move |changes| {
+            captured_clone.lock().unwrap().extend(changes);
+        });
+
+        // Create a Y.Doc update from a SEPARATE doc (simulates receiving from another client)
+        // This is critical: if we mutate the store's own doc, the change is already there
+        // when apply_update takes its "before" snapshot.
+        let update = {
+            let external_doc = Doc::new();
+            let mut txn = external_doc.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([("content", "hello".to_string())]);
+            blocks.insert(&mut txn, "block-1", block_prelim);
+            txn.encode_update_v1()
+        };
+
+        // Apply update (should trigger callback)
+        store.apply_update(&update).unwrap();
+
+        // Verify callback received the Created event
+        let changes = captured.lock().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            &changes[0],
+            BlockChange::Created { id, content, .. } if id == "block-1" && content == "hello"
+        ));
+    }
+
+    #[test]
+    fn test_snapshot_blocks_captures_fields() {
+        use yrs::MapPrelim;
+
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Add a block with content, parentId, and collapsed
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("test content".into())),
+                ("parentId", yrs::Any::String("parent-1".into())),
+                ("collapsed", yrs::Any::Bool(true)),
+            ]);
+            blocks.insert(&mut txn, "block-1", block_prelim);
+        }
+
+        // Snapshot and verify
+        let doc = store.doc();
+        let doc_guard = doc.read().unwrap();
+        let snapshots = store.snapshot_blocks(&doc_guard);
+
+        assert!(snapshots.contains_key("block-1"));
+        let snap = &snapshots["block-1"];
+        assert_eq!(snap.content, "test content");
+        assert_eq!(snap.parent_id, Some("parent-1".to_string()));
+        assert!(snap.collapsed);
+    }
+
+    #[test]
+    fn test_compute_changes_created() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let before: HashMap<String, BlockSnapshot> = HashMap::new();
+        let mut after: HashMap<String, BlockSnapshot> = HashMap::new();
+        after.insert(
+            "b1".to_string(),
+            BlockSnapshot {
+                content: "new block".to_string(),
+                parent_id: Some("root".to_string()),
+                collapsed: false,
+            },
+        );
+
+        let changes = store.compute_changes(&before, &after);
+
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            &changes[0],
+            BlockChange::Created { id, content, parent_id, .. }
+                if id == "b1" && content == "new block" && parent_id == &Some("root".to_string())
+        ));
+    }
+
+    #[test]
+    fn test_compute_changes_content_changed() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let mut before: HashMap<String, BlockSnapshot> = HashMap::new();
+        before.insert(
+            "b1".to_string(),
+            BlockSnapshot {
+                content: "old".to_string(),
+                parent_id: None,
+                collapsed: false,
+            },
+        );
+
+        let mut after: HashMap<String, BlockSnapshot> = HashMap::new();
+        after.insert(
+            "b1".to_string(),
+            BlockSnapshot {
+                content: "new".to_string(),
+                parent_id: None,
+                collapsed: false,
+            },
+        );
+
+        let changes = store.compute_changes(&before, &after);
+
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            &changes[0],
+            BlockChange::ContentChanged { id, old_content, new_content, .. }
+                if id == "b1" && old_content == "old" && new_content == "new"
+        ));
+    }
+
+    #[test]
+    fn test_compute_changes_moved() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let mut before: HashMap<String, BlockSnapshot> = HashMap::new();
+        before.insert(
+            "b1".to_string(),
+            BlockSnapshot {
+                content: "block".to_string(),
+                parent_id: Some("parent-A".to_string()),
+                collapsed: false,
+            },
+        );
+
+        let mut after: HashMap<String, BlockSnapshot> = HashMap::new();
+        after.insert(
+            "b1".to_string(),
+            BlockSnapshot {
+                content: "block".to_string(),
+                parent_id: Some("parent-B".to_string()),
+                collapsed: false,
+            },
+        );
+
+        let changes = store.compute_changes(&before, &after);
+
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            &changes[0],
+            BlockChange::Moved { id, old_parent_id, new_parent_id, .. }
+                if id == "b1"
+                    && old_parent_id == &Some("parent-A".to_string())
+                    && new_parent_id == &Some("parent-B".to_string())
+        ));
+    }
+
+    #[test]
+    fn test_compute_changes_collapsed_changed() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let mut before: HashMap<String, BlockSnapshot> = HashMap::new();
+        before.insert(
+            "b1".to_string(),
+            BlockSnapshot {
+                content: "block".to_string(),
+                parent_id: None,
+                collapsed: false,
+            },
+        );
+
+        let mut after: HashMap<String, BlockSnapshot> = HashMap::new();
+        after.insert(
+            "b1".to_string(),
+            BlockSnapshot {
+                content: "block".to_string(),
+                parent_id: None,
+                collapsed: true,
+            },
+        );
+
+        let changes = store.compute_changes(&before, &after);
+
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            &changes[0],
+            BlockChange::CollapsedChanged { id, collapsed, .. }
+                if id == "b1" && *collapsed == true
+        ));
+    }
+
+    #[test]
+    fn test_compute_changes_deleted() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let mut before: HashMap<String, BlockSnapshot> = HashMap::new();
+        before.insert(
+            "b1".to_string(),
+            BlockSnapshot {
+                content: "deleted block".to_string(),
+                parent_id: None,
+                collapsed: false,
+            },
+        );
+
+        let after: HashMap<String, BlockSnapshot> = HashMap::new();
+
+        let changes = store.compute_changes(&before, &after);
+
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            &changes[0],
+            BlockChange::Deleted { id, content, .. }
+                if id == "b1" && content == "deleted block"
+        ));
+    }
+
+    #[test]
+    fn test_emit_changes_no_callback() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Don't set a callback - should not panic
+        store.emit_changes(vec![BlockChange::Created {
+            id: "b1".to_string(),
+            content: "test".to_string(),
+            parent_id: None,
+            origin: Origin::User,
+        }]);
+
+        // Test passes if no panic occurred
+    }
+
+    #[test]
+    fn test_emit_changes_empty_vec() {
+        use std::sync::Mutex;
+
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let call_count = Arc::new(Mutex::new(0));
+        let call_count_clone = Arc::clone(&call_count);
+        store.set_change_callback(move |_| {
+            *call_count_clone.lock().unwrap() += 1;
+        });
+
+        // Emit empty vec - callback should NOT be invoked
+        store.emit_changes(vec![]);
+
+        assert_eq!(*call_count.lock().unwrap(), 0);
     }
 }
