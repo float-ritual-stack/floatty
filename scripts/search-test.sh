@@ -20,13 +20,27 @@ get_api_key() {
         echo ""
         return
     fi
-    # Robust TOML parse using Python's tomllib
+    # Robust TOML parse - tomllib (3.11+) with tomli fallback, then regex fallback
     python3 -c "
-import tomllib, sys
+import sys
 try:
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # pip install tomli for py<3.11
     with open(sys.argv[1], 'rb') as f:
         cfg = tomllib.load(f)
     print(cfg.get('api_key', ''))
+except ImportError:
+    # No TOML parser available - fall back to regex
+    import re
+    with open(sys.argv[1], 'r') as f:
+        for line in f:
+            m = re.match(r'^api_key\s*=\s*[\"']([^\"']+)[\"']', line)
+            if m:
+                print(m.group(1))
+                sys.exit(0)
+    print('')
 except Exception:
     print('')
 " "$config_file" 2>/dev/null || echo ""
