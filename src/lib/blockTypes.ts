@@ -22,7 +22,7 @@ export interface Block {
   // Execution output (for daily::, ai::, etc.)
   output?: unknown;
   outputType?: string;  // 'daily-view', 'kanban-view', etc.
-  outputStatus?: 'running' | 'complete' | 'error';
+  outputStatus?: 'pending' | 'running' | 'complete' | 'error';
 }
 
 export function parseBlockType(content: string): BlockType {

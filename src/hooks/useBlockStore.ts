@@ -291,7 +291,7 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'content', content);
       setValueOnYMap(blocksMap, id, 'type', parseBlockType(content));
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   /**
@@ -307,7 +307,7 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'outputType', outputType);
       setValueOnYMap(blocksMap, id, 'outputStatus', status);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   /**
@@ -320,7 +320,7 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
       setValueOnYMap(blocksMap, id, 'outputStatus', status);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   const createBlockBefore = (beforeId: string) => {
@@ -348,7 +348,7 @@ function createBlockStore() {
         const beforeIndex = arr.indexOf(beforeId);
         rootIds.insert(beforeIndex, [newId]);  // Insert BEFORE
       }
-    });
+    }, 'user');
 
     return newId;
   };
@@ -378,7 +378,7 @@ function createBlockStore() {
         const afterIndex = arr.indexOf(afterId);
         rootIds.insert(afterIndex + 1, [newId]);
       }
-    });
+    }, 'user');
 
     return newId;
   };
@@ -401,7 +401,7 @@ function createBlockStore() {
       childIds.push(newId);
       setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
       setValueOnYMap(blocksMap, parentId, 'collapsed', false);
-    });
+    }, 'user');
 
     return newId;
   };
@@ -424,7 +424,7 @@ function createBlockStore() {
       childIds.unshift(newId); // Insert at start
       setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
       setValueOnYMap(blocksMap, parentId, 'collapsed', false);
-    });
+    }, 'user');
 
     return newId;
   };
@@ -464,7 +464,7 @@ function createBlockStore() {
         const afterIndex = arr.indexOf(id);
         rootIds.insert(afterIndex + 1, [newId]);
       }
-    });
+    }, 'user');
 
     return newId;
   };
@@ -503,7 +503,7 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'childIds', childIds);
       // Ensure expanded so user sees the new child
       setValueOnYMap(blocksMap, id, 'collapsed', false);
-    });
+    }, 'user');
 
     return newId;
   };
@@ -550,7 +550,7 @@ function createBlockStore() {
       toDelete.forEach(delId => {
         blocksMap.delete(delId);
       });
-    });
+    }, 'user');
 
     return true;
   };
@@ -613,7 +613,7 @@ function createBlockStore() {
       toDelete.forEach(delId => {
         blocksMap.delete(delId);
       });
-    });
+    }, 'user');
 
     return true;
   };
@@ -641,7 +641,7 @@ function createBlockStore() {
       const newBlock = createBlock(newId, '');
       blocksMap.set(newId, blockToYMap(newBlock));
       rootIds.push([newId]);
-    });
+    }, 'user');
 
     console.log('[BlockStore] Workspace cleared with fresh block.');
   };
@@ -688,7 +688,7 @@ function createBlockStore() {
 
       setValueOnYMap(blocksMap, id, 'parentId', newParentId);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   const outdentBlock = (id: string) => {
@@ -726,7 +726,7 @@ function createBlockStore() {
 
       setValueOnYMap(blocksMap, id, 'parentId', parent.parentId);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   /**
@@ -781,7 +781,7 @@ function createBlockStore() {
       }
 
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
 
     return true;
   };
@@ -838,7 +838,7 @@ function createBlockStore() {
       }
 
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
 
     return true;
   };
@@ -852,7 +852,7 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       setValueOnYMap(blocksMap, id, 'collapsed', !block.collapsed);
-    });
+    }, 'user');
   };
 
   const createInitialBlock = () => {
@@ -864,10 +864,10 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       const rootIds = _doc.getArray<string>('rootIds');
-      
+
       blocksMap.set(newId, blockToYMap(newBlock));
       rootIds.push([newId]);
-    });
+    }, 'user');
 
     return newId;
   };
