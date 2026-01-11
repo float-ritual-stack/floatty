@@ -249,7 +249,10 @@ impl TantivyWriter {
             self.fields.updated_at,
             DateTime::from_timestamp_secs(updated_at),
         );
-        doc.add_bool(self.fields.has_markers, has_markers);
+        doc.add_text(
+            self.fields.has_markers,
+            if has_markers { "true" } else { "false" },
+        );
 
         self.writer
             .add_document(doc)
