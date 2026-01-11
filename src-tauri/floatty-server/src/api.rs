@@ -81,6 +81,9 @@ pub struct BlockDto {
     pub child_ids: Vec<String>,
     pub collapsed: bool,
     pub block_type: String,
+    /// Block metadata (markers, wikilinks, etc). Null if not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// Create block request
@@ -89,12 +92,22 @@ pub struct BlockDto {
 pub struct CreateBlockRequest {
     pub content: String,
     pub parent_id: Option<String>,
+    /// Origin of the mutation (user, agent, bulk_import). Defaults to "user".
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 /// Update block request
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateBlockRequest {
-    pub content: String,
+    /// New content for the block (optional if only updating metadata)
+    pub content: Option<String>,
+    /// Metadata to set on the block
+    pub metadata: Option<serde_json::Value>,
+    /// Origin of the mutation (user, agent, bulk_import). Defaults to "user".
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 /// Standard error response
@@ -256,6 +269,14 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
                     })
                     .unwrap_or(false);
 
+                // Extract metadata if present
+                let metadata = block_map.get(&txn, "metadata").and_then(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => {
+                        serde_json::from_str(s.as_ref()).ok()
+                    }
+                    _ => None,
+                });
+
                 let block_type = floatty_core::parse_block_type(&content);
 
                 blocks.push(BlockDto {
@@ -265,6 +286,7 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
                     child_ids,
                     collapsed,
                     block_type: format!("{:?}", block_type).to_lowercase(),
+                    metadata,
                 });
             }
         }
@@ -329,6 +351,14 @@ async fn get_block(
             })
             .unwrap_or(false);
 
+        // Extract metadata if present
+        let metadata = block_map.get(&txn, "metadata").and_then(|v| match v {
+            yrs::Out::Any(yrs::Any::String(s)) => {
+                serde_json::from_str(s.as_ref()).ok()
+            }
+            _ => None,
+        });
+
         let block_type = floatty_core::parse_block_type(&content);
 
         Ok(Json(BlockDto {
@@ -338,6 +368,7 @@ async fn get_block(
             child_ids,
             collapsed,
             block_type: format!("{:?}", block_type).to_lowercase(),
+            metadata,
         }))
     } else {
         Err(ApiError::NotFound(id))
@@ -428,11 +459,12 @@ async fn create_block(
             child_ids: vec![],
             collapsed: false,
             block_type: format!("{:?}", block_type).to_lowercase(),
+            metadata: None, // New blocks start without metadata
         }),
     ))
 }
 
-/// PATCH /api/v1/blocks/:id - Update content
+/// PATCH /api/v1/blocks/:id - Update content and/or metadata
 async fn update_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -446,8 +478,8 @@ async fn update_block(
         .unwrap_or_default()
         .as_millis() as i64;
 
-    // Read existing block data and update in place (granular CRDT update)
-    let (parent_id, child_ids, collapsed) = {
+    // Read existing block data
+    let (parent_id, child_ids, collapsed, existing_content, existing_metadata) = {
         let txn = doc_guard.transact();
         let blocks_map = txn
             .get_map("blocks")
@@ -487,18 +519,47 @@ async fn update_block(
                 })
                 .unwrap_or(false);
 
-            (parent_id, child_ids, collapsed)
+            let existing_content = block_map
+                .get(&txn, "content")
+                .and_then(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            let existing_metadata = block_map.get(&txn, "metadata").and_then(|v| match v {
+                yrs::Out::Any(yrs::Any::String(s)) => serde_json::from_str(s.as_ref()).ok(),
+                _ => None,
+            });
+
+            (parent_id, child_ids, collapsed, existing_content, existing_metadata)
         } else {
             return Err(ApiError::NotFound(id));
         }
     };
 
-    // Update only content and updatedAt (granular - doesn't rewrite whole block)
+    // Determine final values
+    let final_content = req.content.clone().unwrap_or(existing_content);
+    let final_metadata = if req.metadata.is_some() {
+        req.metadata.clone()
+    } else {
+        existing_metadata
+    };
+
+    // Update fields granularly (only what changed)
     let update = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
         if let Some(yrs::Out::YMap(block_map)) = blocks.get(&txn, &id) {
-            block_map.insert(&mut txn, "content", req.content.clone());
+            // Update content if provided
+            if req.content.is_some() {
+                block_map.insert(&mut txn, "content", final_content.clone());
+            }
+            // Update metadata if provided
+            if let Some(ref meta) = req.metadata {
+                let meta_str = serde_json::to_string(meta).unwrap_or_default();
+                block_map.insert(&mut txn, "metadata", meta_str);
+            }
             block_map.insert(&mut txn, "updatedAt", now as f64);
         }
         txn.encode_update_v1()
@@ -509,15 +570,16 @@ async fn update_block(
     state.store.persist_update(&update)?;
     state.broadcaster.broadcast(update, None);
 
-    let block_type = floatty_core::parse_block_type(&req.content);
+    let block_type = floatty_core::parse_block_type(&final_content);
 
     Ok(Json(BlockDto {
         id: id.clone(),
-        content: req.content,
+        content: final_content,
         parent_id,
         child_ids,
         collapsed,
         block_type: format!("{:?}", block_type).to_lowercase(),
+        metadata: final_metadata,
     }))
 }
 

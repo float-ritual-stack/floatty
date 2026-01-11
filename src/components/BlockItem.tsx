@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, onCleanup } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -85,6 +85,10 @@ export function BlockItem(props: BlockItemProps) {
   const isCollapsed = createMemo(() => paneStore.isCollapsed(props.paneId, props.id, block()?.collapsed || false));
   let contentRef: HTMLDivElement | undefined;
 
+  // Local display content - updated immediately on input for responsive overlay
+  // Store content is debounced (150ms), but overlay needs to track DOM immediately
+  const [displayContent, setDisplayContent] = createSignal(block()?.content || '');
+
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
 
@@ -114,7 +118,9 @@ export function BlockItem(props: BlockItemProps) {
   // Needs: track locally-modified blocks to distinguish from external
   // For now: Enter-to-execute only
 
-  // Sync content from store to DOM, but respect focus to prevent cursor jumps
+  // Sync content from store to DOM and displayContent signal
+  // When unfocused: store is source of truth (handles remote CRDT updates)
+  // When focused: DOM is source of truth (user is typing)
   // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
   createEffect(() => {
     const currentBlock = block();
@@ -125,6 +131,8 @@ export function BlockItem(props: BlockItemProps) {
 
       if (domContent !== storeContent && !isFocusedNow) {
         contentRef.innerText = storeContent;
+        // Also sync displayContent for overlay rendering
+        setDisplayContent(storeContent);
       }
     }
   });
@@ -514,6 +522,10 @@ export function BlockItem(props: BlockItemProps) {
     // innerText respects visual line breaks and converts them to \n.
     const content = target.innerText || '';
 
+    // Update display content IMMEDIATELY for responsive overlay
+    // (overlay reads from displayContent signal, not debounced store)
+    setDisplayContent(content);
+
     // DOM is already updated by contentEditable (immediate feedback)
     // Debounce Y.Doc/store update to reduce sync overhead
     // Cursor/selection remain live (not affected by this debounce)
@@ -671,7 +683,8 @@ export function BlockItem(props: BlockItemProps) {
           {/* REGULAR BLOCK: display + edit layers (hidden when daily output) */}
           <Show when={block()?.type !== 'picker' && !block()?.outputType?.startsWith('daily-')}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
-            <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
+            {/* Uses displayContent (immediate) instead of store content (150ms debounced) */}
+            <BlockDisplay content={displayContent()} onWikilinkClick={handleWikilinkClick} />
 
             {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
             <div

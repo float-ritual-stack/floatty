@@ -45,16 +45,17 @@ Every work unit follows this lifecycle:
 
 ## Work Unit Index
 
-| Unit | Name | Depends On | Delivers | Est. Size |
-|------|------|------------|----------|-----------|
-| 0.1 | Origin Enum | None | Type definition | Small |
-| 0.2 | Origin in Y.Doc | 0.1 | Tagged transactions | Small |
-| 1.1 | BlockChange Types | 0.2 | Event types | Small |
-| 1.2 | Y.Doc Observer Wrapper | 1.1 | Transform events | Medium |
-| 1.3 | Debounce + Dedupe | 1.2 | Batched changes | Small |
-| 1.5.1 | Hook Interface | 0.2 | Trait definition | Small |
-| 1.5.2 | Registry Implementation | 1.5.1 | Registration + dispatch | Medium |
-| 1.5.3 | Origin Filtering | 1.5.2 | Loop prevention | Small |
+| Unit | Name | Depends On | Delivers | Est. Size | Status |
+|------|------|------------|----------|-----------|--------|
+| 0.1 | Origin Enum | None | Type definition | Small | ✅ Done |
+| 0.2 | Origin in Y.Doc | 0.1 | Tagged transactions | Small | ⏭️ Obviated |
+| **0.3** | **API Origin + Metadata** | 0.1 | API accepts origin, exposes metadata | Medium | **Next** |
+| 1.1 | BlockChange Types | **0.3** | Event types | Small | Pending |
+| 1.2 | Y.Doc Observer Wrapper | 1.1 | Transform events | Medium | Pending |
+| 1.3 | Debounce + Dedupe | 1.2 | Batched changes | Small | Pending |
+| 1.5.1 | Hook Interface | **0.3** | Trait definition | Small | Pending |
+| 1.5.2 | Registry Implementation | 1.5.1 | Registration + dispatch | Medium | Pending |
+| 1.5.3 | Origin Filtering | 1.5.2 | Loop prevention | Small | Pending |
 | 2.1 | Metadata Schema | 1.3 + 1.5.3 | Type definitions | Small |
 | 2.2 | Marker Extraction | 2.1 | :: parser hook | Medium |
 | 2.3 | Wikilink Extraction | 2.2 | [[]] parser hook | Medium |
@@ -142,13 +143,29 @@ Unit 0.2 should:
 
 ## Unit 0.2: Origin in Y.Doc
 
+**Status**: ⏭️ Obviated - TypeScript origin tagging completed in commit 5b5227a.
+See handoff `docs/handoffs/unit-0.1.md` for details.
+
+The original goal was to add origin tagging to Y.Doc transactions. This was already done on the TypeScript side (all 18 `_doc.transact()` calls now pass `'user'` origin). The Rust side only receives pre-encoded updates via `apply_update()`, so there are no Rust mutation methods to tag.
+
+---
+
+## Unit 0.3: API Origin + Metadata
+
+**Discovered**: 2026-01-10 during architecture exploration
+**Surfaced by**: Gap analysis comparing current API vs multi-agent vision
+**Impact**: Blocks agent writes being distinguishable from user writes; blocks metadata storage/retrieval
+
+**Size**: Medium
+**Scope**: floatty-server/src/api.rs, floatty-core/src/block.rs
+
 ### Entry Prompt
 
 ```markdown
-# Work Unit 0.2: Origin in Y.Doc Transactions
+# Work Unit 0.3: API Origin + Metadata
 
 ## Context
-You are adding Origin tagging to Y.Doc transactions.
+You are adding origin parameter and metadata field support to the floatty-server REST API.
 Read: docs/SEARCH_ARCHITECTURE_SNAPSHOT.md
 Read: Handoff from Unit 0.1
 
@@ -156,27 +173,36 @@ Read: Handoff from Unit 0.1
 - Unit 0.1 complete: Origin enum exists
 
 ## Deliverable
-All Y.Doc mutations carry an Origin tag for downstream filtering.
+API accepts origin param on block mutations, exposes metadata field in responses and PATCH.
 
 ## Entry Checklist
 - [ ] Read Unit 0.1 handoff
-- [ ] Verify Origin enum exists and compiles
-- [ ] Code review: store.rs mutation methods
-- [ ] Code review: How is 'remote' currently handled?
+- [ ] Code review: api.rs CreateBlockRequest, UpdateBlockRequest structs
+- [ ] Code review: block.rs Block struct (metadata field)
+- [ ] Verify Origin enum is exported and usable
 
 ## Implementation
-1. Add `origin: Origin` parameter to YDocStore mutation methods
-2. Store origin in transaction (Yrs TransactionMut has origin field)
-3. Update all callers to pass appropriate Origin
-4. Verify existing 'remote' filtering still works
+1. Uncomment or add `metadata: Option<serde_json::Value>` in Block struct
+2. Add `origin: Option<String>` to CreateBlockRequest
+3. Add `origin: Option<String>` to UpdateBlockRequest
+4. Parse origin string to Origin enum (default: Origin::User)
+5. Add metadata to BlockDto response
+6. Add PATCH support for metadata field updates
+7. Wire origin through to Y.Doc transactions
 
 ## Exit Checklist
-- [ ] `cargo test -p floatty-core` passes
+- [ ] POST /api/v1/blocks accepts `{"origin": "agent", "content": "..."}`
+- [ ] GET /api/v1/blocks/:id returns metadata field (null if empty)
+- [ ] PATCH /api/v1/blocks/:id can update metadata
+- [ ] Origin flows to Y.Doc transaction (verified via observer)
 - [ ] `cargo test -p floatty-server` passes
-- [ ] Existing frontend still works (manual test)
-- [ ] Code review: any simplification opportunities?
-- [ ] Document: any decisions made?
-- [ ] Write handoff for Unit 1.1
+- [ ] `cargo test -p floatty-core` passes
+
+## Handoff
+Unit 1.1 (BlockChange Types) can now:
+- Include origin in change events
+- Include metadata in change events
+- Distinguish Agent vs User vs Remote sources
 ```
 
 ---
@@ -191,10 +217,10 @@ All Y.Doc mutations carry an Origin tag for downstream filtering.
 ## Context
 You are defining the BlockChange event types for the emitter system.
 Read: docs/SEARCH_ARCHITECTURE_SNAPSHOT.md
-Read: Handoff from Unit 0.2
+Read: Handoff from Unit 0.3
 
 ## Preconditions
-- Unit 0.2 complete: Origin tagging works
+- Unit 0.3 complete: API accepts origin, exposes metadata
 
 ## Deliverable
 Type definitions for block change events that downstream systems can subscribe to.
@@ -480,7 +506,7 @@ You are defining the BlockHook trait for floatty's hook registry.
 Read: docs/SEARCH_ARCHITECTURE_LAYERS.md (Section 2.4)
 
 ## Preconditions
-- Unit 0.2 complete: Origin enum exists and is used in transactions
+- Unit 0.3 complete: Origin enum exists, API accepts origin param
 
 ## Deliverable
 A Rust trait defining the interface for block change hooks.
@@ -952,6 +978,41 @@ docs/SEARCH_ADR.md (Architecture Decision Records)
 
 ---
 
+## Gap Discovery Protocol
+
+When a gap is discovered during work unit execution:
+
+1. **Document Immediately**
+   - Add to "Discovered Gaps" section at end of this doc
+   - Include: when discovered, what surfaced it, impact assessment
+
+2. **Assess Impact**
+   | Impact Level | Action |
+   |--------------|--------|
+   | Blocks current work | Stop, escalate, add as prerequisite unit |
+   | Blocks upcoming units | Insert new unit, update dependencies |
+   | Enables future capability | Add to Phase 3+ or create new phase |
+   | Nice-to-have | Log in Discovered Gaps, continue |
+
+3. **If Adding New Unit**
+   - Update Work Unit Index table
+   - Update all downstream unit dependencies
+   - Write full Entry/Exit Protocol
+   - Update handoff from previous unit
+
+4. **Capture Context**
+   ```
+   mcp__evna-remote__active_context(
+     capture="ctx::{date} @ {time} [project::floatty] [mode::gap-capture] {summary}",
+     project="floatty"
+   )
+   ```
+
+5. **Use /floatty:gap Command**
+   For guided gap capture: `/floatty:gap {description}`
+
+---
+
 ## Summary
 
 This methodology ensures:
@@ -963,3 +1024,59 @@ This methodology ensures:
 5. **Quality**: Code review + simplification pass built in
 
 **Next step**: Create `docs/handoffs/` directory and start Unit 0.1.
+
+---
+
+## Discovered Gaps
+
+Gaps identified during work unit execution. These may become future units or inform architectural decisions.
+
+### Gap: Rust YDocStore Mutation Methods
+
+**Discovered**: 2026-01-10 during Unit 0.1 exploration
+**Surfaced by**: Fresh session code review
+
+**Current State**:
+The Rust YDocStore in `floatty-core/src/store.rs` only has `apply_update()` which receives pre-encoded Y.Doc updates from the frontend. There are no block-level mutation methods like `create_block()`, `update_block()`, `delete_block()`.
+
+**Impact**:
+Limits "headless" to "server holds state" rather than "server can act". External agents/APIs cannot create blocks - they must go through a connected frontend.
+
+**Architecture Implications**:
+```
+Current:   TypeScript Y.Doc → mutations → sync → Rust apply_update()
+Headless:  Rust Y.Doc → mutations → sync → TypeScript + Other clients
+               ↑
+           API / Agent / External tool
+```
+
+**Suggested Resolution**:
+Potential Unit 0.3 to add:
+- `create_block(id, content, parent_id, origin) -> Result<()>`
+- `update_block(id, content, origin) -> Result<()>`
+- `delete_block(id, origin) -> Result<()>`
+
+These would use the Origin enum defined in Unit 0.1.
+
+**Status**: Documented, not blocking current search work. Origin enum is still valid scaffolding regardless of where mutations originate.
+
+**Notes**: The current TypeScript-driven architecture is simpler and may be sufficient for v1. Rust mutation methods would enable true headless operation but add complexity.
+
+### Gap: API Origin + Metadata
+
+**Discovered**: 2026-01-10 during architecture exploration
+**Surfaced by**: Gap analysis comparing floatty-server API vs multi-agent vision
+**Status**: ✅ Resolved → Unit 0.3 added
+
+**Current State**:
+- POST/PATCH /api/v1/blocks doesn't accept `origin` param
+- Block.metadata field exists in struct but not exposed in API
+- Cannot distinguish Agent vs User writes via API
+
+**Impact**:
+- Agents writing blocks appear as User origin
+- Metadata (markers, wikilinks) cannot be stored/retrieved via API
+- Hook filtering can't distinguish API-sourced vs frontend-sourced mutations
+
+**Resolution**:
+Created Unit 0.3 with Entry/Exit Protocol. Dependencies updated (1.1 and 1.5.1 now depend on 0.3).

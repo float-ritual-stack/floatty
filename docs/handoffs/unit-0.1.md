@@ -74,3 +74,24 @@ Based on code review:
   - Unit 0.2 can be considered already partially complete (TS side done in commit 5b5227a)
 
 **Recommendation**: Proceed directly to Phase 1.x (Change Emitter) since origin tagging in transactions is already done in TypeScript.
+
+---
+
+## Plan Adjustment (2026-01-10)
+
+After architecture exploration, two gaps were identified:
+
+1. **API Origin + Metadata** (Unit 0.3 added)
+   - POST/PATCH /api/v1/blocks should accept `origin` param
+   - Block.metadata should be exposed in API
+   - This enables agents to write with proper origin tagging
+
+2. **Rust YDocStore Mutation Methods** (documented as gap, not blocking)
+   - Would enable true headless operation
+   - Deferred - current architecture sufficient for search work
+
+**Updated dependency chain**:
+- Unit 0.1 ✅ → Unit 0.2 ⏭️ (obviated) → **Unit 0.3** → Unit 1.1
+- Unit 1.5.1 now depends on 0.3 instead of 0.2
+
+See `docs/SEARCH_WORK_UNITS.md` for updated index and Unit 0.3 definition.

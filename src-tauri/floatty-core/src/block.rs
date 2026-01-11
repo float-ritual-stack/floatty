@@ -180,7 +180,11 @@ pub struct Block {
     pub created_at: i64,
     #[ts(type = "number")]
     pub updated_at: i64,
-    // metadata: Option<serde_json::Value>, // Future: currently unused
+    /// Block metadata for markers, wikilinks, and other extracted data.
+    /// Populated by hooks, exposed via API for external agent integration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "Record<string, unknown> | null")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 impl Block {
@@ -199,6 +203,7 @@ impl Block {
             collapsed: false,
             created_at: now,
             updated_at: now,
+            metadata: None,
         }
     }
 
