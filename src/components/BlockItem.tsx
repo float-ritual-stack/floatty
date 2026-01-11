@@ -22,14 +22,14 @@ const UPDATE_DEBOUNCE_MS = 150;
  * - Immediate DOM updates happen outside this (contentEditable handles it)
  * - Only Y.Doc/store updates are debounced
  */
-function createDebouncedUpdater<T extends (...args: Parameters<T>) => void>(
-  fn: T,
+function createDebouncedUpdater<Args extends unknown[]>(
+  fn: (...args: Args) => void,
   delay: number
-): { debounced: T; flush: () => void; cancel: () => void } {
+): { debounced: (...args: Args) => void; flush: () => void; cancel: () => void } {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let pendingArgs: Parameters<T> | null = null;
+  let pendingArgs: Args | null = null;
 
-  const debounced = ((...args: Parameters<T>) => {
+  const debounced = (...args: Args) => {
     pendingArgs = args;
     if (timeoutId) clearTimeout(timeoutId);
     timeoutId = setTimeout(() => {
@@ -39,7 +39,7 @@ function createDebouncedUpdater<T extends (...args: Parameters<T>) => void>(
       }
       timeoutId = null;
     }, delay);
-  }) as T;
+  };
 
   const flush = () => {
     if (timeoutId) {

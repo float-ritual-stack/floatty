@@ -20,10 +20,22 @@ pub struct WriterHandle {
     tx: mpsc::Sender<WriterMessage>,
 }
 
+/// Messages that can be sent to the writer actor.
 pub enum WriterMessage {
-    AddOrUpdate { block_id, content, block_type, parent_id, updated_at, has_markers },
-    Delete { block_id },
+    /// Add or update a document (delete by ID first, then add).
+    AddOrUpdate {
+        block_id: String,
+        content: String,
+        block_type: String,
+        parent_id: Option<String>,
+        updated_at: i64,
+        has_markers: bool,
+    },
+    /// Delete a document by block ID.
+    Delete { block_id: String },
+    /// Commit pending changes to disk.
     Commit,
+    /// Shutdown the actor.
     Shutdown,
 }
 ```
@@ -66,19 +78,22 @@ self.emit_changes(changes);
 
 | File | Purpose |
 |------|---------|
-| `floatty-core/src/search/writer.rs` | NEW - Writer actor |
-| `floatty-core/src/search/mod.rs` | Exports, WriterClosed error |
-| `floatty-core/src/lib.rs` | Re-exports |
-| `floatty-core/src/store.rs` | Y.Doc observation + Origin fix |
-| `floatty-core/src/hooks/system.rs` | TempDir fix, change callback wiring |
-| `floatty-server/src/api.rs` | Hook emission, origin field removal |
-| `floatty-server/src/main.rs` | Hook system initialization |
+| `src-tauri/floatty-core/Cargo.toml` | Added tokio dependency for mpsc |
+| `src-tauri/floatty-core/src/search/writer.rs` | NEW - Writer actor |
+| `src-tauri/floatty-core/src/search/mod.rs` | Exports, WriterClosed error |
+| `src-tauri/floatty-core/src/lib.rs` | Re-exports |
+| `src-tauri/floatty-core/src/store.rs` | Y.Doc observation + Origin fix |
+| `src-tauri/floatty-core/src/hooks/system.rs` | TempDir fix, change callback wiring |
+| `src-tauri/floatty-server/src/api.rs` | Hook emission, origin field removal |
+| `src-tauri/floatty-server/src/main.rs` | Hook system initialization |
 | `src/components/BlockItem.tsx` | Cleanup flush fix |
 
 ## Tests
 
-- **154 Rust tests pass** (19 search-related)
-- Writer tests: add_or_update, delete, commit, shutdown, capacity, update_replaces
+- **154 Rust tests pass**
+- Writer tests (6 new): `test_add_or_update`, `test_delete`, `test_commit`, `test_shutdown`, `test_capacity`, `test_update_replaces`
+
+Note: The 19 search-related tests were added in Unit 3.4 (SearchService), not this unit.
 
 ## Architecture State
 

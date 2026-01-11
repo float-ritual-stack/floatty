@@ -65,7 +65,7 @@ Every work unit follows this lifecycle:
 | 3.2 | Writer Actor | 3.1 | Bounded channel + backpressure | Medium | ✅ Done |
 | 3.3 | TantivyIndexHook | 3.2 | Delete+Add update logic | Medium | ✅ Done |
 | 3.4 | Search Service | 3.3 | Query primitives | Medium | ✅ Done |
-| **3.5** | **Tauri Commands** | **3.4** | **Frontend API** | **Small** | **← NEXT** |
+| 3.5 | Search API Endpoint | 3.4 | Frontend API | Small | ✅ Done |
 
 ---
 
@@ -1067,7 +1067,7 @@ When a gap is discovered during work unit execution:
    - Update handoff from previous unit
 
 4. **Capture Context**
-   ```
+   ```text
    mcp__evna-remote__active_context(
      capture="ctx::{date} @ {time} [project::floatty] [mode::gap-capture] {summary}",
      project="floatty"
@@ -1109,7 +1109,7 @@ The Rust YDocStore in `floatty-core/src/store.rs` only has `apply_update()` whic
 Limits "headless" to "server holds state" rather than "server can act". External agents/APIs cannot create blocks - they must go through a connected frontend.
 
 **Architecture Implications**:
-```
+```text
 Current:   TypeScript Y.Doc → mutations → sync → Rust apply_update()
 Headless:  Rust Y.Doc → mutations → sync → TypeScript + Other clients
                ↑
@@ -1141,7 +1141,7 @@ These would use the Origin enum defined in Unit 0.1.
 - `BlockItem`: Origin-aware sync gate - 'user' skipped when focused, undo/remote always sync
 
 **Pattern established**:
-```
+```text
 Focused + user origin  → skip (handleInput handles it)
 Focused + non-user     → sync (undo, remote are authoritative)
 Not focused            → sync always
@@ -1231,7 +1231,7 @@ All hook infrastructure exists but is never connected:
 - Search can't work until this is fixed
 
 **Architecture Flow (Currently Broken)**:
-```
+```text
 Block Change → ??? → HookRegistry.dispatch() → MetadataExtractionHook → metadata
                 ↑
             MISSING: Nothing creates registry or wires the chain

@@ -101,6 +101,17 @@ curl -X PATCH http://127.0.0.1:8765/api/v1/blocks/abc123 \
 
 - **Origin parsing/validation**: Currently stored as raw string. Future: parse to Origin enum and validate.
 
+- **compute_changes() hardcodes Origin::User**: In `floatty-core/src/store.rs` lines 236-290, the `compute_changes()` function builds `BlockChange` events from before/after snapshots but hardcodes `Origin::User` for all events:
+  ```rust
+  changes.push(BlockChange::Created {
+      id: id.clone(),
+      content: after_snap.content.clone(),
+      parent_id: after_snap.parent_id.clone(),
+      origin: Origin::User,  // ← hardcoded, not from transaction
+  });
+  ```
+  To properly propagate origin, the Y.Doc transaction origin needs to be passed through from `apply_update()` to `compute_changes()`. This would require changes to the snapshot-diff approach or attaching origin to the transaction context.
+
 ## Setup for Next Unit
 
 Unit 1.1 (BlockChange Types) can now:

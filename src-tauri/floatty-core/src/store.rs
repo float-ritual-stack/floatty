@@ -6,8 +6,13 @@
 //! # Change Observation
 //!
 //! The store can emit BlockChange events when blocks are created, modified, or deleted.
-//! This enables hooks (like metadata extraction) to react to all mutations,
-//! regardless of whether they came from the REST API or Y.Doc sync.
+//! This enables hooks (like metadata extraction) to react to all mutations.
+//!
+//! ## Functions That Emit BlockChange Callbacks
+//!
+//! Currently only `apply_update()` emits callbacks (for Y.Doc sync from frontend).
+//! REST API handlers in floatty-server also emit changes via direct hook calls,
+//! bypassing the callback mechanism.
 //!
 //! ```rust,ignore
 //! let store = YDocStore::open(path, key)?;
@@ -17,6 +22,9 @@
 //!     }
 //! });
 //! ```
+//!
+//! Note: The `compute_changes()` function currently hardcodes `Origin::User` for all
+//! change events. See `docs/handoffs/unit-0.3.md` for details on this limitation.
 
 use crate::events::BlockChange;
 use crate::persistence::{PersistenceError, YDocPersistence};
@@ -354,10 +362,14 @@ impl YDocStore {
         };
 
         // Extract fields from Y.Map
-        let content = match block_map.get(&txn, "content")? {
-            Out::Any(yrs::Any::String(s)) => s.to_string(),
-            _ => String::new(),
-        };
+        // Content defaults to empty string if key missing (don't fail the whole get_block)
+        let content = block_map
+            .get(&txn, "content")
+            .and_then(|v| match v {
+                Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
 
         let parent_id = block_map
             .get(&txn, "parentId")

@@ -63,7 +63,7 @@ All new tests pass (148 total in floatty-core):
 
 ```
 floatty-core:
-  Cargo.toml                          - Added tantivy = "0.22"
+  Cargo.toml                          - Added tantivy = "0.25"
   src/lib.rs                          - Added search module and re-exports
   src/search/mod.rs                   - NEW: Module structure, SearchError
   src/search/schema.rs                - NEW: Schema definition
@@ -87,7 +87,7 @@ cargo test -p floatty-core --lib
 | Decision | Rationale |
 |----------|-----------|
 | Store `index_path` in IndexManager | ManagedDirectory doesn't expose path; need it for debugging |
-| Use Tantivy 0.22 | Latest stable (note: `IndexSortByField` deprecated in 0.23) |
+| Use Tantivy 0.25 | Latest stable (0.25 at time of implementation) |
 | No index sorting | `IndexSortByField` deprecated, deferred to query-time sorting |
 | `get_field()` returns panic on missing | Schema is static, missing field is programmer error |
 
