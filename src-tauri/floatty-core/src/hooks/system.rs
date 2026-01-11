@@ -244,7 +244,8 @@ mod tests {
     use yrs::{Map, MapPrelim, Transact, WriteTxn};
 
     /// Helper to create a YDocStore with some test blocks.
-    fn create_store_with_blocks(blocks: &[(&str, &str)]) -> Arc<YDocStore> {
+    /// Returns (TempDir, Arc<YDocStore>) - caller must hold TempDir to keep DB alive.
+    fn create_store_with_blocks(blocks: &[(&str, &str)]) -> (tempfile::TempDir, Arc<YDocStore>) {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let store = YDocStore::open(&db_path, "test").unwrap();
@@ -271,7 +272,7 @@ mod tests {
             store.persist_update(&update).unwrap();
         }
 
-        Arc::new(store)
+        (dir, Arc::new(store))
     }
 
     #[tokio::test]
@@ -289,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn test_rehydration_emits_changes() {
         // Create store with existing blocks
-        let store = create_store_with_blocks(&[
+        let (_dir, store) = create_store_with_blocks(&[
             ("b1", "ctx:: test marker"),
             ("b2", "[[Wiki Link]]"),
             ("b3", "plain text"),
@@ -320,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn test_rehydration_skips_empty_content() {
         // Create store with one empty block
-        let store = create_store_with_blocks(&[
+        let (_dir, store) = create_store_with_blocks(&[
             ("b1", "has content"),
             ("b2", ""), // Empty content
         ]);
@@ -390,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn test_full_integration_metadata_populated() {
         // Create store with a block that has markers
-        let store = create_store_with_blocks(&[
+        let (_dir, store) = create_store_with_blocks(&[
             ("b1", "ctx:: test block [project::floatty]"),
         ]);
 

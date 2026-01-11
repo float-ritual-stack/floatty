@@ -58,6 +58,8 @@ pub enum SearchError {
     OpenDir(#[from] tantivy::directory::error::OpenDirectoryError),
 
     /// Failed to open index.
+    /// Reserved for future use when index migration/versioning is added.
+    /// Currently index creation always succeeds or returns Tantivy error.
     #[error("Failed to open index: {0}")]
     OpenIndex(String),
 

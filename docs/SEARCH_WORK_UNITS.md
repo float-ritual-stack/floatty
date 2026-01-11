@@ -10,7 +10,7 @@
 
 Every work unit follows this lifecycle:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  PHASE: ENTRY                                                   │
 ├─────────────────────────────────────────────────────────────────┤
@@ -1052,6 +1052,7 @@ When a gap is discovered during work unit execution:
    - Include: when discovered, what surfaced it, impact assessment
 
 2. **Assess Impact**
+
    | Impact Level | Action |
    |--------------|--------|
    | Blocks current work | Stop, escalate, add as prerequisite unit |

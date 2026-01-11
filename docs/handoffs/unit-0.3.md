@@ -70,7 +70,7 @@ pub struct BlockDto {
 | Origin as Option<String> | String vs Option<String> | Option<String> | Allows omission (defaults to User), matches TS flexibility |
 | Partial PATCH | Replace whole block vs merge fields | Merge fields | Enables metadata-only updates without overwriting content |
 | Metadata type | Typed struct vs serde_json::Value | serde_json::Value | Flexibility for hooks to store arbitrary data |
-| ts-rs annotation | derive TS for Value vs explicit type | Explicit `#[ts(type = "Record<string, unknown> | null")]` | serde_json::Value doesn't impl TS trait |
+| ts-rs annotation | derive TS for Value vs explicit type | Explicit `#[ts(type = "Record<string, unknown> \| null")]` | serde_json::Value doesn't impl TS trait |
 
 ## Blockers Encountered
 

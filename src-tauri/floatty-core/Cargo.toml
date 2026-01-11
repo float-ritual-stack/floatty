@@ -32,7 +32,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 regex = "1"
 
 # Full-text search
-tantivy = "0.22"
+tantivy = "0.25"
 
 # Async runtime (for broadcast channel, timer, spawn)
 tokio = { version = "1", features = ["sync", "time", "rt"] }

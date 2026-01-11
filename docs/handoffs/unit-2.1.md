@@ -10,7 +10,7 @@
 - Updated `Block` struct to use `Option<BlockMetadata>` instead of `Option<serde_json::Value>`
 - Generated TypeScript bindings via ts-rs
 - Updated TypeScript `Block` interface to use generated `BlockMetadata` type
-- Added 8 new unit tests for metadata types
+- Added 9 new unit tests for metadata types
 
 ## Files Changed
 

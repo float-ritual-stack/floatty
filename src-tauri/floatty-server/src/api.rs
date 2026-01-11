@@ -94,9 +94,8 @@ pub struct BlockDto {
 pub struct CreateBlockRequest {
     pub content: String,
     pub parent_id: Option<String>,
-    /// Origin of the mutation (user, agent, bulk_import). Defaults to "user".
-    #[serde(default)]
-    pub origin: Option<String>,
+    // NOTE: Origin field removed - origin is now handled via Y.Doc observation
+    // with Origin::User for all frontend mutations. See hooks/system.rs.
 }
 
 /// Update block request
@@ -107,9 +106,8 @@ pub struct UpdateBlockRequest {
     pub content: Option<String>,
     /// Metadata to set on the block
     pub metadata: Option<serde_json::Value>,
-    /// Origin of the mutation (user, agent, bulk_import). Defaults to "user".
-    #[serde(default)]
-    pub origin: Option<String>,
+    // NOTE: Origin field removed - origin is now handled via Y.Doc observation
+    // with Origin::User for all frontend mutations. See hooks/system.rs.
 }
 
 /// Standard error response

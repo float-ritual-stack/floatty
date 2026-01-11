@@ -104,9 +104,9 @@ export function BlockItem(props: BlockItemProps) {
       store.updateBlockContent(id, content);
     }, UPDATE_DEBOUNCE_MS);
 
-  // Cleanup: cancel pending debounced updates on unmount
+  // Cleanup: flush pending edits on unmount (don't discard user's work)
   onCleanup(() => {
-    cancelContentUpdate();
+    flushContentUpdate();
   });
 
   // Handle focus changes from props

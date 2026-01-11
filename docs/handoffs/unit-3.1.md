@@ -5,7 +5,7 @@
 Tantivy search index infrastructure for floatty blocks:
 
 1. **Tantivy Dependency** (`Cargo.toml`):
-   - Added `tantivy = "0.22"`
+   - Added `tantivy = "0.25"` (upgraded from 0.22 during PR review)
    - Compiles successfully with all existing code
 
 2. **Schema Definition** (`src-tauri/floatty-core/src/search/schema.rs`):

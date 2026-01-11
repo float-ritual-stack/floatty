@@ -119,7 +119,7 @@ Unit 1.5.1 (Hook Interface) should:
 
 To complete the pipeline:
 
-```
+```text
 Y.Doc mutation → Observer → ChangeEmitter.emit() → BatchedChangeCollector.submit() → flush → HookRegistry → hooks
                                    ↑                                                              ↓
                               or directly                                              Search, Metadata, etc.
