@@ -51,8 +51,8 @@ Every work unit follows this lifecycle:
 | 0.2 | Origin in Y.Doc | 0.1 | Tagged transactions | Small | ⏭️ Obviated |
 | 0.3 | API Origin + Metadata | 0.1 | API accepts origin, exposes metadata | Medium | ✅ Done |
 | 1.1 | BlockChange Types | 0.3 | Event types | Small | ✅ Done |
-| **1.2** | **Y.Doc Observer Wrapper** | 1.1 | Transform events | Medium | **Next** |
-| 1.3 | Debounce + Dedupe | 1.2 | Batched changes | Small | Pending |
+| 1.2 | Change Emitter | 1.1 | Broadcast channel + emit | Medium | ✅ Done |
+| **1.3** | **Debounce + Dedupe** | 1.2 | Batched changes | Small | **Next** |
 | 1.5.1 | Hook Interface | **0.3** | Trait definition | Small | Pending |
 | 1.5.2 | Registry Implementation | 1.5.1 | Registration + dispatch | Medium | Pending |
 | 1.5.3 | Origin Filtering | 1.5.2 | Loop prevention | Small | Pending |
