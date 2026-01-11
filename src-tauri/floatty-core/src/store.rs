@@ -26,7 +26,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 use yrs::{Doc, Map, Out, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
 
 /// Default doc key for the outliner.
@@ -180,8 +180,9 @@ impl YDocStore {
     where
         F: Fn(Vec<BlockChange>) + Send + Sync + 'static,
     {
-        if let Ok(mut cb) = self.change_callback.write() {
-            *cb = Some(Arc::new(callback));
+        match self.change_callback.write() {
+            Ok(mut cb) => *cb = Some(Arc::new(callback)),
+            Err(e) => warn!("Failed to set change callback (lock poisoned): {}", e),
         }
     }
 

@@ -94,6 +94,10 @@ export function BlockItem(props: BlockItemProps) {
   // Store content is debounced (150ms), but overlay needs to track DOM immediately
   const [displayContent, setDisplayContent] = createSignal(block()?.content || '');
 
+  // IME composition state - prevents debounced updates during CJK character composition
+  // Without this, incomplete characters would be synced to Y.Doc mid-composition
+  const [isComposing, setIsComposing] = createSignal(false);
+
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
 
@@ -560,6 +564,11 @@ export function BlockItem(props: BlockItemProps) {
     // (overlay reads from displayContent signal, not debounced store)
     setDisplayContent(content);
 
+    // Skip Y.Doc update during IME composition (CJK input)
+    // Incomplete characters would cause sync issues and cursor jumps
+    // The final character will sync when composition ends
+    if (isComposing()) return;
+
     // DOM is already updated by contentEditable (immediate feedback)
     // Debounce Y.Doc/store update to reduce sync overhead
     // Cursor/selection remain live (not affected by this debounce)
@@ -734,6 +743,13 @@ export function BlockItem(props: BlockItemProps) {
               onPaste={handlePaste}
               onFocus={() => props.onFocus(props.id)}
               onBlur={handleBlur}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={(e) => {
+                setIsComposing(false);
+                // Trigger final update after composition completes
+                // The IME has committed the final character(s)
+                handleInput(e as unknown as InputEvent);
+              }}
             />
           </Show>
         </div>

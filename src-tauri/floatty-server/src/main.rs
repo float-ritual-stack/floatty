@@ -65,7 +65,9 @@ async fn main() {
         let hook_system_clone = Arc::clone(&hook_system);
         store.set_change_callback(move |changes| {
             for change in changes {
-                let _ = hook_system_clone.emit_change(change);
+                if let Err(e) = hook_system_clone.emit_change(change) {
+                    tracing::error!("Hook emission failed: {}", e);
+                }
             }
         });
     }
