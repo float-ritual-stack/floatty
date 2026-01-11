@@ -115,6 +115,7 @@ export function BlockItem(props: BlockItemProps) {
 
   // Handle focus changes from props
   // NOTE: Don't steal focus from block selection mode (when outliner container is focused)
+  // FLO-XXX: Preserve scroll position - browser focus() can reset scroll even with preventScroll
   createEffect((prevFrameId: number | undefined) => {
     // Cancel any pending focus from previous effect run
     if (prevFrameId) cancelAnimationFrame(prevFrameId);
@@ -125,7 +126,16 @@ export function BlockItem(props: BlockItemProps) {
         const activeEl = document.activeElement;
         const isBlockSelectionMode = activeEl?.classList.contains('outliner-container');
         if (!isBlockSelectionMode) {
-          contentRef?.focus();
+          // Save scroll position of outliner container before focus
+          const outlinerContainer = contentRef?.closest('.outliner-container') as HTMLElement | null;
+          const scrollTop = outlinerContainer?.scrollTop ?? 0;
+
+          contentRef?.focus({ preventScroll: true });
+
+          // Restore scroll position in case focus() moved it
+          if (outlinerContainer && outlinerContainer.scrollTop !== scrollTop) {
+            outlinerContainer.scrollTop = scrollTop;
+          }
         }
       });
       return frameId; // Pass to next effect run for cleanup
@@ -305,7 +315,7 @@ export function BlockItem(props: BlockItemProps) {
         store.moveBlockUp(props.id);
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => contentRef?.focus());
+          requestAnimationFrame(() => contentRef?.focus({ preventScroll: true }));
         });
         return;
       }
@@ -315,7 +325,7 @@ export function BlockItem(props: BlockItemProps) {
         store.moveBlockDown(props.id);
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => contentRef?.focus());
+          requestAnimationFrame(() => contentRef?.focus({ preventScroll: true }));
         });
         return;
       }
