@@ -2,6 +2,73 @@
 
 All notable changes to floatty are documented here.
 
+## [0.3.0] - 2026-01-11
+
+### Search Infrastructure (Work Units 0.x - 3.6)
+
+Complete Tantivy-backed search system with hook-based metadata extraction.
+
+#### Architecture
+- **Hook system** (Work Units 1.5.x) - Origin-filtered hook registry for block change events
+- **Change emitter** (Work Units 1.x) - Y.Doc observer wrapper with debouncing and deduplication
+- **Writer actor** (Work Unit 3.2) - Async Tokio actor for non-blocking Tantivy index writes
+- **Search service** (Work Unit 3.4) - HTTP endpoint with block ID + score results
+
+#### Search Features
+- **Marker extraction** (Work Unit 3.6) - Extracts `ctx::`, `project::`, `mode::`, `issue::` from block content
+- **Wikilink indexing** - `[[Page Name]]` and `[[Page|Alias]]` extracted to `outlinks` field
+- **Full-text search** - Tantivy query syntax on content and extracted markers
+- **API endpoints** - `/api/v1/search?q=...` returns ranked block IDs
+
+#### Metadata Schema
+```rust
+BlockMetadata {
+    markers: Vec<Marker>,      // ctx::, project::, mode::, issue::
+    outlinks: Vec<String>,     // [[wikilink]] targets
+    has_markers: bool,         // fast filter
+}
+```
+
+### Backend Modularization (PR #76)
+
+- **Services pattern** - Business logic extracted from Tauri commands to `src-tauri/src/services/`
+- **Thin command adapters** - Tauri commands delegate to services for testability
+- **Handler registry** - Consolidated block type executors (`sh::`, `ai::`, `daily::`)
+
+### Frontend Handler Registry (PR #77)
+
+- **Unified handler API** - `executeHandler(type, block, context)` pattern
+- **Removed legacy handlers** - Consolidated `ai.ts` and `sh.ts` into registry
+
+### Structured Logging (PR #75)
+
+- **tracing migration** - Replaced tauri-plugin-log with tracing + tracing-subscriber
+- **JSON log format** - `~/.floatty/logs/floatty-YYYY-MM-DD.jsonl`
+- **Queryable with jq** - Structured fields for duration, targets, errors
+
+### Bug Fixes
+
+- **Text selection bleeding** (FLO-145, PR #74) - Selection no longer crosses block boundaries
+- **Cursor/text sync** (PR #73) - Focus-based ctx tag styling fixed
+- **CSS containment revert** (PR #71) - Removed rules causing text to vanish
+- **10 code review issues** (PR #72) - Address findings from 6-agent parallel review
+
+### Documentation
+
+- **Architecture snapshot** (PR #78) - 15k line comprehensive pattern analysis
+- **Search work units** - Detailed specs for all 20+ implementation units
+- **Handoff documents** - Per-unit completion notes with test evidence
+
+### Developer Experience
+
+- **search-test.sh** - Helper script for testing search API
+- **318 tests** - Up from 283 in 0.2.x
+
+### Linear Tickets Closed
+FLO-145, FLO-146
+
+---
+
 ## [0.2.3] - 2026-01-06
 
 ### Ephemeral Panes / Quick Peek (FLO-136, PR #64)
