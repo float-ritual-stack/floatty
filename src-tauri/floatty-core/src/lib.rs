@@ -24,11 +24,25 @@
 //! let full_state = store.get_full_state().expect("Failed to get state");
 //! ```
 
+pub mod batcher;
 pub mod block;
+pub mod emitter;
+pub mod events;
+pub mod hooks;
+pub mod metadata;
+pub mod origin;
 pub mod persistence;
+pub mod search;
 pub mod store;
 
 // Re-exports for convenience
+pub use batcher::BatchedChangeCollector;
 pub use block::{Block, BlockType, parse_block_type};
+pub use emitter::{ChangeEmitter, ChangeBuilder, parse_origin};
+pub use events::{BlockChange, BlockChangeBatch};
+pub use hooks::{BlockHook, HookRegistry, HookSystem, MetadataExtractionHook, PageNameIndex, PageNameIndexHook, PageSuggestion, should_process, parsing};
+pub use metadata::{BlockMetadata, Marker};
+pub use origin::Origin;
 pub use persistence::{PersistenceError, YDocPersistence, default_db_path};
-pub use store::{StoreError, YDocStore, DEFAULT_DOC_KEY};
+pub use search::{IndexManager, SchemaFields, SearchError, SearchFilters, SearchHit, SearchService, TantivyWriter, WriterHandle, WriterMessage};
+pub use store::{ChangeCallback, StoreError, YDocStore, DEFAULT_DOC_KEY};

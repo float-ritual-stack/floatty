@@ -656,8 +656,9 @@ export function useSyncedYDoc(
             const blocksMap = doc.getMap('blocks');
             const rootIds = doc.getArray('rootIds');
             sharedUndoManager = new Y.UndoManager([blocksMap, rootIds], {
-              // Track all origins except 'remote' (which is from server)
-              trackedOrigins: new Set([null, undefined]),
+              // Track user-originated changes (from useBlockStore transactions)
+              // Excludes 'remote' (server sync) and 'hook' (automated processing)
+              trackedOrigins: new Set([null, undefined, 'user']),
             });
             // Clear stack so user can't undo past loaded state
             // (prevents undoing the initial block creation)

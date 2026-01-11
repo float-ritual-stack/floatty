@@ -6,8 +6,7 @@
  */
 
 import { registry } from './registry';
-import { shHandler } from './sh';
-import { aiHandler } from './ai';
+import { shHandler, aiHandler } from './commandDoor';
 import { dailyHandler } from './daily';
 
 // Re-export registry and types for convenience

@@ -33,6 +33,8 @@ export interface BlockStoreInterface {
   readonly blocks: Record<string, Block>;
   readonly rootIds: string[];
   readonly isInitialized: boolean;
+  /** Origin of last Y.Doc transaction - 'user' for typing, UndoManager for undo/redo */
+  readonly lastUpdateOrigin: unknown;
   getBlock: (id: string) => Block | undefined;
   updateBlockContent: (id: string, content: string) => void;
   setBlockOutput: (id: string, output: unknown, outputType: string, status?: Block['outputStatus']) => void;

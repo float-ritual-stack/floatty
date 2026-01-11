@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -12,6 +12,56 @@ import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor rest
 import { registry, type DailyNoteData } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
+
+// Debounce delay for Y.Doc updates (ms)
+// Keeps typing responsive while reducing sync overhead
+const UPDATE_DEBOUNCE_MS = 150;
+
+/**
+ * Creates a debounced function with flush and cancel capabilities.
+ * - Immediate DOM updates happen outside this (contentEditable handles it)
+ * - Only Y.Doc/store updates are debounced
+ */
+function createDebouncedUpdater<Args extends unknown[]>(
+  fn: (...args: Args) => void,
+  delay: number
+): { debounced: (...args: Args) => void; flush: () => void; cancel: () => void } {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let pendingArgs: Args | null = null;
+
+  const debounced = (...args: Args) => {
+    pendingArgs = args;
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => {
+      if (pendingArgs) {
+        fn(...pendingArgs);
+        pendingArgs = null;
+      }
+      timeoutId = null;
+    }, delay);
+  };
+
+  const flush = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    if (pendingArgs) {
+      fn(...pendingArgs);
+      pendingArgs = null;
+    }
+  };
+
+  const cancel = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    pendingArgs = null;
+  };
+
+  return { debounced, flush, cancel };
+}
 
 interface BlockItemProps {
   id: string;
@@ -30,21 +80,76 @@ export function BlockItem(props: BlockItemProps) {
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
+
+  // Capture ID once at component creation - prevents reactive tracking issues
+  // when used in DOM attributes (SolidJS quirk with data-* attributes)
+  const blockId = props.id;
+
   const block = createMemo(() => store.blocks[props.id]);
   const isFocused = createMemo(() => props.focusedBlockId === props.id);
   const isCollapsed = createMemo(() => paneStore.isCollapsed(props.paneId, props.id, block()?.collapsed || false));
   let contentRef: HTMLDivElement | undefined;
 
+  // Local display content - updated immediately on input for responsive overlay
+  // Store content is debounced (150ms), but overlay needs to track DOM immediately
+  const [displayContent, setDisplayContent] = createSignal(block()?.content || '');
+
+  // IME composition state - prevents debounced updates during CJK character composition
+  // Without this, incomplete characters would be synced to Y.Doc mid-composition
+  const [isComposing, setIsComposing] = createSignal(false);
+
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
 
+  // Debounced Y.Doc updates - DOM stays immediate via contentEditable
+  // Flush on blur, cancel on unmount
+  const { debounced: debouncedUpdateContent, flush: flushContentUpdate, cancel: cancelContentUpdate } =
+    createDebouncedUpdater((id: string, content: string) => {
+      store.updateBlockContent(id, content);
+    }, UPDATE_DEBOUNCE_MS);
+
+  // Cleanup: flush pending edits on unmount (don't discard user's work)
+  onCleanup(() => {
+    flushContentUpdate();
+  });
+
   // Handle focus changes from props
-  createEffect(() => {
+  // NOTE: Don't steal focus from block selection mode (when outliner container is focused)
+  // FLO-147: Disable scroll during focus - preventScroll unreliable on contentEditable
+  // Browser can queue its own scroll task AFTER our restore logic runs.
+  // Solution: Lock scrolling entirely via overflow:hidden during focus transition.
+  createEffect((prevFrameId: number | undefined) => {
+    // Cancel any pending focus from previous effect run
+    if (prevFrameId) cancelAnimationFrame(prevFrameId);
+
     if (isFocused() && contentRef) {
-      requestAnimationFrame(() => {
-        contentRef?.focus();
+      const frameId = requestAnimationFrame(() => {
+        // If outliner container has focus (block selection mode), don't steal it
+        const activeEl = document.activeElement;
+        const isBlockSelectionMode = activeEl?.classList.contains('outliner-container');
+        if (!isBlockSelectionMode) {
+          const container = contentRef?.closest('.outliner-container') as HTMLElement | null;
+
+          if (container) {
+            // Lock scroll by disabling overflow - browser can't scroll what can't scroll
+            const originalOverflow = container.style.overflow;
+            container.style.overflow = 'hidden';
+
+            contentRef?.focus({ preventScroll: true });
+
+            // Re-enable scroll after browser's focus handling completes
+            // setTimeout(0) pushes past any queued scroll tasks
+            setTimeout(() => {
+              container.style.overflow = originalOverflow || '';
+            }, 0);
+          } else {
+            contentRef?.focus({ preventScroll: true });
+          }
+        }
       });
+      return frameId; // Pass to next effect run for cleanup
     }
+    return undefined;
   });
 
   // TODO: AUTO-EXECUTE for external blocks (API/CRDT sync)
@@ -52,7 +157,11 @@ export function BlockItem(props: BlockItemProps) {
   // Needs: track locally-modified blocks to distinguish from external
   // For now: Enter-to-execute only
 
-  // Sync content from store to DOM, but respect focus to prevent cursor jumps
+  // Sync content from store to DOM and displayContent signal
+  // Origin-aware gate:
+  //   - Not focused → always sync (split pane, unfocused blocks)
+  //   - Focused + user origin → skip (don't echo typing back, causes cursor jump)
+  //   - Focused + non-user origin → sync (undo, redo, remote are authoritative)
   // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
   createEffect(() => {
     const currentBlock = block();
@@ -61,14 +170,36 @@ export function BlockItem(props: BlockItemProps) {
       const storeContent = currentBlock.content;
       const isFocusedNow = document.activeElement === contentRef;
 
-      if (domContent !== storeContent && !isFocusedNow) {
-        contentRef.innerText = storeContent;
+      // Check if this update is from user's own typing (should skip when focused)
+      // UndoManager sets its own instance as origin, not 'user'
+      const origin = store.lastUpdateOrigin;
+      const isUserOrigin = origin === 'user';
+
+      // Gate: sync if not focused, OR if focused but not from user typing
+      // This gate applies to BOTH displayContent and DOM sync
+      // When focused + user origin: handleInput already updated displayContent immediately
+      const shouldSync = !isFocusedNow || !isUserOrigin;
+
+      if (shouldSync) {
+        // Sync displayContent for overlay
+        if (displayContent() !== storeContent) {
+          setDisplayContent(storeContent);
+        }
+
+        // Sync DOM
+        if (domContent !== storeContent) {
+          contentRef.innerText = storeContent;
+        }
       }
     }
   });
 
   // CRITICAL: Sync DOM when focus leaves (catches splits where store updated while focused)
   const handleBlur = () => {
+    // Flush any pending debounced content updates to Y.Doc before blur completes
+    // This ensures the store has the final content when focus leaves
+    flushContentUpdate();
+
     const currentBlock = block();
     if (contentRef && currentBlock) {
       if (contentRef.innerText !== currentBlock.content) {
@@ -193,7 +324,7 @@ export function BlockItem(props: BlockItemProps) {
         store.moveBlockUp(props.id);
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => contentRef?.focus());
+          requestAnimationFrame(() => contentRef?.focus({ preventScroll: true }));
         });
         return;
       }
@@ -203,7 +334,7 @@ export function BlockItem(props: BlockItemProps) {
         store.moveBlockDown(props.id);
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => contentRef?.focus());
+          requestAnimationFrame(() => contentRef?.focus({ preventScroll: true }));
         });
         return;
       }
@@ -441,18 +572,39 @@ export function BlockItem(props: BlockItemProps) {
     }
   };
 
-  const handleInput = (e: InputEvent) => {
-    const target = e.target as HTMLDivElement;
+  /**
+   * Core content update logic extracted for reuse by input and composition handlers.
+   * Avoids unsafe type casting between InputEvent and CompositionEvent.
+   */
+  const updateContentFromDom = (target: HTMLDivElement) => {
     // CRITICAL: Use innerText, not textContent!
     // textContent ignores <div> and <br> elements, losing line breaks.
     // innerText respects visual line breaks and converts them to \n.
-    store.updateBlockContent(props.id, target.innerText || '');
+    const content = target.innerText || '';
+
+    // Update display content IMMEDIATELY for responsive overlay
+    // (overlay reads from displayContent signal, not debounced store)
+    setDisplayContent(content);
+
+    // Skip Y.Doc update during IME composition (CJK input)
+    // Incomplete characters would cause sync issues and cursor jumps
+    // The final character will sync when composition ends
+    if (isComposing()) return;
+
+    // DOM is already updated by contentEditable (immediate feedback)
+    // Debounce Y.Doc/store update to reduce sync overhead
+    // Cursor/selection remain live (not affected by this debounce)
+    debouncedUpdateContent(props.id, content);
 
     // FLO-136: Typing pins ephemeral panes (user is engaging with content)
     const tabId = findTabIdByPaneId(props.paneId);
     if (tabId) {
       layoutStore.pinPane(tabId, props.paneId);
     }
+  };
+
+  const handleInput = (e: InputEvent) => {
+    updateContentFromDom(e.target as HTMLDivElement);
   };
 
   const bulletClass = () => {
@@ -542,6 +694,7 @@ export function BlockItem(props: BlockItemProps) {
     <div class="block-wrapper">
       <div
         class="block-item"
+        data-block-id={blockId}
         role="option"
         aria-selected={props.isBlockSelected?.(props.id) || false}
         classList={{ 'block-focused': isFocused(), 'block-selected': props.isBlockSelected?.(props.id) }}
@@ -582,7 +735,7 @@ export function BlockItem(props: BlockItemProps) {
           {/* DAILY OUTPUT VIEW: replaces normal content when outputType is daily-* */}
           <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
             <div class="daily-output">
-              <Show when={block()?.outputStatus === 'running'}>
+              <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
                 <div class="daily-running">
                   <span class="daily-running-spinner">◐</span>
                   <span class="daily-running-text">Extracting...</span>
@@ -591,7 +744,7 @@ export function BlockItem(props: BlockItemProps) {
               <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
                 <DailyView data={block()!.output as DailyNoteData} />
               </Show>
-              <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running'}>
+              <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
                 <DailyErrorView error={(block()!.output as { error: string }).error} />
               </Show>
             </div>
@@ -600,7 +753,8 @@ export function BlockItem(props: BlockItemProps) {
           {/* REGULAR BLOCK: display + edit layers (hidden when daily output) */}
           <Show when={block()?.type !== 'picker' && !block()?.outputType?.startsWith('daily-')}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
-            <BlockDisplay content={block()?.content || ''} onWikilinkClick={handleWikilinkClick} />
+            {/* Uses displayContent (immediate) instead of store content (150ms debounced) */}
+            <BlockDisplay content={displayContent()} onWikilinkClick={handleWikilinkClick} />
 
             {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
             <div
@@ -615,6 +769,13 @@ export function BlockItem(props: BlockItemProps) {
               onPaste={handlePaste}
               onFocus={() => props.onFocus(props.id)}
               onBlur={handleBlur}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={(e) => {
+                setIsComposing(false);
+                // Trigger final update after composition completes
+                // The IME has committed the final character(s)
+                updateContentFromDom(e.target as HTMLDivElement);
+              }}
             />
           </Show>
         </div>

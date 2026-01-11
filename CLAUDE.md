@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm install           # Install JS dependencies
 npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
 npm run lint          # ESLint
-npm run test          # Run vitest (268 tests)
+npm run test          # Run vitest (318 tests)
 npm run test:watch    # Watch mode for TDD
 ```
 
@@ -445,4 +445,8 @@ This prevents accidental deletion of large branches. Document as intentional, no
 
 ## Do NOT
 
-See @.claude/rules/do-not.md for critical anti-patterns (PTY/Rust and SolidJS).
+See @.claude/rules/do-not.md for critical anti-patterns (PTY/Rust, SolidJS, Y.Doc/Search, Rust Backend).
+
+## Y.Doc Patterns
+
+See @.claude/rules/ydoc-patterns.md for CRDT architecture patterns (source of truth, metadata storage, observer wrapping, origin filtering).

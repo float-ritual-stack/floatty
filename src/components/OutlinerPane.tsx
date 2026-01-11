@@ -30,7 +30,7 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       // Focus the first root block's editor (more specific than generic [contenteditable])
       const firstBlock = containerRef?.querySelector('[data-block-id]') as HTMLElement;
       const editor = firstBlock?.querySelector('[contenteditable]') as HTMLElement;
-      editor?.focus();
+      editor?.focus({ preventScroll: true });
     },
     fit: () => {
       updatePosition();

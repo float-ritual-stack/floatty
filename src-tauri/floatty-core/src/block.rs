@@ -9,6 +9,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::metadata::BlockMetadata;
+
 /// Block types determine rendering and execution behavior.
 /// Derived from content prefix - NOT stored in the database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -49,6 +51,33 @@ pub enum BlockType {
     Todo,
     /// Blockquote: `> `
     Quote,
+}
+
+impl BlockType {
+    /// Returns the lowercase string representation of the block type.
+    ///
+    /// Matches the serde serialization (lowercase names).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BlockType::Text => "text",
+            BlockType::Sh => "sh",
+            BlockType::Ai => "ai",
+            BlockType::Ctx => "ctx",
+            BlockType::Dispatch => "dispatch",
+            BlockType::Web => "web",
+            BlockType::Output => "output",
+            BlockType::Error => "error",
+            BlockType::Picker => "picker",
+            BlockType::Ran => "ran",
+            BlockType::Daily => "daily",
+            BlockType::H1 => "h1",
+            BlockType::H2 => "h2",
+            BlockType::H3 => "h3",
+            BlockType::Bullet => "bullet",
+            BlockType::Todo => "todo",
+            BlockType::Quote => "quote",
+        }
+    }
 }
 
 /// Check for bullet-style ctx marker: `- ctx::YYYY-MM-DD`
@@ -180,7 +209,10 @@ pub struct Block {
     pub created_at: i64,
     #[ts(type = "number")]
     pub updated_at: i64,
-    // metadata: Option<serde_json::Value>, // Future: currently unused
+    /// Block metadata for markers, wikilinks, and other extracted data.
+    /// Populated by hooks, exposed via API for external agent integration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<BlockMetadata>,
 }
 
 impl Block {
@@ -199,6 +231,7 @@ impl Block {
             collapsed: false,
             created_at: now,
             updated_at: now,
+            metadata: None,
         }
     }
 

@@ -8,7 +8,7 @@
 //!   floatty-server
 
 use axum::{http::Method, middleware, routing::get, Router};
-use floatty_core::YDocStore;
+use floatty_core::{HookSystem, YDocStore};
 use floatty_server::{api, auth, config::ServerConfig, ws, WsBroadcaster};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -56,6 +56,25 @@ async fn main() {
         }
     };
 
+    // Initialize hook system (MetadataExtractionHook + PageNameIndexHook registered, cold start rehydration)
+    let hook_system = Arc::new(HookSystem::initialize(Arc::clone(&store)));
+
+    // Wire Y.Doc observation to hook system
+    // This makes ALL Y.Doc mutations (including frontend sync) trigger hooks
+    {
+        let hook_system_clone = Arc::clone(&hook_system);
+        store
+            .set_change_callback(move |changes| {
+                for change in changes {
+                    if let Err(e) = hook_system_clone.emit_change(change) {
+                        tracing::error!("Hook emission failed: {}", e);
+                    }
+                }
+            })
+            .expect("Failed to register change callback - hooks will not fire");
+    }
+    tracing::info!("Y.Doc change observation wired to hook system");
+
     // Create WebSocket broadcaster for real-time sync
     let broadcaster = Arc::new(WsBroadcaster::new(64));
 
@@ -69,11 +88,11 @@ async fn main() {
     let api_routes = if config.auth_enabled {
         let auth_state = auth::ApiKeyAuth::new(api_key.clone());
         tracing::info!("API authentication enabled");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster))
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system))
             .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
     } else {
         tracing::warn!("API authentication DISABLED (auth_enabled = false in config)");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster))
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system))
     };
 
     // WebSocket route (auth via query param since WS can't use headers easily)

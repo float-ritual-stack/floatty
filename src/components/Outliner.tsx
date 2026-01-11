@@ -245,10 +245,9 @@ export function Outliner(props: OutlinerProps) {
         // Undo/Redo (Y.Doc UndoManager)
         // Use ensureVisibleFocus to handle both deleted blocks AND
         // blocks hidden by restored collapsed state
+        // NOTE: Don't blur first - it's aggressive and can race with Y.Doc updates
         '$mod+z': (e) => {
           e.preventDefault();
-          const activeEl = document.activeElement as HTMLElement;
-          activeEl?.blur?.();
           undo();
           requestAnimationFrame(() => {
             collapse.ensureVisibleFocus();
@@ -256,8 +255,6 @@ export function Outliner(props: OutlinerProps) {
         },
         '$mod+Shift+z': (e) => {
           e.preventDefault();
-          const activeEl = document.activeElement as HTMLElement;
-          activeEl?.blur?.();
           redo();
           requestAnimationFrame(() => {
             collapse.ensureVisibleFocus();

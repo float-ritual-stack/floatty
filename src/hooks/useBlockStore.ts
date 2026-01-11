@@ -40,6 +40,8 @@ export interface BlockState {
   blocks: Record<string, Block>;
   rootIds: string[];
   isInitialized: boolean;
+  /** Origin of last Y.Doc transaction - used by BlockItem sync gate */
+  lastUpdateOrigin: unknown;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -169,6 +171,9 @@ function createBlockStore() {
     blocks: {},
     rootIds: [],
     isInitialized: false,
+    // Origin of last Y.Doc transaction (for sync gate in BlockItem)
+    // 'user' = local typing, UndoManager = undo/redo, other = remote/external
+    lastUpdateOrigin: null as unknown,
   });
 
   let _doc: Y.Doc | null = null;
@@ -213,7 +218,15 @@ function createBlockStore() {
 
     // Observe Blocks Map (Deep - handles nested Y.Map property changes)
     _blocksObserver = (events: Y.YEvent<unknown>[]) => {
+      // Capture transaction origin for BlockItem sync gate
+      // NOTE: All events in a batch share the same transaction, so events[0] is representative
+      // 'user' = local typing, UndoManager instance = undo/redo, other = remote/external
+      const txOrigin = events[0]?.transaction.origin;
+
       batch(() => {
+        // Expose origin to components (BlockItem uses this for sync decisions)
+        setState('lastUpdateOrigin', txOrigin);
+
         // Track which blocks need refresh (deduped)
         const blocksToRefresh = new Set<string>();
         const blocksToDelete = new Set<string>();
@@ -291,7 +304,7 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'content', content);
       setValueOnYMap(blocksMap, id, 'type', parseBlockType(content));
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   /**
@@ -307,7 +320,7 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'outputType', outputType);
       setValueOnYMap(blocksMap, id, 'outputStatus', status);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   /**
@@ -320,7 +333,7 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
       setValueOnYMap(blocksMap, id, 'outputStatus', status);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   const createBlockBefore = (beforeId: string) => {
@@ -348,7 +361,7 @@ function createBlockStore() {
         const beforeIndex = arr.indexOf(beforeId);
         rootIds.insert(beforeIndex, [newId]);  // Insert BEFORE
       }
-    });
+    }, 'user');
 
     return newId;
   };
@@ -378,7 +391,7 @@ function createBlockStore() {
         const afterIndex = arr.indexOf(afterId);
         rootIds.insert(afterIndex + 1, [newId]);
       }
-    });
+    }, 'user');
 
     return newId;
   };
@@ -401,7 +414,7 @@ function createBlockStore() {
       childIds.push(newId);
       setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
       setValueOnYMap(blocksMap, parentId, 'collapsed', false);
-    });
+    }, 'user');
 
     return newId;
   };
@@ -424,7 +437,7 @@ function createBlockStore() {
       childIds.unshift(newId); // Insert at start
       setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
       setValueOnYMap(blocksMap, parentId, 'collapsed', false);
-    });
+    }, 'user');
 
     return newId;
   };
@@ -464,7 +477,7 @@ function createBlockStore() {
         const afterIndex = arr.indexOf(id);
         rootIds.insert(afterIndex + 1, [newId]);
       }
-    });
+    }, 'user');
 
     return newId;
   };
@@ -503,7 +516,7 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'childIds', childIds);
       // Ensure expanded so user sees the new child
       setValueOnYMap(blocksMap, id, 'collapsed', false);
-    });
+    }, 'user');
 
     return newId;
   };
@@ -550,7 +563,7 @@ function createBlockStore() {
       toDelete.forEach(delId => {
         blocksMap.delete(delId);
       });
-    });
+    }, 'user');
 
     return true;
   };
@@ -613,7 +626,7 @@ function createBlockStore() {
       toDelete.forEach(delId => {
         blocksMap.delete(delId);
       });
-    });
+    }, 'user');
 
     return true;
   };
@@ -641,7 +654,7 @@ function createBlockStore() {
       const newBlock = createBlock(newId, '');
       blocksMap.set(newId, blockToYMap(newBlock));
       rootIds.push([newId]);
-    });
+    }, 'user');
 
     console.log('[BlockStore] Workspace cleared with fresh block.');
   };
@@ -688,7 +701,7 @@ function createBlockStore() {
 
       setValueOnYMap(blocksMap, id, 'parentId', newParentId);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   const outdentBlock = (id: string) => {
@@ -726,7 +739,7 @@ function createBlockStore() {
 
       setValueOnYMap(blocksMap, id, 'parentId', parent.parentId);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
   };
 
   /**
@@ -781,7 +794,7 @@ function createBlockStore() {
       }
 
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
 
     return true;
   };
@@ -838,7 +851,7 @@ function createBlockStore() {
       }
 
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-    });
+    }, 'user');
 
     return true;
   };
@@ -852,7 +865,7 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       setValueOnYMap(blocksMap, id, 'collapsed', !block.collapsed);
-    });
+    }, 'user');
   };
 
   const createInitialBlock = () => {
@@ -864,10 +877,10 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       const rootIds = _doc.getArray<string>('rootIds');
-      
+
       blocksMap.set(newId, blockToYMap(newBlock));
       rootIds.push([newId]);
-    });
+    }, 'user');
 
     return newId;
   };
@@ -876,6 +889,7 @@ function createBlockStore() {
     get blocks() { return state.blocks; },
     get rootIds() { return state.rootIds; },
     get isInitialized() { return state.isInitialized; },
+    get lastUpdateOrigin() { return state.lastUpdateOrigin; },
     initFromYDoc,
     getBlock,
     updateBlockContent,
