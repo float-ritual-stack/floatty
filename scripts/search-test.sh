@@ -38,7 +38,7 @@ api() {
         "$@"
 }
 
-# Search for blocks
+# Search for blocks (IDs only)
 cmd_search() {
     local query="${1:-}"
     if [[ -z "$query" ]]; then
@@ -53,6 +53,56 @@ cmd_search() {
     echo "Searching for: $query"
     echo "─────────────────────────────────────"
     api GET "/search?q=$(urlencode "$query")&limit=20" | jq .
+}
+
+# Search and return full blocks with content
+cmd_find() {
+    local query="${1:-}"
+    local limit="${2:-10}"
+
+    if [[ -z "$query" ]]; then
+        echo "Usage: $0 find <query> [limit]"
+        echo "Examples:"
+        echo "  $0 find 'project::floatty'"
+        echo "  $0 find 'mode::dev' 5"
+        exit 1
+    fi
+
+    echo "Finding: $query (limit: $limit)"
+    echo "═══════════════════════════════════════════════════════════════════"
+
+    # Get search hits
+    local hits=$(api GET "/search?q=$(urlencode "$query")&limit=$limit")
+    local count=$(echo "$hits" | jq '.hits | length')
+
+    if [[ "$count" == "0" ]]; then
+        echo "No results found."
+        return
+    fi
+
+    echo "Found $count hits:"
+    echo ""
+
+    # Hydrate each block
+    echo "$hits" | jq -r '.hits[].blockId' | while read -r block_id; do
+        local block=$(api GET "/blocks/$block_id" 2>/dev/null)
+        if [[ -n "$block" && "$block" != "null" ]]; then
+            local content=$(echo "$block" | jq -r '.content // "(no content)"')
+            local block_type=$(echo "$block" | jq -r '.blockType // "text"')
+            local score=$(echo "$hits" | jq -r ".hits[] | select(.blockId == \"$block_id\") | .score")
+
+            echo "┌─ [$block_type] score: $score"
+            echo "│  $block_id"
+            echo "├──────────────────────────────────────────────────────────────"
+            echo "$content" | head -5 | sed 's/^/│  /'
+            local lines=$(echo "$content" | wc -l)
+            if [[ $lines -gt 5 ]]; then
+                echo "│  ... ($lines lines total)"
+            fi
+            echo "└──────────────────────────────────────────────────────────────"
+            echo ""
+        fi
+    done
 }
 
 # Populate test data
@@ -132,6 +182,10 @@ case "${1:-help}" in
         shift
         cmd_search "$@"
         ;;
+    find)
+        shift
+        cmd_find "$@"
+        ;;
     populate)
         cmd_populate
         ;;
@@ -150,7 +204,8 @@ case "${1:-help}" in
         echo "Usage: $0 <command> [args]"
         echo ""
         echo "Commands:"
-        echo "  search <query>   Search for blocks (e.g., 'project::floatty')"
+        echo "  search <query>   Search for blocks (IDs + scores only)"
+        echo "  find <query>     Search and show full block content"
         echo "  populate         Create test blocks with various markers"
         echo "  list             List all blocks"
         echo "  health           Check server health"
