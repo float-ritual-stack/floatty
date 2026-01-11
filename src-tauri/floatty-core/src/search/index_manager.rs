@@ -63,6 +63,8 @@ pub struct SchemaFields {
     pub updated_at: Field,
     /// Whether block has :: markers.
     pub has_markers: Field,
+    /// Full-text searchable marker values (e.g., "project::floatty mode::dev").
+    pub markers: Field,
 }
 
 impl SchemaFields {
@@ -75,6 +77,7 @@ impl SchemaFields {
             parent_id: get_field(schema, "parent_id"),
             updated_at: get_field(schema, "updated_at"),
             has_markers: get_field(schema, "has_markers"),
+            markers: get_field(schema, "markers"),
         }
     }
 }
@@ -175,8 +178,8 @@ mod tests {
         // Index directory should now exist
         assert!(index_path.exists());
 
-        // Schema should have 6 fields
-        assert_eq!(manager.schema().fields().count(), 6);
+        // Schema should have 7 fields
+        assert_eq!(manager.schema().fields().count(), 7);
     }
 
     #[test]
@@ -213,6 +216,7 @@ mod tests {
         assert_eq!(schema.get_field_entry(fields.parent_id).name(), "parent_id");
         assert_eq!(schema.get_field_entry(fields.updated_at).name(), "updated_at");
         assert_eq!(schema.get_field_entry(fields.has_markers).name(), "has_markers");
+        assert_eq!(schema.get_field_entry(fields.markers).name(), "markers");
     }
 
     #[test]

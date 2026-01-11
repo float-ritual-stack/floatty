@@ -66,6 +66,7 @@ Every work unit follows this lifecycle:
 | 3.3 | TantivyIndexHook | 3.2 | Delete+Add update logic | Medium | ✅ Done |
 | 3.4 | Search Service | 3.3 | Query primitives | Medium | ✅ Done |
 | 3.5 | Search API Endpoint | 3.4 | Frontend API | Small | ✅ Done |
+| 3.6 | Marker Extraction & Indexing | 3.5 | `q=project::floatty` works | Medium | ✅ Done |
 
 ---
 
@@ -905,6 +906,98 @@ Tauri commands for frontend search access.
 - [ ] PHASE 3 COMPLETE: Full search working
 - [ ] Write handoff summarizing Phase 3
 ```
+
+---
+
+## Unit 3.6: Marker Extraction & Indexing
+
+**Completed**: 2026-01-11
+
+### Entry Prompt
+
+```markdown
+# Work Unit 3.6: Marker Extraction & Indexing
+
+## Context
+You are enabling semantic marker search (e.g., `q=project::floatty`).
+Read: Handoff from Unit 3.5
+Read: floatty-core/src/hooks/parsing.rs (existing marker extraction)
+
+## Preconditions
+- Unit 3.5 complete: Search API endpoint works
+- Marker extraction already populates BlockMetadata.markers
+
+## Deliverable
+`q=project::floatty` returns blocks containing that marker.
+
+## Problem
+Current search fails on `::` markers because Tantivy interprets `project::floatty`
+as "search field 'project:' for 'floatty'" (field specifier syntax).
+
+## Implementation
+1. Add `markers` TEXT field to Tantivy schema
+2. Update writer pipeline to accept markers string
+3. Format markers from BlockMetadata in TantivyIndexHook
+4. Update QueryParser to search both content AND markers fields
+5. Escape `::` to `\:\:` in queries to avoid field specifier interpretation
+
+## Exit Checklist
+- [ ] `cargo test -p floatty-core` passes (194 tests)
+- [ ] `q=project::floatty` returns expected blocks via REST API
+- [ ] Code namespaces (std::, tokio::) NOT indexed
+- [ ] Both `[project::X]` and `project::X` formats work
+```
+
+### What Was Done
+
+1. **parsing.rs** - Extended marker extraction:
+   - Added `CODE_NAMESPACES` deny list (std, tokio, tauri, etc.)
+   - Added `STANDALONE_PATTERN` regex for `project::floatty` (not bracketed)
+   - `extract_standalone_markers()` filters code noise, skips bracketed (handled by tag extraction)
+   - `extract_all_markers()` now deduplicates by (type, value)
+
+2. **schema.rs** - Added `markers` TEXT field (searchable, tokenized)
+
+3. **index_manager.rs** - Added `markers: Field` to `SchemaFields` struct
+
+4. **tantivy_index.rs** - Format markers from `BlockMetadata.markers` as space-separated string
+
+5. **writer.rs** - Added `markers: String` to `WriterMessage::AddOrUpdate` and pipeline
+
+6. **service.rs** - Key fix: escape `::` to `\:\:` before QueryParser, search both `content` AND `markers`
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `floatty-core/src/hooks/parsing.rs` | +100 lines: deny list, standalone regex, extraction fn |
+| `floatty-core/src/search/schema.rs` | +1 line: markers TEXT field |
+| `floatty-core/src/search/index_manager.rs` | +2 lines: markers in SchemaFields |
+| `floatty-core/src/search/writer.rs` | +10 lines: markers param throughout |
+| `floatty-core/src/hooks/tantivy_index.rs` | +20 lines: format markers string |
+| `floatty-core/src/search/service.rs` | +5 lines: escape ::, search markers field |
+
+### Tests Added
+
+- `test_extract_standalone_project` - basic standalone marker
+- `test_standalone_filters_code_namespaces` - std::, tokio:: filtered
+- `test_standalone_with_path_values` - `project::rangle/pharmacy` works
+- `test_standalone_skips_bracketed` - avoids double-extraction with tags
+- `test_standalone_skips_prefix_markers` - ctx:: only extracted as prefix
+- `test_search_by_marker_value` - integration test for marker search
+
+### Decisions Made
+
+| Decision | Options | Choice | Rationale |
+|----------|---------|--------|-----------|
+| Escape `::` vs custom parser | Escape chars / rewrite parser | Escape to `\:\:` | Simplest fix, Tantivy handles escaping |
+| Filter method | Regex lookbehind / position check | Position check | Rust regex doesn't support look-around |
+| Marker field type | STRING vs TEXT | TEXT | Need tokenization for multi-marker search |
+
+### Schema Migration Note
+
+**IMPORTANT**: After adding the `markers` field, the index schema changed from 6 to 7 fields.
+Existing indexes will panic on startup. Clear `~/.floatty/search_index/` after upgrading.
 
 ---
 

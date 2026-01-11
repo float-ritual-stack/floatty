@@ -130,14 +130,19 @@ impl SearchService {
             return Ok(Vec::new());
         }
 
+        // Pre-process query: escape `::` so Tantivy doesn't interpret as field syntax
+        // e.g., "project::floatty" → "project\:\:floatty"
+        let query_escaped = query_trimmed.replace("::", r"\:\:");
+
         // Get reader and searcher
         let reader = self.index.index().reader()?;
         let searcher = reader.searcher();
         let fields = self.index.fields();
 
-        // Build the text query
-        let query_parser = QueryParser::for_index(self.index.index(), vec![fields.content]);
-        let text_query = query_parser.parse_query(query_trimmed)?;
+        // Build the text query - searches both content and extracted markers
+        let query_parser =
+            QueryParser::for_index(self.index.index(), vec![fields.content, fields.markers]);
+        let text_query = query_parser.parse_query(&query_escaped)?;
 
         // Build filter queries
         let filter_queries = self.build_filter_queries(&filters);
@@ -223,6 +228,19 @@ mod tests {
     /// Helper to create an index with test documents.
     /// Returns (TempDir, Arc<IndexManager>) - caller must hold TempDir to keep index alive.
     fn create_test_index(docs: &[(&str, &str, &str, bool)]) -> (tempfile::TempDir, Arc<IndexManager>) {
+        // Convert to extended format with empty markers
+        let extended: Vec<_> = docs
+            .iter()
+            .map(|(id, content, block_type, has_markers)| (*id, *content, *block_type, *has_markers, ""))
+            .collect();
+        create_test_index_with_markers(&extended)
+    }
+
+    /// Helper to create an index with test documents including markers.
+    /// Returns (TempDir, Arc<IndexManager>) - caller must hold TempDir to keep index alive.
+    fn create_test_index_with_markers(
+        docs: &[(&str, &str, &str, bool, &str)],
+    ) -> (tempfile::TempDir, Arc<IndexManager>) {
         let dir = tempdir().unwrap();
         let index_path = dir.path().join("search_index");
         let manager = Arc::new(IndexManager::open_or_create_at(index_path).unwrap());
@@ -231,13 +249,14 @@ mod tests {
         let fields = manager.fields();
         let mut writer = manager.index().writer::<tantivy::TantivyDocument>(15_000_000).unwrap();
 
-        for (id, content, block_type, has_markers) in docs {
+        for (id, content, block_type, has_markers, markers) in docs {
             let mut doc = tantivy::TantivyDocument::new();
             doc.add_text(fields.block_id, *id);
             doc.add_text(fields.content, *content);
             doc.add_text(fields.block_type, *block_type);
             doc.add_text(fields.parent_id, ""); // Empty parent
             doc.add_text(fields.has_markers, if *has_markers { "true" } else { "false" });
+            doc.add_text(fields.markers, *markers);
             writer.add_document(doc).unwrap();
         }
 
@@ -441,5 +460,48 @@ mod tests {
 
         // First result should have higher score (more term frequency)
         assert!(hits[0].score >= hits[1].score);
+    }
+
+    #[test]
+    fn test_search_by_marker_value() {
+        // Test searching by extracted marker values (e.g., "project::floatty")
+        let (_dir, manager) = create_test_index_with_markers(&[
+            ("b1", "working today", "text", true, "project::floatty mode::dev"),
+            ("b2", "other work", "text", true, "project::pharmacy"),
+            ("b3", "no markers", "text", false, ""),
+        ]);
+
+        let service = SearchService::new(manager);
+
+        // Search for project::floatty - should match b1's markers field
+        let hits = service.search("project::floatty", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b1");
+
+        // Search for project::pharmacy - should match b2
+        let hits = service.search("project::pharmacy", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b2");
+
+        // Search for mode::dev - should match b1
+        let hits = service.search("mode::dev", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b1");
+    }
+
+    #[test]
+    fn test_search_marker_partial_match() {
+        // Test that partial marker terms work (Tantivy tokenizes on whitespace/punctuation)
+        let (_dir, manager) = create_test_index_with_markers(&[
+            ("b1", "context marker", "ctx", true, "project::floatty"),
+            ("b2", "other block", "text", false, ""),
+        ]);
+
+        let service = SearchService::new(manager);
+
+        // Search for just "floatty" - should match via markers field
+        let hits = service.search("floatty", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b1");
     }
 }

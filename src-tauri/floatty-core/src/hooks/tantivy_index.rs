@@ -106,18 +106,32 @@ impl TantivyIndexHook {
         // Extract block type from content
         let block_type = parse_block_type(content).as_str().to_string();
 
-        // Get parent_id and has_markers from store
-        let (parent_id, has_markers) = store
+        // Get parent_id, has_markers, and formatted markers string from store
+        let (parent_id, has_markers, markers) = store
             .get_block(id)
             .map(|b| {
-                let markers_count = b
+                let (markers_count, markers_str) = b
                     .metadata
                     .as_ref()
-                    .map(|m| m.markers.len())
-                    .unwrap_or(0);
-                (b.parent_id, markers_count > 0)
+                    .map(|m| {
+                        let formatted = m
+                            .markers
+                            .iter()
+                            .map(|marker| {
+                                if let Some(ref v) = marker.value {
+                                    format!("{}::{}", marker.marker_type, v)
+                                } else {
+                                    marker.marker_type.clone()
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        (m.markers.len(), formatted)
+                    })
+                    .unwrap_or((0, String::new()));
+                (b.parent_id, markers_count > 0, markers_str)
             })
-            .unwrap_or((None, false));
+            .unwrap_or((None, false, String::new()));
 
         // Get timestamp
         let updated_at = chrono::Utc::now().timestamp();
@@ -126,6 +140,7 @@ impl TantivyIndexHook {
             block_id = %id,
             block_type = %block_type,
             has_markers = has_markers,
+            markers = %markers,
             "Indexing block"
         );
 
@@ -135,7 +150,7 @@ impl TantivyIndexHook {
         let content = content.to_string();
         tokio::spawn(async move {
             if let Err(e) = writer
-                .add_or_update(id.clone(), content, block_type, parent_id, updated_at, has_markers)
+                .add_or_update(id.clone(), content, block_type, parent_id, updated_at, has_markers, markers)
                 .await
             {
                 warn!(block_id = %id, error = %e, "Failed to index block");

@@ -17,6 +17,14 @@ const PREFIX_MARKERS: &[&str] = &[
     "reminder", "meeting", "brain-boot", "door", "embed", "file", "ask", "media",
 ];
 
+/// Code namespace patterns to exclude from standalone marker extraction.
+/// These are Rust/code patterns like `std::string`, `tokio::spawn` that aren't semantic markers.
+const CODE_NAMESPACES: &[&str] = &[
+    "std", "core", "tauri", "tokio", "serde", "crate", "self", "super", "yrs", "log", "anyhow",
+    "thiserror", "fs", "io", "env", "http", "tracing", "chrono", "regex", "tantivy", "async",
+    "sync", "collections", "fmt", "path", "result", "option", "vec", "str", "string",
+];
+
 /// Extract prefix marker from block content (e.g., "sh::", "ctx::").
 ///
 /// Returns the marker type if content starts with a known `prefix::` pattern.
@@ -52,6 +60,15 @@ static TAG_PATTERN: LazyLock<Regex> =
 /// Known tag marker types (for validation/filtering if needed).
 pub const KNOWN_TAG_TYPES: &[&str] = &["project", "mode", "issue", "repo", "branch", "meeting"];
 
+/// Regex for standalone markers: `project::floatty` (not in brackets).
+/// Captures: (1) marker_type, (2) value
+/// We must exclude matches inside brackets or code chains, done via post-filtering.
+static STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    // Match word boundary, marker_type, ::, value
+    // \b ensures we match whole words, not partial (e.g., won't match inside `[project::floatty]`)
+    Regex::new(r"\b([a-zA-Z_][a-zA-Z0-9_-]*)::([\w/.@_-]+)").expect("valid regex")
+});
+
 /// Extract all tag markers from content.
 ///
 /// Returns markers for patterns like `[project::floatty]`, `[mode::dev]`.
@@ -70,6 +87,67 @@ pub fn extract_tag_markers(content: &str) -> Vec<Marker> {
     TAG_PATTERN
         .captures_iter(content)
         .map(|cap| Marker::with_value(&cap[1], &cap[2]))
+        .collect()
+}
+
+/// Extract standalone markers like `project::floatty` (not bracketed).
+///
+/// Filters out code namespaces (std::, tokio::, etc.) to avoid polluting
+/// the index with Rust/code patterns.
+///
+/// Also filters out markers that appear inside brackets (already captured by tag extraction).
+///
+/// # Examples
+///
+/// ```
+/// use floatty_core::hooks::parsing::extract_standalone_markers;
+///
+/// let markers = extract_standalone_markers("working on project::floatty today");
+/// assert_eq!(markers.len(), 1);
+/// assert_eq!(markers[0].marker_type, "project");
+/// assert_eq!(markers[0].value, Some("floatty".to_string()));
+///
+/// // Code namespaces are filtered out
+/// let markers = extract_standalone_markers("std::string tokio::spawn project::floatty");
+/// assert_eq!(markers.len(), 1); // Only project::floatty
+/// ```
+pub fn extract_standalone_markers(content: &str) -> Vec<Marker> {
+    let bytes = content.as_bytes();
+
+    STANDALONE_PATTERN
+        .captures_iter(content)
+        .filter_map(|cap| {
+            // cap[1] = marker_type, cap[2] = value
+            let marker_type = &cap[1];
+            let marker_type_lower = marker_type.to_lowercase();
+
+            // Skip code namespaces
+            if CODE_NAMESPACES
+                .iter()
+                .any(|ns| ns.eq_ignore_ascii_case(marker_type))
+            {
+                return None;
+            }
+
+            // Skip prefix markers (already extracted as prefix, no value)
+            // We want standalone to capture the VALUE, but prefix extraction only captures type
+            if PREFIX_MARKERS.contains(&marker_type_lower.as_str()) {
+                return None;
+            }
+
+            // Check if preceded by '[' (bracketed marker, already extracted by tag pattern)
+            let match_start = cap.get(0).unwrap().start();
+            if match_start > 0 && bytes[match_start - 1] == b'[' {
+                return None;
+            }
+
+            // Skip if preceded by ':' (code chain like ::std::)
+            if match_start > 0 && bytes[match_start - 1] == b':' {
+                return None;
+            }
+
+            Some(Marker::with_value(marker_type, &cap[2]))
+        })
         .collect()
 }
 
@@ -254,8 +332,15 @@ pub fn extract_all_markers(content: &str) -> Vec<Marker> {
         markers.push(Marker::new(prefix_type));
     }
 
-    // Extract tag markers
+    // Extract tag markers [project::X]
     markers.extend(extract_tag_markers(content));
+
+    // Extract standalone markers project::X (not bracketed)
+    markers.extend(extract_standalone_markers(content));
+
+    // Deduplicate by (marker_type, value)
+    markers.sort_by(|a, b| (&a.marker_type, &a.value).cmp(&(&b.marker_type, &b.value)));
+    markers.dedup_by(|a, b| a.marker_type == b.marker_type && a.value == b.value);
 
     markers
 }
@@ -332,6 +417,72 @@ mod tests {
     #[test]
     fn test_tag_marker_none() {
         let markers = extract_tag_markers("no tags here");
+        assert!(markers.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Standalone markers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_standalone_simple() {
+        let markers = extract_standalone_markers("working on project::floatty today");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "project");
+        assert_eq!(markers[0].value, Some("floatty".to_string()));
+    }
+
+    #[test]
+    fn test_standalone_multiple() {
+        let markers = extract_standalone_markers("project::floatty mode::dev issue::264");
+        assert_eq!(markers.len(), 3);
+        assert_eq!(markers[0].marker_type, "project");
+        assert_eq!(markers[1].marker_type, "mode");
+        assert_eq!(markers[2].marker_type, "issue");
+    }
+
+    #[test]
+    fn test_standalone_with_path_values() {
+        let markers = extract_standalone_markers("project::rangle/pharmacy");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].value, Some("rangle/pharmacy".to_string()));
+    }
+
+    #[test]
+    fn test_standalone_filters_code_namespaces() {
+        let markers = extract_standalone_markers("std::string tokio::spawn project::floatty");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "project");
+    }
+
+    #[test]
+    fn test_standalone_filters_many_code_patterns() {
+        let content = "serde::Deserialize tauri::command anyhow::Result project::floatty mode::dev";
+        let markers = extract_standalone_markers(content);
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0].marker_type, "project");
+        assert_eq!(markers[1].marker_type, "mode");
+    }
+
+    #[test]
+    fn test_standalone_case_insensitive_filter() {
+        // STD:: should also be filtered
+        let markers = extract_standalone_markers("STD::string Tokio::spawn project::floatty");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "project");
+    }
+
+    #[test]
+    fn test_standalone_does_not_match_bracketed() {
+        // Bracketed markers should NOT be matched by standalone pattern
+        // (the negative lookbehind prevents [ before the match)
+        let markers = extract_standalone_markers("[project::floatty]");
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_standalone_none() {
+        let markers = extract_standalone_markers("no markers here");
         assert!(markers.is_empty());
     }
 
@@ -479,8 +630,46 @@ mod tests {
     fn test_extract_all_markers_mixed() {
         let markers = extract_all_markers("ctx::2026-01-10 [project::floatty] [mode::dev]");
         assert_eq!(markers.len(), 3);
+        // Sorted alphabetically by (marker_type, value)
         assert_eq!(markers[0].marker_type, "ctx");
-        assert_eq!(markers[1].marker_type, "project");
+        assert_eq!(markers[1].marker_type, "mode");
+        assert_eq!(markers[2].marker_type, "project");
+    }
+
+    #[test]
+    fn test_extract_all_markers_standalone() {
+        let markers = extract_all_markers("working on project::floatty today");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "project");
+        assert_eq!(markers[0].value, Some("floatty".to_string()));
+    }
+
+    #[test]
+    fn test_extract_all_markers_filters_code() {
+        // Code namespaces should be filtered even in combined extraction
+        let markers = extract_all_markers("std::string tokio::spawn project::floatty");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "project");
+    }
+
+    #[test]
+    fn test_extract_all_markers_deduplicates() {
+        // Same marker in both bracketed and standalone form should dedupe
+        let markers = extract_all_markers("[project::floatty] and project::floatty again");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "project");
+        assert_eq!(markers[0].value, Some("floatty".to_string()));
+    }
+
+    #[test]
+    fn test_extract_all_markers_mixed_with_standalone() {
+        let content = "ctx::2026-01-11 [project::floatty] mode::synthesis issue::264";
+        let markers = extract_all_markers(content);
+        // ctx, issue, mode, project (sorted alphabetically by type)
+        assert_eq!(markers.len(), 4);
+        assert_eq!(markers[0].marker_type, "ctx");
+        assert_eq!(markers[1].marker_type, "issue");
         assert_eq!(markers[2].marker_type, "mode");
+        assert_eq!(markers[3].marker_type, "project");
     }
 }

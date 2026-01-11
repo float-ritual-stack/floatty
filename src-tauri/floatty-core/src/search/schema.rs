@@ -60,6 +60,11 @@ pub fn build_schema() -> Schema {
     // STRING = indexed without tokenization, STORED = retrievable
     builder.add_text_field("has_markers", STRING | STORED);
 
+    // markers: Full-text searchable marker values
+    // Stores concatenated marker strings like "project::floatty mode::dev issue::264"
+    // TEXT = tokenized with standard analyzer, so "project::floatty" is searchable
+    builder.add_text_field("markers", TEXT);
+
     builder.build()
 }
 
@@ -90,15 +95,16 @@ mod tests {
         assert!(schema.get_field("parent_id").is_ok());
         assert!(schema.get_field("updated_at").is_ok());
         assert!(schema.get_field("has_markers").is_ok());
+        assert!(schema.get_field("markers").is_ok());
     }
 
     #[test]
     fn test_schema_field_count() {
         let schema = build_schema();
-        // Should have exactly 6 fields
+        // Should have exactly 7 fields
         // schema.fields() returns an iterator of (Field, &FieldEntry)
         let field_count = schema.fields().count();
-        assert_eq!(field_count, 6);
+        assert_eq!(field_count, 7);
     }
 
     #[test]

@@ -46,6 +46,8 @@ pub enum WriterMessage {
         parent_id: Option<String>,
         updated_at: i64,
         has_markers: bool,
+        /// Space-separated marker values for full-text search (e.g., "project::floatty mode::dev").
+        markers: String,
     },
     /// Delete a document by block ID.
     Delete { block_id: String },
@@ -83,6 +85,7 @@ impl WriterHandle {
         parent_id: Option<String>,
         updated_at: i64,
         has_markers: bool,
+        markers: String,
     ) -> Result<(), SearchError> {
         self.tx
             .send(WriterMessage::AddOrUpdate {
@@ -92,6 +95,7 @@ impl WriterHandle {
                 parent_id,
                 updated_at,
                 has_markers,
+                markers,
             })
             .await
             .map_err(|_| SearchError::WriterClosed)
@@ -187,6 +191,7 @@ impl TantivyWriter {
                     parent_id,
                     updated_at,
                     has_markers,
+                    markers,
                 } => {
                     if let Err(e) = self.handle_add_or_update(
                         &block_id,
@@ -195,6 +200,7 @@ impl TantivyWriter {
                         parent_id.as_deref(),
                         updated_at,
                         has_markers,
+                        &markers,
                     ) {
                         error!(block_id = %block_id, error = %e, "Failed to index block");
                     } else {
@@ -248,6 +254,7 @@ impl TantivyWriter {
         parent_id: Option<&str>,
         updated_at: i64,
         has_markers: bool,
+        markers: &str,
     ) -> Result<(), SearchError> {
         // Delete any existing document with this ID
         let term = Term::from_field_text(self.fields.block_id, block_id);
@@ -270,6 +277,8 @@ impl TantivyWriter {
             self.fields.has_markers,
             if has_markers { "true" } else { "false" },
         );
+        // Full-text searchable marker values (e.g., "project::floatty mode::dev")
+        doc.add_text(self.fields.markers, markers);
 
         self.writer
             .add_document(doc)
@@ -311,6 +320,7 @@ mod tests {
                 None,
                 1704067200,
                 false,
+                String::new(),
             )
             .await;
 
@@ -331,6 +341,7 @@ mod tests {
                 None,
                 1704067200,
                 false,
+                String::new(),
             )
             .await
             .unwrap();
@@ -353,6 +364,7 @@ mod tests {
                 Some("parent_1".to_string()),
                 1704067200,
                 true,
+                "project::test".to_string(),
             )
             .await
             .unwrap();
@@ -402,6 +414,7 @@ mod tests {
                 None,
                 1704067200,
                 false,
+                String::new(),
             )
             .await
             .unwrap();
@@ -415,6 +428,7 @@ mod tests {
                 None,
                 1704067201,
                 true,
+                "project::floatty mode::dev".to_string(),
             )
             .await
             .unwrap();
