@@ -49,17 +49,21 @@ Every work unit follows this lifecycle:
 |------|------|------------|----------|-----------|
 | 0.1 | Origin Enum | None | Type definition | Small |
 | 0.2 | Origin in Y.Doc | 0.1 | Tagged transactions | Small |
-| 1.1 | Change Emitter Interface | 0.2 | Event types | Small |
-| 1.2 | Store Integration | 1.1 | Emitter at boundary | Medium |
+| 1.1 | BlockChange Types | 0.2 | Event types | Small |
+| 1.2 | Y.Doc Observer Wrapper | 1.1 | Transform events | Medium |
 | 1.3 | Debounce + Dedupe | 1.2 | Batched changes | Small |
-| 2.1 | Metadata Schema | 1.3 | Type definitions | Small |
+| 1.5.1 | Hook Interface | 0.2 | Trait definition | Small |
+| 1.5.2 | Registry Implementation | 1.5.1 | Registration + dispatch | Medium |
+| 1.5.3 | Origin Filtering | 1.5.2 | Loop prevention | Small |
+| 2.1 | Metadata Schema | 1.3 + 1.5.3 | Type definitions | Small |
 | 2.2 | Marker Extraction | 2.1 | :: parser hook | Medium |
 | 2.3 | Wikilink Extraction | 2.2 | [[]] parser hook | Medium |
 | 2.4 | PageNameIndex | 2.3 | Autocomplete structure | Small |
 | 3.1 | Tantivy Setup | 2.4 | Index + schema | Medium |
-| 3.2 | Writer Actor | 3.1 | Concurrent write handling | Medium |
-| 3.3 | Search Service | 3.2 | Query primitives | Medium |
-| 3.4 | Tauri Commands | 3.3 | Frontend API | Small |
+| 3.2 | Writer Actor | 3.1 | Bounded channel + backpressure | Medium |
+| 3.3 | TantivyIndexHook | 3.2 | Delete+Add update logic | Medium |
+| 3.4 | Search Service | 3.3 | Query primitives | Medium |
+| 3.5 | Tauri Commands | 3.4 | Frontend API | Small |
 
 ---
 
@@ -464,9 +468,352 @@ A fast HashSet-based structure for [[ autocomplete.
 
 ---
 
-## Units 3.x: Tantivy Integration
+## Unit 1.5.1: Hook Interface
 
-*(Prompts follow same structure - available on request)*
+### Entry Prompt
+
+```markdown
+# Work Unit 1.5.1: Hook Interface
+
+## Context
+You are defining the BlockHook trait for floatty's hook registry.
+Read: docs/SEARCH_ARCHITECTURE_LAYERS.md (Section 2.4)
+
+## Preconditions
+- Unit 0.2 complete: Origin enum exists and is used in transactions
+
+## Deliverable
+A Rust trait defining the interface for block change hooks.
+
+## Entry Checklist
+- [ ] Read SEARCH_ARCHITECTURE_LAYERS.md
+- [ ] Code review: src/lib/handlers/registry.ts (frontend pattern to mirror)
+- [ ] Understand priority ordering requirements
+
+## Implementation
+1. Create src-tauri/floatty-core/src/hooks/mod.rs
+2. Define BlockHook trait:
+   - `fn name(&self) -> &'static str`
+   - `fn priority(&self) -> i32` (lower = earlier)
+   - `fn is_sync(&self) -> bool`
+   - `fn accepts_origins(&self) -> Option<Vec<Origin>>`
+   - `fn process(&self, changes: &[BlockChange], store: &YDocStore)`
+3. Export from lib.rs
+4. Add unit tests for trait bounds
+
+## Exit Checklist
+- [ ] `cargo test -p floatty-core` passes
+- [ ] Trait is object-safe (can use `Box<dyn BlockHook>`)
+- [ ] Code review: any simplification opportunities?
+- [ ] Document: any decisions made?
+- [ ] Write handoff for Unit 1.5.2
+```
+
+---
+
+## Unit 1.5.2: Registry Implementation
+
+### Entry Prompt
+
+```markdown
+# Work Unit 1.5.2: Registry Implementation
+
+## Context
+You are implementing the HookRegistry that dispatches to registered hooks.
+Read: Handoff from Unit 1.5.1
+
+## Preconditions
+- Unit 1.5.1 complete: BlockHook trait exists
+
+## Deliverable
+A HookRegistry struct that registers hooks and dispatches changes in priority order.
+
+## Entry Checklist
+- [ ] Read Unit 1.5.1 handoff
+- [ ] Verify BlockHook trait compiles
+- [ ] Code review: How will hooks be registered at startup?
+
+## Implementation
+1. Create HookRegistry struct in hooks/mod.rs
+2. Implement `register(&mut self, hook: Box<dyn BlockHook>)`
+3. Implement `dispatch(&self, changes: &[BlockChange], store: &YDocStore)`
+   - Sort hooks by priority
+   - For each hook: check accepts_origins, then process
+   - Sync hooks block, async hooks spawn
+4. Add integration tests
+
+## Exit Checklist
+- [ ] `cargo test -p floatty-core` passes
+- [ ] Multiple hooks can be registered
+- [ ] Priority ordering works correctly
+- [ ] Code review: any simplification opportunities?
+- [ ] Write handoff for Unit 1.5.3
+```
+
+---
+
+## Unit 1.5.3: Origin Filtering
+
+### Entry Prompt
+
+```markdown
+# Work Unit 1.5.3: Origin Filtering (Loop Prevention)
+
+## Context
+You are implementing origin-based filtering to prevent infinite hook loops.
+Read: docs/.claude/rules/ydoc-patterns.md (Pattern 4)
+
+## Preconditions
+- Unit 1.5.2 complete: HookRegistry dispatches to hooks
+
+## Deliverable
+Hooks can specify which origins they respond to, preventing loops.
+
+## Entry Checklist
+- [ ] Read Unit 1.5.2 handoff
+- [ ] Read ydoc-patterns.md Pattern 4 (Origin Prevents Infinite Loops)
+- [ ] Understand: Hook writes should use Origin::Hook
+
+## Implementation
+1. Update dispatch() to filter by accepts_origins()
+2. Ensure hooks that write to store use Origin::Hook
+3. Add loop prevention test:
+   - Register a dummy hook that writes to store
+   - Verify hook does NOT receive its own write event
+4. Document the origin contract in code comments
+
+## Exit Checklist
+- [ ] `cargo test -p floatty-core` passes
+- [ ] Test: Register hook that writes to store; verify it does NOT receive its own write event
+- [ ] Code review: any simplification opportunities?
+- [ ] Write handoff for Unit 2.1
+```
+
+---
+
+## Unit 3.1: Tantivy Setup
+
+### Entry Prompt
+
+```markdown
+# Work Unit 3.1: Tantivy Setup
+
+## Context
+You are setting up the Tantivy search index infrastructure.
+Read: docs/SEARCH_ARCHITECTURE_LAYERS.md
+
+## Preconditions
+- Unit 2.4 complete: PageNameIndex works (tracer bullet validated)
+
+## Deliverable
+Tantivy dependency added, index created, schema defined.
+
+## Entry Checklist
+- [ ] Read SEARCH_ARCHITECTURE_LAYERS.md (Part 2.6)
+- [ ] Add tantivy to Cargo.toml
+- [ ] Decide: index location (~/.floatty/search_index/)
+
+## Implementation
+1. Add `tantivy = "0.22"` to floatty-core/Cargo.toml
+2. Define Schema:
+   - `block_id`: STRING | STORED | INDEXED (Primary Key for deletes)
+   - `content`: TEXT (Standard tokenizer)
+   - `block_type`: STRING | FAST (For facet filtering)
+   - `parent_id`: STRING | STORED (For context retrieval)
+   - `updated_at`: DATE | FAST (For recency sorting)
+3. Create index directory at ~/.floatty/search_index/
+4. Implement IndexManager struct:
+   - `open_or_create(path) -> Index`
+   - Handle schema migrations (for future)
+5. Add tests for index creation
+
+## Exit Checklist
+- [ ] `cargo test -p floatty-core` passes
+- [ ] Index can be created and reopened
+- [ ] Schema includes block_id as indexed STRING (required for deletions)
+- [ ] Code review: any simplification opportunities?
+- [ ] Write handoff for Unit 3.2
+```
+
+---
+
+## Unit 3.2: Writer Actor
+
+### Entry Prompt
+
+```markdown
+# Work Unit 3.2: Writer Actor
+
+## Context
+You are implementing the async writer actor for Tantivy index updates.
+Read: Handoff from Unit 3.1
+
+## Preconditions
+- Unit 3.1 complete: Index and schema exist
+
+## Deliverable
+A TantivyWriter actor that handles concurrent writes with backpressure.
+
+## Entry Checklist
+- [ ] Read Unit 3.1 handoff
+- [ ] Verify index can be opened
+- [ ] Understand: Updates in Tantivy are Delete + Add
+
+## Implementation
+1. Create TantivyWriter struct wrapping IndexWriter
+2. Implement Actor pattern using **bounded mpsc channel** (capacity: 1000)
+   - Bounded channel provides backpressure during bulk indexing
+   - Prevents OOM if 10k blocks pasted at once
+3. Define message types:
+   - `AddOrUpdate { id, doc }` → delete_term + add_document
+   - `Delete { id }` → delete_term only
+   - `Commit` → writer.commit()
+4. Implement handle_message loop:
+   - `AddOrUpdate`: `writer.delete_term(Term::from_field_text(block_id_field, id))` then `writer.add_document(doc)`
+   - `Delete`: `writer.delete_term(Term::from_field_text(block_id_field, id))`
+   - `Commit`: `writer.commit()`
+5. Spawn actor on app startup
+6. Add tests for message handling
+
+## Exit Checklist
+- [ ] `cargo test -p floatty-core` passes
+- [ ] Channel is bounded (capacity specified)
+- [ ] Delete uses Term-based deletion by block_id
+- [ ] Updates are atomic Delete + Add
+- [ ] Code review: any simplification opportunities?
+- [ ] Write handoff for Unit 3.3
+```
+
+---
+
+## Unit 3.3: TantivyIndexHook
+
+### Entry Prompt
+
+```markdown
+# Work Unit 3.3: TantivyIndexHook
+
+## Context
+You are implementing the async hook that queues index updates.
+Read: Handoff from Unit 3.2
+
+## Preconditions
+- Unit 3.2 complete: Writer actor running
+- Unit 1.5.3 complete: Hook registry with origin filtering
+
+## Deliverable
+A registered hook that maps BlockChange events to index operations.
+
+## Entry Checklist
+- [ ] Read Unit 3.2 handoff
+- [ ] Verify writer actor can receive messages
+- [ ] Understand: This hook is async (is_sync = false)
+
+## Implementation
+1. Create TantivyIndexHook implementing BlockHook
+   - priority: 50 (after metadata hooks)
+   - is_sync: false (async)
+   - accepts_origins: Some(vec![User, Remote, Agent, BulkImport]) — NOT Hook
+2. Map BlockChange to Index Operations:
+   - `Created` → AddOrUpdate (delete any stale, add new)
+   - `ContentChanged` → AddOrUpdate (atomic delete + add)
+   - `Deleted` → Delete
+   - `Moved` → No-op (unless path is indexed)
+3. Send messages to writer actor channel
+4. Register hook at startup
+5. Add integration tests
+
+## Exit Checklist
+- [ ] `cargo test -p floatty-core` passes
+- [ ] Hook is registered with priority 50
+- [ ] ContentChanged triggers Delete + Add (not just Add)
+- [ ] Deleted blocks are removed from index
+- [ ] Code review: any simplification opportunities?
+- [ ] Write handoff for Unit 3.4
+```
+
+---
+
+## Unit 3.4: Search Service
+
+### Entry Prompt
+
+```markdown
+# Work Unit 3.4: Search Service
+
+## Context
+You are implementing the query interface for Tantivy search.
+Read: Handoff from Unit 3.3
+
+## Preconditions
+- Unit 3.3 complete: Index is being updated by hook
+
+## Deliverable
+SearchService with query primitives.
+
+## Entry Checklist
+- [ ] Read Unit 3.3 handoff
+- [ ] Verify some blocks are indexed
+- [ ] Understand: Return IDs only, hydrate from Y.Doc
+
+## Implementation
+1. Create SearchService in services/search.rs
+2. Implement query methods:
+   - `search(query: &str, limit: usize) -> Vec<SearchHit>`
+   - `search_with_filters(query, filters, limit) -> Vec<SearchHit>`
+3. SearchHit contains: block_id, score, snippet
+4. Use QueryParser with content field
+5. Add facet filtering by block_type
+6. Add tests with sample indexed data
+
+## Exit Checklist
+- [ ] `cargo test -p floatty-core` passes
+- [ ] Search returns relevant results
+- [ ] Filters work correctly
+- [ ] Code review: any simplification opportunities?
+- [ ] Write handoff for Unit 3.5
+```
+
+---
+
+## Unit 3.5: Tauri Commands
+
+### Entry Prompt
+
+```markdown
+# Work Unit 3.5: Tauri Commands
+
+## Context
+You are exposing the search service to the frontend.
+Read: Handoff from Unit 3.4
+
+## Preconditions
+- Unit 3.4 complete: SearchService works
+
+## Deliverable
+Tauri commands for frontend search access.
+
+## Entry Checklist
+- [ ] Read Unit 3.4 handoff
+- [ ] Code review: existing Tauri command patterns in commands/
+
+## Implementation
+1. Create commands/search.rs
+2. Add commands (thin adapters to SearchService):
+   - `search_blocks(query, filters, limit) -> Vec<SearchResult>`
+   - `get_block_context(id, radius) -> BlockContext`
+3. Wire into lib.rs tauri::generate_handler!
+4. Add frontend types in src/lib/searchTypes.ts
+5. Test from frontend devtools
+
+## Exit Checklist
+- [ ] `npm run test` passes
+- [ ] `cargo test` passes
+- [ ] Commands callable from frontend
+- [ ] End-to-end: type in block → searchable
+- [ ] PHASE 3 COMPLETE: Full search working
+- [ ] Write handoff summarizing Phase 3
+```
 
 ---
 
