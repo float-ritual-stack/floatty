@@ -64,7 +64,10 @@ export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
           resolvedFromTv = extracted !== original;
         } catch (err) {
           console.error(`[${logPrefix}] TV resolution failed:`, err);
-          // Fall through and try to execute with unresolved variables
+          // Show error block instead of executing with unresolved variables
+          const errorId = actions.createBlockInsideAtTop?.(blockId) ?? actions.createBlockInside(blockId);
+          actions.updateBlockContent(errorId, `error::TV resolution failed: ${String(err)}`);
+          return;
         }
       }
 
