@@ -553,8 +553,11 @@ export function BlockItem(props: BlockItemProps) {
     }
   };
 
-  const handleInput = (e: InputEvent) => {
-    const target = e.target as HTMLDivElement;
+  /**
+   * Core content update logic extracted for reuse by input and composition handlers.
+   * Avoids unsafe type casting between InputEvent and CompositionEvent.
+   */
+  const updateContentFromDom = (target: HTMLDivElement) => {
     // CRITICAL: Use innerText, not textContent!
     // textContent ignores <div> and <br> elements, losing line breaks.
     // innerText respects visual line breaks and converts them to \n.
@@ -579,6 +582,10 @@ export function BlockItem(props: BlockItemProps) {
     if (tabId) {
       layoutStore.pinPane(tabId, props.paneId);
     }
+  };
+
+  const handleInput = (e: InputEvent) => {
+    updateContentFromDom(e.target as HTMLDivElement);
   };
 
   const bulletClass = () => {
@@ -748,7 +755,7 @@ export function BlockItem(props: BlockItemProps) {
                 setIsComposing(false);
                 // Trigger final update after composition completes
                 // The IME has committed the final character(s)
-                handleInput(e as unknown as InputEvent);
+                updateContentFromDom(e.target as HTMLDivElement);
               }}
             />
           </Show>
