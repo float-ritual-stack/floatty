@@ -110,7 +110,12 @@ class HandlerRegistry {
   findHandler(content: string): BlockHandler | null
   isExecutableBlock(content: string): boolean
 }
+
+// Exported as singleton instance (line 58)
+export const registry = new HandlerRegistry();
 ```
+
+Usage: `import { registry } from '../lib/handlers'` then `registry.findHandler(...)`
 
 Registered: `shHandler`, `aiHandler`, `dailyHandler`
 
@@ -169,9 +174,26 @@ export interface Block {
   updatedAt: number;
   metadata?: Record<string, unknown>;  // EXISTS but unused
   output?: unknown;
-  outputType?: string;
-  outputStatus?: 'pending' | 'running' | 'complete' | 'error';
+  outputType?: string;  // 'daily-view', 'kanban-view', etc.
+  outputStatus?: 'running' | 'complete' | 'error';
 }
+```
+
+### 1.9 Block Store Methods
+
+**File**: `src/hooks/useBlockStore.ts`
+
+Mutation methods (lines 880-920):
+```typescript
+// Core mutations
+createBlock(parentId, content) → id
+updateBlockContent(id, content)
+deleteBlock(id)
+moveBlock(id, newParentId, position)
+
+// Output handling (for sh::, ai::, daily:: execution)
+setBlockOutput(id, output, outputType, status = 'complete')
+setBlockStatus(id, status)  // For loading indicators
 ```
 
 ---
