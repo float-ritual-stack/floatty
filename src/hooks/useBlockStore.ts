@@ -40,6 +40,8 @@ export interface BlockState {
   blocks: Record<string, Block>;
   rootIds: string[];
   isInitialized: boolean;
+  /** Origin of last Y.Doc transaction - used by BlockItem sync gate */
+  lastUpdateOrigin: unknown;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -169,6 +171,9 @@ function createBlockStore() {
     blocks: {},
     rootIds: [],
     isInitialized: false,
+    // Origin of last Y.Doc transaction (for sync gate in BlockItem)
+    // 'user' = local typing, UndoManager = undo/redo, other = remote/external
+    lastUpdateOrigin: null as unknown,
   });
 
   let _doc: Y.Doc | null = null;
@@ -213,7 +218,15 @@ function createBlockStore() {
 
     // Observe Blocks Map (Deep - handles nested Y.Map property changes)
     _blocksObserver = (events: Y.YEvent<unknown>[]) => {
+      // Capture transaction origin for BlockItem sync gate
+      // NOTE: All events in a batch share the same transaction, so events[0] is representative
+      // 'user' = local typing, UndoManager instance = undo/redo, other = remote/external
+      const txOrigin = events[0]?.transaction.origin;
+
       batch(() => {
+        // Expose origin to components (BlockItem uses this for sync decisions)
+        setState('lastUpdateOrigin', txOrigin);
+
         // Track which blocks need refresh (deduped)
         const blocksToRefresh = new Set<string>();
         const blocksToDelete = new Set<string>();
@@ -876,6 +889,7 @@ function createBlockStore() {
     get blocks() { return state.blocks; },
     get rootIds() { return state.rootIds; },
     get isInitialized() { return state.isInitialized; },
+    get lastUpdateOrigin() { return state.lastUpdateOrigin; },
     initFromYDoc,
     getBlock,
     updateBlockContent,

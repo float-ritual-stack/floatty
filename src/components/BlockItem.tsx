@@ -80,6 +80,11 @@ export function BlockItem(props: BlockItemProps) {
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
+
+  // Capture ID once at component creation - prevents reactive tracking issues
+  // when used in DOM attributes (SolidJS quirk with data-* attributes)
+  const blockId = props.id;
+
   const block = createMemo(() => store.blocks[props.id]);
   const isFocused = createMemo(() => props.focusedBlockId === props.id);
   const isCollapsed = createMemo(() => paneStore.isCollapsed(props.paneId, props.id, block()?.collapsed || false));
@@ -105,12 +110,23 @@ export function BlockItem(props: BlockItemProps) {
   });
 
   // Handle focus changes from props
-  createEffect(() => {
+  // NOTE: Don't steal focus from block selection mode (when outliner container is focused)
+  createEffect((prevFrameId: number | undefined) => {
+    // Cancel any pending focus from previous effect run
+    if (prevFrameId) cancelAnimationFrame(prevFrameId);
+
     if (isFocused() && contentRef) {
-      requestAnimationFrame(() => {
-        contentRef?.focus();
+      const frameId = requestAnimationFrame(() => {
+        // If outliner container has focus (block selection mode), don't steal it
+        const activeEl = document.activeElement;
+        const isBlockSelectionMode = activeEl?.classList.contains('outliner-container');
+        if (!isBlockSelectionMode) {
+          contentRef?.focus();
+        }
       });
+      return frameId; // Pass to next effect run for cleanup
     }
+    return undefined;
   });
 
   // TODO: AUTO-EXECUTE for external blocks (API/CRDT sync)
@@ -119,8 +135,10 @@ export function BlockItem(props: BlockItemProps) {
   // For now: Enter-to-execute only
 
   // Sync content from store to DOM and displayContent signal
-  // When unfocused: store is source of truth (handles remote CRDT updates)
-  // When focused: DOM is source of truth (user is typing)
+  // Origin-aware gate:
+  //   - Not focused → always sync (split pane, unfocused blocks)
+  //   - Focused + user origin → skip (don't echo typing back, causes cursor jump)
+  //   - Focused + non-user origin → sync (undo, redo, remote are authoritative)
   // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
   createEffect(() => {
     const currentBlock = block();
@@ -129,10 +147,26 @@ export function BlockItem(props: BlockItemProps) {
       const storeContent = currentBlock.content;
       const isFocusedNow = document.activeElement === contentRef;
 
-      if (domContent !== storeContent && !isFocusedNow) {
-        contentRef.innerText = storeContent;
-        // Also sync displayContent for overlay rendering
-        setDisplayContent(storeContent);
+      // Check if this update is from user's own typing (should skip when focused)
+      // UndoManager sets its own instance as origin, not 'user'
+      const origin = store.lastUpdateOrigin;
+      const isUserOrigin = origin === 'user';
+
+      // Gate: sync if not focused, OR if focused but not from user typing
+      // This gate applies to BOTH displayContent and DOM sync
+      // When focused + user origin: handleInput already updated displayContent immediately
+      const shouldSync = !isFocusedNow || !isUserOrigin;
+
+      if (shouldSync) {
+        // Sync displayContent for overlay
+        if (displayContent() !== storeContent) {
+          setDisplayContent(storeContent);
+        }
+
+        // Sync DOM
+        if (domContent !== storeContent) {
+          contentRef.innerText = storeContent;
+        }
       }
     }
   });
@@ -625,6 +659,7 @@ export function BlockItem(props: BlockItemProps) {
     <div class="block-wrapper">
       <div
         class="block-item"
+        data-block-id={blockId}
         role="option"
         aria-selected={props.isBlockSelected?.(props.id) || false}
         classList={{ 'block-focused': isFocused(), 'block-selected': props.isBlockSelected?.(props.id) }}
