@@ -25,12 +25,14 @@
 //! ```
 
 pub mod block;
+pub mod events;
 pub mod origin;
 pub mod persistence;
 pub mod store;
 
 // Re-exports for convenience
 pub use block::{Block, BlockType, parse_block_type};
+pub use events::{BlockChange, BlockChangeBatch};
 pub use origin::Origin;
 pub use persistence::{PersistenceError, YDocPersistence, default_db_path};
 pub use store::{StoreError, YDocStore, DEFAULT_DOC_KEY};
