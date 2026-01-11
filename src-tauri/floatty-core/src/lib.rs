@@ -32,6 +32,7 @@ pub mod hooks;
 pub mod metadata;
 pub mod origin;
 pub mod persistence;
+pub mod search;
 pub mod store;
 
 // Re-exports for convenience
@@ -43,4 +44,5 @@ pub use hooks::{BlockHook, HookRegistry, HookSystem, MetadataExtractionHook, Pag
 pub use metadata::{BlockMetadata, Marker};
 pub use origin::Origin;
 pub use persistence::{PersistenceError, YDocPersistence, default_db_path};
+pub use search::{IndexManager, SchemaFields, SearchError};
 pub use store::{StoreError, YDocStore, DEFAULT_DOC_KEY};
