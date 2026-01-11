@@ -700,7 +700,7 @@ export function BlockItem(props: BlockItemProps) {
           {/* DAILY OUTPUT VIEW: replaces normal content when outputType is daily-* */}
           <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
             <div class="daily-output">
-              <Show when={block()?.outputStatus === 'running'}>
+              <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
                 <div class="daily-running">
                   <span class="daily-running-spinner">◐</span>
                   <span class="daily-running-text">Extracting...</span>
@@ -709,7 +709,7 @@ export function BlockItem(props: BlockItemProps) {
               <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
                 <DailyView data={block()!.output as DailyNoteData} />
               </Show>
-              <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running'}>
+              <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
                 <DailyErrorView error={(block()!.output as { error: string }).error} />
               </Show>
             </div>
