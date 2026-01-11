@@ -115,7 +115,9 @@ export function BlockItem(props: BlockItemProps) {
 
   // Handle focus changes from props
   // NOTE: Don't steal focus from block selection mode (when outliner container is focused)
-  // FLO-XXX: Preserve scroll position - browser focus() can reset scroll even with preventScroll
+  // FLO-147: Disable scroll during focus - preventScroll unreliable on contentEditable
+  // Browser can queue its own scroll task AFTER our restore logic runs.
+  // Solution: Lock scrolling entirely via overflow:hidden during focus transition.
   createEffect((prevFrameId: number | undefined) => {
     // Cancel any pending focus from previous effect run
     if (prevFrameId) cancelAnimationFrame(prevFrameId);
@@ -126,15 +128,22 @@ export function BlockItem(props: BlockItemProps) {
         const activeEl = document.activeElement;
         const isBlockSelectionMode = activeEl?.classList.contains('outliner-container');
         if (!isBlockSelectionMode) {
-          // Save scroll position of outliner container before focus
-          const outlinerContainer = contentRef?.closest('.outliner-container') as HTMLElement | null;
-          const scrollTop = outlinerContainer?.scrollTop ?? 0;
+          const container = contentRef?.closest('.outliner-container') as HTMLElement | null;
 
-          contentRef?.focus({ preventScroll: true });
+          if (container) {
+            // Lock scroll by disabling overflow - browser can't scroll what can't scroll
+            const originalOverflow = container.style.overflow;
+            container.style.overflow = 'hidden';
 
-          // Restore scroll position in case focus() moved it
-          if (outlinerContainer && outlinerContainer.scrollTop !== scrollTop) {
-            outlinerContainer.scrollTop = scrollTop;
+            contentRef?.focus({ preventScroll: true });
+
+            // Re-enable scroll after browser's focus handling completes
+            // setTimeout(0) pushes past any queued scroll tasks
+            setTimeout(() => {
+              container.style.overflow = originalOverflow || '';
+            }, 0);
+          } else {
+            contentRef?.focus({ preventScroll: true });
           }
         }
       });
