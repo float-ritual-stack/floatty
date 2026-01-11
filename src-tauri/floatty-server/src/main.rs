@@ -56,9 +56,8 @@ async fn main() {
         }
     };
 
-    // Initialize hook system (MetadataExtractionHook registered, cold start rehydration)
-    // Keep _hook_system alive for server lifetime - dropping it stops the dispatch task
-    let _hook_system = HookSystem::initialize(Arc::clone(&store));
+    // Initialize hook system (MetadataExtractionHook + PageNameIndexHook registered, cold start rehydration)
+    let hook_system = Arc::new(HookSystem::initialize(Arc::clone(&store)));
 
     // Create WebSocket broadcaster for real-time sync
     let broadcaster = Arc::new(WsBroadcaster::new(64));
@@ -73,11 +72,11 @@ async fn main() {
     let api_routes = if config.auth_enabled {
         let auth_state = auth::ApiKeyAuth::new(api_key.clone());
         tracing::info!("API authentication enabled");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster))
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system))
             .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
     } else {
         tracing::warn!("API authentication DISABLED (auth_enabled = false in config)");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster))
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system))
     };
 
     // WebSocket route (auth via query param since WS can't use headers easily)

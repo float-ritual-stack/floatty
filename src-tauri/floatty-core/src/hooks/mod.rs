@@ -36,11 +36,13 @@
 
 // Submodules
 pub mod metadata_extraction;
+pub mod page_name_index;
 pub mod parsing;
 pub mod system;
 
 // Re-exports
 pub use metadata_extraction::MetadataExtractionHook;
+pub use page_name_index::{PageNameIndex, PageNameIndexHook, PageSuggestion};
 pub use system::HookSystem;
 
 use crate::{BlockChangeBatch, Origin, YDocStore};

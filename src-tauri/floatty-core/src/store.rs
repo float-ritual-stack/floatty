@@ -152,6 +152,99 @@ impl YDocStore {
         Ok(sv)
     }
 
+    /// Get a block by ID from the Y.Doc.
+    ///
+    /// Returns None if the block doesn't exist.
+    /// Used by hooks to read block data (e.g., metadata, parent_id).
+    pub fn get_block(&self, block_id: &str) -> Option<crate::block::Block> {
+        use yrs::{Out, Array};
+
+        let doc = self.doc.read().ok()?;
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks")?;
+
+        let block_map = match blocks_map.get(&txn, block_id)? {
+            Out::YMap(map) => map,
+            _ => return None,
+        };
+
+        // Extract fields from Y.Map
+        let content = match block_map.get(&txn, "content")? {
+            Out::Any(yrs::Any::String(s)) => s.to_string(),
+            _ => String::new(),
+        };
+
+        let parent_id = block_map
+            .get(&txn, "parentId")
+            .and_then(|v| match v {
+                Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            });
+
+        let child_ids = block_map
+            .get(&txn, "childIds")
+            .and_then(|v| match v {
+                Out::YArray(arr) => {
+                    let ids: Vec<String> = arr
+                        .iter(&txn)
+                        .filter_map(|v| match v {
+                            Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .collect();
+                    Some(ids)
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let collapsed = block_map
+            .get(&txn, "collapsed")
+            .and_then(|v| match v {
+                Out::Any(yrs::Any::Bool(b)) => Some(b),
+                _ => None,
+            })
+            .unwrap_or(false);
+
+        let created_at = block_map
+            .get(&txn, "createdAt")
+            .and_then(|v| match v {
+                Out::Any(yrs::Any::BigInt(n)) => Some(n),
+                Out::Any(yrs::Any::Number(n)) => Some(n as i64),
+                _ => None,
+            })
+            .unwrap_or(0);
+
+        let updated_at = block_map
+            .get(&txn, "updatedAt")
+            .and_then(|v| match v {
+                Out::Any(yrs::Any::BigInt(n)) => Some(n),
+                Out::Any(yrs::Any::Number(n)) => Some(n as i64),
+                _ => None,
+            })
+            .unwrap_or(0);
+
+        let metadata = block_map
+            .get(&txn, "metadata")
+            .and_then(|v| match v {
+                Out::Any(yrs::Any::String(s)) => {
+                    serde_json::from_str::<crate::metadata::BlockMetadata>(&s).ok()
+                }
+                _ => None,
+            });
+
+        Some(crate::block::Block {
+            id: block_id.to_string(),
+            parent_id,
+            child_ids,
+            content,
+            collapsed,
+            created_at,
+            updated_at,
+            metadata,
+        })
+    }
+
     /// Apply an update from a remote client.
     ///
     /// Persists first, then applies to memory. This prevents memory/DB divergence

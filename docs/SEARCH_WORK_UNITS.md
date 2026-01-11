@@ -59,9 +59,9 @@ Every work unit follows this lifecycle:
 | 2.1 | Metadata Schema | 1.3 + 1.5.3 | Type definitions | Small | ✅ Done |
 | 2.2 | Marker Extraction | 2.1 | :: parser hook + wikilinks | Medium | ✅ Done |
 | 2.3 | Wikilink Extraction | 2.2 | [[]] parser hook | Medium | ⏭️ Merged into 2.2 |
-| **2.2.3** | **Hook System Wiring** | **2.2** | **Runtime hook chain** | **Medium** | **← NEXT** |
-| 2.4 | PageNameIndex | 2.2.3 | Autocomplete structure | Small |
-| 3.1 | Tantivy Setup | 2.4 | Index + schema | Medium |
+| 2.2.3 | Hook System Wiring | 2.2 | Runtime hook chain | Medium | ✅ Done |
+| 2.4 | PageNameIndex | 2.2.3 | Autocomplete structure | Small | ✅ Done |
+| **3.1** | **Tantivy Setup** | **2.4** | **Index + schema** | **Medium** | **← NEXT** |
 | 3.2 | Writer Actor | 3.1 | Bounded channel + backpressure | Medium |
 | 3.3 | TantivyIndexHook | 3.2 | Delete+Add update logic | Medium |
 | 3.4 | Search Service | 3.3 | Query primitives | Medium |

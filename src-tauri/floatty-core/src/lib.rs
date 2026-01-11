@@ -39,7 +39,7 @@ pub use batcher::BatchedChangeCollector;
 pub use block::{Block, BlockType, parse_block_type};
 pub use emitter::{ChangeEmitter, ChangeBuilder, parse_origin};
 pub use events::{BlockChange, BlockChangeBatch};
-pub use hooks::{BlockHook, HookRegistry, HookSystem, MetadataExtractionHook, should_process, parsing};
+pub use hooks::{BlockHook, HookRegistry, HookSystem, MetadataExtractionHook, PageNameIndex, PageNameIndexHook, PageSuggestion, should_process, parsing};
 pub use metadata::{BlockMetadata, Marker};
 pub use origin::Origin;
 pub use persistence::{PersistenceError, YDocPersistence, default_db_path};

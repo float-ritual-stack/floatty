@@ -20,9 +20,9 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use floatty_core::YDocStore;
+use floatty_core::{HookSystem, PageNameIndex, YDocStore};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use thiserror::Error;
 use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
@@ -33,6 +33,7 @@ use crate::WsBroadcaster;
 pub struct AppState {
     pub store: Arc<YDocStore>,
     pub broadcaster: Arc<WsBroadcaster>,
+    pub page_name_index: Arc<RwLock<PageNameIndex>>,
 }
 
 /// Health check response
@@ -147,8 +148,13 @@ impl IntoResponse for ApiError {
 }
 
 /// Create the API router (CORS applied in main.rs)
-pub fn create_router(store: Arc<YDocStore>, broadcaster: Arc<WsBroadcaster>) -> Router {
-    let state = AppState { store, broadcaster };
+pub fn create_router(
+    store: Arc<YDocStore>,
+    broadcaster: Arc<WsBroadcaster>,
+    hook_system: Arc<HookSystem>,
+) -> Router {
+    let page_name_index = hook_system.page_name_index();
+    let state = AppState { store, broadcaster, page_name_index };
 
     Router::new()
         // Core sync endpoints
@@ -162,6 +168,8 @@ pub fn create_router(store: Arc<YDocStore>, broadcaster: Arc<WsBroadcaster>) -> 
         .route("/api/v1/blocks/:id", get(get_block))
         .route("/api/v1/blocks/:id", patch(update_block))
         .route("/api/v1/blocks/:id", delete(delete_block))
+        // Search endpoints
+        .route("/api/v1/pages/search", get(search_pages))
         .with_state(state)
 }
 
@@ -659,6 +667,63 @@ async fn delete_block(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ============================================================================
+// Page Search API (autocomplete for [[wikilinks]])
+// ============================================================================
+
+/// Search query parameters
+#[derive(Deserialize)]
+pub struct PageSearchQuery {
+    /// Prefix to search for (e.g., "My Pa" to find "My Page")
+    #[serde(default)]
+    pub prefix: String,
+    /// Maximum results to return (default: 10)
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+fn default_limit() -> usize {
+    10
+}
+
+/// Search result DTO
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageSearchResult {
+    pub name: String,
+    pub is_stub: bool,
+}
+
+/// Page search response
+#[derive(Serialize)]
+pub struct PageSearchResponse {
+    pub pages: Vec<PageSearchResult>,
+}
+
+/// GET /api/v1/pages/search?prefix=xxx
+///
+/// Search for pages matching a prefix. Returns existing pages first, then stubs.
+/// Used for [[ autocomplete in the outliner.
+async fn search_pages(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<PageSearchQuery>,
+) -> Result<Json<PageSearchResponse>, ApiError> {
+    let index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
+
+    let results = index.search(&query.prefix);
+
+    let pages: Vec<PageSearchResult> = results
+        .into_iter()
+        .take(query.limit)
+        .map(|s| PageSearchResult {
+            name: s.name,
+            is_stub: s.is_stub,
+        })
+        .collect();
+
+    Ok(Json(PageSearchResponse { pages }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,7 +740,8 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let router = create_router(Arc::clone(&store), broadcaster);
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let router = create_router(Arc::clone(&store), broadcaster, hook_system);
         (router, dir, store)
     }
 
@@ -773,7 +839,8 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
 
         // Create parent
         let response = app
@@ -852,7 +919,8 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
 
         // Create block
         let response = app

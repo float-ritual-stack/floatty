@@ -20,10 +20,11 @@
 
 use crate::emitter::ChangeEmitter;
 use crate::events::{BlockChange, BlockChangeBatch};
-use crate::hooks::{HookRegistry, MetadataExtractionHook};
+use crate::hooks::{HookRegistry, MetadataExtractionHook, PageNameIndexHook};
 use crate::store::YDocStore;
 use crate::Origin;
-use std::sync::Arc;
+use crate::hooks::page_name_index::PageNameIndex;
+use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 use yrs::{Map, ReadTxn, Transact};
@@ -41,6 +42,10 @@ pub struct HookSystem {
 
     /// Handle to the dispatch task (for graceful shutdown).
     _dispatch_handle: tokio::task::JoinHandle<()>,
+
+    /// The page name index for [[ autocomplete.
+    /// Exposed for Tauri commands to query.
+    page_name_index: Arc<RwLock<PageNameIndex>>,
 }
 
 impl HookSystem {
@@ -61,9 +66,11 @@ impl HookSystem {
         let registry = Arc::new(HookRegistry::new());
 
         // Register hooks
+        let page_name_index_hook = Arc::new(PageNameIndexHook::new());
         registry.register(Arc::new(MetadataExtractionHook));
+        registry.register(page_name_index_hook.clone());
         info!(
-            "Registered {} hook(s): MetadataExtractionHook",
+            "Registered {} hooks: MetadataExtractionHook, PageNameIndexHook",
             registry.len()
         );
 
@@ -86,12 +93,20 @@ impl HookSystem {
             registry,
             emitter,
             _dispatch_handle: dispatch_handle,
+            page_name_index: page_name_index_hook.index(),
         }
     }
 
     /// Get a reference to the registry (for testing/inspection).
     pub fn registry(&self) -> &Arc<HookRegistry> {
         &self.registry
+    }
+
+    /// Get the page name index for autocomplete queries.
+    ///
+    /// Used by Tauri commands to provide [[ suggestions.
+    pub fn page_name_index(&self) -> Arc<RwLock<PageNameIndex>> {
+        Arc::clone(&self.page_name_index)
     }
 
     /// Get a reference to the emitter (for external emission).
@@ -267,8 +282,8 @@ mod tests {
 
         let system = HookSystem::initialize(store);
 
-        // Registry should have MetadataExtractionHook
-        assert_eq!(system.registry().len(), 1);
+        // Registry should have MetadataExtractionHook + PageNameIndexHook
+        assert_eq!(system.registry().len(), 2);
     }
 
     #[tokio::test]
