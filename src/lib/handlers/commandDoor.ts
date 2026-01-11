@@ -8,7 +8,7 @@
  * views/executors for different types of thought processing.
  */
 
-import { invoke } from '../tauriTypes';
+import { invoke } from '@tauri-apps/api/core';
 import { parseMarkdownTree } from '../markdownParser';
 import { resolveTvVariables, hasTvVariables } from '../tvResolver';
 import type { BlockHandler, ExecutorActions } from './types';
@@ -22,7 +22,7 @@ export interface CommandDoorConfig {
   /** Prefixes that trigger this door (e.g., ['sh::', 'term::']) */
   prefixes: string[];
   /** Tauri command name to invoke */
-  backend: string;
+  backendCommand: string;
   /** Parameter name for the backend call ('command' for shell, 'prompt' for AI) */
   paramName: string;
   /** Prefix for output blocks */
@@ -41,7 +41,7 @@ export interface CommandDoorConfig {
  * Create a command door handler from configuration
  */
 export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
-  const { prefixes, backend, paramName, outputPrefix, pendingMessage, logPrefix } = config;
+  const { prefixes, backendCommand, paramName, outputPrefix, pendingMessage, logPrefix } = config;
 
   return {
     prefixes,
@@ -81,7 +81,8 @@ export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
       actions.updateBlockContent(outputId, `${outputPrefix}${pendingMessage}`);
 
       try {
-        const rawOutput = await invoke(backend, { [paramName]: extracted });
+        // Invoke the backend command with the correct parameter name
+        const rawOutput = await invoke<string>(backendCommand, { [paramName]: extracted });
         const duration = performance.now() - startTime;
         const cleanOutput = rawOutput.trimEnd();
         console.log(`[${logPrefix}] Complete:`, { duration: `${duration.toFixed(1)}ms`, outputBytes: cleanOutput.length });
@@ -128,7 +129,7 @@ export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
 /** Shell command door - executes shell commands via PTY-less backend */
 export const shHandler = createCommandDoor({
   prefixes: ['sh::', 'term::'],
-  backend: 'execute_shell_command',
+  backendCommand: 'execute_shell_command',
   paramName: 'command',
   outputPrefix: 'output::',
   pendingMessage: 'Running...',
@@ -138,7 +139,7 @@ export const shHandler = createCommandDoor({
 /** AI prompt door - sends prompts to Ollama */
 export const aiHandler = createCommandDoor({
   prefixes: ['ai::', 'chat::'],
-  backend: 'execute_ai_command',
+  backendCommand: 'execute_ai_command',
   paramName: 'prompt',
   outputPrefix: 'ai::',
   pendingMessage: 'Thinking...',

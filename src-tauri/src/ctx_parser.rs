@@ -1,11 +1,10 @@
 use crate::db::{FloattyDb, ParsedCtx};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
-use yrs::{Any, Array, ArrayPrelim, Doc, Map, MapPrelim, Transact, WriteTxn};
+use yrs::Doc;
 
 /// Configuration for the Ollama parser
 #[derive(Clone, Serialize, Deserialize)]
@@ -198,12 +197,6 @@ impl CtxParser {
                                                     project = ?parsed.project,
                                                     "Marker parsed successfully"
                                                 );
-                                                // Sync to Yjs (DISABLED for now)
-                                                /*
-                                                if let Err(e) = sync_to_yjs(&doc, &marker.id, &parsed) {
-                                                    tracing::error!(error = %e, "Failed to sync marker to Yjs");
-                                                }
-                                                */
                                             }
                                         }
                                         Err(e) => {
@@ -264,85 +257,6 @@ impl Drop for CtxParser {
             }
         }
     }
-}
-
-/// Sync a parsed marker to the Yjs document
-#[allow(dead_code)]
-pub fn sync_to_yjs(doc: &Arc<RwLock<Doc>>, id: &str, parsed: &ParsedCtx) -> Result<(), String> {
-    let doc_guard = doc.write().map_err(|e| e.to_string())?;
-    let mut txn = doc_guard.transact_mut();
-    
-    let blocks_map = txn.get_or_insert_map("blocks");
-    let root_ids = txn.get_or_insert_array("rootIds");
-    
-    // Check if block already exists (deduplication)
-    if blocks_map.get(&mut txn, id).is_some() {
-        return Ok(());
-    }
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("System time error: {}", e))?
-        .as_millis() as f64;
-    let content_id = format!("{}_content", id);
-
-    // 1. Create content child block as nested Y.Map with Y.Array for childIds
-    let content_text = if let Some(summary) = &parsed.summary {
-        summary.clone()
-    } else if let Some(msg) = &parsed.message {
-        msg.clone()
-    } else {
-        String::new()
-    };
-
-    let content_block = blocks_map.insert(
-        &mut txn,
-        content_id.clone(),
-        MapPrelim::from([
-            ("id".to_owned(), Any::from(content_id.clone())),
-            ("parentId".to_owned(), Any::from(id.to_string())),
-            ("content".to_owned(), Any::from(content_text)),
-            ("type".to_owned(), Any::from("text")),
-            ("collapsed".to_owned(), Any::from(false)),
-            ("createdAt".to_owned(), Any::from(now)),
-            ("updatedAt".to_owned(), Any::from(now)),
-        ]),
-    );
-    // childIds as nested Y.Array (empty for content block)
-    let empty_children: Vec<Any> = vec![];
-    content_block.insert(&mut txn, "childIds", ArrayPrelim::from(empty_children));
-
-    // 2. Create parent ctx block as nested Y.Map
-    let mut metadata = HashMap::new();
-    if let Some(v) = &parsed.project { metadata.insert("project".to_string(), Any::from(v.to_string())); }
-    if let Some(v) = &parsed.mode { metadata.insert("mode".to_string(), Any::from(v.to_string())); }
-    if let Some(v) = &parsed.meeting { metadata.insert("meeting".to_string(), Any::from(v.to_string())); }
-    if let Some(v) = &parsed.issue { metadata.insert("issue".to_string(), Any::from(v.to_string())); }
-    if let Some(v) = &parsed.time { metadata.insert("time".to_string(), Any::from(v.to_string())); }
-    if let Some(v) = &parsed.timestamp { metadata.insert("timestamp".to_string(), Any::from(v.to_string())); }
-
-    let parent_block = blocks_map.insert(
-        &mut txn,
-        id.to_string(),
-        MapPrelim::from([
-            ("id".to_owned(), Any::from(id.to_string())),
-            ("parentId".to_owned(), Any::Null),
-            ("content".to_owned(), Any::from("")), // Header block has no text of its own
-            ("type".to_owned(), Any::from("ctx")),
-            ("metadata".to_owned(), Any::from(metadata)),
-            ("collapsed".to_owned(), Any::from(false)),
-            ("createdAt".to_owned(), Any::from(now)),
-            ("updatedAt".to_owned(), Any::from(now)),
-        ]),
-    );
-    // childIds as Y.Array with content_id
-    let child_ids_vec: Vec<Any> = vec![Any::from(content_id)];
-    parent_block.insert(&mut txn, "childIds", ArrayPrelim::from(child_ids_vec));
-
-    // 3. Prepend parent to rootIds
-    root_ids.insert(&mut txn, 0, id.to_string());
-
-    Ok(())
 }
 
 /// Parse a single ctx:: line using Ollama
