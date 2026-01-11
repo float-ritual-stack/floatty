@@ -13,17 +13,31 @@ set -euo pipefail
 FLOATTY_PORT="${FLOATTY_PORT:-8765}"
 BASE_URL="http://127.0.0.1:${FLOATTY_PORT}/api/v1"
 
-# Get API key from config
+# Get API key from config (requires explicit configuration, no defaults)
 get_api_key() {
     local config_file="$HOME/.floatty/config.toml"
-    if [[ -f "$config_file" ]]; then
-        grep -E '^api_key' "$config_file" | cut -d'"' -f2
-    else
-        echo "floatty-dev-key"  # Default for dev
+    if [[ ! -f "$config_file" ]]; then
+        echo ""
+        return
     fi
+    # Robust TOML parse using Python's tomllib
+    python3 -c "
+import tomllib, sys
+try:
+    with open(sys.argv[1], 'rb') as f:
+        cfg = tomllib.load(f)
+    print(cfg.get('api_key', ''))
+except Exception:
+    print('')
+" "$config_file" 2>/dev/null || echo ""
 }
 
 API_KEY=$(get_api_key)
+if [[ -z "$API_KEY" ]]; then
+    echo "Error: No api_key found in ~/.floatty/config.toml" >&2
+    echo "Add: api_key = \"your-key-here\"" >&2
+    exit 1
+fi
 AUTH_HEADER="Authorization: Bearer $API_KEY"
 
 # Helper to make API calls
@@ -95,8 +109,8 @@ cmd_find() {
             echo "│  $block_id"
             echo "├──────────────────────────────────────────────────────────────"
             echo "$content" | head -5 | sed 's/^/│  /'
-            local lines=$(echo "$content" | wc -l)
-            if [[ $lines -gt 5 ]]; then
+            local lines=$(($(echo "$content" | wc -l)))
+            if (( lines > 5 )); then
                 echo "│  ... ($lines lines total)"
             fi
             echo "└──────────────────────────────────────────────────────────────"
@@ -152,7 +166,7 @@ cmd_clear_index() {
 cmd_list() {
     echo "Listing all blocks..."
     echo "─────────────────────────────────────"
-    api GET "/blocks" | jq '.[] | {id, content: .content[0:60], has_metadata: (.metadata != null)}'
+    api GET "/blocks" | jq '.[] | {id, content: ((.content // "")[0:60]), has_metadata: (.metadata != null)}'
 }
 
 # Check server health
@@ -171,9 +185,9 @@ cmd_health() {
     fi
 }
 
-# URL encode helper
+# URL encode helper (uses sys.argv to prevent shell injection)
 urlencode() {
-    python3 -c "import urllib.parse; print(urllib.parse.quote('$1', safe=''))"
+    python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" -- "$1"
 }
 
 # Main dispatch
