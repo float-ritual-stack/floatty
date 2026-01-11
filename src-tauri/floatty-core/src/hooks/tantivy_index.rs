@@ -1,0 +1,228 @@
+//! Tantivy index hook.
+//!
+//! Maps BlockChange events to WriterHandle operations for search indexing.
+//!
+//! # Priority
+//!
+//! This hook runs at priority 50 (after MetadataExtraction at 10, PageNameIndex at 20).
+//! This ensures metadata is populated before we check `has_markers`.
+//!
+//! # Origin Filtering
+//!
+//! Accepts: User, Remote, Agent, BulkImport
+//! Ignores: Hook (prevents redundant re-indexing)
+//!
+//! Unlike MetadataExtractionHook, we DO accept Remote origin because:
+//! - The local Tantivy index needs remote content for search to work
+//! - Metadata comes with CRDT sync, so we can read `block.metadata`
+
+use crate::{
+    block::parse_block_type,
+    events::BlockChange,
+    search::WriterHandle,
+    BlockChangeBatch, Origin, YDocStore,
+};
+use std::sync::Arc;
+use tracing::{instrument, trace, warn};
+
+use super::BlockHook;
+
+/// Hook that indexes blocks in Tantivy for full-text search.
+///
+/// Maps BlockChange events to WriterHandle operations:
+/// - Created → AddOrUpdate
+/// - ContentChanged → AddOrUpdate
+/// - MetadataChanged → AddOrUpdate (updates has_markers)
+/// - Deleted → Delete
+/// - Moved, CollapsedChanged → no-op
+pub struct TantivyIndexHook {
+    writer: WriterHandle,
+}
+
+impl TantivyIndexHook {
+    /// Create a new TantivyIndexHook with the given writer handle.
+    pub fn new(writer: WriterHandle) -> Self {
+        Self { writer }
+    }
+}
+
+impl BlockHook for TantivyIndexHook {
+    fn name(&self) -> &'static str {
+        "tantivy_index"
+    }
+
+    fn priority(&self) -> i32 {
+        50 // After metadata hooks (10-20)
+    }
+
+    fn is_sync(&self) -> bool {
+        false // Async - don't block user input, channel send is cheap
+    }
+
+    fn accepts_origins(&self) -> Option<Vec<Origin>> {
+        // Index everything except hook-generated changes
+        // Includes Remote because local index needs remote content
+        Some(vec![
+            Origin::User,
+            Origin::Remote,
+            Origin::Agent,
+            Origin::BulkImport,
+        ])
+    }
+
+    #[instrument(skip(self, batch, store), fields(batch_size = batch.changes.len()))]
+    fn process(&self, batch: &BlockChangeBatch, store: Arc<YDocStore>) {
+        let writer = self.writer.clone();
+
+        // Process each change
+        for change in &batch.changes {
+            match change {
+                BlockChange::Created { id, content, .. } => {
+                    self.index_block(&writer, id, content, &store);
+                }
+                BlockChange::ContentChanged { id, new_content, .. } => {
+                    self.index_block(&writer, id, new_content, &store);
+                }
+                BlockChange::MetadataChanged { id, .. } => {
+                    // Re-index to update has_markers field
+                    // Need to fetch current content from store
+                    if let Some(block) = store.get_block(id) {
+                        self.index_block(&writer, id, &block.content, &store);
+                    }
+                }
+                BlockChange::Deleted { id, .. } => {
+                    self.delete_block(&writer, id);
+                }
+                // Moved and CollapsedChanged don't affect search index
+                BlockChange::Moved { .. } | BlockChange::CollapsedChanged { .. } => {}
+            }
+        }
+    }
+}
+
+impl TantivyIndexHook {
+    /// Index a block, extracting all necessary fields.
+    fn index_block(&self, writer: &WriterHandle, id: &str, content: &str, store: &YDocStore) {
+        // Extract block type from content
+        let block_type = parse_block_type(content).as_str().to_string();
+
+        // Get parent_id and has_markers from store
+        let (parent_id, has_markers) = store
+            .get_block(id)
+            .map(|b| {
+                let markers_count = b
+                    .metadata
+                    .as_ref()
+                    .map(|m| m.markers.len())
+                    .unwrap_or(0);
+                (b.parent_id, markers_count > 0)
+            })
+            .unwrap_or((None, false));
+
+        // Get timestamp
+        let updated_at = chrono::Utc::now().timestamp();
+
+        trace!(
+            block_id = %id,
+            block_type = %block_type,
+            has_markers = has_markers,
+            "Indexing block"
+        );
+
+        // Send to writer (async, but we use spawn to not block)
+        let writer = writer.clone();
+        let id = id.to_string();
+        let content = content.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = writer
+                .add_or_update(id.clone(), content, block_type, parent_id, updated_at, has_markers)
+                .await
+            {
+                warn!(block_id = %id, error = %e, "Failed to index block");
+            }
+        });
+    }
+
+    /// Delete a block from the index.
+    fn delete_block(&self, writer: &WriterHandle, id: &str) {
+        trace!(block_id = %id, "Deleting block from index");
+
+        let writer = writer.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = writer.delete(id.clone()).await {
+                warn!(block_id = %id, error = %e, "Failed to delete block from index");
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hooks::should_process;
+
+    #[test]
+    fn test_hook_name() {
+        let writer = create_mock_writer_handle();
+        let hook = TantivyIndexHook::new(writer);
+        assert_eq!(hook.name(), "tantivy_index");
+    }
+
+    #[test]
+    fn test_hook_priority() {
+        let writer = create_mock_writer_handle();
+        let hook = TantivyIndexHook::new(writer);
+        assert_eq!(hook.priority(), 50);
+    }
+
+    #[test]
+    fn test_hook_is_async() {
+        let writer = create_mock_writer_handle();
+        let hook = TantivyIndexHook::new(writer);
+        assert!(!hook.is_sync());
+    }
+
+    #[test]
+    fn test_accepts_user_origin() {
+        let writer = create_mock_writer_handle();
+        let hook = TantivyIndexHook::new(writer);
+        assert!(should_process(&hook, Origin::User));
+    }
+
+    #[test]
+    fn test_accepts_remote_origin() {
+        let writer = create_mock_writer_handle();
+        let hook = TantivyIndexHook::new(writer);
+        assert!(should_process(&hook, Origin::Remote));
+    }
+
+    #[test]
+    fn test_accepts_agent_origin() {
+        let writer = create_mock_writer_handle();
+        let hook = TantivyIndexHook::new(writer);
+        assert!(should_process(&hook, Origin::Agent));
+    }
+
+    #[test]
+    fn test_accepts_bulk_import_origin() {
+        let writer = create_mock_writer_handle();
+        let hook = TantivyIndexHook::new(writer);
+        assert!(should_process(&hook, Origin::BulkImport));
+    }
+
+    #[test]
+    fn test_rejects_hook_origin() {
+        let writer = create_mock_writer_handle();
+        let hook = TantivyIndexHook::new(writer);
+        assert!(!should_process(&hook, Origin::Hook));
+    }
+
+    /// Create a mock WriterHandle for testing.
+    /// Uses a closed channel so sends will error, but that's fine for unit tests.
+    fn create_mock_writer_handle() -> WriterHandle {
+        use tokio::sync::mpsc;
+        let (tx, _rx) = mpsc::channel(1);
+        WriterHandle::from_sender(tx)
+    }
+}

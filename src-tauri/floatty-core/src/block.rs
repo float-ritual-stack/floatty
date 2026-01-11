@@ -53,6 +53,33 @@ pub enum BlockType {
     Quote,
 }
 
+impl BlockType {
+    /// Returns the lowercase string representation of the block type.
+    ///
+    /// Matches the serde serialization (lowercase names).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BlockType::Text => "text",
+            BlockType::Sh => "sh",
+            BlockType::Ai => "ai",
+            BlockType::Ctx => "ctx",
+            BlockType::Dispatch => "dispatch",
+            BlockType::Web => "web",
+            BlockType::Output => "output",
+            BlockType::Error => "error",
+            BlockType::Picker => "picker",
+            BlockType::Ran => "ran",
+            BlockType::Daily => "daily",
+            BlockType::H1 => "h1",
+            BlockType::H2 => "h2",
+            BlockType::H3 => "h3",
+            BlockType::Bullet => "bullet",
+            BlockType::Todo => "todo",
+            BlockType::Quote => "quote",
+        }
+    }
+}
+
 /// Check for bullet-style ctx marker: `- ctx::YYYY-MM-DD`
 /// Matches TS regex: `/^- ctx::\d{4}-\d{2}-\d{2}/i`
 fn is_bullet_ctx(s: &str) -> bool {

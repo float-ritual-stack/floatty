@@ -44,5 +44,5 @@ pub use hooks::{BlockHook, HookRegistry, HookSystem, MetadataExtractionHook, Pag
 pub use metadata::{BlockMetadata, Marker};
 pub use origin::Origin;
 pub use persistence::{PersistenceError, YDocPersistence, default_db_path};
-pub use search::{IndexManager, SchemaFields, SearchError, TantivyWriter, WriterHandle, WriterMessage};
+pub use search::{IndexManager, SchemaFields, SearchError, SearchFilters, SearchHit, SearchService, TantivyWriter, WriterHandle, WriterMessage};
 pub use store::{ChangeCallback, StoreError, YDocStore, DEFAULT_DOC_KEY};

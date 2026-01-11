@@ -62,6 +62,14 @@ pub struct WriterHandle {
 }
 
 impl WriterHandle {
+    /// Create a WriterHandle from a channel sender.
+    ///
+    /// Mainly for testing - production code should use `TantivyWriter::spawn()`.
+    #[cfg(test)]
+    pub fn from_sender(tx: mpsc::Sender<WriterMessage>) -> Self {
+        Self { tx }
+    }
+
     /// Add or update a block in the index.
     ///
     /// This is atomic: deletes any existing doc with the ID, then adds new.

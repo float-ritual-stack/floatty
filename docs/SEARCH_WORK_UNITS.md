@@ -63,9 +63,9 @@ Every work unit follows this lifecycle:
 | 2.4 | PageNameIndex | 2.2.3 | Autocomplete structure | Small | ✅ Done |
 | 3.1 | Tantivy Setup | 2.4 | Index + schema | Medium | ✅ Done |
 | 3.2 | Writer Actor | 3.1 | Bounded channel + backpressure | Medium | ✅ Done |
-| **3.3** | **TantivyIndexHook** | **3.2** | **Delete+Add update logic** | **Medium** | **← NEXT** |
-| 3.4 | Search Service | 3.3 | Query primitives | Medium |  |
-| 3.5 | Tauri Commands | 3.4 | Frontend API | Small |  |
+| 3.3 | TantivyIndexHook | 3.2 | Delete+Add update logic | Medium | ✅ Done |
+| 3.4 | Search Service | 3.3 | Query primitives | Medium | ✅ Done |
+| **3.5** | **Tauri Commands** | **3.4** | **Frontend API** | **Small** | **← NEXT** |
 
 ---
 

@@ -18,7 +18,7 @@
 //! STRING (not TEXT) means the ID is stored as-is without tokenization.
 
 use tantivy::schema::{
-    DateOptions, Field, Schema, TextFieldIndexing, TextOptions, FAST, STORED, STRING, TEXT,
+    DateOptions, Field, Schema, TextFieldIndexing, TextOptions, STORED, STRING, TEXT,
 };
 
 /// Build the schema for the block search index.
@@ -55,9 +55,10 @@ pub fn build_schema() -> Schema {
     let date_options = DateOptions::default().set_fast().set_stored();
     builder.add_date_field("updated_at", date_options);
 
-    // has_markers: Boolean filter for ctx:: blocks
-    // FAST = column-oriented for filtering, STORED = retrievable
-    builder.add_bool_field("has_markers", FAST | STORED);
+    // has_markers: String filter for ctx:: blocks
+    // Stored as "true"/"false" for term-based queries (TermQuery on text)
+    // STRING = indexed without tokenization, STORED = retrievable
+    builder.add_text_field("has_markers", STRING | STORED);
 
     builder.build()
 }

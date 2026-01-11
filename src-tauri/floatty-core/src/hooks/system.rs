@@ -20,11 +20,13 @@
 
 use crate::emitter::ChangeEmitter;
 use crate::events::{BlockChange, BlockChangeBatch};
-use crate::hooks::{HookRegistry, MetadataExtractionHook, PageNameIndexHook};
+use crate::hooks::page_name_index::PageNameIndex;
+use crate::hooks::{HookRegistry, MetadataExtractionHook, PageNameIndexHook, TantivyIndexHook};
+use crate::search::{IndexManager, SearchError, TantivyWriter, WriterHandle};
 use crate::store::YDocStore;
 use crate::Origin;
-use crate::hooks::page_name_index::PageNameIndex;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 use yrs::{Map, ReadTxn, Transact};
@@ -46,6 +48,16 @@ pub struct HookSystem {
     /// The page name index for [[ autocomplete.
     /// Exposed for Tauri commands to query.
     page_name_index: Arc<RwLock<PageNameIndex>>,
+
+    /// Search index manager for Unit 3.4 SearchService queries.
+    index_manager: Option<Arc<IndexManager>>,
+
+    /// Writer handle for index operations.
+    #[allow(dead_code)]
+    writer_handle: Option<WriterHandle>,
+
+    /// Periodic commit task for search index.
+    _commit_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl HookSystem {
@@ -53,10 +65,13 @@ impl HookSystem {
     ///
     /// This:
     /// 1. Creates HookRegistry
-    /// 2. Registers MetadataExtractionHook
-    /// 3. Creates ChangeEmitter
-    /// 4. Spawns dispatch task (emitter → registry)
-    /// 5. Rehydrates existing blocks (cold start)
+    /// 2. Registers MetadataExtractionHook, PageNameIndexHook
+    /// 3. Optionally creates search infrastructure (IndexManager, WriterHandle)
+    /// 4. Registers TantivyIndexHook if search is available
+    /// 5. Creates ChangeEmitter
+    /// 6. Spawns dispatch task (emitter → registry)
+    /// 7. Spawns periodic commit task for search index
+    /// 8. Rehydrates existing blocks (cold start)
     ///
     /// Returns the HookSystem which should be kept alive for server lifetime.
     pub fn initialize(store: Arc<YDocStore>) -> Self {
@@ -65,14 +80,23 @@ impl HookSystem {
         // Create registry
         let registry = Arc::new(HookRegistry::new());
 
-        // Register hooks
+        // Register metadata hooks
         let page_name_index_hook = Arc::new(PageNameIndexHook::new());
         registry.register(Arc::new(MetadataExtractionHook));
         registry.register(page_name_index_hook.clone());
-        info!(
-            "Registered {} hooks: MetadataExtractionHook, PageNameIndexHook",
-            registry.len()
-        );
+
+        // Initialize search infrastructure
+        let (index_manager, writer_handle, commit_handle) = match Self::initialize_search(&registry)
+        {
+            Ok((im, wh, ch)) => (Some(im), Some(wh), Some(ch)),
+            Err(e) => {
+                warn!("Search index initialization failed: {}. Continuing without search.", e);
+                (None, None, None)
+            }
+        };
+
+        let hook_count = registry.len();
+        info!("Registered {} hooks", hook_count);
 
         // Create emitter
         let emitter = ChangeEmitter::new();
@@ -94,7 +118,32 @@ impl HookSystem {
             emitter,
             _dispatch_handle: dispatch_handle,
             page_name_index: page_name_index_hook.index(),
+            index_manager,
+            writer_handle,
+            _commit_handle: commit_handle,
         }
+    }
+
+    /// Initialize search infrastructure: IndexManager, WriterHandle, and TantivyIndexHook.
+    fn initialize_search(
+        registry: &Arc<HookRegistry>,
+    ) -> Result<(Arc<IndexManager>, WriterHandle, tokio::task::JoinHandle<()>), SearchError> {
+        info!("Initializing search infrastructure...");
+
+        // Create or open the search index
+        let index_manager = Arc::new(IndexManager::open_or_create()?);
+
+        // Spawn the writer actor
+        let writer_handle = TantivyWriter::spawn(&index_manager)?;
+
+        // Register TantivyIndexHook
+        registry.register(Arc::new(TantivyIndexHook::new(writer_handle.clone())));
+        info!("TantivyIndexHook registered with priority 50");
+
+        // Spawn periodic commit task (every 5 seconds)
+        let commit_handle = spawn_commit_task(writer_handle.clone());
+
+        Ok((index_manager, writer_handle, commit_handle))
     }
 
     /// Get a reference to the registry (for testing/inspection).
@@ -107,6 +156,14 @@ impl HookSystem {
     /// Used by Tauri commands to provide [[ suggestions.
     pub fn page_name_index(&self) -> Arc<RwLock<PageNameIndex>> {
         Arc::clone(&self.page_name_index)
+    }
+
+    /// Get the search index manager for queries.
+    ///
+    /// Returns None if search initialization failed.
+    /// Used by Unit 3.4 SearchService.
+    pub fn index_manager(&self) -> Option<Arc<IndexManager>> {
+        self.index_manager.clone()
     }
 
     /// Get a reference to the emitter (for external emission).
@@ -128,6 +185,24 @@ impl HookSystem {
     pub fn emit_change(&self, change: BlockChange) -> Result<usize, crate::emitter::EmitError> {
         self.emitter.emit(change)
     }
+}
+
+/// Spawn a periodic commit task for the search index.
+///
+/// Commits every 5 seconds to batch index updates efficiently.
+fn spawn_commit_task(writer: WriterHandle) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            if let Err(e) = writer.commit().await {
+                // Writer is closed - stop the commit task
+                debug!("Periodic commit task stopping: {}", e);
+                break;
+            }
+            debug!("Periodic search index commit complete");
+        }
+    })
 }
 
 /// Spawn the dispatch task that listens to emitter and dispatches to hooks.
@@ -284,7 +359,15 @@ mod tests {
         let system = HookSystem::initialize(store);
 
         // Registry should have MetadataExtractionHook + PageNameIndexHook
-        assert_eq!(system.registry().len(), 2);
+        // + optionally TantivyIndexHook (if search index available)
+        // Note: TantivyIndexHook uses ~/.floatty/search_index which may not be
+        // available in all test environments (parallel tests, CI, schema changes).
+        // So we check for minimum 2 hooks (metadata + page name).
+        assert!(
+            system.registry().len() >= 2,
+            "Expected at least 2 hooks (Metadata + PageName), got {}",
+            system.registry().len()
+        );
     }
 
     #[tokio::test]

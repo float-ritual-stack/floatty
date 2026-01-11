@@ -36,10 +36,12 @@
 
 mod index_manager;
 mod schema;
+mod service;
 mod writer;
 
 pub use index_manager::{IndexManager, SchemaFields};
 pub use schema::build_schema;
+pub use service::{SearchFilters, SearchHit, SearchService};
 pub use writer::{TantivyWriter, WriterHandle, WriterMessage};
 
 /// Errors that can occur during search operations.
@@ -56,6 +58,10 @@ pub enum SearchError {
     /// Failed to open directory.
     #[error("Failed to open directory: {0}")]
     OpenDir(#[from] tantivy::directory::error::OpenDirectoryError),
+
+    /// Failed to parse query.
+    #[error("Query parse error: {0}")]
+    QueryParse(#[from] tantivy::query::QueryParserError),
 
     /// Failed to open index.
     /// Reserved for future use when index migration/versioning is added.
