@@ -2,6 +2,12 @@
 
 All notable changes to floatty are documented here.
 
+## [0.3.1] - 2026-01-12
+
+### Bug Fixes
+
+- **WebSocket reconnect race condition** (FLO-152, PR #82) - Fixed race where incoming WS messages during reconnect could be processed before full state sync completed, causing stale overwrites. Added message buffering during reconnect and connection ID guards against stale async handlers.
+
 ## [0.3.0] - 2026-01-11
 
 ### Search Infrastructure (Work Units 0.x - 3.6)
