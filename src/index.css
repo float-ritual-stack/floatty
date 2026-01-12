@@ -780,18 +780,11 @@ body.resizing .terminal-pane-positioned {
 }
 
 .block-display .ctx-inline-tag {
-  /* Pills when viewing, full width when editing (for cursor sync).
-     See FLO-94 for two-layer overlay architecture. */
-  font-size: 0.9em;
+  /* Pill styling for inline tags. Font-size MUST stay at inherit
+     for cursor sync (two-layer overlay architecture, FLO-94).
+     DO NOT change font-size on focus - breaks overlay alignment. */
   padding: 0 2px;
   border-radius: 2px;
-  transition: font-size 0.15s ease, padding 0.15s ease;
-}
-
-/* When editing: full width for cursor sync */
-.block-item:focus-within .block-display .ctx-inline-tag {
-  font-size: inherit;
-  padding: 0;
 }
 
 /* Tag type colors - matching sidebar palette */
