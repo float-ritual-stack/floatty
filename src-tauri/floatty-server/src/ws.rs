@@ -85,17 +85,32 @@ async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) {
 
     // Spawn task to forward broadcasts to this client
     let send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            // Send as JSON text message (includes txId for echo prevention)
-            let json = match serde_json::to_string(&msg) {
-                Ok(j) => j,
-                Err(e) => {
-                    tracing::error!("Failed to serialize broadcast: {}", e);
+        // FLO-152: Handle RecvError::Lagged explicitly instead of silently dropping
+        loop {
+            match rx.recv().await {
+                Ok(msg) => {
+                    // Send as JSON text message (includes txId for echo prevention)
+                    let json = match serde_json::to_string(&msg) {
+                        Ok(j) => j,
+                        Err(e) => {
+                            tracing::error!("Failed to serialize broadcast: {}", e);
+                            continue;
+                        }
+                    };
+                    if sender.send(Message::Text(json.into())).await.is_err() {
+                        break; // Client disconnected
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    // Client fell behind - warn but continue (will get next available message)
+                    tracing::warn!("WebSocket client lagged {} messages, catching up", n);
                     continue;
                 }
-            };
-            if sender.send(Message::Text(json.into())).await.is_err() {
-                break; // Client disconnected
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    // Broadcaster closed, exit cleanly
+                    tracing::debug!("Broadcast channel closed");
+                    break;
+                }
             }
         }
     });

@@ -260,6 +260,14 @@ let wsRetryCount = 0;
 const WS_RECONNECT_DELAY = 2000;
 const WS_MAX_RECONNECT_DELAY = 30000;
 
+// FLO-152: Message buffering to prevent race condition on reconnect
+// Problem: onopen schedules microtask, but WS messages arrive before it runs,
+// causing live updates to be overwritten by the subsequent full state fetch.
+// Solution: Buffer incoming messages until reconnect sync completes, then replay.
+let wsReadyForMessages = true; // Start true - only false during reconnect sync
+let wsMessageBuffer: { txId?: string; data: string }[] = [];
+const WS_MESSAGE_BUFFER_MAX = 100; // Prevent unbounded growth if sync hangs
+
 // Echo prevention: track txIds we sent to filter them from broadcasts
 const recentTxIds = new Set<string>();
 const MAX_RECENT_TX_IDS = 50; // Prevent unbounded growth
@@ -272,9 +280,30 @@ function generateTxId(): string {
   // Trim old entries if set gets too large
   while (recentTxIds.size > MAX_RECENT_TX_IDS) {
     const iterator = recentTxIds.values();
-    recentTxIds.delete(iterator.next().value);
+    const oldest = iterator.next().value;
+    if (oldest !== undefined) {
+      recentTxIds.delete(oldest);
+    }
   }
   return id;
+}
+
+/**
+ * Apply a WebSocket message to the Y.Doc.
+ * Extracted to support buffering during reconnect (FLO-152).
+ */
+function applyWsMessage(msg: { txId?: string; data: string }) {
+  // Echo prevention: skip if this is our own update
+  if (msg.txId && recentTxIds.has(msg.txId)) {
+    console.log('[WS] Skipping own update (txId:', msg.txId, ')');
+    recentTxIds.delete(msg.txId);
+    return;
+  }
+
+  // Decode base64 and apply
+  const update = base64ToBytes(msg.data);
+  console.log('[WS] Received update:', update.length, 'bytes');
+  Y.applyUpdate(sharedDoc, update, 'remote');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -408,6 +437,11 @@ function connectWebSocket() {
       console.log('[WS] Connected');
       // Reset retry count on successful connection
       wsRetryCount = 0;
+
+      // FLO-152: Mark NOT ready for messages - buffer incoming until sync completes
+      wsReadyForMessages = false;
+      wsMessageBuffer = [];
+
       // Clear any previous connection error now that we're connected
       if (sharedPendingUpdates.length === 0) {
         setSyncStatus('synced');
@@ -416,7 +450,8 @@ function connectWebSocket() {
 
       // Reconnection sync: flush local pending, then fetch any missed server updates.
       // This prevents stale state if server received updates while we were disconnected.
-      queueMicrotask(async () => {
+      // FLO-152: Use IIFE instead of queueMicrotask to control message buffering
+      (async () => {
         try {
           // 1. Flush local pending updates first
           if (sharedPendingUpdates.length > 0) {
@@ -437,11 +472,21 @@ function connectWebSocket() {
             console.log('[WS] Syncing server state after reconnect:', serverState.length, 'bytes');
             Y.applyUpdate(sharedDoc, serverState, 'remote');
           }
+
+          // FLO-152: NOW safe to process messages - replay buffered ones
+          console.log('[WS] Reconnect sync complete, replaying', wsMessageBuffer.length, 'buffered messages');
+          wsReadyForMessages = true;
+          for (const msg of wsMessageBuffer) {
+            applyWsMessage(msg);
+          }
+          wsMessageBuffer = [];
         } catch (err) {
           console.error('[WS] Reconnect sync failed:', err);
-          // Non-fatal: we'll receive live updates via WebSocket going forward
+          // Even on failure, start accepting messages (better than blocking forever)
+          wsReadyForMessages = true;
+          wsMessageBuffer = [];
         }
-      });
+      })();
     };
 
     sharedWebSocket.onmessage = (event) => {
@@ -450,17 +495,19 @@ function connectWebSocket() {
         try {
           const msg = JSON.parse(event.data) as { txId?: string; data: string };
 
-          // Echo prevention: skip if this is our own update
-          if (msg.txId && recentTxIds.has(msg.txId)) {
-            console.log('[WS] Skipping own update (txId:', msg.txId, ')');
-            recentTxIds.delete(msg.txId); // Clean up after filtering
+          // FLO-152: Buffer messages during reconnect sync to prevent race condition
+          if (!wsReadyForMessages) {
+            if (wsMessageBuffer.length < WS_MESSAGE_BUFFER_MAX) {
+              wsMessageBuffer.push(msg);
+              console.log('[WS] Buffered message during reconnect sync (total:', wsMessageBuffer.length, ')');
+            } else {
+              console.warn('[WS] Message buffer full, dropping message');
+            }
             return;
           }
 
-          // Decode base64 and apply
-          const update = base64ToBytes(msg.data);
-          console.log('[WS] Received update:', update.length, 'bytes');
-          Y.applyUpdate(sharedDoc, update, 'remote');
+          // Ready for messages - apply directly
+          applyWsMessage(msg);
         } catch (err) {
           console.error('[WS] Failed to parse message:', err);
         }

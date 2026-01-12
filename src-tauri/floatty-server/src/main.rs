@@ -76,7 +76,8 @@ async fn main() {
     tracing::info!("Y.Doc change observation wired to hook system");
 
     // Create WebSocket broadcaster for real-time sync
-    let broadcaster = Arc::new(WsBroadcaster::new(64));
+    // FLO-152: Bumped from 64 to 256 to reduce likelihood of Lagged errors
+    let broadcaster = Arc::new(WsBroadcaster::new(256));
 
     // CORS layer - allow requests from Tauri webview (localhost origins)
     let cors = CorsLayer::new()
