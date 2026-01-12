@@ -266,6 +266,7 @@ const WS_MAX_RECONNECT_DELAY = 30000;
 // Solution: Buffer incoming messages until reconnect sync completes, then replay.
 let wsReadyForMessages = true; // Start true - only false during reconnect sync
 let wsMessageBuffer: { txId?: string; data: string }[] = [];
+let wsConnectionId = 0; // FLO-152: Guards against stale IIFE setting wsReadyForMessages
 const WS_MESSAGE_BUFFER_MAX = 100; // Prevent unbounded growth if sync hangs
 
 // Echo prevention: track txIds we sent to filter them from broadcasts
@@ -438,6 +439,9 @@ function connectWebSocket() {
       // Reset retry count on successful connection
       wsRetryCount = 0;
 
+      // FLO-152: Increment connection ID to invalidate any stale IIFEs
+      const thisConnectionId = ++wsConnectionId;
+
       // FLO-152: Mark NOT ready for messages - buffer incoming until sync completes
       wsReadyForMessages = false;
       wsMessageBuffer = [];
@@ -473,6 +477,12 @@ function connectWebSocket() {
             Y.applyUpdate(sharedDoc, serverState, 'remote');
           }
 
+          // FLO-152: Guard against stale IIFE from previous connection
+          if (thisConnectionId !== wsConnectionId) {
+            console.log('[WS] Stale connection IIFE, ignoring');
+            return;
+          }
+
           // FLO-152: NOW safe to process messages - replay buffered ones
           console.log('[WS] Reconnect sync complete, replaying', wsMessageBuffer.length, 'buffered messages');
           wsReadyForMessages = true;
@@ -482,6 +492,11 @@ function connectWebSocket() {
           wsMessageBuffer = [];
         } catch (err) {
           console.error('[WS] Reconnect sync failed:', err);
+          // FLO-152: Guard against stale IIFE from previous connection
+          if (thisConnectionId !== wsConnectionId) {
+            console.log('[WS] Stale connection IIFE error path, ignoring');
+            return;
+          }
           // Even on failure, start accepting messages (better than blocking forever)
           wsReadyForMessages = true;
           wsMessageBuffer = [];
