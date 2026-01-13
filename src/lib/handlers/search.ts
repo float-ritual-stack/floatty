@@ -101,10 +101,21 @@ function getApiKey(): string {
   return key;
 }
 
+/** Default search timeout in ms */
+const SEARCH_TIMEOUT_MS = 10000;
+
+/** Track active searches per block for cancellation */
+const activeSearches = new Map<string, AbortController>();
+
 /**
  * Search blocks via REST API
+ * @param signal - Optional AbortSignal for cancellation
  */
-async function searchBlocks(query: string, limit: number = 20): Promise<{ hits: SearchHit[]; total: number }> {
+async function searchBlocks(
+  query: string,
+  limit: number = 20,
+  signal?: AbortSignal
+): Promise<{ hits: SearchHit[]; total: number }> {
   const url = getServerUrl();
   const apiKey = getApiKey();
   const params = new URLSearchParams({
@@ -116,6 +127,7 @@ async function searchBlocks(query: string, limit: number = 20): Promise<{ hits: 
     headers: {
       'Authorization': `Bearer ${apiKey}`,
     },
+    signal,
   });
 
   if (!response.ok) {
@@ -250,14 +262,31 @@ export const searchHandler: BlockHandler = {
       return;
     }
 
+    // Cancel any existing search for this block (prevents race conditions)
+    const existing = activeSearches.get(blockId);
+    if (existing) {
+      existing.abort();
+      activeSearches.delete(blockId);
+    }
+
+    // Create new controller with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+    activeSearches.set(blockId, controller);
+
     // Show loading state
     if (actions.setBlockStatus) {
       actions.setBlockStatus(blockId, 'running');
     }
 
     try {
-      // Execute search
-      const { hits, total } = await searchBlocks(query);
+      // Execute search with abort signal
+      const { hits, total } = await searchBlocks(query, 20, controller.signal);
+
+      // Check if this search was superseded (another search started for same block)
+      if (activeSearches.get(blockId) !== controller) {
+        return; // Silently exit - newer search will handle results
+      }
 
       // Hydrate with block content
       const results = actions.getBlock
@@ -285,6 +314,25 @@ export const searchHandler: BlockHandler = {
         actions.setBlockStatus(blockId, 'complete');
       }
     } catch (err) {
+      // Handle abort specially
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // Check if aborted due to timeout vs superseded
+        if (activeSearches.get(blockId) === controller) {
+          // Timeout - show error
+          console.warn('[search] Timed out:', query);
+          if (actions.setBlockOutput && actions.setBlockStatus) {
+            actions.setBlockOutput(
+              blockId,
+              { error: 'Search timed out. Try a simpler query.', query } as SearchErrorData,
+              'search-error'
+            );
+            actions.setBlockStatus(blockId, 'error');
+          }
+        }
+        // If superseded, silently return - newer search handles UI
+        return;
+      }
+
       console.error('[search] Error:', err);
       if (actions.setBlockOutput && actions.setBlockStatus) {
         actions.setBlockOutput(
@@ -293,6 +341,12 @@ export const searchHandler: BlockHandler = {
           'search-error'
         );
         actions.setBlockStatus(blockId, 'error');
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      // Only delete if this is still the active search
+      if (activeSearches.get(blockId) === controller) {
+        activeSearches.delete(blockId);
       }
     }
   },
