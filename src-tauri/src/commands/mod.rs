@@ -18,6 +18,6 @@ pub use ctx::{
     clear_ctx_markers, get_ctx_config, get_ctx_counts, get_ctx_markers,
     get_theme, set_ctx_config, set_theme,
 };
-pub use execution::{execute_ai_command, execute_shell_command};
+pub use execution::{execute_ai_command, execute_ai_conversation, execute_shell_command};
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
 pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};

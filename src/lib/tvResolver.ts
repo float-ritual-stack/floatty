@@ -135,12 +135,15 @@ async function spawnTvPicker(pickerId: string, channel: string, paneId?: string)
       container.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
       try {
+        // Build tv command for the channel
+        const command = buildTvCommand(channel);
+
         // Use terminalManager's interactive picker spawn
         // Output capture now happens in Rust (captureOutput: true)
         const result = await terminalManager.spawnInteractivePicker(
           pickerId,
           container,
-          buildTvCommand(channel)
+          command
         );
 
         if (result.exitCode === 0 && result.output) {
@@ -170,8 +173,10 @@ const SAFE_CHANNEL_PATTERN = /^[a-zA-Z0-9_-]+$/;
  * Build tv command with picker-mode flags
  */
 function buildTvCommand(channel: string): string {
+  const trimmedChannel = channel.trim();
+
   // Default channel is 'files' if not specified
-  let ch = channel.trim() || 'files';
+  let ch = trimmedChannel || 'files';
 
   // Validate channel to prevent command injection
   // Only allow alphanumeric, hyphen, underscore
@@ -187,5 +192,7 @@ function buildTvCommand(channel: string): string {
   // Only pass "." for built-in channels; custom cable channels handle their own paths
   // Don't use --source-output so cable config's [source].output field is respected
   const pathArg = useCwd ? ' .' : '';
-  return `tv ${ch}${pathArg} --no-help-panel`;
+  // --preview-size=35: Give 65% to results list (better for narrow picker terminals)
+  // --no-help-panel: Clean interface for embedded use
+  return `tv ${ch}${pathArg} --preview-size=35 --no-help-panel`;
 }

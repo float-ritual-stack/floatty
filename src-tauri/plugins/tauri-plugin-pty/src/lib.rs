@@ -315,6 +315,7 @@ async fn resize(
     rows: u16,
     state: tauri::State<'_, PluginState>,
 ) -> Result<(), String> {
+    log::debug!("PTY resize requested: pid={}, cols={}, rows={}", pid, cols, rows);
     let session = state
         .sessions
         .read()
@@ -333,7 +334,11 @@ async fn resize(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            log::error!("PTY resize failed: pid={}, error={}", pid, e);
+            e.to_string()
+        })?;
+    log::debug!("PTY resize success: pid={}", pid);
     Ok(())
 }
 

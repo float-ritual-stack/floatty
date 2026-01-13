@@ -14,6 +14,8 @@ import { initHttpClient } from './lib/httpClient';
 import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
 import { useSyncHealth } from './hooks/useSyncHealth';
 import { registerHandlers } from './lib/handlers';
+// Initialize logger early - intercepts console.* calls and forwards to Rust log files
+import './lib/logger';
 import './App.css';
 
 // Type for Tauri drag-drop event payload

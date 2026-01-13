@@ -12,9 +12,9 @@ mod sync_test;
 
 use commands::{
     check_hooks_installed, clear_ctx_markers, clear_workspace, execute_ai_command,
-    execute_shell_command, get_ctx_config, get_ctx_counts, get_ctx_markers, get_theme,
-    get_workspace_state, install_shell_hooks, save_clipboard_image, save_workspace_state,
-    set_ctx_config, set_theme, uninstall_shell_hooks,
+    execute_ai_conversation, execute_shell_command, get_ctx_config, get_ctx_counts,
+    get_ctx_markers, get_theme, get_workspace_state, install_shell_hooks, save_clipboard_image,
+    save_workspace_state, set_ctx_config, set_theme, uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
 use server::{spawn_server, ServerState};
@@ -58,6 +58,22 @@ fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
     state.server.as_ref()
         .map(|s| s.info.clone())
         .ok_or_else(|| "Server not running".to_string())
+}
+
+/// Forward JS console messages to Rust tracing (written to log file)
+///
+/// Levels: "trace", "debug", "info", "warn", "error"
+/// Messages appear in ~/.floatty/logs/floatty-{date}.jsonl
+#[tauri::command]
+fn log_js(level: &str, target: &str, message: &str) {
+    match level.to_lowercase().as_str() {
+        "trace" => tracing::trace!(target: "js", js_target = %target, "{}", message),
+        "debug" => tracing::debug!(target: "js", js_target = %target, "{}", message),
+        "info" => tracing::info!(target: "js", js_target = %target, "{}", message),
+        "warn" => tracing::warn!(target: "js", js_target = %target, "{}", message),
+        "error" => tracing::error!(target: "js", js_target = %target, "{}", message),
+        _ => tracing::info!(target: "js", js_target = %target, level = %level, "{}", message),
+    }
 }
 
 /// Initialize structured logging with tracing
@@ -288,8 +304,10 @@ pub fn run() {
                     set_theme,
                     clear_ctx_markers,
                     get_server_info,
+                    log_js,
                     execute_shell_command,
                     execute_ai_command,
+                    execute_ai_conversation,
                     daily_view::execute_daily_command,
                     clear_workspace,
                     save_clipboard_image,
@@ -312,8 +330,10 @@ pub fn run() {
                     set_theme,
                     clear_ctx_markers,
                     get_server_info,
+                    log_js,
                     execute_shell_command,
                     execute_ai_command,
+                    execute_ai_conversation,
                     daily_view::execute_daily_command,
                     clear_workspace,
                     save_clipboard_image,

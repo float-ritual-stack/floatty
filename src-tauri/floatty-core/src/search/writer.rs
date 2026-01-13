@@ -26,7 +26,7 @@
 
 use super::{IndexManager, SchemaFields, SearchError};
 use tantivy::{DateTime, IndexWriter, Term};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
 /// Channel capacity - provides backpressure during bulk operations.
@@ -51,8 +51,14 @@ pub enum WriterMessage {
     },
     /// Delete a document by block ID.
     Delete { block_id: String },
-    /// Commit pending changes to disk.
+    /// Delete all documents from the index (fire-and-forget).
+    ClearAll,
+    /// Delete all documents and notify when complete.
+    ClearAllSync { response: oneshot::Sender<()> },
+    /// Commit pending changes to disk (fire-and-forget).
     Commit,
+    /// Commit and notify when complete.
+    CommitSync { response: oneshot::Sender<()> },
     /// Shutdown the actor.
     Shutdown,
     /// Health check ping (no-op, just verifies channel is open).
@@ -109,6 +115,16 @@ impl WriterHandle {
             .map_err(|_| SearchError::WriterClosed)
     }
 
+    /// Clear all documents from the index.
+    ///
+    /// Use when Y.Doc is reset/cleared to avoid stale index entries.
+    pub async fn clear_all(&self) -> Result<(), SearchError> {
+        self.tx
+            .send(WriterMessage::ClearAll)
+            .await
+            .map_err(|_| SearchError::WriterClosed)
+    }
+
     /// Commit pending changes to disk.
     ///
     /// Call periodically or after batch operations.
@@ -117,6 +133,32 @@ impl WriterHandle {
             .send(WriterMessage::Commit)
             .await
             .map_err(|_| SearchError::WriterClosed)
+    }
+
+    /// Clear all documents and WAIT for completion.
+    ///
+    /// Unlike `clear_all()`, this blocks until the actor processes the request.
+    /// Use for operations that need guaranteed completion before proceeding.
+    pub async fn clear_all_sync(&self) -> Result<(), SearchError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(WriterMessage::ClearAllSync { response: tx })
+            .await
+            .map_err(|_| SearchError::WriterClosed)?;
+        rx.await.map_err(|_| SearchError::WriterClosed)
+    }
+
+    /// Commit and WAIT for completion.
+    ///
+    /// Unlike `commit()`, this blocks until the actor finishes the commit.
+    /// Use for operations that need guaranteed visibility before proceeding.
+    pub async fn commit_sync(&self) -> Result<(), SearchError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(WriterMessage::CommitSync { response: tx })
+            .await
+            .map_err(|_| SearchError::WriterClosed)?;
+        rx.await.map_err(|_| SearchError::WriterClosed)
     }
 
     /// Shutdown the writer actor gracefully.
@@ -215,6 +257,26 @@ impl TantivyWriter {
                     trace!(block_id = %block_id, pending_ops, "Block deleted from index");
                 }
 
+                WriterMessage::ClearAll => {
+                    if let Err(e) = self.writer.delete_all_documents() {
+                        error!(error = %e, "Failed to clear all documents");
+                    } else {
+                        info!("All documents cleared from index");
+                        pending_ops += 1; // Mark that we need a commit
+                    }
+                }
+
+                WriterMessage::ClearAllSync { response } => {
+                    if let Err(e) = self.writer.delete_all_documents() {
+                        error!(error = %e, "Failed to clear all documents");
+                    } else {
+                        info!("All documents cleared from index (sync)");
+                        pending_ops += 1;
+                    }
+                    // Notify caller regardless of success (they'll see logs if failed)
+                    let _ = response.send(());
+                }
+
                 WriterMessage::Commit => {
                     if let Err(e) = self.writer.commit() {
                         error!(error = %e, "Failed to commit index");
@@ -222,6 +284,16 @@ impl TantivyWriter {
                         debug!(pending_ops, "Index committed");
                         pending_ops = 0;
                     }
+                }
+
+                WriterMessage::CommitSync { response } => {
+                    if let Err(e) = self.writer.commit() {
+                        error!(error = %e, "Failed to commit index");
+                    } else {
+                        debug!(pending_ops, "Index committed (sync)");
+                        pending_ops = 0;
+                    }
+                    let _ = response.send(());
                 }
 
                 WriterMessage::Shutdown => {
