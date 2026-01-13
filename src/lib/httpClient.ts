@@ -185,8 +185,13 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
       const client = new HttpClient(serverInfo);
 
       // Store URL and API key globally for other modules (WebSocket, search handler)
+      // API key is non-enumerable to reduce accidental exposure in Object.keys/for-in
       window.__FLOATTY_SERVER_URL__ = serverInfo.url;
-      window.__FLOATTY_API_KEY__ = serverInfo.api_key;
+      Object.defineProperty(window, '__FLOATTY_API_KEY__', {
+        value: serverInfo.api_key,
+        writable: true,
+        configurable: true,
+      });
 
       // Verify connection before committing to this client
       const healthy = await client.isHealthy();
