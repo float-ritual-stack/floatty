@@ -9,41 +9,52 @@ Phase 0: Event Infrastructure
 
 ## Current Work Unit
 
-**ID**: 0.5
-**Name**: Tests + Phase Gate
-**Status**: pending
-**Scope**: `src/lib/events`, `src/lib/hooks`
+**ID**: Phase 0 Complete
+**Name**: Phase Gate
+**Status**: complete
+**Scope**: N/A
 
-### Entry Criteria
+Phase 0 Event Infrastructure is complete. See Completed Work Units below.
 
-- [ ] Review test patterns in src/hooks/*.test.ts
-- [ ] Understand vitest setup
+---
 
-### Exit Criteria
+## Phase 0 Gate Checklist
 
-- [ ] Unit tests for EventBus
-- [ ] Unit tests for ProjectionScheduler
-- [ ] Unit tests for HookRegistry
-- [ ] All tests pass (`npm run test`)
-- [ ] Phase 0 gate checklist complete
+- [x] All work units complete (0.1-0.5)
+- [x] All tests pass (379 tests)
+- [x] Type check passes (`npm run type-check`)
+- [x] No regressions in existing functionality
+- [x] Architecture aligned with FLOATTY_HOOK_SYSTEM.md
 
-### Rollback
-
-```bash
-git checkout HEAD -- src/lib/events/*.test.ts src/lib/hooks/*.test.ts
-```
-
-### Modifications
-
-(Auto-updated by state-tracker.py)
-
-### Learnings
-
-(Fill as you discover things)
+**Phase 0 Deliverables**:
+- `src/lib/events/` - Event types, EventBus (sync), ProjectionScheduler (async batched)
+- `src/lib/hooks/` - Hook types, HookRegistry aligned with architecture doc
+- Full test coverage for all new modules
 
 ---
 
 ## Completed Work Units
+
+### 0.5 Tests + Phase Gate ✓
+
+**Scope**: `src/lib/events`, `src/lib/hooks`
+
+**Modifications**:
+- Created `src/lib/events/eventBus.test.ts` - 16 tests for EventBus
+- Created `src/lib/events/projectionScheduler.test.ts` - 19 tests for ProjectionScheduler
+- Created `src/lib/hooks/hookRegistry.test.ts` - 26 tests for HookRegistry
+
+**Test coverage**:
+- EventBus: subscribe/unsubscribe, emit, priority ordering, filtering, error isolation
+- ProjectionScheduler: register/unregister, enqueue, batching, auto-flush, error isolation
+- HookRegistry: register/unregister, run (async), runSync, filtering, priority, abort, result accumulation
+
+**Learnings**:
+- Test helper `createTestEnvelope` needs at least one event (empty array skips handlers)
+- Fake timers need `advanceTimersByTimeAsync` for promises with setTimeout
+- `console.warn` calls need exact argument matching
+
+---
 
 ### 0.4 Hook Registry ✓
 
@@ -123,7 +134,7 @@ per architecture doc alignment discussion.
 | 0.2 | EventBus (sync pub/sub) | complete | 1h |
 | 0.3 | ProjectionScheduler (batched async) | complete | 1h |
 | 0.4 | Hook Registry | complete | 1h |
-| 0.5 | Tests + Phase Gate | pending | 1h |
+| 0.5 | Tests + Phase Gate | complete | 1h |
 
 ---
 
