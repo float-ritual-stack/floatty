@@ -77,16 +77,32 @@ function getServerUrl(): string {
 }
 
 /**
+ * Get API key from window global (set by httpClient)
+ */
+function getApiKey(): string {
+  const key = (window as unknown as { __FLOATTY_API_KEY__?: string }).__FLOATTY_API_KEY__;
+  if (!key) {
+    throw new Error('API key not available. Is floatty-server running?');
+  }
+  return key;
+}
+
+/**
  * Search blocks via REST API
  */
 async function searchBlocks(query: string, limit: number = 20): Promise<{ hits: SearchHit[]; total: number }> {
   const url = getServerUrl();
+  const apiKey = getApiKey();
   const params = new URLSearchParams({
     q: query,
     limit: String(limit),
   });
 
-  const response = await fetch(`${url}/api/v1/search?${params}`);
+  const response = await fetch(`${url}/api/v1/search?${params}`, {
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+    },
+  });
 
   if (!response.ok) {
     if (response.status === 503) {
