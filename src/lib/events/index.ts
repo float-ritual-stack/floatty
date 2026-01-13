@@ -18,3 +18,10 @@ export {
   type EventFilter,
   EventFilters,
 } from './types';
+
+// EventBus (sync pub/sub)
+export {
+  EventBus,
+  blockEventBus,
+  type SubscriptionOptions,
+} from './eventBus';

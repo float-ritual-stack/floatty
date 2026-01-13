@@ -9,28 +9,28 @@ Phase 0: Event Infrastructure
 
 ## Current Work Unit
 
-**ID**: 0.2
-**Name**: EventBus (sync pub/sub)
+**ID**: 0.3
+**Name**: ProjectionScheduler (batched async)
 **Status**: pending
 **Scope**: `src/lib/events`
 
 ### Entry Criteria
 
-- [ ] Understand types from 0.1 (EventEnvelope, BlockEvent, Origin)
-- [ ] Review current Y.Doc observer in useBlockStore.ts
-- [ ] Understand priority conventions from FLOATTY_HOOK_SYSTEM.md
+- [ ] Understand EventBus pattern from 0.2
+- [ ] Review async batching requirements for search/index writes
+- [ ] Understand debounce timing from ydoc-patterns.md
 
 ### Exit Criteria
 
-- [ ] `src/lib/events/eventBus.ts` created with EventBus class
-- [ ] subscribe/unsubscribe/emit API
-- [ ] Priority-ordered handler execution
+- [ ] `src/lib/events/projectionScheduler.ts` created
+- [ ] Queue-based batching with configurable flush interval
+- [ ] Async handler support with error isolation
 - [ ] `npx tsc --noEmit` passes
 
 ### Rollback
 
 ```bash
-git checkout HEAD -- src/lib/events/eventBus.ts
+git checkout HEAD -- src/lib/events/projectionScheduler.ts
 ```
 
 ### Modifications
@@ -44,6 +44,22 @@ git checkout HEAD -- src/lib/events/eventBus.ts
 ---
 
 ## Completed Work Units
+
+### 0.2 EventBus (sync pub/sub) ✓
+
+**Scope**: `src/lib/events`
+
+**Modifications**:
+- Created `src/lib/events/eventBus.ts` - EventBus class with subscribe/unsubscribe/emit
+- Updated `src/lib/events/index.ts` - exports EventBus, blockEventBus, SubscriptionOptions
+
+**Features**:
+- Priority-ordered handler execution (lower = earlier)
+- Per-subscription filter support
+- Error isolation (one handler failing doesn't break others)
+- Global `blockEventBus` singleton instance
+
+---
 
 ### 0.1 Event Types ✓
 
@@ -65,7 +81,7 @@ git checkout HEAD -- src/lib/events/eventBus.ts
 | ID | Name | Status | Est |
 |----|------|--------|-----|
 | 0.1 | Event Types | complete | 30m |
-| 0.2 | EventBus (sync pub/sub) | pending | 1h |
+| 0.2 | EventBus (sync pub/sub) | complete | 1h |
 | 0.3 | ProjectionScheduler (batched async) | pending | 1h |
 | 0.4 | Wire to Y.Doc observer | pending | 1h |
 | 0.5 | Tests + Phase Gate | pending | 1h |
