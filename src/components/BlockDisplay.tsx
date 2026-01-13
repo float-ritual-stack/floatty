@@ -118,6 +118,7 @@ function InlineTokenSpan(props: TokenSpanProps) {
     'ctx-prefix': 'ctx-inline-prefix',
     'ctx-timestamp': 'ctx-inline-timestamp',
     'ctx-tag': 'ctx-inline-tag',
+    'code-fence': 'md-code-fence',
   };
 
   // For ctx-tag, add type-specific class for color coding
@@ -144,6 +145,29 @@ function InlineTokenSpan(props: TokenSpanProps) {
         }}
       >
         {contentParts}
+      </span>
+    );
+  }
+
+  // Code fences render with line-by-line structure for fence marker styling
+  if (props.token.type === 'code-fence') {
+    const lines = props.token.raw.split('\n');
+    return (
+      <span class={getClass()} data-lang={props.token.lang}>
+        <For each={lines}>
+          {(line, i) => {
+            const isLastLine = i() === lines.length - 1;
+            const isFenceMarker = line.trimStart().startsWith('```');
+            return (
+              <>
+                <span class={isFenceMarker ? 'md-fence-marker' : 'md-fence-content'}>
+                  {line}
+                </span>
+                {!isLastLine && '\n'}
+              </>
+            );
+          }}
+        </For>
       </span>
     );
   }

@@ -25,6 +25,13 @@ Critical anti-patterns that will break floatty.
 - Forget `containerRef?.focus()` after blurring contentEditable (tinykeys needs focus)
 - Use `next` in Shift+Arrow range extension (use `props.id`, then move focus)
 
+## contentEditable (see @.claude/rules/contenteditable-patterns.md)
+
+- Use `Range.toString().length` for cursor offset (doesn't count `<div>` boundaries as newlines)
+- Use `innerText.length` for offset calculation (normalizes whitespace differently)
+- Assume `\n` characters exist in DOM (browser uses `<div>` and `<br>` elements instead)
+- Have mismatched logic between `setCursorAtOffset()` and `getAbsoluteCursorOffset()` (causes split corruption)
+
 ## Y.Doc/Search (see @.claude/rules/ydoc-patterns.md)
 
 - Recreate wikilink/marker parsing in Rust (reuse `inlineParser.ts` or port with TS as spec)

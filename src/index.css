@@ -741,6 +741,19 @@ body.resizing .terminal-pane-positioned {
               2px 0 0 color-mix(in srgb, var(--color-fg) 8%, transparent);
 }
 
+/* Fenced code blocks: ```lang ... ``` */
+.block-display .md-code-fence {
+  display: inline;  /* Stay inline for overlay sync */
+}
+
+.block-display .md-fence-marker {
+  color: var(--color-ansi-bright-black);  /* Dimmed fence delimiters */
+}
+
+.block-display .md-fence-content {
+  color: var(--color-ansi-bright-green);  /* Code-like color */
+}
+
 /* Wikilinks: clickable even above edit layer */
 .block-display .md-wikilink {
   position: relative;
@@ -782,8 +795,9 @@ body.resizing .terminal-pane-positioned {
 .block-display .ctx-inline-tag {
   /* Pill styling for inline tags. Font-size MUST stay at inherit
      for cursor sync (two-layer overlay architecture, FLO-94).
-     DO NOT change font-size on focus - breaks overlay alignment. */
-  padding: 0 2px;
+     DO NOT change font-size on focus - breaks overlay alignment.
+     DO NOT add padding - causes cursor drift (ctx drift fix). */
+  padding: 0;
   border-radius: 2px;
 }
 

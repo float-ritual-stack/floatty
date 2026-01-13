@@ -10,13 +10,15 @@
 import { findWikilinkEnd, parseWikilinkInner } from './wikilinkUtils';
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence';
   content: string;  // inner text without markers (for wikilink: display text)
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
   end: number;      // end position (for future selection sync)
   tagType?: string; // For ctx-tag: 'project', 'mode', 'issue', etc.
   target?: string;  // For wikilink: the page name to link to
+  lang?: string;    // For code-fence: language identifier (rust, js, etc.)
+  code?: string;    // For code-fence: the code content without fence markers
 }
 
 // ctx:: pattern: timestamp required to distinguish from abstract discussion
@@ -37,6 +39,121 @@ export function hasWikilinkPatterns(content: string): boolean {
   const openIdx = content.indexOf('[[');
   if (openIdx === -1) return false;
   return content.indexOf(']]', openIdx + 2) !== -1;
+}
+
+/**
+ * Check if content contains fenced code block patterns.
+ * Requires opening ``` and closing ``` on separate lines.
+ */
+export function hasCodeFencePatterns(content: string): boolean {
+  // Must have at least two ``` on line starts (opening and closing)
+  const lines = content.split('\n');
+  let fenceCount = 0;
+  for (const line of lines) {
+    if (line.trimStart().startsWith('```')) {
+      fenceCount++;
+      if (fenceCount >= 2) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Parse fenced code blocks into tokens.
+ * Uses line-by-line state machine to handle:
+ * - ```lang ... ``` blocks
+ * - Nested content (code inside is NOT parsed for markdown)
+ * - Multiple fenced blocks in same content
+ *
+ * Returns tokens with text between fences as separate text tokens.
+ */
+function parseCodeFenceTokens(content: string): InlineToken[] {
+  if (!hasCodeFencePatterns(content)) return [];
+
+  const tokens: InlineToken[] = [];
+  const lines = content.split('\n');
+
+  let inCodeFence = false;
+  let fenceLang = '';
+  let fenceStart = 0;
+  let fenceLines: string[] = [];
+  let currentPos = 0;
+  let textStart = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trimStart();
+    const lineStart = currentPos;
+    const lineEnd = currentPos + line.length + (i < lines.length - 1 ? 1 : 0); // +1 for \n except last
+
+    if (trimmedLine.startsWith('```')) {
+      if (inCodeFence) {
+        // Closing fence - emit code-fence token
+        const fenceEnd = lineEnd;
+        const raw = content.slice(fenceStart, fenceEnd);
+        const code = fenceLines.join('\n');
+
+        tokens.push({
+          type: 'code-fence',
+          content: code,
+          raw,
+          start: fenceStart,
+          end: fenceEnd,
+          lang: fenceLang,
+          code,
+        });
+
+        inCodeFence = false;
+        fenceLines = [];
+        textStart = fenceEnd;
+      } else {
+        // Opening fence - first emit any text before it
+        if (lineStart > textStart) {
+          const plainText = content.slice(textStart, lineStart);
+          tokens.push({
+            type: 'text',
+            content: plainText,
+            raw: plainText,
+            start: textStart,
+            end: lineStart,
+          });
+        }
+
+        inCodeFence = true;
+        fenceLang = trimmedLine.slice(3).trim(); // Extract language after ```
+        fenceStart = lineStart;
+      }
+    } else if (inCodeFence) {
+      fenceLines.push(line);
+    }
+
+    currentPos = lineEnd;
+  }
+
+  // Handle unclosed fence (treat as text)
+  if (inCodeFence) {
+    // Unclosed fence - emit everything from fence start as text
+    const plainText = content.slice(fenceStart);
+    tokens.push({
+      type: 'text',
+      content: plainText,
+      raw: plainText,
+      start: fenceStart,
+      end: content.length,
+    });
+  } else if (textStart < content.length) {
+    // Trailing text after last fence
+    const plainText = content.slice(textStart);
+    tokens.push({
+      type: 'text',
+      content: plainText,
+      raw: plainText,
+      start: textStart,
+      end: content.length,
+    });
+  }
+
+  return tokens;
 }
 
 /**
@@ -285,31 +402,35 @@ export function parseInlineTokens(content: string): InlineToken[] {
  * Use for early-exit optimization in rendering.
  */
 export function hasInlineFormatting(content: string): boolean {
-  // Standard markdown OR ctx:: patterns OR [[wikilinks]]
-  return /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content) || hasCtxPatterns(content) || hasWikilinkPatterns(content);
+  // Code fences OR standard markdown OR ctx:: patterns OR [[wikilinks]]
+  return hasCodeFencePatterns(content) || /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content) || hasCtxPatterns(content) || hasWikilinkPatterns(content);
 }
 
 /**
- * Parse all inline patterns (markdown + ctx:: + [[wikilinks]]).
+ * Parse all inline patterns (code fences + markdown + ctx:: + [[wikilinks]]).
  * Returns unified token array for rendering.
  *
- * Priority: wikilinks → ctx:: → markdown
+ * Priority: code-fence → wikilinks → ctx:: → markdown
  * Each parser handles 'text' segments from the previous pass.
+ * Code fences are highest priority because their content should NOT be parsed.
  */
 export function parseAllInlineTokens(content: string): InlineToken[] {
+  const hasCodeFence = hasCodeFencePatterns(content);
   const hasMarkdown = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content);
   const hasCtx = hasCtxPatterns(content);
   const hasWikilinks = hasWikilinkPatterns(content);
 
-  if (!hasMarkdown && !hasCtx && !hasWikilinks) return [];
+  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks) return [];
 
-  // Start with wikilinks (highest priority - interactive elements)
+  // Start with code fences (highest priority - content inside is NOT parsed)
   let tokens: InlineToken[] = [];
 
-  if (hasWikilinks) {
+  if (hasCodeFence) {
+    tokens = parseCodeFenceTokens(content);
+  } else if (hasWikilinks) {
     tokens = parseWikilinkTokens(content);
   } else {
-    // No wikilinks - start with full content as text
+    // No code fences or wikilinks - start with full content as text
     tokens = [{
       type: 'text',
       content,
@@ -317,6 +438,26 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
       start: 0,
       end: content.length,
     }];
+  }
+
+  // Apply wikilink parsing to text segments (if code fences were found, text between them)
+  if (hasCodeFence && hasWikilinks) {
+    const wikiMerged: InlineToken[] = [];
+    for (const token of tokens) {
+      if (token.type === 'text' && hasWikilinkPatterns(token.raw)) {
+        const wikiTokens = parseWikilinkTokens(token.raw);
+        for (const wikiToken of wikiTokens) {
+          wikiMerged.push({
+            ...wikiToken,
+            start: wikiToken.start + token.start,
+            end: wikiToken.end + token.start,
+          });
+        }
+      } else {
+        wikiMerged.push(token);
+      }
+    }
+    tokens = wikiMerged;
   }
 
   // Apply ctx parsing to text segments
