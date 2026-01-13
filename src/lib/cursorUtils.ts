@@ -13,30 +13,74 @@
 
 /**
  * Get absolute character offset within contentEditable element.
- * Uses Range.cloneContents() + innerText for reliable multi-line handling.
+ * Walks DOM tree counting text + implicit newlines from block elements.
  *
- * CRITICAL: Manual DOM walking can drift on long multi-line content because
- * browsers vary in how they structure <div>/<br> elements. This approach
- * extracts the actual content before cursor and measures its innerText.
+ * CRITICAL: Range.toString() doesn't count implicit newlines between <div>
+ * elements. innerText normalizes whitespace. Both approaches fail for
+ * multi-line content. Must walk DOM and count div boundaries as newlines.
+ *
+ * This matches the logic in setCursorAtOffset() for bidirectional consistency.
  */
 export function getAbsoluteCursorOffset(element: HTMLElement): number {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) return 0;
 
-  const selRange = selection.getRangeAt(0);
+  const range = selection.getRangeAt(0);
+  return getTextOffsetInElement(element, range.startContainer, range.startOffset);
+}
 
-  // Create a range from start of element to cursor position
-  const preRange = document.createRange();
-  preRange.setStart(element, 0);
-  preRange.setEnd(selRange.startContainer, selRange.startOffset);
+/**
+ * Walk DOM tree counting text + implicit newlines from block elements.
+ * Browser represents newlines as <div> or <br>, not \n characters.
+ * Must count these structural elements to match stored content offsets.
+ */
+function getTextOffsetInElement(
+  root: HTMLElement,
+  targetNode: Node,
+  targetOffset: number
+): number {
+  let offset = 0;
+  let found = false;
 
-  // Clone the contents and measure via innerText (handles <br>/<div> correctly)
-  const fragment = preRange.cloneContents();
-  const tempDiv = document.createElement('div');
-  tempDiv.appendChild(fragment);
+  function walk(node: Node): boolean {
+    if (found) return true;
 
-  // innerText converts <br> and <div> to \n, matching how we store content
-  return tempDiv.innerText.length;
+    // Found target node - add the offset within it
+    if (node === targetNode) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        offset += targetOffset;
+      }
+      found = true;
+      return true;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      offset += node.textContent?.length ?? 0;
+    } else if (node.nodeName === 'BR') {
+      // <br> = 1 character (newline)
+      offset += 1;
+    } else if (node.nodeName === 'DIV' && node !== root) {
+      // <div> inside contentEditable = line break (except root)
+      // Count newline BEFORE this div's content (matches setCursorAtOffset)
+      offset += 1;
+      for (const child of Array.from(node.childNodes)) {
+        if (walk(child)) return true;
+      }
+      return false; // Already processed children
+    }
+
+    // Recurse into children for other element types
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      for (const child of Array.from(node.childNodes)) {
+        if (walk(child)) return true;
+      }
+    }
+
+    return false;
+  }
+
+  walk(root);
+  return offset;
 }
 
 /**

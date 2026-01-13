@@ -103,7 +103,7 @@ export function BlockItem(props: BlockItemProps) {
 
   // Debounced Y.Doc updates - DOM stays immediate via contentEditable
   // Flush on blur, cancel on unmount
-  const { debounced: debouncedUpdateContent, flush: flushContentUpdate, cancel: cancelContentUpdate } =
+  const { debounced: debouncedUpdateContent, flush: flushContentUpdate } =
     createDebouncedUpdater((id: string, content: string) => {
       store.updateBlockContent(id, content);
     }, UPDATE_DEBOUNCE_MS);
@@ -204,6 +204,11 @@ export function BlockItem(props: BlockItemProps) {
     if (contentRef && currentBlock) {
       if (contentRef.innerText !== currentBlock.content) {
         contentRef.innerText = currentBlock.content;
+      }
+      // CRITICAL: Also sync displayContent for overlay layer
+      // After block splits, the effect may not re-run (focus guard), so sync here
+      if (displayContent() !== currentBlock.content) {
+        setDisplayContent(currentBlock.content);
       }
     }
   };
@@ -409,6 +414,10 @@ export function BlockItem(props: BlockItemProps) {
       // No preventDefault = browser handles internal line navigation
     } else if (e.key === 'Enter' && !e.shiftKey) {
       // NOTE: Cmd+Enter (zoomInBlock) is handled above via getActionForEvent()
+
+      // CRITICAL: Flush pending content updates before any Enter action
+      // Without this, debounced updates can race with split/execute and corrupt content
+      flushContentUpdate();
 
       // Plain Enter on executable blocks = execute via handler registry
       if (block()) {

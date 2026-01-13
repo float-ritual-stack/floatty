@@ -4,7 +4,7 @@
  * Tests parseInlineTokens which extracts **bold**, *italic*, `code` spans.
  */
 import { describe, it, expect } from 'vitest';
-import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, type InlineToken } from './inlineParser';
+import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, hasCodeFencePatterns, type InlineToken } from './inlineParser';
 
 // Helper to extract just types and content for easier assertions
 function tokenSummary(tokens: InlineToken[]): Array<{ type: string; content: string }> {
@@ -475,6 +475,53 @@ describe('wikilink parsing', () => {
       const tokens = parseAllInlineTokens('start [[a [[b]]]] middle [[c]] end');
       const text = tokens.filter(t => t.type === 'text').map(t => t.content).join('');
       expect(text).toBe('start  middle  end');
+    });
+  });
+
+  describe('code fence parsing', () => {
+    it('detects code fence patterns', () => {
+      expect(hasCodeFencePatterns('```js\ncode\n```')).toBe(true);
+      expect(hasCodeFencePatterns('no fence here')).toBe(false);
+      expect(hasCodeFencePatterns('```')).toBe(false);  // Single fence = not valid
+    });
+
+    it('parses basic fenced code block', () => {
+      const tokens = parseAllInlineTokens('```js\nconst x = 1;\n```');
+      expect(tokens).toHaveLength(1);
+      expect(tokens[0].type).toBe('code-fence');
+      expect(tokens[0].lang).toBe('js');
+    });
+
+    it('parses adjacent fences', () => {
+      const tokens = parseAllInlineTokens('```a\ncode1\n```\n```b\ncode2\n```');
+      const fences = tokens.filter(t => t.type === 'code-fence');
+      expect(fences).toHaveLength(2);
+    });
+
+    it('unclosed fence is not detected as code fence pattern', () => {
+      // hasCodeFencePatterns requires 2 fences, unclosed = no pattern detected
+      expect(hasCodeFencePatterns('```js\nno closing')).toBe(false);
+      const tokens = parseAllInlineTokens('```js\nno closing');
+      expect(tokens).toHaveLength(0); // No inline patterns detected
+    });
+
+    it('parses empty fence', () => {
+      const tokens = parseAllInlineTokens('```\n```');
+      expect(tokens[0].type).toBe('code-fence');
+      expect(tokens[0].lang).toBe('');
+    });
+
+    it('parses fence with text before and after', () => {
+      const tokens = parseAllInlineTokens('before\n```js\ncode\n```\nafter');
+      expect(tokens.some(t => t.type === 'code-fence')).toBe(true);
+      expect(tokens.some(t => t.type === 'text' && t.content.includes('before'))).toBe(true);
+    });
+
+    it('preserves code content in fence', () => {
+      const tokens = parseAllInlineTokens('```rust\nfn main() {\n  println!("hello");\n}\n```');
+      const fence = tokens.find(t => t.type === 'code-fence');
+      expect(fence?.code).toContain('fn main()');
+      expect(fence?.lang).toBe('rust');
     });
   });
 });
