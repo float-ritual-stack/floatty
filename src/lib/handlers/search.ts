@@ -33,6 +33,8 @@ export interface SearchResult {
   score: number;
   /** Block type (text, sh, ai, ctx, etc.) */
   blockType?: string;
+  /** Parent path for context (e.g., "Project Notes > Meeting") */
+  parentPath?: string;
 }
 
 /** Search results data for view */
@@ -121,6 +123,45 @@ async function searchBlocks(query: string, limit: number = 20): Promise<{ hits: 
   };
 }
 
+/** Block shape for hydration */
+interface HydratableBlock {
+  content?: string;
+  type?: string;
+  parentId?: string;
+}
+
+/**
+ * Build parent path by walking up the tree (max 3 ancestors)
+ */
+function buildParentPath(blockId: string, getBlock: (id: string) => unknown): string | undefined {
+  const ancestors: string[] = [];
+  let currentId = blockId;
+  let depth = 0;
+  const maxDepth = 3;
+
+  while (depth < maxDepth) {
+    const block = getBlock(currentId) as HydratableBlock | undefined;
+    if (!block?.parentId) break;
+
+    const parent = getBlock(block.parentId) as HydratableBlock | undefined;
+    if (!parent) break;
+
+    // Get first line of parent content, truncated
+    const parentContent = parent.content || '';
+    const firstLine = parentContent.split('\n')[0];
+    const label = firstLine.length > 30 ? firstLine.slice(0, 27) + '...' : firstLine;
+
+    if (label) {
+      ancestors.unshift(label);
+    }
+
+    currentId = block.parentId;
+    depth++;
+  }
+
+  return ancestors.length > 0 ? ancestors.join(' › ') : undefined;
+}
+
 /**
  * Hydrate search hits with block content
  * Fetches full block data from Y.Doc via getBlock action
@@ -130,28 +171,47 @@ function hydrateResults(
   getBlock: (id: string) => unknown
 ): SearchResult[] {
   return hits.map(hit => {
-    const block = getBlock(hit.blockId) as {
-      content?: string;
-      type?: string;
-    } | undefined;
+    const block = getBlock(hit.blockId) as HydratableBlock | undefined;
 
     return {
       blockId: hit.blockId,
       content: block?.content || '[Block not found]',
       score: hit.score,
       blockType: block?.type,
+      parentPath: buildParentPath(hit.blockId, getBlock),
     };
   });
 }
 
 /**
- * Truncate content for display (first line, max 100 chars)
+ * Truncate content for display (multiple lines, preserving structure)
+ * Shows up to maxLines lines and maxLen total chars
  */
-export function truncateContent(content: string, maxLen: number = 100): string {
-  // Get first line
-  const firstLine = content.split('\n')[0];
-  if (firstLine.length <= maxLen) return firstLine;
-  return firstLine.slice(0, maxLen - 3) + '...';
+export function truncateContent(content: string, maxLen: number = 200, maxLines: number = 3): string {
+  const lines = content.split('\n');
+  let result = '';
+  let lineCount = 0;
+
+  for (const line of lines) {
+    if (lineCount >= maxLines) break;
+    if (result.length + line.length > maxLen) {
+      // Add partial line if we have room
+      const remaining = maxLen - result.length;
+      if (remaining > 20) {
+        result += (result ? '\n' : '') + line.slice(0, remaining - 3) + '...';
+      }
+      break;
+    }
+    result += (result ? '\n' : '') + line;
+    lineCount++;
+  }
+
+  // If we hit maxLines but there's more content, add ellipsis
+  if (lineCount >= maxLines && lines.length > maxLines) {
+    result += '\n...';
+  }
+
+  return result || content.slice(0, maxLen);
 }
 
 // ═══════════════════════════════════════════════════════════════

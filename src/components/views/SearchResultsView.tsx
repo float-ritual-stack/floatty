@@ -89,15 +89,18 @@ function SearchResultItem(props: {
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div class="search-result-content">
-        <Show when={props.result.blockType}>
-          <span class={`search-result-type type-${props.result.blockType}`}>
-            {props.result.blockType}
-          </span>
+      <div class="search-result-main">
+        <Show when={props.result.parentPath}>
+          <div class="search-result-path">{props.result.parentPath}</div>
         </Show>
-        <span class="search-result-text">
-          {truncateContent(props.result.content)}
-        </span>
+        <div class="search-result-content">
+          <Show when={props.result.blockType}>
+            <span class={`search-result-type type-${props.result.blockType}`}>
+              {props.result.blockType}
+            </span>
+          </Show>
+          <pre class="search-result-text">{truncateContent(props.result.content)}</pre>
+        </div>
       </div>
       <div class="search-result-score">
         {formatScore(props.result.score)}
