@@ -8,6 +8,7 @@
 import { registry } from './registry';
 import { shHandler, aiHandler } from './commandDoor';
 import { dailyHandler } from './daily';
+import { searchHandler } from './search';
 
 // Re-export registry and types for convenience
 export { registry } from './registry';
@@ -21,6 +22,14 @@ export type {
   DayStats,
   DailyNoteData
 } from './daily';
+
+// Re-export search types for component use
+export type {
+  SearchHit,
+  SearchResult,
+  SearchResultsData,
+  SearchErrorData,
+} from './search';
 
 // Guard against duplicate registration (HMR in dev can trigger multiple calls)
 let handlersRegistered = false;
@@ -39,6 +48,7 @@ export function registerHandlers(): void {
   registry.register(shHandler);
   registry.register(aiHandler);
   registry.register(dailyHandler);
+  registry.register(searchHandler);
 
   console.log('[handlers] Registered:', registry.getRegisteredPrefixes().join(', '));
 }

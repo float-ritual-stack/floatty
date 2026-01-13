@@ -9,9 +9,10 @@ import { getActionForEvent, isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
 import { BlockDisplay } from './BlockDisplay';
 import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
-import { registry, type DailyNoteData } from '../lib/handlers';
+import { registry, type DailyNoteData, type SearchResultsData, type SearchErrorData } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
+import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import {
   navigateToBlock as navToBlock,
   navigateToPage as navToPage,
@@ -765,8 +766,26 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* REGULAR BLOCK: display + edit layers (hidden when daily output) */}
-          <Show when={block()?.type !== 'picker' && !block()?.outputType?.startsWith('daily-')}>
+          {/* SEARCH OUTPUT VIEW: replaces normal content when outputType is search-* */}
+          <Show when={block()?.outputType === 'search-results' || block()?.outputType === 'search-error'}>
+            <div class="search-output">
+              <Show when={block()?.outputStatus === 'running'}>
+                <div class="search-running">
+                  <span class="search-running-spinner">◐</span>
+                  <span class="search-running-text">Searching...</span>
+                </div>
+              </Show>
+              <Show when={block()?.outputType === 'search-results' && block()?.outputStatus === 'complete'}>
+                <SearchResultsView data={block()!.output as SearchResultsData} paneId={props.paneId} />
+              </Show>
+              <Show when={block()?.outputType === 'search-error'}>
+                <SearchErrorView data={block()!.output as SearchErrorData} />
+              </Show>
+            </div>
+          </Show>
+
+          {/* REGULAR BLOCK: display + edit layers (hidden when structured output) */}
+          <Show when={block()?.type !== 'picker' && !block()?.outputType?.startsWith('daily-') && !block()?.outputType?.startsWith('search-')}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
             {/* Uses displayContent (immediate) instead of store content (150ms debounced) */}
             <BlockDisplay content={displayContent()} onWikilinkClick={handleWikilinkClick} />
