@@ -2,6 +2,19 @@
 
 All notable changes to floatty are documented here.
 
+## [0.3.2] - 2026-01-13
+
+### Bug Fixes
+
+- **HMR cleanup**: Added `import.meta.hot.dispose()` handlers across 5 modules to prevent state accumulation during development hot reload (useSyncedYDoc, useSyncHealth, handlers, httpClient, terminalManager)
+- **Sync hygiene**: Fixed race condition in httpClient initialization; wrapped terminalManager dispose in try/finally; fixed TypedArray boundary issue in useSyncHealth hash computation
+- **Handler registration**: Added guard against duplicate handler registration; added `.catch()` on async handler executions
+- **UI**: Removed font-size transition on ctx:: tags
+
+### New Features
+
+- **Dev workflow commands**: Added `/floatty:plan`, `/floatty:pr-check`, `/floatty:sweep` slash commands encoding six-pattern bug taxonomy for systematic development hygiene
+
 ## [0.3.1] - 2026-01-12
 
 ### Bug Fixes
