@@ -1,8 +1,10 @@
 /**
  * Handler Registry Types
- * 
+ *
  * Shared types for the block handler system.
  */
+
+import type { SplitDirection, BlockNavigationResult, NavigationResult } from '../navigation';
 
 // ═══════════════════════════════════════════════════════════════
 // EXECUTOR ACTIONS
@@ -29,6 +31,39 @@ export interface ExecutorActions {
   getBlock?: (id: string) => unknown;
   /** Pane ID for scoping picker queries in split layouts */
   paneId?: string;
+
+  // ═══════════════════════════════════════════════════════════════
+  // NAVIGATION (for search::, pick::, and result views)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Navigate to a block by ID.
+   * Zooms the pane to show the block. Optionally creates a split.
+   */
+  navigateToBlock?: (
+    blockId: string,
+    options?: { splitDirection?: SplitDirection; highlight?: boolean; ephemeral?: boolean }
+  ) => BlockNavigationResult;
+
+  /**
+   * Navigate to a page by name.
+   * Creates the page if it doesn't exist.
+   */
+  navigateToPage?: (
+    pageName: string,
+    options?: { splitDirection?: SplitDirection; ephemeral?: boolean }
+  ) => NavigationResult;
+
+  /**
+   * Scroll a block into view without changing zoom.
+   * Returns true if block was found.
+   */
+  scrollToBlock?: (blockId: string) => boolean;
+
+  /**
+   * Highlight a block with brief animation.
+   */
+  highlightBlock?: (blockId: string) => void;
 }
 
 // ═══════════════════════════════════════════════════════════════

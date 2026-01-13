@@ -869,6 +869,28 @@ body.resizing .terminal-pane-positioned {
   outline-offset: -1px;
 }
 
+/* Block highlight animation (for search result navigation) */
+.block-highlight {
+  animation: block-highlight-pulse 1.5s ease-out;
+}
+
+.block-highlight .block-content {
+  outline: 2px solid var(--color-ansi-yellow);
+  outline-offset: -1px;
+}
+
+@keyframes block-highlight-pulse {
+  0% {
+    background: color-mix(in srgb, var(--color-ansi-yellow) 40%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--color-ansi-yellow) 25%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
 /* ================================================
    Status Bar
    ================================================ */

@@ -12,6 +12,12 @@ import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor rest
 import { registry, type DailyNoteData } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
+import {
+  navigateToBlock as navToBlock,
+  navigateToPage as navToPage,
+  scrollToBlock,
+  highlightBlock,
+} from '../lib/navigation';
 
 // Debounce delay for Y.Doc updates (ms)
 // Keeps typing responsive while reducing sync overhead
@@ -426,6 +432,13 @@ export function BlockItem(props: BlockItemProps) {
             setBlockStatus: store.setBlockStatus,
             getBlock: (id) => store.blocks[id],
             paneId: props.paneId,
+            // Navigation functions for search::, pick::, etc.
+            navigateToBlock: (blockId, options) =>
+              navToBlock(blockId, { paneId: props.paneId, ...options }),
+            navigateToPage: (pageName, options) =>
+              navToPage(pageName, { paneId: props.paneId, ...options }),
+            scrollToBlock: (blockId) => scrollToBlock(blockId, props.paneId),
+            highlightBlock: (blockId) => highlightBlock(blockId, props.paneId),
           }).catch(err => {
             console.error('[BlockItem] Handler execution failed:', err);
           });
