@@ -9,28 +9,28 @@ Phase 0: Event Infrastructure
 
 ## Current Work Unit
 
-**ID**: 0.3
-**Name**: ProjectionScheduler (batched async)
+**ID**: 0.4
+**Name**: Wire to Y.Doc observer
 **Status**: pending
-**Scope**: `src/lib/events`
+**Scope**: `src/lib/events`, `src/hooks/useBlockStore.ts`
 
 ### Entry Criteria
 
-- [ ] Understand EventBus pattern from 0.2
-- [ ] Review async batching requirements for search/index writes
-- [ ] Understand debounce timing from ydoc-patterns.md
+- [ ] Review current Y.Doc observer in useBlockStore.ts (lines 220-281)
+- [ ] Understand how to transform Y.Events to BlockEvents
+- [ ] Plan non-breaking integration (wrap, don't replace)
 
 ### Exit Criteria
 
-- [ ] `src/lib/events/projectionScheduler.ts` created
-- [ ] Queue-based batching with configurable flush interval
-- [ ] Async handler support with error isolation
+- [ ] `src/lib/events/ydocBridge.ts` created - transforms Y.Events to BlockEvents
+- [ ] EventBus and ProjectionScheduler receive events from Y.Doc
+- [ ] Existing useBlockStore behavior unchanged (wrap pattern)
 - [ ] `npx tsc --noEmit` passes
 
 ### Rollback
 
 ```bash
-git checkout HEAD -- src/lib/events/projectionScheduler.ts
+git checkout HEAD -- src/lib/events/ydocBridge.ts
 ```
 
 ### Modifications
@@ -44,6 +44,23 @@ git checkout HEAD -- src/lib/events/projectionScheduler.ts
 ---
 
 ## Completed Work Units
+
+### 0.3 ProjectionScheduler (batched async) ✓
+
+**Scope**: `src/lib/events`
+
+**Modifications**:
+- Created `src/lib/events/projectionScheduler.ts` - async batched event processing
+- Updated `src/lib/events/index.ts` - exports ProjectionScheduler, blockProjectionScheduler
+
+**Features**:
+- Queue-based batching with configurable flush interval (default 2s)
+- Max queue size protection (default 1000 events)
+- Parallel async projection execution
+- Error isolation per projection
+- Global `blockProjectionScheduler` singleton instance
+
+---
 
 ### 0.2 EventBus (sync pub/sub) ✓
 
@@ -82,7 +99,7 @@ git checkout HEAD -- src/lib/events/projectionScheduler.ts
 |----|------|--------|-----|
 | 0.1 | Event Types | complete | 30m |
 | 0.2 | EventBus (sync pub/sub) | complete | 1h |
-| 0.3 | ProjectionScheduler (batched async) | pending | 1h |
+| 0.3 | ProjectionScheduler (batched async) | complete | 1h |
 | 0.4 | Wire to Y.Doc observer | pending | 1h |
 | 0.5 | Tests + Phase Gate | pending | 1h |
 

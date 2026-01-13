@@ -25,3 +25,11 @@ export {
   blockEventBus,
   type SubscriptionOptions,
 } from './eventBus';
+
+// ProjectionScheduler (async batched)
+export {
+  ProjectionScheduler,
+  blockProjectionScheduler,
+  type ProjectionSchedulerOptions,
+  type ProjectionOptions,
+} from './projectionScheduler';
