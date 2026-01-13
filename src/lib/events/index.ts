@@ -1,0 +1,20 @@
+/**
+ * Event system for Floatty's two-lane architecture
+ *
+ * @module events
+ * @see docs/architecture/FLOATTY_HOOK_SYSTEM.md
+ */
+
+// Types
+export {
+  Origin,
+  type OriginType,
+  type BlockEventType,
+  type BlockChangeField,
+  type BlockEvent,
+  type EventEnvelope,
+  type SyncEventHandler,
+  type AsyncEventHandler,
+  type EventFilter,
+  EventFilters,
+} from './types';

@@ -9,27 +9,28 @@ Phase 0: Event Infrastructure
 
 ## Current Work Unit
 
-**ID**: 0.1
-**Name**: Event Types
+**ID**: 0.2
+**Name**: EventBus (sync pub/sub)
 **Status**: pending
 **Scope**: `src/lib/events`
 
 ### Entry Criteria
 
-- [ ] Located useBlockStore.ts
-- [ ] Understand current Y.Doc observer pattern
-- [ ] Read FLOATTY_HOOK_SYSTEM.md for context
+- [ ] Understand types from 0.1 (EventEnvelope, BlockEvent, Origin)
+- [ ] Review current Y.Doc observer in useBlockStore.ts
+- [ ] Understand priority conventions from FLOATTY_HOOK_SYSTEM.md
 
 ### Exit Criteria
 
-- [ ] `src/lib/events/types.ts` created with EventEnvelope, BlockEvent, Origin
-- [ ] `src/lib/events/index.ts` exports all types
-- [ ] `npm run type-check` passes
+- [ ] `src/lib/events/eventBus.ts` created with EventBus class
+- [ ] subscribe/unsubscribe/emit API
+- [ ] Priority-ordered handler execution
+- [ ] `npx tsc --noEmit` passes
 
 ### Rollback
 
 ```bash
-git checkout HEAD -- src/lib/events/
+git checkout HEAD -- src/lib/events/eventBus.ts
 ```
 
 ### Modifications
@@ -42,11 +43,28 @@ git checkout HEAD -- src/lib/events/
 
 ---
 
+## Completed Work Units
+
+### 0.1 Event Types ✓
+
+**Scope**: `src/lib/events`
+
+**Modifications**:
+- Created `src/lib/events/types.ts` - Origin, BlockEvent, EventEnvelope, filters
+- Created `src/lib/events/index.ts` - re-exports
+
+**Learnings**:
+- No `type-check` script exists; use `npx tsc --noEmit` directly
+- Y.Doc observer captures txOrigin from `events[0]?.transaction.origin`
+- Block event types match Y.Map actions: add→create, update→update, delete→delete
+
+---
+
 ## Work Units Queue
 
 | ID | Name | Status | Est |
 |----|------|--------|-----|
-| 0.1 | Event Types | pending | 30m |
+| 0.1 | Event Types | complete | 30m |
 | 0.2 | EventBus (sync pub/sub) | pending | 1h |
 | 0.3 | ProjectionScheduler (batched async) | pending | 1h |
 | 0.4 | Wire to Y.Doc observer | pending | 1h |
