@@ -778,7 +778,7 @@ export function BlockItem(props: BlockItemProps) {
               <Show when={block()?.outputType === 'search-results' && block()?.outputStatus === 'complete'}>
                 <SearchResultsView data={block()!.output as SearchResultsData} paneId={props.paneId} />
               </Show>
-              <Show when={block()?.outputType === 'search-error'}>
+              <Show when={block()?.outputType === 'search-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
                 <SearchErrorView data={block()!.output as SearchErrorData} />
               </Show>
             </div>
