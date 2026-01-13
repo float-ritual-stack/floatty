@@ -18,6 +18,16 @@ export interface ServerInfo {
   api_key: string;
 }
 
+/** State hash response for sync health check */
+export interface StateHashResponse {
+  /** SHA256 hash of full Y.Doc state */
+  hash: string;
+  /** Number of blocks in document */
+  blockCount: number;
+  /** Server timestamp (ms since epoch) */
+  timestamp: number;
+}
+
 /** HTTP client interface for Y.Doc sync */
 export interface FloattyHttpClient {
   /** Get full Y.Doc state from server */
@@ -28,6 +38,8 @@ export interface FloattyHttpClient {
   applyUpdate(update: Uint8Array, txId?: string): Promise<void>;
   /** Health check */
   isHealthy(): Promise<boolean>;
+  /** Get state hash for sync health check (lightweight) */
+  getStateHash(): Promise<StateHashResponse>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -122,6 +134,24 @@ class HttpClient implements FloattyHttpClient {
       console.error('[httpClient] Health check failed:', err);
       return false;
     }
+  }
+
+  async getStateHash(): Promise<StateHashResponse> {
+    const response = await fetch(`${this.url}/api/v1/state/hash`, {
+      method: 'GET',
+      headers: this.headers(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to get state hash: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      hash: data.hash,
+      blockCount: data.blockCount,
+      timestamp: data.timestamp,
+    };
   }
 }
 

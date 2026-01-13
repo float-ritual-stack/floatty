@@ -104,6 +104,38 @@ export function getSharedDoc(): Y.Doc {
   return sharedDoc;
 }
 
+/**
+ * Trigger a full resync from server.
+ * Fetches full Y.Doc state and applies it (idempotent - only new updates have effect).
+ * Used by sync health check when hash mismatch detected.
+ */
+export async function triggerFullResync(): Promise<void> {
+  if (!isClientInitialized()) {
+    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot trigger resync');
+    return;
+  }
+
+  console.log('[useSyncedYDoc] Triggering full resync from server');
+  const httpClient = getHttpClient();
+
+  try {
+    const serverState = await httpClient.getState();
+    if (serverState && serverState.length > 2) {
+      isApplyingRemoteGlobal = true;
+      Y.applyUpdate(sharedDoc, serverState, 'server-resync');
+      isApplyingRemoteGlobal = false;
+      console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied');
+    } else {
+      console.log('[useSyncedYDoc] Server state empty, nothing to apply');
+    }
+    setLastSyncError(null);
+  } catch (err) {
+    console.error('[useSyncedYDoc] Full resync failed:', err);
+    setLastSyncError(`Resync failed: ${String(err)}`);
+    throw err;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // SINGLETON Y.DOC
 // ═══════════════════════════════════════════════════════════════

@@ -12,6 +12,7 @@ import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { initHttpClient } from './lib/httpClient';
 import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
+import { useSyncHealth } from './hooks/useSyncHealth';
 import { registerHandlers } from './lib/handlers';
 import './App.css';
 
@@ -45,6 +46,9 @@ function App() {
   onMount(() => {
     registerHandlers();
   });
+
+  // Start sync health checking (polls every 30s, detects WS drift)
+  useSyncHealth();
 
   // Load saved theme and terminal config on startup (after server connected)
   onMount(async () => {
