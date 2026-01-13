@@ -923,11 +923,15 @@ async fn search_blocks(
                 let content = txn
                     .get_map("blocks")
                     .and_then(|blocks| blocks.get(&txn, &h.block_id))
-                    .and_then(|v| v.cast::<yrs::MapRef>().ok())
+                    .and_then(|v| match v {
+                        yrs::Out::YMap(block_map) => Some(block_map),
+                        _ => None,
+                    })
                     .and_then(|block_map| {
-                        block_map
-                            .get(&txn, "content")
-                            .and_then(|v| v.cast::<String>().ok())
+                        block_map.get(&txn, "content").and_then(|v| match v {
+                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            _ => None,
+                        })
                     })
                     .map(|c| {
                         // Truncate for display (first 200 chars - enough for wikilinks)
