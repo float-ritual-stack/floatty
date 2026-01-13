@@ -45,6 +45,13 @@ export class HandlerRegistry {
   getRegisteredPrefixes(): string[] {
     return this.handlers.flatMap(h => h.prefixes);
   }
+
+  /**
+   * Clear all handlers (for HMR cleanup)
+   */
+  clear(): void {
+    this.handlers = [];
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -50,3 +50,15 @@ export function registerHandlers(): void {
 export function isExecutableBlock(content: string): boolean {
   return registry.isExecutableBlock(content);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// HMR CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    console.log('[handlers] HMR cleanup - resetting registration');
+    handlersRegistered = false;
+    registry.clear();
+  });
+}

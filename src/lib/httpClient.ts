@@ -179,25 +179,29 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
 
   // Start initialization
   initPromise = (async () => {
-    // Get server info from Tauri (contains URL and API key)
-    const serverInfo = await invoke('get_server_info', {});
-    const client = new HttpClient(serverInfo);
+    try {
+      // Get server info from Tauri (contains URL and API key)
+      const serverInfo = await invoke('get_server_info', {});
+      const client = new HttpClient(serverInfo);
 
-    // Store URL globally for WebSocket connection
-    window.__FLOATTY_SERVER_URL__ = serverInfo.url;
+      // Store URL globally for WebSocket connection
+      window.__FLOATTY_SERVER_URL__ = serverInfo.url;
 
-    // Verify connection before committing to this client
-    const healthy = await client.isHealthy();
-    if (!healthy) {
-      // Clear promise so retry is possible
+      // Verify connection before committing to this client
+      const healthy = await client.isHealthy();
+      if (!healthy) {
+        throw new Error('Server health check failed');
+      }
+
+      // Only set instance after successful health check
+      clientInstance = client;
+      console.log(`[httpClient] Connected to floatty-server at ${serverInfo.url}`);
+      return clientInstance;
+    } catch (err) {
+      // Clear promise AFTER rejection propagates (prevents race with concurrent callers)
       initPromise = null;
-      throw new Error('Server health check failed');
+      throw err;
     }
-
-    // Only set instance after successful health check
-    clientInstance = client;
-    console.log(`[httpClient] Connected to floatty-server at ${serverInfo.url}`);
-    return clientInstance;
   })();
 
   return initPromise;
@@ -218,4 +222,16 @@ export function getHttpClient(): FloattyHttpClient {
  */
 export function isClientInitialized(): boolean {
   return clientInstance !== null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HMR CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    console.log('[httpClient] HMR cleanup');
+    clientInstance = null;
+    initPromise = null;
+  });
 }

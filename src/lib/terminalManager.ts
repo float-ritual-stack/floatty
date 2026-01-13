@@ -733,42 +733,46 @@ class TerminalManager {
     // Mark as disposing BEFORE kill - prevents onExit callback from triggering closePane
     this.disposing.add(id);
 
-    // Guard: Only attempt PTY operations for valid PIDs (excludes sentinels: -1, -999)
-    if (instance.ptyPid !== null && instance.ptyPid > 0) {
-      if (instance.exitedNaturally) {
-        // PTY already exited - just clean up Rust session map
-        try {
-          await invoke('plugin:pty|dispose', { pid: instance.ptyPid });
-        } catch (e) {
-          console.warn(`[TerminalManager] PTY dispose failed for ${id}:`, e);
-        }
-      } else {
-        // PTY still running - kill it (onExit callback will fire but check disposing flag)
-        console.log(`[TerminalManager] About to invoke plugin:pty|kill for ${id} (pid=${instance.ptyPid})`);
-        try {
-          await invoke('plugin:pty|kill', { pid: instance.ptyPid });
-          console.log(`[TerminalManager] plugin:pty|kill completed successfully for ${id}`);
-        } catch (e) {
-          console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
+    try {
+      // Guard: Only attempt PTY operations for valid PIDs (excludes sentinels: -1, -999)
+      if (instance.ptyPid !== null && instance.ptyPid > 0) {
+        if (instance.exitedNaturally) {
+          // PTY already exited - just clean up Rust session map
+          try {
+            await invoke('plugin:pty|dispose', { pid: instance.ptyPid });
+          } catch (e) {
+            console.warn(`[TerminalManager] PTY dispose failed for ${id}:`, e);
+          }
+        } else {
+          // PTY still running - kill it (onExit callback will fire but check disposing flag)
+          console.log(`[TerminalManager] About to invoke plugin:pty|kill for ${id} (pid=${instance.ptyPid})`);
+          try {
+            await invoke('plugin:pty|kill', { pid: instance.ptyPid });
+            console.log(`[TerminalManager] plugin:pty|kill completed successfully for ${id}`);
+          } catch (e) {
+            console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
+          }
         }
       }
-    }
 
-    // Dispose WebGL addon first to free context
-    if (instance.webglAddon) {
-      try {
-        instance.webglAddon.dispose();
-      } catch (e) {
-        console.warn(`[TerminalManager] WebGL dispose failed during cleanup for ${id}:`, e);
+      // Dispose WebGL addon first to free context
+      if (instance.webglAddon) {
+        try {
+          instance.webglAddon.dispose();
+        } catch (e) {
+          console.warn(`[TerminalManager] WebGL dispose failed during cleanup for ${id}:`, e);
+        }
       }
-    }
 
-    instance.term.dispose();
-    this.instances.delete(id);
-    this.callbacks.delete(id);
-    this.seenMarkers.delete(id);
-    // Note: savedScrollPositions already cleared at line 731
-    this.disposing.delete(id);
+      instance.term.dispose();
+      this.instances.delete(id);
+      this.callbacks.delete(id);
+      this.seenMarkers.delete(id);
+      // Note: savedScrollPositions already cleared at line 731
+    } finally {
+      // Always clear disposing flag, even if cleanup threw
+      this.disposing.delete(id);
+    }
   }
 
   /**
@@ -958,3 +962,27 @@ class TerminalManager {
 
 // Singleton - lives outside React
 export const terminalManager = new TerminalManager();
+
+// ═══════════════════════════════════════════════════════════════
+// HMR CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    console.log('[terminalManager] HMR cleanup');
+    // Dispose all terminal instances
+    for (const [id] of terminalManager['instances']) {
+      try {
+        // Can't await in dispose callback, so just try sync cleanup
+        terminalManager['instances'].get(id)?.term.dispose();
+      } catch {
+        // Ignore errors during HMR cleanup
+      }
+    }
+    terminalManager['instances'].clear();
+    terminalManager['disposing'].clear();
+    terminalManager['callbacks'].clear();
+    terminalManager['seenMarkers'].clear();
+    terminalManager['savedScrollPositions'].clear();
+  });
+}

@@ -30,6 +30,10 @@ const [consecutiveMismatches, setConsecutiveMismatches] = createSignal(0);
 const [lastCheckTime, setLastCheckTime] = createSignal<number | null>(null);
 const [isResyncing, setIsResyncing] = createSignal(false);
 
+// Module-level timer refs for HMR cleanup
+let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+let initialDelayTimeout: ReturnType<typeof setTimeout> | null = null;
+
 /** Get consecutive mismatch count (reactive) */
 export const getConsecutiveMismatches = consecutiveMismatches;
 
@@ -55,8 +59,8 @@ async function computeLocalHash(): Promise<string> {
   const state = Y.encodeStateAsUpdate(doc);
 
   // Use SubtleCrypto for SHA-256 (browser API)
-  // Need to get the underlying ArrayBuffer for crypto.subtle
-  const hashBuffer = await crypto.subtle.digest('SHA-256', state.buffer);
+  // Uint8Array is a valid BufferSource - pass directly (state.buffer could have wrong offset)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', state);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
@@ -137,18 +141,40 @@ async function performHealthCheck(): Promise<void> {
 export function useSyncHealth(): void {
   createEffect(() => {
     // Initial check after a short delay (let WS connect first)
-    const initialDelay = setTimeout(() => {
+    initialDelayTimeout = setTimeout(() => {
       performHealthCheck();
     }, 5000);
 
     // Periodic checks
-    const interval = setInterval(() => {
+    healthCheckInterval = setInterval(() => {
       performHealthCheck();
     }, POLL_INTERVAL);
 
     onCleanup(() => {
-      clearTimeout(initialDelay);
-      clearInterval(interval);
+      if (initialDelayTimeout) clearTimeout(initialDelayTimeout);
+      if (healthCheckInterval) clearInterval(healthCheckInterval);
     });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HMR CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    console.log('[useSyncHealth] HMR cleanup');
+    if (healthCheckInterval) {
+      clearInterval(healthCheckInterval);
+      healthCheckInterval = null;
+    }
+    if (initialDelayTimeout) {
+      clearTimeout(initialDelayTimeout);
+      initialDelayTimeout = null;
+    }
+    // Reset signals to clean state
+    setConsecutiveMismatches(0);
+    setLastCheckTime(null);
+    setIsResyncing(false);
   });
 }
