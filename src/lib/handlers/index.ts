@@ -29,6 +29,7 @@ export type {
   SearchResult,
   SearchResultsData,
   SearchErrorData,
+  PathSegment,
 } from './search';
 
 // Guard against duplicate registration (HMR in dev can trigger multiple calls)

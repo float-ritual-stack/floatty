@@ -1502,6 +1502,25 @@ body.resizing .terminal-pane-positioned {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+}
+
+.search-path-segment {
+  cursor: pointer;
+  color: var(--color-fg-muted);
+  transition: color 0.1s ease;
+}
+
+.search-path-segment:hover {
+  color: var(--color-ansi-cyan);
+  text-decoration: underline;
+}
+
+.search-path-separator {
+  color: var(--color-fg-muted);
+  opacity: 0.5;
+  user-select: none;
 }
 
 .search-result-content {

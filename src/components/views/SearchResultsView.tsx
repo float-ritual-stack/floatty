@@ -7,12 +7,11 @@
  * @see docs/handoffs/search-plugin-spec.md
  */
 
-import { For, Show } from 'solid-js';
-import type { SearchResultsData, SearchResult, SearchErrorData } from '../../lib/handlers/search';
+import { For, Show, Index } from 'solid-js';
+import type { SearchResultsData, SearchResult, SearchErrorData, PathSegment } from '../../lib/handlers/search';
 import { truncateContent } from '../../lib/handlers/search';
 import {
   navigateToBlock,
-  highlightBlock,
   type SplitDirection,
 } from '../../lib/navigation';
 
@@ -81,6 +80,26 @@ function SearchResultItem(props: {
     }
   };
 
+  /**
+   * Handle click on a path segment to navigate to that parent block
+   */
+  const handlePathSegmentClick = (segment: PathSegment, e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const modifiers = getModifiers(e);
+    let splitDirection: SplitDirection = 'none';
+    if (modifiers.modKey) {
+      splitDirection = modifiers.shiftKey ? 'vertical' : 'horizontal';
+    }
+
+    navigateToBlock(segment.blockId, {
+      paneId: props.paneId,
+      splitDirection,
+      highlight: true,
+    });
+  };
+
   return (
     <div
       class="search-result-item"
@@ -90,8 +109,23 @@ function SearchResultItem(props: {
       onKeyDown={handleKeyDown}
     >
       <div class="search-result-main">
-        <Show when={props.result.parentPath}>
-          <div class="search-result-path">{props.result.parentPath}</div>
+        <Show when={props.result.parentPath && props.result.parentPath.length > 0}>
+          <div class="search-result-path">
+            <Index each={props.result.parentPath}>
+              {(segment, index) => (
+                <>
+                  {index > 0 && <span class="search-path-separator"> › </span>}
+                  <span
+                    class="search-path-segment"
+                    onClick={(e) => handlePathSegmentClick(segment(), e)}
+                    title={`Navigate to: ${segment().label}`}
+                  >
+                    {segment().label}
+                  </span>
+                </>
+              )}
+            </Index>
+          </div>
         </Show>
         <div class="search-result-content">
           <Show when={props.result.blockType}>

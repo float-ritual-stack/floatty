@@ -26,6 +26,12 @@ export interface SearchHit {
   score: number;
 }
 
+/** Clickable segment in parent path breadcrumb */
+export interface PathSegment {
+  blockId: string;
+  label: string;
+}
+
 /** Hydrated search result (with block content) */
 export interface SearchResult {
   blockId: string;
@@ -33,8 +39,8 @@ export interface SearchResult {
   score: number;
   /** Block type (text, sh, ai, ctx, etc.) */
   blockType?: string;
-  /** Parent path for context (e.g., "Project Notes > Meeting") */
-  parentPath?: string;
+  /** Parent path segments for context (clickable breadcrumb) */
+  parentPath?: PathSegment[];
 }
 
 /** Search results data for view */
@@ -132,9 +138,10 @@ interface HydratableBlock {
 
 /**
  * Build parent path by walking up the tree (max 3 ancestors)
+ * Returns array of PathSegment for clickable breadcrumb
  */
-function buildParentPath(blockId: string, getBlock: (id: string) => unknown): string | undefined {
-  const ancestors: string[] = [];
+function buildParentPath(blockId: string, getBlock: (id: string) => unknown): PathSegment[] | undefined {
+  const ancestors: PathSegment[] = [];
   let currentId = blockId;
   let depth = 0;
   const maxDepth = 3;
@@ -152,14 +159,17 @@ function buildParentPath(blockId: string, getBlock: (id: string) => unknown): st
     const label = firstLine.length > 30 ? firstLine.slice(0, 27) + '...' : firstLine;
 
     if (label) {
-      ancestors.unshift(label);
+      ancestors.unshift({
+        blockId: block.parentId,
+        label,
+      });
     }
 
     currentId = block.parentId;
     depth++;
   }
 
-  return ancestors.length > 0 ? ancestors.join(' › ') : undefined;
+  return ancestors.length > 0 ? ancestors : undefined;
 }
 
 /**
