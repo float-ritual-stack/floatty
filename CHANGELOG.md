@@ -2,6 +2,29 @@
 
 All notable changes to floatty are documented here.
 
+## [0.4.0] - 2026-01-13
+
+### New Features
+
+- **search:: handler** - Inline search results view with score-ranked hits, clickable navigation to blocks
+- **pick:: handler** - Interactive fzf-style fuzzy picker for block selection (uses $tv pattern)
+- **Multi-turn conversations** (FLO-200) - Role inference (user/assistant/system prefixes), context directives, conversation tree walking for ai:: blocks
+- **JS console logging** - `console.log/warn/error` bridged to Rust tracing via `[target]` prefix parsing
+
+### Bug Fixes
+
+- **ContentEditable cursor offset** (PR #84) - Fixed multi-line offset calculation to count `<div>` boundaries as newlines, preventing block split corruption
+- **UTF-8 truncation** - Search results use char-safe truncation (200 chars) instead of byte slicing
+- **CSS variables** - Added `--color-bg-secondary`, `--color-bg-hover`, `--color-fg-dimmed` for search UI theming
+- **Picker resize** - Added ResizeObserver for dynamic terminal sizing in picker overlay
+
+### Documentation
+
+- Added FLO-200 multi-turn conversation architecture spec
+- Added contentEditable patterns rule (cursor offset edge cases)
+
+---
+
 ## [0.3.2] - 2026-01-13
 
 ### Bug Fixes
