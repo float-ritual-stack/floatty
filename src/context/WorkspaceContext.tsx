@@ -111,6 +111,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           setBlockOutput: store.setBlockOutput,
           setBlockStatus: store.setBlockStatus,
           getBlock: store.getBlock,
+          getParentId: (id: string) => store.getBlock(id)?.parentId ?? undefined,
+          getChildren: (id: string) => store.getBlock(id)?.childIds ?? [],
         }).catch(err => {
           console.error('[AutoExecute] Handler execution failed:', err);
         });
