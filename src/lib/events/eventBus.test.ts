@@ -117,6 +117,55 @@ describe('EventBus', () => {
 
       expect(handler).not.toHaveBeenCalled();
     });
+
+    it('handles unsubscribe during emit without skipping handlers', () => {
+      const order: number[] = [];
+      let id2: string;
+
+      // Handler 1 unsubscribes handler 2 during emit
+      bus.subscribe(() => {
+        order.push(1);
+        bus.unsubscribe(id2);
+      }, { priority: 0 });
+
+      id2 = bus.subscribe(() => {
+        order.push(2);
+      }, { priority: 50 });
+
+      bus.subscribe(() => {
+        order.push(3);
+      }, { priority: 100 });
+
+      bus.emit(createTestEnvelope());
+
+      // All handlers should still run (snapshot prevents skip)
+      expect(order).toEqual([1, 2, 3]);
+    });
+
+    it('handles subscribe during emit without adding to current batch', () => {
+      const order: number[] = [];
+
+      bus.subscribe(() => {
+        order.push(1);
+        // Subscribe new handler during emit
+        bus.subscribe(() => {
+          order.push(99);
+        }, { priority: 50 });
+      }, { priority: 0 });
+
+      bus.subscribe(() => {
+        order.push(2);
+      }, { priority: 100 });
+
+      bus.emit(createTestEnvelope());
+
+      // New handler should NOT run in current emit (snapshot was taken before)
+      expect(order).toEqual([1, 2]);
+
+      // But should run on next emit
+      bus.emit(createTestEnvelope());
+      expect(order).toEqual([1, 2, 1, 99, 2]);
+    });
   });
 
   describe('priority ordering', () => {

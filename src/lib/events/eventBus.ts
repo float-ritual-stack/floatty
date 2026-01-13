@@ -140,7 +140,9 @@ export class EventBus {
    * @param envelope - Event envelope containing block events
    */
   emit(envelope: EventEnvelope): void {
-    for (const subscription of this.subscriptions) {
+    // Snapshot subscriptions to prevent mutation during iteration
+    const subscriptions = [...this.subscriptions];
+    for (const subscription of subscriptions) {
       try {
         // Check filter for each event in the envelope
         const matchingEvents = subscription.filter
