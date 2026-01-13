@@ -121,9 +121,12 @@ export async function triggerFullResync(): Promise<void> {
   try {
     const serverState = await httpClient.getState();
     if (serverState && serverState.length > 2) {
-      isApplyingRemoteGlobal = true;
-      Y.applyUpdate(sharedDoc, serverState, 'server-resync');
-      isApplyingRemoteGlobal = false;
+      try {
+        isApplyingRemoteGlobal = true;
+        Y.applyUpdate(sharedDoc, serverState, 'server-resync');
+      } finally {
+        isApplyingRemoteGlobal = false;
+      }
       console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied');
     } else {
       console.log('[useSyncedYDoc] Server state empty, nothing to apply');
