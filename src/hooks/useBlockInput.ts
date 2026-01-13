@@ -326,6 +326,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
             setBlockStatus: store.setBlockStatus,
             getBlock: store.getBlock,
             paneId: deps.paneId,
+          }).catch(err => {
+            console.error('[useBlockInput] Handler execution failed:', err);
           });
         }
         return;

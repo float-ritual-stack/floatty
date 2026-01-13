@@ -2,6 +2,8 @@
 //!
 //! Core sync endpoints:
 //! - GET /api/v1/state - Full Y.Doc state (base64)
+//! - GET /api/v1/state-vector - State vector for reconciliation
+//! - GET /api/v1/state/hash - SHA256 hash for sync health check
 //! - POST /api/v1/update - Apply Y.Doc update
 //! - GET /api/v1/health - Health check
 //!
@@ -22,7 +24,9 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use floatty_core::{events::BlockChange, HookSystem, Origin, PageNameIndex, SearchFilters, SearchService, YDocStore};
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
 use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
@@ -54,6 +58,18 @@ pub struct StateResponse {
 #[derive(Serialize)]
 pub struct StateVectorResponse {
     pub state_vector: String, // base64 encoded Y.Doc state vector
+}
+
+/// State hash response (for sync health check)
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StateHashResponse {
+    /// SHA256 hash of the full Y.Doc state
+    pub hash: String,
+    /// Number of blocks in the document
+    pub block_count: usize,
+    /// Server timestamp (ms since epoch)
+    pub timestamp: u128,
 }
 
 /// Apply update request
@@ -168,6 +184,7 @@ pub fn create_router(
         .route("/api/v1/health", get(health))
         .route("/api/v1/state", get(get_state))
         .route("/api/v1/state-vector", get(get_state_vector))
+        .route("/api/v1/state/hash", get(get_state_hash))
         .route("/api/v1/update", post(apply_update))
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
@@ -205,6 +222,39 @@ async fn get_state_vector(State(state): State<AppState>) -> Result<Json<StateVec
     let sv = state.store.get_state_vector()?;
     Ok(Json(StateVectorResponse {
         state_vector: BASE64.encode(sv),
+    }))
+}
+
+/// GET /api/v1/state/hash - Lightweight hash for sync health check
+///
+/// Returns SHA256 hash of the Y.Doc state plus block count.
+/// Clients poll this periodically; if hash mismatches local, trigger full resync.
+async fn get_state_hash(State(state): State<AppState>) -> Result<Json<StateHashResponse>, ApiError> {
+    let full_state = state.store.get_full_state()?;
+
+    // Compute SHA256 hash
+    let mut hasher = Sha256::new();
+    hasher.update(&full_state);
+    let hash = format!("{:x}", hasher.finalize());
+
+    // Count blocks
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+    let block_count = txn
+        .get_map("blocks")
+        .map(|m| m.len(&txn) as usize)
+        .unwrap_or(0);
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    Ok(Json(StateHashResponse {
+        hash,
+        block_count,
+        timestamp,
     }))
 }
 
@@ -902,6 +952,26 @@ mod tests {
         let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
         let health: HealthResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(health.status, "ok");
+    }
+
+    #[tokio::test]
+    async fn test_state_hash_endpoint() {
+        let (app, _dir, _store) = test_app();
+
+        let response = app
+            .oneshot(Request::get("/api/v1/state/hash").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let hash_resp: StateHashResponse = serde_json::from_slice(&body).unwrap();
+
+        // SHA256 hash should be 64 hex characters
+        assert_eq!(hash_resp.hash.len(), 64, "Hash should be 64 hex chars");
+        // Timestamp should be reasonable (after year 2024)
+        assert!(hash_resp.timestamp > 1_700_000_000_000, "Timestamp should be recent");
     }
 
     #[tokio::test]

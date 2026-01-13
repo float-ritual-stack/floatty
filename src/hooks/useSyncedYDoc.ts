@@ -104,6 +104,41 @@ export function getSharedDoc(): Y.Doc {
   return sharedDoc;
 }
 
+/**
+ * Trigger a full resync from server.
+ * Fetches full Y.Doc state and applies it (idempotent - only new updates have effect).
+ * Used by sync health check when hash mismatch detected.
+ */
+export async function triggerFullResync(): Promise<void> {
+  if (!isClientInitialized()) {
+    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot trigger resync');
+    return;
+  }
+
+  console.log('[useSyncedYDoc] Triggering full resync from server');
+  const httpClient = getHttpClient();
+
+  try {
+    const serverState = await httpClient.getState();
+    if (serverState && serverState.length > 2) {
+      try {
+        isApplyingRemoteGlobal = true;
+        Y.applyUpdate(sharedDoc, serverState, 'server-resync');
+      } finally {
+        isApplyingRemoteGlobal = false;
+      }
+      console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied');
+    } else {
+      console.log('[useSyncedYDoc] Server state empty, nothing to apply');
+    }
+    setLastSyncError(null);
+  } catch (err) {
+    console.error('[useSyncedYDoc] Full resync failed:', err);
+    setLastSyncError(`Resync failed: ${String(err)}`);
+    throw err;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // SINGLETON Y.DOC
 // ═══════════════════════════════════════════════════════════════
@@ -788,4 +823,75 @@ export function useSyncedYDoc(
     canRedo,
     clearUndoStack,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HMR CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Clean up module-level state for HMR.
+ * Preserves Y.Doc data but closes connections and resets flags.
+ */
+function cleanupForHMR(): void {
+  console.log('[useSyncedYDoc] HMR cleanup triggered');
+
+  // Close WebSocket cleanly (prevent reconnect attempt)
+  if (sharedWebSocket) {
+    sharedWebSocket.onclose = null; // Prevent reconnect trigger
+    sharedWebSocket.onerror = null;
+    sharedWebSocket.onmessage = null;
+    sharedWebSocket.close();
+    sharedWebSocket = null;
+  }
+
+  // Clear all timers
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  if (sharedSyncTimer) {
+    clearTimeout(sharedSyncTimer);
+    sharedSyncTimer = null;
+  }
+  if (backupTimer) {
+    clearTimeout(backupTimer);
+    backupTimer = null;
+  }
+
+  // Remove Y.Doc update handler if attached
+  if (moduleUpdateHandler) {
+    sharedDoc.off('update', moduleUpdateHandler);
+    moduleUpdateHandler = null;
+  }
+
+  // Reset module-level flags
+  sharedDocLoaded = false;
+  sharedDocError = null;
+  sharedDocLoadPromise = null;
+  sharedIsFlushing = false;
+  sharedRetryCount = 0;
+  isApplyingRemoteGlobal = false;
+
+  // Reset WebSocket state
+  wsReadyForMessages = true;
+  wsMessageBuffer = [];
+  wsConnectionId = 0;
+  wsRetryCount = 0;
+
+  // Reset handler tracking
+  handlerRefCount = 0;
+  txIdCounter = 0;
+
+  // Clear collections
+  sharedPendingUpdates = [];
+  recentTxIds.clear();
+
+  // Note: sharedDoc and sharedUndoManager are NOT cleared
+  // - Y.Doc holds the actual CRDT data we want to preserve
+  // - UndoManager can stay attached (cleared on next load if needed)
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(cleanupForHMR);
 }

@@ -18,6 +18,16 @@ export interface ServerInfo {
   api_key: string;
 }
 
+/** State hash response for sync health check */
+export interface StateHashResponse {
+  /** SHA256 hash of full Y.Doc state */
+  hash: string;
+  /** Number of blocks in document */
+  blockCount: number;
+  /** Server timestamp (ms since epoch) */
+  timestamp: number;
+}
+
 /** HTTP client interface for Y.Doc sync */
 export interface FloattyHttpClient {
   /** Get full Y.Doc state from server */
@@ -28,6 +38,8 @@ export interface FloattyHttpClient {
   applyUpdate(update: Uint8Array, txId?: string): Promise<void>;
   /** Health check */
   isHealthy(): Promise<boolean>;
+  /** Get state hash for sync health check (lightweight) */
+  getStateHash(): Promise<StateHashResponse>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -123,6 +135,24 @@ class HttpClient implements FloattyHttpClient {
       return false;
     }
   }
+
+  async getStateHash(): Promise<StateHashResponse> {
+    const response = await fetch(`${this.url}/api/v1/state/hash`, {
+      method: 'GET',
+      headers: this.headers(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to get state hash: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      hash: data.hash,
+      blockCount: data.blockCount,
+      timestamp: data.timestamp,
+    };
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -149,25 +179,29 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
 
   // Start initialization
   initPromise = (async () => {
-    // Get server info from Tauri (contains URL and API key)
-    const serverInfo = await invoke('get_server_info', {});
-    const client = new HttpClient(serverInfo);
+    try {
+      // Get server info from Tauri (contains URL and API key)
+      const serverInfo = await invoke('get_server_info', {});
+      const client = new HttpClient(serverInfo);
 
-    // Store URL globally for WebSocket connection
-    window.__FLOATTY_SERVER_URL__ = serverInfo.url;
+      // Store URL globally for WebSocket connection
+      window.__FLOATTY_SERVER_URL__ = serverInfo.url;
 
-    // Verify connection before committing to this client
-    const healthy = await client.isHealthy();
-    if (!healthy) {
-      // Clear promise so retry is possible
+      // Verify connection before committing to this client
+      const healthy = await client.isHealthy();
+      if (!healthy) {
+        throw new Error('Server health check failed');
+      }
+
+      // Only set instance after successful health check
+      clientInstance = client;
+      console.log(`[httpClient] Connected to floatty-server at ${serverInfo.url}`);
+      return clientInstance;
+    } catch (err) {
+      // Clear promise AFTER rejection propagates (prevents race with concurrent callers)
       initPromise = null;
-      throw new Error('Server health check failed');
+      throw err;
     }
-
-    // Only set instance after successful health check
-    clientInstance = client;
-    console.log(`[httpClient] Connected to floatty-server at ${serverInfo.url}`);
-    return clientInstance;
   })();
 
   return initPromise;
@@ -188,4 +222,16 @@ export function getHttpClient(): FloattyHttpClient {
  */
 export function isClientInitialized(): boolean {
   return clientInstance !== null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HMR CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    console.log('[httpClient] HMR cleanup');
+    clientInstance = null;
+    initPromise = null;
+  });
 }
