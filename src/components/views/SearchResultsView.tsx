@@ -34,21 +34,27 @@ function formatScore(score: number): string {
 }
 
 /**
+ * Extract modifier keys from mouse or keyboard event
+ */
+function getModifiers(e: MouseEvent | KeyboardEvent): { modKey: boolean; shiftKey: boolean } {
+  const modKey = isMac ? e.metaKey : e.ctrlKey;
+  return { modKey, shiftKey: e.shiftKey };
+}
+
+/**
  * Individual search result item
  */
 function SearchResultItem(props: {
   result: SearchResult;
   paneId: string;
 }) {
-  const handleClick = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const modKey = isMac ? e.metaKey : e.ctrlKey;
-
+  /**
+   * Navigate to the result block with optional split based on modifiers
+   */
+  const navigateToResult = (modifiers: { modKey: boolean; shiftKey: boolean }) => {
     let splitDirection: SplitDirection = 'none';
-    if (modKey) {
-      splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
+    if (modifiers.modKey) {
+      splitDirection = modifiers.shiftKey ? 'vertical' : 'horizontal';
     }
 
     const result = navigateToBlock(props.result.blockId, {
@@ -62,17 +68,26 @@ function SearchResultItem(props: {
     }
   };
 
+  const handleClick = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigateToResult(getModifiers(e));
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      navigateToResult(getModifiers(e));
+    }
+  };
+
   return (
     <div
       class="search-result-item"
       onClick={handleClick}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          handleClick(e as unknown as MouseEvent);
-        }
-      }}
+      onKeyDown={handleKeyDown}
     >
       <div class="search-result-content">
         <Show when={props.result.blockType}>
