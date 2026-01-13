@@ -27,6 +27,10 @@ export interface ExecutorActions {
   setBlockStatus?: (id: string, status: 'idle' | 'running' | 'complete' | 'error') => void;
   /** Get block by ID (for reading state) */
   getBlock?: (id: string) => unknown;
+  /** Get parent block ID (for tree navigation in conversation handler) */
+  getParentId?: (id: string) => string | undefined;
+  /** Get child block IDs (for tree navigation in conversation handler) */
+  getChildren?: (id: string) => string[];
   /** Pane ID for scoping picker queries in split layouts */
   paneId?: string;
 }

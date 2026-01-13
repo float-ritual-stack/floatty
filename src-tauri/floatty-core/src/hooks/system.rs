@@ -192,6 +192,21 @@ impl HookSystem {
     pub fn emit_change(&self, change: BlockChange) -> Result<usize, crate::emitter::EmitError> {
         self.emitter.emit(change)
     }
+
+    /// Clear all documents from the search index.
+    ///
+    /// Use when Y.Doc is cleared to avoid stale index entries.
+    /// Uses sync variants to ensure changes are visible before returning.
+    /// Returns Ok(()) if successful or search is disabled.
+    pub async fn clear_search_index(&self) -> Result<(), SearchError> {
+        if let Some(writer) = &self.writer_handle {
+            // Use sync variants to wait for actor completion
+            writer.clear_all_sync().await?;
+            writer.commit_sync().await?;
+            info!("Search index cleared");
+        }
+        Ok(())
+    }
 }
 
 /// Spawn a periodic commit task for the search index.

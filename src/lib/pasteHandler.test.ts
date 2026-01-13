@@ -15,7 +15,8 @@ function createMockActions(): PasteActions & { blocks: Map<string, { content: st
   return {
     blocks,
     getBlock: (id) => blocks.get(id),
-    createBlockAfter: vi.fn((afterId) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    createBlockAfter: vi.fn((_afterId) => {
       const newId = `block-${++idCounter}`;
       blocks.set(newId, { content: '', parentId: null, childIds: [] });
       return newId;

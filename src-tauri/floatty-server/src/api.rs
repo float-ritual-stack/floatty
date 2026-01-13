@@ -195,6 +195,7 @@ pub fn create_router(
         // Search endpoints
         .route("/api/v1/pages/search", get(search_pages))
         .route("/api/v1/search", get(search_blocks))
+        .route("/api/v1/search/clear", post(clear_search_index))
         .with_state(state)
 }
 
@@ -848,10 +849,13 @@ fn default_search_limit() -> usize {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockSearchHit {
-    /// Block ID - hydrate full block from Y.Doc using this
+    /// Block ID
     pub block_id: String,
     /// Relevance score (higher = more relevant)
     pub score: f32,
+    /// Block content (truncated for display)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
 }
 
 /// Full-text search response
@@ -906,15 +910,63 @@ async fn search_blocks(
         .map_err(|e| ApiError::Search(e.to_string()))?;
 
     let total = hits.len();
-    let hits: Vec<BlockSearchHit> = hits
-        .into_iter()
-        .map(|h| BlockSearchHit {
-            block_id: h.block_id,
-            score: h.score,
-        })
-        .collect();
+
+    // Hydrate content from Y.Doc for each hit
+    let hits: Vec<BlockSearchHit> = {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
+
+        hits.into_iter()
+            .map(|h| {
+                // Look up content from Y.Doc
+                let content = txn
+                    .get_map("blocks")
+                    .and_then(|blocks| blocks.get(&txn, &h.block_id))
+                    .and_then(|v| match v {
+                        yrs::Out::YMap(block_map) => Some(block_map),
+                        _ => None,
+                    })
+                    .and_then(|block_map| {
+                        block_map.get(&txn, "content").and_then(|v| match v {
+                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            _ => None,
+                        })
+                    })
+                    .map(|c| {
+                        // Truncate for display (first 200 chars - enough for wikilinks)
+                        // Use char boundary to avoid splitting UTF-8 multi-byte characters
+                        if c.chars().count() > 200 {
+                            let truncated: String = c.chars().take(200).collect();
+                            format!("{}...", truncated)
+                        } else {
+                            c
+                        }
+                    });
+
+                BlockSearchHit {
+                    block_id: h.block_id,
+                    score: h.score,
+                    content,
+                }
+            })
+            .collect()
+    };
 
     Ok(Json(BlockSearchResponse { hits, total }))
+}
+
+/// POST /api/v1/search/clear - Clear all documents from search index
+///
+/// Use when Y.Doc is cleared to remove stale index entries.
+async fn clear_search_index(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
+    state
+        .hook_system
+        .clear_search_index()
+        .await
+        .map_err(|e| ApiError::Search(format!("Failed to clear: {}", e)))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

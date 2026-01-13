@@ -795,6 +795,8 @@ class TerminalManager {
    * @param container - DOM element to render xterm into
    * @param command - Full command to execute (e.g., 'tv files --no-remote')
    * @param _onData - DEPRECATED: Capture now happens in Rust. Kept for API compat.
+   * @param cwd - Working directory for the command
+   * @param extraEnv - Additional environment variables to pass to the command
    * @returns Promise that resolves with exit code and captured output when command completes
    */
   async spawnInteractivePicker(
@@ -802,7 +804,8 @@ class TerminalManager {
     container: HTMLElement,
     command: string,
     _onData?: (data: string) => void,
-    cwd?: string
+    cwd?: string,
+    extraEnv?: Record<string, string>
   ): Promise<{ exitCode: number; output?: string }> {
     // Ensure config is loaded
     await this.loadConfig();
@@ -834,7 +837,66 @@ class TerminalManager {
     // WebGL contexts are limited. Canvas renderer is fine for short-lived pickers.
     console.log('[TerminalManager] Picker using canvas renderer (skipping WebGL)');
 
-    fitAddon.fit();
+    // Wait for CSS layout to stabilize before fitting
+    // The picker-block uses display:none → display:flex via :has() selector
+    // which needs a repaint cycle before container has proper dimensions
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          fitAddon.fit();
+          console.log('[TerminalManager] Picker fit after layout:', { cols: term.cols, rows: term.rows });
+          resolve();
+        });
+      });
+    });
+
+    // ResizeObserver for dynamic resizing (e.g., window resize while picker is open)
+    // Debounce to avoid excessive PTY resize calls
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+    const resizeObserver = new ResizeObserver(() => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        fitAddon.fit();
+        console.log('[TerminalManager] Picker resized:', { cols: term.cols, rows: term.rows });
+      }, 50);
+    });
+    resizeObserver.observe(container);
+
+    // Click-to-focus: if user clicks outside picker then back, refocus terminal
+    // xterm uses an internal hidden textarea for keyboard input - we need to ensure it gets focused
+    // Problem: xterm's internal handlers race with our focus call
+    // Solution: multiple focus attempts at staggered intervals
+    const focusTerminal = (attempt: number) => {
+      if (document.activeElement === term.textarea) {
+        console.log(`[TerminalManager] Picker already focused (attempt ${attempt})`);
+        return;
+      }
+      if (term.textarea) {
+        term.textarea.focus();
+        console.log(`[TerminalManager] Picker textarea.focus() (attempt ${attempt})`);
+      } else {
+        term.focus();
+        console.log(`[TerminalManager] Picker term.focus() fallback (attempt ${attempt})`);
+      }
+    };
+
+    const handleContainerMousedown = (e: MouseEvent) => {
+      // CRITICAL: Stop propagation so parent BlockItem doesn't steal focus
+      // Without this, "## work notes" gets focus before tv picker
+      e.stopPropagation();
+
+      console.log('[TerminalManager] Picker mousedown:', {
+        target: (e.target as HTMLElement)?.className,
+        activeElement: document.activeElement?.tagName,
+      });
+
+      // Multiple focus attempts to win the race with xterm's handlers
+      focusTerminal(1);                    // Immediate
+      setTimeout(() => focusTerminal(2), 0);   // After current event handlers
+      setTimeout(() => focusTerminal(3), 10);  // After microtasks
+      setTimeout(() => focusTerminal(4), 50);  // Safety net
+    };
+    container.addEventListener('mousedown', handleContainerMousedown, { capture: true });
 
     // Get platform and home dir for shell selection (done outside Promise to avoid async executor)
     const os = await platform();
@@ -878,6 +940,9 @@ class TerminalManager {
         console.log(`[TerminalManager] Picker ${id} exited with code ${event.exit_code}, output: ${event.output?.slice(0, 100) ?? '(none)'}`);
 
         // Cleanup
+        resizeObserver.disconnect();
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+        container.removeEventListener('mousedown', handleContainerMousedown, { capture: true });
         term.dispose();
 
         resolve({ exitCode: event.exit_code, output: event.output });
@@ -890,6 +955,19 @@ class TerminalManager {
 
       console.log('[TerminalManager] Spawning picker PTY:', { shell, args, cols: term.cols, rows: 18, cwd, captureOutput: true });
 
+      // Track spawned pid for resize handler (set up before spawn so we don't miss events)
+      let spawnedPid: number | null = null;
+
+      // Set up resize handler BEFORE spawn to catch any resize events
+      term.onResize(({ cols, rows }) => {
+        if (spawnedPid !== null) {
+          console.log('[TerminalManager] Picker resize:', { pid: spawnedPid, cols, rows });
+          invoke('plugin:pty|resize', { pid: spawnedPid, cols, rows }).catch((err) => {
+            console.error('[TerminalManager] Picker resize failed:', err);
+          });
+        }
+      });
+
       invoke<number>('plugin:pty|spawn', {
         file: shell,
         args,
@@ -901,21 +979,18 @@ class TerminalManager {
           COLORTERM: 'truecolor',
           PATH: pickerPath,
           HOME: home,
+          ...extraEnv,  // Include any extra env vars (e.g., FLOATTY_API_KEY for search)
         },
         onData: onDataChannel,
         onExit: onExitChannel,
         captureOutput: true, // Enable Rust-side output capture
       }).then((pid) => {
         console.log('[TerminalManager] Picker PTY spawned with pid:', pid);
+        spawnedPid = pid;  // Enable resize handler
 
         // Wire up input from xterm to PTY
         term.onData((data: string) => {
           invoke('plugin:pty|write', { pid, data }).catch(console.error);
-        });
-
-        // Handle resize (though picker height is fixed)
-        term.onResize(({ cols, rows }) => {
-          invoke('plugin:pty|resize', { pid, cols, rows }).catch(() => {});
         });
 
         term.focus();
