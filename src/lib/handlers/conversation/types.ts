@@ -49,13 +49,13 @@ export interface ConversationConfig {
 
 /**
  * Extended actions for conversation handling
- * Adds tree navigation capabilities
+ * Adds tree navigation capabilities (optional - handler guards and falls back to single-turn)
  */
 export interface ConversationActions extends ExecutorActions {
   /** Get parent block ID */
-  getParentId: (id: string) => string | undefined;
+  getParentId?: (id: string) => string | undefined;
   /** Get child block IDs */
-  getChildren: (id: string) => string[];
+  getChildren?: (id: string) => string[];
 }
 
 // ═══════════════════════════════════════════════════════════════
