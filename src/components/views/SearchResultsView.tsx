@@ -74,7 +74,8 @@ function SearchResultItem(props: {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    // Support both Enter and Space for role="button" accessibility
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
       e.preventDefault();
       navigateToResult(getModifiers(e));
     }

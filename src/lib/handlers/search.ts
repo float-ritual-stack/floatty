@@ -69,7 +69,13 @@ const SEARCH_PREFIX = 'search::';
  */
 function extractQuery(content: string): string {
   const trimmed = content.trim();
-  const prefixEnd = trimmed.toLowerCase().indexOf(SEARCH_PREFIX) + SEARCH_PREFIX.length;
+  const lower = trimmed.toLowerCase();
+  const idx = lower.indexOf(SEARCH_PREFIX);
+
+  // If prefix not found, return empty (will trigger validation error)
+  if (idx < 0) return '';
+
+  const prefixEnd = idx + SEARCH_PREFIX.length;
   return trimmed.slice(prefixEnd).trim();
 }
 

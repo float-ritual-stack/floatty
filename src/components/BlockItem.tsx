@@ -434,10 +434,11 @@ export function BlockItem(props: BlockItemProps) {
             getBlock: (id) => store.blocks[id],
             paneId: props.paneId,
             // Navigation functions for search::, pick::, etc.
+            // paneId is passed last so it cannot be overridden by options
             navigateToBlock: (blockId, options) =>
-              navToBlock(blockId, { paneId: props.paneId, ...options }),
+              navToBlock(blockId, { ...options, paneId: props.paneId }),
             navigateToPage: (pageName, options) =>
-              navToPage(pageName, { paneId: props.paneId, ...options }),
+              navToPage(pageName, { ...options, paneId: props.paneId }),
             scrollToBlock: (blockId) => scrollToBlock(blockId, props.paneId),
             highlightBlock: (blockId) => highlightBlock(blockId, props.paneId),
           }).catch(err => {
