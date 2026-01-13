@@ -111,6 +111,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           setBlockOutput: store.setBlockOutput,
           setBlockStatus: store.setBlockStatus,
           getBlock: store.getBlock,
+        }).catch(err => {
+          console.error('[AutoExecute] Handler execution failed:', err);
         });
       }
       // Future: handle other auto-executable types (web::, query::, etc.)

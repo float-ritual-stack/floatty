@@ -426,6 +426,8 @@ export function BlockItem(props: BlockItemProps) {
             setBlockStatus: store.setBlockStatus,
             getBlock: (id) => store.blocks[id],
             paneId: props.paneId,
+          }).catch(err => {
+            console.error('[BlockItem] Handler execution failed:', err);
           });
           return;
         }

@@ -22,15 +22,24 @@ export type {
   DailyNoteData
 } from './daily';
 
+// Guard against duplicate registration (HMR in dev can trigger multiple calls)
+let handlersRegistered = false;
+
 /**
  * Register all handlers with the global registry
  * Call this once during app initialization (e.g., in main.tsx or App.tsx)
  */
 export function registerHandlers(): void {
+  if (handlersRegistered) {
+    console.log('[handlers] Already registered, skipping');
+    return;
+  }
+  handlersRegistered = true;
+
   registry.register(shHandler);
   registry.register(aiHandler);
   registry.register(dailyHandler);
-  
+
   console.log('[handlers] Registered:', registry.getRegisteredPrefixes().join(', '));
 }
 
