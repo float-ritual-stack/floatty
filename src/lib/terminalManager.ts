@@ -970,6 +970,11 @@ export const terminalManager = new TerminalManager();
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     console.log('[terminalManager] HMR cleanup');
+    // Clear pending restoration timeout (prevents stale callback after HMR)
+    if (terminalManager['restorationTimeout']) {
+      clearTimeout(terminalManager['restorationTimeout']);
+      terminalManager['restorationTimeout'] = null;
+    }
     // Dispose all terminal instances
     for (const [id] of terminalManager['instances']) {
       try {
