@@ -57,6 +57,8 @@ export interface HookBlockStore {
   getBlock: (id: string) => Block | undefined;
   readonly rootIds: string[];
   readonly blocks: Record<string, Block>;
+  /** Current zoomed root (if any) - hooks can use this for scoping */
+  readonly zoomedRootId?: string;
 }
 
 /**

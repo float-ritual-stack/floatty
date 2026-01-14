@@ -3,12 +3,12 @@ import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
+import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { getActionForEvent, isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
 import { BlockDisplay } from './BlockDisplay';
-import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
 import { registry, executeHandler, createHookBlockStore, type DailyNoteData, type SearchResults } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
@@ -181,15 +181,37 @@ export function BlockItem(props: BlockItemProps) {
       // When focused + user origin: handleInput already updated displayContent immediately
       const shouldSync = !isFocusedNow || !isUserOrigin;
 
+      // DEBUG: Track unexpected syncs that might cause cursor jumps
+      if (shouldSync && isFocusedNow && domContent !== storeContent) {
+        console.warn('[BlockItem CURSOR DEBUG] Syncing focused block!', {
+          blockId: currentBlock.id,
+          origin,
+          isUserOrigin,
+          domContent: domContent.slice(0, 50),
+          storeContent: storeContent.slice(0, 50),
+          activeElement: document.activeElement?.tagName,
+        });
+      }
+
       if (shouldSync) {
         // Sync displayContent for overlay
         if (displayContent() !== storeContent) {
           setDisplayContent(storeContent);
         }
 
-        // Sync DOM
+        // Sync DOM - DEFENSIVE: Save/restore cursor if focused to prevent jump
         if (domContent !== storeContent) {
+          // If focused, save cursor position before DOM manipulation
+          const savedOffset = isFocusedNow ? getAbsoluteCursorOffset(contentRef) : -1;
+
           contentRef.innerText = storeContent;
+
+          // Restore cursor position if we were focused
+          // Clamp to new content length in case content shortened
+          if (savedOffset >= 0) {
+            const clampedOffset = Math.min(savedOffset, storeContent.length);
+            setCursorAtOffset(contentRef, clampedOffset);
+          }
         }
       }
     }
@@ -203,7 +225,13 @@ export function BlockItem(props: BlockItemProps) {
 
     const currentBlock = block();
     if (contentRef && currentBlock) {
+      // DEBUG: Track content mismatch on blur
       if (contentRef.innerText !== currentBlock.content) {
+        console.log('[BlockItem BLUR DEBUG] Content mismatch on blur', {
+          blockId: currentBlock.id,
+          domContent: contentRef.innerText.slice(0, 50),
+          storeContent: currentBlock.content.slice(0, 50),
+        });
         contentRef.innerText = currentBlock.content;
       }
       // CRITICAL: Also sync displayContent for overlay layer
@@ -428,11 +456,12 @@ export function BlockItem(props: BlockItemProps) {
         if (handler) {
           e.preventDefault();
 
-          // Create hook-compatible block store adapter
+          // Create hook-compatible block store adapter (with zoom scope)
           const hookStore = createHookBlockStore(
             store.getBlock,
             store.blocks,
-            store.rootIds
+            store.rootIds,
+            paneStore.getZoomedRootId(props.paneId)
           );
 
           // Execute through hook-aware executor
@@ -725,6 +754,20 @@ export function BlockItem(props: BlockItemProps) {
         role="option"
         aria-selected={props.isBlockSelected?.(props.id) || false}
         classList={{ 'block-focused': isFocused(), 'block-selected': props.isBlockSelected?.(props.id) }}
+        onMouseDown={(e: MouseEvent) => {
+          // Save scroll position BEFORE browser focus/scroll happens
+          // This runs before onClick and before native contentEditable focus
+          const container = (e.target as HTMLElement)?.closest('.outliner-container') as HTMLElement | null;
+          if (container) {
+            const savedScrollTop = container.scrollTop;
+            // Restore after browser's focus handling completes
+            requestAnimationFrame(() => {
+              if (container.scrollTop !== savedScrollTop) {
+                container.scrollTop = savedScrollTop;
+              }
+            });
+          }
+        }}
         onClick={(e: MouseEvent) => {
           // FLO-74: Handle selection modifiers
           if (props.onSelect) {

@@ -105,10 +105,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const handler = registry.findHandler(content);
       if (handler) {
         // Create hook-compatible block store adapter
+        // Note: No zoomedRootId for auto-execute - external blocks see full document
+        // (no pane context exists for CRDT sync-triggered execution)
         const hookStore = createHookBlockStore(
           store.getBlock,
           store.blocks,
-          store.rootIds
+          store.rootIds,
+          undefined  // No zoom scope for external execution
         );
 
         // Execute through hook-aware executor

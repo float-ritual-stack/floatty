@@ -136,15 +136,19 @@ export async function executeHandler(
  *
  * This bridges the gap between the application's block store
  * and the read-only interface hooks expect.
+ *
+ * @param zoomedRootId - If set, hooks can scope operations to this subtree
  */
 export function createHookBlockStore(
   getBlock: (id: string) => unknown,
   blocks: Record<string, unknown>,
-  rootIds: string[]
+  rootIds: string[],
+  zoomedRootId?: string | null
 ): HookBlockStore {
   return {
     getBlock: getBlock as HookBlockStore['getBlock'],
     blocks: blocks as HookBlockStore['blocks'],
     rootIds,
+    zoomedRootId: zoomedRootId ?? undefined,
   };
 }

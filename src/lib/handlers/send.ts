@@ -9,11 +9,15 @@
  *
  *   /send
  *   → creates ## assistant block with response
+ *
+ * ARCHITECTURE: Context assembly is done by sendContextHook (execute:before).
+ * This handler CONSUMES hookContext.messages instead of collecting context itself.
+ * This is how the hook system is supposed to work:
+ *   Hooks assemble → Handlers consume
  */
 
 import { invoke } from '@tauri-apps/api/core';
 import type { BlockHandler, ExecutorActions } from './types';
-import type { Block } from '../blockTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // TURN MARKERS
@@ -22,129 +26,13 @@ import type { Block } from '../blockTypes';
 const USER_MARKER = '## user';
 const ASSISTANT_MARKER = '## assistant';
 
-function isUserMarker(content: string): boolean {
-  return content.trim().toLowerCase().startsWith(USER_MARKER.toLowerCase());
-}
-
-function isAssistantMarker(content: string): boolean {
-  return content.trim().toLowerCase().startsWith(ASSISTANT_MARKER.toLowerCase());
-}
-
 // ═══════════════════════════════════════════════════════════════
-// DOCUMENT ORDER WALK
+// HOOK CONTEXT INTERFACE
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Walk all blocks in document order (depth-first pre-order)
- * Returns array of block IDs in reading order
- */
-function getBlocksInDocumentOrder(
-  rootIds: string[],
-  getBlock: (id: string) => Block | undefined
-): string[] {
-  const result: string[] = [];
-
-  function walk(blockId: string) {
-    result.push(blockId);
-    const block = getBlock(blockId);
-    if (block?.childIds) {
-      for (const childId of block.childIds) {
-        walk(childId);
-      }
-    }
-  }
-
-  for (const rootId of rootIds) {
-    walk(rootId);
-  }
-
-  return result;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// CONTEXT COLLECTION
-// ═══════════════════════════════════════════════════════════════
-
-interface TurnContext {
-  /** Collected context text */
-  text: string;
-  /** Number of blocks included */
+interface SendHookContext {
+  messages: Array<{ role: string; content: string }>;
   blockCount: number;
-}
-
-/**
- * Collect context from the current user turn
- *
- * Walks blocks in document order, finds:
- * - Last ## user marker before sendBlockId
- * - All content between that marker and sendBlockId
- *
- * Ignores nesting. Just flat document order.
- */
-export function collectTurnContext(
-  sendBlockId: string,
-  rootIds: string[],
-  getBlock: (id: string) => Block | undefined
-): TurnContext {
-  const allBlocks = getBlocksInDocumentOrder(rootIds, getBlock);
-  const sendIndex = allBlocks.indexOf(sendBlockId);
-
-  if (sendIndex === -1) {
-    return { text: '', blockCount: 0 };
-  }
-
-  // Find last ## user marker before sendBlockId
-  let lastUserIndex = -1;
-  let hitAssistant = false;
-  for (let i = sendIndex - 1; i >= 0; i--) {
-    const block = getBlock(allBlocks[i]);
-    if (!block) continue;
-
-    if (isUserMarker(block.content)) {
-      lastUserIndex = i;
-      break;
-    }
-
-    // Stop if we hit an ## assistant marker (previous turn)
-    if (isAssistantMarker(block.content)) {
-      hitAssistant = true;
-      break;
-    }
-  }
-
-  // No ## user marker found - implicit first turn
-  // Collect from start unless we hit an ## assistant (which means orphaned /send)
-  if (lastUserIndex === -1) {
-    if (hitAssistant) {
-      // /send after ## assistant with no ## user between - that's an error
-      return { text: '', blockCount: 0 };
-    }
-    // Implicit first turn: everything from start to /send
-    lastUserIndex = 0;
-  }
-
-  // Collect all content between ## user and /send
-  const parts: string[] = [];
-  let blockCount = 0;
-
-  for (let i = lastUserIndex; i < sendIndex; i++) {
-    const blockId = allBlocks[i];
-    const block = getBlock(blockId);
-    if (!block) continue;
-
-    const content = block.content.trim();
-    if (!content) continue;
-
-    // Skip the ## user marker itself (or include as context?)
-    // Including it for now - user can see their own header
-    parts.push(content);
-    blockCount++;
-  }
-
-  return {
-    text: parts.join('\n'),
-    blockCount,
-  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -153,6 +41,9 @@ export function collectTurnContext(
 
 /**
  * Send handler - explicit conversation trigger
+ *
+ * Reads context from hookContext.messages (assembled by sendContextHook).
+ * This demonstrates the hook system architecture working correctly.
  */
 export const sendHandler: BlockHandler = {
   prefixes: ['/send', '::send'],
@@ -164,39 +55,22 @@ export const sendHandler: BlockHandler = {
   ): Promise<void> {
     const startTime = performance.now();
 
-    // Get store access from extended actions
-    const extActions = actions as unknown as {
-      getBlock?: (id: string) => Block | undefined;
-      rootIds?: string[];
-    };
+    // Get hook context - assembled by sendContextHook in execute:before
+    const hookContext = (actions as unknown as { hookContext?: SendHookContext }).hookContext;
 
-    const { getBlock } = extActions;
-
-    // Need store access for context collection
-    if (!getBlock) {
-      console.error('[send] Missing getBlock - cannot collect context');
-      actions.updateBlockContent(blockId, 'error:: Missing store access');
+    // Verify hook ran and provided context
+    if (!hookContext?.messages || hookContext.messages.length === 0) {
+      console.error('[send] No hookContext.messages - is sendContextHook registered?');
+      actions.updateBlockContent(blockId, 'error:: Context hook not providing messages');
       return;
     }
 
-    // Get rootIds from actions or infer from block tree
-    // For now, we'll need rootIds passed in
-    const rootIds = extActions.rootIds ?? [];
-    if (rootIds.length === 0) {
-      console.warn('[send] No rootIds available, collecting context may be limited');
-    }
+    const { messages, blockCount } = hookContext;
 
-    // Collect turn context
-    const context = collectTurnContext(blockId, rootIds, getBlock);
-
-    if (!context.text) {
-      actions.updateBlockContent(blockId, 'error:: No ## user turn found above');
-      return;
-    }
-
-    console.log('[send] Collected context:', {
-      blockCount: context.blockCount,
-      textLength: context.text.length,
+    console.log('[send] Context from hook:', {
+      blockCount,
+      messageCount: messages.length,
+      textLength: messages.reduce((sum, m) => sum + m.content.length, 0),
     });
 
     // Replace /send block with ## assistant marker
@@ -226,8 +100,8 @@ export const sendHandler: BlockHandler = {
     }
 
     try {
-      // Call LLM with conversation API for better results
-      const messages = [{ role: 'user', content: context.text }];
+      // Call LLM with conversation API
+      // Messages come from hook - handler just sends them
       const response = await invoke<string>('execute_ai_conversation', {
         messages,
         system: 'You are a helpful assistant responding to notes and thoughts in an outliner. Be concise and direct. Focus on what the user is asking about.',

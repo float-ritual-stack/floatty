@@ -317,11 +317,12 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         e.preventDefault();
         const handler = registry.findHandler(block.content);
         if (handler) {
-          // Create hook-compatible block store adapter
+          // Create hook-compatible block store adapter (with zoom scope)
           const hookStore = createHookBlockStore(
             store.getBlock,
             store.blocks,
-            store.rootIds
+            store.rootIds,
+            paneStore.getZoomedRootId(deps.paneId)
           );
 
           // Execute through hook-aware executor

@@ -68,7 +68,7 @@ export const conversationHandler: BlockHandler = {
         actions,
         getBlock,
         getParentId,
-        getChildren
+        getChildren!
       );
     }
 
@@ -87,7 +87,7 @@ export const conversationHandler: BlockHandler = {
       actions,
       getBlock,
       getParentId,
-      getChildren
+      getChildren!
     );
   },
 };
@@ -102,7 +102,8 @@ async function executeConversationTurn(
   actions: ExecutorActions,
   getBlock: (id: string) => ConversationBlock | undefined,
   getParentId: (id: string) => string | undefined,
-  getChildren: (id: string) => string[]
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _getChildren: (id: string) => string[]
 ): Promise<void> {
   const startTime = performance.now();
 
