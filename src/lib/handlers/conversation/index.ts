@@ -2,7 +2,7 @@
  * Conversation Handler
  *
  * Multi-turn LLM conversation handler for ai:: blocks.
- * Replaces the simple single-turn aiHandler from commandDoor.ts
+ * Builds conversation from tree structure (nested blocks = turns).
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -35,7 +35,6 @@ export const conversationHandler: BlockHandler = {
     actions: ExecutorActions
   ): Promise<void> {
     // Get tree navigation functions from actions
-    // These are passed via the extended ExecutorActions interface
     const extActions = actions as unknown as {
       getBlock?: (id: string) => ConversationBlock | undefined;
       getParentId?: (id: string) => string | undefined;
@@ -69,7 +68,7 @@ export const conversationHandler: BlockHandler = {
         actions,
         getBlock,
         getParentId,
-        getChildren
+        getChildren!
       );
     }
 
@@ -88,7 +87,7 @@ export const conversationHandler: BlockHandler = {
       actions,
       getBlock,
       getParentId,
-      getChildren
+      getChildren!
     );
   },
 };
@@ -128,7 +127,6 @@ async function executeConversationTurn(
     messages = buildConversation(blockId, getBlock, getParentId, config);
   } catch (err) {
     console.error('[conversation] Failed to build conversation:', err);
-    // Fall back to single turn
     return executeSingleTurn(blockId, content, actions);
   }
 

@@ -1,3 +1,8 @@
+---
+paths:
+  - "src/**/*.{ts,tsx}"
+---
+
 # contentEditable Patterns (CRITICAL)
 
 These patterns apply to cursor positioning and text manipulation in contentEditable elements.
@@ -106,9 +111,69 @@ console.log('[CURSOR DEBUG]', {
 });
 ```
 
-## 5. Reference Implementation
+## 5. Selection on Element Nodes (Child Index, Not Character Offset)
+
+**The trap**: When cursor is on a blank line or element boundary, browser sets `startContainer` to an ELEMENT (not text node), and `startOffset` is a **child index**, not a character offset.
+
+```typescript
+// User clicks on blank line in multi-line block
+// DOM: <div contenteditable>text<div><br></div>more</div>
+
+range.startContainer;  // The root DIV element!
+range.startOffset;     // 2 (meaning "before child index 2")
+
+// ❌ BROKEN - treats child index as character offset
+const offset = getTextOffsetInElement(root, range.startContainer, range.startOffset);
+// Returns 0 because targetNode === root, found immediately
+
+// ✅ CORRECT - resolve element position to text node first
+if (startContainer.nodeType === Node.ELEMENT_NODE) {
+  const targetChild = startContainer.childNodes[startOffset];
+  const firstText = findFirstTextNode(targetChild);
+  if (firstText) {
+    targetNode = firstText;
+    targetOffset = 0;
+  }
+}
+```
+
+**Symptom**: Enter on blank line creates block ABOVE instead of splitting. Offset returns 0 when it shouldn't.
+
+**Rule**: Before walking DOM for offset, check if `startContainer` is an element. If so, resolve to the actual text node at that child index position.
+
+## 6. Blank Line Split Semantics
+
+**The trap**: When splitting at a newline boundary, which block gets the trailing whitespace?
+
+```typescript
+// Content: "blob of text\n\nmore text"
+// Cursor at blank line (offset ~13)
+
+// ❌ FEELS WRONG - blank line goes with new block
+content.slice(0, 13);  // "blob of text\n"
+content.slice(13);     // "\nmore text"
+
+// ✅ FEELS RIGHT - blank line stays with top block
+// Consume consecutive newlines when splitting
+let end = offset;
+while (end < content.length && content[end] === '\n') {
+  end++;
+}
+content.slice(0, end);  // "blob of text\n\n"
+content.slice(end);     // "more text"
+```
+
+**Why**: Semantically, blank lines "belong to" the paragraph above them. When you hit Enter on a blank line, you expect the blank to stay above, not come with your new content.
+
+**Rule**: In `splitBlock()`, when offset is at/near newlines, adjust to consume all trailing newlines into the "before" portion.
+
+## 7. Reference Implementation
 
 See `src/lib/cursorUtils.ts`:
-- `getAbsoluteCursorOffset()` - correct DOM-walking offset calculation
+- `getAbsoluteCursorOffset()` - correct DOM-walking offset calculation with element node resolution
 - `setCursorAtOffset()` - matching cursor positioning
+- `findFirstTextNode()` / `findLastTextNode()` - resolve element positions to text nodes
 - `isCursorAtContentStart()` / `isCursorAtContentEnd()` - boundary detection
+
+See `src/hooks/useBlockStore.ts`:
+- `splitBlock()` - includes newline consumption logic for natural blank line behavior

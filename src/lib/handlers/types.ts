@@ -17,8 +17,12 @@ export interface ExecutorActions {
   createBlockInside: (parentId: string) => string;
   /** Create a new block as the first child of parentId */
   createBlockInsideAtTop?: (parentId: string) => string;
+  /** Create a new block as sibling after given block */
+  createBlockAfter?: (afterId: string) => string;
   /** Update the content of a block */
   updateBlockContent: (id: string, content: string) => void;
+  /** Update content from executor (syncs to DOM even when block is focused) */
+  updateBlockContentFromExecutor?: (id: string, content: string) => void;
   /** Delete a block */
   deleteBlock?: (id: string) => boolean;
   /** Set the output data on a block (for structured views like daily::) */
@@ -33,6 +37,8 @@ export interface ExecutorActions {
   getChildren?: (id: string) => string[];
   /** Pane ID for scoping picker queries in split layouts */
   paneId?: string;
+  /** Focus a block (for post-execution cursor placement) */
+  focusBlock?: (id: string) => void;
 }
 
 // ═══════════════════════════════════════════════════════════════

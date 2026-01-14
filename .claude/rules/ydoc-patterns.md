@@ -1,3 +1,8 @@
+---
+paths:
+  - "src/**/*.{ts,tsx}"
+---
+
 # Y.Doc Architecture Patterns
 
 These patterns apply to all Y.Doc/CRDT code in floatty.

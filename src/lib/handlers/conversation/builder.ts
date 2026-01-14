@@ -104,7 +104,6 @@ export function buildConversation(
     throw new Error('Could not find path to conversation root');
   }
 
-  // Convert to messages
   const messages: ConversationMessage[] = [];
   let previousRole: MessageRole | undefined;
 
