@@ -39,6 +39,8 @@ export const Origin = {
   Api: 'api',
   /** System-generated changes (auto-save, cleanup) */
   System: 'system',
+  /** Handler/executor-generated changes (execution outputs, etc.) */
+  Executor: 'executor',
 } as const;
 
 export type OriginType = (typeof Origin)[keyof typeof Origin];

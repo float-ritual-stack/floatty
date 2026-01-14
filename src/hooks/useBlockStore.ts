@@ -50,6 +50,7 @@ function isAutoExecutable(content: string): boolean {
  */
 function mapTransactionOrigin(txOrigin: unknown): OriginType {
   if (txOrigin === 'user') return Origin.User;
+  if (txOrigin === 'executor') return Origin.Executor;
   if (txOrigin === 'hook') return Origin.Hook;
   if (txOrigin === 'api') return Origin.Api;
   if (txOrigin === 'bulk_import') return Origin.BulkImport;

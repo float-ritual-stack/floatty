@@ -17,8 +17,8 @@
  * // Register async projection
  * const id = scheduler.register(
  *   'search-index',
- *   async (events) => {
- *     await tantivy.indexBatch(events);
+ *   async (envelope) => {
+ *     await tantivy.indexBatch(envelope.events);
  *   },
  *   { filter: EventFilters.updates() }
  * );
