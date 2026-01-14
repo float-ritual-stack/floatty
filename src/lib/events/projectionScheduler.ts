@@ -327,3 +327,8 @@ export class ProjectionScheduler {
  * expensive async operations that benefit from batching.
  */
 export const blockProjectionScheduler = new ProjectionScheduler();
+
+// HMR cleanup: stop previous scheduler to avoid duplicate timers
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => blockProjectionScheduler.stop());
+}
