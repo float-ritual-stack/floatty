@@ -2,6 +2,52 @@
 
 All notable changes to floatty are documented here.
 
+## [0.4.1] - 2026-01-14
+
+### New Features
+
+- **/send handler** (PR #88) - Execute blocks with LLM using conversation context
+  - Walks zoomed subtree to build multi-turn conversation (## user / ## assistant markers)
+  - Respects zoom scope - sends only the focused context, not full document
+  - Hook architecture with `execute:before` / `execute:after` lifecycle
+
+- **Executor system** - Unified block execution with typed actions
+  - Actions: `execute`, `stream`, `abort` for different execution modes
+  - Origin tracking: `Origin.Executor` for executor-generated changes
+  - Hook support for validation, logging, transformation
+
+- **Event system** - Two-lane architecture for Y.Doc changes
+  - `EventBus` (sync) - Immediate UI updates, validation
+  - `ProjectionScheduler` (async) - Batched index writes with 2s flush interval
+  - `EventFilters` - Composable predicates for handler targeting
+
+- **Hook registry** - Priority-ordered hooks with error isolation
+  - Type-safe registration by event type (block lifecycle, execution)
+  - `HookContext` with abort capability, shared data passing
+  - HMR-safe with `import.meta.hot.dispose()` cleanup
+
+### Bug Fixes
+
+- **Multi-line cursor offset** (PR #88) - Extended contentEditable patterns rule with `<div>` boundary edge cases
+- **HMR timer cleanup** - Added dispose handlers to ProjectionScheduler singleton
+
+### Documentation
+
+- Updated solidjs-patterns.md with store proxy clone pattern
+- Updated ydoc-patterns.md with event timing guidelines
+- Added contenteditable-patterns.md edge case documentation
+
+### Tests
+
+- 420 tests (up from 318 in 0.4.0)
+  - 19 sendContextHook tests (zoom scoping, multi-turn, implicit first turn)
+  - 13 executor tests (lifecycle hooks, abort handling)
+  - 18 eventBus tests (subscription, filtering, error isolation)
+  - 19 projectionScheduler tests (batching, flush, HMR)
+  - 26 hookRegistry tests (priority ordering, context passing)
+
+---
+
 ## [0.4.0] - 2026-01-13
 
 ### New Features
