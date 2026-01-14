@@ -9,7 +9,7 @@ import { getActionForEvent, isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
 import { BlockDisplay } from './BlockDisplay';
 import { setCursorAtOffset } from '../lib/cursorUtils'; // For merge cursor restore (runs outside block)
-import { registry, type DailyNoteData, type SearchResults } from '../lib/handlers';
+import { registry, executeHandler, createHookBlockStore, type DailyNoteData, type SearchResults } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
@@ -427,18 +427,31 @@ export function BlockItem(props: BlockItemProps) {
 
         if (handler) {
           e.preventDefault();
-          handler.execute(props.id, content, {
+
+          // Create hook-compatible block store adapter
+          const hookStore = createHookBlockStore(
+            store.getBlock,
+            store.blocks,
+            store.rootIds
+          );
+
+          // Execute through hook-aware executor
+          executeHandler(handler, props.id, content, {
             createBlockInside: store.createBlockInside,
             createBlockInsideAtTop: store.createBlockInsideAtTop,
+            createBlockAfter: store.createBlockAfter,
             updateBlockContent: store.updateBlockContent,
+            updateBlockContentFromExecutor: store.updateBlockContentFromExecutor,
             deleteBlock: store.deleteBlock,
             setBlockOutput: store.setBlockOutput,
             setBlockStatus: store.setBlockStatus,
             getBlock: (id) => store.blocks[id],
             getParentId: (id) => store.blocks[id]?.parentId ?? undefined,
             getChildren: (id) => store.blocks[id]?.childIds ?? [],
+            rootIds: store.rootIds,
             paneId: props.paneId,
-          }).catch(err => {
+            focusBlock: props.onFocus,
+          }, hookStore).catch(err => {
             console.error('[BlockItem] Handler execution failed:', err);
           });
           return;

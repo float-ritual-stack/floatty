@@ -1,3 +1,8 @@
+---
+paths:
+  - "src/**/*.{ts,tsx}"
+---
+
 # SolidJS Mental Models (CRITICAL)
 
 These patterns apply to all SolidJS components in floatty.

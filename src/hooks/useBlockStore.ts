@@ -7,6 +7,14 @@ import { createStore } from 'solid-js/store';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
 import type { Block, BlockType } from '../lib/blockTypes';
+import {
+  blockEventBus,
+  blockProjectionScheduler,
+  Origin,
+  type BlockEvent,
+  type EventEnvelope,
+  type OriginType,
+} from '../lib/events';
 
 // ═══════════════════════════════════════════════════════════════
 // AUTO-EXECUTE CALLBACK (for external block creation via API)
@@ -30,6 +38,28 @@ function isAutoExecutable(content: string): boolean {
   const trimmed = content.trim().toLowerCase();
   return trimmed.startsWith('daily::');
   // Future: add || trimmed.startsWith('web::') || trimmed.startsWith('query::')
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT EMISSION HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Map Y.Doc transaction origin to our Origin type.
+ * Used for EventBus origin tagging.
+ */
+function mapTransactionOrigin(txOrigin: unknown): OriginType {
+  if (txOrigin === 'user') return Origin.User;
+  if (txOrigin === 'hook') return Origin.Hook;
+  if (txOrigin === 'api') return Origin.Api;
+  if (txOrigin === 'bulk_import') return Origin.BulkImport;
+  if (txOrigin === 'system') return Origin.System;
+  // Y.UndoManager passes itself as origin
+  if (txOrigin && typeof txOrigin === 'object' && 'undo' in txOrigin) {
+    return Origin.Undo;
+  }
+  // Remote changes from other clients
+  return Origin.Remote;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -222,6 +252,12 @@ function createBlockStore() {
       // NOTE: All events in a batch share the same transaction, so events[0] is representative
       // 'user' = local typing, UndoManager instance = undo/redo, other = remote/external
       const txOrigin = events[0]?.transaction.origin;
+      const origin = mapTransactionOrigin(txOrigin);
+
+      // Collect BlockEvents for the EventBus
+      const blockEvents: BlockEvent[] = [];
+      // Track previous block state for update events (before we modify state)
+      const previousBlocks = new Map<string, Block>();
 
       batch(() => {
         // Expose origin to components (BlockItem uses this for sync decisions)
@@ -250,9 +286,31 @@ function createBlockStore() {
                     setTimeout(() => _autoExecuteHandler!(key, content), 0);
                   }
                 }
+
+                // EventBus: block:create
+                const newBlock = toBlock(blocksMap.get(key));
+                if (newBlock) {
+                  blockEvents.push({
+                    type: 'block:create',
+                    blockId: key,
+                    block: newBlock,
+                  });
+                }
               } else if (change.action === 'update') {
+                // Capture previous state before refresh
+                const prevBlock = state.blocks[key];
+                if (prevBlock) previousBlocks.set(key, { ...prevBlock });
                 blocksToRefresh.add(key);
               } else if (change.action === 'delete') {
+                // Capture deleted block state for event
+                const deletedBlock = state.blocks[key];
+                if (deletedBlock) {
+                  blockEvents.push({
+                    type: 'block:delete',
+                    blockId: key,
+                    previousBlock: { ...deletedBlock },
+                  });
+                }
                 blocksToDelete.add(key);
               }
             });
@@ -260,6 +318,11 @@ function createBlockStore() {
             // Nested: property changed on existing block
             // path[0] is the block ID
             const blockId = path[0] as string;
+            // Capture previous state before refresh
+            if (!previousBlocks.has(blockId)) {
+              const prevBlock = state.blocks[blockId];
+              if (prevBlock) previousBlocks.set(blockId, { ...prevBlock });
+            }
             blocksToRefresh.add(blockId);
           }
         }
@@ -269,6 +332,18 @@ function createBlockStore() {
           const block = toBlock(blocksMap.get(key));
           if (block) {
             setState('blocks', key, block);
+
+            // EventBus: block:update (only if we had previous state, i.e., not just created)
+            const prevBlock = previousBlocks.get(key);
+            if (prevBlock) {
+              blockEvents.push({
+                type: 'block:update',
+                blockId: key,
+                block,
+                previousBlock: prevBlock,
+                // TODO: Could compute changedFields by comparing block vs prevBlock
+              });
+            }
           }
         }
 
@@ -277,6 +352,23 @@ function createBlockStore() {
           setState('blocks', key, undefined!);
         }
       });
+
+      // Emit to EventBus (sync lane) and ProjectionScheduler (async lane)
+      // Only emit if there are actual events
+      if (blockEvents.length > 0) {
+        const envelope: EventEnvelope = {
+          batchId: crypto.randomUUID(),
+          timestamp: Date.now(),
+          origin,
+          events: blockEvents,
+        };
+
+        // Sync: immediate reactions (UI updates, validation)
+        blockEventBus.emit(envelope);
+
+        // Async: batched expensive operations (search index, backlinks)
+        blockProjectionScheduler.enqueue(envelope);
+      }
     };
     blocksMap.observeDeep(_blocksObserver);
 
@@ -305,6 +397,22 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, id, 'type', parseBlockType(content));
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
     }, 'user');
+  };
+
+  /**
+   * Update block content from executor/handler (uses 'executor' origin)
+   * Unlike updateBlockContent, this will sync to DOM even when block is focused.
+   * Use for handler-initiated changes that should update UI immediately.
+   */
+  const updateBlockContentFromExecutor = (id: string, content: string) => {
+    if (!_doc) { warnDocNotReady('updateBlockContentFromExecutor'); return; }
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      setValueOnYMap(blocksMap, id, 'content', content);
+      setValueOnYMap(blocksMap, id, 'type', parseBlockType(content));
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    }, 'executor');
   };
 
   /**
@@ -448,8 +556,29 @@ function createBlockStore() {
     const block = state.blocks[id];
     if (!block) return null;
 
-    const contentBefore = block.content.slice(0, offset);
-    const contentAfter = block.content.slice(offset);
+    // UX: When splitting at a blank line, keep trailing newlines with the top block
+    // This feels more natural - the blank line "belongs to" the paragraph above
+    let adjustedOffset = offset;
+    const content = block.content;
+
+    // If we're at a newline position, consume all consecutive newlines
+    if (content[offset] === '\n' || (offset > 0 && content[offset - 1] === '\n')) {
+      // Find start of newline sequence (walk back)
+      let start = offset;
+      while (start > 0 && content[start - 1] === '\n') {
+        start--;
+      }
+      // Find end of newline sequence (walk forward)
+      let end = offset;
+      while (end < content.length && content[end] === '\n') {
+        end++;
+      }
+      // Keep all newlines with the top block (split at end of newline sequence)
+      adjustedOffset = end;
+    }
+
+    const contentBefore = content.slice(0, adjustedOffset);
+    const contentAfter = content.slice(adjustedOffset);
 
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, contentAfter, block.parentId);
@@ -492,8 +621,20 @@ function createBlockStore() {
     const block = state.blocks[id];
     if (!block) return null;
 
-    const contentBefore = block.content.slice(0, offset);
-    const contentAfter = block.content.slice(offset);
+    // UX: When splitting at a blank line, keep trailing newlines with the top block
+    let adjustedOffset = offset;
+    const content = block.content;
+
+    if (content[offset] === '\n' || (offset > 0 && content[offset - 1] === '\n')) {
+      let end = offset;
+      while (end < content.length && content[end] === '\n') {
+        end++;
+      }
+      adjustedOffset = end;
+    }
+
+    const contentBefore = content.slice(0, adjustedOffset);
+    const contentAfter = content.slice(adjustedOffset);
 
     const newId = crypto.randomUUID();
     // New block becomes child of current block (not sibling)
@@ -893,6 +1034,7 @@ function createBlockStore() {
     initFromYDoc,
     getBlock,
     updateBlockContent,
+    updateBlockContentFromExecutor,  // For handler-initiated updates (syncs even when focused)
     setBlockOutput,  // For daily::, ai:: execution output
     setBlockStatus,  // For loading indicators
     createBlockBefore,

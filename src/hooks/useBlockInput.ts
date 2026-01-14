@@ -11,7 +11,7 @@
  */
 
 import { getActionForEvent } from '../lib/keybinds';
-import { registry } from '../lib/handlers';
+import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
@@ -317,18 +317,30 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         e.preventDefault();
         const handler = registry.findHandler(block.content);
         if (handler) {
-          handler.execute(deps.blockId, block.content, {
+          // Create hook-compatible block store adapter
+          const hookStore = createHookBlockStore(
+            store.getBlock,
+            store.blocks,
+            store.rootIds
+          );
+
+          // Execute through hook-aware executor
+          executeHandler(handler, deps.blockId, block.content, {
             createBlockInside: store.createBlockInside,
             createBlockInsideAtTop: store.createBlockInsideAtTop,
+            createBlockAfter: store.createBlockAfter,
             updateBlockContent: store.updateBlockContent,
+            updateBlockContentFromExecutor: store.updateBlockContentFromExecutor,
             deleteBlock: store.deleteBlock,
             setBlockOutput: store.setBlockOutput,
             setBlockStatus: store.setBlockStatus,
             getBlock: store.getBlock,
             getParentId: (id) => store.getBlock(id)?.parentId ?? undefined,
             getChildren: (id) => store.getBlock(id)?.childIds ?? [],
+            rootIds: store.rootIds,
             paneId: deps.paneId,
-          }).catch(err => {
+            focusBlock: deps.onFocus,
+          }, hookStore).catch(err => {
             console.error('[useBlockInput] Handler execution failed:', err);
           });
         }

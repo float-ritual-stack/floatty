@@ -26,7 +26,62 @@ export function getAbsoluteCursorOffset(element: HTMLElement): number {
   if (!selection || !selection.rangeCount) return 0;
 
   const range = selection.getRangeAt(0);
-  return getTextOffsetInElement(element, range.startContainer, range.startOffset);
+  let targetNode = range.startContainer;
+  let targetOffset = range.startOffset;
+
+  // CRITICAL: When startContainer is an element (not text), startOffset is a CHILD INDEX
+  // We need to resolve this to a text node for accurate offset calculation
+  if (targetNode.nodeType === Node.ELEMENT_NODE && targetNode.childNodes.length > 0) {
+    // If offset points to a valid child, find first text descendant of that child
+    if (targetOffset < targetNode.childNodes.length) {
+      const targetChild = targetNode.childNodes[targetOffset];
+      const firstText = findFirstTextNode(targetChild);
+      if (firstText) {
+        targetNode = firstText;
+        targetOffset = 0;
+      } else {
+        // No text node - target is the child element itself (e.g., <br>)
+        // Walk will count everything before this element
+        targetNode = targetChild;
+        targetOffset = 0;
+      }
+    } else {
+      // Cursor is after all children - find last text position
+      const lastChild = targetNode.childNodes[targetNode.childNodes.length - 1];
+      if (lastChild) {
+        const lastText = findLastTextNode(lastChild);
+        if (lastText) {
+          targetNode = lastText;
+          targetOffset = lastText.textContent?.length ?? 0;
+        } else {
+          targetNode = lastChild;
+          targetOffset = 0;
+        }
+      }
+    }
+  }
+
+  return getTextOffsetInElement(element, targetNode, targetOffset);
+}
+
+/** Find first text node descendant (depth-first) */
+function findFirstTextNode(node: Node): Text | null {
+  if (node.nodeType === Node.TEXT_NODE) return node as Text;
+  for (const child of Array.from(node.childNodes)) {
+    const found = findFirstTextNode(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Find last text node descendant (depth-first, rightmost) */
+function findLastTextNode(node: Node): Text | null {
+  if (node.nodeType === Node.TEXT_NODE) return node as Text;
+  for (let i = node.childNodes.length - 1; i >= 0; i--) {
+    const found = findLastTextNode(node.childNodes[i]);
+    if (found) return found;
+  }
+  return null;
 }
 
 /**

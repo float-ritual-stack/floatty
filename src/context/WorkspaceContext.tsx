@@ -19,7 +19,7 @@ import type { JSX } from 'solid-js';
 import { blockStore as realBlockStore, setAutoExecuteHandler } from '../hooks/useBlockStore';
 import { paneStore as realPaneStore } from '../hooks/usePaneStore';
 import type { Block } from '../lib/blockTypes';
-import { registry } from '../lib/handlers';
+import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPE INTERFACES
@@ -37,6 +37,7 @@ export interface BlockStoreInterface {
   readonly lastUpdateOrigin: unknown;
   getBlock: (id: string) => Block | undefined;
   updateBlockContent: (id: string, content: string) => void;
+  updateBlockContentFromExecutor: (id: string, content: string) => void;
   setBlockOutput: (id: string, output: unknown, outputType: string, status?: Block['outputStatus']) => void;
   setBlockStatus: (id: string, status: Block['outputStatus']) => void;
   createBlockBefore: (beforeId: string) => string;
@@ -103,17 +104,28 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       const handler = registry.findHandler(content);
       if (handler) {
-        handler.execute(blockId, content, {
+        // Create hook-compatible block store adapter
+        const hookStore = createHookBlockStore(
+          store.getBlock,
+          store.blocks,
+          store.rootIds
+        );
+
+        // Execute through hook-aware executor
+        executeHandler(handler, blockId, content, {
           createBlockInside: store.createBlockInside,
           createBlockInsideAtTop: store.createBlockInsideAtTop,
+          createBlockAfter: store.createBlockAfter,
           updateBlockContent: store.updateBlockContent,
+          updateBlockContentFromExecutor: store.updateBlockContentFromExecutor,
           deleteBlock: store.deleteBlock,
           setBlockOutput: store.setBlockOutput,
           setBlockStatus: store.setBlockStatus,
           getBlock: store.getBlock,
           getParentId: (id: string) => store.getBlock(id)?.parentId ?? undefined,
           getChildren: (id: string) => store.getBlock(id)?.childIds ?? [],
-        }).catch(err => {
+          rootIds: store.rootIds,
+        }, hookStore).catch(err => {
           console.error('[AutoExecute] Handler execution failed:', err);
         });
       }
@@ -165,6 +177,7 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     isInitialized: true,
     getBlock: () => undefined,
     updateBlockContent: () => {},
+    updateBlockContentFromExecutor: () => {},
     setBlockOutput: () => {},
     setBlockStatus: () => {},
     createBlockBefore: () => '',

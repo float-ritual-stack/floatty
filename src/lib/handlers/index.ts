@@ -11,10 +11,15 @@ import { conversationHandler } from './conversation';
 import { dailyHandler } from './daily';
 import { searchHandler } from './search';
 import { pickHandler } from './pick';
+import { sendHandler } from './send';
+import { hookRegistry } from '../hooks';
 
 // Re-export registry and types for convenience
 export { registry } from './registry';
 export type { BlockHandler, ExecutorActions } from './types';
+
+// Re-export executor for hook-aware handler execution
+export { executeHandler, createHookBlockStore } from './executor';
 
 // Re-export daily types for component use
 export type {
@@ -32,7 +37,7 @@ export type { SearchResults, SearchHit } from './search';
 let handlersRegistered = false;
 
 /**
- * Register all handlers with the global registry
+ * Register all handlers and hooks with global registries
  * Call this once during app initialization (e.g., in main.tsx or App.tsx)
  */
 export function registerHandlers(): void {
@@ -42,11 +47,13 @@ export function registerHandlers(): void {
   }
   handlersRegistered = true;
 
+  // Register block handlers
   registry.register(shHandler);
   registry.register(conversationHandler);
   registry.register(dailyHandler);
   registry.register(searchHandler);
   registry.register(pickHandler);
+  registry.register(sendHandler);
 
   console.log('[handlers] Registered:', registry.getRegisteredPrefixes().join(', '));
 }
@@ -68,5 +75,6 @@ if (import.meta.hot) {
     console.log('[handlers] HMR cleanup - resetting registration');
     handlersRegistered = false;
     registry.clear();
+    hookRegistry.clear();
   });
 }
