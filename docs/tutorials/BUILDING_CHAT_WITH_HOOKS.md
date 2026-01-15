@@ -466,7 +466,7 @@ export const wikilinkExpansionHook: Hook = {
     return {
       context: {
         messages: expandedMessages,
-        expandedLinks: extractWikilinks(hookContext.messages[0]?.content || [])
+        expandedLinks: extractWikilinks(hookContext.messages[0]?.content || '')
       }
     };
   }
