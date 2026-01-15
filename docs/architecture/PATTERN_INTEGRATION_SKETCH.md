@@ -1,6 +1,9 @@
 # Pattern Integration Sketch: Filters, Components, Routing
 
-> Design exploration: How patterns from float-janky-shack-door and tauri-mast-year prototypes integrate with floatty's EventBus/Hook architecture.
+> **Status**: EXPLORATION - Design thinking, not yet implemented.
+> See [current architecture](../guides/EVENT_SYSTEM.md) for what exists today.
+
+Design exploration: How patterns from float-janky-shack-door and tauri-mast-year prototypes integrate with floatty's EventBus/Hook architecture.
 
 ## Overview
 

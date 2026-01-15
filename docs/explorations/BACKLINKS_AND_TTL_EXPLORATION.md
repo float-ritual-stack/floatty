@@ -1,6 +1,9 @@
 # Feature Exploration: Backlinks & TTL Directives
 
-> Exploring how to implement backlinks loading and skip/TTL directives in floatty, comparing hook-based vs direct approaches.
+> **Status**: EXPLORATION - Design thinking, not yet implemented.
+> See [current architecture](../guides/EVENT_SYSTEM.md) for what exists today.
+
+Exploring how to implement backlinks loading and skip/TTL directives in floatty, comparing hook-based vs direct approaches.
 
 **Reference**: FLOAT Block V2.3 (Drafts.app script)
 **Date**: 2026-01-15
