@@ -582,6 +582,6 @@ src-tauri/
 | **Headless architecture** | ✅ Complete (floatty-server) |
 | **HTTP REST API** | ✅ Complete (blocks CRUD) |
 | **WebSocket sync** | ✅ Complete (realtime broadcast) |
-| Wiki-links / backlinking | ❌ Not implemented |
+| Wiki-links / backlinking | ✅ Complete (inlineParser, LinkedReferences, useBacklinkNavigation) |
 | Block references | ❌ Not implemented |
 | Block titles/aliases | ❌ Not implemented |
