@@ -223,6 +223,17 @@ export const sendContextHook: Hook = {
 ```typescript
 // src/lib/handlers/send.ts
 
+// Type-safe access to hook-injected context
+// In production, extend ExecutorActions directly rather than using this pattern
+interface ExecutorActionsWithHookContext extends ExecutorActions {
+  hookContext?: SendHookContext;
+}
+
+interface SendHookContext {
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  blockCount?: number;
+}
+
 export const sendHandler: BlockHandler = {
   prefixes: ['/send', '::send'],
 
@@ -231,7 +242,9 @@ export const sendHandler: BlockHandler = {
     _content: string,
     actions: ExecutorActions
   ): Promise<void> {
-    const hookContext = (actions as any).hookContext as SendHookContext | undefined;
+    // hookContext is dynamically attached by the executor after running hooks.
+    // Cast to extended interface for type-safe access.
+    const { hookContext } = actions as ExecutorActionsWithHookContext;
 
     if (!hookContext?.messages?.length) {
       actions.updateBlockContent(blockId, 'error:: No messages from context hook');
