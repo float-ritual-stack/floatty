@@ -7,6 +7,32 @@ argument-hint: <feature description or ticket reference>
 
 Before writing any code, work through this checklist to identify risks and design decisions.
 
+## Step 0: Mental Model Classification
+
+First, identify what KIND of thing this is using familiar patterns:
+
+```
+Mental model check:
+─────────────────────────────────────────────────────────────────
+"Is this a Redux action?"              →  Handler
+"Is this Redux middleware?"            →  Hook
+"Is this a Redux selector?"            →  Projection
+"Is this a React component?"           →  Renderer
+
+"Is this an mIRC alias?"               →  Handler
+"Is this an mIRC on EVENT?"            →  Hook
+
+"Is this a CQRS command?"              →  Handler (write)
+"Is this a CQRS query?"                →  Handler (read) or Projection
+
+"Is this an Excel formula?"            →  filter:: / query::
+"Is this an Excel chart?"              →  :::Component
+```
+
+**Classification**: ________________
+
+See `docs/architecture/PHILOSOPHY.md` for full mental model mappings.
+
 ## Step 1: Architectural Impact Scan
 
 Which layers does this feature touch? For each, note specific concerns:

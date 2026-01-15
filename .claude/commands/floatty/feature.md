@@ -4,9 +4,41 @@ description: Start a new feature with architectural alignment
 
 # Feature: $ARGUMENTS
 
-## Pre-Implementation Checklist
+## Step 1: Classify the Primitive
 
-Before writing code, answer:
+Before writing code, determine what KIND of thing this is. Use the Five Questions:
+
+```
+Q1: Who initiates?
+    User types prefix → HANDLER
+    System detects change → HOOK or PROJECTION
+
+Q2: Does it own the block?
+    Yes, transforms/creates → HANDLER
+    No, enriches context → HOOK
+    No, builds derived state → PROJECTION
+
+Q3: When does it run?
+    Once, on Enter → HANDLER
+    On every execution → HOOK (execute:before/after)
+    On block changes → HOOK (block:*) or PROJECTION
+
+Q4: Critical path?
+    User waiting → HANDLER or sync HOOK
+    Background OK → PROJECTION
+
+Q5: Needs other hooks' output?
+    Yes → HOOK (with priority)
+    No → HANDLER
+```
+
+**Classification**: [ ] Handler  [ ] Hook  [ ] Projection  [ ] Renderer
+
+Reference `docs/architecture/PHILOSOPHY.md` § "Applied Examples" for worked decisions.
+
+## Step 2: Event → Handler → Transform → Project
+
+Now trace the data flow:
 
 1. **Event**: What triggers this feature?
    - Block created? User input? Timer? External API?

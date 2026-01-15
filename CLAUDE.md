@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm install           # Install JS dependencies
 npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
 npm run lint          # ESLint
-npm run test          # Run vitest (318 tests)
+npm run test          # Run vitest (420 tests)
 npm run test:watch    # Watch mode for TDD
 ```
 

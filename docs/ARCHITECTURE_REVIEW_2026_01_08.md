@@ -563,11 +563,11 @@ interface BlockMetadata {
 
 ### 3. Client-Side Backlink Computation
 
-**Current**: None (wikilinks not implemented).
+**Current**: ✅ RESOLVED - Wikilinks implemented via `useBacklinkNavigation.ts` with memoized backlink extraction.
 
-**Future problem**: When added, computing backlinks in `Outliner.tsx` = re-scan all blocks on every render.
+~~**Future problem**: When added, computing backlinks in `Outliner.tsx` = re-scan all blocks on every render.~~
 
-**Fix**: See Phase 2, item 4 above.
+**Implementation**: `LinkedReferences.tsx` uses reactive computation, backlinks extracted via `inlineParser.ts`.
 
 ---
 
