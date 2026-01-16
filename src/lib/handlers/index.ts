@@ -12,6 +12,7 @@ import { dailyHandler } from './daily';
 import { searchHandler } from './search';
 import { pickHandler } from './pick';
 import { sendHandler } from './send';
+import { helpHandler } from './help';
 import { hookRegistry } from '../hooks';
 import { sendContextHook } from './hooks/sendContextHook';
 
@@ -55,6 +56,7 @@ export function registerHandlers(): void {
   registry.register(searchHandler);
   registry.register(pickHandler);
   registry.register(sendHandler);
+  registry.register(helpHandler);
 
   // Register hooks - THE ARCHITECTURE IN ACTION
   // Hooks assemble context, handlers consume it

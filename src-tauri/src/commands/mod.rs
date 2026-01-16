@@ -9,6 +9,7 @@
 pub mod clipboard;
 pub mod ctx;
 pub mod execution;
+pub mod help;
 pub mod hooks;
 pub mod workspace;
 
@@ -19,5 +20,6 @@ pub use ctx::{
     get_theme, set_ctx_config, set_theme,
 };
 pub use execution::{execute_ai_command, execute_ai_conversation, execute_shell_command};
+pub use help::read_help_file;
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
 pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};

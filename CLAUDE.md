@@ -252,9 +252,9 @@ Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, 
 
 **Outliner (block editing):**
 
-| Key | On `sh::`/`ai::` block | On regular block |
-|-----|------------------------|------------------|
-| `Enter` | Execute command | Create sibling/split |
+| Key | On command block (`sh::`/`ai::`/`filter::`/`help::`) | On regular block |
+|-----|------------------------------------------------------|------------------|
+| `Enter` | Execute handler | Create sibling/split |
 | `⌘Enter` | Zoom into subtree | Zoom into subtree |
 | `Escape` | Zoom out to full tree | Zoom out to full tree |
 | `Tab` | Indent (at line start) or insert spaces | Indent (at line start) or insert spaces |

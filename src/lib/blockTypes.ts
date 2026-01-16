@@ -70,6 +70,8 @@ export function parseBlockType(content: string): BlockType {
   if (lower.startsWith('ran::')) return 'ran';
   // Note: daily:: uses child-output pattern (like sh::, ai::)
   // See docs/BLOCK_TYPE_PATTERNS.md for when to use type-based vs child-output
+  if (lower.startsWith('filter::')) return 'filter';
+  if (lower.startsWith('search::')) return 'search';
 
   // Markdown syntax (case-sensitive prefix matching)
   if (trimmed.startsWith('### ')) return 'h3';

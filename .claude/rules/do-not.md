@@ -41,6 +41,11 @@ Critical anti-patterns that will break floatty.
 - Return search results directly from Tantivy (hydrate from Y.Doc for full data)
 - Add debouncing without understanding the layer it belongs to
 
+## Inline Parsing
+
+- Add new token types to `inlineParser.ts` without updating `hasInlineFormatting()` in the same file (BlockDisplay early-exits if this gatekeeper returns false → tokens never render)
+- Assume tests passing = feature working (take a screenshot, the parser might not even be called)
+
 ## Rust Backend
 
 - Put business logic in Tauri commands (use `src-tauri/src/services/` for business logic)

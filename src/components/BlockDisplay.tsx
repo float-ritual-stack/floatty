@@ -119,6 +119,9 @@ function InlineTokenSpan(props: TokenSpanProps) {
     'ctx-timestamp': 'ctx-inline-timestamp',
     'ctx-tag': 'ctx-inline-tag',
     'code-fence': 'md-code-fence',
+    'line-comment': 'md-line-comment',
+    'filter-function': 'md-filter-function',
+    'filter-prefix': 'filter-inline-prefix',
   };
 
   // For ctx-tag, add type-specific class for color coding

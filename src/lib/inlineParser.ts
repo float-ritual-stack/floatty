@@ -10,7 +10,7 @@
 import { findWikilinkEnd, parseWikilinkInner } from './wikilinkUtils';
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'filter-function' | 'filter-prefix';
   content: string;  // inner text without markers (for wikilink: display text)
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
@@ -19,6 +19,8 @@ export interface InlineToken {
   target?: string;  // For wikilink: the page name to link to
   lang?: string;    // For code-fence: language identifier (rust, js, etc.)
   code?: string;    // For code-fence: the code content without fence markers
+  commentPrefix?: string; // For line-comment: the prefix used (//, %%, --, #)
+  functionName?: string;  // For filter-function: include or exclude
 }
 
 // ctx:: pattern: timestamp required to distinguish from abstract discussion
@@ -39,6 +41,29 @@ export function hasWikilinkPatterns(content: string): boolean {
   const openIdx = content.indexOf('[[');
   if (openIdx === -1) return false;
   return content.indexOf(']]', openIdx + 2) !== -1;
+}
+
+/**
+ * Check if content starts with filter:: prefix.
+ */
+export function hasFilterPrefixPattern(content: string): boolean {
+  return /^filter::/i.test(content.trim());
+}
+
+/**
+ * Check if content is a line-comment (starts with //, %%, --, #).
+ */
+export function hasLineCommentPattern(content: string): boolean {
+  const trimmed = content.replace(/^[-•]\s+/, '').trim();
+  return /^(\/\/|%%|--|#)\s/.test(trimmed);
+}
+
+/**
+ * Check if content is a filter function call (include(...) or exclude(...)).
+ */
+export function hasFilterFunctionPattern(content: string): boolean {
+  const trimmed = content.replace(/^[-•]\s+/, '').trim();
+  return /^(include|exclude)\s*\([^)]*\)\s*$/i.test(trimmed);
 }
 
 /**
@@ -325,6 +350,59 @@ export function parseInlineTokens(content: string): InlineToken[] {
 
   const tokens: InlineToken[] = [];
 
+  // Check for filter:: prefix at start of line
+  const filterPrefixMatch = content.match(/^(filter::)/i);
+  if (filterPrefixMatch) {
+    const prefix = filterPrefixMatch[1];
+    const rest = content.slice(prefix.length);
+    const tokens: InlineToken[] = [{
+      type: 'filter-prefix',
+      content: prefix,
+      raw: prefix,
+      start: 0,
+      end: prefix.length,
+    }];
+    if (rest) {
+      tokens.push({
+        type: 'text',
+        content: rest,
+        raw: rest,
+        start: prefix.length,
+        end: content.length,
+      });
+    }
+    return tokens;
+  }
+
+  // Check for line-level comment patterns (entire line is a comment)
+  // Only matches if content STARTS with comment prefix (after optional bullet/whitespace)
+  // Note: bullet pattern must be `- ` (dash + space) to avoid stripping `--` comments
+  const trimmed = content.replace(/^[-•]\s+/, '').trim();
+  const commentMatch = trimmed.match(/^(\/\/|%%|--|#)\s*/);
+  if (commentMatch) {
+    return [{
+      type: 'line-comment',
+      content: trimmed.slice(commentMatch[0].length),
+      raw: content,
+      start: 0,
+      end: content.length,
+      commentPrefix: commentMatch[1],
+    }];
+  }
+
+  // Check for filter function patterns: include(...) or exclude(...)
+  const filterFuncMatch = trimmed.match(/^(include|exclude)\s*\([^)]*\)\s*$/i);
+  if (filterFuncMatch) {
+    return [{
+      type: 'filter-function',
+      content: trimmed,
+      raw: content,
+      start: 0,
+      end: content.length,
+      functionName: filterFuncMatch[1].toLowerCase(),
+    }];
+  }
+
   // Combined regex - order matters: code first, then bold (** before *)
   // Using non-greedy matches and avoiding empty content
   const PATTERN = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
@@ -402,8 +480,14 @@ export function parseInlineTokens(content: string): InlineToken[] {
  * Use for early-exit optimization in rendering.
  */
 export function hasInlineFormatting(content: string): boolean {
-  // Code fences OR standard markdown OR ctx:: patterns OR [[wikilinks]]
-  return hasCodeFencePatterns(content) || /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content) || hasCtxPatterns(content) || hasWikilinkPatterns(content);
+  // Code fences OR standard markdown OR ctx:: patterns OR [[wikilinks]] OR comments/filters/prefix
+  return hasCodeFencePatterns(content)
+    || /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content)
+    || hasCtxPatterns(content)
+    || hasWikilinkPatterns(content)
+    || hasLineCommentPattern(content)
+    || hasFilterFunctionPattern(content)
+    || hasFilterPrefixPattern(content);
 }
 
 /**
@@ -419,8 +503,19 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
   const hasMarkdown = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content);
   const hasCtx = hasCtxPatterns(content);
   const hasWikilinks = hasWikilinkPatterns(content);
+  const hasLineComment = hasLineCommentPattern(content);
+  const hasFilterFunc = hasFilterFunctionPattern(content);
+  const hasFilterPrefix = hasFilterPrefixPattern(content);
 
-  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks) return [];
+  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks && !hasLineComment && !hasFilterFunc && !hasFilterPrefix) {
+    return [];
+  }
+
+  // Handle line-comment/filter-function/filter-prefix FIRST (whole-line patterns)
+  // These take precedence because they apply to the entire block content
+  if (hasLineComment || hasFilterFunc || hasFilterPrefix) {
+    return parseInlineTokens(content);
+  }
 
   // Start with code fences (highest priority - content inside is NOT parsed)
   let tokens: InlineToken[] = [];

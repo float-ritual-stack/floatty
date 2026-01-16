@@ -13,8 +13,8 @@ mod sync_test;
 use commands::{
     check_hooks_installed, clear_ctx_markers, clear_workspace, execute_ai_command,
     execute_ai_conversation, execute_shell_command, get_ctx_config, get_ctx_counts,
-    get_ctx_markers, get_theme, get_workspace_state, install_shell_hooks, save_clipboard_image,
-    save_workspace_state, set_ctx_config, set_theme, uninstall_shell_hooks,
+    get_ctx_markers, get_theme, get_workspace_state, install_shell_hooks, read_help_file,
+    save_clipboard_image, save_workspace_state, set_ctx_config, set_theme, uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
 use server::{spawn_server, ServerState};
@@ -316,6 +316,7 @@ pub fn run() {
                     uninstall_shell_hooks,
                     get_workspace_state,
                     save_workspace_state,
+                    read_help_file,
                 ]
             }
             // macOS: include panel commands
@@ -342,6 +343,7 @@ pub fn run() {
                     uninstall_shell_hooks,
                     get_workspace_state,
                     save_workspace_state,
+                    read_help_file,
                     panel::show_test_panel,
                     panel::hide_test_panel,
                     panel::toggle_test_panel,

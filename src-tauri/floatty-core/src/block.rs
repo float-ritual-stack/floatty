@@ -51,6 +51,10 @@ pub enum BlockType {
     Todo,
     /// Blockquote: `> `
     Quote,
+    /// Filter view: prefix `filter::` - children define filter rules
+    Filter,
+    /// Search results: prefix `search::` (planned)
+    Search,
 }
 
 impl BlockType {
@@ -76,6 +80,8 @@ impl BlockType {
             BlockType::Bullet => "bullet",
             BlockType::Todo => "todo",
             BlockType::Quote => "quote",
+            BlockType::Filter => "filter",
+            BlockType::Search => "search",
         }
     }
 }
@@ -164,6 +170,12 @@ pub fn parse_block_type(content: &str) -> BlockType {
     }
     if lower.starts_with("daily::") {
         return BlockType::Daily;
+    }
+    if lower.starts_with("filter::") {
+        return BlockType::Filter;
+    }
+    if lower.starts_with("search::") {
+        return BlockType::Search;
     }
 
     // Markdown syntax (case-sensitive for headings)

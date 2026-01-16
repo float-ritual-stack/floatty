@@ -13,6 +13,7 @@ import { registry, executeHandler, createHookBlockStore, type DailyNoteData, typ
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
+import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 
 // Debounce delay for Y.Doc updates (ms)
 // Keeps typing responsive while reducing sync overhead
@@ -890,6 +891,11 @@ export function BlockItem(props: BlockItemProps) {
             }}
           </Key>
         </div>
+      </Show>
+
+      {/* FILTER BLOCK: live query results (rendered after children which are rules) */}
+      <Show when={block()?.type === 'filter'}>
+        <FilterBlockDisplay block={block()!} paneId={props.paneId} />
       </Show>
     </div>
   );

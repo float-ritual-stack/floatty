@@ -74,6 +74,8 @@ impl MetadataExtractionHook {
     /// Extract metadata from content and store it on the block.
     #[instrument(skip(self, store), fields(block_id = %id))]
     fn extract_and_store(&self, id: &str, content: &str, store: &YDocStore) {
+        debug!("MetadataExtractionHook: processing block {} with content: {}", id, &content[..content.len().min(50)]);
+
         // Extract markers
         let markers = parsing::extract_all_markers(content);
 
@@ -106,8 +108,14 @@ impl MetadataExtractionHook {
         );
 
         // Write metadata to store with Origin::Hook to prevent infinite loops
-        if let Err(e) = store.update_block_metadata(id, metadata, Origin::Hook) {
-            warn!("Failed to update metadata for block {}: {}", id, e);
+        match store.update_block_metadata(id, metadata.clone(), Origin::Hook) {
+            Ok(_) => {
+                debug!("MetadataExtractionHook: wrote metadata for block {} - {} markers, {} outlinks",
+                    id, metadata.markers.len(), metadata.outlinks.len());
+            }
+            Err(e) => {
+                warn!("Failed to update metadata for block {}: {}", id, e);
+            }
         }
     }
 }
