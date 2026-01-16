@@ -2,6 +2,40 @@
 
 All notable changes to floatty are documented here.
 
+## [0.4.2] - 2026-01-15
+
+### New Features
+
+- **filter:: handler** (PR #94, FLO-170) - Dynamic query blocks that filter outline by markers
+  - Query syntax: `filter:: project::floatty status::active`
+  - Filter functions: `include(marker)`, `exclude(marker)`, `children()`
+  - Live results panel with match highlighting, click to navigate
+  - Respects zoom scope - searches within focused subtree
+
+- **help:: handler** (PR #94) - Documentation viewer in outliner
+  - Usage: `help:: filter`, `help:: keyboard`, `help:: handlers`
+  - Hierarchical markdown parsing preserves heading structure
+  - Results insert at top for quick iteration
+
+### Bug Fixes
+
+- **Path traversal vulnerability** (PR #94) - Fixed `read_help_file` to use `starts_with()` instead of `contains()` for proper path validation
+- **Verbose logging** (PR #94) - Changed metadata extraction `info!` logs to `debug!` to reduce noise
+
+### Documentation
+
+- Added FILTER.md comprehensive guide (247 lines) covering query syntax, functions, and use cases
+- Updated CLAUDE.md keyboard table with command block terminology
+- Added inline parsing lesson to do-not.md rules (hasInlineFormatting gatekeeper)
+
+### Tests
+
+- 475 tests (up from 420 in 0.4.1)
+  - 55 new filterParser tests (parsing, escaping, complex queries)
+  - 4 new inlineParser tests (hasInlineFormatting gatekeeper coverage)
+
+---
+
 ## [0.4.1] - 2026-01-14
 
 ### New Features
