@@ -11,26 +11,37 @@ hooks:
     - hooks:
         - type: prompt
           prompt: |
-            You are validating whether a floatty work unit session should end.
+            You are validating whether a floatty float-loop session should end.
 
             Context: $ARGUMENTS
 
-            Analyze the conversation and check if the Exit Protocol was followed:
+            First, determine the SESSION TYPE by scanning the conversation:
 
-            1. **Handoff Written?** - Was a handoff created/updated in .float/work/{track}/handoffs/?
-            2. **Code Committed?** - Were changes committed (look for git commit in transcript)?
-            3. **Sweep Run?** - Was /floatty:sweep run before claiming unit complete?
-            4. **Gaps Logged?** - If gaps discovered, was /floatty:gap used?
-            5. **STATE.md Updated?** - Was session outcome logged?
-            6. **Architecture Used?** - Did implementation follow existing patterns or create one-offs?
+            **PLANNING SESSION** (Phase 0/1 - no Edit/Write tools used):
+            - Required: STATE.md updated with session notes
+            - Optional: evna context capture
 
-            IMPORTANT distinctions:
-            - If session is clearly mid-work (not claiming completion), allow stop: {"ok": true}
-            - If user explicitly said "stopping for now" or "picking up later", allow stop
-            - Only block if Claude is claiming "done" without completing exit protocol
+            **UNIT WORK SESSION** (Phase 4 - Edit/Write tools were used):
+            - Required: Code committed (git commit in transcript)
+            - Required: STATE.md updated with outcome
+            - Required: /floatty:sweep was run before claiming complete
+            - Required: Handoff written if stopping mid-unit
+            - Check: If gaps discovered, was /floatty:gap used?
+            - Check: Did implementation follow architecture or create one-offs?
 
-            If critical items missing when claiming done:
-            {"ok": false, "reason": "Before marking complete: [missing items]"}
+            **EXPLORATION SESSION** (only Read/Grep/Glob tools):
+            - Required: Findings captured (evna or STATE.md)
+
+            **MID-WORK PAUSE** (user said "stopping for now", "picking up later"):
+            - Always allow: {"ok": true}
+
+            Decision logic:
+            1. If user explicitly pausing → allow
+            2. If PLANNING/EXPLORATION session → check minimal requirements
+            3. If UNIT WORK session claiming "done"/"complete" → check full protocol
+
+            If critical items missing:
+            {"ok": false, "reason": "Session type: [type]. Missing: [items]"}
 
             Otherwise:
             {"ok": true}
