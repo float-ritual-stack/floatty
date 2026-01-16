@@ -11,7 +11,6 @@ import {
   matchesPattern,
   blockMatchesFilter,
   executeFilter,
-  extractMarkersFromContent,
   type ParsedFilter,
 } from './filterParser';
 import type { Block } from './blockTypes';
@@ -56,6 +55,24 @@ describe('parseFilterRule', () => {
       operator: 'include',
       markerType: 'project',
       pattern: 'floatty',
+    });
+  });
+
+  it('parses include rule with trailing notes', () => {
+    const result = parseFilterRule('include(project::floatty) <-- matches all floatty blocks');
+    expect(result).toEqual({
+      operator: 'include',
+      markerType: 'project',
+      pattern: 'floatty',
+    });
+  });
+
+  it('parses exclude rule with trailing comments', () => {
+    const result = parseFilterRule('exclude(status::archived) // hide archived');
+    expect(result).toEqual({
+      operator: 'exclude',
+      markerType: 'status',
+      pattern: 'archived',
     });
   });
 
@@ -259,48 +276,6 @@ describe('matchesPattern', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════
-// extractMarkersFromContent (fallback)
-// ═══════════════════════════════════════════════════════════════
-
-describe('extractMarkersFromContent', () => {
-  it('extracts bracketed markers [marker::value]', () => {
-    const markers = extractMarkersFromContent('some text [project::floatty] more text');
-    expect(markers).toHaveLength(1);
-    expect(markers[0]).toEqual({ markerType: 'project', value: 'floatty' });
-  });
-
-  it('extracts multiple bracketed markers', () => {
-    const markers = extractMarkersFromContent('[project::floatty] [status::active]');
-    expect(markers).toHaveLength(2);
-    expect(markers[0].markerType).toBe('project');
-    expect(markers[1].markerType).toBe('status');
-  });
-
-  it('handles marker without value', () => {
-    const markers = extractMarkersFromContent('[ctx::]');
-    expect(markers).toHaveLength(1);
-    expect(markers[0]).toEqual({ markerType: 'ctx', value: null });
-  });
-
-  it('extracts prefix markers (ctx::, project::, etc.)', () => {
-    const markers = extractMarkersFromContent('ctx::2026-01-15 some context');
-    expect(markers).toHaveLength(1);
-    expect(markers[0]).toEqual({ markerType: 'ctx', value: '2026-01-15' });
-  });
-
-  it('ignores block type prefixes (sh::, ai::, filter::, etc.)', () => {
-    const markers = extractMarkersFromContent('sh:: ls -la');
-    expect(markers).toHaveLength(0);
-  });
-
-  it('handles complex content with both patterns', () => {
-    const content = 'ctx::2026-01-15 @ 06:28 PM - [project::floatty] stuff!';
-    const markers = extractMarkersFromContent(content);
-    expect(markers).toContainEqual({ markerType: 'project', value: 'floatty' });
-    expect(markers).toContainEqual({ markerType: 'ctx', value: '2026-01-15' });
-  });
-});
 
 // ═══════════════════════════════════════════════════════════════
 // blockMatchesFilter
@@ -403,11 +378,12 @@ describe('blockMatchesFilter', () => {
     expect(blockMatchesFilter(rangleTask, filter)).toBe(false);
   });
 
-  it('falls back to content extraction when metadata is empty', () => {
+  it('returns false when metadata is empty (no fallback to content)', () => {
     // Block with markers in content but no metadata
-    const blockWithContentMarkers = makeBlock('content-markers', []);
-    blockWithContentMarkers.content = 'ctx::2026-01-15 - [project::floatty] stuff!';
-    blockWithContentMarkers.metadata = undefined;
+    // Without metadata extraction hook, block won't match
+    const blockWithNoMetadata = makeBlock('no-metadata', []);
+    blockWithNoMetadata.content = 'ctx::2026-01-15 - [project::floatty] stuff!';
+    blockWithNoMetadata.metadata = undefined;
 
     const filter: ParsedFilter = {
       combinator: 'all',
@@ -415,7 +391,8 @@ describe('blockMatchesFilter', () => {
       errors: [],
     };
 
-    expect(blockMatchesFilter(blockWithContentMarkers, filter)).toBe(true);
+    // Should NOT match - metadata extraction is server-side responsibility
+    expect(blockMatchesFilter(blockWithNoMetadata, filter)).toBe(false);
   });
 });
 

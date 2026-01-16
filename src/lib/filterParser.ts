@@ -65,8 +65,8 @@ export function parseFilterRule(content: string): FilterRule | { option: string;
     text = text.slice(2).trim();
   }
 
-  // include(marker::pattern)
-  const includeMatch = text.match(/^include\(([^:]+)::([^)]*)\)$/i);
+  // include(marker::pattern) - trailing text after ) is allowed (for comments/notes)
+  const includeMatch = text.match(/^include\(([^:]+)::([^)]*)\)/i);
   if (includeMatch) {
     return {
       operator: 'include',
@@ -75,8 +75,8 @@ export function parseFilterRule(content: string): FilterRule | { option: string;
     };
   }
 
-  // exclude(marker::pattern)
-  const excludeMatch = text.match(/^exclude\(([^:]+)::([^)]*)\)$/i);
+  // exclude(marker::pattern) - trailing text after ) is allowed
+  const excludeMatch = text.match(/^exclude\(([^:]+)::([^)]*)\)/i);
   if (excludeMatch) {
     return {
       operator: 'exclude',
@@ -127,8 +127,15 @@ export function parseFilterFromChildren(children: Block[]): ParsedFilter {
     const parsed = parseFilterRule(content);
 
     if (parsed === null) {
-      // Skip empty/whitespace-only children
-      if (content.trim() && !content.trim().startsWith('#')) {
+      // Skip empty/whitespace-only children and comment lines
+      const trimmed = content.trim();
+      const isComment =
+        !trimmed ||
+        trimmed.startsWith('#') ||
+        trimmed.startsWith('//') ||
+        trimmed.startsWith('%%') ||
+        trimmed.startsWith('--');
+      if (!isComment) {
         result.errors.push({ content, error: 'Unrecognized filter syntax' });
       }
       continue;
@@ -206,42 +213,6 @@ export function markersMatchRule(markers: Marker[], rule: FilterRule): boolean {
   );
 }
 
-/**
- * Extract markers from block content as fallback when metadata is empty.
- * Looks for patterns like [marker::value] and marker:: prefix.
- *
- * This is a temporary fallback until MetadataExtractionHook populates block.metadata.markers.
- */
-export function extractMarkersFromContent(content: string): Marker[] {
-  const markers: Marker[] = [];
-
-  // Match [marker::value] patterns (bracketed markers)
-  const bracketPattern = /\[([a-zA-Z]+)::([^\]]*)\]/g;
-  let match;
-  while ((match = bracketPattern.exec(content)) !== null) {
-    markers.push({
-      markerType: match[1].toLowerCase(),
-      value: match[2].trim() || null,
-    });
-  }
-
-  // Match prefix markers at start of line: marker:: or marker::value
-  // But not if already captured by bracket pattern
-  const prefixPattern = /(?:^|\n)\s*([a-zA-Z]+)::\s*(\S*)/g;
-  while ((match = prefixPattern.exec(content)) !== null) {
-    const markerType = match[1].toLowerCase();
-    // Skip common block type prefixes (handled separately)
-    if (['sh', 'ai', 'filter', 'search', 'daily', 'web', 'link', 'output', 'error', 'picker', 'ran', 'dispatch'].includes(markerType)) {
-      continue;
-    }
-    markers.push({
-      markerType,
-      value: match[2].trim() || null,
-    });
-  }
-
-  return markers;
-}
 
 // ═══════════════════════════════════════════════════════════════
 // FILTER EVALUATION
@@ -257,11 +228,9 @@ export function extractMarkersFromContent(content: string): Marker[] {
  *   4. For 'any' combinator: ANY include rule must match
  */
 export function blockMatchesFilter(block: Block, filter: ParsedFilter): boolean {
-  // Use metadata markers if available, otherwise extract from content
-  // Content extraction is a fallback until MetadataExtractionHook is implemented
-  const markers = (block.metadata?.markers?.length ?? 0) > 0
-    ? block.metadata!.markers
-    : extractMarkersFromContent(block.content);
+  // Use metadata markers from MetadataExtractionHook
+  // No fallback - if metadata is empty, the hook hasn't run yet
+  const markers = block.metadata?.markers ?? [];
 
   const includeRules = filter.rules.filter((r) => r.operator === 'include');
   const excludeRules = filter.rules.filter((r) => r.operator === 'exclude');

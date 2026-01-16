@@ -32,6 +32,78 @@ use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
 use crate::WsBroadcaster;
 
+/// Extract metadata from Y.Doc block, handling multiple formats:
+/// - New: Embedded Y.Map (from MapPrelim insertion)
+/// - Any::Map: JSON-like map value
+/// - Legacy: JSON string (for backwards compatibility)
+fn extract_metadata_from_yrs<T: ReadTxn>(value: yrs::Out, txn: &T) -> Option<serde_json::Value> {
+    match value {
+        // New format: Embedded Y.Map (created by MapPrelim)
+        yrs::Out::YMap(map) => {
+            let mut json_map = serde_json::Map::new();
+            for (key, val) in map.iter(txn) {
+                json_map.insert(key.to_string(), yrs_out_to_json(val, txn));
+            }
+            Some(serde_json::Value::Object(json_map))
+        }
+        // JSON-like map value (yrs::Any::Map)
+        yrs::Out::Any(yrs::Any::Map(map)) => {
+            let json_map: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.to_string(), yrs_any_to_json(v.clone())))
+                .collect();
+            Some(serde_json::Value::Object(json_map))
+        }
+        // Legacy format: JSON string - parse it
+        yrs::Out::Any(yrs::Any::String(s)) => serde_json::from_str(s.as_ref()).ok(),
+        _ => None,
+    }
+}
+
+/// Convert yrs::Out to serde_json::Value recursively (for embedded Y types)
+fn yrs_out_to_json<T: ReadTxn>(out: yrs::Out, txn: &T) -> serde_json::Value {
+    match out {
+        yrs::Out::YMap(map) => {
+            let mut json_map = serde_json::Map::new();
+            for (key, val) in map.iter(txn) {
+                json_map.insert(key.to_string(), yrs_out_to_json(val, txn));
+            }
+            serde_json::Value::Object(json_map)
+        }
+        yrs::Out::YArray(arr) => {
+            let items: Vec<serde_json::Value> = arr.iter(txn).map(|v| yrs_out_to_json(v, txn)).collect();
+            serde_json::Value::Array(items)
+        }
+        yrs::Out::Any(any) => yrs_any_to_json(any),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// Convert yrs::Any to serde_json::Value recursively
+fn yrs_any_to_json(any: yrs::Any) -> serde_json::Value {
+    match any {
+        yrs::Any::Null => serde_json::Value::Null,
+        yrs::Any::Bool(b) => serde_json::Value::Bool(b),
+        yrs::Any::Number(n) => serde_json::Value::Number(
+            serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))
+        ),
+        yrs::Any::BigInt(n) => serde_json::Value::Number(n.into()),
+        yrs::Any::String(s) => serde_json::Value::String(s.to_string()),
+        yrs::Any::Array(arr) => {
+            serde_json::Value::Array(arr.iter().cloned().map(yrs_any_to_json).collect())
+        }
+        yrs::Any::Map(map) => {
+            let obj: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.to_string(), yrs_any_to_json(v.clone())))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        yrs::Any::Buffer(_) => serde_json::Value::Null, // Skip binary data
+        yrs::Any::Undefined => serde_json::Value::Null,
+    }
+}
+
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
@@ -336,13 +408,10 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
                     })
                     .unwrap_or(false);
 
-                // Extract metadata if present
-                let metadata = block_map.get(&txn, "metadata").and_then(|v| match v {
-                    yrs::Out::Any(yrs::Any::String(s)) => {
-                        serde_json::from_str(s.as_ref()).ok()
-                    }
-                    _ => None,
-                });
+                // Extract metadata if present (handles both Y.Map and legacy JSON string)
+                let metadata = block_map
+                    .get(&txn, "metadata")
+                    .and_then(|v| extract_metadata_from_yrs(v, &txn));
 
                 let block_type = floatty_core::parse_block_type(&content);
 
@@ -418,13 +487,10 @@ async fn get_block(
             })
             .unwrap_or(false);
 
-        // Extract metadata if present
-        let metadata = block_map.get(&txn, "metadata").and_then(|v| match v {
-            yrs::Out::Any(yrs::Any::String(s)) => {
-                serde_json::from_str(s.as_ref()).ok()
-            }
-            _ => None,
-        });
+        // Extract metadata if present (handles both Y.Map and legacy JSON string)
+        let metadata = block_map
+            .get(&txn, "metadata")
+            .and_then(|v| extract_metadata_from_yrs(v, &txn));
 
         let block_type = floatty_core::parse_block_type(&content);
 

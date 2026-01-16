@@ -110,6 +110,7 @@ export function FilterBlockDisplay(props: FilterBlockDisplayProps) {
   const { blockStore } = useWorkspace();
   const [results, setResults] = createSignal<Block[]>([]);
   const [lastQueryTime, setLastQueryTime] = createSignal<number>(0);
+  const [resultsCollapsed, setResultsCollapsed] = createSignal(false);
 
   // Get children of this filter block to parse as rules
   const getChildren = () => {
@@ -131,8 +132,21 @@ export function FilterBlockDisplay(props: FilterBlockDisplayProps) {
     return collectDescendantIds(props.block, blockStore.getBlock);
   });
 
+  // Check if we have valid filter rules (not just unrecognized text)
+  const hasValidRules = createMemo(() => {
+    const f = filter();
+    return f.rules.length > 0;
+  });
+
   // Execute filter query
   const runQuery = () => {
+    // Don't query if no valid rules - prevents showing "all blocks" as results
+    if (!hasValidRules()) {
+      setResults([]);
+      setLastQueryTime(0);
+      return;
+    }
+
     const startTime = performance.now();
     const allBlocks = Object.values(blockStore.blocks);
     const matches = executeFilter(filter(), allBlocks, excludeIds());
@@ -192,6 +206,17 @@ export function FilterBlockDisplay(props: FilterBlockDisplayProps) {
       {/* Header with stats */}
       <div class="filter-header">
         <span class="filter-stats">
+          <Show when={hasValidRules()}>
+            <button
+              class="filter-collapse-toggle"
+              onClick={() => setResultsCollapsed(!resultsCollapsed())}
+              title={resultsCollapsed() ? 'Expand results' : 'Collapse results'}
+              aria-label={resultsCollapsed() ? 'Expand results' : 'Collapse results'}
+              aria-expanded={!resultsCollapsed()}
+            >
+              {resultsCollapsed() ? '▶' : '▼'}
+            </button>
+          </Show>
           {results().length} results
           <Show when={lastQueryTime() > 0}>
             <span class="filter-time"> ({lastQueryTime().toFixed(0)}ms)</span>
@@ -228,19 +253,21 @@ export function FilterBlockDisplay(props: FilterBlockDisplayProps) {
       </Show>
 
       {/* Results */}
-      <Show
-        when={results().length > 0}
-        fallback={
-          <Show when={filter().rules.length > 0}>
-            <div class="filter-no-results">No blocks match this filter</div>
-          </Show>
-        }
-      >
-        <div class="filter-results-list">
-          <For each={results()}>
-            {(block) => <FilterResultCard block={block} paneId={props.paneId} />}
-          </For>
-        </div>
+      <Show when={!resultsCollapsed()}>
+        <Show
+          when={results().length > 0}
+          fallback={
+            <Show when={filter().rules.length > 0}>
+              <div class="filter-no-results">No blocks match this filter</div>
+            </Show>
+          }
+        >
+          <div class="filter-results-list">
+            <For each={results()}>
+              {(block) => <FilterResultCard block={block} paneId={props.paneId} />}
+            </For>
+          </div>
+        </Show>
       </Show>
 
       {/* Empty state when no rules */}

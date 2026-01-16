@@ -35,7 +35,9 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 use tracing::{debug, trace};
-use yrs::{Doc, Map, Out, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
+use yrs::{any, Doc, Map, MapPrelim, Out, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
+
+use crate::metadata::BlockMetadata;
 
 /// Default doc key for the outliner.
 pub const DEFAULT_DOC_KEY: &str = "default";
@@ -50,6 +52,55 @@ const COMPACT_THRESHOLD: i64 = 100;
 
 /// Only check DB for compaction every N updates (avoid SELECT per keystroke).
 const COMPACT_CHECK_INTERVAL: i64 = 10;
+
+/// Convert BlockMetadata to a Y.Map structure for CRDT storage.
+///
+/// This enables frontend to read metadata directly without JSON parsing.
+/// The structure is:
+/// ```json
+/// {
+///   "markers": [{ "markerType": "project", "value": "floatty" }, ...],
+///   "outlinks": ["Page Name", ...],
+///   "isStub": false,
+///   "extractedAt": 1234567890
+/// }
+/// ```
+fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
+    // Convert markers Vec<Marker> to array of yrs::Any maps
+    let markers_array: Vec<yrs::Any> = metadata
+        .markers
+        .iter()
+        .map(|m| {
+            let mut marker_map = std::collections::HashMap::new();
+            marker_map.insert("markerType".to_string(), any!(m.marker_type.clone()));
+            if let Some(ref v) = m.value {
+                marker_map.insert("value".to_string(), any!(v.clone()));
+            }
+            yrs::Any::Map(marker_map.into())
+        })
+        .collect();
+
+    // Convert outlinks Vec<String> to array of strings
+    let outlinks_array: Vec<yrs::Any> = metadata
+        .outlinks
+        .iter()
+        .map(|s| any!(s.clone()))
+        .collect();
+
+    // extractedAt: include as f64 or null
+    let extracted_at: yrs::Any = match metadata.extracted_at {
+        Some(ts) => any!(ts as f64),
+        None => yrs::Any::Null,
+    };
+
+    // Build the metadata map with fixed-size array
+    MapPrelim::from([
+        ("markers".to_owned(), yrs::Any::Array(markers_array.into())),
+        ("outlinks".to_owned(), yrs::Any::Array(outlinks_array.into())),
+        ("isStub".to_owned(), any!(metadata.is_stub)),
+        ("extractedAt".to_owned(), extracted_at),
+    ])
+}
 
 /// Callback type for change notifications.
 pub type ChangeCallback = Arc<dyn Fn(Vec<BlockChange>) + Send + Sync>;
@@ -597,7 +648,7 @@ impl YDocStore {
 
     /// Update metadata for a block.
     ///
-    /// Serializes the metadata to JSON and stores it in the block's Y.Map.
+    /// Writes metadata as native Y.Doc structure (nested Y.Map with Y.Array).
     /// Used by hooks to write extracted metadata (markers, outlinks, etc.).
     ///
     /// The origin parameter tags the Y.Doc transaction so downstream observers
@@ -632,11 +683,10 @@ impl YDocStore {
                 }
             };
 
-            // Serialize metadata to JSON string (matches API pattern)
-            let metadata_json = serde_json::to_string(&metadata)
-                .map_err(|e| StoreError::UpdateApply(format!("Metadata serialization failed: {}", e)))?;
-
-            block_map.insert(&mut txn, "metadata", metadata_json);
+            // Write metadata as native Y.Doc structure (not JSON string)
+            // This enables frontend to read it directly without parsing
+            let metadata_map = metadata_to_ymap(&metadata);
+            block_map.insert(&mut txn, "metadata", metadata_map);
 
             txn.encode_update_v1()
         };
