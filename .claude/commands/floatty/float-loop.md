@@ -1,6 +1,40 @@
 ---
 description: Continue a work track (e.g., search-work, testing-infra)
 argument-hint: <track-name>
+hooks:
+  PostToolUse:
+    - matcher: "Edit|Write"
+      hooks:
+        - type: command
+          command: "npm run lint --silent 2>&1 | head -20 || true"
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: |
+            You are validating whether a floatty work unit session should end.
+
+            Context: $ARGUMENTS
+
+            Analyze the conversation and check if the Exit Protocol was followed:
+
+            1. **Handoff Written?** - Was a handoff created/updated in .float/work/{track}/handoffs/?
+            2. **Code Committed?** - Were changes committed (look for git commit in transcript)?
+            3. **Sweep Run?** - Was /floatty:sweep run before claiming unit complete?
+            4. **Gaps Logged?** - If gaps discovered, was /floatty:gap used?
+            5. **STATE.md Updated?** - Was session outcome logged?
+            6. **Architecture Used?** - Did implementation follow existing patterns or create one-offs?
+
+            IMPORTANT distinctions:
+            - If session is clearly mid-work (not claiming completion), allow stop: {"ok": true}
+            - If user explicitly said "stopping for now" or "picking up later", allow stop
+            - Only block if Claude is claiming "done" without completing exit protocol
+
+            If critical items missing when claiming done:
+            {"ok": false, "reason": "Before marking complete: [missing items]"}
+
+            Otherwise:
+            {"ok": true}
+          timeout: 45
 ---
 
 # Float Loop: $ARGUMENTS
