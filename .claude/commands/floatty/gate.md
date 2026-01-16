@@ -1,34 +1,61 @@
 ---
 description: Run phase gate checklist before proceeding to next phase
+argument-hint: [track-name]
 ---
 
-Phase Gate Checklist for current phase in `docs/floatty-foundation/STATE.md`:
+# Phase Gate Check
+
+## Phase 0: Identify Active Track
+
+```bash
+# If track specified, use it; otherwise find most recent
+ls -lt .float/work/$ARGUMENTS/STATE.md 2>/dev/null || ls -lt .float/work/*/STATE.md 2>/dev/null | head -1
+```
+
+---
+
+## Gate Checklist
 
 1. **Test Suite**: Run `npm run test` - all tests must pass
 2. **Lint**: Run `npm run lint` - must be clean
-3. **Type Check**: Run `npm run type-check` - must pass
+3. **Rust Check**: Run `cargo check --manifest-path src-tauri/Cargo.toml`
 4. **STATE.md Review**:
    - All work units in current phase marked `complete`?
-   - Learnings sections populated?
-5. **COMPLETE.md**: Does `docs/floatty-foundation/PHASE-N/COMPLETE.md` exist?
-   - If not, create it with:
-     - Key decisions made
-     - Patterns established
-     - Gotchas discovered
-     - Links to relevant code
-6. **User Approval**: Ask "Ready to proceed to Phase N+1?"
+   - Session log updated?
+5. **WORK_UNITS.md Review**:
+   - Discovered gaps documented?
+   - Dependencies accurate?
+6. **Handoffs Written**: Each completed unit has a handoff in `handoffs/`
+
+---
+
+## Report Format
 
 Report status as:
+
 ```
-Phase N Gate Check:
-✅/❌ npm run test (X tests)
+Phase Gate Check for {track}:
+✅/❌ npm run test ({X} tests)
 ✅/❌ npm run lint
-✅/❌ npm run type-check
-✅/❌ All work units complete
-✅/❌ Learnings captured
-✅/❌ COMPLETE.md exists
+✅/❌ cargo check
+✅/❌ All work units in phase complete
+✅/❌ Session log updated
+✅/❌ Handoffs written
 
 [Action required if any ❌]
 ```
 
-Only proceed to next phase with explicit user approval.
+---
+
+## If All Pass
+
+Update STATE.md:
+- Increment current phase
+- Log gate passage in session log
+- Update "Next Actions" for new phase
+
+---
+
+## If Any Fail
+
+List blockers and suggest fixes before re-running gate.

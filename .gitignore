@@ -37,3 +37,6 @@ src-tauri/binaries/
 .claude/hooks/
 .claude/settings.json
 .claude/settings.local.json
+
+# Float loop work tracks (survives branch changes, local to developer)
+.float/

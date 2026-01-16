@@ -1,8 +1,23 @@
 ---
 description: Capture discovered architecture gap and update work unit specs
+argument-hint: <gap description>
 ---
 
 # Gap: $ARGUMENTS
+
+## Phase 0: Identify Active Track
+
+Check for active work track:
+
+```bash
+# Find most recently modified track
+ls -lt .float/work/*/STATE.md 2>/dev/null | head -1
+```
+
+If no track found, this gap applies to general floatty architecture.
+If track found, the gap will be documented in that track's WORK_UNITS.md.
+
+---
 
 ## Phase 1: Verify the Gap
 
@@ -16,11 +31,13 @@ Use Task tool with subagent_type=Explore:
 Check relevant areas:
 - `src-tauri/floatty-core/src/` for Rust implementations
 - `src/` for TypeScript implementations
-- `docs/` for existing documentation of the feature
+- `.float/work/{track}/` for existing documentation
+
+---
 
 ## Phase 2: Document the Gap
 
-Read `docs/SEARCH_WORK_UNITS.md` to understand current unit structure.
+Read the active track's WORK_UNITS.md to understand current unit structure.
 
 Gap details to capture:
 - What was discovered
@@ -28,17 +45,21 @@ Gap details to capture:
 - Why it matters (what breaks without it)
 - Suggested placement in unit sequence
 
+---
+
 ## Phase 3: Determine Impact
 
 | Impact | Action |
 |--------|--------|
 | Blocks current work | Add as prerequisite unit (0.x, 1.x, etc.) |
-| Enables future capability | Add to Phase 3+ or create new phase |
+| Enables future capability | Add to later phase or create new phase |
 | Nice-to-have | Add to `## Discovered Gaps` section at end of doc |
 
-## Phase 4: Update SEARCH_WORK_UNITS.md
+---
 
-Add to Discovered Gaps section:
+## Phase 4: Update Track WORK_UNITS.md
+
+Add to Discovered Gaps section in `.float/work/{track}/WORK_UNITS.md`:
 
 ```markdown
 ### Gap: {Gap Name}
@@ -63,21 +84,27 @@ Add to Discovered Gaps section:
 **Notes**: {Additional context}
 ```
 
+---
+
 ## Phase 5: Update Dependencies (if blocking)
 
-If new unit is inserted:
+If new unit must be inserted:
 1. Add to Work Unit Index table
 2. Update Entry Protocol of dependent units
 3. Add full unit definition with Entry/Exit protocols
+
+---
 
 ## Phase 6: Capture to evna
 
 ```
 mcp__evna-remote__active_context(
-  capture="ctx::{date} @ {time} [project::floatty] [mode::gap-capture] {summary}",
+  capture="ctx::{date} @ {time} [project::floatty] [mode::gap-capture] track::{track} - {summary}",
   project="floatty"
 )
 ```
+
+---
 
 ## Example
 
@@ -86,7 +113,7 @@ mcp__evna-remote__active_context(
 ```
 
 Would:
-1. Explore to verify store.rs only has apply_update()
-2. Document the limitation and its impact
-3. Add to Discovered Gaps section
+1. Identify active track (e.g., testing-infra)
+2. Explore to verify store.rs only has apply_update()
+3. Document the limitation and its impact in `.float/work/testing-infra/WORK_UNITS.md`
 4. Capture to evna for sibling awareness
