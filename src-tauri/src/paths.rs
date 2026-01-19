@@ -94,7 +94,31 @@ impl DataPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
+
+    /// RAII guard for env var restoration (ensures cleanup even on panic)
+    struct EnvGuard {
+        key: &'static str,
+        old_value: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn new(key: &'static str, new_value: &str) -> Self {
+            let old_value = env::var(key).ok();
+            env::set_var(key, new_value);
+            Self { key, old_value }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.old_value {
+                Some(v) => env::set_var(self.key, v),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
 
     #[test]
     fn test_default_root() {
@@ -116,20 +140,13 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_with_env() {
-        // Save and set env
-        let key = "FLOATTY_DATA_DIR";
-        let old = env::var(key).ok();
-        env::set_var(key, "/tmp/test-env-paths");
+        // EnvGuard handles save/restore with RAII (panic-safe)
+        let _guard = EnvGuard::new("FLOATTY_DATA_DIR", "/tmp/test-env-paths");
 
         let paths = DataPaths::resolve();
         assert_eq!(paths.root, PathBuf::from("/tmp/test-env-paths"));
-
-        // Restore
-        match old {
-            Some(v) => env::set_var(key, v),
-            None => env::remove_var(key),
-        }
     }
 
     #[test]
