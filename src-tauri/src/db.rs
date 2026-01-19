@@ -85,10 +85,11 @@ pub struct FloattyDb {
 }
 
 impl FloattyDb {
-    /// Open or create database at ~/.floatty/ctx_markers.db
-    pub fn open() -> Result<Self> {
-        let db_path = Self::db_path();
-
+    /// Open or create database at specified path.
+    ///
+    /// Use `DataPaths::resolve().database` to get the path based on
+    /// `FLOATTY_DATA_DIR` environment variable.
+    pub fn open_at(db_path: &PathBuf) -> Result<Self> {
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -100,7 +101,7 @@ impl FloattyDb {
             }
         }
 
-        let conn = Connection::open(&db_path)?;
+        let conn = Connection::open(db_path)?;
 
         // Enable WAL mode for better concurrency
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
@@ -108,6 +109,14 @@ impl FloattyDb {
         let db = Self { conn: Mutex::new(conn) };
         db.init_schema()?;
         Ok(db)
+    }
+
+    /// Open or create database at default path (~/.floatty/ctx_markers.db).
+    ///
+    /// Deprecated: prefer `open_at(paths.database)` for explicit path control.
+    #[allow(dead_code)]
+    pub fn open() -> Result<Self> {
+        Self::open_at(&Self::default_db_path())
     }
 
     /// Open an in-memory database for testing
@@ -119,8 +128,9 @@ impl FloattyDb {
         Ok(db)
     }
 
-    /// Get the database file path
-    fn db_path() -> PathBuf {
+    /// Default database file path: ~/.floatty/ctx_markers.db
+    #[allow(dead_code)]
+    pub fn default_db_path() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".floatty")

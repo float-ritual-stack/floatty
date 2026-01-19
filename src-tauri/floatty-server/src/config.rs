@@ -1,10 +1,28 @@
-//! Server configuration loaded from ~/.floatty/config.toml
+//! Server configuration loaded from config.toml.
+//!
+//! Config path is determined by:
+//! 1. `FLOATTY_DATA_DIR` environment variable (if set) → `{FLOATTY_DATA_DIR}/config.toml`
+//! 2. Default: `~/.floatty/config.toml`
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Default port for the floatty-server
 pub const DEFAULT_PORT: u16 = 8765;
+
+/// Get the data directory root.
+///
+/// Checks `FLOATTY_DATA_DIR` first, falls back to `~/.floatty`.
+pub fn data_dir() -> PathBuf {
+    std::env::var("FLOATTY_DATA_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".floatty")
+        })
+}
 
 /// Server configuration section from config.toml
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,12 +104,11 @@ impl ServerConfig {
         Self::default()
     }
 
-    /// Get the config file path
+    /// Get the config file path.
+    ///
+    /// Uses `FLOATTY_DATA_DIR` if set, otherwise `~/.floatty`.
     pub fn config_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".floatty")
-            .join("config.toml")
+        data_dir().join("config.toml")
     }
 
     /// Get the API key, generating and persisting one if not set

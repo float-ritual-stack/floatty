@@ -19,6 +19,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+vergen-gix = { version = "1", features = ["build", "cargo", "rustc"] }
 
 [dependencies]
 serde_json = "1.0"
