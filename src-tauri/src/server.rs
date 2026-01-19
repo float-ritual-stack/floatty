@@ -5,16 +5,9 @@
 //! (reusing existing server) and managed mode (spawning as subprocess).
 
 use crate::config::ServerInfo;
+use crate::paths::DataPaths;
 use std::path::PathBuf;
 use std::process::Child;
-
-/// PID file path for stale server detection
-fn pid_file_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".floatty")
-        .join("server.pid")
-}
 
 /// State for the floatty-server subprocess
 pub struct ServerState {
@@ -22,6 +15,8 @@ pub struct ServerState {
     pub info: ServerInfo,
     /// Child process handle - only Some if we spawned it (None = reusing existing server)
     process: Option<std::sync::Mutex<Child>>,
+    /// Path to PID file for cleanup on drop
+    pid_file: PathBuf,
 }
 
 impl Drop for ServerState {
@@ -32,7 +27,7 @@ impl Drop for ServerState {
                 tracing::info!("Killing floatty-server subprocess (we spawned it)");
                 let _ = child.kill();
                 // Clean up PID file on graceful shutdown
-                remove_pid_file();
+                remove_pid_file(&self.pid_file);
             }
         } else {
             tracing::info!("Not killing floatty-server (reusing existing instance)");
@@ -42,19 +37,17 @@ impl Drop for ServerState {
 
 /// Kill a stale server process using saved PID file.
 /// Returns true if a stale server was found and killed.
-fn kill_stale_server() -> bool {
-    let pid_path = pid_file_path();
-
+fn kill_stale_server(pid_path: &PathBuf) -> bool {
     if !pid_path.exists() {
         return false;
     }
 
     // Read PID from file
-    let pid_str = match std::fs::read_to_string(&pid_path) {
+    let pid_str = match std::fs::read_to_string(pid_path) {
         Ok(s) => s.trim().to_string(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to read PID file");
-            let _ = std::fs::remove_file(&pid_path);
+            let _ = std::fs::remove_file(pid_path);
             return false;
         }
     };
@@ -63,7 +56,7 @@ fn kill_stale_server() -> bool {
         Ok(p) => p,
         Err(_) => {
             tracing::warn!(pid_str = %pid_str, "Invalid PID in file");
-            let _ = std::fs::remove_file(&pid_path);
+            let _ = std::fs::remove_file(pid_path);
             return false;
         }
     };
@@ -77,7 +70,7 @@ fn kill_stale_server() -> bool {
 
     if !is_running {
         tracing::info!(pid = pid, "PID from file is not running (stale PID file)");
-        let _ = std::fs::remove_file(&pid_path);
+        let _ = std::fs::remove_file(pid_path);
         return false;
     }
 
@@ -92,7 +85,7 @@ fn kill_stale_server() -> bool {
     if killed {
         // Wait a moment for process to exit
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let _ = std::fs::remove_file(&pid_path);
+        let _ = std::fs::remove_file(pid_path);
         tracing::info!(pid = pid, "Stale server killed successfully");
         true
     } else {
@@ -102,9 +95,7 @@ fn kill_stale_server() -> bool {
 }
 
 /// Write server PID to file for stale process detection
-fn write_pid_file(pid: u32) {
-    let pid_path = pid_file_path();
-
+fn write_pid_file(pid: u32, pid_path: &PathBuf) {
     // Ensure directory exists
     if let Some(parent) = pid_path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -113,7 +104,7 @@ fn write_pid_file(pid: u32) {
         }
     }
 
-    if let Err(e) = std::fs::write(&pid_path, pid.to_string()) {
+    if let Err(e) = std::fs::write(pid_path, pid.to_string()) {
         tracing::error!(error = %e, "Failed to write PID file");
     } else {
         tracing::info!(pid = pid, path = ?pid_path, "Wrote server PID to file");
@@ -121,10 +112,9 @@ fn write_pid_file(pid: u32) {
 }
 
 /// Remove PID file on clean shutdown
-fn remove_pid_file() {
-    let pid_path = pid_file_path();
+fn remove_pid_file(pid_path: &PathBuf) {
     if pid_path.exists() {
-        if let Err(e) = std::fs::remove_file(&pid_path) {
+        if let Err(e) = std::fs::remove_file(pid_path) {
             tracing::warn!(error = %e, "Failed to remove PID file");
         }
     }
@@ -135,19 +125,26 @@ fn remove_pid_file() {
 ///
 /// Returns `ServerState` on success, or None if spawn/health-check fails.
 /// Uses eprintln for early boot logging (before tauri_plugin_log is initialized).
-pub fn spawn_server(port: u16) -> Option<ServerState> {
+///
+/// # Arguments
+/// * `paths` - Data paths (used for PID file and passed to subprocess via FLOATTY_DATA_DIR)
+/// * `port` - Port to run server on
+pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
+    let pid_file = paths.pid_file.clone();
+
     // First, kill any stale server from previous crashes
-    kill_stale_server();
+    kill_stale_server(&pid_file);
 
     let url = format!("http://127.0.0.1:{}", port);
 
     // Check if server is already running (from previous session or standalone)
     if wait_for_server_health(&url) {
         tracing::info!(url = %url, "Reusing existing server");
-        let api_key = read_api_key_from_config()?;
+        let api_key = read_api_key_from_config(&paths.config)?;
         return Some(ServerState {
             info: ServerInfo { url, api_key },
             process: None, // We didn't spawn it, don't kill it
+            pid_file,
         });
     }
 
@@ -155,10 +152,12 @@ pub fn spawn_server(port: u16) -> Option<ServerState> {
     let server_binary = find_server_binary()?;
     tracing::info!(binary = ?server_binary, "Spawning floatty-server");
 
-    // Spawn server (it reads config for port/api_key itself)
+    // Spawn server with FLOATTY_DATA_DIR env var
+    // This ensures the server uses the same data directory as the main app
     // Use null/inherit instead of piped to prevent deadlock when buffer fills
     // (piped stdout/stderr would block writes if parent never reads - ~64KB buffer on Unix)
     let child = std::process::Command::new(&server_binary)
+        .env("FLOATTY_DATA_DIR", &paths.root)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit())
         .spawn()
@@ -169,10 +168,10 @@ pub fn spawn_server(port: u16) -> Option<ServerState> {
         .ok()?;
 
     let pid = child.id();
-    tracing::info!(pid = pid, "floatty-server subprocess launched");
-    
+    tracing::info!(pid = pid, data_dir = ?paths.root, "floatty-server subprocess launched");
+
     // Write PID file for stale process detection on next launch
-    write_pid_file(pid);
+    write_pid_file(pid, &pid_file);
 
     // Wait for server to be ready
     if !wait_for_server_health(&url) {
@@ -181,29 +180,25 @@ pub fn spawn_server(port: u16) -> Option<ServerState> {
     }
 
     // Read API key from config (server generates and persists if needed)
-    let api_key = read_api_key_from_config()?;
+    let api_key = read_api_key_from_config(&paths.config)?;
 
     tracing::info!(url = %url, pid = pid, "floatty-server ready");
 
     Some(ServerState {
         info: ServerInfo { url, api_key },
         process: Some(std::sync::Mutex::new(child)),
+        pid_file,
     })
 }
 
-/// Read API key from ~/.floatty/config.toml [server].api_key
-fn read_api_key_from_config() -> Option<String> {
-    let config_path = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".floatty")
-        .join("config.toml");
-
+/// Read API key from config.toml [server].api_key
+fn read_api_key_from_config(config_path: &PathBuf) -> Option<String> {
     if !config_path.exists() {
         tracing::warn!(path = ?config_path, "Config file not found");
         return None;
     }
 
-    let content = std::fs::read_to_string(&config_path).ok()?;
+    let content = std::fs::read_to_string(config_path).ok()?;
     let doc: toml::Table = content.parse().ok()?;
 
     // Read from [server].api_key

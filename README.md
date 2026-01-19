@@ -121,11 +121,46 @@ Blocks created via API appear instantly in UI via WebSocket.
 
 API key is stored in `~/.floatty/config.toml`.
 
+## Multi-Workspace Support (NEW)
+
+All data paths derive from `FLOATTY_DATA_DIR` environment variable:
+
+```bash
+# Default behavior (production)
+~/.floatty/
+
+# Development workspace (isolated from release)
+FLOATTY_DATA_DIR=~/.floatty-dev npm run tauri dev
+```
+
+**Data directory structure**:
+```
+{FLOATTY_DATA_DIR}/
+├── config.toml       # workspace_name, server_port, ollama settings
+├── ctx_markers.db    # SQLite database
+├── server.pid        # Server process tracking
+├── logs/             # Structured JSON logs
+└── search_index/     # Tantivy full-text index
+```
+
+**Config options for workspace isolation**:
+```toml
+workspace_name = "dev"    # Shows in title bar
+server_port = 8766        # Unique port per workspace
+```
+
+**Title bar**: Shows workspace + version + git commit: `floatty (dev) - workspace v0.4.2 (abc1234)`
+
+This enables:
+- Running dev and release builds simultaneously (different ports)
+- Test isolation via temporary data directories
+- Future workspace switching for multi-environment setups
+
 ## Structured Logging (NEW)
 
 Floatty uses structured logging with `tracing` for LLM-parseable observability.
 
-**Log location**: `~/.floatty/logs/floatty-{date}.jsonl` (daily rotation)
+**Log location**: `{FLOATTY_DATA_DIR}/logs/floatty-{date}.jsonl` (daily rotation)
 
 **JSON format** - every operation logs structured fields:
 ```json
@@ -143,7 +178,7 @@ Floatty uses structured logging with `tracing` for LLM-parseable observability.
 
 **Query logs with jq**:
 ```bash
-# Find slow operations
+# Find slow operations (use your data dir)
 jq 'select(.fields.duration_ms > 1000)' ~/.floatty/logs/floatty-*.jsonl
 
 # Trace specific operations

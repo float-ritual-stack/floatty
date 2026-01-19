@@ -6,6 +6,7 @@ mod daily_view;
 mod db;
 #[cfg(target_os = "macos")]
 mod panel;
+mod paths;
 mod server;
 mod services;
 mod sync_test;
@@ -17,6 +18,7 @@ use commands::{
     save_clipboard_image, save_workspace_state, set_ctx_config, set_theme, uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
+use paths::DataPaths;
 use server::{spawn_server, ServerState};
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
@@ -26,9 +28,6 @@ use std::sync::Arc;
 use tauri::{Manager, State};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
-
-/// Default server port (matches floatty-server)
-const DEFAULT_SERVER_PORT: u16 = 8765;
 
 /// Inner state when ctx:: system is available
 struct AppStateInner {
@@ -77,20 +76,15 @@ fn log_js(level: &str, target: &str, message: &str) {
 }
 
 /// Initialize structured logging with tracing
-/// 
+///
 /// Logs are written to:
-/// - File: ~/.floatty/logs/floatty-{date}.jsonl (structured JSON, daily rotation)
+/// - File: {data_dir}/logs/floatty-{date}.jsonl (structured JSON, daily rotation)
 /// - Stdout: Human-readable format (dev builds only)
-/// 
+///
 /// Configure via RUST_LOG env var, defaults to INFO level
-fn setup_logging() {
-    let log_dir = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".floatty")
-        .join("logs");
-    
+fn setup_logging(log_dir: &std::path::Path) {
     // Create log directory if it doesn't exist
-    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+    if let Err(e) = std::fs::create_dir_all(log_dir) {
         eprintln!("Failed to create log directory: {}", e);
         return;
     }
@@ -145,21 +139,36 @@ fn setup_logging() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Resolve data paths from FLOATTY_DATA_DIR or default ~/.floatty
+    let paths = DataPaths::resolve();
+
+    // Ensure directories exist before logging
+    if let Err(e) = paths.ensure_dirs() {
+        eprintln!("Failed to create data directories: {}", e);
+    }
+
     // Initialize structured logging FIRST (before any other operations)
-    setup_logging();
-    
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Floatty starting");
-    
+    setup_logging(&paths.logs);
+
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        data_dir = ?paths.root,
+        "Floatty starting"
+    );
+
     let context = tauri::generate_context!();
 
-    // Load config from ~/.floatty/config.toml (or defaults)
-    let config = AggregatorConfig::load();
+    // Load config from {data_dir}/config.toml (or defaults)
+    let config = AggregatorConfig::load_from(&paths.config);
 
-    // Spawn floatty-server subprocess
-    let server_state = spawn_server(DEFAULT_SERVER_PORT);
+    // Use port from config (allows workspace-specific ports)
+    let server_port = config.server_port;
+
+    // Spawn floatty-server subprocess (passes FLOATTY_DATA_DIR env)
+    let server_state = spawn_server(&paths, server_port);
 
     // Try to initialize database and ctx aggregation
-    let inner = match FloattyDb::open() {
+    let inner = match FloattyDb::open_at(&paths.database) {
         Ok(db) => {
             // Legacy migration: if ydoc_updates is empty but system_state has data,
             // migrate it BEFORE creating YDocStore (which loads from ydoc_updates)
@@ -371,19 +380,45 @@ pub fn run() {
                 let _ = (window, event);
             }
         })
-        .setup(|app| {
-            // Set window title with build mode indicator
-            if let Some(window) = app.get_webview_window("main") {
-                let build_mode = if cfg!(debug_assertions) { "dev" } else { "release" };
-                let title = format!("floatty ({})", build_mode);
-                let _ = window.set_title(&title);
-                tracing::info!(
-                    window_title = %title,
-                    debug_mode = cfg!(debug_assertions),
-                    "Window title set"
-                );
+        .setup({
+            // Capture workspace_name for title bar
+            let workspace_name = config.workspace_name.clone();
+            move |app| {
+                // Set enhanced window title:
+                // floatty (dev) - workspace v0.4.2 (abc1234)
+                if let Some(window) = app.get_webview_window("main") {
+                    let build_mode = if cfg!(debug_assertions) { "dev" } else { "release" };
+                    let version = env!("CARGO_PKG_VERSION");
+
+                    // Get git info from vergen (populated at build time)
+                    // Falls back to "unknown" if not available (e.g., building without git)
+                    let git_sha = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
+                    let git_dirty = option_env!("VERGEN_GIT_DIRTY")
+                        .map(|s| s == "true")
+                        .unwrap_or(false);
+
+                    // Format git info: short hash + dirty indicator
+                    let git_info = if git_dirty {
+                        format!("{}+dirty", &git_sha[..7.min(git_sha.len())])
+                    } else {
+                        git_sha[..7.min(git_sha.len())].to_string()
+                    };
+
+                    let title = format!(
+                        "floatty ({}) - {} v{} ({})",
+                        build_mode, workspace_name, version, git_info
+                    );
+                    let _ = window.set_title(&title);
+                    tracing::info!(
+                        window_title = %title,
+                        debug_mode = cfg!(debug_assertions),
+                        workspace = %workspace_name,
+                        git_sha = %git_sha,
+                        "Window title set"
+                    );
+                }
+                Ok(())
             }
-            Ok(())
         })
         .run(context)
         .expect("error while running tauri application");

@@ -152,10 +152,22 @@ impl IndexManager {
     }
 }
 
-/// Get the default index path (~/.floatty/search_index/).
+/// Get the data directory root.
+///
+/// Checks `FLOATTY_DATA_DIR` first, falls back to `~/.floatty`.
+fn data_dir() -> Result<PathBuf, SearchError> {
+    std::env::var("FLOATTY_DATA_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".floatty")))
+        .ok_or(SearchError::NoIndexDir)
+}
+
+/// Get the default index path ({data_dir}/search_index/).
+///
+/// Uses `FLOATTY_DATA_DIR` if set, otherwise `~/.floatty`.
 fn get_index_path() -> Result<PathBuf, SearchError> {
-    let home = dirs::home_dir().ok_or(SearchError::NoIndexDir)?;
-    Ok(home.join(".floatty").join(INDEX_DIR_NAME))
+    Ok(data_dir()?.join(INDEX_DIR_NAME))
 }
 
 #[cfg(test)]

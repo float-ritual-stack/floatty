@@ -101,6 +101,10 @@ export interface AggregatorConfig {
   font_weight_bold: number;
   line_height: number;
   max_shell_output_bytes: number;
+  /** Workspace name for title bar display (default: "default") */
+  workspace_name: string;
+  /** Server port (default: 8765) */
+  server_port: number;
 }
 
 // ═══════════════════════════════════════════════════════════════

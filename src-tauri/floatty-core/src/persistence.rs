@@ -22,13 +22,26 @@ pub enum PersistenceError {
     LockPoisoned,
 }
 
-/// Default database path: ~/.floatty/ctx_markers.db
+/// Get the data directory root.
+///
+/// Checks `FLOATTY_DATA_DIR` first, falls back to `~/.floatty`.
+pub fn data_dir() -> PathBuf {
+    std::env::var("FLOATTY_DATA_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".floatty")
+        })
+}
+
+/// Default database path: {data_dir}/ctx_markers.db
 /// (shares database with ctx:: system for now)
+///
+/// Uses `FLOATTY_DATA_DIR` if set, otherwise `~/.floatty`.
 pub fn default_db_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".floatty")
-        .join("ctx_markers.db")
+    data_dir().join("ctx_markers.db")
 }
 
 /// SQLite persistence layer for Y.Doc updates.

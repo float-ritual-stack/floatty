@@ -46,6 +46,12 @@ pub struct AggregatorConfig {
     /// Max bytes for sh:: block output before truncation (default 64KB)
     #[serde(default = "default_max_shell_output")]
     pub max_shell_output_bytes: usize,
+    /// Workspace name for title bar display (default: "default")
+    #[serde(default = "default_workspace_name")]
+    pub workspace_name: String,
+    /// Server port (default: 8765)
+    #[serde(default = "default_server_port")]
+    pub server_port: u16,
 }
 
 fn default_theme() -> String {
@@ -72,6 +78,14 @@ fn default_max_shell_output() -> usize {
     65536 // 64KB
 }
 
+fn default_workspace_name() -> String {
+    "default".to_string()
+}
+
+fn default_server_port() -> u16 {
+    8765
+}
+
 impl Default for AggregatorConfig {
     fn default() -> Self {
         let default_watcher = WatcherConfig::default();
@@ -90,25 +104,20 @@ impl Default for AggregatorConfig {
             font_weight_bold: default_font_weight_bold(),
             line_height: default_line_height(),
             max_shell_output_bytes: default_max_shell_output(),
+            workspace_name: default_workspace_name(),
+            server_port: default_server_port(),
         }
     }
 }
 
 impl AggregatorConfig {
-    /// Config file path: ~/.floatty/config.toml
-    fn config_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".floatty")
-            .join("config.toml")
-    }
-
-    /// Load config from file, falling back to defaults
-    pub fn load() -> Self {
-        let path = Self::config_path();
-
+    /// Load config from specified path, falling back to defaults.
+    ///
+    /// Use `DataPaths::resolve().config` to get the path based on
+    /// `FLOATTY_DATA_DIR` environment variable.
+    pub fn load_from(path: &PathBuf) -> Self {
         if path.exists() {
-            match std::fs::read_to_string(&path) {
+            match std::fs::read_to_string(path) {
                 Ok(contents) => {
                     match toml::from_str::<AggregatorConfig>(&contents) {
                         Ok(config) => {
@@ -131,20 +140,48 @@ impl AggregatorConfig {
         Self::default()
     }
 
-    /// Save current config to file
-    pub fn save(&self) -> Result<(), String> {
-        let path = Self::config_path();
+    /// Load config from default path (~/.floatty/config.toml).
+    ///
+    /// Deprecated: prefer `load_from(paths.config)` for explicit path control.
+    pub fn load() -> Self {
+        let path = Self::default_config_path();
+        Self::load_from(&path)
+    }
 
+    /// Default config file path.
+    ///
+    /// Uses `FLOATTY_DATA_DIR` if set, otherwise `~/.floatty`.
+    pub fn default_config_path() -> PathBuf {
+        std::env::var("FLOATTY_DATA_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".floatty")
+            })
+            .join("config.toml")
+    }
+
+    /// Save current config to specified path.
+    pub fn save_to(&self, path: &PathBuf) -> Result<(), String> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
 
         let contents = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+        std::fs::write(path, contents).map_err(|e| e.to_string())?;
 
         log::info!("Saved config to {:?}", path);
         Ok(())
+    }
+
+    /// Save current config to default path.
+    ///
+    /// Deprecated: prefer `save_to(paths.config)` for explicit path control.
+    pub fn save(&self) -> Result<(), String> {
+        self.save_to(&Self::default_config_path())
     }
 }
 

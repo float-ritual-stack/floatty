@@ -111,9 +111,12 @@ Critical rules:
 | File | Purpose |
 |------|---------|
 | `lib.rs` | App setup, Tauri commands, config loading |
+| `paths.rs` | Centralized `DataPaths` struct - all paths derive from `FLOATTY_DATA_DIR` |
+| `config.rs` | `AggregatorConfig` with workspace_name, server_port, ollama settings |
 | `ctx_watcher.rs` | Watches JSONL files, extracts ctx:: lines, tracks file positions |
 | `ctx_parser.rs` | Background worker calling Ollama for structured parsing |
 | `db.rs` | SQLite schema, marker CRUD, file position persistence |
+| `server.rs` | Spawns floatty-server subprocess, passes `FLOATTY_DATA_DIR` env |
 
 **SolidJS components** (`src/components/`):
 
@@ -173,7 +176,28 @@ Critical rules:
 
 ### Configuration
 
-Config file: `~/.floatty/config.toml`
+**Data Directory** (NEW: Multi-Workspace Support):
+
+All paths derive from a single root via `FLOATTY_DATA_DIR` environment variable:
+```bash
+# Default: ~/.floatty
+# Dev mode: ~/.floatty-dev (set in package.json scripts)
+FLOATTY_DATA_DIR=~/.floatty-dev npm run tauri dev
+```
+
+Path resolution (in `src-tauri/src/paths.rs`):
+```
+{FLOATTY_DATA_DIR}/
+├── config.toml       # User configuration
+├── ctx_markers.db    # SQLite (WAL mode)
+├── server.pid        # Server process tracking
+├── logs/             # Structured JSON logs (daily rotation)
+└── search_index/     # Tantivy full-text index
+```
+
+**Exception**: `shell-hooks.zsh` always stays at `~/.floatty` (hardcoded in user's `.zshrc`).
+
+**Config file**: `{data_dir}/config.toml`
 ```toml
 watch_path = "~/.claude/projects"       # Claude Code session logs
 ollama_endpoint = "http://localhost:11434"  # Standard Ollama port
@@ -181,15 +205,18 @@ ollama_model = "qwen2.5:7b"
 poll_interval_ms = 2000
 max_retries = 3
 max_age_hours = 72                      # Look back 3 days for markers
+workspace_name = "default"              # Shows in title bar
+server_port = 8765                      # Per-workspace port isolation
 ```
 
-Database: `~/.floatty/ctx_markers.db` (SQLite, WAL mode)
+**Title bar format**: `floatty (dev) - workspace_name v0.4.2 (abc1234)`
 
 **floatty-server** (headless CRDT sync):
 - Default port: `8765` (http://127.0.0.1:8765)
-- Override: `FLOATTY_PORT` env var
-- WebSocket: `ws://127.0.0.1:8765/ws`
-- REST API: `http://127.0.0.1:8765/api/v1/blocks`
+- Override: `FLOATTY_PORT` env var OR `server_port` in config.toml
+- WebSocket: `ws://127.0.0.1:{port}/ws`
+- REST API: `http://127.0.0.1:{port}/api/v1/blocks`
+- Server receives `FLOATTY_DATA_DIR` from parent process
 
 ### Logging (NEW: Structured with tracing)
 
