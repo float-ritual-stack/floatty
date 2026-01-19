@@ -2,6 +2,34 @@
 
 All notable changes to floatty are documented here.
 
+## [0.4.3] - 2026-01-18
+
+### New Features
+
+- **FLOATTY_DATA_DIR** (PR #95) - Multi-workspace data isolation
+  - All paths derive from single `FLOATTY_DATA_DIR` env var (default: `~/.floatty`)
+  - Dev builds default to `~/.floatty-dev` for automatic isolation
+  - Config-driven `workspace_name` shows in title bar
+  - Config-driven `server_port` for per-workspace server isolation
+  - New `paths.rs` module centralizes path resolution
+
+- **/floatty:float-loop** - Generic work track command for Claude Code skills
+  - Session-type-aware Stop hook
+  - PostToolUse lint + Stop validation hooks
+
+### Infrastructure
+
+- Enhanced title bar: `floatty (dev) - workspace v0.4.3 (abc1234)`
+- Git commit embedding via `vergen-gix` at build time
+- `serial_test` crate for env mutation test isolation
+
+### Documentation
+
+- Updated CLAUDE.md with DataPaths architecture, FLOATTY_DATA_DIR usage
+- Updated README.md with Multi-Workspace Support section
+
+---
+
 ## [0.4.2] - 2026-01-15
 
 ### New Features
