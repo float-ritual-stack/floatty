@@ -4,7 +4,7 @@
 
 use crate::config::AggregatorConfig;
 use crate::services::execution;
-use crate::services::provider::{Provider, ProviderResponse};
+use crate::services::provider::{ProviderRequest, ProviderResponse};
 
 /// Execute a shell command and return stdout/stderr
 ///
@@ -71,23 +71,18 @@ pub async fn execute_ai_conversation(
 /// Routes to CLI or HTTP providers based on config.toml [providers.*] sections.
 /// This is the FLO-187 provider-aware dispatch system.
 ///
-/// Accepts either:
-/// - Legacy Provider enum (backwards compatible, converted to ProviderRequest)
-/// - ProviderRequest directly (new format with provider name)
+/// Accepts ProviderRequest with provider name - config lookup happens in Rust.
 #[tauri::command]
 pub async fn execute_provider_conversation(
     messages: Vec<execution::ChatMessage>,
-    provider: Provider,
+    provider: ProviderRequest,
     model_override: Option<String>,
     system: Option<String>,
 ) -> Result<ProviderResponse, String> {
     let config = AggregatorConfig::load();
 
-    // Convert legacy Provider to ProviderRequest
-    let request: crate::services::provider::ProviderRequest = provider.into();
-
     crate::services::provider::execute_with_provider(
-        request,
+        provider,
         messages,
         model_override,
         system,
