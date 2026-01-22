@@ -25,9 +25,20 @@ import { extractContent } from '../utils';
 
 /**
  * Conversation handler for multi-turn LLM interactions
+ *
+ * @deprecated FLO-187: Direct ai:: execution is deprecated.
+ * Use /send with ai:: provider config blocks instead:
+ *
+ *   ai::kitty float-hub     ← Provider config (NOT executable)
+ *     ## user
+ *       your message
+ *     /send                 ← This triggers execution
+ *
+ * The ai:: and chat:: blocks are now CONFIGURATION, not triggers.
+ * This handler remains for backwards compatibility but has no prefixes.
  */
 export const conversationHandler: BlockHandler = {
-  prefixes: ['ai::', 'chat::'],
+  prefixes: [],  // Deprecated: was ['ai::', 'chat::']
 
   async execute(
     blockId: string,

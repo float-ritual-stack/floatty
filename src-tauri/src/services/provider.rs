@@ -185,7 +185,9 @@ async fn execute_claude_cli(
     }
 
     // Output format for parsing session ID
+    // Note: stream-json with -p requires --verbose flag
     cmd.arg("--output-format").arg("stream-json");
+    cmd.arg("--verbose");
 
     // Set working directory if project specified
     if let Some(ref proj) = project {
@@ -259,19 +261,35 @@ async fn execute_claude_cli(
         }
     }
 
+    // Also capture stderr for error messages
+    let stderr = child.stderr.take();
+
     // Wait for process to complete
     let status = child.wait().await.map_err(|e| e.to_string())?;
     let duration_ms = start.elapsed().as_millis() as u64;
 
     if !status.success() {
+        // Read stderr for error details
+        let stderr_content = if let Some(stderr) = stderr {
+            let mut stderr_reader = BufReader::new(stderr);
+            let mut stderr_buf = String::new();
+            let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr_reader, &mut stderr_buf).await;
+            stderr_buf
+        } else {
+            String::new()
+        };
+
         tracing::error!(
             exit_code = ?status.code(),
             duration_ms = duration_ms,
+            stderr = %stderr_content,
+            response_so_far = %response_content,
             "Claude Code CLI failed"
         );
         return Err(format!(
-            "Claude Code CLI exited with status: {:?}",
-            status.code()
+            "Claude Code CLI exited with status: {:?}. stderr: {}",
+            status.code(),
+            stderr_content.trim()
         ));
     }
 
