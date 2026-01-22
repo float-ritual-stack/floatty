@@ -49,7 +49,7 @@ interface SendHookContext {
 interface ProviderResponse {
   content: string;
   session_id?: string;
-  provider_type: string;
+  provider_name: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -91,7 +91,7 @@ export const sendHandler: BlockHandler = {
 
     // Get provider info from hook (defaults to Ollama if not present)
     const provider: ProviderConfig = hookContext.provider ?? {
-      type: 'ollama',
+      name: 'ollama',
       blockId: '',
     };
     const modelOverride = hookContext.modelOverride;
@@ -100,7 +100,7 @@ export const sendHandler: BlockHandler = {
       blockCount,
       messageCount: messages.length,
       textLength: messages.reduce((sum, m) => sum + m.content.length, 0),
-      provider: provider.type,
+      provider: provider.name,
       model: modelOverride,
     });
 
@@ -112,8 +112,10 @@ export const sendHandler: BlockHandler = {
 
     // Create response placeholder as child
     const responseId = actions.createBlockInside(blockId);
-    const thinkingMessage = provider.type === 'claude-code'
-      ? 'Claude Code thinking...'
+    // CLI providers (kitty, cowboy, amp, etc.) get specific message
+    const isCliProvider = ['kitty', 'cowboy', 'amp', 'opencode'].includes(provider.name);
+    const thinkingMessage = isCliProvider
+      ? `${provider.name} thinking...`
       : 'Thinking...';
     updateContent(responseId, thinkingMessage);
 
@@ -146,7 +148,7 @@ export const sendHandler: BlockHandler = {
       console.log('[send] Complete:', {
         duration: `${duration.toFixed(1)}ms`,
         responseLength: response.content.length,
-        providerType: response.provider_type,
+        provider: response.provider_name,
         sessionId: response.session_id,
       });
 

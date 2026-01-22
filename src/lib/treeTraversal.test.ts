@@ -2,6 +2,7 @@
  * Tree Traversal Tests
  *
  * Tests for provider detection and inherited context gathering.
+ * Config-driven: Tests verify provider name extraction, not type mapping.
  *
  * @see FLO-187 Provider-Aware Dispatch System
  */
@@ -46,7 +47,7 @@ function createMockStore(blocks: Record<string, Partial<Block>>, rootIds: string
 }
 
 // ═══════════════════════════════════════════════════════════════
-// PROVIDER PARSING
+// PROVIDER PARSING (Config-driven)
 // ═══════════════════════════════════════════════════════════════
 
 describe('parseProviderConfig', () => {
@@ -57,64 +58,74 @@ describe('parseProviderConfig', () => {
     expect(parseProviderConfig('sh:: ls -la', 'block1')).toBeNull();
   });
 
-  it('parses bare ai:: as default Ollama', () => {
+  it('parses bare ai:: as default provider (ollama)', () => {
     const result = parseProviderConfig('ai::', 'block1');
-    expect(result).toEqual({ type: 'ollama', blockId: 'block1' });
+    expect(result).toEqual({ name: 'ollama', blockId: 'block1' });
   });
 
   it('parses ai:: with leading/trailing whitespace', () => {
     const result = parseProviderConfig('  ai::  ', 'block1');
-    expect(result).toEqual({ type: 'ollama', blockId: 'block1' });
+    expect(result).toEqual({ name: 'ollama', blockId: 'block1' });
   });
 
-  it('parses ai::kitty as Claude Code', () => {
+  it('parses ai::kitty - provider name extracted', () => {
     const result = parseProviderConfig('ai::kitty', 'block1');
-    expect(result).toEqual({ type: 'claude-code', project: undefined, blockId: 'block1' });
+    expect(result?.name).toBe('kitty');
+    expect(result?.blockId).toBe('block1');
   });
 
-  it('parses ai::kitty with project directory', () => {
+  it('parses ai::kitty with working directory', () => {
     const result = parseProviderConfig('ai::kitty float-hub', 'block1');
-    expect(result).toEqual({ type: 'claude-code', project: 'float-hub', blockId: 'block1' });
+    expect(result?.name).toBe('kitty');
+    expect(result?.workingDir).toBe('float-hub');
   });
 
-  it('parses ai::ollama as explicit Ollama', () => {
+  it('parses ai::ollama - provider name extracted', () => {
     const result = parseProviderConfig('ai::ollama', 'block1');
-    expect(result).toEqual({ type: 'ollama', model: undefined, blockId: 'block1' });
+    expect(result?.name).toBe('ollama');
   });
 
-  it('parses ai::ollama with model override', () => {
+  it('parses ai::ollama with model', () => {
     const result = parseProviderConfig('ai::ollama qwen2.5:7b', 'block1');
-    expect(result).toEqual({ type: 'ollama', model: 'qwen2.5:7b', blockId: 'block1' });
+    expect(result?.name).toBe('ollama');
+    expect(result?.model).toBe('qwen2.5:7b');
   });
 
-  it('parses ai::anthropic as Anthropic API', () => {
-    const result = parseProviderConfig('ai::anthropic', 'block1');
-    expect(result).toEqual({ type: 'anthropic', model: undefined, blockId: 'block1' });
+  it('parses ai::gemini - new provider', () => {
+    const result = parseProviderConfig('ai::gemini', 'block1');
+    expect(result?.name).toBe('gemini');
   });
 
-  it('parses ai::anthropic with model', () => {
-    const result = parseProviderConfig('ai::anthropic claude-3-opus', 'block1');
-    expect(result).toEqual({ type: 'anthropic', model: 'claude-3-opus', blockId: 'block1' });
+  it('parses ai::amp - new provider', () => {
+    const result = parseProviderConfig('ai::amp', 'block1');
+    expect(result?.name).toBe('amp');
   });
 
-  it('treats unknown provider as Ollama model name', () => {
-    // "ai::llama3" should be treated as Ollama with model "llama3"
-    const result = parseProviderConfig('ai::llama3', 'block1');
-    expect(result).toEqual({ type: 'ollama', model: 'llama3', blockId: 'block1' });
+  it('parses ai::opencode - new provider', () => {
+    const result = parseProviderConfig('ai::opencode', 'block1');
+    expect(result?.name).toBe('opencode');
+  });
+
+  it('parses ai::cowboy - alternate claude-code persona', () => {
+    const result = parseProviderConfig('ai::cowboy', 'block1');
+    expect(result?.name).toBe('cowboy');
+  });
+
+  it('parses ai::claude - direct Anthropic API', () => {
+    const result = parseProviderConfig('ai::claude', 'block1');
+    expect(result?.name).toBe('claude');
+  });
+
+  it('parses ai::openai - OpenAI API', () => {
+    const result = parseProviderConfig('ai::openai gpt-4', 'block1');
+    expect(result?.name).toBe('openai');
+    expect(result?.model).toBe('gpt-4');
   });
 
   it('is case-insensitive for provider names', () => {
-    expect(parseProviderConfig('AI::Kitty Float-Hub', 'b1')).toEqual({
-      type: 'claude-code',
-      project: 'Float-Hub', // Preserves case in arg
-      blockId: 'b1',
-    });
-
-    expect(parseProviderConfig('ai::OLLAMA QWEN2.5:7b', 'b1')).toEqual({
-      type: 'ollama',
-      model: 'QWEN2.5:7b', // Preserves case in model
-      blockId: 'b1',
-    });
+    const result = parseProviderConfig('AI::Kitty Float-Hub', 'b1');
+    expect(result?.name).toBe('kitty'); // Lowercased
+    expect(result?.workingDir).toBe('Float-Hub'); // Preserves case in arg
   });
 });
 
@@ -133,11 +144,11 @@ describe('traverseUpForProvider', () => {
 
     const result = traverseUpForProvider('send', store);
 
-    expect(result.type).toBe('claude-code');
-    expect(result).toHaveProperty('project', 'float-hub');
+    expect(result.name).toBe('kitty');
+    expect(result.workingDir).toBe('float-hub');
   });
 
-  it('finds ai::ollama with model override', () => {
+  it('finds ai::ollama with model', () => {
     const store = createMockStore({
       root: { id: 'root', content: 'ai::ollama qwen2.5:7b', childIds: ['send'] },
       send: { id: 'send', content: '/send', parentId: 'root' },
@@ -145,18 +156,18 @@ describe('traverseUpForProvider', () => {
 
     const result = traverseUpForProvider('send', store);
 
-    expect(result.type).toBe('ollama');
-    expect(result).toHaveProperty('model', 'qwen2.5:7b');
+    expect(result.name).toBe('ollama');
+    expect(result.model).toBe('qwen2.5:7b');
   });
 
-  it('defaults to Ollama when no provider found', () => {
+  it('defaults to ollama when no provider found', () => {
     const store = createMockStore({
       send: { id: 'send', content: '/send' },
     }, ['send']);
 
     const result = traverseUpForProvider('send', store);
 
-    expect(result.type).toBe('ollama');
+    expect(result.name).toBe('ollama');
     expect(result.blockId).toBe('');
   });
 
@@ -168,14 +179,14 @@ describe('traverseUpForProvider', () => {
 
     // kitty:: without ai:: prefix is NOT a provider
     const result = traverseUpForProvider('send', store);
-    expect(result.type).toBe('ollama'); // Falls back to default
+    expect(result.name).toBe('ollama'); // Falls back to default
     expect(result.blockId).toBe('');
   });
 
   it('finds nearest provider when multiple exist', () => {
     // Nested providers - should use the nearest one
     const store = createMockStore({
-      outer: { id: 'outer', content: 'ai::anthropic claude-3-opus', childIds: ['inner'] },
+      outer: { id: 'outer', content: 'ai::claude', childIds: ['inner'] },
       inner: { id: 'inner', content: 'ai::kitty', parentId: 'outer', childIds: ['send'] },
       send: { id: 'send', content: '/send', parentId: 'inner' },
     });
@@ -183,7 +194,7 @@ describe('traverseUpForProvider', () => {
     const result = traverseUpForProvider('send', store);
 
     // Should find inner (ai::kitty) first
-    expect(result.type).toBe('claude-code');
+    expect(result.name).toBe('kitty');
   });
 });
 
@@ -287,8 +298,8 @@ describe('buildInheritedContext', () => {
 
     const ctx = buildInheritedContext('send', store, 'provider');
 
-    expect(ctx.provider?.type).toBe('claude-code');
-    expect(ctx.provider).toHaveProperty('project', 'float-hub');
+    expect(ctx.provider?.name).toBe('kitty');
+    expect(ctx.provider?.workingDir).toBe('float-hub');
     expect(ctx.sessionId).toBe('sess-123');
     expect(ctx.zoomedRootId).toBe('provider');
     // Ancestors: send -> msg -> user -> provider (session is sibling, not ancestor)

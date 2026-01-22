@@ -66,10 +66,14 @@ pub async fn execute_ai_conversation(
     ).await
 }
 
-/// Execute conversation with provider-aware routing
+/// Execute conversation with provider-aware routing (config-driven)
 ///
-/// Routes to Ollama, Claude Code CLI, or Anthropic API based on provider config.
+/// Routes to CLI or HTTP providers based on config.toml [providers.*] sections.
 /// This is the FLO-187 provider-aware dispatch system.
+///
+/// Accepts either:
+/// - Legacy Provider enum (backwards compatible, converted to ProviderRequest)
+/// - ProviderRequest directly (new format with provider name)
 #[tauri::command]
 pub async fn execute_provider_conversation(
     messages: Vec<execution::ChatMessage>,
@@ -79,13 +83,14 @@ pub async fn execute_provider_conversation(
 ) -> Result<ProviderResponse, String> {
     let config = AggregatorConfig::load();
 
+    // Convert legacy Provider to ProviderRequest
+    let request: crate::services::provider::ProviderRequest = provider.into();
+
     crate::services::provider::execute_with_provider(
-        provider,
+        request,
         messages,
         model_override,
         system,
-        config.ollama_endpoint,
-        config.ollama_model,
-        config.max_shell_output_bytes,
+        &config,
     ).await
 }

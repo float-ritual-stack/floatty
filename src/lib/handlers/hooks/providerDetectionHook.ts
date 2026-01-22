@@ -70,13 +70,13 @@ export const providerDetectionHook: Hook = {
     const effectiveModel = modelOverride ??
       ('model' in provider ? provider.model : undefined);
 
-    // For claude-code type, inject session if found
-    if (provider.type === 'claude-code' && sessionId) {
+    // For CLI providers (kitty, cowboy, etc.), inject session if found
+    if (['kitty', 'cowboy', 'amp', 'opencode', 'gemini'].includes(provider.name) && sessionId) {
       (provider as ProviderConfig & { sessionId?: string }).sessionId = sessionId;
     }
 
     console.log('[providerDetectionHook] Detected:', {
-      type: provider.type,
+      name: provider.name,
       blockId: provider.blockId || '(default)',
       sessionId,
       effectiveModel,

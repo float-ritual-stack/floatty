@@ -96,8 +96,8 @@ describe('providerDetectionHook handler', () => {
 
     expect(result.context).toBeDefined();
     const ctx = result.context as ProviderHookContext;
-    expect(ctx.provider.type).toBe('claude-code');
-    expect(ctx.provider).toHaveProperty('project', 'float-hub');
+    expect(ctx.provider.name).toBe('kitty');
+    expect(ctx.provider).toHaveProperty('workingDir', 'float-hub');
   });
 
   it('detects ai::ollama with model override', () => {
@@ -114,7 +114,7 @@ describe('providerDetectionHook handler', () => {
     });
 
     const ctx = result.context as ProviderHookContext;
-    expect(ctx.provider.type).toBe('ollama');
+    expect(ctx.provider.name).toBe('ollama');
     expect(ctx.provider).toHaveProperty('model', 'qwen2.5:7b');
     expect(ctx.modelOverride).toBe('qwen2.5:7b');
   });
@@ -132,7 +132,7 @@ describe('providerDetectionHook handler', () => {
     });
 
     const ctx = result.context as ProviderHookContext;
-    expect(ctx.provider.type).toBe('ollama');
+    expect(ctx.provider.name).toBe('ollama');
     expect(ctx.provider.blockId).toBe(''); // No provider block
   });
 
@@ -151,7 +151,7 @@ describe('providerDetectionHook handler', () => {
 
     // kitty:: without ai:: prefix is NOT a provider
     const ctx = result.context as ProviderHookContext;
-    expect(ctx.provider.type).toBe('ollama'); // Falls back to default
+    expect(ctx.provider.name).toBe('ollama'); // Falls back to default
   });
 
   it('finds session ID from provider children', () => {
@@ -170,8 +170,9 @@ describe('providerDetectionHook handler', () => {
     });
 
     const ctx = result.context as ProviderHookContext;
+    expect(ctx.provider.name).toBe('kitty');
     expect(ctx.sessionId).toBe('abc123-uuid');
-    // Session should also be injected into provider for claude-code type
+    // Session should also be injected into provider for CLI providers
     expect(ctx.provider).toHaveProperty('sessionId', 'abc123-uuid');
   });
 
@@ -225,7 +226,7 @@ describe('providerDetectionHook handler', () => {
     });
 
     const ctx = result.context as ProviderHookContext;
-    expect(ctx.provider.type).toBe('anthropic');
+    expect(ctx.provider.name).toBe('anthropic');
     expect(ctx.provider).toHaveProperty('model', 'claude-3-opus');
   });
 });

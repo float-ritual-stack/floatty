@@ -6,11 +6,133 @@
 use crate::ctx_parser::ParserConfig;
 use crate::ctx_watcher::WatcherConfig;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Default Ollama model used for ctx:: marker parsing.
 /// Shared between AggregatorConfig (user-facing) and ParserConfig (internal).
 pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:7b";
-use std::path::PathBuf;
+
+// ═══════════════════════════════════════════════════════════════
+// PROVIDER CONFIGURATION (FLO-187)
+// ═══════════════════════════════════════════════════════════════
+
+/// CLI-based provider configuration.
+///
+/// Defines how to invoke a CLI tool for LLM conversations.
+///
+/// Example TOML:
+/// ```toml
+/// [providers.kitty]
+/// command = "claude"
+/// args = ["-p", "{prompt}", "--output-format", "stream-json", "--verbose"]
+/// resume_flag = "--resume"
+/// session_field = "session_id"
+/// working_dir = "~/float-hub"
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CliProviderConfig {
+    /// Command to execute (e.g., "claude", "gemini", "amp")
+    pub command: String,
+
+    /// Arguments with {prompt} placeholder
+    /// e.g., ["-p", "{prompt}", "--output-format", "stream-json"]
+    #[serde(default)]
+    pub args: Vec<String>,
+
+    /// Flag for resuming sessions (e.g., "--resume", "--continue")
+    #[serde(default)]
+    pub resume_flag: Option<String>,
+
+    /// JSON field containing session ID in response (e.g., "session_id")
+    #[serde(default)]
+    pub session_field: Option<String>,
+
+    /// Default working directory (supports ~ expansion)
+    #[serde(default)]
+    pub working_dir: Option<String>,
+}
+
+/// HTTP API provider configuration (e.g., Ollama, direct Anthropic API).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HttpProviderConfig {
+    /// API endpoint URL
+    pub endpoint: String,
+
+    /// Model name (optional, can be overridden per-request)
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// API key environment variable name (e.g., "ANTHROPIC_API_KEY")
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+}
+
+/// Provider configuration - either CLI or HTTP based.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ProviderConfig {
+    /// CLI-based provider (claude, gemini, amp, opencode, etc.)
+    #[serde(rename = "cli")]
+    Cli(CliProviderConfig),
+
+    /// HTTP API provider (ollama, anthropic direct)
+    #[serde(rename = "http")]
+    Http(HttpProviderConfig),
+}
+
+/// Default providers when none configured.
+fn default_providers() -> HashMap<String, ProviderConfig> {
+    let mut providers = HashMap::new();
+
+    // Default Ollama provider
+    providers.insert(
+        "ollama".to_string(),
+        ProviderConfig::Http(HttpProviderConfig {
+            endpoint: "http://localhost:11434".to_string(),
+            model: Some(DEFAULT_OLLAMA_MODEL.to_string()),
+            api_key_env: None,
+        }),
+    );
+
+    // Claude Code CLI (kitty persona)
+    providers.insert(
+        "kitty".to_string(),
+        ProviderConfig::Cli(CliProviderConfig {
+            command: "claude".to_string(),
+            args: vec![
+                "-p".to_string(),
+                "{prompt}".to_string(),
+                "--output-format".to_string(),
+                "stream-json".to_string(),
+                "--verbose".to_string(),
+            ],
+            resume_flag: Some("--resume".to_string()),
+            session_field: Some("session_id".to_string()),
+            working_dir: None,
+        }),
+    );
+
+    // Claude Code CLI (cowboy persona) - same CLI, different default dir
+    providers.insert(
+        "cowboy".to_string(),
+        ProviderConfig::Cli(CliProviderConfig {
+            command: "claude".to_string(),
+            args: vec![
+                "-p".to_string(),
+                "{prompt}".to_string(),
+                "--output-format".to_string(),
+                "stream-json".to_string(),
+                "--verbose".to_string(),
+            ],
+            resume_flag: Some("--resume".to_string()),
+            session_field: Some("session_id".to_string()),
+            working_dir: None,
+        }),
+    );
+
+    providers
+}
 
 /// Server info returned to frontend for HTTP client initialization
 #[derive(Clone, Serialize)]
@@ -52,6 +174,18 @@ pub struct AggregatorConfig {
     /// Server port (default: 8765)
     #[serde(default = "default_server_port")]
     pub server_port: u16,
+
+    /// LLM providers configuration (ai::kitty, ai::ollama, etc.)
+    #[serde(default = "default_providers")]
+    pub providers: HashMap<String, ProviderConfig>,
+
+    /// Default provider when ai:: is used without specifier
+    #[serde(default = "default_provider_name")]
+    pub default_provider: String,
+}
+
+fn default_provider_name() -> String {
+    "ollama".to_string()
 }
 
 fn default_theme() -> String {
@@ -106,6 +240,8 @@ impl Default for AggregatorConfig {
             max_shell_output_bytes: default_max_shell_output(),
             workspace_name: default_workspace_name(),
             server_port: default_server_port(),
+            providers: default_providers(),
+            default_provider: default_provider_name(),
         }
     }
 }

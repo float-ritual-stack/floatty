@@ -1,7 +1,17 @@
-/// Provider-Aware Conversation Execution
+/// Provider-Aware Conversation Execution (Config-Driven)
 ///
-/// Routes conversation execution to different LLM backends based on provider configuration.
-/// Supports Ollama (default), Claude Code CLI, and Anthropic API.
+/// Routes conversation execution to different LLM backends based on config.toml.
+/// Providers are defined in [providers.NAME] sections, supporting CLI and HTTP types.
+///
+/// Example config:
+/// ```toml
+/// [providers.kitty]
+/// type = "cli"
+/// command = "claude"
+/// args = ["-p", "{prompt}", "--output-format", "stream-json", "--verbose"]
+/// resume_flag = "--resume"
+/// session_field = "session_id"
+/// ```
 ///
 /// @see FLO-187 Provider-Aware Dispatch System
 
@@ -12,47 +22,43 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use super::execution::{execute_ai_conversation, ChatMessage};
+use crate::config::{AggregatorConfig, CliProviderConfig, HttpProviderConfig, ProviderConfig};
 
 // ═══════════════════════════════════════════════════════════════
-// PROVIDER TYPES
+// PROVIDER REQUEST (from TypeScript)
 // ═══════════════════════════════════════════════════════════════
 
-/// Provider configuration - matches TypeScript ProviderConfig
+/// Provider request from TypeScript - just the name and overrides.
+/// Config lookup happens on Rust side.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "type")]
-pub enum Provider {
-    /// Default Ollama backend
-    #[serde(rename = "ollama")]
-    Ollama {
-        model: Option<String>,
-        #[serde(rename = "blockId")]
-        block_id: String,
-    },
+pub struct ProviderRequest {
+    /// Provider name (e.g., "kitty", "ollama", "gemini")
+    pub name: String,
 
-    /// Claude Code CLI backend
-    #[serde(rename = "claude-code")]
-    ClaudeCode {
-        project: Option<String>,
-        #[serde(rename = "sessionId")]
-        session_id: Option<String>,
-        #[serde(rename = "blockId")]
-        block_id: String,
-    },
+    /// Block ID where provider was defined
+    #[serde(rename = "blockId")]
+    pub block_id: String,
 
-    /// Anthropic API backend (future)
-    #[serde(rename = "anthropic")]
-    Anthropic {
-        model: Option<String>,
-        #[serde(rename = "blockId")]
-        block_id: String,
-    },
+    /// Working directory override (from ai::kitty float-hub)
+    #[serde(rename = "workingDir")]
+    pub working_dir: Option<String>,
+
+    /// Session ID for resuming conversations
+    #[serde(rename = "sessionId")]
+    pub session_id: Option<String>,
+
+    /// Model override
+    pub model: Option<String>,
 }
 
-impl Default for Provider {
+impl Default for ProviderRequest {
     fn default() -> Self {
-        Provider::Ollama {
-            model: None,
+        Self {
+            name: "ollama".to_string(),
             block_id: String::new(),
+            working_dir: None,
+            session_id: None,
+            model: None,
         }
     }
 }
@@ -62,149 +68,124 @@ impl Default for Provider {
 pub struct ProviderResponse {
     /// Response content
     pub content: String,
-    /// Session ID (for Claude Code CLI)
+    /// Session ID (for CLI providers with session support)
     pub session_id: Option<String>,
-    /// Provider type that generated response
-    pub provider_type: String,
+    /// Provider name that generated response
+    pub provider_name: String,
 }
 
 // ═══════════════════════════════════════════════════════════════
 // PROVIDER ROUTING
 // ═══════════════════════════════════════════════════════════════
 
-/// Execute conversation with provider-aware routing
+/// Execute conversation with config-driven provider routing.
 ///
-/// Routes to appropriate backend based on provider configuration.
+/// Looks up provider by name in config.providers, then routes to
+/// appropriate executor (CLI or HTTP).
 pub async fn execute_with_provider(
-    provider: Provider,
+    request: ProviderRequest,
     messages: Vec<ChatMessage>,
     model_override: Option<String>,
     system: Option<String>,
-    endpoint: String,
-    default_model: String,
-    max_bytes: usize,
+    config: &AggregatorConfig,
 ) -> Result<ProviderResponse, String> {
-    match provider {
-        Provider::Ollama { model, .. } => {
-            // Use override > provider model > default
-            let effective_model = model_override
-                .or(model)
-                .unwrap_or(default_model);
+    let provider_name = &request.name;
 
-            let content = execute_ai_conversation(
-                messages,
-                endpoint,
-                effective_model,
-                None, // max_tokens
-                None, // temperature
-                system,
-                max_bytes,
+    // Look up provider in config
+    let provider_config = config.providers.get(provider_name).ok_or_else(|| {
+        format!(
+            "Unknown provider '{}'. Available: {:?}",
+            provider_name,
+            config.providers.keys().collect::<Vec<_>>()
+        )
+    })?;
+
+    tracing::info!(
+        provider = %provider_name,
+        working_dir = ?request.working_dir,
+        session_id = ?request.session_id,
+        "Routing to provider"
+    );
+
+    match provider_config {
+        ProviderConfig::Cli(cli_config) => {
+            execute_cli_provider(
+                cli_config,
+                &request,
+                &messages,
+                config.max_shell_output_bytes,
             )
-            .await?;
-
-            Ok(ProviderResponse {
-                content,
-                session_id: None,
-                provider_type: "ollama".to_string(),
-            })
+            .await
         }
 
-        Provider::ClaudeCode {
-            project,
-            session_id,
-            ..
-        } => {
-            execute_claude_cli(messages, session_id, project, max_bytes).await
-        }
-
-        Provider::Anthropic { model, .. } => {
-            // For now, Anthropic routes through Ollama (future: direct API)
-            tracing::warn!(
-                model = ?model,
-                "Anthropic provider not yet implemented, falling back to Ollama"
-            );
-
-            let effective_model = model_override
-                .or(model)
-                .unwrap_or(default_model);
-
-            let content = execute_ai_conversation(
+        ProviderConfig::Http(http_config) => {
+            execute_http_provider(
+                http_config,
+                &request,
                 messages,
-                endpoint,
-                effective_model,
-                None,
-                None,
+                model_override,
                 system,
-                max_bytes,
+                config.max_shell_output_bytes,
             )
-            .await?;
-
-            Ok(ProviderResponse {
-                content,
-                session_id: None,
-                provider_type: "anthropic".to_string(),
-            })
+            .await
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// CLAUDE CODE CLI EXECUTION
+// CLI PROVIDER EXECUTION
 // ═══════════════════════════════════════════════════════════════
 
-/// Execute conversation via Claude Code CLI
-///
-/// Invokes: `claude -p "{prompt}" --output-format json [--resume session_id]`
-async fn execute_claude_cli(
-    messages: Vec<ChatMessage>,
-    session_id: Option<String>,
-    project: Option<String>,
+/// Execute conversation via CLI provider (claude, gemini, amp, opencode, etc.)
+async fn execute_cli_provider(
+    config: &CliProviderConfig,
+    request: &ProviderRequest,
+    messages: &[ChatMessage],
     max_bytes: usize,
 ) -> Result<ProviderResponse, String> {
     let start = Instant::now();
 
     // Build prompt from messages
-    let prompt = build_prompt_from_messages(&messages);
+    let prompt = build_prompt_from_messages(messages);
 
     tracing::info!(
-        session_id = ?session_id,
-        project = ?project,
+        command = %config.command,
+        session_id = ?request.session_id,
+        working_dir = ?request.working_dir.as_ref().or(config.working_dir.as_ref()),
         prompt_len = prompt.len(),
-        "Claude Code CLI execution requested"
+        "CLI provider execution requested"
     );
 
     // Build command
-    let mut cmd = Command::new("claude");
+    let mut cmd = Command::new(&config.command);
 
-    // Add prompt
-    cmd.arg("-p").arg(&prompt);
-
-    // Resume session if we have one
-    if let Some(ref sid) = session_id {
-        cmd.arg("--resume").arg(sid);
+    // Add configured args with {prompt} substitution
+    for arg in &config.args {
+        if arg == "{prompt}" {
+            cmd.arg(&prompt);
+        } else {
+            cmd.arg(arg);
+        }
     }
 
-    // Output format for parsing session ID
-    // Note: stream-json with -p requires --verbose flag
-    cmd.arg("--output-format").arg("stream-json");
-    cmd.arg("--verbose");
+    // Resume session if we have one and provider supports it
+    if let (Some(ref sid), Some(ref resume_flag)) = (&request.session_id, &config.resume_flag) {
+        cmd.arg(resume_flag).arg(sid);
+    }
 
-    // Set working directory if project specified
-    if let Some(ref proj) = project {
-        // Expand ~ if present
-        let project_path = if proj.starts_with("~/") {
-            dirs::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(&proj[2..])
-        } else {
-            std::path::PathBuf::from(proj)
-        };
+    // Set working directory: request override > config default
+    let working_dir = request
+        .working_dir
+        .as_ref()
+        .or(config.working_dir.as_ref());
 
-        if project_path.exists() {
-            cmd.current_dir(&project_path);
-            tracing::debug!(path = ?project_path, "Set working directory to project");
+    if let Some(ref dir) = working_dir {
+        let path = expand_tilde(dir);
+        if path.exists() {
+            cmd.current_dir(&path);
+            tracing::debug!(path = ?path, "Set working directory");
         } else {
-            tracing::warn!(path = ?project_path, "Project directory does not exist, using current dir");
+            tracing::warn!(path = ?path, "Working directory does not exist, using current dir");
         }
     }
 
@@ -214,11 +195,14 @@ async fn execute_claude_cli(
 
     // Spawn process
     let mut child = cmd.spawn().map_err(|e| {
-        tracing::error!(error = %e, "Failed to spawn claude command");
-        format!("Failed to spawn claude: {}. Is Claude Code CLI installed?", e)
+        tracing::error!(command = %config.command, error = %e, "Failed to spawn CLI");
+        format!(
+            "Failed to spawn '{}': {}. Is the CLI installed?",
+            config.command, e
+        )
     })?;
 
-    // Read stdout line by line for streaming JSON
+    // Read stdout line by line
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
@@ -227,77 +211,55 @@ async fn execute_claude_cli(
     let mut new_session_id: Option<String> = None;
 
     while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
-        // Each line is a JSON object in stream-json format
+        // Try to parse as JSON for session extraction
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
-            // Check for session info
-            if let Some(session) = parsed.get("session_id").and_then(|v| v.as_str()) {
-                new_session_id = Some(session.to_string());
-            }
-
-            // Check for content
-            if let Some(content) = parsed.get("content").and_then(|v| v.as_str()) {
-                response_content.push_str(content);
-            }
-
-            // Check for text content in messages
-            if let Some(result) = parsed.get("result") {
-                if let Some(content) = result.as_str() {
-                    response_content.push_str(content);
+            // Extract session ID if configured
+            if let Some(ref field) = config.session_field {
+                if let Some(session) = parsed.get(field).and_then(|v| v.as_str()) {
+                    new_session_id = Some(session.to_string());
                 }
             }
 
-            // Handle assistant message type
-            if parsed.get("type").and_then(|v| v.as_str()) == Some("assistant") {
-                if let Some(message) = parsed.get("message") {
-                    if let Some(content) = message.get("content").and_then(|v| v.as_array()) {
-                        for part in content {
-                            if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                                response_content.push_str(text);
-                            }
-                        }
-                    }
-                }
-            }
+            // Extract content from various JSON formats
+            extract_content_from_json(&parsed, &mut response_content);
+        } else {
+            // Plain text output
+            response_content.push_str(&line);
+            response_content.push('\n');
         }
     }
 
-    // Also capture stderr for error messages
+    // Capture stderr
     let stderr = child.stderr.take();
 
-    // Wait for process to complete
+    // Wait for process
     let status = child.wait().await.map_err(|e| e.to_string())?;
     let duration_ms = start.elapsed().as_millis() as u64;
 
     if !status.success() {
-        // Read stderr for error details
-        let stderr_content = if let Some(stderr) = stderr {
-            let mut stderr_reader = BufReader::new(stderr);
-            let mut stderr_buf = String::new();
-            let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr_reader, &mut stderr_buf).await;
-            stderr_buf
-        } else {
-            String::new()
-        };
+        let stderr_content = read_stderr(stderr).await;
 
         tracing::error!(
+            command = %config.command,
             exit_code = ?status.code(),
             duration_ms = duration_ms,
             stderr = %stderr_content,
-            response_so_far = %response_content,
-            "Claude Code CLI failed"
+            "CLI provider failed"
         );
         return Err(format!(
-            "Claude Code CLI exited with status: {:?}. stderr: {}",
+            "'{}' exited with status: {:?}. stderr: {}",
+            config.command,
             status.code(),
             stderr_content.trim()
         ));
     }
 
     tracing::info!(
-        session_id = ?new_session_id.as_ref().or(session_id.as_ref()),
+        command = %config.command,
+        session_id = ?new_session_id.as_ref().or(request.session_id.as_ref()),
         duration_ms = duration_ms,
         response_bytes = response_content.len(),
-        "Claude Code CLI succeeded"
+        "CLI provider succeeded"
     );
 
     // Truncate if needed
@@ -308,15 +270,95 @@ async fn execute_claude_cli(
     };
 
     Ok(ProviderResponse {
-        content: final_content,
-        session_id: new_session_id.or(session_id),
-        provider_type: "claude-code".to_string(),
+        content: final_content.trim().to_string(),
+        session_id: new_session_id.or_else(|| request.session_id.clone()),
+        provider_name: request.name.clone(),
     })
 }
 
+/// Extract content from various JSON response formats (Claude, Gemini, etc.)
+fn extract_content_from_json(parsed: &serde_json::Value, content: &mut String) {
+    // Direct content field
+    if let Some(c) = parsed.get("content").and_then(|v| v.as_str()) {
+        content.push_str(c);
+    }
+
+    // Result field
+    if let Some(result) = parsed.get("result") {
+        if let Some(c) = result.as_str() {
+            content.push_str(c);
+        }
+    }
+
+    // Claude-style assistant message
+    if parsed.get("type").and_then(|v| v.as_str()) == Some("assistant") {
+        if let Some(message) = parsed.get("message") {
+            if let Some(content_array) = message.get("content").and_then(|v| v.as_array()) {
+                for part in content_array {
+                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                        content.push_str(text);
+                    }
+                }
+            }
+        }
+    }
+
+    // Text field (Gemini style)
+    if let Some(c) = parsed.get("text").and_then(|v| v.as_str()) {
+        content.push_str(c);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HTTP PROVIDER EXECUTION
+// ═══════════════════════════════════════════════════════════════
+
+/// Execute conversation via HTTP API provider (Ollama, Anthropic, etc.)
+async fn execute_http_provider(
+    config: &HttpProviderConfig,
+    request: &ProviderRequest,
+    messages: Vec<ChatMessage>,
+    model_override: Option<String>,
+    system: Option<String>,
+    max_bytes: usize,
+) -> Result<ProviderResponse, String> {
+    // Use model override > request model > config model > default
+    let effective_model = model_override
+        .or_else(|| request.model.clone())
+        .or_else(|| config.model.clone())
+        .unwrap_or_else(|| "qwen2.5:7b".to_string());
+
+    tracing::info!(
+        endpoint = %config.endpoint,
+        model = %effective_model,
+        "HTTP provider execution requested"
+    );
+
+    let content = execute_ai_conversation(
+        messages,
+        config.endpoint.clone(),
+        effective_model,
+        None, // max_tokens
+        None, // temperature
+        system,
+        max_bytes,
+    )
+    .await?;
+
+    Ok(ProviderResponse {
+        content,
+        session_id: None,
+        provider_name: request.name.clone(),
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════════
+
 /// Build a prompt string from conversation messages
 fn build_prompt_from_messages(messages: &[ChatMessage]) -> String {
-    // For Claude Code CLI, we send the last user message as the prompt
+    // For CLI providers, send the last user message as the prompt
     // The CLI manages its own conversation history via session
     if let Some(last_user) = messages.iter().rev().find(|m| m.role == "user") {
         return last_user.content.clone();
@@ -328,6 +370,31 @@ fn build_prompt_from_messages(messages: &[ChatMessage]) -> String {
         .map(|m| format!("[{}]: {}", m.role, m.content))
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// Expand ~ to home directory
+fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if path.starts_with("~/") {
+        dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(&path[2..])
+    } else {
+        std::path::PathBuf::from(path)
+    }
+}
+
+/// Read stderr from child process
+async fn read_stderr(
+    stderr: Option<tokio::process::ChildStderr>,
+) -> String {
+    if let Some(stderr) = stderr {
+        let mut reader = BufReader::new(stderr);
+        let mut buf = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut reader, &mut buf).await;
+        buf
+    } else {
+        String::new()
+    }
 }
 
 /// Truncate string at UTF-8 character boundary
@@ -348,6 +415,81 @@ fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// BACKWARDS COMPATIBILITY
+// ═══════════════════════════════════════════════════════════════
+
+/// Legacy Provider enum for backwards compatibility during migration.
+/// Will be removed once TypeScript is updated to use ProviderRequest.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type")]
+pub enum Provider {
+    #[serde(rename = "ollama")]
+    Ollama {
+        model: Option<String>,
+        #[serde(rename = "blockId")]
+        block_id: String,
+    },
+
+    #[serde(rename = "claude-code")]
+    ClaudeCode {
+        project: Option<String>,
+        #[serde(rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(rename = "blockId")]
+        block_id: String,
+    },
+
+    #[serde(rename = "anthropic")]
+    Anthropic {
+        model: Option<String>,
+        #[serde(rename = "blockId")]
+        block_id: String,
+    },
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Provider::Ollama {
+            model: None,
+            block_id: String::new(),
+        }
+    }
+}
+
+/// Convert legacy Provider to ProviderRequest
+impl From<Provider> for ProviderRequest {
+    fn from(provider: Provider) -> Self {
+        match provider {
+            Provider::Ollama { model, block_id } => ProviderRequest {
+                name: "ollama".to_string(),
+                block_id,
+                working_dir: None,
+                session_id: None,
+                model,
+            },
+            Provider::ClaudeCode {
+                project,
+                session_id,
+                block_id,
+            } => ProviderRequest {
+                name: "kitty".to_string(), // Map claude-code to kitty provider
+                block_id,
+                working_dir: project,
+                session_id,
+                model: None,
+            },
+            Provider::Anthropic { model, block_id } => ProviderRequest {
+                name: "ollama".to_string(), // Anthropic not yet supported, fallback
+                block_id,
+                working_dir: None,
+                session_id: None,
+                model,
+            },
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // TESTS
 // ═══════════════════════════════════════════════════════════════
 
@@ -356,37 +498,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_provider_deserialization_ollama() {
-        let json = r#"{"type": "ollama", "model": "qwen2.5:7b", "blockId": "block1"}"#;
-        let provider: Provider = serde_json::from_str(json).unwrap();
-
-        match provider {
-            Provider::Ollama { model, block_id } => {
-                assert_eq!(model, Some("qwen2.5:7b".to_string()));
-                assert_eq!(block_id, "block1");
-            }
-            _ => panic!("Expected Ollama variant"),
-        }
+    fn test_provider_request_default() {
+        let req = ProviderRequest::default();
+        assert_eq!(req.name, "ollama");
+        assert!(req.working_dir.is_none());
     }
 
     #[test]
-    fn test_provider_deserialization_claude_code() {
-        let json =
-            r#"{"type": "claude-code", "project": "float-hub", "sessionId": "abc123", "blockId": "block2"}"#;
-        let provider: Provider = serde_json::from_str(json).unwrap();
+    fn test_legacy_provider_conversion() {
+        let legacy = Provider::ClaudeCode {
+            project: Some("float-hub".to_string()),
+            session_id: Some("abc123".to_string()),
+            block_id: "block1".to_string(),
+        };
 
-        match provider {
-            Provider::ClaudeCode {
-                project,
-                session_id,
-                block_id,
-            } => {
-                assert_eq!(project, Some("float-hub".to_string()));
-                assert_eq!(session_id, Some("abc123".to_string()));
-                assert_eq!(block_id, "block2");
-            }
-            _ => panic!("Expected ClaudeCode variant"),
-        }
+        let request: ProviderRequest = legacy.into();
+        assert_eq!(request.name, "kitty");
+        assert_eq!(request.working_dir, Some("float-hub".to_string()));
+        assert_eq!(request.session_id, Some("abc123".to_string()));
     }
 
     #[test]
@@ -408,6 +537,12 @@ mod tests {
 
         let prompt = build_prompt_from_messages(&messages);
         assert_eq!(prompt, "What is 2+2?");
+    }
+
+    #[test]
+    fn test_expand_tilde() {
+        let expanded = expand_tilde("~/projects/test");
+        assert!(!expanded.to_string_lossy().contains("~"));
     }
 
     #[test]

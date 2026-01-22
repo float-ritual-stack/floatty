@@ -25,16 +25,26 @@ export interface TraversalStore {
 /**
  * Provider configuration parsed from ai::* blocks.
  *
+ * Config-driven: Rust looks up provider by name in config.toml.
+ *
  * Examples:
- * - "ai::" → { type: 'ollama' }
- * - "ai::ollama qwen2.5:7b" → { type: 'ollama', model: 'qwen2.5:7b' }
- * - "ai::kitty float-hub" → { type: 'claude-code', project: 'float-hub' }
- * - "ai::anthropic claude-3-opus" → { type: 'anthropic', model: 'claude-3-opus' }
+ * - "ai::" → { name: 'ollama' } (default)
+ * - "ai::ollama qwen2.5:7b" → { name: 'ollama', model: 'qwen2.5:7b' }
+ * - "ai::kitty float-hub" → { name: 'kitty', workingDir: 'float-hub' }
+ * - "ai::gemini" → { name: 'gemini' }
  */
-export type ProviderConfig =
-  | { type: 'ollama'; model?: string; blockId: string }
-  | { type: 'claude-code'; project?: string; sessionId?: string; blockId: string }
-  | { type: 'anthropic'; model?: string; blockId: string };
+export interface ProviderConfig {
+  /** Provider name (looked up in config.toml [providers.*]) */
+  name: string;
+  /** Block ID where provider was defined */
+  blockId: string;
+  /** Working directory override (from ai::kitty float-hub) */
+  workingDir?: string;
+  /** Session ID for resuming conversations */
+  sessionId?: string;
+  /** Model override */
+  model?: string;
+}
 
 /**
  * Full inherited context visible to user via /context command.
@@ -60,12 +70,15 @@ export interface InheritedContext {
 /**
  * Parse a provider configuration from block content.
  *
+ * Config-driven: Just extracts provider name and arg, Rust does config lookup.
+ *
  * Pattern: "ai::{provider} {arg}"
  *
  * @example
- * parseProviderConfig("ai::") → { type: 'ollama' }
- * parseProviderConfig("ai::kitty float-hub") → { type: 'claude-code', project: 'float-hub' }
- * parseProviderConfig("ai::ollama qwen2.5:7b") → { type: 'ollama', model: 'qwen2.5:7b' }
+ * parseProviderConfig("ai::") → { name: 'ollama' }
+ * parseProviderConfig("ai::kitty float-hub") → { name: 'kitty', workingDir: 'float-hub' }
+ * parseProviderConfig("ai::ollama qwen2.5:7b") → { name: 'ollama', model: 'qwen2.5:7b' }
+ * parseProviderConfig("ai::gemini") → { name: 'gemini' }
  */
 export function parseProviderConfig(content: string, blockId: string): ProviderConfig | null {
   const trimmed = content.trim().toLowerCase();
@@ -78,36 +91,27 @@ export function parseProviderConfig(content: string, blockId: string): ProviderC
   // Get rest after "ai::"
   const rest = content.trim().slice(4).trim();
 
-  // "ai::" alone = default Ollama
+  // "ai::" alone = default provider (ollama)
   if (!rest) {
-    return { type: 'ollama', blockId };
+    return { name: 'ollama', blockId };
   }
 
   // Parse "provider arg" format
   const spaceIndex = rest.indexOf(' ');
-  const provider = spaceIndex === -1 ? rest : rest.slice(0, spaceIndex);
+  const providerName = spaceIndex === -1 ? rest : rest.slice(0, spaceIndex);
   const arg = spaceIndex === -1 ? undefined : rest.slice(spaceIndex + 1).trim() || undefined;
 
-  const providerLower = provider.toLowerCase();
-
-  switch (providerLower) {
-    case 'kitty':
-      // Claude Code CLI - arg is project directory
-      return { type: 'claude-code', project: arg, blockId };
-
-    case 'ollama':
-      // Explicit Ollama - arg is model name
-      return { type: 'ollama', model: arg, blockId };
-
-    case 'anthropic':
-      // Direct Anthropic API - arg is model name
-      return { type: 'anthropic', model: arg, blockId };
-
-    default:
-      // Unknown provider - treat as Ollama with model name
-      // e.g., "ai::qwen2.5:7b" → Ollama with qwen2.5:7b model
-      return { type: 'ollama', model: provider + (arg ? ` ${arg}` : ''), blockId };
-  }
+  // Config-driven: Just pass the name through, Rust decides what it means
+  // The arg interpretation depends on the provider type (from config):
+  // - CLI providers: arg is working directory
+  // - HTTP providers: arg is model name
+  return {
+    name: providerName.toLowerCase(),
+    blockId,
+    // Pass arg as both - Rust will use the appropriate one based on config
+    workingDir: arg,
+    model: arg,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -187,7 +191,7 @@ export function findAncestor(
  *
  * @param startId - Block to start from (typically /send block)
  * @param store - Block store for lookups
- * @returns Provider config or default Ollama if none found
+ * @returns Provider config or default provider if none found
  */
 export function traverseUpForProvider(
   startId: string,
@@ -199,8 +203,8 @@ export function traverseUpForProvider(
     return undefined;
   });
 
-  // Default to Ollama if no provider found
-  return provider ?? { type: 'ollama', blockId: '' };
+  // Default to 'ollama' if no provider found (config-driven default)
+  return provider ?? { name: 'ollama', blockId: '' };
 }
 
 /**
