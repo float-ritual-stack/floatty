@@ -25,18 +25,24 @@ import type { Block } from '../blockTypes';
 
 /**
  * Format provider config for display
+ *
+ * Config-driven: shows whatever info is available, no hardcoded provider lists
  */
 function formatProvider(provider: ProviderConfig): string {
-  switch (provider.type) {
-    case 'claude-code':
-      return `ai::kitty${provider.project ? ` (${provider.project})` : ''}`;
-    case 'ollama':
-      return `ai::ollama${provider.model ? ` (${provider.model})` : ''}`;
-    case 'anthropic':
-      return `ai::anthropic${provider.model ? ` (${provider.model})` : ''}`;
-    default:
-      return 'ai:: (default)';
+  const parts: string[] = [`ai::${provider.name}`];
+
+  // Show workingDir if set (CLI providers)
+  if (provider.workingDir) {
+    parts.push(`dir: ${provider.workingDir}`);
   }
+
+  // Show model if set (could be from provider line or config)
+  // Skip if same as workingDir (parseProviderConfig sets both to same value)
+  if (provider.model && provider.model !== provider.workingDir) {
+    parts.push(`model: ${provider.model}`);
+  }
+
+  return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0];
 }
 
 /**
