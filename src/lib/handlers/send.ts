@@ -10,14 +10,22 @@
  *   /send
  *   → creates ## assistant block with response
  *
- * ARCHITECTURE: Context assembly is done by sendContextHook (execute:before).
- * This handler CONSUMES hookContext.messages instead of collecting context itself.
- * This is how the hook system is supposed to work:
- *   Hooks assemble → Handlers consume
+ * ARCHITECTURE:
+ * - Context assembly is done by sendContextHook (execute:before)
+ * - Provider detection is done by providerDetectionHook (execute:before, priority -1)
+ * - This handler CONSUMES hookContext (messages + provider) instead of collecting itself
+ *
+ * PROVIDER ROUTING (FLO-187):
+ * - ai::              → Ollama (default)
+ * - ai::ollama model  → Ollama with model
+ * - ai::kitty project → Claude Code CLI
+ * - ai::anthropic     → Anthropic API (future)
  */
 
 import { invoke } from '@tauri-apps/api/core';
 import type { BlockHandler, ExecutorActions } from './types';
+import type { ProviderConfig } from '../treeTraversal';
+import type { ProviderHookContext } from './hooks/providerDetectionHook';
 
 // ═══════════════════════════════════════════════════════════════
 // TURN MARKERS
@@ -35,6 +43,15 @@ interface SendHookContext {
   blockCount: number;
 }
 
+/**
+ * Response from provider execution (matches Rust ProviderResponse)
+ */
+interface ProviderResponse {
+  content: string;
+  session_id?: string;
+  provider_type: string;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // HANDLER
 // ═══════════════════════════════════════════════════════════════
@@ -42,8 +59,11 @@ interface SendHookContext {
 /**
  * Send handler - explicit conversation trigger
  *
- * Reads context from hookContext.messages (assembled by sendContextHook).
- * This demonstrates the hook system architecture working correctly.
+ * Reads context from hookContext:
+ * - messages (assembled by sendContextHook)
+ * - provider (detected by providerDetectionHook)
+ *
+ * Routes to appropriate backend based on provider configuration.
  */
 export const sendHandler: BlockHandler = {
   prefixes: ['/send', '::send'],
@@ -55,8 +75,10 @@ export const sendHandler: BlockHandler = {
   ): Promise<void> {
     const startTime = performance.now();
 
-    // Get hook context - assembled by sendContextHook in execute:before
-    const hookContext = (actions as unknown as { hookContext?: SendHookContext }).hookContext;
+    // Get hook context - assembled by sendContextHook + providerDetectionHook
+    const hookContext = (actions as unknown as {
+      hookContext?: SendHookContext & Partial<ProviderHookContext>;
+    }).hookContext;
 
     // Verify hook ran and provided context
     if (!hookContext?.messages || hookContext.messages.length === 0) {
@@ -67,10 +89,19 @@ export const sendHandler: BlockHandler = {
 
     const { messages, blockCount } = hookContext;
 
+    // Get provider info from hook (defaults to Ollama if not present)
+    const provider: ProviderConfig = hookContext.provider ?? {
+      type: 'ollama',
+      blockId: '',
+    };
+    const modelOverride = hookContext.modelOverride;
+
     console.log('[send] Context from hook:', {
       blockCount,
       messageCount: messages.length,
       textLength: messages.reduce((sum, m) => sum + m.content.length, 0),
+      provider: provider.type,
+      model: modelOverride,
     });
 
     // Replace /send block with ## assistant marker
@@ -81,7 +112,10 @@ export const sendHandler: BlockHandler = {
 
     // Create response placeholder as child
     const responseId = actions.createBlockInside(blockId);
-    updateContent(responseId, 'Thinking...');
+    const thinkingMessage = provider.type === 'claude-code'
+      ? 'Claude Code thinking...'
+      : 'Thinking...';
+    updateContent(responseId, thinkingMessage);
 
     // Create ## user block IMMEDIATELY so user can start typing while waiting
     // This is the key UX insight: don't make user wait for LLM to start next thought
@@ -100,22 +134,30 @@ export const sendHandler: BlockHandler = {
     }
 
     try {
-      // Call LLM with conversation API
-      // Messages come from hook - handler just sends them
-      const response = await invoke<string>('execute_ai_conversation', {
+      // Call provider-aware execution
+      const response = await invoke<ProviderResponse>('execute_provider_conversation', {
         messages,
+        provider,
+        modelOverride,
         system: 'You are a helpful assistant responding to notes and thoughts in an outliner. Be concise and direct. Focus on what the user is asking about.',
       });
 
       const duration = performance.now() - startTime;
       console.log('[send] Complete:', {
         duration: `${duration.toFixed(1)}ms`,
-        responseLength: response.length,
+        responseLength: response.content.length,
+        providerType: response.provider_type,
+        sessionId: response.session_id,
       });
 
       // Update response
-      actions.updateBlockContent(responseId, response.trim());
+      actions.updateBlockContent(responseId, response.content.trim());
       actions.setBlockStatus?.(blockId, 'complete');
+
+      // Phase 5: Session persistence - store session_id if returned
+      if (response.session_id && provider.blockId) {
+        persistSessionId(provider.blockId, response.session_id, actions);
+      }
     } catch (err) {
       console.error('[send] Error:', err);
       actions.updateBlockContent(responseId, `Error: ${String(err)}`);
@@ -123,3 +165,50 @@ export const sendHandler: BlockHandler = {
     }
   },
 };
+
+// ═══════════════════════════════════════════════════════════════
+// SESSION PERSISTENCE
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Persist session ID as a child of the provider block.
+ * Pattern: "session: {uuid}"
+ *
+ * This allows resuming Claude Code conversations on subsequent /send calls.
+ */
+function persistSessionId(
+  providerBlockId: string,
+  sessionId: string,
+  actions: ExecutorActions
+): void {
+  // Check if session already exists
+  if (actions.getBlock) {
+    const providerBlock = actions.getBlock(providerBlockId) as {
+      childIds?: string[];
+    } | undefined;
+
+    if (providerBlock?.childIds) {
+      for (const childId of providerBlock.childIds) {
+        const child = actions.getBlock(childId) as { content?: string } | undefined;
+        if (child?.content?.startsWith('session:')) {
+          // Update existing session block
+          actions.updateBlockContent(childId, `session: ${sessionId}`);
+          console.log('[send] Updated existing session:', sessionId);
+          return;
+        }
+      }
+    }
+  }
+
+  // Create new session block as first child of provider
+  if (actions.createBlockInsideAtTop) {
+    const sessionBlockId = actions.createBlockInsideAtTop(providerBlockId);
+    actions.updateBlockContent(sessionBlockId, `session: ${sessionId}`);
+    console.log('[send] Created new session block:', sessionId);
+  } else {
+    // Fallback: create at end
+    const sessionBlockId = actions.createBlockInside(providerBlockId);
+    actions.updateBlockContent(sessionBlockId, `session: ${sessionId}`);
+    console.log('[send] Created session block (at end):', sessionId);
+  }
+}

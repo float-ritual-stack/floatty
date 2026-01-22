@@ -13,8 +13,11 @@ import { searchHandler } from './search';
 import { pickHandler } from './pick';
 import { sendHandler } from './send';
 import { helpHandler } from './help';
+import { contextHandler } from './context';
 import { hookRegistry } from '../hooks';
 import { sendContextHook } from './hooks/sendContextHook';
+import { contextStoreHook } from './hooks/contextStoreHook';
+import { providerDetectionHook } from './hooks/providerDetectionHook';
 
 // Re-export registry and types for convenience
 export { registry } from './registry';
@@ -57,10 +60,14 @@ export function registerHandlers(): void {
   registry.register(pickHandler);
   registry.register(sendHandler);
   registry.register(helpHandler);
+  registry.register(contextHandler);
 
   // Register hooks - THE ARCHITECTURE IN ACTION
   // Hooks assemble context, handlers consume it
+  // Priority order: providerDetection (-1) → sendContext (0) → contextStore (0)
+  hookRegistry.register(providerDetectionHook);
   hookRegistry.register(sendContextHook);
+  hookRegistry.register(contextStoreHook);
 
   console.log('[handlers] Registered handlers:', registry.getRegisteredPrefixes().join(', '));
   console.log('[handlers] Registered hooks:', hookRegistry.getHookIds().join(', '));

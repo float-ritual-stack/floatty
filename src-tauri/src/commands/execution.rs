@@ -1,9 +1,10 @@
 /// Tauri command wrappers for execution services
-/// 
+///
 /// Thin adapters (3-10 lines each) that extract state and delegate to services.
 
 use crate::config::AggregatorConfig;
 use crate::services::execution;
+use crate::services::provider::{Provider, ProviderResponse};
 
 /// Execute a shell command and return stdout/stderr
 ///
@@ -61,6 +62,30 @@ pub async fn execute_ai_conversation(
         max_tokens,
         temperature,
         system,
+        config.max_shell_output_bytes,
+    ).await
+}
+
+/// Execute conversation with provider-aware routing
+///
+/// Routes to Ollama, Claude Code CLI, or Anthropic API based on provider config.
+/// This is the FLO-187 provider-aware dispatch system.
+#[tauri::command]
+pub async fn execute_provider_conversation(
+    messages: Vec<execution::ChatMessage>,
+    provider: Provider,
+    model_override: Option<String>,
+    system: Option<String>,
+) -> Result<ProviderResponse, String> {
+    let config = AggregatorConfig::load();
+
+    crate::services::provider::execute_with_provider(
+        provider,
+        messages,
+        model_override,
+        system,
+        config.ollama_endpoint,
+        config.ollama_model,
         config.max_shell_output_bytes,
     ).await
 }
