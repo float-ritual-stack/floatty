@@ -218,48 +218,46 @@ server_port = 8765                      # Per-workspace port isolation
 - REST API: `http://127.0.0.1:{port}/api/v1/blocks`
 - Server receives `FLOATTY_DATA_DIR` from parent process
 
-### Logging (NEW: Structured with tracing)
+### Logging (Structured with tracing)
 
-**Log location**: `~/.floatty/logs/floatty-YYYY-MM-DD.jsonl` (JSON lines, rotates daily)
+**Log location**: `{data_dir}/logs/floatty.YYYY-MM-DD.jsonl` (JSON lines, rotates daily)
 
-Setup in `lib.rs` via `tracing`:
-```rust
-tracing_subscriber::fmt()
-    .json()  // Structured JSON for LLM parsing
-    .with_writer(tracing_appender::rolling::daily(log_dir, "floatty"))
+**IMPORTANT**: Log filename uses DOT not DASH: `floatty.2026-01-23.jsonl`
+
+**Frontend → Rust forwarding**: `src/lib/logger.ts` intercepts all `console.*` calls and forwards to Rust via `invoke('log_js')`. Messages appear with `"target":"js"` and `js_target` field showing the source (e.g., `"js_target":"useSyncedYDoc"`).
+
+**Log level filtering**: Default level is `info`. Debug logs are enabled in dev scripts:
+```bash
+npm run tauri dev   # Includes RUST_LOG=debug automatically
 ```
 
 **Query logs with jq**:
 ```bash
-# Find slow shell commands (>1s)
-jq 'select(.fields.duration_ms > 1000)' ~/.floatty/logs/*.jsonl
+# Find frontend logs (all console.* output)
+jq 'select(.target == "js")' ~/.floatty-dev/logs/floatty.*.jsonl
 
-# Trace a specific ctx:: marker parse
-jq 'select(.span.marker_id == "ctx_abc123")' ~/.floatty/logs/*.jsonl
+# Find specific frontend module logs
+jq 'select(.target == "js" and .fields.js_target == "useSyncedYDoc")' ~/.floatty-dev/logs/floatty.*.jsonl
+
+# Find slow shell commands (>1s)
+jq 'select(.fields.duration_ms > 1000)' ~/.floatty-dev/logs/floatty.*.jsonl
 
 # AI command errors only
-jq 'select(.level == "ERROR" and .target == "floatty::commands::ai")' ~/.floatty/logs/*.jsonl
-
-# All operations with their performance
-jq 'select(.fields.duration_ms) | {target, duration_ms, fields}' ~/.floatty/logs/*.jsonl
+jq 'select(.level == "ERROR" and .target == "floatty::commands::ai")' ~/.floatty-dev/logs/floatty.*.jsonl
 ```
 
-**Example structured log entry**:
+**Example log entries**:
 ```json
-{"timestamp":"2026-01-08T10:15:42.123Z","level":"INFO","target":"floatty::commands::shell","fields":{"command_len":42,"duration_ms":1234,"exit_code":0,"output_bytes":5678},"span":{"request_id":"req_xyz"}}
+// Rust-originated
+{"timestamp":"...","level":"INFO","target":"float_pty_lib::server","fields":{"message":"Spawning floatty-server"},...}
+
+// Frontend-originated (via logger.ts)
+{"timestamp":"...","level":"INFO","target":"js","fields":{"message":"Full resync complete: 257928 bytes applied","js_target":"useSyncedYDoc"},...}
 ```
 
-**When debugging ctx:: sidebar issues**, query structured logs:
-```bash
-jq 'select(.target | test("ctx|watcher|parser"))' ~/.floatty/logs/*.jsonl
-```
+**Why some logs are missing**: `console.debug()` maps to `tracing::debug!` which is filtered at `info` level. Use `console.log()` for logs that should always appear, `console.debug()` for verbose output.
 
-**Common ctx:: issues**:
-- No ctx:: logs at all → check `jq 'select(.target | test("ctx"))' ~/.floatty/logs/*.jsonl` for errors
-- "Failed to watch directory" → `jq 'select(.fields.error and (.target == "floatty::ctx_watcher"))' ~/.floatty/logs/*.jsonl`
-- Parser errors → `jq 'select(.level == "ERROR" and (.target == "floatty::ctx_parser"))' ~/.floatty/logs/*.jsonl`
-
-**Dev builds**: Pretty-printed to stdout (human-readable), production writes JSON to file.
+**Dev builds**: Pretty-printed to stdout AND written to file.
 
 See `docs/architecture/LOGGING_STRATEGY.md` for complete guide and LLM integration patterns.
 

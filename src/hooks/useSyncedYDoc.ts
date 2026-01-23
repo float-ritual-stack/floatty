@@ -12,6 +12,11 @@
 import { onMount, onCleanup, createSignal, type Accessor } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import * as Y from 'yjs';
+import {
+  saveBackup as saveBackupIDB,
+  getBackup as getBackupIDB,
+  clearBackup as clearBackupIDB,
+} from '../lib/idbBackup';
 
 // ═══════════════════════════════════════════════════════════════
 // SYNC STATUS (singleton signals for UI visibility)
@@ -343,29 +348,27 @@ function applyWsMessage(msg: { txId?: string; data: string }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// LOCAL STORAGE BACKUP (crash resilience)
+// INDEXEDDB BACKUP (crash resilience)
 // ═══════════════════════════════════════════════════════════════
+// Migrated from localStorage (2026-01-23) due to 5MB limit.
+// IndexedDB supports binary storage directly (no base64 overhead)
+// and has much higher quotas (typically 50MB+ or % of disk).
 
-const YDOC_BACKUP_KEY = 'floatty_ydoc_backup';
+const YDOC_BACKUP_KEY = 'floatty_ydoc_backup'; // For migration only
 const BACKUP_DEBOUNCE_MS = 1000;
-const BACKUP_MAX_SIZE = 5 * 1024 * 1024; // 5MB limit for localStorage
 let backupTimer: number | null = null;
 
 /**
- * Schedule a backup of current Y.Doc state to localStorage.
+ * Schedule a backup of current Y.Doc state to IndexedDB.
  * Called when local changes are queued, providing crash resilience.
  */
 function scheduleBackup() {
   if (backupTimer) clearTimeout(backupTimer);
-  backupTimer = window.setTimeout(() => {
+  backupTimer = window.setTimeout(async () => {
     try {
       const state = Y.encodeStateAsUpdate(sharedDoc);
-      if (state.length > BACKUP_MAX_SIZE) {
-        console.warn('[useSyncedYDoc] Y.Doc too large for localStorage backup:', state.length, 'bytes');
-        return;
-      }
-      localStorage.setItem(YDOC_BACKUP_KEY, bytesToBase64(state));
-      console.debug('[useSyncedYDoc] Backed up Y.Doc to localStorage:', state.length, 'bytes');
+      await saveBackupIDB(state);
+      console.log('[useSyncedYDoc] Backed up Y.Doc to IndexedDB:', state.length, 'bytes');
     } catch (err) {
       console.warn('[useSyncedYDoc] Failed to backup Y.Doc:', err);
     }
@@ -373,19 +376,22 @@ function scheduleBackup() {
 }
 
 /**
- * Clear the localStorage backup (called when sync completes).
+ * Clear the IndexedDB backup (called when sync completes).
  */
 function clearBackup() {
-  try {
-    localStorage.removeItem(YDOC_BACKUP_KEY);
-    console.debug('[useSyncedYDoc] Cleared localStorage backup (synced)');
-  } catch (err) {
-    console.warn('[useSyncedYDoc] Failed to clear backup:', err);
-  }
+  clearBackupIDB()
+    .then(() => {
+      console.log('[useSyncedYDoc] Cleared IndexedDB backup (synced)');
+    })
+    .catch(err => {
+      console.warn('[useSyncedYDoc] Failed to clear backup:', err);
+    });
 }
 
 /**
- * Check if a localStorage backup exists.
+ * Check if a legacy localStorage backup exists (sync check).
+ * @deprecated Use getBackup() from idbBackup.ts for new code.
+ * This only checks localStorage, not IndexedDB.
  */
 export function hasLocalBackup(): boolean {
   try {
@@ -396,13 +402,26 @@ export function hasLocalBackup(): boolean {
 }
 
 /**
- * Get the localStorage backup if it exists.
+ * Get the backup if it exists (checks both IndexedDB and legacy localStorage).
  */
-export function getLocalBackup(): Uint8Array | null {
+export async function getLocalBackup(): Promise<Uint8Array | null> {
   try {
-    const backup = localStorage.getItem(YDOC_BACKUP_KEY);
-    if (!backup) return null;
-    return base64ToBytes(backup);
+    // Try IndexedDB first (new location)
+    const idbBackup = await getBackupIDB();
+    if (idbBackup) return idbBackup;
+
+    // Fallback to localStorage (legacy migration)
+    const lsBackup = localStorage.getItem(YDOC_BACKUP_KEY);
+    if (lsBackup) {
+      console.log('[useSyncedYDoc] Found legacy localStorage backup, migrating to IndexedDB');
+      const bytes = base64ToBytes(lsBackup);
+      await saveBackupIDB(bytes);
+      localStorage.removeItem(YDOC_BACKUP_KEY);
+      console.log('[useSyncedYDoc] Migration complete');
+      return bytes;
+    }
+
+    return null;
   } catch (err) {
     console.warn('[useSyncedYDoc] Failed to read backup:', err);
     return null;
@@ -671,11 +690,11 @@ export function useSyncedYDoc(
 
           const httpClient = getHttpClient();
 
-          // Check for localStorage backup (crash recovery)
-          const localBackup = getLocalBackup();
+          // Check for backup (crash recovery) - migrates legacy localStorage if found
+          const localBackup = await getLocalBackup();
 
           if (localBackup) {
-            console.log('[useSyncedYDoc] Found localStorage backup, attempting reconciliation...');
+            console.log('[useSyncedYDoc] Found backup, attempting reconciliation...');
 
             // Track whether local changes were successfully pushed
             let hadLocalChanges = false;
@@ -730,7 +749,7 @@ export function useSyncedYDoc(
                 clearBackup();
               } else {
                 console.warn('[useSyncedYDoc] PRESERVING backup - local changes failed to push, will retry next startup');
-                // Don't clear - user's local changes are still in localStorage
+                // Don't clear - user's local changes are still in IndexedDB
               }
             }
           } else {
