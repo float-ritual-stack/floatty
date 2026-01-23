@@ -379,18 +379,21 @@ function scheduleBackup() {
  * Clear the IndexedDB backup (called when sync completes).
  */
 function clearBackup() {
-  clearBackupIDB().catch(err => {
-    console.warn('[useSyncedYDoc] Failed to clear backup:', err);
-  });
-  console.log('[useSyncedYDoc] Cleared IndexedDB backup (synced)');
+  clearBackupIDB()
+    .then(() => {
+      console.log('[useSyncedYDoc] Cleared IndexedDB backup (synced)');
+    })
+    .catch(err => {
+      console.warn('[useSyncedYDoc] Failed to clear backup:', err);
+    });
 }
 
 /**
- * Check if a backup exists (IndexedDB or legacy localStorage).
- * @deprecated Use hasBackupIDB() directly for new code.
+ * Check if a legacy localStorage backup exists (sync check).
+ * @deprecated Use getBackup() from idbBackup.ts for new code.
+ * This only checks localStorage, not IndexedDB.
  */
 export function hasLocalBackup(): boolean {
-  // Sync check for localStorage (legacy migration)
   try {
     return localStorage.getItem(YDOC_BACKUP_KEY) !== null;
   } catch {

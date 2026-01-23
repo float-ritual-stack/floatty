@@ -226,9 +226,9 @@ server_port = 8765                      # Per-workspace port isolation
 
 **Frontend → Rust forwarding**: `src/lib/logger.ts` intercepts all `console.*` calls and forwards to Rust via `invoke('log_js')`. Messages appear with `"target":"js"` and `js_target` field showing the source (e.g., `"js_target":"useSyncedYDoc"`).
 
-**Log level filtering**: Default level is `info`. To see debug logs:
+**Log level filtering**: Default level is `info`. Debug logs are enabled in dev scripts:
 ```bash
-RUST_LOG=debug npm run tauri dev
+npm run tauri dev   # Includes RUST_LOG=debug automatically
 ```
 
 **Query logs with jq**:
