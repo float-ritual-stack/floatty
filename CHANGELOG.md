@@ -2,6 +2,24 @@
 
 All notable changes to floatty are documented here.
 
+## [0.4.4] - 2026-01-23
+
+### Bug Fixes
+
+- **IndexedDB backup migration** (PR #97) - Fixed Y.Doc backup storage
+  - Migrated from localStorage (5MB limit) to IndexedDB (50MB+)
+  - Prevents silent data loss when Y.Doc exceeds localStorage quota
+  - Automatic migration: existing localStorage backups move to IndexedDB on first access
+  - Added error logging for database initialization failures
+  - Added objectStore guard for future version upgrades
+
+### Documentation
+
+- Updated CLAUDE.md logging section (debug logs in dev scripts)
+- Clarified hasLocalBackup() docstring (only checks localStorage, not IndexedDB)
+
+---
+
 ## [0.4.3] - 2026-01-18
 
 ### New Features
