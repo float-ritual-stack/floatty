@@ -49,6 +49,7 @@ export interface BlockStoreInterface {
   deleteBlock: (id: string) => boolean;
   indentBlock: (id: string) => void;
   outdentBlock: (id: string) => void;
+  liftChildrenToSiblings: (blockId: string, afterId: string) => void;
   toggleCollapsed: (id: string) => void;
 }
 

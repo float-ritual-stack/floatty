@@ -158,7 +158,9 @@ export function setCursorAtOffset(element: HTMLElement, offset: number): void {
       const nodeLength = node.textContent?.length || 0;
       if (currentOffset + nodeLength >= offset) {
         // Cursor belongs in this text node
-        range.setStart(node, offset - currentOffset);
+        // Clamp offset to prevent IndexSizeError if DOM changed since offset calculation
+        const clampedOffset = Math.min(offset - currentOffset, nodeLength);
+        range.setStart(node, clampedOffset);
         range.collapse(true);
         found = true;
         return true;
@@ -223,6 +225,9 @@ export function isCursorAtContentStart(element: HTMLElement): boolean {
     return true;
   }
 
+  // Must have a range to check position (after undo, rangeCount can be 0)
+  if (!selection.rangeCount) return false;
+
   const range = selection.getRangeAt(0);
 
   // Must be at offset 0
@@ -263,6 +268,9 @@ export function isCursorAtContentEnd(element: HTMLElement): boolean {
   if (!element.textContent || element.textContent.length === 0) {
     return true;
   }
+
+  // Must have a range to check position (after undo, rangeCount can be 0)
+  if (!selection.rangeCount) return false;
 
   const range = selection.getRangeAt(0);
   const container = range.startContainer;
@@ -329,6 +337,40 @@ export function isCursorAtContentEnd(element: HTMLElement): boolean {
       const textContent = element.textContent || '';
       return textContent.length === 0 || offset >= childCount;
     }
+  }
+
+  // Container is a non-root element (e.g., cursor in <div><br></div> blank line)
+  // Check if there's any text content AFTER this element in the DOM tree
+  if (container.nodeType === Node.ELEMENT_NODE && container !== element) {
+    // Walk from container to find any text content after it
+    const treeWalker = document.createTreeWalker(
+      element,
+      NodeFilter.SHOW_ALL,
+      null
+    );
+
+    // Navigate to the container element
+    treeWalker.currentNode = container;
+
+    // If offset > 0, we're after some children - check from last child
+    if (offset > 0 && container.childNodes.length > 0) {
+      const lastProcessed = container.childNodes[Math.min(offset, container.childNodes.length) - 1];
+      treeWalker.currentNode = lastProcessed;
+      // Skip to end of this subtree
+      while (treeWalker.lastChild()) { /* descend to deepest node */ }
+    }
+
+    // Now check if there's any text content after current position
+    let next = treeWalker.nextNode();
+    while (next) {
+      if (next.nodeType === Node.TEXT_NODE && next.textContent && next.textContent.length > 0) {
+        return false; // There's text content after cursor
+      }
+      next = treeWalker.nextNode();
+    }
+
+    // No text content found after cursor position
+    return true;
   }
 
   // Default: check total length approach (simpler fallback)

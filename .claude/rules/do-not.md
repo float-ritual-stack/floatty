@@ -20,10 +20,11 @@ Critical anti-patterns that will break floatty.
 
 ## Keyboard/Selection
 
-- Use `cursor.getOffset() === 0` for start detection (use `cursor.isAtStart()` instead)
+- Use `cursor.isAtStart()` for block-level decisions like merge (use `cursor.getOffset() === 0` instead - `isAtStart()` can be true at start of ANY line in multi-line content!)
 - Use `'set'` mode when you want to select a block (use `'anchor'` - 'set' only clears)
 - Forget `containerRef?.focus()` after blurring contentEditable (tinykeys needs focus)
 - Use `next` in Shift+Arrow range extension (use `props.id`, then move focus)
+- Block merge just because block has children (only block when children are COLLAPSED/hidden - see @.claude/rules/contenteditable-patterns.md)
 
 ## contentEditable (see @.claude/rules/contenteditable-patterns.md)
 
@@ -31,6 +32,9 @@ Critical anti-patterns that will break floatty.
 - Use `innerText.length` for offset calculation (normalizes whitespace differently)
 - Assume `\n` characters exist in DOM (browser uses `<div>` and `<br>` elements instead)
 - Have mismatched logic between `setCursorAtOffset()` and `getAbsoluteCursorOffset()` (causes split corruption)
+- Call `selection.getRangeAt(0)` without checking `selection.rangeCount` first (throws IndexSizeError after undo)
+- Set cursor offset without clamping to node length (DOM may have changed, throws IndexSizeError)
+- Assume ArrowUp/Down works when only newlines exist before/after cursor (browser can't navigate - handle manually)
 
 ## Y.Doc/Search (see @.claude/rules/ydoc-patterns.md)
 

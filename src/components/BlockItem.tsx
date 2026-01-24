@@ -3,13 +3,14 @@ import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
+import { useBlockInput } from '../hooks/useBlockInput';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { layoutStore } from '../hooks/useLayoutStore';
-import { getActionForEvent, isMac } from '../lib/keybinds';
+import { isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
 import { BlockDisplay } from './BlockDisplay';
-import { registry, executeHandler, createHookBlockStore, type DailyNoteData, type SearchResults } from '../lib/handlers';
+import { type DailyNoteData, type SearchResults } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
@@ -120,6 +121,52 @@ export function BlockItem(props: BlockItemProps) {
   // Cleanup: flush pending edits on unmount (don't discard user's work)
   onCleanup(() => {
     flushContentUpdate();
+  });
+
+  // Find wikilink at cursor position (for keyboard navigation)
+  const getWikilinkAtCursor = (): string | null => {
+    const content = block()?.content || '';
+    if (!hasWikilinkPatterns(content)) return null;
+
+    const cursorOffset = cursor.getOffset();
+    const tokens = parseAllInlineTokens(content);
+
+    for (const token of tokens) {
+      if (token.type === 'wikilink' && token.target) {
+        // Check if cursor is within this wikilink's range
+        if (cursorOffset >= token.start && cursorOffset <= token.end) {
+          return token.target;
+        }
+      }
+    }
+    return null;
+  };
+
+  // Wrapper for navigateToPage that matches hook's expected signature
+  const navigateToPageForHook = (target: string, paneId: string) => {
+    const result = navigateToPage(target, paneId, 'none');
+    return { success: result.success, focusTargetId: result.focusTargetId };
+  };
+
+  // Wire up the keyboard handler hook - single source of truth for keyboard logic
+  const { handleKeyDown } = useBlockInput({
+    blockId: props.id,
+    paneId: props.paneId,
+    getBlock: () => block(),
+    isCollapsed,
+    blockStore: store,
+    paneStore,
+    cursor,
+    findNextVisibleBlock,
+    findPrevVisibleBlock,
+    findFocusAfterDelete,
+    onFocus: props.onFocus,
+    flushContentUpdate,
+    onSelect: props.onSelect,
+    selectionAnchor: props.selectionAnchor,
+    getWikilinkAtCursor,
+    navigateToPage: navigateToPageForHook,
+    getContentRef: () => contentRef,
   });
 
   // Handle focus changes from props
@@ -264,6 +311,11 @@ export function BlockItem(props: BlockItemProps) {
     const text = e.clipboardData?.getData('text/plain');
     if (!text) return;
 
+    // FIX: Flush pending content before structured paste check
+    // Without this, store.blocks[id] may be stale (150ms debounce)
+    // and handleStructuredPaste might incorrectly think block is empty
+    flushContentUpdate();
+
     // Try structured paste (FLO-128: structure like sh:: cat output)
     const result = handleStructuredPaste(props.id, text, {
       getBlock: (id) => store.blocks[id],
@@ -284,364 +336,6 @@ export function BlockItem(props: BlockItemProps) {
       }
     }
     // If not handled, browser does default plain text paste
-  };
-
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (!block()) return;
-
-    // Check centralized keybind system first for block-level actions
-    const action = getActionForEvent(e);
-
-    switch (action) {
-      case 'zoomOutBlock': {
-        // Escape: zoom out if currently zoomed
-        const zoomedRoot = paneStore.getZoomedRootId(props.paneId);
-        if (zoomedRoot) {
-          e.preventDefault();
-          paneStore.setZoomedRoot(props.paneId, null);
-          return;
-        }
-        break; // Not zoomed - let Escape propagate naturally (blur, etc.)
-      }
-
-      case 'zoomInBlock': {
-        // Cmd+Enter: Navigate wikilink OR toggle zoom
-        e.preventDefault();
-
-        // Check if cursor is inside a [[wikilink]] - navigate instead of zoom
-        const wikilinkTarget = getWikilinkAtCursor();
-        if (wikilinkTarget) {
-          console.log('[Wikilink] Keyboard nav to:', wikilinkTarget);
-          const result = navigateToPage(wikilinkTarget, props.paneId, 'none');
-          // Focus first child of page (in current pane)
-          if (result.success && result.focusTargetId) {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
-            });
-          }
-          return;
-        }
-
-        // No wikilink at cursor - normal zoom behavior
-        const currentZoom = paneStore.getZoomedRootId(props.paneId);
-
-        if (currentZoom === props.id) {
-          // Already zoomed into this block - zoom out
-          paneStore.setZoomedRoot(props.paneId, null);
-          return;
-        }
-
-        // Zoom into this block's subtree
-        // Auto-create child if block has none (avoids stuck-on-empty-block bug)
-        if (block()!.childIds.length === 0) {
-          const newChildId = store.createBlockInside(props.id);
-          paneStore.setZoomedRoot(props.paneId, props.id);
-          if (newChildId) {
-            // Double rAF: first for zoom render, second to focus after child mounts
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => props.onFocus(newChildId));
-            });
-          }
-        } else {
-          paneStore.setZoomedRoot(props.paneId, props.id);
-        }
-        return;
-      }
-
-      case 'collapseBlock': {
-        // Cmd+. to toggle collapse
-        e.preventDefault();
-        const currentBlock = block();
-        const hasChildren = currentBlock?.childIds && currentBlock.childIds.length > 0;
-        if (hasChildren) {
-          paneStore.toggleCollapsed(props.paneId, props.id);
-        }
-        return;
-      }
-
-      case 'deleteBlock': {
-        // Cmd+Backspace: Delete block and subtree, focus parent (for better undo context)
-        e.preventDefault();
-        const focusTarget = findFocusAfterDelete(props.id, props.paneId);
-        store.deleteBlock(props.id);
-        if (focusTarget) props.onFocus(focusTarget);
-        return;
-      }
-
-      // FLO-75: Block movement via Cmd+Up/Down
-      case 'moveBlockUp': {
-        e.preventDefault();
-        store.moveBlockUp(props.id);
-        // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => contentRef?.focus({ preventScroll: true }));
-        });
-        return;
-      }
-
-      case 'moveBlockDown': {
-        e.preventDefault();
-        store.moveBlockDown(props.id);
-        // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => contentRef?.focus({ preventScroll: true }));
-        });
-        return;
-      }
-    }
-
-    // Non-action keybinds (navigation, editing)
-    if (e.key === 'ArrowUp') {
-      // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
-      // This allows browser to handle text selection within block
-      const shouldNavigate = cursor.isAtStart();
-
-      if (shouldNavigate) {
-        e.preventDefault();
-        const prev = findPrevVisibleBlock(props.id, props.paneId);
-        if (prev) {
-          if (e.shiftKey && props.onSelect) {
-            if (!props.selectionAnchor) {
-              // First Shift+Arrow: select current, set anchor, move focus only
-              props.onSelect(props.id, 'anchor');
-              props.onFocus(prev);
-              return;
-            }
-            // Subsequent: extend range to include THIS block, then move focus
-            props.onSelect(props.id, 'range');
-            props.onFocus(prev);
-            return;
-          } else if (props.onSelect) {
-            // Plain navigation clears selection
-            props.onSelect(prev, 'set');
-          }
-          props.onFocus(prev);
-        }
-      }
-      // No preventDefault = browser handles internal line navigation
-    } else if (e.key === 'ArrowDown') {
-      // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
-      // This allows browser to handle text selection within block
-      const shouldNavigate = cursor.isAtEnd();
-
-      if (shouldNavigate) {
-        e.preventDefault();
-
-        const next = findNextVisibleBlock(props.id, props.paneId);
-        if (next) {
-          if (e.shiftKey && props.onSelect) {
-            if (!props.selectionAnchor) {
-              // First Shift+Arrow: select current, set anchor, move focus only
-              props.onSelect(props.id, 'anchor');
-              props.onFocus(next);
-              return;
-            }
-            // Subsequent: extend range to include THIS block, then move focus
-            props.onSelect(props.id, 'range');
-            props.onFocus(next);
-            return;
-          } else if (props.onSelect) {
-            // Plain navigation clears selection
-            props.onSelect(next, 'set');
-          }
-          props.onFocus(next);
-        } else if (!e.shiftKey) {
-          // FLO-92: No next visible block - create sibling for typeable target
-          // BUT don't create if current block is already empty (avoid empty spam)
-          // Only on plain navigation, not Shift+Arrow
-          const currentContent = block()?.content || '';
-          if (currentContent === '') return;
-
-          const newId = store.createBlockAfter(props.id);
-          if (newId) props.onFocus(newId);
-        }
-      }
-      // No preventDefault = browser handles internal line navigation
-    } else if (e.key === 'Enter' && !e.shiftKey) {
-      // NOTE: Cmd+Enter (zoomInBlock) is handled above via getActionForEvent()
-
-      // CRITICAL: Flush pending content updates before any Enter action
-      // Without this, debounced updates can race with split/execute and corrupt content
-      flushContentUpdate();
-
-      // Plain Enter on executable blocks = execute via handler registry
-      if (block()) {
-        const content = block()!.content;
-        const handler = registry.findHandler(content);
-
-        if (handler) {
-          e.preventDefault();
-
-          // Create hook-compatible block store adapter (with zoom scope)
-          const hookStore = createHookBlockStore(
-            store.getBlock,
-            store.blocks,
-            store.rootIds,
-            paneStore.getZoomedRootId(props.paneId)
-          );
-
-          // Execute through hook-aware executor
-          executeHandler(handler, props.id, content, {
-            createBlockInside: store.createBlockInside,
-            createBlockInsideAtTop: store.createBlockInsideAtTop,
-            createBlockAfter: store.createBlockAfter,
-            updateBlockContent: store.updateBlockContent,
-            updateBlockContentFromExecutor: store.updateBlockContentFromExecutor,
-            deleteBlock: store.deleteBlock,
-            setBlockOutput: store.setBlockOutput,
-            setBlockStatus: store.setBlockStatus,
-            getBlock: (id) => store.blocks[id],
-            getParentId: (id) => store.blocks[id]?.parentId ?? undefined,
-            getChildren: (id) => store.blocks[id]?.childIds ?? [],
-            rootIds: store.rootIds,
-            paneId: props.paneId,
-            focusBlock: props.onFocus,
-          }, hookStore).catch(err => {
-            console.error('[BlockItem] Handler execution failed:', err);
-          });
-          return;
-        }
-      }
-
-      e.preventDefault();
-
-      // CRITICAL: Use absolute offset, not anchorOffset (which is text-node-relative)
-      const offset = cursor.getOffset();
-      const currentContent = block()?.content || '';
-      const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-      const atEnd = offset >= currentContent.length;
-      const atStart = offset === 0;
-
-      // At START of block with content → create sibling BEFORE (not split)
-      if (atStart && currentContent.length > 0) {
-        const newId = store.createBlockBefore(props.id);
-        if (newId) props.onFocus(newId);
-        return;
-      }
-
-      // At end of block with EXPANDED children → create first child (continue under heading)
-      // COLLAPSED blocks with children → fall through to sibling behavior
-      if (atEnd && hasChildren && !isCollapsed()) {
-        const newId = store.createBlockInsideAtTop(props.id);
-        if (newId) props.onFocus(newId);
-        return;
-      }
-
-      // Middle split: behavior depends on expanded/collapsed state
-      // EXPANDED with children → split content becomes first child (nest inside)
-      // COLLAPSED or no children → normal split (sibling after)
-      const blockIsCollapsed = isCollapsed();
-      const shouldNestSplit = hasChildren && !blockIsCollapsed;
-
-      const newId = shouldNestSplit
-        ? store.splitBlockToFirstChild(props.id, offset)
-        : store.splitBlock(props.id, offset);
-
-      if (newId) {
-        // Trust the store - it updates old block's content to slice(0, offset)
-        // Reactive effect syncs DOM when focus moves (guard at line 44)
-        props.onFocus(newId);
-      }
-    } else if (e.key === 'Tab') {
-      // FIRST: prevent browser default (Shift+Tab can collapse content otherwise)
-      e.preventDefault();
-
-      // Use absolute block start (0,0), not just line start
-      const atAbsoluteStart = cursor.isAtStart();
-
-      if (atAbsoluteStart) {
-        // At absolute block start: Tab/Shift+Tab controls tree structure
-        if (e.shiftKey) {
-          store.outdentBlock(props.id);
-        } else {
-          store.indentBlock(props.id);
-          // FLO-61: After indent, ensure new parent is expanded in this pane
-          // indentBlock sets block.collapsed=false on Y.Doc, but paneStore may have override
-          requestAnimationFrame(() => {
-            const updatedBlock = store.blocks[props.id];
-            if (updatedBlock?.parentId) {
-              paneStore.setCollapsed(props.paneId, updatedBlock.parentId, false);
-            }
-          });
-        }
-      } else {
-        // Anywhere else: Tab/Shift+Tab works on LINE content (inline indentation)
-        if (e.shiftKey) {
-          // Shift+Tab: remove up to 2 leading spaces from current line
-          if (contentRef) {
-            // Use innerText for reading - textContent ignores <div>/<br>, losing line breaks
-            const text = contentRef.innerText || '';
-            const pos = cursor.getOffset();
-
-            // Find line start (look backwards for newline)
-            const lineStart = text.lastIndexOf('\n', pos - 1) + 1;
-
-            // Count leading spaces on this line
-            let spaces = 0;
-            while (lineStart + spaces < text.length && text[lineStart + spaces] === ' ') {
-              spaces++;
-            }
-
-            // Remove up to 2 spaces
-            const toRemove = Math.min(spaces, 2);
-            if (toRemove > 0) {
-              const newText = text.slice(0, lineStart) + text.slice(lineStart + toRemove);
-              contentRef.innerText = newText;
-              store.updateBlockContent(props.id, newText);
-
-              // Restore cursor position using proper utility
-              const newPos = Math.max(lineStart, pos - toRemove);
-              cursor.setOffset(newPos);
-            }
-          }
-        } else {
-          // Tab: insert 2 spaces
-          document.execCommand('insertText', false, '  ');
-        }
-      }
-      // NOTE: Cmd+. (collapseBlock) handled above via getActionForEvent()
-      // NOTE: Cmd+Backspace (deleteBlock) handled above via getActionForEvent()
-    } else if (e.key === 'Backspace') {
-      // CRITICAL: Use cursor.isAtStart() for robust start detection (handles edge cases)
-      // Also check isCollapsed - if text is selected (Cmd+A), let browser handle delete
-      const isAtStart = cursor.isAtStart() && cursor.isSelectionCollapsed();
-
-      if (isAtStart) {
-          // Only merge if no children to avoid deleting subtree accidentally
-          if (block()?.childIds.length) {
-             return;
-          }
-
-          // Merge with previous block
-          const prevId = findPrevVisibleBlock(props.id, props.paneId);
-          if (prevId) {
-             const prevBlock = store.blocks[prevId];
-             if (prevBlock) {
-                e.preventDefault();
-                const oldContent = block()?.content || '';
-                const prevContentLength = prevBlock.content.length;
-                const prevContent = prevBlock.content;
-                
-                // Update previous block content
-                store.updateBlockContent(prevId, prevContent + oldContent);
-                
-                // Delete current block
-                store.deleteBlock(props.id);
-                
-                // Focus previous block
-                props.onFocus(prevId);
-                
-                // Restore cursor position using proper utility
-                requestAnimationFrame(() => {
-                   const el = document.activeElement as HTMLElement;
-                   if (el && el.textContent === prevContent + oldContent) {
-                      setCursorAtOffset(el, prevContentLength);
-                   }
-                });
-             }
-          }
-      }
-    }
   };
 
   /**
@@ -745,25 +439,6 @@ export function BlockItem(props: BlockItemProps) {
         }
       }
     }
-  };
-
-  // Find wikilink at cursor position (for keyboard navigation)
-  const getWikilinkAtCursor = (): string | null => {
-    const content = block()?.content || '';
-    if (!hasWikilinkPatterns(content)) return null;
-
-    const cursorOffset = cursor.getOffset();
-    const tokens = parseAllInlineTokens(content);
-
-    for (const token of tokens) {
-      if (token.type === 'wikilink' && token.target) {
-        // Check if cursor is within this wikilink's range
-        if (cursorOffset >= token.start && cursorOffset <= token.end) {
-          return token.target;
-        }
-      }
-    }
-    return null;
   };
 
   return (
