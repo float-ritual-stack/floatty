@@ -904,25 +904,32 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
-      // Clear children from source block
-      setValueOnYMap(blocksMap, blockId, 'childIds', []);
-
       // Insert children as siblings after afterId
+      // Guard: verify afterId exists in target container before clearing source
       if (newParentId) {
         // afterBlock has a parent - insert into parent's childIds
         const parentData = blocksMap.get(newParentId);
-        if (parentData) {
-          const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
-          const afterIndex = childIds.indexOf(afterId);
-          // Insert all lifted children after afterId
-          childIds.splice(afterIndex + 1, 0, ...childrenToLift);
-          setValueOnYMap(blocksMap, newParentId, 'childIds', childIds);
-        }
+        if (!parentData) return;
+        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const afterIndex = childIds.indexOf(afterId);
+        if (afterIndex < 0) return; // afterId not found - bail to avoid orphaning children
+
+        // Clear children from source block (only after confirming valid insert location)
+        setValueOnYMap(blocksMap, blockId, 'childIds', []);
+
+        // Insert all lifted children after afterId
+        childIds.splice(afterIndex + 1, 0, ...childrenToLift);
+        setValueOnYMap(blocksMap, newParentId, 'childIds', childIds);
       } else {
         // afterBlock is at root level - insert into rootIds
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
         const afterIndex = arr.indexOf(afterId);
+        if (afterIndex < 0) return; // afterId not found - bail to avoid orphaning children
+
+        // Clear children from source block (only after confirming valid insert location)
+        setValueOnYMap(blocksMap, blockId, 'childIds', []);
+
         rootIds.insert(afterIndex + 1, childrenToLift);
       }
 

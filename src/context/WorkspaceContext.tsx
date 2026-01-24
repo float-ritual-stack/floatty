@@ -193,6 +193,7 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     deleteBlock: () => false,
     indentBlock: () => {},
     outdentBlock: () => {},
+    liftChildrenToSiblings: () => {},
     toggleCollapsed: () => {},
     ...overrides,
   };
