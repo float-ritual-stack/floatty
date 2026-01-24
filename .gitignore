@@ -40,3 +40,6 @@ src-tauri/binaries/
 
 # Float loop work tracks (survives branch changes, local to developer)
 .float/
+
+# btca cache (cloned repos for context queries)
+.btca/

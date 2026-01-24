@@ -150,7 +150,8 @@ export async function triggerFullResync(): Promise<void> {
 
 // Y.Doc is a singleton - survives component unmount/remount cycles.
 // Only the update observer is cleaned up per-component.
-const sharedDoc = new Y.Doc();
+// FLO-197/P4: Enable GC to prevent tombstone accumulation (safe with single-client)
+const sharedDoc = new Y.Doc({ gc: true });
 let sharedDocLoaded = false;
 let sharedDocError: string | null = null;
 let sharedDocLoadPromise: Promise<void> | null = null;

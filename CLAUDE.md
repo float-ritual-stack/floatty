@@ -37,6 +37,30 @@ The build script copies `floatty-server` to `src-tauri/binaries/floatty-server-{
 
 **Dev mode**: Server binary is found via workspace target paths (`target/debug/floatty-server`).
 
+## Querying floatty-server (Claude Reference)
+
+The server requires auth. Config lives at `~/.floatty-dev/config.toml` (dev) or `~/.floatty/config.toml` (prod).
+
+```bash
+# 1. Get port and API key from config
+grep -E 'server_port|api_key' ~/.floatty-dev/config.toml
+
+# 2. Query with auth header (example: count blocks)
+curl -s -H "Authorization: Bearer <API_KEY>" "http://127.0.0.1:<PORT>/api/v1/blocks" | jq '.blocks | length'
+
+# One-liner (extracts from config):
+KEY=$(grep api_key ~/.floatty-dev/config.toml | cut -d'"' -f2) && \
+PORT=$(grep server_port ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ') && \
+curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks" | jq '.blocks | length'
+```
+
+**Response structure**: `{ "blocks": { "<id>": {...}, ... }, "root_ids": ["id1", "id2", ...] }`
+
+**Common queries**:
+- Block count: `.blocks | length`
+- Root block count: `.root_ids | length`
+- Single block: `.blocks["<block-id>"]`
+
 ## Testing
 
 **Stack**: Vitest + jsdom + @solidjs/testing-library

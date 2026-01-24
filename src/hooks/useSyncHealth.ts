@@ -1,8 +1,14 @@
 /**
  * useSyncHealth - Periodic sync health check via REST polling
  *
- * Detects WebSocket sync drift by comparing local Y.Doc hash against server.
+ * Detects WebSocket sync drift by comparing local block count against server.
  * If mismatches persist for 2+ consecutive checks, triggers full resync.
+ *
+ * NOTE (FLO-197/P4): Originally used SHA256 hash comparison, but this was
+ * fundamentally broken - Y.Doc encoding includes client IDs, timestamps, and
+ * tombstones, so two docs with identical content have different hashes.
+ * Block count comparison catches actual drift (create/delete mismatch) without
+ * false positives from encoding differences.
  *
  * This is the "safety net" - even if WebSocket is zombied, we eventually catch up.
  */
@@ -10,7 +16,6 @@
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import { getSharedDoc, triggerFullResync } from './useSyncedYDoc';
-import * as Y from 'yjs';
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -44,27 +49,20 @@ export const getLastCheckTime = lastCheckTime;
 export const getIsResyncing = isResyncing;
 
 // ═══════════════════════════════════════════════════════════════
-// HASH COMPUTATION
+// BLOCK COUNT (replaces broken hash comparison - FLO-197/P4)
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Compute SHA-256 hash of local Y.Doc state.
- * Must match server's computation in api.rs.
+ * Count blocks in local Y.Doc.
+ * Used for sync health comparison against server.
  */
-async function computeLocalHash(): Promise<string> {
+function getLocalBlockCount(): number {
   const doc = getSharedDoc();
-  if (!doc) return '';
+  if (!doc) return 0;
 
-  // Get full state (same as server's get_full_state)
-  const state = Y.encodeStateAsUpdate(doc);
-
-  // Use SubtleCrypto for SHA-256 (browser API)
-  // Uint8Array is a valid BufferSource - pass directly (state.buffer could have wrong offset)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', state);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-  return hashHex;
+  // Read-only access - no transaction needed
+  const blocksMap = doc.getMap('blocks');
+  return blocksMap.size;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -73,7 +71,11 @@ async function computeLocalHash(): Promise<string> {
 
 /**
  * Perform a single sync health check.
- * Compares local hash against server; triggers resync if persistent mismatch.
+ * Compares local block count against server; triggers resync if persistent mismatch.
+ *
+ * FLO-197/P4: Uses block count instead of hash. Hash comparison was broken because
+ * Y.Doc encoding includes client IDs, timestamps, tombstones - two docs with
+ * identical content have different encodings and thus different hashes.
  */
 async function performHealthCheck(): Promise<void> {
   if (!isClientInitialized()) {
@@ -88,18 +90,18 @@ async function performHealthCheck(): Promise<void> {
 
   try {
     const httpClient = getHttpClient();
-    const serverHash = await httpClient.getStateHash();
-    const localHash = await computeLocalHash();
+    const serverHealth = await httpClient.getStateHash();
+    const localBlockCount = getLocalBlockCount();
 
     setLastCheckTime(Date.now());
 
-    if (serverHash.hash !== localHash) {
+    if (serverHealth.blockCount !== localBlockCount) {
       const newCount = consecutiveMismatches() + 1;
       setConsecutiveMismatches(newCount);
       console.warn(
-        `[SyncHealth] Hash mismatch detected (${newCount}/${MISMATCH_THRESHOLD})`,
-        `\n  Server: ${serverHash.hash.slice(0, 16)}... (${serverHash.blockCount} blocks)`,
-        `\n  Local:  ${localHash.slice(0, 16)}...`
+        `[SyncHealth] Block count mismatch detected (${newCount}/${MISMATCH_THRESHOLD})`,
+        `\n  Server: ${serverHealth.blockCount} blocks`,
+        `\n  Local:  ${localBlockCount} blocks`
       );
 
       if (newCount >= MISMATCH_THRESHOLD) {
@@ -118,9 +120,9 @@ async function performHealthCheck(): Promise<void> {
         }
       }
     } else {
-      // Hashes match - reset counter
+      // Block counts match - reset counter
       if (consecutiveMismatches() > 0) {
-        console.log('[SyncHealth] Hashes match, clearing mismatch counter');
+        console.log('[SyncHealth] Block counts match, clearing mismatch counter');
       }
       setConsecutiveMismatches(0);
     }

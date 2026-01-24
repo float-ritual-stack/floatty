@@ -52,6 +52,14 @@ pub struct AggregatorConfig {
     /// Server port (default: 8765)
     #[serde(default = "default_server_port")]
     pub server_port: u16,
+    /// Collapse depth when splitting outliner panes (0 = disabled; recommended 2)
+    /// Higher numbers show more levels: 1 = roots only, 2 = roots + children, etc.
+    #[serde(default = "default_split_collapse_depth")]
+    pub split_collapse_depth: u32,
+    /// Collapse depth on initial app load (0 = disabled, 2 = recommended for large outlines)
+    /// Applies to all panes on first mount. Helps with 1000+ block outlines.
+    #[serde(default = "default_initial_collapse_depth")]
+    pub initial_collapse_depth: u32,
 }
 
 fn default_theme() -> String {
@@ -86,6 +94,14 @@ fn default_server_port() -> u16 {
     8765
 }
 
+fn default_split_collapse_depth() -> u32 {
+    0 // Disabled by default (clone exact expansion state)
+}
+
+fn default_initial_collapse_depth() -> u32 {
+    0 // Disabled by default (show all expanded)
+}
+
 impl Default for AggregatorConfig {
     fn default() -> Self {
         let default_watcher = WatcherConfig::default();
@@ -106,6 +122,8 @@ impl Default for AggregatorConfig {
             max_shell_output_bytes: default_max_shell_output(),
             workspace_name: default_workspace_name(),
             server_port: default_server_port(),
+            split_collapse_depth: default_split_collapse_depth(),
+            initial_collapse_depth: default_initial_collapse_depth(),
         }
     }
 }
