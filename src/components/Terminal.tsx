@@ -518,7 +518,14 @@ export function Terminal() {
       layoutStore.setActivePaneId(activeId, paneId);
       const pane = paneRefs.get(paneId);
       pane?.fit();
-      pane?.focus();
+      // FLO-197: Only auto-focus terminal panes, not outliners
+      // For outliners, BlockItem's onClick already handles focus.
+      // Calling pane.focus() for outliners causes a race: it focuses the first block,
+      // then the block click focuses the correct block, creating a flash.
+      const leaf = getPaneLeaf(activeId, paneId);
+      if (leaf?.leafType === 'terminal') {
+        pane?.focus();
+      }
     }
   };
 

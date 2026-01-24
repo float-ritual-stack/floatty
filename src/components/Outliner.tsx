@@ -125,6 +125,19 @@ export function Outliner(props: OutlinerProps) {
     const dispose = store.initFromYDoc(doc);
     onCleanup(dispose);
 
+    // FLO-197: Scroll focused block into view after mount (e.g., after split)
+    // Without this, new pane starts at scroll top 0 which is disorienting
+    const focusedId = focusedBlockId();
+    if (focusedId && containerRef) {
+      requestAnimationFrame(() => {
+        const blockEl = containerRef?.querySelector(`[data-block-id="${focusedId}"]`);
+        blockEl?.scrollIntoView({ block: 'center', behavior: 'instant' });
+        // Also focus the contentEditable (BlockItem's effect might be blocked by guards)
+        const editor = blockEl?.querySelector('[contenteditable]') as HTMLElement;
+        editor?.focus({ preventScroll: true });
+      });
+    }
+
     // FLO-74 Refinement: Progressive Cmd+A with indent-based expansion
     // FLO-66: Progressive expand/collapse with ⌘E / ⌘⇧E
     if (containerRef) {
@@ -245,9 +258,15 @@ export function Outliner(props: OutlinerProps) {
         // Undo/Redo (Y.Doc UndoManager)
         // Use ensureVisibleFocus to handle both deleted blocks AND
         // blocks hidden by restored collapsed state
-        // NOTE: Don't blur first - it's aggressive and can race with Y.Doc updates
+        // FLO-197: Blur first to flush uncommitted edits before undo
+        // (prevents losing text typed but not yet debounce-committed)
         '$mod+z': (e) => {
           e.preventDefault();
+          // Flush uncommitted edits by blurring focused contentEditable
+          const activeEl = document.activeElement as HTMLElement;
+          if (activeEl?.contentEditable === 'true') {
+            activeEl.blur();  // Triggers handleBlur → flushContentUpdate
+          }
           undo();
           requestAnimationFrame(() => {
             collapse.ensureVisibleFocus();
@@ -255,6 +274,11 @@ export function Outliner(props: OutlinerProps) {
         },
         '$mod+Shift+z': (e) => {
           e.preventDefault();
+          // Flush uncommitted edits by blurring focused contentEditable
+          const activeEl = document.activeElement as HTMLElement;
+          if (activeEl?.contentEditable === 'true') {
+            activeEl.blur();  // Triggers handleBlur → flushContentUpdate
+          }
           redo();
           requestAnimationFrame(() => {
             collapse.ensureVisibleFocus();

@@ -100,14 +100,21 @@ export function BlockItem(props: BlockItemProps) {
   // Without this, incomplete characters would be synced to Y.Doc mid-composition
   const [isComposing, setIsComposing] = createSignal(false);
 
+  // FLO-197: Dirty flag pattern - tracks uncommitted local edits
+  // Prevents content sync effect from overwriting pending debounced changes
+  // when another block's change triggers effect re-evaluation
+  const [hasLocalChanges, setHasLocalChanges] = createSignal(false);
+
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
 
   // Debounced Y.Doc updates - DOM stays immediate via contentEditable
   // Flush on blur, cancel on unmount
+  // FLO-197: Clear dirty flag after store commit (enables content sync for non-local changes)
   const { debounced: debouncedUpdateContent, flush: flushContentUpdate } =
     createDebouncedUpdater((id: string, content: string) => {
       store.updateBlockContent(id, content);
+      setHasLocalChanges(false);
     }, UPDATE_DEBOUNCE_MS);
 
   // Cleanup: flush pending edits on unmount (don't discard user's work)
@@ -167,52 +174,60 @@ export function BlockItem(props: BlockItemProps) {
   // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
   createEffect(() => {
     const currentBlock = block();
-    if (contentRef && currentBlock) {
-      const domContent = contentRef.innerText;
-      const storeContent = currentBlock.content;
-      const isFocusedNow = document.activeElement === contentRef;
+    if (!contentRef || !currentBlock) return;
 
-      // Check if this update is from user's own typing (should skip when focused)
-      // UndoManager sets its own instance as origin, not 'user'
-      const origin = store.lastUpdateOrigin;
-      const isUserOrigin = origin === 'user';
+    // FLO-197: CRITICAL - Skip sync if we have uncommitted local changes
+    // This prevents the race condition where:
+    // 1. User types in block A, debounce pending
+    // 2. Block B changes with 'remote'/'hook' origin
+    // 3. This effect re-runs (triggered by global lastUpdateOrigin)
+    // 4. Without this guard, DOM would be overwritten with stale store content
+    if (hasLocalChanges()) return;
 
-      // Gate: sync if not focused, OR if focused but not from user typing
-      // This gate applies to BOTH displayContent and DOM sync
-      // When focused + user origin: handleInput already updated displayContent immediately
-      const shouldSync = !isFocusedNow || !isUserOrigin;
+    const domContent = contentRef.innerText;
+    const storeContent = currentBlock.content;
+    const isFocusedNow = document.activeElement === contentRef;
 
-      // DEBUG: Track unexpected syncs that might cause cursor jumps
-      if (shouldSync && isFocusedNow && domContent !== storeContent) {
-        console.warn('[BlockItem CURSOR DEBUG] Syncing focused block!', {
-          blockId: currentBlock.id,
-          origin,
-          isUserOrigin,
-          domContent: domContent.slice(0, 50),
-          storeContent: storeContent.slice(0, 50),
-          activeElement: document.activeElement?.tagName,
-        });
+    // Check if this update is from user's own typing (should skip when focused)
+    // UndoManager sets its own instance as origin, not 'user'
+    const origin = store.lastUpdateOrigin;
+    const isUserOrigin = origin === 'user';
+
+    // Gate: sync if not focused, OR if focused but not from user typing
+    // This gate applies to BOTH displayContent and DOM sync
+    // When focused + user origin: handleInput already updated displayContent immediately
+    const shouldSync = !isFocusedNow || !isUserOrigin;
+
+    // DEBUG: Track unexpected syncs that might cause cursor jumps
+    if (shouldSync && isFocusedNow && domContent !== storeContent) {
+      console.warn('[BlockItem CURSOR DEBUG] Syncing focused block!', {
+        blockId: currentBlock.id,
+        origin,
+        isUserOrigin,
+        domContent: domContent.slice(0, 50),
+        storeContent: storeContent.slice(0, 50),
+        activeElement: document.activeElement?.tagName,
+      });
+    }
+
+    if (shouldSync) {
+      // Sync displayContent for overlay
+      if (displayContent() !== storeContent) {
+        setDisplayContent(storeContent);
       }
 
-      if (shouldSync) {
-        // Sync displayContent for overlay
-        if (displayContent() !== storeContent) {
-          setDisplayContent(storeContent);
-        }
+      // Sync DOM - DEFENSIVE: Save/restore cursor if focused to prevent jump
+      if (domContent !== storeContent) {
+        // If focused, save cursor position before DOM manipulation
+        const savedOffset = isFocusedNow ? getAbsoluteCursorOffset(contentRef) : -1;
 
-        // Sync DOM - DEFENSIVE: Save/restore cursor if focused to prevent jump
-        if (domContent !== storeContent) {
-          // If focused, save cursor position before DOM manipulation
-          const savedOffset = isFocusedNow ? getAbsoluteCursorOffset(contentRef) : -1;
+        contentRef.innerText = storeContent;
 
-          contentRef.innerText = storeContent;
-
-          // Restore cursor position if we were focused
-          // Clamp to new content length in case content shortened
-          if (savedOffset >= 0) {
-            const clampedOffset = Math.min(savedOffset, storeContent.length);
-            setCursorAtOffset(contentRef, clampedOffset);
-          }
+        // Restore cursor position if we were focused
+        // Clamp to new content length in case content shortened
+        if (savedOffset >= 0) {
+          const clampedOffset = Math.min(savedOffset, storeContent.length);
+          setCursorAtOffset(contentRef, clampedOffset);
         }
       }
     }
@@ -638,6 +653,10 @@ export function BlockItem(props: BlockItemProps) {
     // textContent ignores <div> and <br> elements, losing line breaks.
     // innerText respects visual line breaks and converts them to \n.
     const content = target.innerText || '';
+
+    // FLO-197: Mark as dirty BEFORE any updates
+    // Prevents content sync effect from overwriting pending edits
+    setHasLocalChanges(true);
 
     // Update display content IMMEDIATELY for responsive overlay
     // (overlay reads from displayContent signal, not debounced store)

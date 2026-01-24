@@ -1,6 +1,7 @@
 import { createEffect, onMount, onCleanup, createSignal } from 'solid-js';
 import { Outliner } from './Outliner';
 import { type PaneHandle } from '../lib/layoutTypes';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 export type OutlinerPaneHandle = PaneHandle;
 
@@ -16,6 +17,7 @@ interface OutlinerPaneProps {
 }
 
 export function OutlinerPane(props: OutlinerPaneProps) {
+  const { paneStore } = useWorkspace();
   let containerRef: HTMLDivElement | undefined;
   const [rect, setRect] = createSignal<{ top: number; left: number; width: number; height: number }>({
     top: 0,
@@ -27,9 +29,21 @@ export function OutlinerPane(props: OutlinerPaneProps) {
   // Imperative handle for parent
   const handle: OutlinerPaneHandle = {
     focus: () => {
-      // Focus the first root block's editor (more specific than generic [contenteditable])
-      const firstBlock = containerRef?.querySelector('[data-block-id]') as HTMLElement;
-      const editor = firstBlock?.querySelector('[contenteditable]') as HTMLElement;
+      // FLO-197: Focus the stored focusedBlockId, not always the first block
+      // This prevents the focus jump when clicking between panes
+      const focusedId = paneStore.getFocusedBlockId(props.id);
+      let targetBlock: HTMLElement | null = null;
+
+      if (focusedId) {
+        targetBlock = containerRef?.querySelector(`[data-block-id="${focusedId}"]`) as HTMLElement;
+      }
+
+      // Fallback to first block if focusedId not found in DOM
+      if (!targetBlock) {
+        targetBlock = containerRef?.querySelector('[data-block-id]') as HTMLElement;
+      }
+
+      const editor = targetBlock?.querySelector('[contenteditable]') as HTMLElement;
       editor?.focus({ preventScroll: true });
     },
     fit: () => {
