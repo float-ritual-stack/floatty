@@ -11,6 +11,7 @@ import { Breadcrumb } from './Breadcrumb';
 import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
+import { invoke, type AggregatorConfig } from '../lib/tauriTypes';
 
 interface OutlinerProps {
   paneId: string;
@@ -128,19 +129,22 @@ export function Outliner(props: OutlinerProps) {
     const dispose = store.initFromYDoc(doc);
     onCleanup(dispose);
 
-    // FLO-197: Apply initial collapse depth for split panes
-    // Force-collapse blocks DEEPER than threshold, preserve state for shallower blocks
-    // This keeps user's expansion choices for upper levels while reducing visual noise
-    if (props.initialCollapseDepth && props.initialCollapseDepth > 0) {
+    // FLO-197: Apply collapse depth on mount
+    // - Split panes: use props.initialCollapseDepth (from split handler)
+    // - Initial panes: load config.initial_collapse_depth
+    const applyCollapseDepth = (depth: number) => {
+      if (depth <= 0) return;
+
       const roots = zoomedRootId() ? [zoomedRootId()!] : store.rootIds;
+      console.log(`[FLO-197] Applying collapse depth ${depth} to ${roots.length} roots`);
 
       const forceCollapseDeeper = (id: string, currentDepth: number) => {
         const block = store.blocks[id];
         if (!block || block.childIds.length === 0) return;
 
         // Only force-collapse blocks DEEPER than threshold
-        // Blocks at/above threshold keep their cloned state
-        if (currentDepth > props.initialCollapseDepth!) {
+        // Blocks at/above threshold keep their existing state
+        if (currentDepth > depth) {
           paneStore.setCollapsed(props.paneId, id, true);
         }
 
@@ -152,6 +156,20 @@ export function Outliner(props: OutlinerProps) {
       for (const rootId of roots) {
         forceCollapseDeeper(rootId, 1);
       }
+    };
+
+    // Split pane case: use prop directly
+    if (props.initialCollapseDepth && props.initialCollapseDepth > 0) {
+      applyCollapseDepth(props.initialCollapseDepth);
+    } else {
+      // Initial load case: check config for initial_collapse_depth
+      invoke('get_ctx_config', {}).then((config: AggregatorConfig) => {
+        if (config.initial_collapse_depth && config.initial_collapse_depth > 0) {
+          applyCollapseDepth(config.initial_collapse_depth);
+        }
+      }).catch((err: unknown) => {
+        console.warn('[FLO-197] Failed to load config for initial_collapse_depth:', err);
+      });
     }
 
     // FLO-197: Scroll focused block into view after mount (e.g., after split)

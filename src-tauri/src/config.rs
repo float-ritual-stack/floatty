@@ -56,6 +56,10 @@ pub struct AggregatorConfig {
     /// Higher numbers show more levels: 1 = roots only, 2 = roots + children, etc.
     #[serde(default = "default_split_collapse_depth")]
     pub split_collapse_depth: u32,
+    /// Collapse depth on initial app load (0 = disabled, 2 = recommended for large outlines)
+    /// Applies to all panes on first mount. Helps with 1000+ block outlines.
+    #[serde(default = "default_initial_collapse_depth")]
+    pub initial_collapse_depth: u32,
 }
 
 fn default_theme() -> String {
@@ -94,6 +98,10 @@ fn default_split_collapse_depth() -> u32 {
     0 // Disabled by default (clone exact expansion state)
 }
 
+fn default_initial_collapse_depth() -> u32 {
+    0 // Disabled by default (show all expanded)
+}
+
 impl Default for AggregatorConfig {
     fn default() -> Self {
         let default_watcher = WatcherConfig::default();
@@ -115,6 +123,7 @@ impl Default for AggregatorConfig {
             workspace_name: default_workspace_name(),
             server_port: default_server_port(),
             split_collapse_depth: default_split_collapse_depth(),
+            initial_collapse_depth: default_initial_collapse_depth(),
         }
     }
 }
