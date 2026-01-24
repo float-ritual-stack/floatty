@@ -16,7 +16,14 @@ import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
-import { readText, readImageBase64, hasImage, hasText, hasFiles, readFiles } from 'tauri-plugin-clipboard-api';
+import { readText, readImageBase64, readFiles } from 'tauri-plugin-clipboard-api';
+
+// Batched clipboard info from Rust (replaces 3 sequential IPC calls)
+interface ClipboardInfo {
+  has_files: boolean;
+  has_image: boolean;
+  has_text: boolean;
+}
 import { defaultTheme, toXtermTheme } from './themes';
 
 // Terminal font config from ~/.floatty/config.toml
@@ -449,27 +456,26 @@ class TerminalManager {
             if (event.type === 'keydown') {
               // Check clipboard content type and paste appropriately
               // Priority: files > images > text (files from Finder Cmd+C)
+              // Uses batched IPC call (1 call vs 3 sequential)
               (async () => {
                 try {
-                  const hasFilesContent = await hasFiles();
-                  const hasImageContent = await hasImage();
-                  const hasTextContent = await hasText();
+                  const info = await invoke<ClipboardInfo>('get_clipboard_info');
 
-                  if (hasFilesContent) {
+                  if (info.has_files) {
                     // Files in clipboard (Finder Cmd+C) - paste paths
                     const files = await readFiles();
                     if (files && files.length > 0) {
                       const formatted = files.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
                       invoke('plugin:pty|write', { pid, data: formatted }).catch(console.error);
                     }
-                  } else if (hasImageContent) {
+                  } else if (info.has_image) {
                     // Image in clipboard - save to temp file, paste path
                     const base64 = await readImageBase64();
                     if (base64) {
                       const tempPath = await invoke<string>('save_clipboard_image', { base64 });
                       invoke('plugin:pty|write', { pid, data: tempPath }).catch(console.error);
                     }
-                  } else if (hasTextContent) {
+                  } else if (info.has_text) {
                     // Text in clipboard - paste directly
                     const text = await readText();
                     if (text) {
