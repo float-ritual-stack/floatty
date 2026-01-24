@@ -2,6 +2,31 @@
 
 All notable changes to floatty are documented here.
 
+## [0.5.0] - 2026-01-24
+
+### Fixed
+
+- **Content sync race condition** - Added `hasLocalChanges` dirty flag to prevent remote updates from overwriting pending debounced edits (FLO-197 P0)
+- **Focus race on pane click** - `OutlinerPane.focus()` now respects `focusedBlockId` instead of always focusing first block (FLO-197 P1)
+- **Sync health false positives** - Replaced broken hash comparison with block count (Y.Doc encoding includes client IDs, so hashes never match) (FLO-197 P4)
+- **Startup freeze with large outlines** - Gate render on config loaded to apply collapse BEFORE mounting 10K+ BlockItem components (FLO-197 P5)
+- **Version sync** - `tauri.conf.json` was stuck at 0.2.3, now properly synced
+
+### Added
+
+- **Configurable collapse depth on split** - New config `split_collapse_depth` to force-collapse blocks deeper than N when splitting panes (FLO-197 P3)
+- **Initial collapse depth** - New config `initial_collapse_depth` for controlling expansion on app startup
+- **Scroll-to-focus on split** - New pane centers the focused block instead of starting at scroll top 0
+- **Y.Doc garbage collection** - Enabled `gc: true` to prevent tombstone accumulation
+
+### Documentation
+
+- Added AGENTS.md for multi-agent floatty development patterns
+- Added floatty-server query reference to CLAUDE.md
+- Updated `/floatty:release` command to sync all THREE version files (package.json, Cargo.toml, tauri.conf.json)
+
+---
+
 ## [0.4.4] - 2026-01-23
 
 ### Bug Fixes
