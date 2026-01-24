@@ -64,7 +64,7 @@ Create a changelog entry following the existing format in CHANGELOG.md:
 
 ### 4. Update Version Numbers
 
-Update ALL version locations:
+Update ALL version locations (there are THREE):
 
 ```bash
 # package.json
@@ -73,10 +73,14 @@ jq --arg v "$NEW_VERSION" '.version = $v' package.json > tmp.json && mv tmp.json
 # src-tauri/Cargo.toml (first version = line)
 sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" src-tauri/Cargo.toml
 
-# Verify updates
+# src-tauri/tauri.conf.json (CRITICAL: macOS app version comes from here)
+jq --arg v "$NEW_VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
+# Verify ALL THREE are updated
 echo "Updated versions:"
-jq -r '.version' package.json
-grep '^version' src-tauri/Cargo.toml | head -1
+echo "package.json:        $(jq -r '.version' package.json)"
+echo "Cargo.toml:          $(grep '^version' src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)"
+echo "tauri.conf.json:     $(jq -r '.version' src-tauri/tauri.conf.json)"
 ```
 
 ### 5. Update CHANGELOG.md
@@ -92,7 +96,7 @@ Format: `## [x.y.z] - YYYY-MM-DD`
 ### 6. Create Release Commit
 
 ```bash
-git add package.json src-tauri/Cargo.toml CHANGELOG.md
+git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json CHANGELOG.md
 git commit -m "chore: release v$NEW_VERSION"
 ```
 
