@@ -12,6 +12,8 @@ interface OutlinerPaneProps {
   isVisible: boolean;
   // FLO-77: Initial scroll position for cloned panes
   initialScrollTop?: number;
+  // FLO-197: Initial collapse depth for split panes (0 = clone exact state)
+  initialCollapseDepth?: number;
   onPaneClick?: () => void;  // Called when pane is clicked (for focus tracking)
   ref?: (handle: OutlinerPaneHandle) => void;
 }
@@ -140,7 +142,7 @@ export function OutlinerPane(props: OutlinerPaneProps) {
         "z-index": props.isActive ? 10 : 1,
       }}
     >
-      <Outliner paneId={props.id} />
+      <Outliner paneId={props.id} initialCollapseDepth={props.initialCollapseDepth} />
     </div>
   );
 };

@@ -69,7 +69,8 @@ function createLayoutStore() {
     tabId: string,
     direction: 'horizontal' | 'vertical',
     leafType: 'terminal' | 'outliner' = 'terminal',
-    ephemeral: boolean = false
+    ephemeral: boolean = false,
+    collapseDepth?: number  // FLO-197: Initial collapse depth for new outliner pane
   ): string | null => {
     const layout = state.layouts[tabId];
     if (!layout) {
@@ -122,8 +123,8 @@ function createLayoutStore() {
       children: [
         // CLONE the leaf - don't use proxy directly (causes infinite recursion)
         { type: 'leaf', id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal' },
-        // FLO-136: Mark new pane as ephemeral if requested
-        { type: 'leaf', id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop, ephemeral },
+        // FLO-136/FLO-197: Mark ephemeral if requested, set collapse depth for outliners
+        { type: 'leaf', id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop, ephemeral, initialCollapseDepth: collapseDepth },
       ],
     };
 

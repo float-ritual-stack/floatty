@@ -105,6 +105,8 @@ export interface AggregatorConfig {
   workspace_name: string;
   /** Server port (default: 8765) */
   server_port: number;
+  /** Collapse depth when splitting outliner panes (0 = disabled) */
+  split_collapse_depth?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════

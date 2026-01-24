@@ -189,6 +189,18 @@ function TabBar(props: {
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
+  // FLO-197: Collapse depth for split panes (loaded from config)
+  const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
+
+  // Load config once on mount
+  (async () => {
+    try {
+      const config = await invoke<{ split_collapse_depth?: number }>('get_ctx_config');
+      setSplitCollapseDepth(config.split_collapse_depth ?? 0);
+    } catch (e) {
+      console.warn('[Terminal] Failed to load config for split_collapse_depth:', e);
+    }
+  })();
 
   // Pane refs for imperative control
   const paneRefs = new Map<string, PaneHandle>();
@@ -230,7 +242,9 @@ export function Terminal() {
       return;
     }
 
-    const newPaneId = layoutStore.splitPane(activeId, direction, leafType);
+    // FLO-197: Pass collapse depth for outliner panes (0 = disabled)
+    const collapseDepth = leafType === 'outliner' ? splitCollapseDepth() : undefined;
+    const newPaneId = layoutStore.splitPane(activeId, direction, leafType, false, collapseDepth);
     if (newPaneId) {
       requestAnimationFrame(() => {
         setTimeout(() => {
@@ -544,6 +558,8 @@ export function Terminal() {
           leafType: leaf?.leafType || 'terminal',
           // FLO-77: Pass initialScrollTop for cloned outliner panes
           initialScrollTop: leaf?.initialScrollTop,
+          // FLO-197: Pass initialCollapseDepth for split panes
+          initialCollapseDepth: leaf?.initialCollapseDepth,
           // FLO-136: Ephemeral pane flag for preview mode
           ephemeral: leaf?.ephemeral ?? false,
           isActivePane: paneId === activePaneId,
@@ -642,6 +658,7 @@ export function Terminal() {
                     isActive={info().isActivePane && info().isActiveTab}
                     isVisible={info().isActiveTab}
                     initialScrollTop={info().initialScrollTop}
+                    initialCollapseDepth={info().initialCollapseDepth}
                     ref={(handle) => setPaneRef(info().paneId, handle)}
                     onPaneClick={() => handlePaneClick(info().paneId)}
                   />

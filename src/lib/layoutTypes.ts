@@ -17,6 +17,8 @@ export interface PaneLeaf {
   initialScrollTop?: number;
   // FLO-136: Ephemeral panes are replaced by next same-direction split
   ephemeral?: boolean;
+  // FLO-197: Initial collapse depth for split panes (0 = clone exact state)
+  initialCollapseDepth?: number;
 }
 
 // A split containing two children

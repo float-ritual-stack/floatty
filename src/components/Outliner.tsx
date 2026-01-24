@@ -14,6 +14,9 @@ import { blocksToMarkdown } from '../lib/markdownExport';
 
 interface OutlinerProps {
   paneId: string;
+  // FLO-197: Initial collapse depth for split panes (0 = disabled)
+  // Blocks deeper than this depth will be force-collapsed on mount
+  initialCollapseDepth?: number;
 }
 
 export function Outliner(props: OutlinerProps) {
@@ -124,6 +127,32 @@ export function Outliner(props: OutlinerProps) {
     console.log('Outliner mounted for pane:', props.paneId);
     const dispose = store.initFromYDoc(doc);
     onCleanup(dispose);
+
+    // FLO-197: Apply initial collapse depth for split panes
+    // Force-collapse blocks DEEPER than threshold, preserve state for shallower blocks
+    // This keeps user's expansion choices for upper levels while reducing visual noise
+    if (props.initialCollapseDepth && props.initialCollapseDepth > 0) {
+      const roots = zoomedRootId() ? [zoomedRootId()!] : store.rootIds;
+
+      const forceCollapseDeeper = (id: string, currentDepth: number) => {
+        const block = store.blocks[id];
+        if (!block || block.childIds.length === 0) return;
+
+        // Only force-collapse blocks DEEPER than threshold
+        // Blocks at/above threshold keep their cloned state
+        if (currentDepth > props.initialCollapseDepth!) {
+          paneStore.setCollapsed(props.paneId, id, true);
+        }
+
+        for (const childId of block.childIds) {
+          forceCollapseDeeper(childId, currentDepth + 1);
+        }
+      };
+
+      for (const rootId of roots) {
+        forceCollapseDeeper(rootId, 1);
+      }
+    }
 
     // FLO-197: Scroll focused block into view after mount (e.g., after split)
     // Without this, new pane starts at scroll top 0 which is disorienting
