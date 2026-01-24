@@ -52,7 +52,7 @@ pub struct AggregatorConfig {
     /// Server port (default: 8765)
     #[serde(default = "default_server_port")]
     pub server_port: u16,
-    /// Collapse depth when splitting outliner panes (0 = disabled, 2 = default)
+    /// Collapse depth when splitting outliner panes (0 = disabled; recommended 2)
     /// Higher numbers show more levels: 1 = roots only, 2 = roots + children, etc.
     #[serde(default = "default_split_collapse_depth")]
     pub split_collapse_depth: u32,

@@ -73,8 +73,11 @@ export function Outliner(props: OutlinerProps) {
     };
 
     // Split pane case: use prop directly (sync, fast)
-    if (props.initialCollapseDepth && props.initialCollapseDepth > 0) {
-      applyCollapseDepth(props.initialCollapseDepth);
+    // Check !== undefined to treat 0 as valid override (disabled, but don't fall back to config)
+    if (props.initialCollapseDepth !== undefined) {
+      if (props.initialCollapseDepth > 0) {
+        applyCollapseDepth(props.initialCollapseDepth);
+      }
       setConfigReady(true);
       return;
     }
