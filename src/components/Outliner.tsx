@@ -31,8 +31,65 @@ export function Outliner(props: OutlinerProps) {
   const setFocusedBlockId = (id: string | null) => paneStore.setFocusedBlockId(props.paneId, id);
   const [confirmClear, setConfirmClear] = createSignal(false);
 
+  // FLO-197/P5: Gate render on config loaded (prevents 10K render freeze)
+  // For split panes (props.initialCollapseDepth set), ready immediately after applying depth
+  // For initial load, ready after async config load completes
+  const [configReady, setConfigReady] = createSignal(false);
+
   // Get current zoomed root for this pane (null = show all roots)
   const zoomedRootId = () => paneStore.getZoomedRootId(props.paneId);
+
+  // FLO-197/P5: Apply collapse depth BEFORE first render
+  // This effect runs when isLoaded() becomes true, applies collapse, THEN enables rendering
+  createEffect(() => {
+    if (!isLoaded()) return;
+    if (configReady()) return; // Already processed
+
+    // Helper to force-collapse blocks deeper than threshold
+    const applyCollapseDepth = (depth: number) => {
+      if (depth <= 0) return;
+
+      const roots = zoomedRootId() ? [zoomedRootId()!] : store.rootIds;
+      console.log(`[FLO-197] Applying initial_collapse_depth ${depth} to ${roots.length} roots`);
+
+      const forceCollapseDeeper = (id: string, currentDepth: number) => {
+        const block = store.blocks[id];
+        if (!block || block.childIds.length === 0) return;
+
+        // Only force-collapse blocks DEEPER than threshold
+        // Blocks at/above threshold keep their existing state
+        if (currentDepth > depth) {
+          paneStore.setCollapsed(props.paneId, id, true);
+        }
+
+        for (const childId of block.childIds) {
+          forceCollapseDeeper(childId, currentDepth + 1);
+        }
+      };
+
+      for (const rootId of roots) {
+        forceCollapseDeeper(rootId, 1);
+      }
+    };
+
+    // Split pane case: use prop directly (sync, fast)
+    if (props.initialCollapseDepth && props.initialCollapseDepth > 0) {
+      applyCollapseDepth(props.initialCollapseDepth);
+      setConfigReady(true);
+      return;
+    }
+
+    // Initial load case: check config for initial_collapse_depth (async)
+    invoke('get_ctx_config', {}).then((config: AggregatorConfig) => {
+      if (config.initial_collapse_depth && config.initial_collapse_depth > 0) {
+        applyCollapseDepth(config.initial_collapse_depth);
+      }
+      setConfigReady(true);
+    }).catch((err: unknown) => {
+      console.warn('[FLO-197] Failed to load config for initial_collapse_depth:', err);
+      setConfigReady(true); // Still allow render even if config fails
+    });
+  });
 
   // Container ref for tinykeys and collapse focus management
   let containerRef: HTMLDivElement | undefined;
@@ -129,48 +186,8 @@ export function Outliner(props: OutlinerProps) {
     const dispose = store.initFromYDoc(doc);
     onCleanup(dispose);
 
-    // FLO-197: Apply collapse depth on mount
-    // - Split panes: use props.initialCollapseDepth (from split handler)
-    // - Initial panes: load config.initial_collapse_depth
-    const applyCollapseDepth = (depth: number) => {
-      if (depth <= 0) return;
-
-      const roots = zoomedRootId() ? [zoomedRootId()!] : store.rootIds;
-      console.log(`[FLO-197] Applying collapse depth ${depth} to ${roots.length} roots`);
-
-      const forceCollapseDeeper = (id: string, currentDepth: number) => {
-        const block = store.blocks[id];
-        if (!block || block.childIds.length === 0) return;
-
-        // Only force-collapse blocks DEEPER than threshold
-        // Blocks at/above threshold keep their existing state
-        if (currentDepth > depth) {
-          paneStore.setCollapsed(props.paneId, id, true);
-        }
-
-        for (const childId of block.childIds) {
-          forceCollapseDeeper(childId, currentDepth + 1);
-        }
-      };
-
-      for (const rootId of roots) {
-        forceCollapseDeeper(rootId, 1);
-      }
-    };
-
-    // Split pane case: use prop directly
-    if (props.initialCollapseDepth && props.initialCollapseDepth > 0) {
-      applyCollapseDepth(props.initialCollapseDepth);
-    } else {
-      // Initial load case: check config for initial_collapse_depth
-      invoke('get_ctx_config', {}).then((config: AggregatorConfig) => {
-        if (config.initial_collapse_depth && config.initial_collapse_depth > 0) {
-          applyCollapseDepth(config.initial_collapse_depth);
-        }
-      }).catch((err: unknown) => {
-        console.warn('[FLO-197] Failed to load config for initial_collapse_depth:', err);
-      });
-    }
+    // FLO-197/P5: Collapse depth now handled in createEffect BEFORE render
+    // (see effect above that gates on configReady)
 
     // FLO-197: Scroll focused block into view after mount (e.g., after split)
     // Without this, new pane starts at scroll top 0 which is disorienting
@@ -377,7 +394,7 @@ export function Outliner(props: OutlinerProps) {
       onKeyDown={handleOutlinerKeyDown}
       tabIndex={-1}
     >
-      <Show when={isLoaded()} fallback={<div class="ctx-empty-state">Loading workspace...</div>}>
+      <Show when={isLoaded() && configReady()} fallback={<div class="ctx-empty-state">Loading workspace...</div>}>
         <Show when={store.rootIds.length > 0 || zoomedRootId()}>
           {/* Clear button - only show when not zoomed */}
           <Show when={!zoomedRootId()}>
