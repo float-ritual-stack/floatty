@@ -82,6 +82,19 @@ describe('determineKeyAction', () => {
       expect(result.type).toBe('none');
     });
 
+    it('navigates up when only blank lines before cursor (browser cannot navigate)', () => {
+      // Content: "\n\na" with cursor at 'a' (offset 2)
+      // Browser can't visually move up from here, so we should navigate
+      const result = determineKeyAction('ArrowUp', false, null, createDeps({
+        cursorAtStart: false,  // Not at absolute start (offset != 0)
+        cursorOffset: 2,       // After the two newlines
+        content: '\n\na',      // Blank lines then content
+      }));
+
+      const action = expectAction(result, 'navigate_up');
+      expect(action.prevId).toBe('prev-block');
+    });
+
     it('navigates down when ArrowDown at cursor end', () => {
       const result = determineKeyAction('ArrowDown', false, null, createDeps({
         cursorAtEnd: true,
@@ -310,14 +323,29 @@ describe('determineKeyAction', () => {
       expect(action.prevId).toBe('prev-block');
     });
 
-    it('does nothing when Backspace at start but block has children', () => {
+    it('does nothing when Backspace at start but block has COLLAPSED children (hidden)', () => {
+      // When children are collapsed (hidden), protect from accidental merge
       const result = determineKeyAction('Backspace', false, null, createDeps({
         cursorOffset: 0,
         selectionCollapsed: true,
+        isCollapsed: true,  // Children are hidden
         block: createBlock({ childIds: ['child-1'] }),
       }));
 
       expect(result.type).toBe('none');
+    });
+
+    it('allows merge when Backspace at start with EXPANDED children (visible)', () => {
+      // When children are visible, user knows they exist - allow merge (lift children)
+      const result = determineKeyAction('Backspace', false, null, createDeps({
+        cursorOffset: 0,
+        selectionCollapsed: true,
+        isCollapsed: false,  // Children are visible
+        block: createBlock({ childIds: ['child-1'] }),
+      }));
+
+      const action = expectAction(result, 'merge_with_previous');
+      expect(action.prevId).toBe('prev-block');
     });
 
     it('does nothing when Backspace with text selected', () => {

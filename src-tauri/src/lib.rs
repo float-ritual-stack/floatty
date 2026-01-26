@@ -13,9 +13,10 @@ mod sync_test;
 
 use commands::{
     check_hooks_installed, clear_ctx_markers, clear_workspace, execute_ai_command,
-    execute_ai_conversation, execute_shell_command, get_ctx_config, get_ctx_counts,
-    get_ctx_markers, get_theme, get_workspace_state, install_shell_hooks, read_help_file,
-    save_clipboard_image, save_workspace_state, set_ctx_config, set_theme, uninstall_shell_hooks,
+    execute_ai_conversation, execute_shell_command, get_clipboard_info, get_ctx_config,
+    get_ctx_counts, get_ctx_markers, get_theme, get_workspace_state, install_shell_hooks,
+    read_help_file, save_clipboard_image, save_workspace_state, set_ctx_config, set_theme,
+    uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
 use paths::DataPaths;
@@ -319,6 +320,7 @@ pub fn run() {
                     execute_ai_conversation,
                     daily_view::execute_daily_command,
                     clear_workspace,
+                    get_clipboard_info,
                     save_clipboard_image,
                     check_hooks_installed,
                     install_shell_hooks,
@@ -346,6 +348,7 @@ pub fn run() {
                     execute_ai_conversation,
                     daily_view::execute_daily_command,
                     clear_workspace,
+                    get_clipboard_info,
                     save_clipboard_image,
                     check_hooks_installed,
                     install_shell_hooks,

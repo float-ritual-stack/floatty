@@ -49,6 +49,7 @@ export interface BlockStoreInterface {
   deleteBlock: (id: string) => boolean;
   indentBlock: (id: string) => void;
   outdentBlock: (id: string) => void;
+  liftChildrenToSiblings: (blockId: string, afterId: string) => void;
   toggleCollapsed: (id: string) => void;
 }
 
@@ -192,6 +193,7 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     deleteBlock: () => false,
     indentBlock: () => {},
     outdentBlock: () => {},
+    liftChildrenToSiblings: () => {},
     toggleCollapsed: () => {},
     ...overrides,
   };

@@ -885,6 +885,63 @@ function createBlockStore() {
   };
 
   /**
+   * Lift block's children to become siblings after a target block.
+   * Used during block merge to preserve subtrees.
+   *
+   * @param blockId - The block whose children should be lifted
+   * @param afterId - The block after which children should be inserted as siblings
+   */
+  const liftChildrenToSiblings = (blockId: string, afterId: string) => {
+    if (!_doc) { warnDocNotReady('liftChildrenToSiblings'); return; }
+
+    const block = state.blocks[blockId];
+    const afterBlock = state.blocks[afterId];
+    if (!block || !afterBlock || block.childIds.length === 0) return;
+
+    const childrenToLift = [...block.childIds];
+    const newParentId = afterBlock.parentId;
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      // Insert children as siblings after afterId
+      // Guard: verify afterId exists in target container before clearing source
+      if (newParentId) {
+        // afterBlock has a parent - insert into parent's childIds
+        const parentData = blocksMap.get(newParentId);
+        if (!parentData) return;
+        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const afterIndex = childIds.indexOf(afterId);
+        if (afterIndex < 0) return; // afterId not found - bail to avoid orphaning children
+
+        // Clear children from source block (only after confirming valid insert location)
+        setValueOnYMap(blocksMap, blockId, 'childIds', []);
+
+        // Insert all lifted children after afterId
+        childIds.splice(afterIndex + 1, 0, ...childrenToLift);
+        setValueOnYMap(blocksMap, newParentId, 'childIds', childIds);
+      } else {
+        // afterBlock is at root level - insert into rootIds
+        const rootIds = _doc.getArray<string>('rootIds');
+        const arr = rootIds.toArray();
+        const afterIndex = arr.indexOf(afterId);
+        if (afterIndex < 0) return; // afterId not found - bail to avoid orphaning children
+
+        // Clear children from source block (only after confirming valid insert location)
+        setValueOnYMap(blocksMap, blockId, 'childIds', []);
+
+        rootIds.insert(afterIndex + 1, childrenToLift);
+      }
+
+      // Update parentId for all lifted children
+      for (const childId of childrenToLift) {
+        setValueOnYMap(blocksMap, childId, 'parentId', newParentId);
+        setValueOnYMap(blocksMap, childId, 'updatedAt', Date.now());
+      }
+    }, 'user');
+  };
+
+  /**
    * FLO-75: Move block before its previous sibling
    * Returns true if move happened, false if already first or escaped to parent level
    * When at first sibling position, escapes to become sibling after parent (like outdent)
@@ -1048,6 +1105,7 @@ function createBlockStore() {
     deleteBlocks,
     indentBlock,
     outdentBlock,
+    liftChildrenToSiblings,
     // FLO-75: Block movement
     moveBlockUp,
     moveBlockDown,

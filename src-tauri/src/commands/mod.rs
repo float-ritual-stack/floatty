@@ -14,7 +14,7 @@ pub mod hooks;
 pub mod workspace;
 
 // Re-export command functions for registration
-pub use clipboard::save_clipboard_image;
+pub use clipboard::{get_clipboard_info, save_clipboard_image};
 pub use ctx::{
     clear_ctx_markers, get_ctx_config, get_ctx_counts, get_ctx_markers,
     get_theme, set_ctx_config, set_theme,

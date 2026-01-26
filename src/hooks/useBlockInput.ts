@@ -43,6 +43,17 @@ export interface BlockInputDependencies {
   // Callbacks
   onFocus: (id: string) => void;
 
+  // Content sync
+  flushContentUpdate: () => void;
+
+  // Selection (optional - for multi-select support)
+  onSelect?: (id: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => void;
+  selectionAnchor?: string | null;
+
+  // Wikilink navigation (optional - for Cmd+Enter on [[links]])
+  getWikilinkAtCursor?: () => string | null;
+  navigateToPage?: (target: string, paneId: string) => { success: boolean; focusTargetId?: string };
+
   // DOM access (for line operations - should be minimized)
   getContentRef: () => HTMLElement | undefined;
 }
@@ -59,8 +70,11 @@ export type KeyboardAction =
   | { type: 'preventDefault' }
   | { type: 'zoom_out' }
   | { type: 'zoom_in' }
+  | { type: 'zoom_in_wikilink'; target: string }  // Cmd+Enter on [[wikilink]]
   | { type: 'toggle_collapse' }
   | { type: 'delete_block'; prevId: string | null }
+  | { type: 'move_block_up' }   // FLO-75: Cmd+Up
+  | { type: 'move_block_down' } // FLO-75: Cmd+Down
   | { type: 'navigate_up'; prevId: string | null }
   | { type: 'navigate_down'; nextId: string | null }
   | { type: 'navigate_up_with_selection'; prevId: string | null }  // FLO-74: Shift+ArrowUp
@@ -125,13 +139,29 @@ export function determineKeyAction(
     case 'deleteBlock':
       // Use findFocusAfterDelete which respects zoom boundaries
       return { type: 'delete_block', prevId: deps.findFocusAfterDelete() };
+
+    case 'moveBlockUp':
+      return { type: 'move_block_up' };
+
+    case 'moveBlockDown':
+      return { type: 'move_block_down' };
   }
 
   // Non-action keybinds
   if (key === 'ArrowUp') {
     // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
     // This allows browser to handle text selection within block
-    const shouldNavigate = cursorAtStart;
+    let shouldNavigate = cursorAtStart;
+
+    // FIX: Browser can't navigate up from content preceded by blank lines
+    // If only newlines exist before cursor, treat as "at start" for navigation
+    if (!shouldNavigate && cursorOffset > 0) {
+      const beforeCursor = deps.content.slice(0, cursorOffset);
+      if (/^\n+$/.test(beforeCursor)) {
+        shouldNavigate = true;
+      }
+    }
+
     if (shouldNavigate) {
       const prevId = deps.findPrevId();
       if (shiftKey) {
@@ -145,7 +175,17 @@ export function determineKeyAction(
   if (key === 'ArrowDown') {
     // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
     // This allows browser to handle text selection within block
-    const shouldNavigate = cursorAtEnd;
+    let shouldNavigate = cursorAtEnd;
+
+    // FIX: Browser can't navigate down from blank/trailing newline lines
+    // If only newlines remain after cursor, treat as "at end" for navigation
+    if (!shouldNavigate) {
+      const remaining = deps.content.slice(cursorOffset);
+      if (remaining.length > 0 && /^\n+$/.test(remaining)) {
+        shouldNavigate = true;
+      }
+    }
+
     if (shouldNavigate) {
       const nextId = deps.findNextId();
       if (nextId) {
@@ -156,7 +196,8 @@ export function determineKeyAction(
       }
       // FLO-92: No next block exists - create trailing sibling for typeable target
       // Only for plain navigation, not Shift+Arrow selection
-      if (!shiftKey) {
+      // BUT don't create if current block is already empty (avoid empty spam)
+      if (!shiftKey && deps.content !== '') {
         const targetParent = zoomedRootId ?? block.parentId;
         return { type: 'create_trailing_block', parentId: targetParent };
       }
@@ -203,7 +244,10 @@ export function determineKeyAction(
 
   if (key === 'Backspace') {
     const atStartWithSelection = selectionCollapsed && cursorOffset === 0;
-    if (atStartWithSelection && !block.childIds.length) {
+    // Only protect from merge if children are COLLAPSED (hidden from user)
+    // If expanded, user can see children - allow merge and lift them
+    const hasHiddenChildren = block.childIds.length > 0 && deps.isCollapsed;
+    if (atStartWithSelection && !hasHiddenChildren) {
       const prevId = deps.findPrevId();
       if (prevId) {
         return { type: 'merge_with_previous', prevId };
@@ -261,16 +305,45 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         paneStore.setZoomedRoot(deps.paneId, null);
         return;
 
-      case 'zoom_in':
+      case 'zoom_in': {
         e.preventDefault();
-        if (block.childIds.length === 0) {
-          const newChildId = store.createBlockInside(deps.blockId);
-          if (newChildId) {
-            requestAnimationFrame(() => deps.onFocus(newChildId));
+
+        // Check if cursor is inside a [[wikilink]] - navigate instead of zoom
+        if (deps.getWikilinkAtCursor && deps.navigateToPage) {
+          const wikilinkTarget = deps.getWikilinkAtCursor();
+          if (wikilinkTarget) {
+            const result = deps.navigateToPage(wikilinkTarget, deps.paneId);
+            if (result.success && result.focusTargetId) {
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => deps.onFocus(result.focusTargetId!));
+              });
+            }
+            return;
           }
         }
-        paneStore.setZoomedRoot(deps.paneId, deps.blockId);
+
+        // No wikilink - toggle zoom behavior
+        const currentZoom = paneStore.getZoomedRootId(deps.paneId);
+        if (currentZoom === deps.blockId) {
+          // Already zoomed into this block - zoom out
+          paneStore.setZoomedRoot(deps.paneId, null);
+          return;
+        }
+
+        // Zoom into this block's subtree
+        if (block.childIds.length === 0) {
+          const newChildId = store.createBlockInside(deps.blockId);
+          paneStore.setZoomedRoot(deps.paneId, deps.blockId);
+          if (newChildId) {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => deps.onFocus(newChildId));
+            });
+          }
+        } else {
+          paneStore.setZoomedRoot(deps.paneId, deps.blockId);
+        }
         return;
+      }
 
       case 'toggle_collapse':
         e.preventDefault();
@@ -283,26 +356,76 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         if (keyAction.prevId) deps.onFocus(keyAction.prevId);
         return;
 
+      case 'move_block_up': {
+        e.preventDefault();
+        store.moveBlockUp(deps.blockId);
+        // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
+        const contentRef = deps.getContentRef();
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => contentRef?.focus({ preventScroll: true }));
+        });
+        return;
+      }
+
+      case 'move_block_down': {
+        e.preventDefault();
+        store.moveBlockDown(deps.blockId);
+        // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
+        const contentRef = deps.getContentRef();
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => contentRef?.focus({ preventScroll: true }));
+        });
+        return;
+      }
+
       case 'navigate_up':
         e.preventDefault();
-        if (keyAction.prevId) deps.onFocus(keyAction.prevId);
+        if (keyAction.prevId) {
+          // Plain navigation clears selection
+          if (deps.onSelect) deps.onSelect(keyAction.prevId, 'set');
+          deps.onFocus(keyAction.prevId);
+        }
         return;
 
       case 'navigate_down':
         e.preventDefault();
-        if (keyAction.nextId) deps.onFocus(keyAction.nextId);
+        if (keyAction.nextId) {
+          // Plain navigation clears selection
+          if (deps.onSelect) deps.onSelect(keyAction.nextId, 'set');
+          deps.onFocus(keyAction.nextId);
+        }
         return;
 
       case 'navigate_up_with_selection':
         e.preventDefault();
-        // Selection logic is handled by caller (BlockItem/Outliner)
-        if (keyAction.prevId) deps.onFocus(keyAction.prevId);
+        if (keyAction.prevId && deps.onSelect) {
+          if (!deps.selectionAnchor) {
+            // First Shift+Arrow: select current, set anchor, move focus only
+            deps.onSelect(deps.blockId, 'anchor');
+          } else {
+            // Subsequent: extend range to include THIS block
+            deps.onSelect(deps.blockId, 'range');
+          }
+          deps.onFocus(keyAction.prevId);
+        } else if (keyAction.prevId) {
+          deps.onFocus(keyAction.prevId);
+        }
         return;
 
       case 'navigate_down_with_selection':
         e.preventDefault();
-        // Selection logic is handled by caller (BlockItem/Outliner)
-        if (keyAction.nextId) deps.onFocus(keyAction.nextId);
+        if (keyAction.nextId && deps.onSelect) {
+          if (!deps.selectionAnchor) {
+            // First Shift+Arrow: select current, set anchor, move focus only
+            deps.onSelect(deps.blockId, 'anchor');
+          } else {
+            // Subsequent: extend range to include THIS block
+            deps.onSelect(deps.blockId, 'range');
+          }
+          deps.onFocus(keyAction.nextId);
+        } else if (keyAction.nextId) {
+          deps.onFocus(keyAction.nextId);
+        }
         return;
 
       case 'create_trailing_block': {
@@ -315,6 +438,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'execute_block': {
         e.preventDefault();
+        // Flush pending content before execute (debounced updates can race with store operations)
+        deps.flushContentUpdate();
         const handler = registry.findHandler(block.content);
         if (handler) {
           // Create hook-compatible block store adapter (with zoom scope)
@@ -364,6 +489,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'split_block': {
         e.preventDefault();
+        // Flush pending content before split (debounced updates can race with store operations)
+        deps.flushContentUpdate();
         const newId = store.splitBlock(deps.blockId, keyAction.offset);
         if (newId) deps.onFocus(newId);
         return;
@@ -371,6 +498,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'split_to_child': {
         e.preventDefault();
+        // Flush pending content before split (debounced updates can race with store operations)
+        deps.flushContentUpdate();
         const newId = store.splitBlockToFirstChild(deps.blockId, keyAction.offset);
         if (newId) deps.onFocus(newId);
         return;
@@ -426,21 +555,39 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'merge_with_previous': {
         e.preventDefault();
+        // Flush pending content before merge (debounced updates can race with store operations)
+        deps.flushContentUpdate();
         const prevBlock = store.blocks[keyAction.prevId];
         if (prevBlock) {
           const oldContent = block.content;
           const prevContentLength = prevBlock.content.length;
+          const childrenToLift = [...block.childIds];  // Copy before mutation
 
-          store.updateBlockContent(keyAction.prevId, prevBlock.content + oldContent);
-          store.deleteBlock(deps.blockId);
+          // FIX 1: Focus BEFORE mutations (optimistic - UI feels instant)
           deps.onFocus(keyAction.prevId);
 
-          // Restore cursor after merge
-          requestAnimationFrame(() => {
-            const el = document.activeElement as HTMLElement;
-            if (el && el.textContent === prevBlock.content + oldContent) {
-              setCursorAtOffset(el, prevContentLength);
-            }
+          // If block has children, lift them to be siblings after merged block
+          // This preserves the subtree when merging expanded blocks
+          if (childrenToLift.length > 0) {
+            store.liftChildrenToSiblings(deps.blockId, keyAction.prevId);
+          }
+
+          // Mutations: merge content and delete (now childless) block
+          store.updateBlockContent(keyAction.prevId, prevBlock.content + oldContent);
+          store.deleteBlock(deps.blockId);
+
+          // FIX 2: Use queueMicrotask chain (not rAF)
+          // 1st microtask: Y.Doc transaction batches
+          // 2nd microtask: SolidJS effects propagate
+          queueMicrotask(() => {
+            queueMicrotask(() => {
+              // Use document.activeElement (focus already moved via onFocus)
+              // FIX 3: Use innerText for comparison (preserves newlines from <div>/<br>)
+              const el = document.activeElement as HTMLElement;
+              if (el) {
+                setCursorAtOffset(el, prevContentLength);
+              }
+            });
           });
         }
         return;

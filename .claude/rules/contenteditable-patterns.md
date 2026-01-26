@@ -167,13 +167,117 @@ content.slice(end);     // "more text"
 
 **Rule**: In `splitBlock()`, when offset is at/near newlines, adjust to consume all trailing newlines into the "before" portion.
 
-## 7. Reference Implementation
+## 7. isAtStart() vs getOffset() === 0 (CRITICAL)
+
+**The trap**: `cursor.isAtStart()` checks if cursor is at the first TEXT node at offset 0. This can be TRUE at the start of ANY line in multi-line content!
+
+```typescript
+// Content: "\n\nworld" (two blank lines, then "world")
+// Cursor at start of "world" (visually first visible character)
+
+// ❌ WRONG - isAtStart() may return TRUE
+// Because blank lines are <br> elements, "world" is in the first TEXT node
+cursor.isAtStart();  // TRUE! But offset is ~2 (after the \n\n)
+
+// ✅ CORRECT - use absolute offset for block-level decisions
+cursor.getOffset() === 0;  // FALSE - we're not at absolute start
+```
+
+**When to use which**:
+- `isAtStart()` - for DOM position checks within current text node
+- `getOffset() === 0` - for block-level decisions (merge, backspace behavior)
+
+**Symptom**: Backspace at start of "world" in `\n\nworld` incorrectly triggers block merge because `isAtStart()` returns true.
+
+## 8. Blank Line Navigation (Browser Limitation)
+
+**The trap**: Browser cannot visually navigate up/down through content that is only newlines.
+
+```typescript
+// Content: "\n\na" - cursor at "a"
+// User presses ArrowUp
+// Browser can't move up (no visual line above "a" within this block)
+// But cursorAtStart is FALSE (there's \n\n before cursor)
+
+// Content: "a\n\n" - cursor after "a"
+// User presses ArrowDown
+// Browser can't move down (no visual content below)
+// But cursorAtEnd is FALSE (there's \n\n after cursor)
+```
+
+**Fix**: Check if content before/after cursor is only newlines:
+
+```typescript
+// ArrowUp with leading blank lines
+if (!cursorAtStart && cursorOffset > 0) {
+  const beforeCursor = content.slice(0, cursorOffset);
+  if (/^\n+$/.test(beforeCursor)) {
+    shouldNavigate = true;  // Browser can't, we should
+  }
+}
+
+// ArrowDown with trailing blank lines
+if (!cursorAtEnd) {
+  const afterCursor = content.slice(cursorOffset);
+  if (/^\n+$/.test(afterCursor)) {
+    shouldNavigate = true;  // Browser can't, we should
+  }
+}
+```
+
+## 9. IndexSizeError Guards
+
+**The trap**: Selection/Range APIs throw `IndexSizeError` when offsets exceed bounds.
+
+```typescript
+// ❌ BROKEN - no rangeCount check
+const range = selection.getRangeAt(0);  // Throws if rangeCount is 0 (after undo)
+
+// ❌ BROKEN - offset may exceed node length (DOM changed between calculation and use)
+range.setStart(textNode, calculatedOffset);  // Throws if offset > textNode.length
+
+// ✅ CORRECT
+if (!selection.rangeCount) return false;
+const range = selection.getRangeAt(0);
+
+const clampedOffset = Math.min(calculatedOffset, textNode.textContent?.length ?? 0);
+range.setStart(textNode, clampedOffset);
+```
+
+**When this happens**: After undo operations, during fast typing, when DOM mutates between offset calculation and cursor positioning.
+
+## 10. Collapsed Children Protection for Merge
+
+**The trap**: Blocking ALL merges when block has children is too restrictive.
+
+```typescript
+// ❌ WRONG - always block merge if has children
+if (block.childIds.length > 0) return;  // User can't merge expanded blocks!
+
+// ✅ CORRECT - only protect HIDDEN children
+const hasHiddenChildren = block.childIds.length > 0 && isCollapsed;
+if (hasHiddenChildren) return;  // Protect hidden subtree
+// If children are visible (expanded), allow merge and lift them to siblings
+```
+
+**Why**: If children are visible, user knows they exist. Merge should lift them to siblings, not block the operation. Only protect when children are COLLAPSED (hidden).
+
+**Behaviors**:
+- Backspace at start, children expanded → merge, lift children to siblings
+- Backspace at start, children collapsed → do nothing (protect hidden subtree)
+- Cmd+Backspace → delete block AND all children (explicit destructive action)
+
+## 11. Reference Implementation
 
 See `src/lib/cursorUtils.ts`:
 - `getAbsoluteCursorOffset()` - correct DOM-walking offset calculation with element node resolution
-- `setCursorAtOffset()` - matching cursor positioning
+- `setCursorAtOffset()` - matching cursor positioning with offset clamping
 - `findFirstTextNode()` / `findLastTextNode()` - resolve element positions to text nodes
-- `isCursorAtContentStart()` / `isCursorAtContentEnd()` - boundary detection
+- `isCursorAtContentStart()` / `isCursorAtContentEnd()` - boundary detection with rangeCount guards
 
 See `src/hooks/useBlockStore.ts`:
 - `splitBlock()` - includes newline consumption logic for natural blank line behavior
+- `liftChildrenToSiblings()` - reparent children when merging expanded blocks
+
+See `src/hooks/useBlockInput.ts`:
+- `determineKeyAction()` - blank line navigation fixes, collapsed children check
