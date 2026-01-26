@@ -174,6 +174,10 @@ pub struct BlockDto {
     /// Block metadata (markers, wikilinks, etc). Null if not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Timestamp when block was created (ms since epoch)
+    pub created_at: i64,
+    /// Timestamp when block was last updated (ms since epoch)
+    pub updated_at: i64,
 }
 
 /// Create block request
@@ -240,6 +244,17 @@ impl IntoResponse for ApiError {
         });
         (status, body).into_response()
     }
+}
+
+/// Extract timestamp from Y.Doc value (handles f64 and i64)
+fn extract_timestamp(value: Option<yrs::Out>) -> i64 {
+    value
+        .and_then(|v| match v {
+            yrs::Out::Any(yrs::Any::Number(n)) => Some(n as i64),
+            yrs::Out::Any(yrs::Any::BigInt(n)) => Some(n),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 /// Create the API router (CORS applied in main.rs)
@@ -413,6 +428,10 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
                     .get(&txn, "metadata")
                     .and_then(|v| extract_metadata_from_yrs(v, &txn));
 
+                // Extract timestamps
+                let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
+                let updated_at = extract_timestamp(block_map.get(&txn, "updatedAt"));
+
                 let block_type = floatty_core::parse_block_type(&content);
 
                 blocks.push(BlockDto {
@@ -423,6 +442,8 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
                     collapsed,
                     block_type: format!("{:?}", block_type).to_lowercase(),
                     metadata,
+                    created_at,
+                    updated_at,
                 });
             }
         }
@@ -492,6 +513,10 @@ async fn get_block(
             .get(&txn, "metadata")
             .and_then(|v| extract_metadata_from_yrs(v, &txn));
 
+        // Extract timestamps
+        let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
+        let updated_at = extract_timestamp(block_map.get(&txn, "updatedAt"));
+
         let block_type = floatty_core::parse_block_type(&content);
 
         Ok(Json(BlockDto {
@@ -502,6 +527,8 @@ async fn get_block(
             collapsed,
             block_type: format!("{:?}", block_type).to_lowercase(),
             metadata,
+            created_at,
+            updated_at,
         }))
     } else {
         Err(ApiError::NotFound(id))
@@ -601,6 +628,8 @@ async fn create_block(
             collapsed: false,
             block_type: format!("{:?}", block_type).to_lowercase(),
             metadata: None, // Hooks will populate async
+            created_at: now as i64,
+            updated_at: now as i64,
         }),
     ))
 }
@@ -620,7 +649,7 @@ async fn update_block(
         .as_millis() as i64;
 
     // Read existing block data
-    let (parent_id, child_ids, collapsed, existing_content, existing_metadata) = {
+    let (parent_id, child_ids, collapsed, existing_content, existing_metadata, created_at) = {
         let txn = doc_guard.transact();
         let blocks_map = txn
             .get_map("blocks")
@@ -673,7 +702,10 @@ async fn update_block(
                 _ => None,
             });
 
-            (parent_id, child_ids, collapsed, existing_content, existing_metadata)
+            // Extract created_at (doesn't change on update)
+            let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
+
+            (parent_id, child_ids, collapsed, existing_content, existing_metadata, created_at)
         } else {
             return Err(ApiError::NotFound(id));
         }
@@ -733,6 +765,8 @@ async fn update_block(
         collapsed,
         block_type: format!("{:?}", block_type).to_lowercase(),
         metadata: final_metadata,
+        created_at,
+        updated_at: now as i64,
     }))
 }
 
