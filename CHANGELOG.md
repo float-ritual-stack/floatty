@@ -2,6 +2,27 @@
 
 All notable changes to floatty are documented here.
 
+## [0.5.1] - 2026-01-26
+
+### Bug Fixes
+
+- **Outliner**: Fixed backspace at blank lines incorrectly triggering block merge - now correctly uses absolute offset (`getOffset() === 0`) instead of DOM position (`isAtStart()`) for merge decisions
+- **Outliner**: Fixed ArrowUp/Down navigation when cursor is surrounded by only newlines (browser can't navigate, now handled manually)
+- **Outliner**: Fixed IndexSizeError crashes by adding rangeCount guards and offset clamping in cursor utilities
+- **Outliner**: Blocks with expanded children can now merge (children lifted to siblings); collapsed children still protected
+
+### Performance
+
+- **Terminal**: Batched clipboard IPC calls (3 → 1) reducing paste latency
+
+### Internal
+
+- Wired `useBlockInput` hook as single source of truth for keyboard handling (~400 lines removed from BlockItem.tsx)
+- Added `liftChildrenToSiblings()` to block store for merge operations
+- Updated contenteditable-patterns.md with §7-10 documenting cursor edge cases
+
+---
+
 ## [0.5.0] - 2026-01-24
 
 ### Fixed
