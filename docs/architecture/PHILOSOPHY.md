@@ -2,7 +2,7 @@
 
 > How proven patterns from Redux, mIRC, CQRS, and Excel inform Floatty's AI-native architecture.
 
-**Last Updated**: 2026-01-15
+**Last Updated**: 2026-01-26
 
 ---
 
@@ -442,6 +442,82 @@ Block: "remind me to call mom tomorrow"
 Traditional: /remind (.+) (today|tomorrow)/ → Fragile regex
 AI-native: ai.extract(text, { task, when }) → Robust understanding
 ```
+
+### 2.6 Permeable Boundaries
+
+> Personal notes are personal
+> Personal systems are personal
+> Systems have permeable boundaries
+> Even our systems have systems
+> Translate at the boundaries
+
+This isn't philosophy—it's **architectural prescription**.
+
+#### The Axioms
+
+| Axiom | Architectural Implication |
+|-------|---------------------------|
+| Personal notes are personal | No forced structure. Blocks accept any content. |
+| Personal systems are personal | Config at `~/.floatty/`, not global. User owns their data. |
+| Systems have permeable boundaries | Workspaces isolate (dev/prod). Exports translate out. |
+| Even our systems have systems | floatty-server (headless) + Desktop UI + CLI + agents. |
+| Translate at boundaries | Scratchpad evolves → daily note captures → doc canonicalizes. |
+
+#### The Refinement Flow
+
+Content moves through boundaries, transforming at each:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SCRATCHPAD (messy, fast, personal)                              │
+│    "some random thought ctx::2026-01-26 @ 5pm"                   │
+│         │                                                        │
+│         ▼ [boundary: "worth anchoring temporally"]               │
+│  DAILY NOTE (chronological, still personal)                      │
+│    "- 5pm - floatty patterns - boundaries as design principle"   │
+│         │                                                        │
+│         ▼ [boundary: "reusable pattern"]                         │
+│  CANONICAL DOC (architecture/, structured)                       │
+│    "### 2.6 Permeable Boundaries"                                │
+│         │                                                        │
+│         ▼ [boundary: "external interface"]                       │
+│  PUBLIC API / DOCS                                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Each boundary is a **translation point**. The messy becomes structured. The personal becomes shareable. The implicit becomes explicit.
+
+#### Why This Matters for AI-Native Tools
+
+LLMs work best with clear context boundaries. floatty's architecture produces these naturally:
+
+| Boundary Mechanism | AI Benefit |
+|--------------------|------------|
+| Block children | Natural context scope (subtree = unit) |
+| `ctx::3` TTL | Explicit attention budget |
+| `[[wikilink]]` expansion | Controlled context permeability |
+| Workspace isolation | Prevents context pollution (test ≠ prod) |
+| `pages::` container | Named boundaries (pages are namespaces) |
+
+**The insight**: Boundaries aren't constraints—they're **translation infrastructure**. Good boundaries enable permeability. Bad architecture has no boundaries (everything bleeds) or impermeable walls (nothing connects).
+
+floatty's `::` syntax IS a boundary marker. `sh::` says "this crosses to shell". `ctx::` says "this crosses to timeline". `[[link]]` says "this references across pages". The markers name the boundary crossings.
+
+#### Applied Example: float.dispatch
+
+```
+float.dispatch/
+├── bridges/          # Boundary: incoming captures
+│   └── auto-inbox/   # Raw arrivals (pre-translation)
+├── boards/           # Boundary: processed + organized
+│   └── sysops-log/   # Canonical records
+└── README.md         # Boundary: external documentation
+```
+
+Each folder is a boundary with different permeability:
+- `auto-inbox/`: Highly permeable (anything lands here)
+- `boards/`: Semi-permeable (curated, but internal)
+- Public docs: Low permeability (stable interface)
 
 ---
 

@@ -36,6 +36,9 @@ export function Outliner(props: OutlinerProps) {
   // For initial load, ready after async config load completes
   const [configReady, setConfigReady] = createSignal(false);
 
+  // Phase 0.5: Cache config for homebase keybind (Cmd+Shift+0)
+  const [cachedConfig, setCachedConfig] = createSignal<AggregatorConfig | null>(null);
+
   // Get current zoomed root for this pane (null = show all roots)
   const zoomedRootId = () => paneStore.getZoomedRootId(props.paneId);
 
@@ -72,6 +75,15 @@ export function Outliner(props: OutlinerProps) {
       }
     };
 
+    // Load config (always needed for homebase keybind Cmd+Shift+0)
+    const configPromise = invoke('get_ctx_config', {}).then((config: AggregatorConfig) => {
+      setCachedConfig(config);  // Cache for homebase keybind
+      return config;
+    }).catch((err: unknown) => {
+      console.warn('[Outliner] Failed to load config:', err);
+      return null;
+    });
+
     // Split pane case: use prop directly (sync, fast)
     // Check !== undefined to treat 0 as valid override (disabled, but don't fall back to config)
     if (props.initialCollapseDepth !== undefined) {
@@ -82,15 +94,12 @@ export function Outliner(props: OutlinerProps) {
       return;
     }
 
-    // Initial load case: check config for initial_collapse_depth (async)
-    invoke('get_ctx_config', {}).then((config: AggregatorConfig) => {
-      if (config.initial_collapse_depth && config.initial_collapse_depth > 0) {
+    // Initial load case: use config for initial_collapse_depth (async)
+    configPromise.then((config) => {
+      if (config?.initial_collapse_depth && config.initial_collapse_depth > 0) {
         applyCollapseDepth(config.initial_collapse_depth);
       }
       setConfigReady(true);
-    }).catch((err: unknown) => {
-      console.warn('[FLO-197] Failed to load config for initial_collapse_depth:', err);
-      setConfigReady(true); // Still allow render even if config fails
     });
   });
 
@@ -278,47 +287,46 @@ export function Outliner(props: OutlinerProps) {
         '$mod+a a a a a a a a a': (e) => expandSelectionToLevel(8, e),
         '$mod+a a a a a a a a a a': (e) => expandSelectionToLevel(9, e),
 
-        // FLO-66: Progressive expand/collapse
+        // FLO-66: Progressive expand/collapse (scoped to focused subtree)
+        // FLO-XXX: Pass focusedBlockId instead of null to avoid expanding entire outline
         '$mod+e': (e) => {
           e.preventDefault();
-          collapse.expandToDepth(null, 1);
+          collapse.expandToDepth(focusedBlockId(), 1);
           collapse.ensureVisibleFocus();
         },
         '$mod+e e': (e) => {
           e.preventDefault();
-          collapse.expandToDepth(null, 2);
+          collapse.expandToDepth(focusedBlockId(), 2);
           collapse.ensureVisibleFocus();
         },
         '$mod+e e e': (e) => {
           e.preventDefault();
-          collapse.expandToDepth(null, 3);
+          collapse.expandToDepth(focusedBlockId(), 3);
           collapse.ensureVisibleFocus();
         },
         '$mod+e e e e': (e) => {
           e.preventDefault();
-          collapse.expandToDepth(null, Infinity);
+          collapse.expandToDepth(focusedBlockId(), Infinity);
           collapse.ensureVisibleFocus();
         },
-        // Cmd+Shift+E → collapse (Shift inverts direction)
+        // Cmd+Shift+E → Global expand (all roots, capped at 3 for safety)
+        // Phase 0.5: Restores "old" behavior for occasional "see everything" use
         '$mod+Shift+e': (e) => {
           e.preventDefault();
-          collapse.collapseToDepth(null, 1);
+          collapse.expandToDepth(null, 3);  // null = all roots, capped at depth 3
           collapse.ensureVisibleFocus();
         },
         '$mod+Shift+e e': (e) => {
           e.preventDefault();
-          collapse.collapseToDepth(null, 2);
+          collapse.expandToDepth(null, Infinity);  // Explicit "show everything"
           collapse.ensureVisibleFocus();
         },
-        '$mod+Shift+e e e': (e) => {
+        // Cmd+Shift+0 → Homebase (collapse all to config.initial_collapse_depth)
+        // Phase 0.5: Reset after progressive expansion session
+        '$mod+Shift+0': (e) => {
           e.preventDefault();
-          collapse.collapseToDepth(null, 3);
-          collapse.ensureVisibleFocus();
-        },
-        '$mod+Shift+e e e e': (e) => {
-          e.preventDefault();
-          const maxDepth = collapse.getMaxDepthFrom(null);
-          collapse.collapseToDepth(null, maxDepth);
+          const depth = cachedConfig()?.initial_collapse_depth ?? 0;
+          collapse.collapseToDepth(null, depth);  // null = all roots
           collapse.ensureVisibleFocus();
         },
 
