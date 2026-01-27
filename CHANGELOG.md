@@ -2,6 +2,14 @@
 
 All notable changes to floatty are documented here.
 
+## [0.6.1] - 2026-01-27
+
+### Bug Fixes
+
+- **Outliner**: Scroll viewport to keep focused block visible during keyboard navigation (ArrowUp/ArrowDown)
+
+---
+
 ## [0.6.0] - 2026-01-27
 
 ### New Features
