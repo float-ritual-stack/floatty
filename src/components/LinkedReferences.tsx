@@ -77,10 +77,9 @@ export function LinkedReferences(props: LinkedReferencesProps) {
       }
     }
 
-    // FLO-180: Push current location before navigating to backlink
-    const currentZoom = paneStore.getZoomedRootId(props.paneId);
-    paneStore.pushNavigation(props.paneId, currentZoom, props.pageBlockId);
+    // FLO-180: Zoom first, then push destination (standard browser model)
     paneStore.setZoomedRoot(props.paneId, targetId);
+    paneStore.pushNavigation(props.paneId, targetId, props.pageBlockId);
   };
 
   // Keyboard handler for backlink items (Enter/Space to activate)

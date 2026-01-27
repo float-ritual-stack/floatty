@@ -3,6 +3,11 @@
  *
  * Tests the navigation history functions in isolation.
  * No framework, no DOM, no mocking - just pure functions.
+ *
+ * Standard Browser Model:
+ * - entries contain actual visited locations (where you ARE, not where you came FROM)
+ * - currentIndex points to current location
+ * - Push happens AFTER navigating (stores destination)
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -10,7 +15,7 @@ import {
   pushNavigation,
   goBack,
   goForward,
-canGoBack,
+  canGoBack,
   canGoForward,
   isSameLocation,
   getHistoryLength,
@@ -101,15 +106,15 @@ describe('pushNavigation', () => {
   });
 
   it('discards forward entries when navigating after goBack', () => {
-    // Build history: A → B → C
+    // Build history: A → B → C (user at C)
     let state = createNavigationState();
     state = pushNavigation(state, createEntry('page-a'));
     state = pushNavigation(state, createEntry('page-b'));
     state = pushNavigation(state, createEntry('page-c'));
 
     // Go back twice (to A)
-    state = goBack(state).state;
-    state = goBack(state).state;
+    state = goBack(state).state;  // Now at B
+    state = goBack(state).state;  // Now at A
 
     // Now push D - should discard B and C
     state = pushNavigation(state, createEntry('page-d'));
@@ -202,14 +207,25 @@ describe('goBack', () => {
     expect(result.state).toBe(state);
   });
 
-  it('returns entry and decrements currentIndex', () => {
+  it('returns null entry when at first entry (nowhere to go back)', () => {
     let state = createNavigationState();
     state = pushNavigation(state, createEntry('page-a'));
-    state = pushNavigation(state, createEntry('page-b'));
 
     const result = goBack(state);
 
-    expect(result.entry?.zoomedRootId).toBe('page-b');
+    expect(result.entry).toBeNull();
+    expect(result.state).toBe(state);
+  });
+
+  it('returns previous entry and decrements currentIndex', () => {
+    let state = createNavigationState();
+    state = pushNavigation(state, createEntry('page-a'));
+    state = pushNavigation(state, createEntry('page-b'));
+    // entries=[page-a, page-b], index=1 (at page-b)
+
+    const result = goBack(state);
+
+    expect(result.entry?.zoomedRootId).toBe('page-a');
     expect(result.state.currentIndex).toBe(0);
   });
 
@@ -218,26 +234,22 @@ describe('goBack', () => {
     state = pushNavigation(state, createEntry('page-a'));
     state = pushNavigation(state, createEntry('page-b'));
     state = pushNavigation(state, createEntry('page-c'));
+    // entries=[page-a, page-b, page-c], index=2 (at page-c)
 
-    // First goBack
+    // First goBack: page-c → page-b
     let result = goBack(state);
-    expect(result.entry?.zoomedRootId).toBe('page-c');
+    expect(result.entry?.zoomedRootId).toBe('page-b');
     expect(result.state.currentIndex).toBe(1);
 
-    // Second goBack
-    result = goBack(result.state);
-    expect(result.entry?.zoomedRootId).toBe('page-b');
-    expect(result.state.currentIndex).toBe(0);
-
-    // Third goBack
+    // Second goBack: page-b → page-a
     result = goBack(result.state);
     expect(result.entry?.zoomedRootId).toBe('page-a');
-    expect(result.state.currentIndex).toBe(-1);
+    expect(result.state.currentIndex).toBe(0);
 
-    // Fourth goBack - at boundary
+    // Third goBack: at start, can't go back
     result = goBack(result.state);
     expect(result.entry).toBeNull();
-    expect(result.state.currentIndex).toBe(-1);
+    expect(result.state.currentIndex).toBe(0);
   });
 
   it('does not mutate entries array', () => {
@@ -268,12 +280,13 @@ describe('goForward', () => {
     let state = createNavigationState();
     state = pushNavigation(state, createEntry('page-a'));
     state = pushNavigation(state, createEntry('page-b'));
+    // entries=[page-a, page-b], index=1 (at page-b)
 
-    // Go back
+    // Go back to page-a
     state = goBack(state).state;
     expect(state.currentIndex).toBe(0);
 
-    // Go forward
+    // Go forward to page-b
     const result = goForward(state);
     expect(result.entry?.zoomedRootId).toBe('page-b');
     expect(result.state.currentIndex).toBe(1);
@@ -313,16 +326,24 @@ describe('canGoBack', () => {
     expect(canGoBack(state)).toBe(false);
   });
 
-  it('returns true with history entries', () => {
+  it('returns false with only one entry (at first location)', () => {
     let state = createNavigationState();
     state = pushNavigation(state, createEntry('page-a'));
+    expect(canGoBack(state)).toBe(false);
+  });
+
+  it('returns true with two or more entries', () => {
+    let state = createNavigationState();
+    state = pushNavigation(state, createEntry('page-a'));
+    state = pushNavigation(state, createEntry('page-b'));
     expect(canGoBack(state)).toBe(true);
   });
 
   it('returns false after exhausting back history', () => {
     let state = createNavigationState();
     state = pushNavigation(state, createEntry('page-a'));
-    state = goBack(state).state;
+    state = pushNavigation(state, createEntry('page-b'));
+    state = goBack(state).state;  // Now at page-a (index 0)
     expect(canGoBack(state)).toBe(false);
   });
 
@@ -434,124 +455,134 @@ describe('null zoomedRootId handling (roots view)', () => {
     expect(state.entries[0].zoomedRootId).toBeNull();
   });
 
-  it('goBack returns null entry (roots view) correctly', () => {
-    // Mental model: push BEFORE navigating, so push captures where I WAS
-    // Journey: roots (null) → page-a
-    // Push "I was at roots" before zooming to page-a
+  it('goBack returns previous entry correctly for roots', () => {
+    // Journey: roots → page-a
     let state = createNavigationState();
-    state = pushNavigation(state, createEntry(null));  // Push: was at roots
-    // Now user is viewing page-a, history = [null], index = 0
+    state = pushNavigation(state, createEntry(null));     // At roots
+    state = pushNavigation(state, createEntry('page-a')); // Navigate to page-a
+    // entries=[null, page-a], index=1 (at page-a)
 
     const result = goBack(state);
 
-    // Should return null (roots) - where I was before current view
-    expect(result.entry?.zoomedRootId).toBeNull();
+    expect(result.entry?.zoomedRootId).toBeNull();  // Back to roots
+    expect(result.state.currentIndex).toBe(0);
   });
 
   it('correctly navigates through mixed null and string zoomedRootIds', () => {
     let state = createNavigationState();
 
-    // User starts at roots, navigates around
-    state = pushNavigation(state, createEntry(null));  // At roots
+    // User navigates: roots → page-a → roots → page-b
+    state = pushNavigation(state, createEntry(null));      // At roots
     state = pushNavigation(state, createEntry('page-a'));  // To page-a
-    state = pushNavigation(state, createEntry(null));  // Back to roots (via click)
+    state = pushNavigation(state, createEntry(null));      // Back to roots
     state = pushNavigation(state, createEntry('page-b'));  // To page-b
+    // entries=[null, page-a, null, page-b], index=3
 
     expect(state.entries).toHaveLength(4);
 
-    // Go back should get us: page-b (current), then null, then page-a, then null
+    // Go back: page-b → roots
     let result = goBack(state);
-    expect(result.entry?.zoomedRootId).toBe('page-b');
-    state = result.state;
-
-    result = goBack(state);
     expect(result.entry?.zoomedRootId).toBeNull();
     state = result.state;
 
+    // Go back: roots → page-a
     result = goBack(state);
     expect(result.entry?.zoomedRootId).toBe('page-a');
     state = result.state;
 
+    // Go back: page-a → roots
     result = goBack(state);
     expect(result.entry?.zoomedRootId).toBeNull();
+    state = result.state;
+
+    // Go back: at start, can't go further
+    result = goBack(state);
+    expect(result.entry).toBeNull();
   });
 });
 
 describe('complex navigation scenarios', () => {
   it('simulates real user navigation session', () => {
-    // Mental model: history entries are "where I was BEFORE each navigation"
-    // Push happens BEFORE the zoom changes, capturing current location
+    // Standard browser model: push AFTER navigating (stores destination)
     let state = createNavigationState();
 
-    // User starts at roots (null), clicks [[PageA]]
-    // Push current (null) before zooming to PageA
+    // User starts at roots, push roots as initial location
     state = pushNavigation(state, createEntry(null));
-    // Now viewing PageA, history = [null], index = 0
-    expect(state.entries[0].zoomedRootId).toBeNull();
+    // entries=[null], index=0
 
-    // User clicks [[PageB]] while viewing PageA
-    // Push current (PageA) before zooming to PageB
+    // User clicks [[PageA]] → navigate to PageA, push PageA
     state = pushNavigation(state, createEntry('page-a'));
-    // Now viewing PageB, history = [null, page-a], index = 1
+    // entries=[null, page-a], index=1
     expect(state.entries).toHaveLength(2);
 
-    // User clicks [[PageC]] while viewing PageB
-    // Push current (PageB) before zooming to PageC
+    // User clicks [[PageB]] → navigate to PageB, push PageB
     state = pushNavigation(state, createEntry('page-b'));
-    // Now viewing PageC, history = [null, page-a, page-b], index = 2
+    // entries=[null, page-a, page-b], index=2
     expect(state.entries).toHaveLength(3);
 
-    // User hits back (while viewing PageC)
-    // Returns page-b (where they were before PageC)
+    // User clicks [[PageC]] → navigate to PageC, push PageC
+    state = pushNavigation(state, createEntry('page-c'));
+    // entries=[null, page-a, page-b, page-c], index=3
+    expect(state.entries).toHaveLength(4);
+
+    // User hits back (at PageC)
     let result = goBack(state);
     expect(result.entry?.zoomedRootId).toBe('page-b');
     state = result.state;
-    // Now viewing PageB, index = 1
+    // Now at page-b, index=2
 
-    // User hits back again (while viewing PageB)
-    // Returns page-a (where they were before PageB)
+    // User hits back (at PageB)
     result = goBack(state);
     expect(result.entry?.zoomedRootId).toBe('page-a');
     state = result.state;
-    // Now viewing PageA, index = 0
+    // Now at page-a, index=1
 
-    // User hits forward (while viewing PageA)
-    // Returns page-a (where we go forward TO is actually index+1 = page-a)
-    // Wait, this is confusing. Let me re-read goForward...
-    // goForward increments index then returns that entry
-    // index was 0, becomes 1, returns entries[1] = page-a
+    // User hits forward (at PageA)
     result = goForward(state);
-    expect(result.entry?.zoomedRootId).toBe('page-a');
+    expect(result.entry?.zoomedRootId).toBe('page-b');
     state = result.state;
-    // Now viewing PageB (because forward went to the page-a entry), index = 1
+    // Now at page-b, index=2
 
-    // User clicks [[PageD]] while viewing PageB
-    // Push current (PageB) before zooming to PageD
-    // This should discard entries after currentIndex
-    state = pushNavigation(state, createEntry('page-b'));
-    // history = [null, page-a, page-b], index = 2
+    // User hits forward (at PageB)
+    result = goForward(state);
+    expect(result.entry?.zoomedRootId).toBe('page-c');
+    state = result.state;
+    // Now at page-c, index=3
+
+    // User clicks [[PageD]] → discards forward (none), push PageD
+    state = pushNavigation(state, createEntry('page-d'));
+    // entries=[null, page-a, page-b, page-c, page-d], index=4
 
     // Forward should be gone (we're at end of history)
     expect(canGoForward(state)).toBe(false);
   });
 
-  it('handles mixed null and string zoomedRootIds', () => {
-    // Journey: roots → page-a → roots → page-b → page-c (current)
-    // Push at each step: null, page-a, null, page-b
+  it('discards forward history when navigating from middle', () => {
     let state = createNavigationState();
 
-    state = pushNavigation(state, createEntry(null));      // Before going to page-a
-    state = pushNavigation(state, createEntry('page-a'));  // Before going back to roots
-    state = pushNavigation(state, createEntry(null));      // Before going to page-b
-    state = pushNavigation(state, createEntry('page-b'));  // Before going to page-c
+    // Build: roots → A → B → C
+    state = pushNavigation(state, createEntry(null));
+    state = pushNavigation(state, createEntry('page-a'));
+    state = pushNavigation(state, createEntry('page-b'));
+    state = pushNavigation(state, createEntry('page-c'));
+    // entries=[null, a, b, c], index=3
 
-    expect(state.entries).toHaveLength(4);
-    // entries = [null, page-a, null, page-b], index = 3
-    // User is now at page-c
+    // Go back to A (index=1)
+    state = goBack(state).state;  // at b, index=2
+    state = goBack(state).state;  // at a, index=1
 
-    // Go back should give us page-b (where we were before page-c)
-    const result = goBack(state);
-    expect(result.entry?.zoomedRootId).toBe('page-b');
+    // Now push D - should discard B and C
+    state = pushNavigation(state, createEntry('page-d'));
+    // entries=[null, a, d], index=2
+
+    expect(state.entries).toHaveLength(3);
+    expect(state.entries[0].zoomedRootId).toBeNull();
+    expect(state.entries[1].zoomedRootId).toBe('page-a');
+    expect(state.entries[2].zoomedRootId).toBe('page-d');
+
+    // Can go back but not forward
+    expect(canGoBack(state)).toBe(true);
+    expect(canGoForward(state)).toBe(false);
   });
 
   it('preserves focusedBlockId through navigation', () => {
@@ -561,7 +592,7 @@ describe('complex navigation scenarios', () => {
     state = pushNavigation(state, createEntry('page-b', 'block-2'));
 
     const result = goBack(state);
-    expect(result.entry?.zoomedRootId).toBe('page-b');
-    expect(result.entry?.focusedBlockId).toBe('block-2');
+    expect(result.entry?.zoomedRootId).toBe('page-a');
+    expect(result.entry?.focusedBlockId).toBe('block-1');
   });
 });

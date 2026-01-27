@@ -31,10 +31,9 @@ export function Breadcrumb(props: BreadcrumbProps) {
   const ancestors = () => getAncestors(props.blockId);
 
   const handleZoomTo = (blockId: string | null) => {
-    // FLO-180: Push current location before zooming via breadcrumb
-    const currentZoom = paneStore.getZoomedRootId(props.paneId);
-    paneStore.pushNavigation(props.paneId, currentZoom);
+    // FLO-180: Zoom first, then push destination (standard browser model)
     paneStore.setZoomedRoot(props.paneId, blockId);
+    paneStore.pushNavigation(props.paneId, blockId);
   };
 
   return (

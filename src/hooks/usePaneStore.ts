@@ -107,10 +107,13 @@ function createPaneStore() {
   };
 
   /**
-   * Push current location to history (call BEFORE navigating away)
+   * Push a location to history (call AFTER navigating to destination)
+   *
+   * Standard browser model: entries contain visited locations.
+   * Push the DESTINATION you just navigated TO, not where you came from.
    *
    * @param paneId - The pane to push history for
-   * @param zoomedRootId - Current zoom location (null = roots view)
+   * @param zoomedRootId - The destination location (null = roots view)
    * @param focusedBlockId - Optional focused block for better restoration
    */
   const pushNavigation = (

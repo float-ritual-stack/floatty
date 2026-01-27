@@ -5,17 +5,19 @@
  * All functions are pure - return new state, no mutations.
  * This follows the same pattern as useBlockInput's determineKeyAction().
  *
- * History Model:
- * - Browser-like: entries are "places I came FROM"
- * - Push CURRENT location BEFORE navigating away
- * - Back = restore previous entry, Forward = restore next entry
- * - currentIndex points to "where we would go on back", not "where we are"
+ * History Model (Standard Browser Model):
+ * - entries contain actual visited locations
+ * - currentIndex points to the CURRENT location in the stack
+ * - Push DESTINATION after navigating (stores where you ARE now)
+ * - Back = decrement index, return that entry
+ * - Forward = increment index, return that entry
  *
  * Example:
- *   Start at null (roots view)
- *   Click [[PageA]] → push(null) → zoom to PageA
- *   Click [[PageB]] → push(PageA) → zoom to PageB
- *   Cmd+[ → goBack → restores PageA, currentIndex decremented
+ *   Start at roots (null), push(null) → entries=[null], index=0
+ *   Click [[PageA]], push(PageA) → entries=[null, PageA], index=1
+ *   Click [[PageB]], push(PageB) → entries=[null, PageA, PageB], index=2
+ *   Cmd+[ → goBack → index=1, return PageA
+ *   Cmd+] → goForward → index=2, return PageB
  */
 
 // Default max entries (browser uses ~50)
@@ -40,13 +42,13 @@ export interface NavigationState {
   /** Stack of navigation entries (oldest first) */
   entries: NavigationEntry[];
   /**
-   * Current position in history stack
-   * -1 = no history (or navigated forward past all entries)
-   * 0..length-1 = valid index for goBack
+   * Current position in history stack (points to current location)
+   * -1 = no history yet
+   * 0..length-1 = valid position
    *
-   * After pushNavigation: currentIndex = entries.length - 1
-   * After goBack: currentIndex decremented (if > 0)
-   * After goForward: currentIndex incremented (if < entries.length - 1)
+   * After pushNavigation: currentIndex = entries.length - 1 (at new entry)
+   * After goBack: currentIndex decremented, return entries[newIndex]
+   * After goForward: currentIndex incremented, return entries[newIndex]
    */
   currentIndex: number;
 }
@@ -70,7 +72,7 @@ export function isSameLocation(a: NavigationEntry, b: NavigationEntry): boolean 
 }
 
 /**
- * Push a new navigation entry (before navigating away)
+ * Push a new navigation entry (the destination you just navigated TO)
  *
  * Behavior:
  * - Discards any forward history (entries after currentIndex)
@@ -78,7 +80,7 @@ export function isSameLocation(a: NavigationEntry, b: NavigationEntry): boolean 
  * - Trims to maxSize (oldest entries removed first)
  *
  * @param state Current navigation state
- * @param entry Entry to push (typically current location before navigating)
+ * @param entry Entry to push (the DESTINATION location you just arrived at)
  * @param maxSize Maximum entries to keep (default: 50)
  * @returns New state with entry added
  */
@@ -93,14 +95,14 @@ export function pushNavigation(
     ? state.entries.slice(0, state.currentIndex + 1)
     : [];
 
-  // Deduplicate: don't push if same location as most recent entry
-  const lastEntry = baseEntries[baseEntries.length - 1];
-  if (lastEntry && isSameLocation(lastEntry, entry)) {
+  // Deduplicate: don't push if same location as current entry
+  const currentEntry = baseEntries[baseEntries.length - 1];
+  if (currentEntry && isSameLocation(currentEntry, entry)) {
     // Same location - don't add duplicate, but update focused block if provided
-    if (entry.focusedBlockId && entry.focusedBlockId !== lastEntry.focusedBlockId) {
+    if (entry.focusedBlockId && entry.focusedBlockId !== currentEntry.focusedBlockId) {
       const updatedEntries = [...baseEntries];
       updatedEntries[updatedEntries.length - 1] = {
-        ...lastEntry,
+        ...currentEntry,
         focusedBlockId: entry.focusedBlockId,
         timestamp: entry.timestamp,
       };
@@ -144,13 +146,13 @@ export interface NavigationResult {
  * @returns New state and entry to restore (null if at start of history)
  */
 export function goBack(state: NavigationState): NavigationResult {
-  // Can't go back if no history or already at start
-  if (state.currentIndex < 0 || state.entries.length === 0) {
+  // Can't go back if no history or already at start (index 0 is first entry)
+  if (state.currentIndex <= 0 || state.entries.length === 0) {
     return { state, entry: null };
   }
 
-  const entry = state.entries[state.currentIndex];
   const newIndex = state.currentIndex - 1;
+  const entry = state.entries[newIndex];
 
   return {
     state: {
@@ -186,17 +188,17 @@ export function goForward(state: NavigationState): NavigationResult {
 }
 
 /**
- * Check if we can go back
+ * Check if we can go back (have history before current position)
  */
 export function canGoBack(state: NavigationState): boolean {
-  return state.currentIndex >= 0 && state.entries.length > 0;
+  return state.currentIndex > 0 && state.entries.length > 1;
 }
 
 /**
- * Check if we can go forward
+ * Check if we can go forward (have history after current position)
  */
 export function canGoForward(state: NavigationState): boolean {
-  return state.currentIndex < state.entries.length - 1;
+  return state.currentIndex < state.entries.length - 1 && state.currentIndex >= 0;
 }
 
 /**

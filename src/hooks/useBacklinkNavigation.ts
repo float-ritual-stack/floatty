@@ -259,15 +259,14 @@ export function navigateToPage(
     }
   }
 
-  // FLO-180: Push current location before zooming (only for same-pane navigation)
-  // New split panes get empty history, so only push for existing pane
-  if (splitDirection === 'none') {
-    const currentZoom = paneStore.getZoomedRootId(paneId);
-    paneStore.pushNavigation(paneId, currentZoom);
-  }
-
   // Zoom to the page
   paneStore.setZoomedRoot(targetPaneId, page.id);
+
+  // FLO-180: Push DESTINATION after navigating (standard browser model)
+  // New split panes get empty history, so only push for existing pane
+  if (splitDirection === 'none') {
+    paneStore.pushNavigation(paneId, page.id);
+  }
 
   // Determine focus target: first child (create if needed)
   let focusTargetId: string | null = null;
