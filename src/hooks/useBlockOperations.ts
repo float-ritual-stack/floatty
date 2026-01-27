@@ -47,6 +47,14 @@ export function useBlockOperations() {
       // No editable children - fall through to find next sibling
     }
 
+    // 1b. SPECIAL CASE: At zoomed root with children (even if collapsed)
+    // Zooming implies intent to navigate into children, so allow navigation
+    // This is a safety net if collapse state gets out of sync with zoom
+    if (id === zoomedRootId && block.childIds.length > 0) {
+      const firstEditableChild = block.childIds.find(isEditableBlock);
+      if (firstEditableChild) return firstEditableChild;
+    }
+
     // 2. Otherwise, find next sibling or ancestor's next sibling
     // BUT stop at zoom boundary - don't climb above zoomed root
     let currentId = id;
