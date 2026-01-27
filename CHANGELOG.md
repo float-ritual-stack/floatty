@@ -2,6 +2,25 @@
 
 All notable changes to floatty are documented here.
 
+## [0.6.0] - 2026-01-27
+
+### New Features
+
+- **Scoped expand keybinds** (PR #101) - `⌘E` now expands focused subtree only instead of entire outline
+  - Fixes jank with large outlines (2,774+ root blocks)
+  - `⌘⇧E` provides global expand (all roots, capped at depth 3)
+  - `⌘⇧0` adds "homebase reset" to collapse all to `initial_collapse_depth`
+  - Config is now cached at startup for keybind access
+
+- **Block timestamps in API** (PR #100) - `createdAt`/`updatedAt` exposed in floatty-server `/api/v1/blocks` response
+  - Enables age-based queries and sorting
+
+### Documentation
+
+- Added "Permeable Boundaries" section to PHILOSOPHY.md (architectural principle for context boundaries)
+
+---
+
 ## [0.5.1] - 2026-01-26
 
 ### Bug Fixes
