@@ -90,7 +90,11 @@ export function BlockItem(props: BlockItemProps) {
 
   const block = createMemo(() => store.blocks[props.id]);
   const isFocused = createMemo(() => props.focusedBlockId === props.id);
-  const isCollapsed = createMemo(() => paneStore.isCollapsed(props.paneId, props.id, block()?.collapsed || false));
+  const isCollapsed = createMemo(() => {
+    const b = block();
+    const defaultCollapsed = b?.collapsed || false;
+    return paneStore.isCollapsed(props.paneId, props.id, defaultCollapsed);
+  });
   let contentRef: HTMLDivElement | undefined;
 
   // Local display content - updated immediately on input for responsive overlay

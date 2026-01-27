@@ -127,3 +127,41 @@ const handleKeyDown = (e: KeyboardEvent) => {
 - "Impossible" state where component shows X but handler acts on Y
 
 **Real example**: Nested zoom navigation. After zooming parent → child, keyboard handler still used parent's block ID because `blockId: props.id` was captured at mount.
+
+## 7. Effect Dependency Leaks Through Function Calls (CRITICAL)
+
+**The trap**: `createEffect` tracks ALL reactive reads during execution, including reads inside called functions. If your effect calls a function that reads from a store, you just created a dependency on that store.
+
+**When this bites you**: Effect should run on signal A change, but also runs on unrelated signal B change because an internal function reads B.
+
+```typescript
+// ❌ BROKEN - effect runs on EVERY block content change
+createEffect(() => {
+  const zoomTarget = zoomedRootId();  // Intended dependency
+  if (zoomTarget) {
+    collapse.expandToDepth(zoomTarget, 2);  // ← reads block store internally!
+  }
+});
+// expandToDepth walks tree, reads block.childIds → effect depends on block store
+// User types → store update → effect re-runs → resets collapse state
+
+// ✅ CORRECT - use on() to explicitly declare dependencies
+import { on } from 'solid-js';
+
+createEffect(on(zoomedRootId, (zoomTarget, prevTarget) => {
+  if (zoomTarget && zoomTarget !== prevTarget) {
+    collapse.expandToDepth(zoomTarget, 2);  // Store reads ignored
+  }
+}));
+```
+
+**Why `on()` works**: It tells SolidJS "only track this specific signal, ignore everything else accessed during execution."
+
+**Rule**: When an effect should only respond to specific signals but calls functions that read other reactive state, wrap with `on()`.
+
+**Symptoms of this bug**:
+- Effect runs far more often than expected
+- State resets unexpectedly when editing unrelated data
+- Y.Doc content updates trigger unrelated UI effects
+
+**Real example**: Auto-expand on zoom. Effect ran `expandToDepth` which read block store → effect became dependent on block content → every keystroke reset collapse state.

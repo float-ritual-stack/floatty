@@ -17,7 +17,7 @@
 import { createContext, useContext, onMount, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { blockStore as realBlockStore, setAutoExecuteHandler } from '../hooks/useBlockStore';
-import { paneStore as realPaneStore } from '../hooks/usePaneStore';
+import { paneStore as realPaneStore, type NavigationEntry } from '../hooks/usePaneStore';
 import type { Block } from '../lib/blockTypes';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 
@@ -62,6 +62,15 @@ export interface PaneStoreInterface {
   setCollapsed: (paneId: string, blockId: string, collapsed: boolean) => void;
   getZoomedRootId: (paneId: string) => string | null;
   setZoomedRoot: (paneId: string, blockId: string | null) => void;
+  // FLO-77: Focused block tracking
+  getFocusedBlockId: (paneId: string) => string | null;
+  setFocusedBlockId: (paneId: string, blockId: string | null) => void;
+  // FLO-180: Navigation history
+  pushNavigation: (paneId: string, zoomedRootId: string | null, focusedBlockId?: string) => void;
+  goBack: (paneId: string, blockExists: (blockId: string) => boolean) => NavigationEntry | null;
+  goForward: (paneId: string, blockExists: (blockId: string) => boolean) => NavigationEntry | null;
+  canGoBack: (paneId: string) => boolean;
+  canGoForward: (paneId: string) => boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -209,6 +218,15 @@ export function createMockPaneStore(overrides: Partial<PaneStoreInterface> = {})
     setCollapsed: () => {},
     getZoomedRootId: () => null,
     setZoomedRoot: () => {},
+    // FLO-77: Focused block tracking
+    getFocusedBlockId: () => null,
+    setFocusedBlockId: () => {},
+    // FLO-180: Navigation history
+    pushNavigation: () => {},
+    goBack: () => null,
+    goForward: () => null,
+    canGoBack: () => false,
+    canGoForward: () => false,
     ...overrides,
   };
 }

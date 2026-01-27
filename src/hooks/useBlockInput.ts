@@ -301,10 +301,13 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       case 'none':
         return;
 
-      case 'zoom_out':
+      case 'zoom_out': {
         e.preventDefault();
+        // FLO-180: Zoom out to roots, then push destination (standard browser model)
         paneStore.setZoomedRoot(deps.paneId, null);
+        paneStore.pushNavigation(deps.paneId, null, deps.getBlockId());
         return;
+      }
 
       case 'zoom_in': {
         e.preventDefault();
@@ -327,7 +330,9 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         const currentZoom = paneStore.getZoomedRootId(deps.paneId);
         if (currentZoom === deps.getBlockId()) {
           // Already zoomed into this block - zoom out
+          // FLO-180: Zoom out, then push destination (standard browser model)
           paneStore.setZoomedRoot(deps.paneId, null);
+          paneStore.pushNavigation(deps.paneId, null, deps.getBlockId());
           return;
         }
 
@@ -335,6 +340,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         if (block.childIds.length === 0) {
           const newChildId = store.createBlockInside(deps.getBlockId());
           paneStore.setZoomedRoot(deps.paneId, deps.getBlockId());
+          // FLO-180: Push destination AFTER zoom (standard browser model)
+          paneStore.pushNavigation(deps.paneId, deps.getBlockId(), deps.getBlockId());
           if (newChildId) {
             requestAnimationFrame(() => {
               requestAnimationFrame(() => deps.onFocus(newChildId));
@@ -342,6 +349,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           }
         } else {
           paneStore.setZoomedRoot(deps.paneId, deps.getBlockId());
+          // FLO-180: Push destination AFTER zoom (standard browser model)
+          paneStore.pushNavigation(deps.paneId, deps.getBlockId(), deps.getBlockId());
         }
         return;
       }

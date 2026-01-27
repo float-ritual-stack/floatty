@@ -18,6 +18,7 @@ Critical anti-patterns that will break floatty.
 - Clear refs in `onCleanup` for components that might re-render
 - Use `<Show>` for heavy components that should survive visibility changes
 - Pass prop values to hooks that create event handlers (use getters instead - `getBlockId: () => props.id` not `blockId: props.id` - SolidJS updates props on same instance, closures go stale)
+- Use bare `createEffect` when calling functions that read other stores (use `on()` to explicitly declare dependencies - function internals create implicit deps, effect runs on unrelated changes)
 
 ## Keyboard/Selection
 

@@ -2,6 +2,18 @@
 
 All notable changes to floatty are documented here.
 
+## [0.6.2] - 2026-01-27
+
+### Bug Fixes
+
+- **Nested zoom navigation**: Fixed keyboard navigation after zooming into a child block. Changed `blockId: props.id` to `getBlockId: () => props.id` to ensure event handlers read fresh props when SolidJS updates the same component instance. (PR #102)
+
+### Documentation
+
+- Added SolidJS stale closure pattern to rules documentation (`solidjs-patterns.md`, `do-not.md`) to prevent similar bugs.
+
+---
+
 ## [0.6.1] - 2026-01-27
 
 ### Bug Fixes

@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, onMount, onCleanup, Show } from 'solid-js';
+import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, on } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
@@ -157,14 +157,16 @@ export function Outliner(props: OutlinerProps) {
 
   // Auto-expand when zooming into a block
   // This ensures collapsed blocks become navigable when you Cmd+Enter into them
-  createEffect(() => {
-    const zoomTarget = zoomedRootId();
-    if (zoomTarget) {
+  // CRITICAL: Use on() to track ONLY zoomedRootId changes, not block content updates.
+  // Without on(), expandToDepth's internal store reads create spurious dependencies,
+  // causing the effect to re-run on every Y.Doc content update (FLO-180 bug fix).
+  createEffect(on(zoomedRootId, (zoomTarget, prevTarget) => {
+    if (zoomTarget && zoomTarget !== prevTarget) {
       // Use initial_collapse_depth from config, fallback to 2
       const depth = cachedConfig()?.initial_collapse_depth ?? 2;
       collapse.expandToDepth(zoomTarget, depth);
     }
-  });
+  }));
 
   // FLO-74: Global keyboard handler for selection operations
   const handleOutlinerKeyDown = (e: KeyboardEvent) => {
@@ -376,6 +378,32 @@ export function Outliner(props: OutlinerProps) {
           e.preventDefault();
           exportToMarkdown();
         },
+
+        // FLO-180: Navigation history (back/forward)
+        '$mod+[': (e) => {
+          e.preventDefault();
+          const blockExists = (id: string) => !!store.getBlock(id);
+          const entry = paneStore.goBack(props.paneId, blockExists);
+          if (entry) {
+            console.log('[FLO-180] Navigated back to:', entry.zoomedRootId ?? 'roots');
+            // Restore focus after DOM updates
+            requestAnimationFrame(() => {
+              collapse.ensureVisibleFocus();
+            });
+          }
+        },
+        '$mod+]': (e) => {
+          e.preventDefault();
+          const blockExists = (id: string) => !!store.getBlock(id);
+          const entry = paneStore.goForward(props.paneId, blockExists);
+          if (entry) {
+            console.log('[FLO-180] Navigated forward to:', entry.zoomedRootId ?? 'roots');
+            // Restore focus after DOM updates
+            requestAnimationFrame(() => {
+              collapse.ensureVisibleFocus();
+            });
+          }
+        },
       });
       onCleanup(unsubscribe);
     }
@@ -483,7 +511,11 @@ export function Outliner(props: OutlinerProps) {
             />
             {/* LinkedReferences: show when zoomed into a page under pages:: */}
             <Show when={isPageBlock(zoomedRootId()!)}>
-              <LinkedReferences pageBlockId={zoomedRootId()!} paneId={props.paneId} />
+              <LinkedReferences
+                pageBlockId={zoomedRootId()!}
+                paneId={props.paneId}
+                onFocusBlock={handleFocus}
+              />
             </Show>
           </Show>
         </Show>
