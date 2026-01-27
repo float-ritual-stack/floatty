@@ -197,6 +197,10 @@ export function BlockItem(props: BlockItemProps) {
             // setTimeout(0) pushes past any queued scroll tasks
             setTimeout(() => {
               container.style.overflow = originalOverflow || '';
+              // FLO-XXX: Scroll focused block into view if outside viewport
+              // 'nearest' = minimal scroll (no movement if already visible)
+              // 'instant' = no animation (rapid keyboard nav would lag with smooth)
+              contentRef?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
             }, 0);
           } else {
             contentRef?.focus({ preventScroll: true });
