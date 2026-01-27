@@ -2,6 +2,29 @@
 
 All notable changes to floatty are documented here.
 
+## [0.7.1] - 2026-01-27
+
+### Bug Fixes
+
+- **Outliner**: Back navigation (`⌘[`) now restores focus to the exact block you navigated from, not just the zoom level (FLO-211, PR #104)
+  - Added `originBlockId` capture to `zoomTo()` API
+  - `expandAncestors()` ensures restored block is visible even if parent was collapsed
+  - Fixed memory leak in `historyNavigationPending` Set cleanup
+
+---
+
+## [0.7.0] - 2026-01-27
+
+### New Features
+
+- **Navigation history** (`⌘[`/`⌘]`) - Browser-style back/forward navigation in the outliner (FLO-180, PR #103)
+  - Each pane maintains its own navigation history (up to 50 entries)
+  - History skips deleted blocks automatically
+  - History persists across sessions
+  - Split panes start with empty history (like browser tab duplication)
+
+---
+
 ## [0.6.2] - 2026-01-27
 
 ### Bug Fixes
