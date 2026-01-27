@@ -114,6 +114,18 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
   };
 
   /**
+   * FLO-211: Expand all ancestors of a block to make it visible.
+   * Used to restore focus to a previously-visible block after back/forward navigation.
+   */
+  const expandAncestors = (blockId: string) => {
+    const ancestors = getAncestors(blockId);
+    for (const ancestorId of ancestors) {
+      // Expand each ancestor (set collapsed = false)
+      paneStore.setCollapsed(paneId, ancestorId, false);
+    }
+  };
+
+  /**
    * After expand/collapse, ensure focus is on a visible block
    * If current focused block is hidden, find nearest visible ancestor
    */
@@ -156,5 +168,6 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
     expandToDepth,
     collapseToDepth,
     ensureVisibleFocus,
+    expandAncestors,  // FLO-211: Used for focus restoration after back/forward
   };
 }

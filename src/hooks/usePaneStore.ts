@@ -20,6 +20,10 @@ import {
   type NavigationEntry,
 } from '../lib/navigationHistory';
 
+// FLO-211: Track panes with pending history navigation
+// Used to skip auto-expand on back/forward (preserve user's collapse state)
+const historyNavigationPending = new Set<string>();
+
 // Re-export types for consumers
 export type { NavigationState, NavigationEntry };
 
@@ -156,6 +160,8 @@ function createPaneStore() {
       ) {
         // Valid entry found - update state and zoom
         setState('navigationHistory', paneId, result.state);
+        // FLO-211: Skip history push (we're traversing history) and auto-expand
+        historyNavigationPending.add(paneId);
         setZoomedRoot(paneId, result.entry.zoomedRootId);
 
         // Restore focused block if it exists
@@ -200,6 +206,8 @@ function createPaneStore() {
       ) {
         // Valid entry found - update state and zoom
         setState('navigationHistory', paneId, result.state);
+        // FLO-211: Skip history push (we're traversing history) and auto-expand
+        historyNavigationPending.add(paneId);
         setZoomedRoot(paneId, result.entry.zoomedRootId);
 
         // Restore focused block if it exists
@@ -232,6 +240,70 @@ function createPaneStore() {
    */
   const canGoForward = (paneId: string): boolean => {
     return canGoForwardPure(getNavigationHistory(paneId));
+  };
+
+  /**
+   * FLO-211: Check and consume history navigation flag
+   * Used by Outliner to skip auto-expand on back/forward navigation.
+   * Returns true if this zoom change came from history navigation.
+   */
+  const consumeHistoryNavigation = (paneId: string): boolean => {
+    if (historyNavigationPending.has(paneId)) {
+      historyNavigationPending.delete(paneId);
+      return true;
+    }
+    return false;
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // FLO-211: Unified Navigation API
+  // Centralizes zoom + history push + auto-expand coordination
+  // ═══════════════════════════════════════════════════════════════
+
+  interface ZoomToOptions {
+    /** Don't push to history (used by goBack/goForward) */
+    skipHistory?: boolean;
+    /** Don't auto-expand (used by history navigation) */
+    skipAutoExpand?: boolean;
+    /** FLO-211: Block where navigation started (e.g., wikilink container) */
+    originBlockId?: string;
+  }
+
+  /**
+   * Navigate to a zoom target with consistent history and expand behavior.
+   *
+   * This is the preferred API for navigation - use this instead of calling
+   * setZoomedRoot + pushNavigation separately.
+   *
+   * @param paneId - The pane to navigate
+   * @param targetBlockId - The block to zoom into (null = roots view)
+   * @param options - Control history push and auto-expand behavior
+   */
+  const zoomTo = (
+    paneId: string,
+    targetBlockId: string | null,
+    options: ZoomToOptions = {}
+  ) => {
+    const { skipHistory = false, skipAutoExpand = false, originBlockId } = options;
+
+    // Push current location to history BEFORE navigating (browser model)
+    // FLO-211: Capture focus so we can restore it on back navigation
+    if (!skipHistory) {
+      const currentZoom = getZoomedRootId(paneId);
+      // Use originBlockId if provided (click navigation), else paneStore focus
+      const focusToCapture = originBlockId ?? getFocusedBlockId(paneId) ?? undefined;
+
+      pushNavigation(paneId, currentZoom, focusToCapture);
+      pushNavigation(paneId, targetBlockId);  // Destination has no focus yet
+    }
+
+    // Mark to skip auto-expand if requested
+    if (skipAutoExpand) {
+      historyNavigationPending.add(paneId);
+    }
+
+    // Perform the zoom
+    setZoomedRoot(paneId, targetBlockId);
   };
 
   /**
@@ -391,6 +463,9 @@ function createPaneStore() {
     goForward,
     canGoBack,
     canGoForward,
+    // FLO-211: Unified navigation API
+    zoomTo,
+    consumeHistoryNavigation,
     // Clone state
     clonePaneState,
     // Cleanup

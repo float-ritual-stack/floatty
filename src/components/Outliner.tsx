@@ -161,6 +161,12 @@ export function Outliner(props: OutlinerProps) {
   // Without on(), expandToDepth's internal store reads create spurious dependencies,
   // causing the effect to re-run on every Y.Doc content update (FLO-180 bug fix).
   createEffect(on(zoomedRootId, (zoomTarget, prevTarget) => {
+    // FLO-211: Skip auto-expand for history navigation (back/forward)
+    // This preserves the user's collapse state when returning to a previous location
+    if (paneStore.consumeHistoryNavigation(props.paneId)) {
+      return;
+    }
+
     if (zoomTarget && zoomTarget !== prevTarget) {
       // Use initial_collapse_depth from config, fallback to 2
       const depth = cachedConfig()?.initial_collapse_depth ?? 2;
@@ -379,16 +385,22 @@ export function Outliner(props: OutlinerProps) {
           exportToMarkdown();
         },
 
-        // FLO-180: Navigation history (back/forward)
+        // FLO-180/211: Navigation history (back/forward) with focus restoration
         '$mod+[': (e) => {
           e.preventDefault();
           const blockExists = (id: string) => !!store.getBlock(id);
           const entry = paneStore.goBack(props.paneId, blockExists);
           if (entry) {
-            console.log('[FLO-180] Navigated back to:', entry.zoomedRootId ?? 'roots');
-            // Restore focus after DOM updates
+            console.log('[FLO-180] Navigated back to:', entry.zoomedRootId ?? 'roots', 'focus:', entry.focusedBlockId);
+            // FLO-211: Restore focus after DOM updates
             requestAnimationFrame(() => {
-              collapse.ensureVisibleFocus();
+              if (entry.focusedBlockId && blockExists(entry.focusedBlockId)) {
+                // Expand path to focused block, then let BlockItem's effect handle focus
+                collapse.expandAncestors(entry.focusedBlockId);
+              } else {
+                // Fallback for entries without focus (old history or deleted blocks)
+                collapse.ensureVisibleFocus();
+              }
             });
           }
         },
@@ -397,10 +409,16 @@ export function Outliner(props: OutlinerProps) {
           const blockExists = (id: string) => !!store.getBlock(id);
           const entry = paneStore.goForward(props.paneId, blockExists);
           if (entry) {
-            console.log('[FLO-180] Navigated forward to:', entry.zoomedRootId ?? 'roots');
-            // Restore focus after DOM updates
+            console.log('[FLO-180] Navigated forward to:', entry.zoomedRootId ?? 'roots', 'focus:', entry.focusedBlockId);
+            // FLO-211: Restore focus after DOM updates
             requestAnimationFrame(() => {
-              collapse.ensureVisibleFocus();
+              if (entry.focusedBlockId && blockExists(entry.focusedBlockId)) {
+                // Expand path to focused block, then let BlockItem's effect handle focus
+                collapse.expandAncestors(entry.focusedBlockId);
+              } else {
+                // Fallback for entries without focus (old history or deleted blocks)
+                collapse.ensureVisibleFocus();
+              }
             });
           }
         },
