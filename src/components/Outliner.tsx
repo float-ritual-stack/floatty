@@ -155,6 +155,17 @@ export function Outliner(props: OutlinerProps) {
     getContainerRef: () => containerRef,
   });
 
+  // Auto-expand when zooming into a block
+  // This ensures collapsed blocks become navigable when you Cmd+Enter into them
+  createEffect(() => {
+    const zoomTarget = zoomedRootId();
+    if (zoomTarget) {
+      // Use initial_collapse_depth from config, fallback to 2
+      const depth = cachedConfig()?.initial_collapse_depth ?? 2;
+      collapse.expandToDepth(zoomTarget, depth);
+    }
+  });
+
   // FLO-74: Global keyboard handler for selection operations
   const handleOutlinerKeyDown = (e: KeyboardEvent) => {
     const selected = selection.selectedBlockIds();

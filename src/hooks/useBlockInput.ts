@@ -22,8 +22,9 @@ import type { Block } from '../lib/blockTypes';
 // ═══════════════════════════════════════════════════════════════
 
 export interface BlockInputDependencies {
-  // Block data
-  blockId: string;
+  // Block data - use getter to stay reactive when props change
+  // (critical for zoomed root BlockItem where props.id changes on zoom)
+  getBlockId: () => string;
   paneId: string;
   getBlock: () => Block | undefined;
   isCollapsed: () => boolean;
@@ -288,9 +289,9 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         cursorOffset: deps.cursor.getOffset(),
         selectionCollapsed: deps.cursor.isSelectionCollapsed(),
         zoomedRootId: paneStore.getZoomedRootId(deps.paneId),
-        findPrevId: () => deps.findPrevVisibleBlock(deps.blockId, deps.paneId),
-        findNextId: () => deps.findNextVisibleBlock(deps.blockId, deps.paneId),
-        findFocusAfterDelete: () => deps.findFocusAfterDelete(deps.blockId, deps.paneId),
+        findPrevId: () => deps.findPrevVisibleBlock(deps.getBlockId(), deps.paneId),
+        findNextId: () => deps.findNextVisibleBlock(deps.getBlockId(), deps.paneId),
+        findFocusAfterDelete: () => deps.findFocusAfterDelete(deps.getBlockId(), deps.paneId),
         content: block.content,
       }
     );
@@ -324,7 +325,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
         // No wikilink - toggle zoom behavior
         const currentZoom = paneStore.getZoomedRootId(deps.paneId);
-        if (currentZoom === deps.blockId) {
+        if (currentZoom === deps.getBlockId()) {
           // Already zoomed into this block - zoom out
           paneStore.setZoomedRoot(deps.paneId, null);
           return;
@@ -332,33 +333,33 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
         // Zoom into this block's subtree
         if (block.childIds.length === 0) {
-          const newChildId = store.createBlockInside(deps.blockId);
-          paneStore.setZoomedRoot(deps.paneId, deps.blockId);
+          const newChildId = store.createBlockInside(deps.getBlockId());
+          paneStore.setZoomedRoot(deps.paneId, deps.getBlockId());
           if (newChildId) {
             requestAnimationFrame(() => {
               requestAnimationFrame(() => deps.onFocus(newChildId));
             });
           }
         } else {
-          paneStore.setZoomedRoot(deps.paneId, deps.blockId);
+          paneStore.setZoomedRoot(deps.paneId, deps.getBlockId());
         }
         return;
       }
 
       case 'toggle_collapse':
         e.preventDefault();
-        paneStore.toggleCollapsed(deps.paneId, deps.blockId);
+        paneStore.toggleCollapsed(deps.paneId, deps.getBlockId(), deps.getBlock()?.collapsed || false);
         return;
 
       case 'delete_block':
         e.preventDefault();
-        store.deleteBlock(deps.blockId);
+        store.deleteBlock(deps.getBlockId());
         if (keyAction.prevId) deps.onFocus(keyAction.prevId);
         return;
 
       case 'move_block_up': {
         e.preventDefault();
-        store.moveBlockUp(deps.blockId);
+        store.moveBlockUp(deps.getBlockId());
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         const contentRef = deps.getContentRef();
         requestAnimationFrame(() => {
@@ -369,7 +370,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'move_block_down': {
         e.preventDefault();
-        store.moveBlockDown(deps.blockId);
+        store.moveBlockDown(deps.getBlockId());
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         const contentRef = deps.getContentRef();
         requestAnimationFrame(() => {
@@ -401,10 +402,10 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         if (keyAction.prevId && deps.onSelect) {
           if (!deps.selectionAnchor) {
             // First Shift+Arrow: select current, set anchor, move focus only
-            deps.onSelect(deps.blockId, 'anchor');
+            deps.onSelect(deps.getBlockId(), 'anchor');
           } else {
             // Subsequent: extend range to include THIS block
-            deps.onSelect(deps.blockId, 'range');
+            deps.onSelect(deps.getBlockId(), 'range');
           }
           deps.onFocus(keyAction.prevId);
         } else if (keyAction.prevId) {
@@ -417,10 +418,10 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         if (keyAction.nextId && deps.onSelect) {
           if (!deps.selectionAnchor) {
             // First Shift+Arrow: select current, set anchor, move focus only
-            deps.onSelect(deps.blockId, 'anchor');
+            deps.onSelect(deps.getBlockId(), 'anchor');
           } else {
             // Subsequent: extend range to include THIS block
-            deps.onSelect(deps.blockId, 'range');
+            deps.onSelect(deps.getBlockId(), 'range');
           }
           deps.onFocus(keyAction.nextId);
         } else if (keyAction.nextId) {
@@ -429,9 +430,14 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         return;
 
       case 'create_trailing_block': {
-        // FLO-92: Create sibling block after current when at tree end
+        // FLO-92: Create block when at tree end (respects zoom scope)
         e.preventDefault();
-        const newId = store.createBlockAfter(deps.blockId);
+        const targetParent = keyAction.parentId;
+        // If targeting a specific parent (zoom context), create as last child
+        // Otherwise fall back to creating sibling of current block
+        const newId = targetParent
+          ? store.createBlockInside(targetParent)
+          : store.createBlockAfter(deps.getBlockId());
         if (newId) deps.onFocus(newId);
         return;
       }
@@ -451,7 +457,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           );
 
           // Execute through hook-aware executor
-          executeHandler(handler, deps.blockId, block.content, {
+          executeHandler(handler, deps.getBlockId(), block.content, {
             createBlockInside: store.createBlockInside,
             createBlockInsideAtTop: store.createBlockInsideAtTop,
             createBlockAfter: store.createBlockAfter,
@@ -475,14 +481,14 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'create_block_before': {
         e.preventDefault();
-        const newId = store.createBlockBefore(deps.blockId);
+        const newId = store.createBlockBefore(deps.getBlockId());
         if (newId) deps.onFocus(newId);
         return;
       }
 
       case 'create_block_inside': {
         e.preventDefault();
-        const newId = store.createBlockInsideAtTop(deps.blockId);
+        const newId = store.createBlockInsideAtTop(deps.getBlockId());
         if (newId) deps.onFocus(newId);
         return;
       }
@@ -491,7 +497,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         e.preventDefault();
         // Flush pending content before split (debounced updates can race with store operations)
         deps.flushContentUpdate();
-        const newId = store.splitBlock(deps.blockId, keyAction.offset);
+        const newId = store.splitBlock(deps.getBlockId(), keyAction.offset);
         if (newId) deps.onFocus(newId);
         return;
       }
@@ -500,17 +506,17 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         e.preventDefault();
         // Flush pending content before split (debounced updates can race with store operations)
         deps.flushContentUpdate();
-        const newId = store.splitBlockToFirstChild(deps.blockId, keyAction.offset);
+        const newId = store.splitBlockToFirstChild(deps.getBlockId(), keyAction.offset);
         if (newId) deps.onFocus(newId);
         return;
       }
 
       case 'indent':
         e.preventDefault();
-        store.indentBlock(deps.blockId);
+        store.indentBlock(deps.getBlockId());
         // FLO-61: After indent, ensure new parent is expanded in this pane
         requestAnimationFrame(() => {
-          const updatedBlock = store.blocks[deps.blockId];
+          const updatedBlock = store.blocks[deps.getBlockId()];
           if (updatedBlock?.parentId) {
             deps.paneStore.setCollapsed(deps.paneId, updatedBlock.parentId, false);
           }
@@ -519,7 +525,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'outdent':
         e.preventDefault();
-        store.outdentBlock(deps.blockId);
+        store.outdentBlock(deps.getBlockId());
         return;
 
       case 'insert_spaces':
@@ -546,7 +552,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           if (toRemove > 0) {
             const newText = text.slice(0, lineStart) + text.slice(lineStart + toRemove);
             contentRef.innerText = newText;
-            store.updateBlockContent(deps.blockId, newText);
+            store.updateBlockContent(deps.getBlockId(), newText);
             deps.cursor.setOffset(Math.max(lineStart, pos - toRemove));
           }
         }
@@ -569,12 +575,12 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           // If block has children, lift them to be siblings after merged block
           // This preserves the subtree when merging expanded blocks
           if (childrenToLift.length > 0) {
-            store.liftChildrenToSiblings(deps.blockId, keyAction.prevId);
+            store.liftChildrenToSiblings(deps.getBlockId(), keyAction.prevId);
           }
 
           // Mutations: merge content and delete (now childless) block
           store.updateBlockContent(keyAction.prevId, prevBlock.content + oldContent);
-          store.deleteBlock(deps.blockId);
+          store.deleteBlock(deps.getBlockId());
 
           // FIX 2: Use queueMicrotask chain (not rAF)
           // 1st microtask: Y.Doc transaction batches

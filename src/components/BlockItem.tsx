@@ -149,8 +149,9 @@ export function BlockItem(props: BlockItemProps) {
   };
 
   // Wire up the keyboard handler hook - single source of truth for keyboard logic
+  // getBlockId is a getter to stay reactive when zoomed root changes (same component, new props)
   const { handleKeyDown } = useBlockInput({
-    blockId: props.id,
+    getBlockId: () => props.id,
     paneId: props.paneId,
     getBlock: () => block(),
     isCollapsed,
@@ -486,7 +487,7 @@ export function BlockItem(props: BlockItemProps) {
           onPointerDown={(e) => {
             e.stopPropagation();
             e.preventDefault();
-            paneStore.toggleCollapsed(props.paneId, props.id);
+            paneStore.toggleCollapsed(props.paneId, props.id, block()?.collapsed || false);
           }}
         >
           {bulletChar()}

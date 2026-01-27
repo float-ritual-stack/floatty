@@ -25,9 +25,10 @@ function createPaneStore() {
     focusedBlockId: {},
   });
 
-  const toggleCollapsed = (paneId: string, blockId: string) => {
+  const toggleCollapsed = (paneId: string, blockId: string, blockDefaultCollapsed: boolean = false) => {
     // Get current value first to ensure proper toggle
-    const currentValue = isCollapsed(paneId, blockId, false);
+    // Must pass the block's own collapsed state as default to match display logic
+    const currentValue = isCollapsed(paneId, blockId, blockDefaultCollapsed);
 
     // Ensure the pane entry exists
     if (!state.collapsed[paneId]) {
