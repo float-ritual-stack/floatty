@@ -46,6 +46,15 @@ export interface PersistedWorkspace {
   collapsedState?: Record<string, Record<string, boolean>>;
   // FLO-77: Focused block ID per pane (optional)
   focusedBlockId?: Record<string, string | null>;
+  // FLO-180: Navigation history per pane (optional, capped at 50 entries)
+  navigationHistory?: Record<string, {
+    entries: Array<{
+      zoomedRootId: string | null;
+      focusedBlockId?: string;
+      timestamp: number;
+    }>;
+    currentIndex: number;
+  }>;
 }
 
 /**
@@ -122,7 +131,8 @@ export function createWorkspacePersistence() {
         zoomedRootIds[paneId] = paneState.zoomedRootId;
       }
       // FLO-77: Pass focusedBlockId to hydration
-      paneStore.hydratePaneState(zoomedRootIds, state.collapsedState, state.focusedBlockId);
+      // FLO-180: Pass navigationHistory to hydration
+      paneStore.hydratePaneState(zoomedRootIds, state.collapsedState, state.focusedBlockId, state.navigationHistory);
 
       console.log(`[WorkspacePersistence] Restored workspace: ${state.tabs.length} tabs`);
       setIsLoaded(true);
@@ -160,6 +170,8 @@ export function createWorkspacePersistence() {
         collapsedState: paneData.collapsed,
         // FLO-77: Include focusedBlockId in persistence
         focusedBlockId: paneData.focusedBlockId,
+        // FLO-180: Include navigationHistory in persistence (capped at 50 entries per pane)
+        navigationHistory: paneData.navigationHistory,
       };
 
       const stateJson = JSON.stringify(state);

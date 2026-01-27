@@ -301,10 +301,14 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       case 'none':
         return;
 
-      case 'zoom_out':
+      case 'zoom_out': {
         e.preventDefault();
+        // FLO-180: Push current location before zooming out
+        const currentZoom = paneStore.getZoomedRootId(deps.paneId);
+        paneStore.pushNavigation(deps.paneId, currentZoom, deps.getBlockId());
         paneStore.setZoomedRoot(deps.paneId, null);
         return;
+      }
 
       case 'zoom_in': {
         e.preventDefault();
@@ -327,9 +331,14 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         const currentZoom = paneStore.getZoomedRootId(deps.paneId);
         if (currentZoom === deps.getBlockId()) {
           // Already zoomed into this block - zoom out
+          // FLO-180: Push current location before zooming out
+          paneStore.pushNavigation(deps.paneId, currentZoom, deps.getBlockId());
           paneStore.setZoomedRoot(deps.paneId, null);
           return;
         }
+
+        // FLO-180: Push current location before zooming into subtree
+        paneStore.pushNavigation(deps.paneId, currentZoom, deps.getBlockId());
 
         // Zoom into this block's subtree
         if (block.childIds.length === 0) {

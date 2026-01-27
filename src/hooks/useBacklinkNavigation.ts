@@ -259,6 +259,13 @@ export function navigateToPage(
     }
   }
 
+  // FLO-180: Push current location before zooming (only for same-pane navigation)
+  // New split panes get empty history, so only push for existing pane
+  if (splitDirection === 'none') {
+    const currentZoom = paneStore.getZoomedRootId(paneId);
+    paneStore.pushNavigation(paneId, currentZoom);
+  }
+
   // Zoom to the page
   paneStore.setZoomedRoot(targetPaneId, page.id);
 

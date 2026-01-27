@@ -70,12 +70,16 @@ export function LinkedReferences(props: LinkedReferencesProps) {
       if (tabId) {
         const newPaneId = layoutStore.splitPane(tabId, splitDir, 'outliner');
         if (newPaneId) {
+          // FLO-180: New pane gets empty history, no push needed
           paneStore.setZoomedRoot(newPaneId, targetId);
           return;
         }
       }
     }
 
+    // FLO-180: Push current location before navigating to backlink
+    const currentZoom = paneStore.getZoomedRootId(props.paneId);
+    paneStore.pushNavigation(props.paneId, currentZoom, props.pageBlockId);
     paneStore.setZoomedRoot(props.paneId, targetId);
   };
 
