@@ -343,6 +343,9 @@ function createPaneStore() {
    * Should be called when a pane is closed to remove orphaned view state
    */
   const removePane = (paneId: string) => {
+    // FLO-211: Clean up pending history navigation flag (module-level Set)
+    historyNavigationPending.delete(paneId);
+
     // Clean up collapsed state
     if (state.collapsed[paneId]) {
       setState('collapsed', paneId, undefined!);
