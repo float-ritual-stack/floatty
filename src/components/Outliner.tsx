@@ -511,7 +511,11 @@ export function Outliner(props: OutlinerProps) {
             />
             {/* LinkedReferences: show when zoomed into a page under pages:: */}
             <Show when={isPageBlock(zoomedRootId()!)}>
-              <LinkedReferences pageBlockId={zoomedRootId()!} paneId={props.paneId} />
+              <LinkedReferences
+                pageBlockId={zoomedRootId()!}
+                paneId={props.paneId}
+                onFocusBlock={handleFocus}
+              />
             </Show>
           </Show>
         </Show>

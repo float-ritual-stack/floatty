@@ -19,6 +19,8 @@ interface LinkedReferencesProps {
   pageBlockId: string;
   /** Current pane ID for navigation */
   paneId: string;
+  /** Callback to focus a block after navigation */
+  onFocusBlock?: (blockId: string) => void;
 }
 
 /**
@@ -80,6 +82,14 @@ export function LinkedReferences(props: LinkedReferencesProps) {
     // FLO-180: Zoom first, then push destination (standard browser model)
     paneStore.setZoomedRoot(props.paneId, targetId);
     paneStore.pushNavigation(props.paneId, targetId, props.pageBlockId);
+
+    // Focus the backlink block so user sees the reference in context
+    if (props.onFocusBlock) {
+      // Double rAF: first for zoom state update, second for DOM render
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => props.onFocusBlock!(backlinkBlock.id));
+      });
+    }
   };
 
   // Keyboard handler for backlink items (Enter/Space to activate)
