@@ -212,12 +212,14 @@ export type SplitDirection = 'none' | 'horizontal' | 'vertical';
  * @param paneId - The current pane ID (tabId derived automatically)
  * @param splitDirection - How to split the pane (default: 'none')
  * @param ephemeral - Create ephemeral/preview pane (default: false)
+ * @param options.originBlockId - FLO-211: Block where navigation started (for focus restoration)
  */
 export function navigateToPage(
   pageName: string,
   paneId: string,
   splitDirection: SplitDirection = 'none',
-  ephemeral: boolean = false
+  ephemeral: boolean = false,
+  options?: { originBlockId?: string }
 ): NavigationResult {
   // Normalize page name
   const normalizedName = pageName.trim();
@@ -259,14 +261,13 @@ export function navigateToPage(
     }
   }
 
-  // Zoom to the page
-  paneStore.setZoomedRoot(targetPaneId, page.id);
-
-  // FLO-180: Push DESTINATION after navigating (standard browser model)
-  // New split panes get empty history, so only push for existing pane
-  if (splitDirection === 'none') {
-    paneStore.pushNavigation(paneId, page.id);
-  }
+  // FLO-211: Use unified zoomTo API for consistent history behavior
+  // New split panes get skipHistory (empty history by design)
+  // Pass originBlockId for focus restoration on back navigation
+  paneStore.zoomTo(targetPaneId, page.id, {
+    skipHistory: splitDirection !== 'none',
+    originBlockId: options?.originBlockId,
+  });
 
   // Determine focus target: first child (create if needed)
   let focusTargetId: string | null = null;

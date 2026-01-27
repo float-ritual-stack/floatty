@@ -425,7 +425,10 @@ export function BlockItem(props: BlockItemProps) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
-    const result = navigateToPage(target, props.paneId, splitDirection, ephemeral);
+    // FLO-211: Pass current block as origin for focus restoration on back navigation
+    const result = navigateToPage(target, props.paneId, splitDirection, ephemeral, {
+      originBlockId: props.id,
+    });
     if (!result.success) {
       console.warn('[BlockItem] Wikilink navigation failed:', result.error);
     } else {

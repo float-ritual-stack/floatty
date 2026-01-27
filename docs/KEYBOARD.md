@@ -137,6 +137,8 @@ type BlockType = 'text' | 'h1' | 'h2' | 'h3' | 'bullet' | 'todo' | 'quote' | 'sh
 |-----|--------|
 | `Cmd+.` | Toggle collapse focused block |
 | `Cmd+Enter` | Zoom into subtree |
+| `Cmd+[` | Go back in navigation history (restores zoom AND focus) |
+| `Cmd+]` | Go forward in navigation history |
 | `Escape` | Zoom out / clear selection |
 | `Cmd+A` | Progressive select (expand on repeat) |
 | `Cmd+E` | Progressive expand (depth +1 on repeat) |

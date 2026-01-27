@@ -178,7 +178,7 @@ Critical rules:
 |------|---------|
 | `useTabStore.ts` | SolidJS store for tab state |
 | `useLayoutStore.ts` | SolidJS store for per-tab split pane layouts |
-| `usePaneStore.ts` | Per-pane view state (collapsed, zoomedRootId) |
+| `usePaneStore.ts` | Per-pane view state (collapsed, zoom, focus, navigation history). Use `zoomTo()` API for navigation. |
 | `useBlockStore.ts` | Block tree CRUD operations (Y.Doc backed) |
 | `useBlockOperations.ts` | Navigation helpers (findNext/Prev, getAncestors) |
 | `useCursor.ts` | DOM cursor abstraction for testability |
@@ -311,6 +311,8 @@ Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, 
 | `⌘.` | Toggle collapse | Toggle collapse |
 | `⌘⌫` | Delete block and subtree | Delete block and subtree |
 | `⌘⇧M` | Export outline to clipboard (markdown) | Export outline to clipboard (markdown) |
+| `⌘[` | Go back (restores zoom AND focus) | Go back (restores zoom AND focus) |
+| `⌘]` | Go forward | Go forward |
 | `Click [[link]]` | Navigate to page | Navigate to page |
 | `⌘Click [[link]]` | Open page in horizontal split | Open page in horizontal split |
 | `⌘⇧Click [[link]]` | Open page in vertical split | Open page in vertical split |

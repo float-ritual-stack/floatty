@@ -49,12 +49,15 @@ export function LinkedReferences(props: LinkedReferencesProps) {
 
   // Handle clicking a wikilink inside a backlink reference
   // Cmd+Click → horizontal split, Cmd+Shift+Click → vertical split
+  // FLO-211: Pass pageBlockId as origin for focus restoration on back navigation
   const handleWikilinkClick = (target: string, e: MouseEvent) => {
     const modKey = isMac ? e.metaKey : e.ctrlKey;
     const splitDirection = modKey
       ? (e.shiftKey ? 'vertical' : 'horizontal')
       : 'none';
-    navigateToPage(target, props.paneId, splitDirection);
+    navigateToPage(target, props.paneId, splitDirection, false, {
+      originBlockId: props.pageBlockId,
+    });
   };
 
   // Handle clicking a backlink item to navigate to its parent context
@@ -79,9 +82,11 @@ export function LinkedReferences(props: LinkedReferencesProps) {
       }
     }
 
-    // FLO-180: Zoom first, then push destination (standard browser model)
-    paneStore.setZoomedRoot(props.paneId, targetId);
-    paneStore.pushNavigation(props.paneId, targetId, props.pageBlockId);
+    // FLO-211: Use unified zoomTo API for consistent history behavior
+    // Pass pageBlockId as origin for focus restoration on back navigation
+    paneStore.zoomTo(props.paneId, targetId, {
+      originBlockId: props.pageBlockId,
+    });
 
     // Focus the backlink block so user sees the reference in context
     if (props.onFocusBlock) {
