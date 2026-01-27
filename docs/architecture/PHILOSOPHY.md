@@ -467,7 +467,7 @@ This isn't philosophy—it's **architectural prescription**.
 
 Content moves through boundaries, transforming at each:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  SCRATCHPAD (messy, fast, personal)                              │
 │    "some random thought ctx::2026-01-26 @ 5pm"                   │
@@ -505,7 +505,7 @@ floatty's `::` syntax IS a boundary marker. `sh::` says "this crosses to shell".
 
 #### Applied Example: float.dispatch
 
-```
+```text
 float.dispatch/
 ├── bridges/          # Boundary: incoming captures
 │   └── auto-inbox/   # Raw arrivals (pre-translation)
