@@ -212,15 +212,23 @@ impl AggregatorConfig {
     }
 
     /// Get the model for ctx:: sidebar parsing.
-    /// Falls back to ollama_model if ctx_model is unset.
+    /// Falls back to ollama_model if ctx_model is unset or empty.
     pub fn get_ctx_model(&self) -> &str {
-        self.ctx_model.as_deref().unwrap_or(&self.ollama_model)
+        self.ctx_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.ollama_model)
     }
 
     /// Get the model for /send conversations.
-    /// Falls back to ollama_model if send_model is unset.
+    /// Falls back to ollama_model if send_model is unset or empty.
     pub fn get_send_model(&self) -> &str {
-        self.send_model.as_deref().unwrap_or(&self.ollama_model)
+        self.send_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.ollama_model)
     }
 }
 

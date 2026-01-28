@@ -4,7 +4,7 @@ The `/send` command triggers a turn-based conversation with a local LLM (via Oll
 
 ## Basic Usage
 
-```
+```text
 ## user
 - your thoughts here
 - another thought
@@ -34,7 +34,7 @@ If `send_model` is not set, falls back to `ollama_model`.
 
 Specify model per-invocation:
 
-```
+```text
 /send:mistral-small:24b
 /send:llama3.3:70b-instruct-q4_K_M
 /send:qwen2.5:7b
@@ -49,7 +49,7 @@ The `/send` handler collects context from sibling blocks within the same convers
 ## Model Recommendations
 
 | Model | Size | Best For |
-|-------|------|----------|
+| ----- | ---- | -------- |
 | `qwen2.5:7b` | 4.7 GB | Quick responses, light hardware |
 | `mistral-small:24b` | 14 GB | Better reasoning, more coherent |
 | `llama3.3:70b-instruct-q4_K_M` | 42 GB | Best quality, needs GPU RAM |

@@ -58,7 +58,8 @@ function parseModelFromContent(content: string): string | undefined {
   const trimmed = content.trim();
   // Match /send:modelname or ::send:modelname
   const match = trimmed.match(/^(?:\/send|::send):(.+)$/i);
-  return match?.[1];
+  const model = match?.[1]?.trim();
+  return model && model.length > 0 ? model : undefined;
 }
 
 export const sendHandler: BlockHandler = {
