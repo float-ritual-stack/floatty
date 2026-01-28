@@ -2,6 +2,23 @@
 
 All notable changes to floatty are documented here.
 
+## [0.7.2] - 2026-01-28
+
+### Features
+
+- **Split Ollama model configuration** - Configure separate models for ctx:: sidebar parsing (`ctx_model`) and `/send` conversations (`send_model`) in config.toml. Inline override with `/send:model-name` syntax. (FLO-216, #105)
+
+### Documentation
+
+- Added `/send` command guide (`docs/guides/SEND.md`)
+- Added `send` topic to help handler
+
+### Maintenance
+
+- Fixed unused import lint warning in workspace.rs
+
+---
+
 ## [0.7.1] - 2026-01-27
 
 ### Bug Fixes

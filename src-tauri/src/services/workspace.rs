@@ -62,8 +62,6 @@ pub fn clear(store: &YDocStore) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Note: These tests would require mocking YDocStore and FloattyDb
     // which is complex. Basic smoke tests to ensure functions exist.
 
