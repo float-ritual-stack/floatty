@@ -19,6 +19,7 @@ const HELP_TOPICS: Record<string, string> = {
   handlers: 'docs/guides/ADDING_HANDLERS.md',
   hooks: 'docs/guides/HOOK_PATTERNS.md',
   events: 'docs/guides/EVENT_SYSTEM.md',
+  send: 'docs/guides/SEND.md',
 };
 
 export const helpHandler: BlockHandler = {
