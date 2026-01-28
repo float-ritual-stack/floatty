@@ -10,6 +10,10 @@
  *   /send
  *   → creates ## assistant block with response
  *
+ * Model selection:
+ *   /send           → uses config send_model (falls back to ollama_model)
+ *   /send:model     → uses specified model (e.g., /send:mistral-small:24b)
+ *
  * ARCHITECTURE: Context assembly is done by sendContextHook (execute:before).
  * This handler CONSUMES hookContext.messages instead of collecting context itself.
  * This is how the hook system is supposed to work:
@@ -45,12 +49,24 @@ interface SendHookContext {
  * Reads context from hookContext.messages (assembled by sendContextHook).
  * This demonstrates the hook system architecture working correctly.
  */
+/**
+ * Parse /send command for optional model override
+ * @param content The block content (e.g., "/send" or "/send:mistral-small:24b")
+ * @returns Model name if specified, undefined otherwise
+ */
+function parseModelFromContent(content: string): string | undefined {
+  const trimmed = content.trim();
+  // Match /send:modelname or ::send:modelname
+  const match = trimmed.match(/^(?:\/send|::send):(.+)$/i);
+  return match?.[1];
+}
+
 export const sendHandler: BlockHandler = {
   prefixes: ['/send', '::send'],
 
   async execute(
     blockId: string,
-    _content: string,
+    content: string,
     actions: ExecutorActions
   ): Promise<void> {
     const startTime = performance.now();
@@ -100,10 +116,22 @@ export const sendHandler: BlockHandler = {
     }
 
     try {
+      // Parse optional model override from /send:modelname syntax
+      const inlineModel = parseModelFromContent(content);
+
+      // Get configured send_model (falls back to ollama_model on backend)
+      const configModel = await invoke<string>('get_send_model');
+
+      // Use inline override if provided, otherwise config
+      const model = inlineModel ?? configModel;
+
+      console.log('[send] Using model:', model, inlineModel ? '(inline override)' : '(from config)');
+
       // Call LLM with conversation API
       // Messages come from hook - handler just sends them
       const response = await invoke<string>('execute_ai_conversation', {
         messages,
+        model,
         system: 'You are a helpful assistant responding to notes and thoughts in an outliner. Be concise and direct. Focus on what the user is asking about.',
       });
 
@@ -111,6 +139,7 @@ export const sendHandler: BlockHandler = {
       console.log('[send] Complete:', {
         duration: `${duration.toFixed(1)}ms`,
         responseLength: response.length,
+        model,
       });
 
       // Update response

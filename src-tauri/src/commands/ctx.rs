@@ -63,3 +63,11 @@ pub fn get_theme() -> String {
 pub fn set_theme(theme: String) -> Result<(), String> {
     ctx::set_theme(theme)
 }
+
+/// Get the configured model for /send conversations
+/// Returns send_model if set, otherwise ollama_model
+#[tauri::command]
+pub fn get_send_model() -> String {
+    let config = ctx::get_config();
+    config.get_send_model().to_string()
+}

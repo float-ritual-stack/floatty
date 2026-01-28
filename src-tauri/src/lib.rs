@@ -14,9 +14,9 @@ mod sync_test;
 use commands::{
     check_hooks_installed, clear_ctx_markers, clear_workspace, execute_ai_command,
     execute_ai_conversation, execute_shell_command, get_clipboard_info, get_ctx_config,
-    get_ctx_counts, get_ctx_markers, get_theme, get_workspace_state, install_shell_hooks,
-    read_help_file, save_clipboard_image, save_workspace_state, set_ctx_config, set_theme,
-    uninstall_shell_hooks,
+    get_ctx_counts, get_ctx_markers, get_send_model, get_theme, get_workspace_state,
+    install_shell_hooks, read_help_file, save_clipboard_image, save_workspace_state,
+    set_ctx_config, set_theme, uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
 use paths::DataPaths;
@@ -238,7 +238,7 @@ pub fn run() {
             };
             let parser_config = ParserConfig {
                 endpoint: config.ollama_endpoint.clone(),
-                model: config.ollama_model.clone(),
+                model: config.get_ctx_model().to_string(),
                 poll_interval_ms: config.poll_interval_ms,
                 max_retries: config.max_retries,
                 ..ParserConfig::default()
@@ -310,6 +310,7 @@ pub fn run() {
                     get_ctx_counts,
                     get_ctx_config,
                     set_ctx_config,
+                    get_send_model,
                     get_theme,
                     set_theme,
                     clear_ctx_markers,
@@ -338,6 +339,7 @@ pub fn run() {
                     get_ctx_counts,
                     get_ctx_config,
                     set_ctx_config,
+                    get_send_model,
                     get_theme,
                     set_theme,
                     clear_ctx_markers,
