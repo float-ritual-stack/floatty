@@ -124,7 +124,9 @@ export const sendHandler: BlockHandler = {
       const configModel = await invoke<string>('get_send_model');
 
       // Use inline override if provided, otherwise config
-      const model = inlineModel ?? configModel;
+      // Guard against empty string from config (backend should handle, but defense in depth)
+      const effectiveConfigModel = configModel?.trim() || undefined;
+      const model = inlineModel ?? effectiveConfigModel ?? 'qwen2.5:7b';
 
       console.log('[send] Using model:', model, inlineModel ? '(inline override)' : '(from config)');
 
