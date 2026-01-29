@@ -2,6 +2,17 @@
 
 All notable changes to floatty are documented here.
 
+## [0.7.4] - 2026-01-29
+
+### Bug Fixes
+
+- **Terminal scroll**: Fixed user scroll detection during output (FLO-220)
+  - v0.7.3's `pendingWrites` guard blocked ALL scroll events during output
+  - Now uses direction detection: scroll UP (viewportY decreases) = detach, at bottom = reattach
+  - Removes stale state capture - callback checks current `stickyBottom` value
+
+---
+
 ## [0.7.3] - 2026-01-29
 
 ### Fixed
