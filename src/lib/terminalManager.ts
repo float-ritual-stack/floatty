@@ -412,25 +412,20 @@ class TerminalManager {
         };
 
         // FLO-220 v2: Track user scroll intent via direction detection
-        // Key insight: Can't use timing to distinguish user scroll from xterm-triggered scroll
-        // Instead, detect scroll DIRECTION:
-        // - viewportY decreased → user scrolled UP → detach
-        // - viewportY at/past baseY → at bottom → reattach
-        // - viewportY same or increased but not at bottom → content added → no change
+        // Key insight: Can't distinguish user scroll from programmatic scrollToBottom()
+        // Both fire onScroll events. Solution: ONLY detach on scroll up, NEVER auto-reattach.
+        // User must explicitly use Cmd+End to reattach. This prevents race conditions
+        // where pending scrollToBottom() calls yank user back after they scroll up.
         term.onScroll((viewportY) => {
           const inst = this.instances.get(id);
           if (!inst) return;
 
-          const buffer = term.buffer.active;
-          const atBottom = viewportY >= buffer.baseY;
-
           // Detect user scroll UP (viewportY decreased from previous)
+          // This is the ONLY way to detach. Reattachment requires Cmd+End.
           if (previousViewportY !== null && viewportY < previousViewportY) {
             inst.stickyBottom = false;
-          } else if (atBottom) {
-            inst.stickyBottom = true;
           }
-          // else: content added (viewportY same/increased, not at bottom) - no change
+          // Removed: auto-reattach on atBottom (caused race with programmatic scrolls)
 
           previousViewportY = viewportY;
         });
@@ -538,8 +533,11 @@ class TerminalManager {
             return false; // Block default browser paste behavior
           }
 
-          // FLO-220: Cmd+End (macOS) / Ctrl+End (other): Explicit scroll to bottom + reattach
-          const isScrollToBottom = event.key === 'End' && (isMac ? event.metaKey : event.ctrlKey);
+          // FLO-220: Scroll to bottom + reattach
+          // Cmd+End or Cmd+Down (macOS) / Ctrl+End or Ctrl+Down (other)
+          // Cmd+Down added for compact keyboards without End key
+          const modifier = isMac ? event.metaKey : event.ctrlKey;
+          const isScrollToBottom = modifier && (event.key === 'End' || event.key === 'ArrowDown');
           if (isScrollToBottom && event.type === 'keydown') {
             term.scrollToBottom();
             const inst = this.instances.get(id);
