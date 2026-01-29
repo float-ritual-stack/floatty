@@ -2,6 +2,16 @@
 
 All notable changes to floatty are documented here.
 
+## [0.7.5] - 2026-01-29
+
+### Bug Fixes
+
+- **Terminal scroll**: Fixed race condition where programmatic `scrollToBottom()` calls would yank user back after scrolling up (FLO-220)
+  - Removed auto-reattach on reaching bottom - only explicit `Cmd+End` or `Cmd+Down` reattaches now
+  - Added `Cmd+Down` (`Ctrl+Down` on Linux/Windows) as alternative for compact keyboards without End key
+
+---
+
 ## [0.7.4] - 2026-01-29
 
 ### Bug Fixes
