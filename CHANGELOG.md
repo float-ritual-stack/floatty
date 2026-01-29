@@ -2,6 +2,18 @@
 
 All notable changes to floatty are documented here.
 
+## [0.7.6] - 2026-01-29
+
+### Bug Fixes
+
+- **Terminal scroll**: Replaced broken `onScroll` detection with wheel events (FLO-220)
+  - xterm's `onScroll` only fires on content changes, not user scroll ([xterm #3201](https://github.com/xtermjs/xterm.js/issues/3201))
+  - Wheel events reliably detect user scroll intent
+  - Added visual indicator (⇡) in tab bar when detached from output
+  - Fixed memory leak: wheel listener now cleaned up on dispose
+
+---
+
 ## [0.7.5] - 2026-01-29
 
 ### Bug Fixes
