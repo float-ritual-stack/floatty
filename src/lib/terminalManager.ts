@@ -360,15 +360,17 @@ class TerminalManager {
         let textBuffer = '';
         const seenSet = this.seenMarkers.get(id)!;
 
-        // FLO-220: Flag to distinguish write-triggered scrolls from user scrolls
-        let isWritingData = false;
+        // FLO-220: Counter to track pending writes (handles rapid sequential onData)
+        // Using counter instead of boolean because term.write() queues async and
+        // multiple onData messages can arrive before callbacks fire
+        let pendingWrites = 0;
 
         const onData = new Channel<string>();
         onData.onmessage = (base64Data: string) => {
           const inst = this.instances.get(id);
           if (!inst) return;
 
-          // FLO-220: Capture sticky state BEFORE write (write may trigger scroll events)
+          // FLO-220: Capture sticky state BEFORE first write in a batch
           const wasSticky = inst.stickyBottom;
 
           const binaryString = atob(base64Data);
@@ -377,10 +379,10 @@ class TerminalManager {
             bytes[i] = binaryString.charCodeAt(i);
           }
 
-          // FLO-220: Set flag before write, clear after with scroll restoration
-          isWritingData = true;
+          // FLO-220: Increment before write, decrement in callback
+          pendingWrites++;
           term.write(bytes, () => {
-            isWritingData = false;
+            pendingWrites = Math.max(0, pendingWrites - 1);
             // Scroll to bottom only if user was following output
             if (wasSticky) {
               term.scrollToBottom();
@@ -412,7 +414,7 @@ class TerminalManager {
         // Scrolling to bottom → reattach (stickyBottom = true)
         term.onScroll((viewportY) => {
           const inst = this.instances.get(id);
-          if (!inst || isWritingData) return;  // Ignore scroll events during write
+          if (!inst || pendingWrites > 0) return;  // Ignore scroll events during write
 
           const buffer = term.buffer.active;
           const atBottom = viewportY >= buffer.baseY;
