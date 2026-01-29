@@ -61,6 +61,7 @@ export interface TerminalInstance {
   exitedNaturally: boolean;  // Guards against double onPtyExit calls
   semanticState: SemanticState;
   stickyBottom: boolean;  // FLO-220: Follow output when true, stay put when false
+  wheelHandler?: (e: WheelEvent) => void;  // FLO-220: Stored for cleanup
 }
 
 export interface TerminalCallbacks {
@@ -423,27 +424,25 @@ class TerminalManager {
         };
 
         // Wheel event = actual user scroll
-        term.element?.addEventListener('wheel', (e) => {
+        // Store handler for cleanup in dispose()
+        const wheelHandler = (e: WheelEvent) => {
           if (e.deltaY < 0) {
             // User scrolling UP → detach
             setStickyBottom(false, 'wheel-up');
           } else if (e.deltaY > 0) {
             // User scrolling DOWN → check if at bottom to reattach
             const buffer = term.buffer.active;
-            const viewportY = term.buffer.active.viewportY;
+            const viewportY = buffer.viewportY;
             const atBottom = viewportY >= buffer.baseY;
             if (atBottom) {
               setStickyBottom(true, 'wheel-down-at-bottom');
             }
           }
-        }, { passive: true });
-
-        // onScroll - no longer used for scroll detection
-        // Wheel events handle user scroll intent, Cmd+Down handles explicit reattach
-        // Keeping this for potential future debugging but it's essentially a no-op
-        term.onScroll(() => {
-          // No-op: wheel events and Cmd+Down handle all scroll state changes
-        });
+        };
+        term.element?.addEventListener('wheel', wheelHandler, { passive: true });
+        // Store for cleanup in dispose()
+        const inst = this.instances.get(id);
+        if (inst) inst.wheelHandler = wheelHandler;
 
         // Exit channel - notified when PTY closes (shell exits)
         // Exit event contains exit_code and optional captured output
@@ -828,6 +827,11 @@ class TerminalManager {
             console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
           }
         }
+      }
+
+      // FLO-220: Remove wheel event listener before disposing terminal
+      if (instance.wheelHandler && instance.term.element) {
+        instance.term.element.removeEventListener('wheel', instance.wheelHandler);
       }
 
       // Dispose WebGL addon first to free context
