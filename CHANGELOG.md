@@ -2,6 +2,18 @@
 
 All notable changes to floatty are documented here.
 
+## [0.7.3] - 2026-01-29
+
+### Fixed
+
+- **Terminal scroll behavior** (FLO-220, PR #106): Fixed two scroll issues that became more frequent with recent Claude Code updates:
+  - Random scroll jumps to top during heavy output
+  - Mouse scroll not quite reaching bottom (requiring arrow key)
+
+  New sticky-bottom mode tracks user scroll intent - scrolling up detaches from output, scrolling to bottom reattaches. Added `Cmd+End` / `Ctrl+End` shortcut to explicitly scroll to bottom and reattach.
+
+---
+
 ## [0.7.2] - 2026-01-28
 
 ### Features
