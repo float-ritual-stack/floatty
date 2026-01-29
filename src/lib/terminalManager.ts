@@ -61,6 +61,7 @@ export interface TerminalInstance {
   exitedNaturally: boolean;  // Guards against double onPtyExit calls
   semanticState: SemanticState;
   stickyBottom: boolean;  // FLO-220: Follow output when true, stay put when false
+  wheelHandler?: (e: WheelEvent) => void;  // FLO-220: Stored for cleanup
 }
 
 export interface TerminalCallbacks {
@@ -69,6 +70,7 @@ export interface TerminalCallbacks {
   onTitleChange?: (title: string) => void;
   onCtxMarker?: (marker: CtxMarker) => void;
   onSemanticStateChange?: (state: SemanticState) => void;
+  onStickyChange?: (sticky: boolean) => void;  // FLO-220: Notify UI of scroll state changes
 }
 
 interface CtxMarker {
@@ -360,15 +362,6 @@ class TerminalManager {
         let textBuffer = '';
         const seenSet = this.seenMarkers.get(id)!;
 
-        // FLO-220: Counter to track pending writes (handles rapid sequential onData)
-        // Using counter instead of boolean because term.write() queues async and
-        // multiple onData messages can arrive before callbacks fire
-        let pendingWrites = 0;
-        // FLO-220 v2: Track previous scroll position to detect direction
-        // User scroll UP (viewportY decreases) → detach
-        // Content added or scrollToBottom() → no direction change or increase
-        let previousViewportY: number | null = null;
-
         const onData = new Channel<string>();
         onData.onmessage = (base64Data: string) => {
           const inst = this.instances.get(id);
@@ -380,12 +373,8 @@ class TerminalManager {
             bytes[i] = binaryString.charCodeAt(i);
           }
 
-          // FLO-220: Increment before write, decrement in callback
-          pendingWrites++;
+          // FLO-220: Auto-scroll if sticky (wheel events handle detach)
           term.write(bytes, () => {
-            pendingWrites = Math.max(0, pendingWrites - 1);
-            // FLO-220 v2: Check CURRENT sticky state, not stale captured value
-            // Direction detection in onScroll handles detach - this just follows if attached
             if (inst.stickyBottom) {
               term.scrollToBottom();
             }
@@ -411,24 +400,40 @@ class TerminalManager {
           }
         };
 
-        // FLO-220 v2: Track user scroll intent via direction detection
-        // Key insight: Can't distinguish user scroll from programmatic scrollToBottom()
-        // Both fire onScroll events. Solution: ONLY detach on scroll up, NEVER auto-reattach.
-        // User must explicitly use Cmd+End to reattach. This prevents race conditions
-        // where pending scrollToBottom() calls yank user back after they scroll up.
-        term.onScroll((viewportY) => {
+        // FLO-220 v3: Use wheel event for user scroll detection
+        // Key insight: xterm's onScroll doesn't fire on user scroll (only on content changes)
+        // See: https://github.com/xtermjs/xterm.js/issues/3201
+        // Solution: Listen to actual wheel events for user intent
+
+        const setStickyBottom = (value: boolean, source: string) => {
           const inst = this.instances.get(id);
-          if (!inst) return;
+          if (!inst || inst.stickyBottom === value) return;
+          console.log(`[FLO-220] stickyBottom: ${inst.stickyBottom} → ${value} (${source})`);
+          inst.stickyBottom = value;
+          // Emit event for UI indicator
+          this.callbacks.get(id)?.onStickyChange?.(value);
+        };
 
-          // Detect user scroll UP (viewportY decreased from previous)
-          // This is the ONLY way to detach. Reattachment requires Cmd+End.
-          if (previousViewportY !== null && viewportY < previousViewportY) {
-            inst.stickyBottom = false;
+        // Wheel event = actual user scroll
+        // Store handler for cleanup in dispose()
+        const wheelHandler = (e: WheelEvent) => {
+          if (e.deltaY < 0) {
+            // User scrolling UP → detach
+            setStickyBottom(false, 'wheel-up');
+          } else if (e.deltaY > 0) {
+            // User scrolling DOWN → check if at bottom to reattach
+            const buffer = term.buffer.active;
+            const viewportY = buffer.viewportY;
+            const atBottom = viewportY >= buffer.baseY;
+            if (atBottom) {
+              setStickyBottom(true, 'wheel-down-at-bottom');
+            }
           }
-          // Removed: auto-reattach on atBottom (caused race with programmatic scrolls)
-
-          previousViewportY = viewportY;
-        });
+        };
+        term.element?.addEventListener('wheel', wheelHandler, { passive: true });
+        // Store for cleanup in dispose()
+        const inst = this.instances.get(id);
+        if (inst) inst.wheelHandler = wheelHandler;
 
         // Exit channel - notified when PTY closes (shell exits)
         // Exit event contains exit_code and optional captured output
@@ -540,8 +545,7 @@ class TerminalManager {
           const isScrollToBottom = modifier && (event.key === 'End' || event.key === 'ArrowDown');
           if (isScrollToBottom && event.type === 'keydown') {
             term.scrollToBottom();
-            const inst = this.instances.get(id);
-            if (inst) inst.stickyBottom = true;
+            setStickyBottom(true, 'cmd-down');
             return false;
           }
 
@@ -814,6 +818,11 @@ class TerminalManager {
             console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
           }
         }
+      }
+
+      // FLO-220: Remove wheel event listener before disposing terminal
+      if (instance.wheelHandler && instance.term.element) {
+        instance.term.element.removeEventListener('wheel', instance.wheelHandler);
       }
 
       // Dispose WebGL addon first to free context

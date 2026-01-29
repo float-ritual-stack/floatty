@@ -25,6 +25,7 @@ export interface TerminalPaneProps {
   onCtxMarker?: (marker: unknown) => void;
   onTitleChange?: (title: string) => void;
   onSemanticStateChange?: (state: unknown) => void;  // OSC 133/1337 state updates
+  onStickyChange?: (sticky: boolean) => void;  // FLO-220: Scroll state changes
   onPaneClick?: () => void;  // Called when pane is clicked (for focus tracking)
   isActive?: boolean;
   isVisible?: boolean;  // Whether the tab containing this pane is visible
@@ -104,6 +105,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       onTitleChange: props.onTitleChange,
       onCtxMarker: props.onCtxMarker as (marker: unknown) => void,
       onSemanticStateChange: props.onSemanticStateChange as (state: unknown) => void,
+      onStickyChange: props.onStickyChange,
     });
   });
 

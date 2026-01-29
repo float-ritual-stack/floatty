@@ -144,6 +144,7 @@ function TabBar(props: {
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onNewTab: () => void;
+  getStickyState?: (tabId: string) => boolean;
 }) {
   return (
     <nav class="tab-bar" role="navigation" aria-label="Terminal tabs">
@@ -155,6 +156,10 @@ function TabBar(props: {
               onClick={() => props.onSelectTab(tab.id)}
             >
               <span class="tab-index">{index() + 1}</span>
+              {/* FLO-220: Show indicator when not following output */}
+              <Show when={props.getStickyState && !props.getStickyState(tab.id)}>
+                <span class="tab-scroll-indicator" title="Scrolled up - press Cmd+Down to follow output">⇡</span>
+              </Show>
               <span class="tab-title" title={tab.title}>
                 {tab.title.length > 20 ? tab.title.slice(-20) : tab.title}
               </span>
@@ -191,6 +196,8 @@ export function Terminal() {
   const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
   // FLO-197: Collapse depth for split panes (loaded from config)
   const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
+  // FLO-220: Track sticky scroll state per pane for UI indicator
+  const [stickyState, setStickyState] = createSignal<Map<string, boolean>>(new Map());
 
   // Load config once on mount
   (async () => {
@@ -526,6 +533,22 @@ export function Terminal() {
     }
   };
 
+  // FLO-220: Track sticky scroll state per pane
+  const handleStickyChange = (paneId: string, sticky: boolean) => {
+    setStickyState(prev => {
+      const next = new Map(prev);
+      next.set(paneId, sticky);
+      return next;
+    });
+  };
+
+  // FLO-220: Get sticky state for active pane of a tab
+  const getTabStickyState = (tabId: string): boolean => {
+    const activePaneId = getActivePaneId(tabId);
+    if (!activePaneId) return true;  // Default to sticky
+    return stickyState().get(activePaneId) ?? true;
+  };
+
   const handlePaneClick = (paneId: string) => {
     const activeId = tabStore.activeTabId();
     if (activeId) {
@@ -618,6 +641,7 @@ export function Terminal() {
         onSelectTab={tabStore.setActiveTab}
         onCloseTab={handleCloseTab}
         onNewTab={() => handleNewTab()}
+        getStickyState={getTabStickyState}
       />
       <div class="terminal-wrapper">
         <main class="terminal-container" role="main">
@@ -685,6 +709,7 @@ export function Terminal() {
                       setSemanticState({ ...state } as SemanticState);
                     }
                   }}
+                  onStickyChange={(sticky) => handleStickyChange(info().paneId, sticky)}
                 />
               </Show>
             )}
