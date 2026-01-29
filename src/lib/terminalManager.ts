@@ -364,14 +364,15 @@ class TerminalManager {
         // Using counter instead of boolean because term.write() queues async and
         // multiple onData messages can arrive before callbacks fire
         let pendingWrites = 0;
+        // FLO-220 v2: Track previous scroll position to detect direction
+        // User scroll UP (viewportY decreases) → detach
+        // Content added or scrollToBottom() → no direction change or increase
+        let previousViewportY: number | null = null;
 
         const onData = new Channel<string>();
         onData.onmessage = (base64Data: string) => {
           const inst = this.instances.get(id);
           if (!inst) return;
-
-          // FLO-220: Capture sticky state BEFORE first write in a batch
-          const wasSticky = inst.stickyBottom;
 
           const binaryString = atob(base64Data);
           const bytes = new Uint8Array(binaryString.length);
@@ -383,8 +384,9 @@ class TerminalManager {
           pendingWrites++;
           term.write(bytes, () => {
             pendingWrites = Math.max(0, pendingWrites - 1);
-            // Scroll to bottom only if user was following output
-            if (wasSticky) {
+            // FLO-220 v2: Check CURRENT sticky state, not stale captured value
+            // Direction detection in onScroll handles detach - this just follows if attached
+            if (inst.stickyBottom) {
               term.scrollToBottom();
             }
           });
@@ -409,23 +411,28 @@ class TerminalManager {
           }
         };
 
-        // FLO-220: Track user scroll intent
-        // Scrolling up → detach (stickyBottom = false)
-        // Scrolling to bottom → reattach (stickyBottom = true)
+        // FLO-220 v2: Track user scroll intent via direction detection
+        // Key insight: Can't use timing to distinguish user scroll from xterm-triggered scroll
+        // Instead, detect scroll DIRECTION:
+        // - viewportY decreased → user scrolled UP → detach
+        // - viewportY at/past baseY → at bottom → reattach
+        // - viewportY same or increased but not at bottom → content added → no change
         term.onScroll((viewportY) => {
           const inst = this.instances.get(id);
-          if (!inst || pendingWrites > 0) return;  // Ignore scroll events during write
+          if (!inst) return;
 
           const buffer = term.buffer.active;
           const atBottom = viewportY >= buffer.baseY;
 
-          if (!atBottom && inst.stickyBottom) {
-            // User scrolled up → detach
+          // Detect user scroll UP (viewportY decreased from previous)
+          if (previousViewportY !== null && viewportY < previousViewportY) {
             inst.stickyBottom = false;
-          } else if (atBottom && !inst.stickyBottom) {
-            // User scrolled to bottom → reattach
+          } else if (atBottom) {
             inst.stickyBottom = true;
           }
+          // else: content added (viewportY same/increased, not at bottom) - no change
+
+          previousViewportY = viewportY;
         });
 
         // Exit channel - notified when PTY closes (shell exits)
