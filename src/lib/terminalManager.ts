@@ -60,6 +60,7 @@ export interface TerminalInstance {
   container: HTMLElement | null;
   exitedNaturally: boolean;  // Guards against double onPtyExit calls
   semanticState: SemanticState;
+  stickyBottom: boolean;  // FLO-220: Follow output when true, stay put when false
 }
 
 export interface TerminalCallbacks {
@@ -265,6 +266,7 @@ class TerminalManager {
         commandStartTime: null,
         hooksActive: false,
       },
+      stickyBottom: true,  // FLO-220: Default to following output
     };
     this.instances.set(id, instance);
     this.seenMarkers.set(id, new Set());
@@ -358,14 +360,34 @@ class TerminalManager {
         let textBuffer = '';
         const seenSet = this.seenMarkers.get(id)!;
 
+        // FLO-220: Counter to track pending writes (handles rapid sequential onData)
+        // Using counter instead of boolean because term.write() queues async and
+        // multiple onData messages can arrive before callbacks fire
+        let pendingWrites = 0;
+
         const onData = new Channel<string>();
         onData.onmessage = (base64Data: string) => {
+          const inst = this.instances.get(id);
+          if (!inst) return;
+
+          // FLO-220: Capture sticky state BEFORE first write in a batch
+          const wasSticky = inst.stickyBottom;
+
           const binaryString = atob(base64Data);
           const bytes = new Uint8Array(binaryString.length);
           for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
-          term.write(bytes);
+
+          // FLO-220: Increment before write, decrement in callback
+          pendingWrites++;
+          term.write(bytes, () => {
+            pendingWrites = Math.max(0, pendingWrites - 1);
+            // Scroll to bottom only if user was following output
+            if (wasSticky) {
+              term.scrollToBottom();
+            }
+          });
 
           // ctx:: detection
           const text = new TextDecoder().decode(bytes);
@@ -386,6 +408,25 @@ class TerminalManager {
             }
           }
         };
+
+        // FLO-220: Track user scroll intent
+        // Scrolling up → detach (stickyBottom = false)
+        // Scrolling to bottom → reattach (stickyBottom = true)
+        term.onScroll((viewportY) => {
+          const inst = this.instances.get(id);
+          if (!inst || pendingWrites > 0) return;  // Ignore scroll events during write
+
+          const buffer = term.buffer.active;
+          const atBottom = viewportY >= buffer.baseY;
+
+          if (!atBottom && inst.stickyBottom) {
+            // User scrolled up → detach
+            inst.stickyBottom = false;
+          } else if (atBottom && !inst.stickyBottom) {
+            // User scrolled to bottom → reattach
+            inst.stickyBottom = true;
+          }
+        });
 
         // Exit channel - notified when PTY closes (shell exits)
         // Exit event contains exit_code and optional captured output
@@ -488,6 +529,15 @@ class TerminalManager {
               })();
             }
             return false; // Block default browser paste behavior
+          }
+
+          // FLO-220: Cmd+End (macOS) / Ctrl+End (other): Explicit scroll to bottom + reattach
+          const isScrollToBottom = event.key === 'End' && (isMac ? event.metaKey : event.ctrlKey);
+          if (isScrollToBottom && event.type === 'keydown') {
+            term.scrollToBottom();
+            const inst = this.instances.get(id);
+            if (inst) inst.stickyBottom = true;
+            return false;
           }
 
           return true; // Let xterm handle normally
