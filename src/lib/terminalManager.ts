@@ -69,6 +69,7 @@ export interface TerminalCallbacks {
   onTitleChange?: (title: string) => void;
   onCtxMarker?: (marker: CtxMarker) => void;
   onSemanticStateChange?: (state: SemanticState) => void;
+  onStickyChange?: (sticky: boolean) => void;  // FLO-220: Notify UI of scroll state changes
 }
 
 interface CtxMarker {
@@ -364,10 +365,6 @@ class TerminalManager {
         // Using counter instead of boolean because term.write() queues async and
         // multiple onData messages can arrive before callbacks fire
         let pendingWrites = 0;
-        // FLO-220 v2: Track previous scroll position to detect direction
-        // User scroll UP (viewportY decreases) → detach
-        // Content added or scrollToBottom() → no direction change or increase
-        let previousViewportY: number | null = null;
 
         const onData = new Channel<string>();
         onData.onmessage = (base64Data: string) => {
@@ -411,23 +408,41 @@ class TerminalManager {
           }
         };
 
-        // FLO-220 v2: Track user scroll intent via direction detection
-        // Key insight: Can't distinguish user scroll from programmatic scrollToBottom()
-        // Both fire onScroll events. Solution: ONLY detach on scroll up, NEVER auto-reattach.
-        // User must explicitly use Cmd+End to reattach. This prevents race conditions
-        // where pending scrollToBottom() calls yank user back after they scroll up.
-        term.onScroll((viewportY) => {
+        // FLO-220 v3: Use wheel event for user scroll detection
+        // Key insight: xterm's onScroll doesn't fire on user scroll (only on content changes)
+        // See: https://github.com/xtermjs/xterm.js/issues/3201
+        // Solution: Listen to actual wheel events for user intent
+
+        const setStickyBottom = (value: boolean, source: string) => {
           const inst = this.instances.get(id);
-          if (!inst) return;
+          if (!inst || inst.stickyBottom === value) return;
+          console.log(`[FLO-220] stickyBottom: ${inst.stickyBottom} → ${value} (${source})`);
+          inst.stickyBottom = value;
+          // Emit event for UI indicator
+          this.callbacks.get(id)?.onStickyChange?.(value);
+        };
 
-          // Detect user scroll UP (viewportY decreased from previous)
-          // This is the ONLY way to detach. Reattachment requires Cmd+End.
-          if (previousViewportY !== null && viewportY < previousViewportY) {
-            inst.stickyBottom = false;
+        // Wheel event = actual user scroll
+        term.element?.addEventListener('wheel', (e) => {
+          if (e.deltaY < 0) {
+            // User scrolling UP → detach
+            setStickyBottom(false, 'wheel-up');
+          } else if (e.deltaY > 0) {
+            // User scrolling DOWN → check if at bottom to reattach
+            const buffer = term.buffer.active;
+            const viewportY = term.buffer.active.viewportY;
+            const atBottom = viewportY >= buffer.baseY;
+            if (atBottom) {
+              setStickyBottom(true, 'wheel-down-at-bottom');
+            }
           }
-          // Removed: auto-reattach on atBottom (caused race with programmatic scrolls)
+        }, { passive: true });
 
-          previousViewportY = viewportY;
+        // onScroll - no longer used for scroll detection
+        // Wheel events handle user scroll intent, Cmd+Down handles explicit reattach
+        // Keeping this for potential future debugging but it's essentially a no-op
+        term.onScroll(() => {
+          // No-op: wheel events and Cmd+Down handle all scroll state changes
         });
 
         // Exit channel - notified when PTY closes (shell exits)
@@ -540,8 +555,7 @@ class TerminalManager {
           const isScrollToBottom = modifier && (event.key === 'End' || event.key === 'ArrowDown');
           if (isScrollToBottom && event.type === 'keydown') {
             term.scrollToBottom();
-            const inst = this.instances.get(id);
-            if (inst) inst.stickyBottom = true;
+            setStickyBottom(true, 'cmd-down');
             return false;
           }
 

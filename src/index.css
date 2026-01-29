@@ -420,6 +420,19 @@ html, body, #root {
   white-space: nowrap;
 }
 
+/* FLO-220: Visual indicator when not following output */
+.tab-scroll-indicator {
+  color: var(--color-ansi-yellow);
+  font-size: 10px;
+  margin-right: 4px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
 .tab-close {
   display: flex;
   align-items: center;
