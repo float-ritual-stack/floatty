@@ -362,11 +362,6 @@ class TerminalManager {
         let textBuffer = '';
         const seenSet = this.seenMarkers.get(id)!;
 
-        // FLO-220: Counter to track pending writes (handles rapid sequential onData)
-        // Using counter instead of boolean because term.write() queues async and
-        // multiple onData messages can arrive before callbacks fire
-        let pendingWrites = 0;
-
         const onData = new Channel<string>();
         onData.onmessage = (base64Data: string) => {
           const inst = this.instances.get(id);
@@ -378,12 +373,8 @@ class TerminalManager {
             bytes[i] = binaryString.charCodeAt(i);
           }
 
-          // FLO-220: Increment before write, decrement in callback
-          pendingWrites++;
+          // FLO-220: Auto-scroll if sticky (wheel events handle detach)
           term.write(bytes, () => {
-            pendingWrites = Math.max(0, pendingWrites - 1);
-            // FLO-220 v2: Check CURRENT sticky state, not stale captured value
-            // Direction detection in onScroll handles detach - this just follows if attached
             if (inst.stickyBottom) {
               term.scrollToBottom();
             }
