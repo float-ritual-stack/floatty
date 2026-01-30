@@ -185,7 +185,14 @@ function blockToYMap(block: Block): Y.Map<unknown> {
     blockMap.set('outputStatus', block.outputStatus);
   }
   if (block.tableConfig !== undefined) {
-    blockMap.set('tableConfig', block.tableConfig);
+    // Clone to avoid storing SolidJS store proxies in Y.Map
+    const tableConfig = {
+      ...block.tableConfig,
+      columnWidths: block.tableConfig.columnWidths
+        ? [...block.tableConfig.columnWidths]
+        : undefined,
+    };
+    blockMap.set('tableConfig', tableConfig);
   }
 
   // childIds as Y.Array for CRDT-safe ordered list

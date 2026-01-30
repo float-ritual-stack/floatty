@@ -208,9 +208,11 @@ export function hasTablePattern(content: string): boolean {
  * Returns cells between the outer pipes.
  */
 function splitTableRow(line: string): string[] {
-  // Remove leading/trailing |
+  // Defensively handle rows with or without trailing pipe
   const trimmed = line.trim();
-  const inner = trimmed.slice(1, -1);  // Remove outer |
+  const start = trimmed.startsWith('|') ? 1 : 0;
+  const end = trimmed.endsWith('|') ? trimmed.length - 1 : trimmed.length;
+  const inner = trimmed.slice(start, end);
 
   // Split by unescaped pipes only
   const cells: string[] = [];

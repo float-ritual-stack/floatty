@@ -245,10 +245,13 @@ export function TableView(props: TableViewProps) {
   // ═══════════════════════════════════════════════════════════════
   const [resizing, setResizing] = createSignal<{
     colIdx: number;
-    startX: number;
-    startWidths: number[];
+    startX: number;      // Original drag start (never mutated during drag)
+    startWidths: number[]; // Original widths at drag start (never mutated)
     tableWidth: number;
   } | null>(null);
+
+  // Separate signal for visual feedback during drag (updated each frame)
+  const [dragWidths, setDragWidths] = createSignal<number[] | null>(null);
 
   // Sync local rows from token data (only when token changes, not during editing)
   createEffect(() => {
@@ -326,6 +329,7 @@ export function TableView(props: TableViewProps) {
     const state = resizing();
     if (!state) return;
 
+    // Delta from ORIGINAL start position (not mutated during drag)
     const deltaX = e.clientX - state.startX;
     const deltaPercent = (deltaX / state.tableWidth) * 100;
 
@@ -346,26 +350,26 @@ export function TableView(props: TableViewProps) {
       newRight = MIN_COLUMN_WIDTH_PERCENT;
     }
 
-    // Update widths (visual feedback via colgroup)
+    // Update visual feedback via separate signal (startWidths stays stable)
     const newWidths = [...state.startWidths];
     newWidths[leftIdx] = newLeft;
     newWidths[rightIdx] = newRight;
-
-    // Store on resizing state for immediate visual update
-    setResizing({ ...state, startWidths: newWidths, startX: e.clientX });
+    setDragWidths(newWidths);
   };
 
   const handleResizeEnd = () => {
     const state = resizing();
     if (!state) return;
 
-    // Normalize and persist
-    const normalized = normalizeWidths(state.startWidths);
+    // Normalize and persist - use dragWidths if available, else startWidths
+    const finalWidths = dragWidths() ?? state.startWidths;
+    const normalized = normalizeWidths(finalWidths);
     props.onTableConfigChange?.({ columnWidths: normalized });
 
-    // Reset cursor
+    // Reset cursor and state
     document.body.style.cursor = '';
     document.body.classList.remove('resizing');
+    setDragWidths(null);
     setResizing(null);
   };
 
@@ -388,10 +392,10 @@ export function TableView(props: TableViewProps) {
     }
   });
 
-  // Get active widths (during resize use live state, otherwise use memo)
+  // Get active widths (during resize use dragWidths, otherwise use memo)
   const activeWidths = () => {
-    const state = resizing();
-    if (state) return state.startWidths;
+    const dw = dragWidths();
+    if (dw) return dw;
     return columnWidths();
   };
 
