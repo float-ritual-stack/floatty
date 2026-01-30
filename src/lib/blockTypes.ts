@@ -50,6 +50,21 @@ export interface Block {
   outputType?: string;
   /** Execution status for UI feedback. */
   outputStatus?: 'pending' | 'running' | 'complete' | 'error';
+
+  /**
+   * Table configuration for blocks containing markdown tables.
+   * Stored in Y.Doc but not synced to Rust (UI-only state like output fields).
+   */
+  tableConfig?: TableConfig;
+}
+
+/**
+ * Configuration for markdown tables (FLO-58).
+ * Stored per-block to persist column widths after resize.
+ */
+export interface TableConfig {
+  /** Column widths as percentages (must sum to ~100). Only stored after first resize. */
+  columnWidths?: number[];
 }
 
 export function parseBlockType(content: string): BlockType {

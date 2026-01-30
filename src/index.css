@@ -876,6 +876,11 @@ body.resizing .terminal-pane-positioned {
   background: transparent;
 }
 
+/* Raw edit mode - visible text, no overlay (used for table raw editing) */
+.block-edit-raw {
+  color: var(--color-fg) !important;
+}
+
 .block-content {
   position: relative;  /* Stacks above display layer */
   width: 100%;
@@ -1827,5 +1832,249 @@ body.resizing .terminal-pane-positioned {
   font-family: var(--font-mono);
   font-size: 11px;
   width: fit-content;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MARKDOWN TABLES (FLO-58)
+   Rendered by TableView component for table tokens
+   Picker pattern: table takes full keyboard control
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Container for table blocks in BlockItem - ensures proper document flow */
+.table-block-container {
+  position: relative;
+  width: 100%;
+}
+
+/* Wrapper for table + toggle button positioning */
+.md-table-wrapper {
+  position: relative;
+}
+
+.md-table {
+  display: table;
+  table-layout: fixed;  /* FLO-58: Prevent column resize during edit */
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin: 4px 0;
+  pointer-events: auto;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-fg) 15%, transparent);
+}
+
+/* Focus ring when table is keyboard-focused */
+.md-table:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+.md-table thead {
+  background: color-mix(in srgb, var(--color-fg) 8%, transparent);
+}
+
+.md-table th,
+.md-table td {
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--color-fg) 15%, transparent);
+  text-align: left;
+  /* FLO-58 Phase 3: Text wrapping instead of ellipsis truncation */
+  white-space: pre-wrap;
+  word-break: break-word;
+  vertical-align: top;
+  /* 3-line max when resting (expand on focus/edit) */
+  max-height: 72px;
+  overflow: hidden;
+}
+
+.md-table th {
+  font-weight: 600;
+  color: var(--color-fg);
+}
+
+.md-table td {
+  color: var(--color-fg);
+}
+
+.md-table tbody tr:nth-child(odd) {
+  background: color-mix(in srgb, var(--color-fg) 3%, transparent);
+}
+
+.md-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+
+/* FLO-58: Focused cell highlight (keyboard navigation) */
+.md-table-cell-focused {
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+  /* Phase 3: Expand height when focused */
+  max-height: none;
+  overflow: visible;
+}
+
+/* Editable cell styling - zero padding so input matches cell */
+.md-table-cell-editing {
+  padding: 0 !important;
+  /* Phase 3: Expand height when editing */
+  max-height: none;
+  overflow: visible;
+}
+
+.md-table-input {
+  width: 100%;
+  height: 100%;
+  min-height: 24px;
+  background: var(--color-bg);
+  border: none;
+  border-radius: 0;
+  padding: 4px 8px;  /* Match cell padding exactly */
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-fg);
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+.md-table-input:focus {
+  box-shadow: inset 0 0 0 2px var(--color-accent),
+              0 0 0 2px color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* Alignment classes */
+.md-table-align-left { text-align: left; }
+.md-table-align-center { text-align: center; }
+.md-table-align-right { text-align: right; }
+
+/* Raw mode toggle button */
+.md-table-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-fg) 10%, transparent);
+  color: var(--color-fg);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+  z-index: 1;
+}
+
+.md-table-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* Raw markdown view */
+.md-table-raw-wrapper {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.md-table-raw {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--color-fg) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-fg) 15%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  margin: 0;
+  /* Textarea-specific styles for editable raw mode */
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  outline: none;
+  color: inherit;
+}
+
+/* Wikilinks in table cells - override td color inheritance */
+.md-table .md-wikilink {
+  color: var(--color-ansi-blue);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.md-table .md-wikilink:hover {
+  background-color: color-mix(in srgb, var(--color-ansi-blue) 15%, transparent);
+}
+
+/* Container for raw mode editing - positions button at top-right */
+.table-raw-container {
+  position: relative;
+  width: 100%;
+}
+
+/* Raw mode toggle button - matches .md-table-toggle position */
+.table-raw-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-fg) 10%, transparent);
+  color: var(--color-fg);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+  z-index: 1;
+}
+
+.table-raw-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FLO-58: Table Column Resize Handles
+   ═══════════════════════════════════════════════════════════════ */
+
+.table-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;      /* Center on border */
+  width: 8px;       /* 8px hit area */
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  touch-action: none;  /* Prevent scroll on tablet */
+}
+
+/* Visible indicator on hover */
+.table-resize-handle:hover {
+  background: color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+
+/* While dragging - show accent color bar */
+.table-resize-handle:active,
+.md-table-resizing .table-resize-handle {
+  background: var(--color-accent);
+}
+
+/* During resize, disable pointer events on table cells to prevent interference */
+.md-table-resizing td,
+.md-table-resizing th {
+  pointer-events: none;
+}
+
+/* Body-level resizing class to disable text selection during drag */
+body.resizing {
+  user-select: none;
+  cursor: col-resize !important;
+}
+
+body.resizing * {
+  cursor: col-resize !important;
 }
 

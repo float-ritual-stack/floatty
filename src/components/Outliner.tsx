@@ -266,6 +266,11 @@ export function Outliner(props: OutlinerProps) {
         const activeEl = document.activeElement as HTMLElement;
         const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
 
+        // FLO-58: Let table cell inputs handle their own Cmd+A
+        if (activeEl?.classList.contains('md-table-input') || activeEl?.classList.contains('md-table-raw')) {
+          return; // Input will handle select-all natively
+        }
+
         if (isEditing) {
           // Check if all text is already selected
           const sel = window.getSelection();

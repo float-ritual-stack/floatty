@@ -4,7 +4,7 @@
  * Tests parseInlineTokens which extracts **bold**, *italic*, `code` spans.
  */
 import { describe, it, expect } from 'vitest';
-import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, hasCodeFencePatterns, type InlineToken } from './inlineParser';
+import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, hasCodeFencePatterns, hasTablePattern, type InlineToken } from './inlineParser';
 
 // Helper to extract just types and content for easier assertions
 function tokenSummary(tokens: InlineToken[]): Array<{ type: string; content: string }> {
@@ -638,6 +638,177 @@ describe('wikilink parsing', () => {
       const tokens = parseInlineTokens('filter::');
       expect(tokens).toHaveLength(1);
       expect(tokens[0].type).toBe('filter-prefix');
+    });
+  });
+});
+
+// FLO-58: Markdown table parsing
+describe('markdown table parsing', () => {
+  describe('hasTablePattern', () => {
+    it('returns true for valid markdown table', () => {
+      const table = `| Header 1 | Header 2 |
+|----------|----------|
+| Cell 1   | Cell 2   |`;
+      expect(hasTablePattern(table)).toBe(true);
+    });
+
+    it('returns false for single line', () => {
+      expect(hasTablePattern('| Header 1 | Header 2 |')).toBe(false);
+    });
+
+    it('returns false for missing pipe prefix', () => {
+      const table = `Header 1 | Header 2 |
+|----------|----------|`;
+      expect(hasTablePattern(table)).toBe(false);
+    });
+
+    it('returns false for missing separator', () => {
+      const table = `| Header 1 | Header 2 |
+| Cell 1   | Cell 2   |`;
+      expect(hasTablePattern(table)).toBe(false);
+    });
+
+    it('returns true for table with alignment markers', () => {
+      const table = `| Left | Center | Right |
+|:-----|:------:|------:|
+| L    | C      | R     |`;
+      expect(hasTablePattern(table)).toBe(true);
+    });
+
+    it('returns false for plain text', () => {
+      expect(hasTablePattern('just some text')).toBe(false);
+    });
+  });
+
+  describe('parseAllInlineTokens for tables', () => {
+    it('parses basic table', () => {
+      const table = `| A | B |
+|---|---|
+| 1 | 2 |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens).toHaveLength(1);
+      expect(tokens[0].type).toBe('table');
+    });
+
+    it('extracts headers', () => {
+      const table = `| Name | Age |
+|------|-----|
+| Bob  | 30  |`;
+      const tokens = parseAllInlineTokens(table);
+      const tableToken = tokens[0];
+      expect(tableToken.headers).toEqual(['Name', 'Age']);
+    });
+
+    it('extracts rows', () => {
+      const table = `| A | B |
+|---|---|
+| 1 | 2 |
+| 3 | 4 |`;
+      const tokens = parseAllInlineTokens(table);
+      const tableToken = tokens[0];
+      expect(tableToken.rows).toEqual([['1', '2'], ['3', '4']]);
+    });
+
+    it('parses left alignment (default)', () => {
+      const table = `| Col |
+|-----|
+| X   |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].alignments).toEqual(['left']);
+    });
+
+    it('parses center alignment', () => {
+      const table = `| Col |
+|:---:|
+| X   |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].alignments).toEqual(['center']);
+    });
+
+    it('parses right alignment', () => {
+      const table = `| Col |
+|----:|
+| X   |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].alignments).toEqual(['right']);
+    });
+
+    it('parses mixed alignments', () => {
+      const table = `| L | C | R |
+|:--|:-:|--:|
+| 1 | 2 | 3 |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].alignments).toEqual(['left', 'center', 'right']);
+    });
+
+    it('handles table with no data rows', () => {
+      const table = `| Header |
+|--------|`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].type).toBe('table');
+      expect(tokens[0].headers).toEqual(['Header']);
+      expect(tokens[0].rows).toEqual([]);
+    });
+
+    it('trims whitespace from cells', () => {
+      const table = `|   Header   |
+|------------|
+|   Value    |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].headers).toEqual(['Header']);
+      expect(tokens[0].rows).toEqual([['Value']]);
+    });
+
+    it('preserves raw content', () => {
+      const table = `| A | B |
+|---|---|
+| 1 | 2 |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].raw).toBe(table);
+    });
+  });
+
+  describe('hasInlineFormatting includes tables', () => {
+    it('returns true for table content', () => {
+      const table = `| A | B |
+|---|---|
+| 1 | 2 |`;
+      expect(hasInlineFormatting(table)).toBe(true);
+    });
+  });
+
+  describe('pipe escaping', () => {
+    it('handles escaped pipes in cell content', () => {
+      // Pipes escaped as \| should be treated as literal pipe in cell
+      const table = `| Header |
+|--------|
+| a \\| b |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].rows).toEqual([['a | b']]);
+    });
+
+    it('handles escaped pipes in headers', () => {
+      const table = `| A \\| B |
+|--------|
+| val |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].headers).toEqual(['A | B']);
+    });
+
+    it('handles multiple escaped pipes in one cell', () => {
+      const table = `| Col |
+|-----|
+| a \\| b \\| c |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].rows).toEqual([['a | b | c']]);
+    });
+
+    it('handles mixed escaped and unescaped pipes', () => {
+      const table = `| A | B |
+|---|---|
+| x \\| y | z |`;
+      const tokens = parseAllInlineTokens(table);
+      expect(tokens[0].rows).toEqual([['x | y', 'z']]);
     });
   });
 });
