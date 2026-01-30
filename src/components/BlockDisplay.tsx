@@ -538,8 +538,8 @@ export function TableView(props: TableViewProps) {
     // Tab while editing: save and move to next/prev cell
     if (e.key === 'Tab') {
       e.preventDefault();
+      const cell = editingCell(); // Capture before save clears it
       handleCellSave();
-      const cell = editingCell();
       if (cell) {
         if (e.shiftKey) {
           // Backward

@@ -1074,7 +1074,7 @@ function createBlockStore() {
 
   /**
    * Update table configuration (FLO-58).
-   * Merges new config with existing - pass undefined to clear.
+   * Replaces table configuration - pass undefined to clear.
    */
   const updateTableConfig = (id: string, config: TableConfig | undefined) => {
     if (!_doc) { warnDocNotReady('updateTableConfig'); return; }

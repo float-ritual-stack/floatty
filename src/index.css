@@ -1882,9 +1882,8 @@ body.resizing .terminal-pane-positioned {
   white-space: pre-wrap;
   word-break: break-word;
   vertical-align: top;
-  /* 3-line max when resting (expand on focus/edit) */
-  max-height: 72px;
-  overflow: hidden;
+  /* Note: max-height/overflow ignored on table cells by browsers.
+     Height constraint would need inner wrapper - not implemented. */
 }
 
 .md-table th {
