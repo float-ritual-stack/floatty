@@ -2,11 +2,12 @@
 
 use axum::{
     body::Body,
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{header::AUTHORIZATION, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use std::net::SocketAddr;
 
 /// API key authentication state
 #[derive(Clone)]
@@ -29,6 +30,7 @@ impl ApiKeyAuth {
 /// Middleware function that validates Bearer token
 pub async fn auth_middleware(
     State(auth): State<ApiKeyAuth>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
@@ -40,6 +42,12 @@ pub async fn auth_middleware(
     // Skip auth for CORS preflight (OPTIONS) requests
     // CorsLayer handles these; auth would block with 401
     if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
+    // Skip auth for localhost connections (127.0.0.1 or ::1)
+    // Remote access still requires API key
+    if addr.ip().is_loopback() {
         return next.run(request).await;
     }
 
