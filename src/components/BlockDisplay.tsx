@@ -340,7 +340,8 @@ export function TableView(props: TableViewProps) {
     let newLeft = state.startWidths[leftIdx] + deltaPercent;
     let newRight = state.startWidths[rightIdx] - deltaPercent;
 
-    // Enforce minimum widths
+    // Enforce minimum widths with final clamp to avoid edge case
+    // where sequential adjustments leave one column below minimum
     if (newLeft < MIN_COLUMN_WIDTH_PERCENT) {
       newRight -= (MIN_COLUMN_WIDTH_PERCENT - newLeft);
       newLeft = MIN_COLUMN_WIDTH_PERCENT;
@@ -349,6 +350,9 @@ export function TableView(props: TableViewProps) {
       newLeft -= (MIN_COLUMN_WIDTH_PERCENT - newRight);
       newRight = MIN_COLUMN_WIDTH_PERCENT;
     }
+    // Final clamp for robustness
+    newLeft = Math.max(newLeft, MIN_COLUMN_WIDTH_PERCENT);
+    newRight = Math.max(newRight, MIN_COLUMN_WIDTH_PERCENT);
 
     // Update visual feedback via separate signal (startWidths stays stable)
     const newWidths = [...state.startWidths];
