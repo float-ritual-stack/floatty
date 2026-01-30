@@ -6,7 +6,7 @@ import { createRoot, batch } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
-import type { Block, BlockType } from '../lib/blockTypes';
+import type { Block, BlockType, TableConfig } from '../lib/blockTypes';
 import {
   blockEventBus,
   blockProjectionScheduler,
@@ -155,6 +155,8 @@ function toBlock(value: unknown): Block | null {
     output: getValue(value, 'output') as unknown,
     outputType: getValue(value, 'outputType') as string | undefined,
     outputStatus: getValue(value, 'outputStatus') as Block['outputStatus'],
+    // Table config (UI-only)
+    tableConfig: getValue(value, 'tableConfig') as TableConfig | undefined,
   };
 }
 
@@ -181,6 +183,16 @@ function blockToYMap(block: Block): Y.Map<unknown> {
   }
   if (block.outputStatus !== undefined) {
     blockMap.set('outputStatus', block.outputStatus);
+  }
+  if (block.tableConfig !== undefined) {
+    // Clone to avoid storing SolidJS store proxies in Y.Map
+    const tableConfig = {
+      ...block.tableConfig,
+      columnWidths: block.tableConfig.columnWidths
+        ? [...block.tableConfig.columnWidths]
+        : undefined,
+    };
+    blockMap.set('tableConfig', tableConfig);
   }
 
   // childIds as Y.Array for CRDT-safe ordered list
@@ -1067,6 +1079,20 @@ function createBlockStore() {
     }, 'user');
   };
 
+  /**
+   * Update table configuration (FLO-58).
+   * Replaces table configuration - pass undefined to clear.
+   */
+  const updateTableConfig = (id: string, config: TableConfig | undefined) => {
+    if (!_doc) { warnDocNotReady('updateTableConfig'); return; }
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      setValueOnYMap(blocksMap, id, 'tableConfig', config);
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    }, 'user');
+  };
+
   const createInitialBlock = () => {
     if (!_doc) { warnDocNotReady('createInitialBlock'); return ''; }
     
@@ -1110,6 +1136,7 @@ function createBlockStore() {
     moveBlockUp,
     moveBlockDown,
     toggleCollapsed,
+    updateTableConfig,  // FLO-58: table column widths
     createInitialBlock,
     clearWorkspace,
   };

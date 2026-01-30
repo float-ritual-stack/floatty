@@ -10,7 +10,7 @@
 import { findWikilinkEnd, parseWikilinkInner } from './wikilinkUtils';
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'filter-function' | 'filter-prefix';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'filter-function' | 'filter-prefix' | 'table';
   content: string;  // inner text without markers (for wikilink: display text)
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
@@ -21,6 +21,10 @@ export interface InlineToken {
   code?: string;    // For code-fence: the code content without fence markers
   commentPrefix?: string; // For line-comment: the prefix used (//, %%, --, #)
   functionName?: string;  // For filter-function: include or exclude
+  // Table-specific fields
+  headers?: string[];  // For table: column headers
+  rows?: string[][];   // For table: data rows (2D array)
+  alignments?: ('left' | 'center' | 'right')[];  // For table: column alignments
 }
 
 // ctx:: pattern: timestamp required to distinguish from abstract discussion
@@ -179,6 +183,96 @@ function parseCodeFenceTokens(content: string): InlineToken[] {
   }
 
   return tokens;
+}
+
+/**
+ * Check if content contains a markdown table pattern.
+ * Tables require: first line with pipes, second line is separator with dashes.
+ */
+export function hasTablePattern(content: string): boolean {
+  const lines = content.split('\n');
+  if (lines.length < 2) return false;
+
+  const firstLine = lines[0].trim();
+  const secondLine = lines[1].trim();
+
+  // First line: | header | header | (must have pipes)
+  if (!firstLine.startsWith('|') || !firstLine.endsWith('|')) return false;
+
+  // Second line: |---|---| (separator with dashes, optional colons for alignment)
+  return /^\|[\s\-:|]+\|$/.test(secondLine);
+}
+
+/**
+ * Split table row by pipes, respecting escaped pipes (\|).
+ * Returns cells between the outer pipes.
+ */
+function splitTableRow(line: string): string[] {
+  // Defensively handle rows with or without trailing pipe
+  const trimmed = line.trim();
+  const start = trimmed.startsWith('|') ? 1 : 0;
+  const end = trimmed.endsWith('|') ? trimmed.length - 1 : trimmed.length;
+  const inner = trimmed.slice(start, end);
+
+  // Split by unescaped pipes only
+  const cells: string[] = [];
+  let current = '';
+  let i = 0;
+  while (i < inner.length) {
+    if (inner[i] === '\\' && inner[i + 1] === '|') {
+      // Escaped pipe - unescape and include
+      current += '|';
+      i += 2;
+    } else if (inner[i] === '|') {
+      // Unescaped pipe - cell boundary
+      cells.push(current.trim());
+      current = '';
+      i++;
+    } else {
+      current += inner[i];
+      i++;
+    }
+  }
+  cells.push(current.trim());  // Last cell
+  return cells;
+}
+
+/**
+ * Parse markdown table into token with structured data.
+ * Returns null if content is not a valid table.
+ * Exported for BlockItem to use (picker pattern).
+ */
+export function parseTableToken(content: string): InlineToken | null {
+  if (!hasTablePattern(content)) return null;
+
+  const lines = content.split('\n').filter(l => l.trim().startsWith('|'));
+  if (lines.length < 2) return null;
+
+  // Parse headers (line 0)
+  const headers = splitTableRow(lines[0]);
+
+  // Parse alignments from separator (line 1) - no escaping needed for separators
+  const separatorCells = lines[1].split('|').slice(1, -1);
+  const alignments: ('left' | 'center' | 'right')[] = separatorCells.map(cell => {
+    const trimmed = cell.trim();
+    if (trimmed.startsWith(':') && trimmed.endsWith(':')) return 'center';
+    if (trimmed.endsWith(':')) return 'right';
+    return 'left';
+  });
+
+  // Parse data rows (line 2+)
+  const rows = lines.slice(2).map(row => splitTableRow(row));
+
+  return {
+    type: 'table',
+    content: content,
+    raw: content,
+    start: 0,
+    end: content.length,
+    headers,
+    rows,
+    alignments,
+  };
 }
 
 /**
@@ -480,8 +574,9 @@ export function parseInlineTokens(content: string): InlineToken[] {
  * Use for early-exit optimization in rendering.
  */
 export function hasInlineFormatting(content: string): boolean {
-  // Code fences OR standard markdown OR ctx:: patterns OR [[wikilinks]] OR comments/filters/prefix
-  return hasCodeFencePatterns(content)
+  // Tables OR code fences OR standard markdown OR ctx:: patterns OR [[wikilinks]] OR comments/filters/prefix
+  return hasTablePattern(content)
+    || hasCodeFencePatterns(content)
     || /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content)
     || hasCtxPatterns(content)
     || hasWikilinkPatterns(content)
@@ -491,14 +586,21 @@ export function hasInlineFormatting(content: string): boolean {
 }
 
 /**
- * Parse all inline patterns (code fences + markdown + ctx:: + [[wikilinks]]).
+ * Parse all inline patterns (tables + code fences + markdown + ctx:: + [[wikilinks]]).
  * Returns unified token array for rendering.
  *
- * Priority: code-fence → wikilinks → ctx:: → markdown
- * Each parser handles 'text' segments from the previous pass.
- * Code fences are highest priority because their content should NOT be parsed.
+ * Priority: table → code-fence → wikilinks → ctx:: → markdown
+ * Tables are block-level - if content IS a table, return single token.
+ * Code fences are next highest priority because their content should NOT be parsed.
  */
 export function parseAllInlineTokens(content: string): InlineToken[] {
+  // Tables are block-level - if content IS a table, return single token
+  // This takes priority over everything else
+  if (hasTablePattern(content)) {
+    const tableToken = parseTableToken(content);
+    if (tableToken) return [tableToken];
+  }
+
   const hasCodeFence = hasCodeFencePatterns(content);
   const hasMarkdown = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*/.test(content);
   const hasCtx = hasCtxPatterns(content);

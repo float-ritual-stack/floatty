@@ -165,3 +165,56 @@ createEffect(on(zoomedRootId, (zoomTarget, prevTarget) => {
 - Y.Doc content updates trigger unrelated UI effects
 
 **Real example**: Auto-expand on zoom. Effect ran `expandToDepth` which read block store → effect became dependent on block content → every keystroke reset collapse state.
+
+## 8. Scoped Async Actions (Prevent Deadlocks)
+
+**The trap**: A single global `busy()` signal disables ALL buttons, including ones needed to unblock the current operation.
+
+```typescript
+// ❌ BROKEN - global busy creates deadlock
+const [busy, setBusy] = createSignal(false);
+
+async function longTask() {
+  setBusy(true);
+  // ... task needs user to click "Confirm" button
+  // But Confirm is disabled because busy() is true!
+}
+
+// ✅ CORRECT - scoped pending state per action
+const [saving, setSaving] = createSignal(false);
+const [confirming, setConfirming] = createSignal(false);
+
+async function save() {
+  if (saving()) return;  // Prevent double-click
+  setSaving(true);
+  try { await doSave(); }
+  finally { setSaving(false); }
+}
+```
+
+**Rule**: Each async action gets its own pending signal. Never share a global `busy()` across unrelated operations.
+
+## 9. Signal Snapshots Before Await
+
+**The trap**: Reading a signal after `await` may get a different value than before - the user or another action may have changed it.
+
+```typescript
+// ❌ RISKY - signal may change during await
+async function handlePermission() {
+  await someAsyncWork();
+  const request = activePermission();  // May be different now!
+  respond(request.id);
+}
+
+// ✅ CORRECT - snapshot values before await
+async function handlePermission() {
+  const request = activePermission();
+  if (!request) return;
+  const requestId = request.id;  // Capture BEFORE await
+
+  await someAsyncWork();
+  respond(requestId);  // Uses stable value
+}
+```
+
+**Rule**: If you need stable signal values across an async boundary, snapshot them into local variables before the first `await`.

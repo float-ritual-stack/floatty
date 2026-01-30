@@ -8,8 +8,8 @@ import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
-import { parseAllInlineTokens, hasWikilinkPatterns } from '../lib/inlineParser';
-import { BlockDisplay } from './BlockDisplay';
+import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
+import { BlockDisplay, TableView } from './BlockDisplay';
 import { type DailyNoteData, type SearchResults } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
@@ -95,7 +95,28 @@ export function BlockItem(props: BlockItemProps) {
     const defaultCollapsed = b?.collapsed || false;
     return paneStore.isCollapsed(props.paneId, props.id, defaultCollapsed);
   });
+  // FLO-58: Detect table blocks for picker pattern rendering
+  const isTableBlock = createMemo(() => hasTablePattern(block()?.content ?? ''));
+  // FLO-58: Lift showRaw state to persist across TableView remounts
+  // (remounts happen when raw editing temporarily breaks table syntax)
+  const [tableShowRaw, setTableShowRaw] = createSignal(false);
   let contentRef: HTMLDivElement | undefined;
+
+  // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
+  // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
+  createEffect(() => {
+    if (tableShowRaw() && isTableBlock()) {
+      // Wait for contentEditable to mount
+      queueMicrotask(() => {
+        if (contentRef) {
+          const content = block()?.content ?? '';
+          contentRef.innerText = content;
+          setDisplayContent(content);
+          contentRef.focus();
+        }
+      });
+    }
+  });
 
   // Local display content - updated immediately on input for responsive overlay
   // Store content is debounced (150ms), but overlay needs to track DOM immediately
@@ -509,6 +530,37 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
+          {/* TABLE BLOCK: render TableView when NOT in raw mode */}
+          {/* Raw mode uses the regular contentEditable below instead */}
+          <Show when={isTableBlock() && !tableShowRaw()}>
+            <div class="table-block-container">
+              {(() => {
+                const token = parseTableToken(block()?.content ?? '');
+                return token ? (
+                  <TableView
+                    token={token}
+                    blockId={props.id}
+                    onUpdate={(content) => store.updateBlockContent(props.id, content)}
+                    onWikilinkClick={handleWikilinkClick}
+                    isFocused={isFocused()}
+                    onNavigateOut={(direction) => {
+                      // Navigate to prev/next block when exiting table bounds
+                      const nextBlockId = direction === 'up'
+                        ? findPrevVisibleBlock(props.id, props.paneId)
+                        : findNextVisibleBlock(props.id, props.paneId);
+                      if (nextBlockId) {
+                        props.onFocus(nextBlockId);
+                      }
+                    }}
+                    setShowRaw={setTableShowRaw}
+                    tableConfig={block()?.tableConfig}
+                    onTableConfigChange={(config) => store.updateTableConfig(props.id, config)}
+                  />
+                ) : null;
+              })()}
+            </div>
+          </Show>
+
           {/* DAILY OUTPUT VIEW: replaces normal content when outputType is daily-* */}
           <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
             <div class="daily-output">
@@ -545,33 +597,75 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* REGULAR BLOCK: display + edit layers (hidden when daily/search output) */}
-          <Show when={block()?.type !== 'picker' && !block()?.outputType?.startsWith('daily-') && !block()?.outputType?.startsWith('search-')}>
+          {/* REGULAR BLOCK: display + edit layers (hidden for special block types) */}
+          {/* FLO-58: Also show for table blocks in raw mode - use contentEditable for raw markdown editing */}
+          <Show when={block()?.type !== 'picker' && (!isTableBlock() || tableShowRaw()) && !block()?.outputType?.startsWith('daily-') && !block()?.outputType?.startsWith('search-')}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
-            {/* Uses displayContent (immediate) instead of store content (150ms debounced) */}
-            <BlockDisplay content={displayContent()} onWikilinkClick={handleWikilinkClick} />
+            {/* Skip for table raw mode - just show contentEditable directly */}
+            <Show when={!tableShowRaw()}>
+              <BlockDisplay
+                content={displayContent()}
+                onWikilinkClick={handleWikilinkClick}
+                blockId={props.id}
+                onUpdateContent={(content) => store.updateBlockContent(props.id, content)}
+              />
+            </Show>
+
+            {/* TABLE RAW MODE: wrap in container with toggle button at top-right */}
+            <Show when={tableShowRaw()}>
+              <div class="table-raw-container">
+                <button
+                  class="table-raw-toggle"
+                  onClick={() => setTableShowRaw(false)}
+                  title="Switch to table view"
+                >
+                  ⊞
+                </button>
+                <div
+                  ref={contentRef}
+                  contentEditable
+                  class="block-content block-edit block-edit-raw"
+                  spellcheck={false}
+                  autocapitalize="off"
+                  autocorrect="off"
+                  onInput={handleInput}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  onFocus={() => props.onFocus(props.id)}
+                  onBlur={handleBlur}
+                  onCompositionStart={() => setIsComposing(true)}
+                  onCompositionEnd={(e) => {
+                    setIsComposing(false);
+                    updateContentFromDom(e.target as HTMLDivElement);
+                  }}
+                />
+              </div>
+            </Show>
 
             {/* EDIT LAYER: contentEditable with transparent text, visible cursor */}
-            <div
-              ref={contentRef}
-              contentEditable
-              class="block-content block-edit"
-              spellcheck={false}
-              autocapitalize="off"
-              autocorrect="off"
-              onInput={handleInput}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onFocus={() => props.onFocus(props.id)}
-              onBlur={handleBlur}
-              onCompositionStart={() => setIsComposing(true)}
-              onCompositionEnd={(e) => {
-                setIsComposing(false);
-                // Trigger final update after composition completes
-                // The IME has committed the final character(s)
-                updateContentFromDom(e.target as HTMLDivElement);
-              }}
-            />
+            {/* Skip for table raw mode - handled above with container */}
+            <Show when={!tableShowRaw()}>
+              <div
+                ref={contentRef}
+                contentEditable
+                class="block-content block-edit"
+                spellcheck={false}
+                autocapitalize="off"
+                autocorrect="off"
+                onInput={handleInput}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onFocus={() => props.onFocus(props.id)}
+                onBlur={handleBlur}
+                onCompositionStart={() => setIsComposing(true)}
+                onCompositionEnd={(e) => {
+                  setIsComposing(false);
+                  // Trigger final update after composition completes
+                  // The IME has committed the final character(s)
+                  updateContentFromDom(e.target as HTMLDivElement);
+                }}
+              />
+            </Show>
           </Show>
         </div>
       </div>
