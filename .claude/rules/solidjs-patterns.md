@@ -218,3 +218,59 @@ async function handlePermission() {
 ```
 
 **Rule**: If you need stable signal values across an async boundary, snapshot them into local variables before the first `await`.
+
+## 10. Pointer Events on Window (Drag Operations)
+
+**The trap**: Drag operations that might leave the original element need window-level listeners. Using element-level listeners loses tracking if pointer leaves the element bounds.
+
+**When this bites you**: User drags column resize handle quickly, pointer exits element, drag stops unexpectedly.
+
+```typescript
+// ❌ BROKEN - loses tracking when pointer leaves element
+const handlePointerDown = (e: PointerEvent) => {
+  const el = e.currentTarget as HTMLElement;
+  el.addEventListener('pointermove', handlePointerMove);
+  el.addEventListener('pointerup', handlePointerUp);
+  // ↑ If pointer leaves el during drag, pointermove stops firing
+};
+
+// ✅ CORRECT - use window listeners for cross-element tracking
+const handlePointerDown = (e: PointerEvent) => {
+  // Capture pointer to track across element boundaries
+  (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+  const handlePointerMove = (e: PointerEvent) => {
+    // Fired even if pointer is outside original element
+    updateDragState(e.clientX, e.clientY);
+  };
+
+  const handlePointerUp = () => {
+    window.removeEventListener('pointermove', handlePointerMove);
+    window.removeEventListener('pointerup', handlePointerUp);
+  };
+
+  // Attach to window, not element
+  window.addEventListener('pointermove', handlePointerMove);
+  window.addEventListener('pointerup', handlePointerUp);
+};
+```
+
+**Additional patterns**:
+
+```typescript
+// Capture pointer for guaranteed tracking
+(e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+// Update cursor feedback during drag
+document.body.style.cursor = 'col-resize';  // During drag
+document.body.style.cursor = '';  // On pointerup
+
+// Prevent touch scroll while dragging
+touch-action: none;  // CSS on element
+```
+
+**Rule**: For any drag/interactive operation that extends beyond element bounds (resize handles, sliders, drag-to-select), use window-level listeners with `setPointerCapture()`.
+
+**Real example**: FLO-58 column resizing. Handles are thin targets, user drags quickly, pointer exits handle. Window listeners keep tracking. `setPointerCapture()` ensures `pointerup` fires even if released far from element.
+
+**See also**: [[../docs/learnings/2026-01-30-flo-58-table-improvements.md|FLO-58 Table Improvements]] - practical implementation of this pattern in `BlockDisplay.tsx`
