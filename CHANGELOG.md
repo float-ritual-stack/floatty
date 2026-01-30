@@ -2,6 +2,21 @@
 
 All notable changes to floatty are documented here.
 
+## [0.7.7] - 2026-01-30
+
+### Features
+
+- **Markdown table rendering** (FLO-58, PR #107): Full interactive table support in the outliner
+  - Parses markdown table syntax (`| A | B |`) into structured table view
+  - Cell editing with Tab/Shift+Tab navigation between cells
+  - Column resizing via drag handles (zero-sum model, Shift+drag for proportional)
+  - Text wrapping in all cells
+  - Toggle between table view and raw markdown (≡ button)
+  - Inline formatting preserved in cells (bold, italic, wikilinks)
+  - Column widths persist in block metadata
+
+---
+
 ## [0.7.6] - 2026-01-29
 
 ### Bug Fixes

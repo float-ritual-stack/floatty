@@ -138,10 +138,8 @@ export interface TableViewProps {
   isFocused?: boolean;
   /** Called when navigating out of table bounds (Up from first row, Down from last row) */
   onNavigateOut?: (direction: 'up' | 'down') => void;
-  /** Raw mode state lifted from parent to persist across remounts */
-  showRaw?: boolean;
-  /** Raw mode setter lifted from parent */
-  setShowRaw?: (value: boolean) => void;
+  /** Called when user clicks toggle to switch to raw markdown editing */
+  onSwitchToRaw?: () => void;
   /** Table config from block.tableConfig (FLO-58) */
   tableConfig?: TableConfig;
   /** Called when column widths change (FLO-58) */
@@ -227,16 +225,6 @@ export function TableView(props: TableViewProps) {
   const [focusedCell, setFocusedCell] = createSignal<{ row: number; col: number }>({ row: 0, col: 0 });
   const [localRows, setLocalRows] = createSignal<string[][]>([]);
   const [editValue, setEditValue] = createSignal(''); // Separate signal for input value
-  // Use lifted state if provided, otherwise fallback to local (for read-only tables)
-  const [localShowRaw, setLocalShowRaw] = createSignal(false);
-  const showRaw = () => props.showRaw ?? localShowRaw();
-  const setShowRaw = (value: boolean) => {
-    if (props.setShowRaw) {
-      props.setShowRaw(value);
-    } else {
-      setLocalShowRaw(value);
-    }
-  };
   let tableRef: HTMLTableElement | undefined;
   let inputRef: HTMLInputElement | undefined;
 
@@ -589,31 +577,14 @@ export function TableView(props: TableViewProps) {
   };
 
   return (
-    <Show when={!showRaw()} fallback={
-      <div class="md-table-raw-wrapper">
-        <textarea
-          class="md-table-raw"
-          value={props.token.raw}
-          onInput={(e) => props.onUpdate?.(e.currentTarget.value)}
-          spellcheck={false}
-        />
-        <button
-          class="md-table-toggle"
-          onClick={() => setShowRaw(false)}
-          title="Switch to table view"
-        >
-          ⊞
-        </button>
-      </div>
-    }>
-      <div class="md-table-wrapper">
-        <button
-          class="md-table-toggle"
-          onClick={() => setShowRaw(true)}
-          title="Show raw markdown"
-        >
-          ≡
-        </button>
+    <div class="md-table-wrapper">
+      <button
+        class="md-table-toggle"
+        onClick={() => props.onSwitchToRaw?.()}
+        title="Show raw markdown"
+      >
+        ≡
+      </button>
         <table
           ref={tableRef}
           class={`md-table${resizing() ? ' md-table-resizing' : ''}`}
@@ -685,8 +656,7 @@ export function TableView(props: TableViewProps) {
             </For>
           </tbody>
         </table>
-      </div>
-    </Show>
+    </div>
   );
 }
 

@@ -552,7 +552,7 @@ export function BlockItem(props: BlockItemProps) {
                         props.onFocus(nextBlockId);
                       }
                     }}
-                    setShowRaw={setTableShowRaw}
+                    onSwitchToRaw={() => setTableShowRaw(true)}
                     tableConfig={block()?.tableConfig}
                     onTableConfigChange={(config) => store.updateTableConfig(props.id, config)}
                   />
