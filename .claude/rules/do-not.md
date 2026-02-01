@@ -56,3 +56,4 @@ Critical anti-patterns that will break floatty.
 
 - Put business logic in Tauri commands (use `src-tauri/src/services/` for business logic)
 - Skip the services pattern for new features (thin command adapters, pure service logic)
+- Add block operations to API without emitting corresponding `BlockChange::*` event (hooks depend on complete event coverage - FLO-224 missed `Moved` event on reparent, caught by Greptile)

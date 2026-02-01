@@ -155,7 +155,7 @@ pub struct UpdateRequest {
 }
 
 /// Block list response
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct BlocksResponse {
     pub blocks: Vec<BlockDto>,
     pub root_ids: Vec<String>,
@@ -196,10 +196,31 @@ pub struct CreateBlockRequest {
 pub struct UpdateBlockRequest {
     /// New content for the block (optional if only updating metadata)
     pub content: Option<String>,
+    /// New parent ID for reparenting:
+    /// - Field absent: None = don't change parent
+    /// - Field present with null: Some(None) = move to root
+    /// - Field present with value: Some(Some(id)) = move under parent
+    #[serde(default, deserialize_with = "deserialize_optional_parent_id")]
+    pub parent_id: Option<Option<String>>,
     /// Metadata to set on the block
     pub metadata: Option<serde_json::Value>,
     // NOTE: Origin field removed - origin is now handled via Y.Doc observation
     // with Origin::User for all frontend mutations. See hooks/system.rs.
+}
+
+/// Custom deserializer for Option<Option<String>> that distinguishes:
+/// - field absent: returns None (don't change)
+/// - field present with null: returns Some(None) (move to root)
+/// - field present with value: returns Some(Some(value)) (move under parent)
+fn deserialize_optional_parent_id<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Deserialize the field value (null or string)
+    // The #[serde(default)] handles the absent case by not calling this at all
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    // Wrap in Some to indicate field was present
+    Ok(Some(value))
 }
 
 /// Standard error response
@@ -228,13 +249,16 @@ pub enum ApiError {
 
     #[error("Search error: {0}")]
     Search(String),
+
+    #[error("Invalid parent: {0}")]
+    InvalidParent(String),
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status = match &self {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
-            ApiError::InvalidBase64(_) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidBase64(_) | ApiError::InvalidParent(_) => StatusCode::BAD_REQUEST,
             ApiError::SearchUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Search(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
@@ -634,7 +658,7 @@ async fn create_block(
     ))
 }
 
-/// PATCH /api/v1/blocks/:id - Update content and/or metadata
+/// PATCH /api/v1/blocks/:id - Update content, metadata, and/or parent
 async fn update_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -649,7 +673,7 @@ async fn update_block(
         .as_millis() as i64;
 
     // Read existing block data
-    let (parent_id, child_ids, collapsed, existing_content, existing_metadata, created_at) = {
+    let (old_parent_id, child_ids, collapsed, existing_content, existing_metadata, created_at) = {
         let txn = doc_guard.transact();
         let blocks_map = txn
             .get_map("blocks")
@@ -721,10 +745,65 @@ async fn update_block(
         existing_metadata
     };
 
+    // Determine if reparenting is requested
+    // req.parent_id: None = don't change, Some(None) = move to root, Some(Some(id)) = move under parent
+    let (final_parent_id, parent_changed) = match &req.parent_id {
+        None => (old_parent_id.clone(), false),
+        Some(new_parent) => {
+            let changed = *new_parent != old_parent_id;
+            (new_parent.clone(), changed)
+        }
+    };
+
     // Update fields granularly (only what changed)
     let update = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
+
+        // Validate new parent exists and won't create cycle (if reparenting to a non-root parent)
+        if parent_changed {
+            if let Some(ref new_parent_id) = final_parent_id {
+                // Prevent self-parenting
+                if new_parent_id == &id {
+                    return Err(ApiError::InvalidParent(
+                        "Cannot reparent block under itself".to_string()
+                    ));
+                }
+
+                // Walk ancestor chain to prevent cycles (can't parent under a descendant)
+                let mut cursor = Some(new_parent_id.clone());
+                while let Some(pid) = cursor {
+                    if pid == id {
+                        return Err(ApiError::InvalidParent(format!(
+                            "Cannot reparent block {} under its own descendant",
+                            id
+                        )));
+                    }
+                    cursor = blocks
+                        .get(&txn, &pid)
+                        .and_then(|v| match v {
+                            yrs::Out::YMap(m) => m.get(&txn, "parentId").and_then(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                yrs::Out::Any(yrs::Any::Null) => None,
+                                _ => None,
+                            }),
+                            _ => None,
+                        });
+                }
+
+                // Validate new parent exists
+                match blocks.get(&txn, new_parent_id) {
+                    Some(yrs::Out::YMap(_)) => {} // New parent exists
+                    _ => {
+                        return Err(ApiError::NotFound(format!(
+                            "New parent block not found: {}",
+                            new_parent_id
+                        )));
+                    }
+                }
+            }
+        }
+
         if let Some(yrs::Out::YMap(block_map)) = blocks.get(&txn, &id) {
             // Update content if provided
             if req.content.is_some() {
@@ -735,6 +814,65 @@ async fn update_block(
                 let meta_str = serde_json::to_string(meta).unwrap_or_default();
                 block_map.insert(&mut txn, "metadata", meta_str);
             }
+
+            // Handle reparenting
+            if parent_changed {
+                // Update block's parentId field
+                let parent_id_value: yrs::Any = match &final_parent_id {
+                    Some(p) => yrs::Any::String(p.clone().into()),
+                    None => yrs::Any::Null,
+                };
+                block_map.insert(&mut txn, "parentId", parent_id_value);
+
+                // Remove from old parent's childIds (or rootIds if was root)
+                if let Some(ref old_pid) = old_parent_id {
+                    if let Some(yrs::Out::YMap(old_parent_map)) = blocks.get(&txn, old_pid) {
+                        if let Some(yrs::Out::YArray(child_ids_arr)) = old_parent_map.get(&txn, "childIds") {
+                            let mut remove_idx: Option<u32> = None;
+                            for (i, value) in child_ids_arr.iter(&txn).enumerate() {
+                                if let yrs::Out::Any(yrs::Any::String(s)) = value {
+                                    if s.as_ref() == id {
+                                        remove_idx = Some(i as u32);
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Some(idx) = remove_idx {
+                                child_ids_arr.remove(&mut txn, idx);
+                            }
+                        }
+                    }
+                } else {
+                    // Was root - remove from rootIds
+                    let root_ids = txn.get_or_insert_array("rootIds");
+                    let mut remove_idx: Option<u32> = None;
+                    for (i, value) in root_ids.iter(&txn).enumerate() {
+                        if let yrs::Out::Any(yrs::Any::String(s)) = value {
+                            if s.as_ref() == id {
+                                remove_idx = Some(i as u32);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(idx) = remove_idx {
+                        root_ids.remove(&mut txn, idx);
+                    }
+                }
+
+                // Add to new parent's childIds (or rootIds if moving to root)
+                if let Some(ref new_pid) = final_parent_id {
+                    if let Some(yrs::Out::YMap(new_parent_map)) = blocks.get(&txn, new_pid) {
+                        if let Some(yrs::Out::YArray(child_ids_arr)) = new_parent_map.get(&txn, "childIds") {
+                            child_ids_arr.push_back(&mut txn, id.as_str());
+                        }
+                    }
+                } else {
+                    // Moving to root
+                    let root_ids = txn.get_or_insert_array("rootIds");
+                    root_ids.push_back(&mut txn, id.as_str());
+                }
+            }
+
             block_map.insert(&mut txn, "updatedAt", now as f64);
         }
         txn.encode_update_v1()
@@ -755,12 +893,22 @@ async fn update_block(
         });
     }
 
+    // Emit Moved event if reparenting occurred
+    if parent_changed {
+        let _ = state.hook_system.emit_change(BlockChange::Moved {
+            id: id.clone(),
+            old_parent_id,
+            new_parent_id: final_parent_id.clone(),
+            origin: Origin::User,
+        });
+    }
+
     let block_type = floatty_core::parse_block_type(&final_content);
 
     Ok(Json(BlockDto {
         id: id.clone(),
         content: final_content,
-        parent_id,
+        parent_id: final_parent_id,
         child_ids,
         collapsed,
         block_type: format!("{:?}", block_type).to_lowercase(),
@@ -1481,5 +1629,355 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         // Note: Results may be empty if index commit hasn't happened yet.
         // This is acceptable for unit tests - integration tests would wait longer.
+    }
+
+    #[tokio::test]
+    async fn test_reparent_block_to_new_parent() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create parent A
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Parent A"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let parent_a: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Create parent B
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Parent B"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let parent_b: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Create child under parent A
+        let child_req = format!(r#"{{"content": "Child", "parentId": "{}"}}"#, parent_a.id);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(child_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let child: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert_eq!(child.parent_id, Some(parent_a.id.clone()));
+
+        // Reparent child to parent B via PATCH
+        let reparent_req = format!(r#"{{"parentId": "{}"}}"#, parent_b.id);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::patch(&format!("/api/v1/blocks/{}", child.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(reparent_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let updated_child: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert_eq!(updated_child.parent_id, Some(parent_b.id.clone()));
+
+        // Verify parent A no longer has child
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(&format!("/api/v1/blocks/{}", parent_a.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let updated_parent_a: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert!(!updated_parent_a.child_ids.contains(&child.id), "Parent A should no longer have child");
+
+        // Verify parent B now has child
+        let response = app
+            .oneshot(
+                Request::get(&format!("/api/v1/blocks/{}", parent_b.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let updated_parent_b: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert!(updated_parent_b.child_ids.contains(&child.id), "Parent B should now have child");
+    }
+
+    #[tokio::test]
+    async fn test_reparent_block_to_root() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create parent
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Parent"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let parent: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Create child under parent
+        let child_req = format!(r#"{{"content": "Child", "parentId": "{}"}}"#, parent.id);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(child_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let child: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Move child to root (parentId: null)
+        let response = app
+            .clone()
+            .oneshot(
+                Request::patch(&format!("/api/v1/blocks/{}", child.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"parentId": null}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let updated_child: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert!(updated_child.parent_id.is_none(), "Child should now be root");
+
+        // Verify parent no longer has child
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(&format!("/api/v1/blocks/{}", parent.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let updated_parent: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert!(!updated_parent.child_ids.contains(&child.id));
+
+        // Verify child is now in rootIds
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/blocks")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let blocks: BlocksResponse = serde_json::from_slice(&body).unwrap();
+        assert!(blocks.root_ids.contains(&child.id), "Child should now be in rootIds");
+    }
+
+    #[tokio::test]
+    async fn test_reparent_root_block_to_parent() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create two root blocks
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Block A"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block_a: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Block B"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block_b: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Verify both are roots
+        let response = app
+            .clone()
+            .oneshot(Request::get("/api/v1/blocks").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let blocks: BlocksResponse = serde_json::from_slice(&body).unwrap();
+        assert!(blocks.root_ids.contains(&block_a.id));
+        assert!(blocks.root_ids.contains(&block_b.id));
+
+        // Move block B under block A
+        let reparent_req = format!(r#"{{"parentId": "{}"}}"#, block_a.id);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::patch(&format!("/api/v1/blocks/{}", block_b.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(reparent_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify block B is no longer root and block A has it as child
+        let response = app
+            .clone()
+            .oneshot(Request::get("/api/v1/blocks").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let blocks: BlocksResponse = serde_json::from_slice(&body).unwrap();
+        assert!(blocks.root_ids.contains(&block_a.id), "Block A should still be root");
+        assert!(!blocks.root_ids.contains(&block_b.id), "Block B should no longer be root");
+
+        let response = app
+            .oneshot(
+                Request::get(&format!("/api/v1/blocks/{}", block_a.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block_a_updated: BlockDto = serde_json::from_slice(&body).unwrap();
+        assert!(block_a_updated.child_ids.contains(&block_b.id), "Block A should have Block B as child");
+    }
+
+    #[tokio::test]
+    async fn test_reparent_rejects_self_parent() {
+        let (app, _dir, _store) = test_app();
+
+        // Create a block
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Test"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Try to parent block under itself
+        let reparent_req = format!(r#"{{"parentId": "{}"}}"#, block.id);
+        let response = app
+            .oneshot(
+                Request::patch(&format!("/api/v1/blocks/{}", block.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(reparent_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "Self-parenting should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_reparent_rejects_cycle() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create parent -> child hierarchy
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Parent"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let parent: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        let child_req = format!(r#"{{"content": "Child", "parentId": "{}"}}"#, parent.id);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(child_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let child: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Try to parent parent under child (would create cycle)
+        let reparent_req = format!(r#"{{"parentId": "{}"}}"#, child.id);
+        let response = app
+            .oneshot(
+                Request::patch(&format!("/api/v1/blocks/{}", parent.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(reparent_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "Cycle should be rejected");
     }
 }
