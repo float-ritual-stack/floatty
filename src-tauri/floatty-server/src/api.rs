@@ -861,6 +861,16 @@ async fn update_block(
         });
     }
 
+    // Emit Moved event if reparenting occurred
+    if parent_changed {
+        let _ = state.hook_system.emit_change(BlockChange::Moved {
+            id: id.clone(),
+            old_parent_id,
+            new_parent_id: final_parent_id.clone(),
+            origin: Origin::User,
+        });
+    }
+
     let block_type = floatty_core::parse_block_type(&final_content);
 
     Ok(Json(BlockDto {
