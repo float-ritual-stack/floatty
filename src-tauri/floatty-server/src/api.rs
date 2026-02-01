@@ -249,13 +249,16 @@ pub enum ApiError {
 
     #[error("Search error: {0}")]
     Search(String),
+
+    #[error("Invalid parent: {0}")]
+    InvalidParent(String),
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status = match &self {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
-            ApiError::InvalidBase64(_) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidBase64(_) | ApiError::InvalidParent(_) => StatusCode::BAD_REQUEST,
             ApiError::SearchUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Search(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
@@ -757,9 +760,38 @@ async fn update_block(
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
 
-        // Validate new parent exists (if reparenting to a non-root parent)
+        // Validate new parent exists and won't create cycle (if reparenting to a non-root parent)
         if parent_changed {
             if let Some(ref new_parent_id) = final_parent_id {
+                // Prevent self-parenting
+                if new_parent_id == &id {
+                    return Err(ApiError::InvalidParent(
+                        "Cannot reparent block under itself".to_string()
+                    ));
+                }
+
+                // Walk ancestor chain to prevent cycles (can't parent under a descendant)
+                let mut cursor = Some(new_parent_id.clone());
+                while let Some(pid) = cursor {
+                    if pid == id {
+                        return Err(ApiError::InvalidParent(format!(
+                            "Cannot reparent block {} under its own descendant",
+                            id
+                        )));
+                    }
+                    cursor = blocks
+                        .get(&txn, &pid)
+                        .and_then(|v| match v {
+                            yrs::Out::YMap(m) => m.get(&txn, "parentId").and_then(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                yrs::Out::Any(yrs::Any::Null) => None,
+                                _ => None,
+                            }),
+                            _ => None,
+                        });
+                }
+
+                // Validate new parent exists
                 match blocks.get(&txn, new_parent_id) {
                     Some(yrs::Out::YMap(_)) => {} // New parent exists
                     _ => {
@@ -1862,5 +1894,90 @@ mod tests {
         let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
         let block_a_updated: BlockDto = serde_json::from_slice(&body).unwrap();
         assert!(block_a_updated.child_ids.contains(&block_b.id), "Block A should have Block B as child");
+    }
+
+    #[tokio::test]
+    async fn test_reparent_rejects_self_parent() {
+        let (app, _dir, _store) = test_app();
+
+        // Create a block
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Test"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let block: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Try to parent block under itself
+        let reparent_req = format!(r#"{{"parentId": "{}"}}"#, block.id);
+        let response = app
+            .oneshot(
+                Request::patch(&format!("/api/v1/blocks/{}", block.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(reparent_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "Self-parenting should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_reparent_rejects_cycle() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create parent -> child hierarchy
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Parent"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let parent: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        let child_req = format!(r#"{{"content": "Child", "parentId": "{}"}}"#, parent.id);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(child_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let child: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Try to parent parent under child (would create cycle)
+        let reparent_req = format!(r#"{{"parentId": "{}"}}"#, child.id);
+        let response = app
+            .oneshot(
+                Request::patch(&format!("/api/v1/blocks/{}", parent.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(reparent_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "Cycle should be rejected");
     }
 }
