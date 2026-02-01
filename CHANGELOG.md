@@ -2,6 +2,23 @@
 
 All notable changes to floatty are documented here.
 
+## [0.7.8] - 2026-02-01
+
+### Features
+
+- **API reparenting** (FLO-224, PR #108): Blocks can now be moved between parents via PATCH `/api/v1/blocks/:id`
+  - `parentId: null` moves block to root
+  - `parentId: "<id>"` moves block under specified parent
+  - Children automatically travel with reparented block
+  - Cycle detection prevents parenting under self or descendants
+  - Emits `BlockChange::Moved` event for hook integration
+
+### Bug Fixes
+
+- **Server auth**: Skip auth for localhost connections (dev ergonomics)
+
+---
+
 ## [0.7.7] - 2026-01-30
 
 ### Features
