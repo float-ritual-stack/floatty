@@ -6,6 +6,31 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.10] - 2026-02-02
+
+### Features
+
+- **Automated rolling backup daemon** (FLO-251, PR #113)
+  - Hourly backups to `~/.floatty/backups/` (configurable)
+  - Tiered retention: 24h hourly, 7d daily, 4w weekly
+  - `backup::status` - Daemon health and timing
+  - `backup::list` - Show recent backups with sizes
+  - `backup::trigger` - Force immediate backup
+  - `backup::config` - View retention settings
+  - `backup::restore <file> --confirm` - Restore from backup
+
+- **Export endpoints for agents/cron** (FLO-249)
+  - `GET /api/v1/export/binary` - Download raw .ydoc
+  - `GET /api/v1/export/json` - Download human-readable JSON
+
+### Improvements
+
+- Use `chrono` crate for UTC timestamps (replaces 50+ lines of manual date calc)
+- Async file writes in backup daemon (`tokio::fs::write`)
+- Proper error propagation in config serialization
+
+---
+
 ## [0.7.9] - 2026-02-02
 
 ### Features
