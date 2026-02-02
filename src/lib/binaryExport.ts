@@ -23,11 +23,21 @@ export function exportBinary(doc: Y.Doc): Uint8Array {
 
 /**
  * Export Y.Doc state as base64 string.
+ *
+ * NOTE: Chunked encoding to avoid stack overflow on large docs.
+ * String.fromCharCode(...array) spreads can exceed call stack limits.
  */
 export function exportBinaryBase64(doc: Y.Doc): string {
   const state = Y.encodeStateAsUpdate(doc);
-  // Use built-in btoa with a workaround for binary data
-  const binary = String.fromCharCode(...state);
+
+  // Build binary string in chunks to avoid "Maximum call stack size exceeded"
+  // for large Y.Doc states (can be MB+ for real outlines)
+  const CHUNK_SIZE = 8192;
+  let binary = '';
+  for (let i = 0; i < state.length; i += CHUNK_SIZE) {
+    const chunk = state.subarray(i, Math.min(i + CHUNK_SIZE, state.length));
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
   return btoa(binary);
 }
 

@@ -438,43 +438,47 @@ export async function getLocalBackup(): Promise<Uint8Array | null> {
  *
  * Logs warnings for states that might indicate data corruption or
  * accidental wipe. Future: Could show modal for confirmation.
+ *
+ * NOTE: Returns void - this is logging-only, doesn't gate startup.
  */
-async function validateSyncedState(doc: Y.Doc): Promise<boolean> {
-  const blocksMap = doc.getMap('blocks');
-  const rootIdsArray = doc.getArray<string>('rootIds');
+async function validateSyncedState(doc: Y.Doc): Promise<void> {
+  try {
+    const blocksMap = doc.getMap('blocks');
+    const rootIdsArray = doc.getArray<string>('rootIds');
 
-  const blockCount = blocksMap.size;
-  const rootCount = rootIdsArray.length;
+    const blockCount = blocksMap.size;
+    const rootCount = rootIdsArray.length;
 
-  // Suspicious: 0 blocks but backup existed (possible server wipe)
-  if (blockCount === 0) {
-    const hadBackup = await hasBackupIDB();
-    if (hadBackup) {
-      console.warn('[FLO-247] ⚠️ Server returned empty but IndexedDB backup exists!');
-      console.warn('[FLO-247] This could indicate server wipe. Check ~/.floatty-dev/ctx_markers.db');
-      // For now just log - modal can come later
-      return false;
+    // Suspicious: 0 blocks but backup existed (possible server wipe)
+    if (blockCount === 0) {
+      const hadBackup = await hasBackupIDB();
+      if (hadBackup) {
+        console.warn('[FLO-247] ⚠️ Server returned empty but IndexedDB backup exists!');
+        console.warn('[FLO-247] This could indicate server wipe. Check ~/.floatty-dev/ctx_markers.db');
+        return;
+      }
     }
-  }
 
-  // Suspicious: Very few blocks (might be test data)
-  if (blockCount > 0 && blockCount < 10) {
-    console.warn(`[FLO-247] ⚠️ Very few blocks (${blockCount}) - might be test data`);
-  }
+    // Suspicious: Very few blocks (might be test data)
+    if (blockCount > 0 && blockCount < 10) {
+      console.warn(`[FLO-247] ⚠️ Very few blocks (${blockCount}) - might be test data`);
+    }
 
-  // Suspicious: No roots but blocks exist (orphaned blocks)
-  if (rootCount === 0 && blockCount > 0) {
-    console.warn(`[FLO-247] ⚠️ ${blockCount} blocks exist but no root IDs!`);
-    return false;
-  }
+    // Suspicious: No roots but blocks exist (orphaned blocks)
+    if (rootCount === 0 && blockCount > 0) {
+      console.warn(`[FLO-247] ⚠️ ${blockCount} blocks exist but no root IDs!`);
+      return;
+    }
 
-  // Suspicious: More roots than expected (usually 2-3)
-  if (rootCount > 20) {
-    console.warn(`[FLO-247] ⚠️ Unusually many root blocks (${rootCount})`);
-  }
+    // Suspicious: More roots than expected (usually 2-3)
+    if (rootCount > 20) {
+      console.warn(`[FLO-247] ⚠️ Unusually many root blocks (${rootCount})`);
+    }
 
-  console.log(`[FLO-247] ✓ State looks healthy: ${blockCount} blocks, ${rootCount} roots`);
-  return true;
+    console.log(`[FLO-247] ✓ State looks healthy: ${blockCount} blocks, ${rootCount} roots`);
+  } catch (err) {
+    console.warn('[FLO-247] Sanity check failed:', err);
+  }
 }
 
 // Export for testing

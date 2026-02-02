@@ -44,15 +44,16 @@ export function exportOutlineToJSON(
   const blocks: ExportedOutline['blocks'] = {};
 
   for (const [id, block] of Object.entries(blocksRecord)) {
+    // Clone arrays/objects to detach from SolidJS store proxies
     blocks[id] = {
       content: block.content,
       parentId: block.parentId || null,
-      childIds: block.childIds || [],
+      childIds: block.childIds ? [...block.childIds] : [],
       type: block.type || 'text',
       collapsed: block.collapsed || false,
       createdAt: block.createdAt || 0,
       updatedAt: block.updatedAt || 0,
-      metadata: block.metadata || {},
+      metadata: block.metadata ? { ...block.metadata } : {},
     };
   }
 
@@ -60,7 +61,7 @@ export function exportOutlineToJSON(
     version: 1,
     exported: new Date().toISOString(),
     blockCount: Object.keys(blocks).length,
-    rootIds: rootIds,
+    rootIds: [...rootIds], // Clone to detach from store
     blocks,
   };
 }

@@ -26,12 +26,16 @@ export function initBackupNamespace(workspaceName: string): void {
   const newDbName = `floatty-backup-${build}-${workspaceName}`;
 
   if (newDbName !== dbName) {
-    // Close existing connection to prevent leak
-    if (dbPromise) {
-      dbPromise.then(db => db.close()).catch(() => {});
-      dbPromise = null;
-    }
+    // CRITICAL: Null the promise SYNCHRONOUSLY before async close to prevent
+    // race where getDB() reuses the old promise while close is pending
+    const oldPromise = dbPromise;
+    dbPromise = null;
     dbName = newDbName;
+
+    // Fire-and-forget close of old connection (best effort cleanup)
+    if (oldPromise) {
+      oldPromise.then(db => db.close()).catch(() => {});
+    }
     console.log(`[idbBackup] Namespace set to: ${dbName}`);
   }
 }
