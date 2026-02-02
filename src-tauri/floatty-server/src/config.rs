@@ -100,19 +100,35 @@ impl Default for ServerConfig {
 /// Full config file structure (matches floatty's config.toml)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    /// Top-level server_port (preferred, same as main app reads)
+    pub server_port: Option<u16>,
+
+    /// Legacy [server] section (for backwards compatibility)
     #[serde(default)]
     pub server: ServerConfig,
 }
 
 impl ServerConfig {
     /// Load config from ~/.floatty/config.toml
+    ///
+    /// Port resolution order:
+    /// 1. `server_port` at top level (same as main app)
+    /// 2. `[server].port` (legacy/backwards compat)
+    /// 3. Build-profile default (33333 debug, 8765 release)
     pub fn load() -> Self {
         let config_path = Self::config_path();
 
         if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
                 Ok(contents) => match toml::from_str::<Config>(&contents) {
-                    Ok(config) => return config.server,
+                    Ok(config) => {
+                        let mut server_config = config.server;
+                        // Top-level server_port takes precedence over [server].port
+                        if let Some(port) = config.server_port {
+                            server_config.port = port;
+                        }
+                        return server_config;
+                    }
                     Err(e) => {
                         tracing::warn!("Failed to parse config: {}. Using defaults.", e);
                     }
