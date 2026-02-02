@@ -218,10 +218,11 @@ impl AggregatorConfig {
         };
 
         // Merge our fields into the existing doc
-        let self_table: toml::Table = toml::to_string(self)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_default();
+        let self_str = toml::to_string(self)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        let self_table: toml::Table = self_str
+            .parse()
+            .map_err(|e| format!("Failed to parse serialized config: {}", e))?;
 
         for (key, value) in self_table {
             doc.insert(key, value);
