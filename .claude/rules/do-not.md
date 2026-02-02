@@ -2,6 +2,12 @@
 
 Critical anti-patterns that will break floatty.
 
+## General (Meta)
+
+- Claim architecture/system "doesn't exist" without grepping first (e.g., "no hook system exists" when `HookSystem` is in 13 files)
+- Mark PR review comments as "out of scope" without verifying the infrastructure isn't already there
+- Trust compacted conversation summary over actual codebase state
+
 ## PTY/Rust
 
 - Remove batching pattern (breaks performance)

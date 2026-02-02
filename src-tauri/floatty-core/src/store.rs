@@ -623,6 +623,70 @@ impl YDocStore {
         Ok(())
     }
 
+    /// Reset the Y.Doc to a new state from a binary backup.
+    ///
+    /// This is a **destructive operation** that:
+    /// 1. Clears all persisted Y.Doc updates
+    /// 2. Creates a fresh Y.Doc
+    /// 3. Applies the provided state as the new baseline
+    /// 4. Persists the new state
+    ///
+    /// Use this for restore-from-backup scenarios where you want to completely
+    /// replace the server's state, not merge with it.
+    ///
+    /// # Arguments
+    /// * `state_bytes` - Raw Y.Doc state (from `Y.encodeStateAsUpdate()`)
+    ///
+    /// # Returns
+    /// * `Ok(block_count)` - Number of blocks in the restored state
+    /// * `Err(StoreError)` - If decode/apply fails
+    pub fn reset_from_state(&self, state_bytes: &[u8]) -> Result<usize, StoreError> {
+        // 1. Decode and validate first (before any destructive ops)
+        let update = Update::decode_v1(state_bytes)
+            .map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
+
+        // 2. Create a fresh Y.Doc and apply the state
+        let new_doc = Doc::new();
+        {
+            let mut txn = new_doc.transact_mut();
+            txn.apply_update(update)
+                .map_err(|e| StoreError::UpdateApply(e.to_string()))?;
+        }
+
+        // 3. Count blocks in the new state (verify we have data before clearing)
+        let block_count = {
+            let txn = new_doc.transact();
+            txn.get_map("blocks")
+                .map(|m| m.len(&txn) as usize)
+                .unwrap_or(0)
+        };
+
+        // 4. Encode the full state BEFORE clearing (ensures we have valid data)
+        let full_state = new_doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+
+        // 5. NOW clear persisted state (only after successful decode + apply + encode)
+        self.persistence.clear_updates(&self.doc_key)?;
+
+        // 6. Persist the new state
+        self.persistence.append_update(&self.doc_key, &full_state)?;
+
+        // 7. Replace the in-memory doc (under write lock for thread safety)
+        {
+            let mut doc_guard = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
+            *doc_guard = new_doc;
+        }
+
+        log::info!(
+            "Y.Doc reset complete: {} blocks restored from {} bytes",
+            block_count,
+            state_bytes.len()
+        );
+
+        Ok(block_count)
+    }
+
     /// Get block metadata as JSON Value (for change events).
     ///
     /// Used to capture the old metadata state before mutations.

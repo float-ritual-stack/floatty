@@ -297,6 +297,7 @@ pub fn create_router(
         .route("/api/v1/state-vector", get(get_state_vector))
         .route("/api/v1/state/hash", get(get_state_hash))
         .route("/api/v1/update", post(apply_update))
+        .route("/api/v1/restore", post(restore_state))
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
         .route("/api/v1/blocks", post(create_block))
@@ -385,6 +386,91 @@ async fn apply_update(
     state.broadcaster.broadcast(update_bytes, req.tx_id);
 
     Ok(StatusCode::OK)
+}
+
+/// Restore request - same as update but for full state replacement
+#[derive(Deserialize)]
+pub struct RestoreRequest {
+    /// Base64 encoded Y.Doc state (from binary export)
+    pub state: String,
+}
+
+/// Restore response
+#[derive(Serialize)]
+pub struct RestoreResponse {
+    /// Number of blocks restored
+    pub block_count: usize,
+    /// Number of root blocks
+    pub root_count: usize,
+}
+
+/// POST /api/v1/restore - Replace Y.Doc state from binary backup
+///
+/// This is a **destructive operation** that replaces all server state with the
+/// provided backup. Use for disaster recovery or migration.
+///
+/// Unlike `/api/v1/update` which merges updates via CRDT, this endpoint:
+/// 1. Clears all existing Y.Doc state
+/// 2. Applies the backup as the new baseline
+/// 3. Broadcasts the new state to all connected clients
+///
+/// # Request Body
+/// ```json
+/// { "state": "<base64 encoded Y.Doc state>" }
+/// ```
+///
+/// # Response
+/// ```json
+/// { "block_count": 196, "root_count": 7 }
+/// ```
+async fn restore_state(
+    State(state): State<AppState>,
+    Json(req): Json<RestoreRequest>,
+) -> Result<Json<RestoreResponse>, ApiError> {
+    let state_bytes = BASE64
+        .decode(&req.state)
+        .map_err(|e| ApiError::InvalidBase64(e.to_string()))?;
+
+    // 1. Clear search index before restore (stale entries would remain otherwise)
+    if let Err(e) = state.hook_system.clear_search_index().await {
+        tracing::warn!("Failed to clear search index before restore: {}", e);
+        // Continue anyway - search will have stale entries but Y.Doc is more important
+    }
+
+    // 2. Reset the store to the new state
+    let block_count = state.store.reset_from_state(&state_bytes)?;
+
+    // 3. Get the new full state for broadcasting
+    let new_state = state.store.get_full_state()?;
+
+    // 4. Broadcast the new state to all WebSocket clients
+    // They'll need to reset their local Y.Doc too
+    state.broadcaster.broadcast(new_state, None);
+
+    // 5. Rehydrate hooks (metadata extraction, search indexing, etc.)
+    let rehydrated = state.hook_system.rehydrate_all_blocks(&state.store);
+    tracing::info!("Rehydrated {} blocks after restore", rehydrated);
+
+    // Count roots
+    let root_count = {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
+        txn.get_array("rootIds")
+            .map(|arr| arr.len(&txn) as usize)
+            .unwrap_or(0)
+    };
+
+    tracing::info!(
+        block_count = block_count,
+        root_count = root_count,
+        "Y.Doc restored from binary backup"
+    );
+
+    Ok(Json(RestoreResponse {
+        block_count,
+        root_count,
+    }))
 }
 
 /// GET /api/v1/blocks - All blocks as JSON

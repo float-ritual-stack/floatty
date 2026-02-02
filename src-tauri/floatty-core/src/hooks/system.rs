@@ -207,6 +207,16 @@ impl HookSystem {
         }
         Ok(())
     }
+
+    /// Rehydrate all blocks in the store.
+    ///
+    /// Emits ContentChanged events for all blocks with BulkImport origin.
+    /// Use after restore operations to rebuild metadata, search index, etc.
+    ///
+    /// Returns the number of blocks rehydrated.
+    pub fn rehydrate_all_blocks(&self, store: &YDocStore) -> usize {
+        rehydrate_existing_blocks(&self.emitter, store)
+    }
 }
 
 /// Spawn a periodic commit task for the search index.
