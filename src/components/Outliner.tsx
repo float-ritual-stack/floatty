@@ -266,6 +266,9 @@ export function Outliner(props: OutlinerProps) {
 
       // FLO-247: JSON export with validation (Cmd+Shift+J)
       const exportToJSON = () => {
+        // Flush any pending contentEditable edits before export
+        (document.activeElement as HTMLElement)?.blur();
+
         try {
           const data = exportOutlineToJSON(store.blocks, store.rootIds);
           const validation = validateExport(data);
@@ -284,6 +287,9 @@ export function Outliner(props: OutlinerProps) {
 
       // FLO-247: Binary Y.Doc export for perfect restore (Cmd+Shift+B)
       const exportToBinary = () => {
+        // Flush any pending contentEditable edits before export
+        (document.activeElement as HTMLElement)?.blur();
+
         try {
           downloadBinary(doc);
           console.log('[FLO-247] Exported Y.Doc binary');
