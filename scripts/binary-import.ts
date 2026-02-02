@@ -6,31 +6,35 @@
  * For incremental sync, use /api/v1/update instead.
  *
  * Usage:
- *   npx tsx scripts/binary-import.ts [file.ydoc]
+ *   npx tsx scripts/binary-import.ts <file.ydoc>
  *   npx tsx scripts/binary-import.ts ~/float-hub/inbox/floatty-2026-02-02.ydoc
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as Y from 'yjs';
 
+// Load config from ~/.floatty-dev/config.toml (dev) or ~/.floatty/config.toml (prod)
 const configPath = path.join(process.env.HOME!, '.floatty-dev/config.toml');
 const content = fs.readFileSync(configPath, 'utf-8');
-const match = content.match(/api_key\s*=\s*"([^"]+)"/);
-const API_KEY = match?.[1] || '';
-const PORT = 33333;
 
-function bytesToBase64(bytes: Uint8Array): string {
-  const CHUNK_SIZE = 8192;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    const chunk = bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.length));
-    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
-  }
-  return btoa(binary);
+const keyMatch = content.match(/api_key\s*=\s*"([^"]+)"/);
+const portMatch = content.match(/server_port\s*=\s*(\d+)/);
+
+const API_KEY = keyMatch?.[1] || '';
+const PORT = Number(portMatch?.[1] ?? 33333);
+
+if (!API_KEY) {
+  console.error('Missing api_key in config.toml');
+  process.exit(1);
 }
 
 async function main() {
-  const file = process.argv[2] || '/Users/evan/float-hub/inbox/floatty-2026-02-02.ydoc';
+  const file = process.argv[2];
+  if (!file) {
+    console.error('Usage: npx tsx scripts/binary-import.ts <file.ydoc>');
+    process.exit(1);
+  }
+
   console.log(`Loading ${file}...`);
 
   const buffer = fs.readFileSync(file);
@@ -49,11 +53,15 @@ async function main() {
   const beforeResponse = await fetch(`http://127.0.0.1:${PORT}/api/v1/blocks`, {
     headers: { 'Authorization': `Bearer ${API_KEY}` }
   });
-  const beforeData = await beforeResponse.json();
-  console.log(`\nServer BEFORE: ${beforeData.blocks?.length || 0} blocks`);
+  if (!beforeResponse.ok) {
+    console.error(`Server unavailable: ${beforeResponse.status}`);
+    process.exit(1);
+  }
+  const beforeData = await beforeResponse.json() as { blocks?: unknown[] };
+  console.log(`\nServer BEFORE: ${beforeData.blocks?.length ?? 0} blocks`);
 
   // Send to /api/v1/restore (replaces state completely)
-  const base64 = bytesToBase64(state);
+  const base64 = Buffer.from(state).toString('base64');
   console.log(`\nRestoring ${base64.length} base64 chars...`);
 
   const response = await fetch(`http://127.0.0.1:${PORT}/api/v1/restore`, {
@@ -71,7 +79,7 @@ async function main() {
     process.exit(1);
   }
 
-  const result = await response.json();
+  const result = await response.json() as { block_count: number; root_count: number };
   console.log(`\n✅ Restore complete!`);
   console.log(`   Blocks: ${result.block_count}`);
   console.log(`   Roots: ${result.root_count}`);
@@ -80,8 +88,8 @@ async function main() {
   const afterResponse = await fetch(`http://127.0.0.1:${PORT}/api/v1/blocks`, {
     headers: { 'Authorization': `Bearer ${API_KEY}` }
   });
-  const afterData = await afterResponse.json();
-  console.log(`\nServer AFTER: ${afterData.blocks?.length || 0} blocks`);
+  const afterData = await afterResponse.json() as { blocks?: unknown[] };
+  console.log(`\nServer AFTER: ${afterData.blocks?.length ?? 0} blocks`);
 
   // Final verification
   if (afterData.blocks?.length === blocksMap.size) {
@@ -92,4 +100,7 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

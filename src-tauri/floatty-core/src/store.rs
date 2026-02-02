@@ -641,14 +641,11 @@ impl YDocStore {
     /// * `Ok(block_count)` - Number of blocks in the restored state
     /// * `Err(StoreError)` - If decode/apply fails
     pub fn reset_from_state(&self, state_bytes: &[u8]) -> Result<usize, StoreError> {
-        // Validate the update can be decoded first
+        // 1. Decode and validate first (before any destructive ops)
         let update = Update::decode_v1(state_bytes)
             .map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
 
-        // Clear all persisted updates
-        self.persistence.clear_updates(&self.doc_key)?;
-
-        // Create a fresh Y.Doc and apply the state
+        // 2. Create a fresh Y.Doc and apply the state
         let new_doc = Doc::new();
         {
             let mut txn = new_doc.transact_mut();
@@ -656,7 +653,7 @@ impl YDocStore {
                 .map_err(|e| StoreError::UpdateApply(e.to_string()))?;
         }
 
-        // Count blocks in the new state
+        // 3. Count blocks in the new state (verify we have data before clearing)
         let block_count = {
             let txn = new_doc.transact();
             txn.get_map("blocks")
@@ -664,13 +661,18 @@ impl YDocStore {
                 .unwrap_or(0)
         };
 
-        // Persist the full state as a single compacted update
+        // 4. Encode the full state BEFORE clearing (ensures we have valid data)
         let full_state = new_doc
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
+
+        // 5. NOW clear persisted state (only after successful decode + apply + encode)
+        self.persistence.clear_updates(&self.doc_key)?;
+
+        // 6. Persist the new state
         self.persistence.append_update(&self.doc_key, &full_state)?;
 
-        // Replace the in-memory doc
+        // 7. Replace the in-memory doc (under write lock for thread safety)
         {
             let mut doc_guard = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
             *doc_guard = new_doc;
