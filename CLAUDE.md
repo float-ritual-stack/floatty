@@ -200,14 +200,13 @@ Critical rules:
 
 ### Configuration
 
-**Data Directory** (NEW: Multi-Workspace Support):
+**Data Directory** (Build Profile Isolation):
 
-All paths derive from a single root via `FLOATTY_DATA_DIR` environment variable:
-```bash
-# Default: ~/.floatty
-# Dev mode: ~/.floatty-dev (set in package.json scripts)
-FLOATTY_DATA_DIR=~/.floatty-dev npm run tauri dev
-```
+Paths derive from build profile (prevents accidental dev/release data sharing):
+- **Debug builds** (`cargo build`): `~/.floatty-dev`
+- **Release builds** (`cargo build --release`): `~/.floatty`
+
+Override with `FLOATTY_DATA_DIR` environment variable if needed.
 
 Path resolution (in `src-tauri/src/paths.rs`):
 ```

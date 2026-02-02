@@ -64,11 +64,24 @@ impl DataPaths {
         }
     }
 
-    /// Default root directory: `~/.floatty`
+    /// Default root directory based on build profile.
+    ///
+    /// - Debug builds: `~/.floatty-dev`
+    /// - Release builds: `~/.floatty`
+    ///
+    /// This prevents accidental data sharing between dev and release.
     pub fn default_root() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".floatty")
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+
+        #[cfg(debug_assertions)]
+        {
+            home.join(".floatty-dev")
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            home.join(".floatty")
+        }
     }
 
     /// Shell hooks path (always at `~/.floatty/shell-hooks.zsh`).
@@ -123,6 +136,11 @@ mod tests {
     #[test]
     fn test_default_root() {
         let root = DataPaths::default_root();
+        // Debug builds use .floatty-dev, release uses .floatty
+        #[cfg(debug_assertions)]
+        assert!(root.ends_with(".floatty-dev"));
+
+        #[cfg(not(debug_assertions))]
         assert!(root.ends_with(".floatty"));
     }
 

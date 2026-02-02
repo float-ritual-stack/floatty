@@ -15,15 +15,25 @@ pub const DEV_PORT: u16 = 33333;
 
 /// Get the data directory root.
 ///
-/// Checks `FLOATTY_DATA_DIR` first, falls back to `~/.floatty`.
+/// Checks `FLOATTY_DATA_DIR` first, falls back based on build profile:
+/// - Debug: `~/.floatty-dev`
+/// - Release: `~/.floatty`
 pub fn data_dir() -> PathBuf {
     std::env::var("FLOATTY_DATA_DIR")
         .ok()
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".floatty")
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+
+            #[cfg(debug_assertions)]
+            {
+                home.join(".floatty-dev")
+            }
+
+            #[cfg(not(debug_assertions))]
+            {
+                home.join(".floatty")
+            }
         })
 }
 
@@ -55,14 +65,15 @@ fn default_enabled() -> bool {
 }
 
 fn default_port() -> u16 {
-    // Dev builds use visually distinct port for easy log identification
-    if std::env::var("FLOATTY_DATA_DIR")
-        .map(|p| p.contains("floatty-dev"))
-        .unwrap_or(false)
+    // Build profile determines port - prevents accidental cross-talk
+    #[cfg(debug_assertions)]
     {
-        DEV_PORT
-    } else {
-        DEFAULT_PORT
+        DEV_PORT // 33333
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        DEFAULT_PORT // 8765
     }
 }
 

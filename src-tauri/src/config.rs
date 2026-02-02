@@ -98,14 +98,15 @@ fn default_workspace_name() -> String {
 }
 
 fn default_server_port() -> u16 {
-    // Dev builds use visually distinct port for easy log identification
-    if std::env::var("FLOATTY_DATA_DIR")
-        .map(|p| p.contains("floatty-dev"))
-        .unwrap_or(false)
+    // Build profile determines port - prevents accidental cross-talk
+    #[cfg(debug_assertions)]
     {
-        33333
-    } else {
-        8765
+        33333 // Dev builds
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        8765 // Release builds
     }
 }
 
