@@ -41,8 +41,8 @@ sha2 = "0.10"
 dirs = "5"
 toml = "0.8"
 
-# Time/date
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# Time/date (only need "now" for Utc::now(), not "clock" which pulls timezone databases)
+chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
 
 [[bin]]
 name = "floatty-server"
