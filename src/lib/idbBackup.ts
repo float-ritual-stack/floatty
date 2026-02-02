@@ -7,16 +7,39 @@
  * - Binary storage: no base64 overhead
  */
 
-const DB_NAME = 'floatty-backup';
 const STORE_NAME = 'ydoc';
 const DB_VERSION = 1;
 
+// Mutable - set by initBackupNamespace before first access
+let dbName = 'floatty-backup';
 let dbPromise: Promise<IDBDatabase> | null = null;
+
+/**
+ * Initialize the backup namespace based on build environment and workspace.
+ * MUST be called BEFORE any backup operations (getBackup, saveBackup, etc.)
+ *
+ * Creates isolation between: dev/release builds AND different workspaces
+ * e.g., 'floatty-backup-dev-default' vs 'floatty-backup-release-work'
+ */
+export function initBackupNamespace(workspaceName: string): void {
+  const build = import.meta.env.DEV ? 'dev' : 'release';
+  const newDbName = `floatty-backup-${build}-${workspaceName}`;
+
+  if (newDbName !== dbName) {
+    // Close existing connection to prevent leak
+    if (dbPromise) {
+      dbPromise.then(db => db.close()).catch(() => {});
+      dbPromise = null;
+    }
+    dbName = newDbName;
+    console.log(`[idbBackup] Namespace set to: ${dbName}`);
+  }
+}
 
 function getDB(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      const request = indexedDB.open(dbName, DB_VERSION);
       request.onerror = () => {
         console.error('[idbBackup] Failed to open database:', request.error);
         reject(request.error);

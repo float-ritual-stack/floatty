@@ -16,7 +16,11 @@ import {
   saveBackup as saveBackupIDB,
   getBackup as getBackupIDB,
   clearBackup as clearBackupIDB,
+  hasBackup as hasBackupIDB,
+  initBackupNamespace,
 } from '../lib/idbBackup';
+import { invoke } from '@tauri-apps/api/core';
+import type { AggregatorConfig } from '../lib/tauriTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // SYNC STATUS (singleton signals for UI visibility)
@@ -430,6 +434,53 @@ export async function getLocalBackup(): Promise<Uint8Array | null> {
 }
 
 /**
+ * FLO-247: Startup sanity check - detect suspicious Y.Doc state.
+ *
+ * Logs warnings for states that might indicate data corruption or
+ * accidental wipe. Future: Could show modal for confirmation.
+ */
+async function validateSyncedState(doc: Y.Doc): Promise<boolean> {
+  const blocksMap = doc.getMap('blocks');
+  const rootIdsArray = doc.getArray<string>('rootIds');
+
+  const blockCount = blocksMap.size;
+  const rootCount = rootIdsArray.length;
+
+  // Suspicious: 0 blocks but backup existed (possible server wipe)
+  if (blockCount === 0) {
+    const hadBackup = await hasBackupIDB();
+    if (hadBackup) {
+      console.warn('[FLO-247] ⚠️ Server returned empty but IndexedDB backup exists!');
+      console.warn('[FLO-247] This could indicate server wipe. Check ~/.floatty-dev/ctx_markers.db');
+      // For now just log - modal can come later
+      return false;
+    }
+  }
+
+  // Suspicious: Very few blocks (might be test data)
+  if (blockCount > 0 && blockCount < 10) {
+    console.warn(`[FLO-247] ⚠️ Very few blocks (${blockCount}) - might be test data`);
+  }
+
+  // Suspicious: No roots but blocks exist (orphaned blocks)
+  if (rootCount === 0 && blockCount > 0) {
+    console.warn(`[FLO-247] ⚠️ ${blockCount} blocks exist but no root IDs!`);
+    return false;
+  }
+
+  // Suspicious: More roots than expected (usually 2-3)
+  if (rootCount > 20) {
+    console.warn(`[FLO-247] ⚠️ Unusually many root blocks (${rootCount})`);
+  }
+
+  console.log(`[FLO-247] ✓ State looks healthy: ${blockCount} blocks, ${rootCount} roots`);
+  return true;
+}
+
+// Export for testing
+export { validateSyncedState };
+
+/**
  * Force flush pending updates immediately.
  * Used on WebSocket reconnect to sync state before receiving broadcasts.
  */
@@ -684,6 +735,16 @@ export function useSyncedYDoc(
       // First load - do it
       sharedDocLoadPromise = (async () => {
         try {
+          // CRITICAL: Initialize IndexedDB namespace BEFORE any backup operations
+          // This isolates dev/release and different workspaces (FLO-247)
+          try {
+            const config = await invoke<AggregatorConfig>('get_ctx_config', {});
+            initBackupNamespace(config.workspace_name || 'default');
+          } catch (configErr) {
+            console.warn('[useSyncedYDoc] Failed to load config for namespace, using unknown:', configErr);
+            initBackupNamespace('unknown');
+          }
+
           // Ensure HTTP client is initialized
           if (!isClientInitialized()) {
             throw new Error('HTTP client not initialized');
@@ -784,6 +845,9 @@ export function useSyncedYDoc(
 
           // Connect to WebSocket for real-time sync
           connectWebSocket();
+
+          // FLO-247: Startup sanity check - detect suspicious state
+          validateSyncedState(doc);
         } catch (err) {
           console.error('Failed to load initial state from server:', err);
           sharedDocError = String(err);
