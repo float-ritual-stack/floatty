@@ -76,7 +76,7 @@ for (const [docKey, updates] of Object.entries(byDoc)) {
   }
 
   // Print from roots
-  const roots = rootIds?.toArray() || children.get('ROOT') || [];
+  const roots = rootIds?.toArray() ?? [];
   for (const rootId of roots) {
     printBlock(rootId, 0);
   }
