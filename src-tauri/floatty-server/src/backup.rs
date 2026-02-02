@@ -4,6 +4,7 @@
 //! Retention policy: hourly for 24h, daily for 7d, weekly for 4w.
 
 use crate::config::{data_dir, BackupConfig};
+use chrono::Utc;
 use floatty_core::YDocStore;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -89,7 +90,7 @@ impl BackupDaemon {
                 let filename = format!("floatty-{}.ydoc", timestamp);
                 let path = self.backup_dir.join(&filename);
 
-                match std::fs::write(&path, &state) {
+                match tokio::fs::write(&path, &state).await {
                     Ok(_) => {
                         let duration_ms = start.elapsed().as_millis() as u64;
                         tracing::info!(
@@ -123,56 +124,7 @@ impl BackupDaemon {
 
     /// Generate UTC timestamp for filename: YYYY-MM-DD-HHmmss
     fn timestamp() -> String {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let secs = now.as_secs();
-
-        // Calculate UTC datetime components
-        let days_since_epoch = secs / 86400;
-        let secs_today = secs % 86400;
-
-        let mut year: i32 = 1970;
-        let mut remaining_days = days_since_epoch as i64;
-
-        loop {
-            let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-                366
-            } else {
-                365
-            };
-            if remaining_days < days_in_year {
-                break;
-            }
-            remaining_days -= days_in_year;
-            year += 1;
-        }
-
-        let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-        let days_in_months: [i64; 12] = [
-            31,
-            if is_leap { 29 } else { 28 },
-            31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-        ];
-
-        let mut month = 1;
-        for days in days_in_months {
-            if remaining_days < days {
-                break;
-            }
-            remaining_days -= days;
-            month += 1;
-        }
-        let day = remaining_days + 1;
-
-        let hour = secs_today / 3600;
-        let minute = (secs_today % 3600) / 60;
-        let second = secs_today % 60;
-
-        format!(
-            "{:04}-{:02}-{:02}-{:02}{:02}{:02}",
-            year, month, day, hour, minute, second
-        )
+        Utc::now().format("%Y-%m-%d-%H%M%S").to_string()
     }
 
     /// Check if we should backup immediately (last backup is stale)
@@ -196,12 +148,8 @@ impl BackupDaemon {
                     .duration_since(backup.created)
                     .unwrap_or(Duration::MAX);
 
-                // Stale if older than interval
-                let threshold = if self.config.interval_hours < 60 {
-                    Duration::from_secs(self.config.interval_hours * 60)
-                } else {
-                    Duration::from_secs(self.config.interval_hours * 3600)
-                };
+                // Stale if older than interval (interval_hours is always in hours)
+                let threshold = Duration::from_secs(self.config.interval_hours * 3600);
 
                 age > threshold
             }
@@ -414,13 +362,9 @@ impl BackupDaemon {
         let last_backup = backups.first().map(|b| b.created);
         let total_size: u64 = backups.iter().map(|b| b.size_bytes).sum();
 
-        // Calculate next backup time
+        // Calculate next backup time (interval_hours is always in hours)
         let next_backup = last_backup.map(|last| {
-            let interval = if self.config.interval_hours < 60 {
-                Duration::from_secs(self.config.interval_hours * 60)
-            } else {
-                Duration::from_secs(self.config.interval_hours * 3600)
-            };
+            let interval = Duration::from_secs(self.config.interval_hours * 3600);
             last + interval
         });
 
@@ -444,7 +388,7 @@ impl BackupDaemon {
         let filename = format!("floatty-{}.ydoc", timestamp);
         let path = self.backup_dir.join(&filename);
 
-        std::fs::write(&path, &state)
+        tokio::fs::write(&path, &state).await
             .map_err(|e| format!("Failed to write backup: {}", e))?;
 
         let duration_ms = start.elapsed().as_millis() as u64;

@@ -158,7 +158,7 @@ impl BackupConfig {
     pub fn load() -> Self {
         let config_path = ServerConfig::config_path();
 
-        let mut backup_config = if config_path.exists() {
+        let backup_config = if config_path.exists() {
             std::fs::read_to_string(&config_path)
                 .ok()
                 .and_then(|contents| toml::from_str::<Config>(&contents).ok())
@@ -168,15 +168,8 @@ impl BackupConfig {
             Self::default()
         };
 
-        // Env var overrides for testing (e.g., FLOATTY_BACKUP_INTERVAL=1 for 1 minute)
-        if let Ok(interval) = std::env::var("FLOATTY_BACKUP_INTERVAL") {
-            if let Ok(mins) = interval.parse::<u64>() {
-                // Env var is in MINUTES for easier testing, stored as hours internally
-                // Special case: if < 60, treat as minutes (for dev testing)
-                backup_config.interval_hours = if mins < 60 { mins } else { mins / 60 };
-                tracing::info!("Backup interval overridden via env: {} minutes", mins);
-            }
-        }
+        // Note: FLOATTY_BACKUP_INTERVAL_SECS env var is handled in backup.rs run() method
+        // for testing/development. The config.interval_hours value is always in hours.
 
         backup_config
     }
@@ -291,7 +284,13 @@ impl ServerConfig {
         }
 
         // Write back
-        let toml_str = toml::to_string_pretty(&doc).unwrap_or_default();
+        let toml_str = match toml::to_string_pretty(&doc) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to serialize config: {}", e);
+                return;
+            }
+        };
         if let Err(e) = std::fs::write(&config_path, toml_str) {
             tracing::warn!("Failed to persist API key: {}", e);
         } else {

@@ -53,9 +53,10 @@ export function downloadBinary(doc: Y.Doc, filename?: string): void {
   const a = document.createElement('a');
   a.href = url;
   // Include time (HHmmss) to avoid (1) (2) (3) collisions and match API format
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const time = now.toTimeString().slice(0, 8).replace(/:/g, '');
+  // Use UTC consistently (toTimeString returns local time, which mismatches date from ISO)
+  const iso = new Date().toISOString();
+  const date = iso.slice(0, 10);
+  const time = iso.slice(11, 19).replace(/:/g, '');
   a.download = filename || `floatty-${date}-${time}.ydoc`;
   a.click();
   URL.revokeObjectURL(url);

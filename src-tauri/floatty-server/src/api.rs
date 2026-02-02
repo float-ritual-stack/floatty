@@ -27,6 +27,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use chrono::{DateTime, Utc};
 use floatty_core::{events::BlockChange, HookSystem, Origin, PageNameIndex, SearchFilters, SearchService, YDocStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
@@ -523,59 +524,9 @@ pub struct ExportedOutline {
     pub blocks: std::collections::HashMap<String, ExportedBlock>,
 }
 
-/// Generate timestamp string for filenames: YYYY-MM-DD-HHmmss
+/// Generate timestamp string for filenames: YYYY-MM-DD-HHmmss (UTC)
 fn export_timestamp() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-
-    // Calculate UTC datetime components
-    let days_since_epoch = secs / 86400;
-    let secs_today = secs % 86400;
-
-    // Simple year/month/day calculation (accurate enough for filenames)
-    let mut year = 1970;
-    let mut remaining_days = days_since_epoch as i64;
-
-    loop {
-        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-            366
-        } else {
-            365
-        };
-        if remaining_days < days_in_year {
-            break;
-        }
-        remaining_days -= days_in_year;
-        year += 1;
-    }
-
-    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days_in_months: [i64; 12] = [
-        31,
-        if is_leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-    ];
-
-    let mut month = 1;
-    for days in days_in_months {
-        if remaining_days < days {
-            break;
-        }
-        remaining_days -= days;
-        month += 1;
-    }
-    let day = remaining_days + 1;
-
-    let hour = secs_today / 3600;
-    let minute = (secs_today % 3600) / 60;
-    let second = secs_today % 60;
-
-    format!(
-        "{:04}-{:02}-{:02}-{:02}{:02}{:02}",
-        year, month, day, hour, minute, second
-    )
+    Utc::now().format("%Y-%m-%d-%H%M%S").to_string()
 }
 
 /// GET /api/v1/export/binary - Raw Y.Doc state as downloadable .ydoc file
@@ -1611,40 +1562,12 @@ pub struct BackupConfigResponse {
     pub backup_dir: String,
 }
 
-/// Format SystemTime as ISO 8601 string
+/// Format SystemTime as ISO 8601 string (UTC)
 fn format_system_time(t: SystemTime) -> String {
     let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-
-    // Simple UTC formatting (matches backup.rs timestamp logic)
-    let days_since_epoch = secs / 86400;
-    let secs_today = secs % 86400;
-
-    let mut year: i32 = 1970;
-    let mut remaining_days = days_since_epoch as i64;
-
-    loop {
-        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
-        if remaining_days < days_in_year { break; }
-        remaining_days -= days_in_year;
-        year += 1;
-    }
-
-    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days_in_months: [i64; 12] = [31, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-    let mut month = 1;
-    for days in days_in_months {
-        if remaining_days < days { break; }
-        remaining_days -= days;
-        month += 1;
-    }
-    let day = remaining_days + 1;
-
-    let hour = secs_today / 3600;
-    let minute = (secs_today % 3600) / 60;
-    let second = secs_today % 60;
-
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, hour, minute, second)
+    DateTime::from_timestamp(secs as i64, 0)
+        .map(|dt: DateTime<Utc>| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// GET /api/v1/backup/status - Backup daemon status
