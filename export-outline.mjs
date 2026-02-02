@@ -38,8 +38,7 @@ for (const [docKey, updates] of Object.entries(byDoc)) {
 
   console.log(`\n=== Pane: ${docKey} (${blocksMap.size} blocks) ===\n`);
 
-  // Build parent->children map
-  const children = new Map();
+  // Build blocks map (keep childIds for ordering)
   const blocks = new Map();
 
   for (const [id, blockMap] of blocksMap.entries()) {
@@ -53,21 +52,24 @@ for (const [docKey, updates] of Object.entries(byDoc)) {
         : (Array.isArray(blockMap.childIds) ? blockMap.childIds : []),
     };
     blocks.set(id, block);
-    const parentId = block.parentId || 'ROOT';
-    if (!children.has(parentId)) children.set(parentId, []);
-    children.get(parentId).push(id);
   }
 
-  // Recursive print
+  // Recursive print - uses block.childIds for correct sibling order
   function printBlock(id, depth = 0) {
     const block = blocks.get(id);
     if (!block) return;
 
     const indent = '  '.repeat(depth);
     const content = block.content || '[empty]';
-    console.log(`${indent}${content}`);
 
-    const kids = children.get(id) || [];
+    // Indent EVERY line of multi-line content (not just first)
+    const lines = content.split('\n');
+    for (const line of lines) {
+      console.log(`${indent}${line}`);
+    }
+
+    // USE block.childIds - this preserves intentional ordering
+    const kids = block.childIds || [];
     for (const kidId of kids) {
       printBlock(kidId, depth + 1);
     }
