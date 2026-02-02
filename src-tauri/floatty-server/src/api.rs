@@ -431,15 +431,25 @@ async fn restore_state(
         .decode(&req.state)
         .map_err(|e| ApiError::InvalidBase64(e.to_string()))?;
 
-    // Reset the store to the new state
+    // 1. Clear search index before restore (stale entries would remain otherwise)
+    if let Err(e) = state.hook_system.clear_search_index().await {
+        tracing::warn!("Failed to clear search index before restore: {}", e);
+        // Continue anyway - search will have stale entries but Y.Doc is more important
+    }
+
+    // 2. Reset the store to the new state
     let block_count = state.store.reset_from_state(&state_bytes)?;
 
-    // Get the new full state for broadcasting
+    // 3. Get the new full state for broadcasting
     let new_state = state.store.get_full_state()?;
 
-    // Broadcast the new state to all WebSocket clients
+    // 4. Broadcast the new state to all WebSocket clients
     // They'll need to reset their local Y.Doc too
     state.broadcaster.broadcast(new_state, None);
+
+    // 5. Rehydrate hooks (metadata extraction, search indexing, etc.)
+    let rehydrated = state.hook_system.rehydrate_all_blocks(&state.store);
+    tracing::info!("Rehydrated {} blocks after restore", rehydrated);
 
     // Count roots
     let root_count = {
