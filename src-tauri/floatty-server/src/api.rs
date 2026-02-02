@@ -387,8 +387,30 @@ async fn apply_update(
     Ok(StatusCode::OK)
 }
 
+/// Query parameters for block listing
+#[derive(Deserialize, Default)]
+pub struct BlocksQuery {
+    /// Filter by prefix (e.g., "scratch", "sh", "pages")
+    #[serde(default)]
+    pub prefix: Option<String>,
+    /// Maximum results to return (default: unlimited)
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Filter by tree depth (0 = roots only)
+    #[serde(default)]
+    pub depth: Option<usize>,
+}
+
 /// GET /api/v1/blocks - All blocks as JSON
-async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse>, ApiError> {
+///
+/// Query parameters:
+/// - `prefix`: Filter by block prefix (e.g., `?prefix=scratch` for all `scratch::` blocks)
+/// - `limit`: Maximum number of results
+/// - `depth`: Filter by tree depth (0 = roots only)
+async fn get_blocks(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<BlocksQuery>,
+) -> Result<Json<BlocksResponse>, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
@@ -457,9 +479,41 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
                 let updated_at = extract_timestamp(block_map.get(&txn, "updatedAt"));
 
                 let block_type = floatty_core::parse_block_type(&content);
+                let block_id = key.to_string();
+
+                // Apply filters
+                // Filter by prefix (from metadata)
+                if let Some(ref prefix_filter) = query.prefix {
+                    let block_prefix = metadata
+                        .as_ref()
+                        .and_then(|m| m.get("prefix"))
+                        .and_then(|v| v.as_str());
+
+                    if block_prefix != Some(prefix_filter.as_str()) {
+                        continue;
+                    }
+                }
+
+                // Filter by depth (0 = roots only)
+                if let Some(depth_filter) = query.depth {
+                    let is_root = parent_id.is_none();
+                    // depth=0 means roots only
+                    // For now, we only support depth=0 (roots)
+                    // Future: could compute actual depth by walking parent chain
+                    if depth_filter == 0 && !is_root {
+                        continue;
+                    }
+                }
+
+                // Check limit
+                if let Some(limit) = query.limit {
+                    if blocks.len() >= limit {
+                        break;
+                    }
+                }
 
                 blocks.push(BlockDto {
-                    id: key.to_string(),
+                    id: block_id,
                     content,
                     parent_id,
                     child_ids,
@@ -1979,5 +2033,126 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "Cycle should be rejected");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Prefix query filter (FLO-246)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_blocks_query_no_filters() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create two blocks
+        app.clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Block A"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Block B"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Query without filters - should return both
+        let response = app
+            .oneshot(Request::get("/api/v1/blocks").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result.blocks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_blocks_query_with_limit() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create 3 blocks
+        for i in 0..3 {
+            app.clone()
+                .oneshot(
+                    Request::post("/api/v1/blocks")
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(format!(r#"{{"content": "Block {}"}}"#, i)))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Query with limit=2 - should return at most 2
+        let response = app
+            .oneshot(Request::get("/api/v1/blocks?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&body).unwrap();
+        assert!(result.blocks.len() <= 2, "Limit should cap results");
+    }
+
+    #[tokio::test]
+    async fn test_blocks_query_with_depth() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create root block
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Root"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let root: BlockDto = serde_json::from_slice(&body).unwrap();
+
+        // Create child block
+        let child_req = format!(r#"{{"content": "Child", "parentId": "{}"}}"#, root.id);
+        app.clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(child_req))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Query with depth=0 - should only return root
+        let response = app
+            .oneshot(Request::get("/api/v1/blocks?depth=0").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result.blocks.len(), 1, "depth=0 should only return roots");
+        assert!(result.blocks[0].parent_id.is_none(), "Returned block should be root");
     }
 }

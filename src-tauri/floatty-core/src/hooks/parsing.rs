@@ -25,6 +25,11 @@ const CODE_NAMESPACES: &[&str] = &[
     "sync", "collections", "fmt", "path", "result", "option", "vec", "str", "string",
 ];
 
+/// Regex for extracting ANY prefix pattern from start of content.
+/// Matches: `word::` at line start, capturing the word part.
+static ANY_PREFIX_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_-]*)::").expect("valid regex"));
+
 /// Extract prefix marker from block content (e.g., "sh::", "ctx::").
 ///
 /// Returns the marker type if content starts with a known `prefix::` pattern.
@@ -47,6 +52,30 @@ pub fn extract_prefix_marker(content: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Extract ANY prefix from block content (e.g., "scratch::", "random::").
+///
+/// Unlike `extract_prefix_marker`, this captures ALL `word::` patterns at line start,
+/// not just known prefixes. This enables discovery of user-defined prefixes.
+///
+/// Returns lowercase prefix for consistency.
+///
+/// # Examples
+///
+/// ```
+/// use floatty_core::hooks::parsing::extract_any_prefix;
+///
+/// assert_eq!(extract_any_prefix("sh:: ls -la"), Some("sh".to_string()));
+/// assert_eq!(extract_any_prefix("scratch:: random thought"), Some("scratch".to_string()));
+/// assert_eq!(extract_any_prefix("random:: stuff"), Some("random".to_string()));
+/// assert_eq!(extract_any_prefix("just text"), None);
+/// assert_eq!(extract_any_prefix(""), None);
+/// ```
+pub fn extract_any_prefix(content: &str) -> Option<String> {
+    ANY_PREFIX_PATTERN
+        .captures(content)
+        .map(|cap| cap[1].to_lowercase())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -385,6 +414,57 @@ mod tests {
         assert_eq!(extract_prefix_marker("just plain text"), None);
         assert_eq!(extract_prefix_marker("not:: a prefix"), None);
         assert_eq!(extract_prefix_marker(""), None);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Any prefix extraction (FLO-246)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_any_prefix_known() {
+        assert_eq!(extract_any_prefix("sh:: ls -la"), Some("sh".to_string()));
+        assert_eq!(extract_any_prefix("ctx::2026-01-10"), Some("ctx".to_string()));
+        assert_eq!(extract_any_prefix("ai:: explain"), Some("ai".to_string()));
+    }
+
+    #[test]
+    fn test_any_prefix_user_defined() {
+        // User-defined prefixes that aren't in PREFIX_MARKERS
+        assert_eq!(extract_any_prefix("scratch:: random thought"), Some("scratch".to_string()));
+        assert_eq!(extract_any_prefix("random:: stuff"), Some("random".to_string()));
+        assert_eq!(extract_any_prefix("thisthing:: marker"), Some("thisthing".to_string()));
+    }
+
+    #[test]
+    fn test_any_prefix_case_insensitive_result() {
+        // Output should always be lowercase
+        assert_eq!(extract_any_prefix("SCRATCH:: test"), Some("scratch".to_string()));
+        assert_eq!(extract_any_prefix("Random:: test"), Some("random".to_string()));
+    }
+
+    #[test]
+    fn test_any_prefix_with_hyphen() {
+        // Hyphens are valid in prefix names
+        assert_eq!(extract_any_prefix("brain-boot:: morning"), Some("brain-boot".to_string()));
+    }
+
+    #[test]
+    fn test_any_prefix_with_underscore() {
+        // Underscores are valid in prefix names
+        assert_eq!(extract_any_prefix("my_prefix:: content"), Some("my_prefix".to_string()));
+    }
+
+    #[test]
+    fn test_any_prefix_none() {
+        assert_eq!(extract_any_prefix("just plain text"), None);
+        assert_eq!(extract_any_prefix(""), None);
+        assert_eq!(extract_any_prefix("no :: at start"), None);
+    }
+
+    #[test]
+    fn test_any_prefix_mid_content() {
+        // Prefix must be at start - mid-content :: patterns shouldn't match
+        assert_eq!(extract_any_prefix("text prefix:: stuff"), None);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

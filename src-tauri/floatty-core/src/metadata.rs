@@ -54,6 +54,7 @@ impl Marker {
 /// - Efficient marker queries (what blocks have `[project::X]`?)
 /// - Backlink tracking (what blocks link to `[[Page]]`?)
 /// - Stub detection (referenced but not yet created pages)
+/// - Prefix discovery (what blocks start with `scratch::`?)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, rename_all = "camelCase")]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +80,14 @@ pub struct BlockMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "number | null")]
     pub extracted_at: Option<i64>,
+
+    /// Block prefix extracted from content (e.g., "sh", "ai", "scratch", "random").
+    ///
+    /// ANY `word::` pattern at the start of content becomes a prefix.
+    /// Only REGISTERED prefixes (sh, ai, ctx, etc.) trigger handlers.
+    /// All prefixes are queryable for discovery (find all `scratch::` blocks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
 }
 
 impl BlockMetadata {
@@ -87,9 +96,9 @@ impl BlockMetadata {
         Self::default()
     }
 
-    /// Check if metadata is empty (no markers, no outlinks, not a stub).
+    /// Check if metadata is empty (no markers, no outlinks, not a stub, no prefix).
     pub fn is_empty(&self) -> bool {
-        self.markers.is_empty() && self.outlinks.is_empty() && !self.is_stub
+        self.markers.is_empty() && self.outlinks.is_empty() && !self.is_stub && self.prefix.is_none()
     }
 
     /// Add a marker.

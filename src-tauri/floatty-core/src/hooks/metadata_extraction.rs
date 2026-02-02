@@ -86,12 +86,17 @@ impl MetadataExtractionHook {
             Vec::new()
         };
 
+        // Extract prefix (ANY word:: pattern, not just known prefixes)
+        // This enables discovery of user-defined prefixes like scratch::, random::
+        let prefix = parsing::extract_any_prefix(content);
+
         // Build metadata
         let metadata = BlockMetadata {
             markers,
             outlinks,
             is_stub: false, // Determined by PageNameIndex, not here
             extracted_at: Some(chrono::Utc::now().timestamp()),
+            prefix,
         };
 
         // Skip if nothing to store
@@ -103,6 +108,7 @@ impl MetadataExtractionHook {
         debug!(
             markers = metadata.markers.len(),
             outlinks = metadata.outlinks.len(),
+            prefix = ?metadata.prefix,
             "Extracted metadata for block {}",
             id
         );
@@ -110,8 +116,8 @@ impl MetadataExtractionHook {
         // Write metadata to store with Origin::Hook to prevent infinite loops
         match store.update_block_metadata(id, metadata.clone(), Origin::Hook) {
             Ok(_) => {
-                debug!("MetadataExtractionHook: wrote metadata for block {} - {} markers, {} outlinks",
-                    id, metadata.markers.len(), metadata.outlinks.len());
+                debug!("MetadataExtractionHook: wrote metadata for block {} - {} markers, {} outlinks, prefix={:?}",
+                    id, metadata.markers.len(), metadata.outlinks.len(), metadata.prefix);
             }
             Err(e) => {
                 warn!("Failed to update metadata for block {}: {}", id, e);

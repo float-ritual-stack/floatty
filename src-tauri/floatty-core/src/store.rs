@@ -62,7 +62,8 @@ const COMPACT_CHECK_INTERVAL: i64 = 10;
 ///   "markers": [{ "markerType": "project", "value": "floatty" }, ...],
 ///   "outlinks": ["Page Name", ...],
 ///   "isStub": false,
-///   "extractedAt": 1234567890
+///   "extractedAt": 1234567890,
+///   "prefix": "pages"
 /// }
 /// ```
 fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
@@ -93,12 +94,19 @@ fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
         None => yrs::Any::Null,
     };
 
+    // prefix: include as string or null
+    let prefix: yrs::Any = match &metadata.prefix {
+        Some(p) => any!(p.clone()),
+        None => yrs::Any::Null,
+    };
+
     // Build the metadata map with fixed-size array
     MapPrelim::from([
         ("markers".to_owned(), yrs::Any::Array(markers_array.into())),
         ("outlinks".to_owned(), yrs::Any::Array(outlinks_array.into())),
         ("isStub".to_owned(), any!(metadata.is_stub)),
         ("extractedAt".to_owned(), extracted_at),
+        ("prefix".to_owned(), prefix),
     ])
 }
 

@@ -9,6 +9,7 @@ import type { Marker } from "./Marker";
  * - Efficient marker queries (what blocks have `[project::X]`?)
  * - Backlink tracking (what blocks link to `[[Page]]`?)
  * - Stub detection (referenced but not yet created pages)
+ * - Prefix discovery (what blocks start with `scratch::`?)
  */
 export type BlockMetadata = { 
 /**
@@ -31,4 +32,12 @@ isStub: boolean,
  * Timestamp of last metadata extraction.
  * Used to skip re-extraction if content unchanged.
  */
-extractedAt: number | null, };
+extractedAt: number | null, 
+/**
+ * Block prefix extracted from content (e.g., "sh", "ai", "scratch", "random").
+ *
+ * ANY `word::` pattern at the start of content becomes a prefix.
+ * Only REGISTERED prefixes (sh, ai, ctx, etc.) trigger handlers.
+ * All prefixes are queryable for discovery (find all `scratch::` blocks).
+ */
+prefix: string | null, };
