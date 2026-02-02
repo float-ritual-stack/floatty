@@ -9,7 +9,12 @@
 
 use axum::{extract::DefaultBodyLimit, http::Method, middleware, routing::get, Router};
 use floatty_core::{HookSystem, YDocStore};
-use floatty_server::{api, auth, config::ServerConfig, ws, WsBroadcaster};
+use floatty_server::{
+    api, auth,
+    backup::{self, BackupDaemon},
+    config::{BackupConfig, ServerConfig},
+    ws, WsBroadcaster,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -79,6 +84,39 @@ async fn main() {
     // FLO-152: Bumped from 64 to 256 to reduce likelihood of Lagged errors
     let broadcaster = Arc::new(WsBroadcaster::new(256));
 
+    // Initialize backup daemon if enabled (FLO-251)
+    let backup_config = BackupConfig::load();
+    let backup_daemon: Option<Arc<BackupDaemon>> = if backup_config.enabled {
+        let backup_dir = backup::backup_dir();
+        if let Err(e) = std::fs::create_dir_all(&backup_dir) {
+            tracing::error!("Failed to create backup directory: {}", e);
+            None
+        } else {
+            let daemon = BackupDaemon::new(
+                Arc::clone(&store),
+                backup_config.clone(),
+                backup_dir,
+            );
+            let daemon_arc = Arc::new(daemon);
+
+            // Use the same Arc for both API and background task
+            let _handle = Arc::clone(&daemon_arc).start();
+
+            tracing::info!(
+                "Backup daemon started (interval: {}h, retain: {}h/{}d/{}w)",
+                backup_config.interval_hours,
+                backup_config.retain_hourly,
+                backup_config.retain_daily,
+                backup_config.retain_weekly
+            );
+
+            Some(daemon_arc)
+        }
+    } else {
+        tracing::info!("Backup daemon disabled");
+        None
+    };
+
     // CORS layer - allow requests from Tauri webview (localhost origins)
     let cors = CorsLayer::new()
         .allow_origin(Any) // Tauri uses tauri://localhost or http://localhost
@@ -89,11 +127,11 @@ async fn main() {
     let api_routes = if config.auth_enabled {
         let auth_state = auth::ApiKeyAuth::new(api_key.clone());
         tracing::info!("API authentication enabled");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system))
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone())
             .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
     } else {
         tracing::warn!("API authentication DISABLED (auth_enabled = false in config)");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system))
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone())
     };
 
     // WebSocket route (auth via query param since WS can't use headers easily)

@@ -14,10 +14,12 @@
 
 pub mod api;
 pub mod auth;
+pub mod backup;
 pub mod config;
 pub mod ws;
 
 pub use api::create_router;
 pub use auth::ApiKeyAuth;
-pub use config::ServerConfig;
+pub use backup::{BackupDaemon, BackupInfo, DaemonStatus};
+pub use config::{BackupConfig, ServerConfig};
 pub use ws::WsBroadcaster;

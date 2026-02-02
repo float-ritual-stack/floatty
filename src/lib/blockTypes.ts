@@ -87,6 +87,7 @@ export function parseBlockType(content: string): BlockType {
   // See docs/BLOCK_TYPE_PATTERNS.md for when to use type-based vs child-output
   if (lower.startsWith('filter::')) return 'filter';
   if (lower.startsWith('search::')) return 'search';
+  if (lower.startsWith('backup::')) return 'backup';
 
   // Markdown syntax (case-sensitive prefix matching)
   if (trimmed.startsWith('### ')) return 'h3';

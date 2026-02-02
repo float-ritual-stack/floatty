@@ -1516,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "float-pty"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -1583,6 +1583,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "chrono",
  "dirs 5.0.1",
  "floatty-core",
  "futures-util",

@@ -97,6 +97,84 @@ impl Default for ServerConfig {
     }
 }
 
+/// Backup daemon configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupConfig {
+    /// Enable/disable automated backups (default: true)
+    #[serde(default = "default_backup_enabled")]
+    pub enabled: bool,
+
+    /// Backup interval in hours (default: 1)
+    #[serde(default = "default_backup_interval_hours")]
+    pub interval_hours: u64,
+
+    /// Hours to keep hourly backups (default: 24)
+    #[serde(default = "default_backup_retain_hourly")]
+    pub retain_hourly: u32,
+
+    /// Days to keep daily backups (default: 7)
+    #[serde(default = "default_backup_retain_daily")]
+    pub retain_daily: u32,
+
+    /// Weeks to keep weekly backups (default: 4)
+    #[serde(default = "default_backup_retain_weekly")]
+    pub retain_weekly: u32,
+}
+
+fn default_backup_enabled() -> bool {
+    true
+}
+
+fn default_backup_interval_hours() -> u64 {
+    1
+}
+
+fn default_backup_retain_hourly() -> u32 {
+    24
+}
+
+fn default_backup_retain_daily() -> u32 {
+    7
+}
+
+fn default_backup_retain_weekly() -> u32 {
+    4
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_backup_enabled(),
+            interval_hours: default_backup_interval_hours(),
+            retain_hourly: default_backup_retain_hourly(),
+            retain_daily: default_backup_retain_daily(),
+            retain_weekly: default_backup_retain_weekly(),
+        }
+    }
+}
+
+impl BackupConfig {
+    /// Load backup config from file, with env var overrides for testing
+    pub fn load() -> Self {
+        let config_path = ServerConfig::config_path();
+
+        let backup_config = if config_path.exists() {
+            std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|contents| toml::from_str::<Config>(&contents).ok())
+                .map(|c| c.backup)
+                .unwrap_or_default()
+        } else {
+            Self::default()
+        };
+
+        // Note: FLOATTY_BACKUP_INTERVAL_SECS env var is handled in backup.rs run() method
+        // for testing/development. The config.interval_hours value is always in hours.
+
+        backup_config
+    }
+}
+
 /// Full config file structure (matches floatty's config.toml)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -106,6 +184,10 @@ pub struct Config {
     /// Legacy [server] section (for backwards compatibility)
     #[serde(default)]
     pub server: ServerConfig,
+
+    /// Backup daemon configuration
+    #[serde(default)]
+    pub backup: BackupConfig,
 }
 
 impl ServerConfig {
@@ -202,7 +284,13 @@ impl ServerConfig {
         }
 
         // Write back
-        let toml_str = toml::to_string_pretty(&doc).unwrap_or_default();
+        let toml_str = match toml::to_string_pretty(&doc) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to serialize config: {}", e);
+                return;
+            }
+        };
         if let Err(e) = std::fs::write(&config_path, toml_str) {
             tracing::warn!("Failed to persist API key: {}", e);
         } else {

@@ -200,13 +200,35 @@ impl AggregatorConfig {
     }
 
     /// Save current config to specified path.
+    /// Preserves unknown sections (like [server]) that other processes may have written.
     pub fn save_to(&self, path: &PathBuf) -> Result<(), String> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
 
-        let contents = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
+        // Read existing config to preserve unknown sections (like [server].api_key)
+        let mut doc: toml::Table = if path.exists() {
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_default()
+        } else {
+            toml::Table::new()
+        };
+
+        // Merge our fields into the existing doc
+        let self_str = toml::to_string(self)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        let self_table: toml::Table = self_str
+            .parse()
+            .map_err(|e| format!("Failed to parse serialized config: {}", e))?;
+
+        for (key, value) in self_table {
+            doc.insert(key, value);
+        }
+
+        let contents = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
         std::fs::write(path, contents).map_err(|e| e.to_string())?;
 
         log::info!("Saved config to {:?}", path);

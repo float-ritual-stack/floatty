@@ -55,6 +55,8 @@ pub enum BlockType {
     Filter,
     /// Search results: prefix `search::` (planned)
     Search,
+    /// Backup commands: prefix `backup::`
+    Backup,
 }
 
 impl BlockType {
@@ -82,6 +84,7 @@ impl BlockType {
             BlockType::Quote => "quote",
             BlockType::Filter => "filter",
             BlockType::Search => "search",
+            BlockType::Backup => "backup",
         }
     }
 }
@@ -176,6 +179,9 @@ pub fn parse_block_type(content: &str) -> BlockType {
     }
     if lower.starts_with("search::") {
         return BlockType::Search;
+    }
+    if lower.starts_with("backup::") {
+        return BlockType::Backup;
     }
 
     // Markdown syntax (case-sensitive for headings)
