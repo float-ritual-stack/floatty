@@ -454,7 +454,7 @@ async function validateSyncedState(doc: Y.Doc): Promise<void> {
       const hadBackup = await hasBackupIDB();
       if (hadBackup) {
         console.warn('[FLO-247] ⚠️ Server returned empty but IndexedDB backup exists!');
-        console.warn('[FLO-247] This could indicate server wipe. Check ~/.floatty-dev/ctx_markers.db');
+        console.warn('[FLO-247] This could indicate server wipe. Check ctx_markers.db in your FLOATTY_DATA_DIR');
         return;
       }
     }

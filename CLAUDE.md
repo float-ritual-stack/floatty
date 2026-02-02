@@ -309,9 +309,9 @@ See `docs/architecture/LOGGING_STRATEGY.md` for complete guide and LLM integrati
 | `⇧Tab` | Outdent (at line start) |
 | `⌘.` | Toggle collapse |
 | `⌘⌫` | Delete block and subtree |
-| `⌘⇧M` | Export markdown to clipboard |
-| `⌘⇧J` | Export JSON (FLO-247) |
-| `⌘⇧B` | Export binary Y.Doc (FLO-247) |
+| `⌘⇧M` / `Ctrl+Shift+M` | Export markdown to clipboard |
+| `⌘⇧J` / `Ctrl+Shift+J` | Export JSON (FLO-247) |
+| `⌘⇧B` / `Ctrl+Shift+B` | Export binary Y.Doc (FLO-247) |
 | `⌘[` / `⌘]` | Navigation history back/forward |
 | `⌘Z` / `⌘⇧Z` | Undo/redo |
 | `⌘A` | Select all (escalates: text → block → tree) |
