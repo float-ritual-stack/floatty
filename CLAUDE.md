@@ -236,8 +236,8 @@ server_port = 8765                      # Per-workspace port isolation
 **Title bar format**: `floatty (dev) - workspace_name v0.4.2 (abc1234)`
 
 **floatty-server** (headless CRDT sync):
-- Default port: `8765` (http://127.0.0.1:8765)
-- Override: `FLOATTY_PORT` env var OR `server_port` in config.toml
+- Default port: `33333` (dev) / `8765` (release) - visually distinct for log scanning
+- Override: `server_port` in config.toml
 - WebSocket: `ws://127.0.0.1:{port}/ws`
 - REST API: `http://127.0.0.1:{port}/api/v1/blocks`
 - Server receives `FLOATTY_DATA_DIR` from parent process

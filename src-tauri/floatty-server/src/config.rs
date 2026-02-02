@@ -7,8 +7,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Default port for the floatty-server
+/// Default port for the floatty-server (release builds)
 pub const DEFAULT_PORT: u16 = 8765;
+
+/// Default port for dev builds (visually distinct for log scanning)
+pub const DEV_PORT: u16 = 33333;
 
 /// Get the data directory root.
 ///
@@ -52,7 +55,15 @@ fn default_enabled() -> bool {
 }
 
 fn default_port() -> u16 {
-    DEFAULT_PORT
+    // Dev builds use visually distinct port for easy log identification
+    if std::env::var("FLOATTY_DATA_DIR")
+        .map(|p| p.contains("floatty-dev"))
+        .unwrap_or(false)
+    {
+        DEV_PORT
+    } else {
+        DEFAULT_PORT
+    }
 }
 
 fn default_bind() -> String {
