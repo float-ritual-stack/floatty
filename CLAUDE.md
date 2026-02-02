@@ -61,6 +61,50 @@ curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks" |
 - Root block count: `.root_ids | length`
 - Single block: `.blocks["<block-id>"]`
 
+### Sync & Restore Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v1/state` | GET | Full Y.Doc state (base64) |
+| `/api/v1/state-vector` | GET | State vector for reconciliation |
+| `/api/v1/state/hash` | GET | SHA256 hash + block count (sync health check) |
+| `/api/v1/update` | POST | Apply Y.Doc update (CRDT merge) |
+| `/api/v1/restore` | POST | **DESTRUCTIVE** - Replace entire Y.Doc state |
+
+#### `/api/v1/update` vs `/api/v1/restore`
+
+**`/update` (CRDT merge)**: Applies an update via CRDT merge. If the server has *newer* state vectors than the update, nothing happens (CRDT says "I already have this"). Use for normal sync.
+
+**`/restore` (nuclear option)**: Completely replaces server state. Use for disaster recovery.
+
+```bash
+# CRDT merge (may do nothing if server is ahead)
+curl -X POST -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"update": "<base64>"}' \
+  "http://127.0.0.1:$PORT/api/v1/update"
+
+# DESTRUCTIVE RESTORE - nukes server state, replaces with backup
+curl -X POST -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "<base64>"}' \
+  "http://127.0.0.1:$PORT/api/v1/restore"
+```
+
+**When to use `/restore`**:
+- Restoring from a `.ydoc` backup after data loss
+- Migrating state between instances
+- Server state is corrupted and needs full replacement
+
+**Warning**: `/restore` clears ALL existing state. Connected clients will receive a broadcast of the new state and should resync their local Y.Doc.
+
+### Binary Import Script
+
+```bash
+# Restore from .ydoc backup (uses /api/v1/restore)
+npx tsx scripts/binary-import.ts ~/path/to/backup.ydoc
+```
+
 ## Testing
 
 **Stack**: Vitest + jsdom + @solidjs/testing-library
