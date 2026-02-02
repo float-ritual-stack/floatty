@@ -271,8 +271,6 @@ async function handleRestore(filename: string | undefined, args: string[]): Prom
     '|--------|-------|',
     `| Blocks restored | ${result.blockCount} |`,
     `| Root blocks | ${result.rootCount} |`,
-    '',
-    '*Refresh page to see changes.*',
   ].join('\n');
 }
 

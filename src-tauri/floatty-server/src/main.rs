@@ -95,17 +95,12 @@ async fn main() {
             let daemon = BackupDaemon::new(
                 Arc::clone(&store),
                 backup_config.clone(),
-                backup_dir.clone(),
+                backup_dir,
             );
             let daemon_arc = Arc::new(daemon);
 
-            // Clone for the spawned task (daemon.start() consumes self)
-            let daemon_for_task = BackupDaemon::new(
-                Arc::clone(&store),
-                backup_config.clone(),
-                backup_dir,
-            );
-            let _handle = daemon_for_task.start();
+            // Use the same Arc for both API and background task
+            let _handle = Arc::clone(&daemon_arc).start();
 
             tracing::info!(
                 "Backup daemon started (interval: {}h, retain: {}h/{}d/{}w)",

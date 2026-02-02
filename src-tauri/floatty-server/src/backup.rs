@@ -47,9 +47,11 @@ impl BackupDaemon {
     }
 
     /// Start the backup daemon as a background task
-    pub fn start(self) -> JoinHandle<()> {
+    /// Takes Arc<Self> so the same instance is used for both API and background task
+    pub fn start(self: Arc<Self>) -> JoinHandle<()> {
+        let daemon = Arc::clone(&self);
         tokio::spawn(async move {
-            self.run().await;
+            daemon.run().await;
         })
     }
 
@@ -61,13 +63,12 @@ impl BackupDaemon {
             self.run_backup().await;
         }
 
-        // Calculate interval in seconds
-        // For testing: if interval_hours < 60, treat as minutes
-        let interval_secs = if self.config.interval_hours < 60 {
-            self.config.interval_hours * 60 // Minutes for dev testing
-        } else {
-            self.config.interval_hours * 3600 // Hours for production
-        };
+        // Calculate interval in seconds (always hours)
+        // For testing, use FLOATTY_BACKUP_INTERVAL_SECS env var to override
+        let interval_secs = std::env::var("FLOATTY_BACKUP_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(self.config.interval_hours * 3600);
 
         let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
         interval.tick().await; // First tick is immediate (skip it)
