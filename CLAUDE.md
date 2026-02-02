@@ -285,39 +285,39 @@ jq 'select(.level == "ERROR" and .target == "floatty::commands::ai")' ~/.floatty
 
 See `docs/architecture/LOGGING_STRATEGY.md` for complete guide and LLM integration patterns.
 
-### Keyboard Shortcuts
+### Keybind Registry
 
-**Terminal/Global:**
+**Purpose**: When adding new keybinds, check this list to avoid conflicts.
 
-| Key | Action |
-|-----|--------|
-| `⌘T` / `Ctrl+T` | New tab |
-| `⌘W` / `Ctrl+W` | Close tab |
-| `⌘1-9` | Jump to tab N |
-| `⌘⇧[` / `⌘⇧]` | Prev/next tab |
-| `⌘B` | Toggle sidebar |
+**Reserved (pass through to terminal)**: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, readline)
 
-Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, readline)
+**Terminal/Global** (in `Terminal.tsx`):
+- `⌘T` / `Ctrl+T` - New tab
+- `⌘W` / `Ctrl+W` - Close tab
+- `⌘1-9` - Jump to tab N
+- `⌘⇧[` / `⌘⇧]` - Prev/next tab
+- `⌘B` - Toggle sidebar
 
-**Outliner (block editing):**
+**Outliner** (in `Outliner.tsx` via tinykeys):
 
-| Key | On command block (`sh::`/`ai::`/`filter::`/`help::`) | On regular block |
-|-----|------------------------------------------------------|------------------|
-| `Enter` | Execute handler | Create sibling/split |
-| `⌘Enter` | Zoom into subtree | Zoom into subtree |
-| `Escape` | Zoom out to full tree | Zoom out to full tree |
-| `Tab` | Indent (at line start) or insert spaces | Indent (at line start) or insert spaces |
-| `⇧Tab` | Outdent (at line start) or remove spaces | Outdent (at line start) or remove spaces |
-| `⌘.` | Toggle collapse | Toggle collapse |
-| `⌘⌫` | Delete block and subtree | Delete block and subtree |
-| `⌘⇧M` | Export outline to clipboard (markdown) | Export outline to clipboard (markdown) |
-| `⌘⇧J` | Export JSON with validation (FLO-247) | Export JSON with validation (FLO-247) |
-| `⌘⇧B` | Export binary Y.Doc (perfect restore) | Export binary Y.Doc (perfect restore) |
-| `⌘[` | Go back (restores zoom AND focus) | Go back (restores zoom AND focus) |
-| `⌘]` | Go forward | Go forward |
-| `Click [[link]]` | Navigate to page | Navigate to page |
-| `⌘Click [[link]]` | Open page in horizontal split | Open page in horizontal split |
-| `⌘⇧Click [[link]]` | Open page in vertical split | Open page in vertical split |
+| Key | Behavior |
+|-----|----------|
+| `Enter` | Command block: execute handler. Regular: create sibling/split |
+| `⌘Enter` | Zoom into subtree |
+| `Escape` | Zoom out to full tree |
+| `Tab` | Indent (at line start) or insert spaces |
+| `⇧Tab` | Outdent (at line start) |
+| `⌘.` | Toggle collapse |
+| `⌘⌫` | Delete block and subtree |
+| `⌘⇧M` | Export markdown to clipboard |
+| `⌘⇧J` | Export JSON (FLO-247) |
+| `⌘⇧B` | Export binary Y.Doc (FLO-247) |
+| `⌘[` / `⌘]` | Navigation history back/forward |
+| `⌘Z` / `⌘⇧Z` | Undo/redo |
+| `⌘A` | Select all (escalates: text → block → tree) |
+| `⌘0-3` | Expand to level N |
+
+**Click handlers** (in `BlockDisplay.tsx`): `[[wikilinks]]` navigate to pages, modifier-click opens in splits.
 
 ### Terminal Manager Architecture
 
