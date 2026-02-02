@@ -20,6 +20,7 @@ const HELP_TOPICS: Record<string, string> = {
   hooks: 'docs/guides/HOOK_PATTERNS.md',
   events: 'docs/guides/EVENT_SYSTEM.md',
   send: 'docs/guides/SEND.md',
+  backup: 'docs/guides/BACKUP.md',
 };
 
 export const helpHandler: BlockHandler = {

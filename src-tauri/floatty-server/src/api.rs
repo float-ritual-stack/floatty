@@ -109,6 +109,8 @@ fn yrs_any_to_json(any: yrs::Any) -> serde_json::Value {
     }
 }
 
+use crate::backup::BackupDaemon;
+
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
@@ -116,6 +118,8 @@ pub struct AppState {
     pub broadcaster: Arc<WsBroadcaster>,
     pub page_name_index: Arc<RwLock<PageNameIndex>>,
     pub hook_system: Arc<HookSystem>,
+    /// Backup daemon (optional - only present if backups enabled)
+    pub backup_daemon: Option<Arc<BackupDaemon>>,
 }
 
 /// Health check response
@@ -291,9 +295,10 @@ pub fn create_router(
     store: Arc<YDocStore>,
     broadcaster: Arc<WsBroadcaster>,
     hook_system: Arc<HookSystem>,
+    backup_daemon: Option<Arc<BackupDaemon>>,
 ) -> Router {
     let page_name_index = hook_system.page_name_index();
-    let state = AppState { store, broadcaster, page_name_index, hook_system };
+    let state = AppState { store, broadcaster, page_name_index, hook_system, backup_daemon };
 
     Router::new()
         // Core sync endpoints
@@ -316,6 +321,12 @@ pub fn create_router(
         .route("/api/v1/pages/search", get(search_pages))
         .route("/api/v1/search", get(search_blocks))
         .route("/api/v1/search/clear", post(clear_search_index))
+        // Backup endpoints
+        .route("/api/v1/backup/status", get(backup_status))
+        .route("/api/v1/backup/list", get(backup_list))
+        .route("/api/v1/backup/trigger", post(backup_trigger))
+        .route("/api/v1/backup/restore", post(backup_restore))
+        .route("/api/v1/backup/config", get(backup_config))
         .with_state(state)
 }
 
@@ -1543,6 +1554,222 @@ async fn clear_search_index(State(state): State<AppState>) -> Result<StatusCode,
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ============================================================================
+// Backup Endpoints (FLO-251)
+// ============================================================================
+
+/// Backup status response
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupStatusResponse {
+    pub running: bool,
+    pub last_backup: Option<String>,
+    pub next_backup: Option<String>,
+    pub backup_count: usize,
+    pub total_size_bytes: u64,
+    pub backup_dir: String,
+}
+
+/// Backup file info for list response
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupFileInfo {
+    pub filename: String,
+    pub size_bytes: u64,
+    pub created: String,
+}
+
+/// Backup list response
+#[derive(Serialize)]
+pub struct BackupListResponse {
+    pub backups: Vec<BackupFileInfo>,
+}
+
+/// Backup trigger response
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupTriggerResponse {
+    pub filename: String,
+    pub size_bytes: u64,
+}
+
+/// Backup restore request
+#[derive(Deserialize)]
+pub struct BackupRestoreRequest {
+    pub filename: String,
+}
+
+/// Backup config response
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupConfigResponse {
+    pub enabled: bool,
+    pub interval_hours: u64,
+    pub retain_hourly: u32,
+    pub retain_daily: u32,
+    pub retain_weekly: u32,
+    pub backup_dir: String,
+}
+
+/// Format SystemTime as ISO 8601 string
+fn format_system_time(t: SystemTime) -> String {
+    let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+
+    // Simple UTC formatting (matches backup.rs timestamp logic)
+    let days_since_epoch = secs / 86400;
+    let secs_today = secs % 86400;
+
+    let mut year: i32 = 1970;
+    let mut remaining_days = days_since_epoch as i64;
+
+    loop {
+        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
+        if remaining_days < days_in_year { break; }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+
+    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_months: [i64; 12] = [31, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    let mut month = 1;
+    for days in days_in_months {
+        if remaining_days < days { break; }
+        remaining_days -= days;
+        month += 1;
+    }
+    let day = remaining_days + 1;
+
+    let hour = secs_today / 3600;
+    let minute = (secs_today % 3600) / 60;
+    let second = secs_today % 60;
+
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, hour, minute, second)
+}
+
+/// GET /api/v1/backup/status - Backup daemon status
+async fn backup_status(State(state): State<AppState>) -> Result<Json<BackupStatusResponse>, ApiError> {
+    let daemon = state.backup_daemon.as_ref()
+        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
+
+    let status = daemon.get_status();
+
+    Ok(Json(BackupStatusResponse {
+        running: status.running,
+        last_backup: status.last_backup.map(format_system_time),
+        next_backup: status.next_backup.map(format_system_time),
+        backup_count: status.backup_count,
+        total_size_bytes: status.total_size_bytes,
+        backup_dir: daemon.backup_dir().display().to_string(),
+    }))
+}
+
+/// GET /api/v1/backup/list - List backup files
+async fn backup_list(State(state): State<AppState>) -> Result<Json<BackupListResponse>, ApiError> {
+    let daemon = state.backup_daemon.as_ref()
+        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
+
+    let backups = daemon.list_backups()
+        .map_err(|e| ApiError::Search(format!("Failed to list backups: {}", e)))?;
+
+    let files: Vec<BackupFileInfo> = backups.into_iter()
+        .map(|b| BackupFileInfo {
+            filename: b.filename,
+            size_bytes: b.size_bytes,
+            created: format_system_time(b.created),
+        })
+        .collect();
+
+    Ok(Json(BackupListResponse { backups: files }))
+}
+
+/// POST /api/v1/backup/trigger - Trigger immediate backup
+async fn backup_trigger(State(state): State<AppState>) -> Result<Json<BackupTriggerResponse>, ApiError> {
+    let daemon = state.backup_daemon.as_ref()
+        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
+
+    let info = daemon.trigger_backup().await
+        .map_err(|e| ApiError::Search(e))?;
+
+    Ok(Json(BackupTriggerResponse {
+        filename: info.filename,
+        size_bytes: info.size_bytes,
+    }))
+}
+
+/// POST /api/v1/backup/restore - Restore from backup file
+async fn backup_restore(
+    State(state): State<AppState>,
+    Json(req): Json<BackupRestoreRequest>,
+) -> Result<Json<RestoreResponse>, ApiError> {
+    let daemon = state.backup_daemon.as_ref()
+        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
+
+    // Find the backup file
+    let backups = daemon.list_backups()
+        .map_err(|e| ApiError::Search(format!("Failed to list backups: {}", e)))?;
+
+    let backup = backups.iter()
+        .find(|b| b.filename == req.filename)
+        .ok_or_else(|| ApiError::NotFound(format!("Backup not found: {}", req.filename)))?;
+
+    // Read the backup file
+    let state_bytes = std::fs::read(&backup.path)
+        .map_err(|e| ApiError::Search(format!("Failed to read backup: {}", e)))?;
+
+    // Clear search index before restore
+    if let Err(e) = state.hook_system.clear_search_index().await {
+        tracing::warn!("Failed to clear search index before restore: {}", e);
+    }
+
+    // Reset the store to the backup state
+    let block_count = state.store.reset_from_state(&state_bytes)?;
+
+    // Broadcast new state to connected clients
+    let new_state = state.store.get_full_state()?;
+    state.broadcaster.broadcast(new_state, None);
+
+    // Rehydrate hooks
+    let rehydrated = state.hook_system.rehydrate_all_blocks(&state.store);
+    tracing::info!("Rehydrated {} blocks after backup restore", rehydrated);
+
+    // Count roots
+    let root_count = {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
+        txn.get_array("rootIds")
+            .map(|arr| arr.len(&txn) as usize)
+            .unwrap_or(0)
+    };
+
+    tracing::info!(
+        block_count = block_count,
+        root_count = root_count,
+        filename = %req.filename,
+        "Restored from backup"
+    );
+
+    Ok(Json(RestoreResponse { block_count, root_count }))
+}
+
+/// GET /api/v1/backup/config - Get backup configuration
+async fn backup_config(State(state): State<AppState>) -> Result<Json<BackupConfigResponse>, ApiError> {
+    let daemon = state.backup_daemon.as_ref()
+        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
+
+    let config = daemon.config();
+
+    Ok(Json(BackupConfigResponse {
+        enabled: config.enabled,
+        interval_hours: config.interval_hours,
+        retain_hourly: config.retain_hourly,
+        retain_daily: config.retain_daily,
+        retain_weekly: config.retain_weekly,
+        backup_dir: daemon.backup_dir().display().to_string(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1560,7 +1787,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let router = create_router(Arc::clone(&store), broadcaster, hook_system);
+        // Pass None for backup_daemon in tests
+        let router = create_router(Arc::clone(&store), broadcaster, hook_system, None);
         (router, dir, store)
     }
 
@@ -1679,7 +1907,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create parent
         let response = app
@@ -1759,7 +1987,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create block
         let response = app
@@ -1918,7 +2146,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create a block with searchable content
         let response = app
@@ -1964,7 +2192,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create parent A
         let response = app
@@ -2062,7 +2290,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create parent
         let response = app
@@ -2144,7 +2372,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create two root blocks
         let response = app
@@ -2262,7 +2490,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create parent -> child hierarchy
         let response = app
@@ -2314,7 +2542,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create a block first
         let _response = app
@@ -2358,7 +2586,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
 
         // Create a block first
         let _response = app

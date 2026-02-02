@@ -97,6 +97,91 @@ impl Default for ServerConfig {
     }
 }
 
+/// Backup daemon configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupConfig {
+    /// Enable/disable automated backups (default: true)
+    #[serde(default = "default_backup_enabled")]
+    pub enabled: bool,
+
+    /// Backup interval in hours (default: 1)
+    #[serde(default = "default_backup_interval_hours")]
+    pub interval_hours: u64,
+
+    /// Hours to keep hourly backups (default: 24)
+    #[serde(default = "default_backup_retain_hourly")]
+    pub retain_hourly: u32,
+
+    /// Days to keep daily backups (default: 7)
+    #[serde(default = "default_backup_retain_daily")]
+    pub retain_daily: u32,
+
+    /// Weeks to keep weekly backups (default: 4)
+    #[serde(default = "default_backup_retain_weekly")]
+    pub retain_weekly: u32,
+}
+
+fn default_backup_enabled() -> bool {
+    true
+}
+
+fn default_backup_interval_hours() -> u64 {
+    1
+}
+
+fn default_backup_retain_hourly() -> u32 {
+    24
+}
+
+fn default_backup_retain_daily() -> u32 {
+    7
+}
+
+fn default_backup_retain_weekly() -> u32 {
+    4
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_backup_enabled(),
+            interval_hours: default_backup_interval_hours(),
+            retain_hourly: default_backup_retain_hourly(),
+            retain_daily: default_backup_retain_daily(),
+            retain_weekly: default_backup_retain_weekly(),
+        }
+    }
+}
+
+impl BackupConfig {
+    /// Load backup config from file, with env var overrides for testing
+    pub fn load() -> Self {
+        let config_path = ServerConfig::config_path();
+
+        let mut backup_config = if config_path.exists() {
+            std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|contents| toml::from_str::<Config>(&contents).ok())
+                .map(|c| c.backup)
+                .unwrap_or_default()
+        } else {
+            Self::default()
+        };
+
+        // Env var overrides for testing (e.g., FLOATTY_BACKUP_INTERVAL=1 for 1 minute)
+        if let Ok(interval) = std::env::var("FLOATTY_BACKUP_INTERVAL") {
+            if let Ok(mins) = interval.parse::<u64>() {
+                // Env var is in MINUTES for easier testing, stored as hours internally
+                // Special case: if < 60, treat as minutes (for dev testing)
+                backup_config.interval_hours = if mins < 60 { mins } else { mins / 60 };
+                tracing::info!("Backup interval overridden via env: {} minutes", mins);
+            }
+        }
+
+        backup_config
+    }
+}
+
 /// Full config file structure (matches floatty's config.toml)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -106,6 +191,10 @@ pub struct Config {
     /// Legacy [server] section (for backwards compatibility)
     #[serde(default)]
     pub server: ServerConfig,
+
+    /// Backup daemon configuration
+    #[serde(default)]
+    pub backup: BackupConfig,
 }
 
 impl ServerConfig {
