@@ -5,7 +5,12 @@
 //! - GET /api/v1/state-vector - State vector for reconciliation
 //! - GET /api/v1/state/hash - SHA256 hash for sync health check
 //! - POST /api/v1/update - Apply Y.Doc update
+//! - POST /api/v1/restore - Replace Y.Doc state from backup
 //! - GET /api/v1/health - Health check
+//!
+//! Export endpoints:
+//! - GET /api/v1/export/binary - Raw Y.Doc state as .ydoc file
+//! - GET /api/v1/export/json - Human-readable JSON export
 //!
 //! Block CRUD endpoints:
 //! - GET /api/v1/blocks - All blocks as JSON
@@ -16,7 +21,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::IntoResponse,
     routing::{delete, get, patch, post},
     Json, Router,
@@ -298,6 +303,9 @@ pub fn create_router(
         .route("/api/v1/state/hash", get(get_state_hash))
         .route("/api/v1/update", post(apply_update))
         .route("/api/v1/restore", post(restore_state))
+        // Export endpoints
+        .route("/api/v1/export/binary", get(export_binary))
+        .route("/api/v1/export/json", get(export_json))
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
         .route("/api/v1/blocks", post(create_block))
@@ -471,6 +479,238 @@ async fn restore_state(
         block_count,
         root_count,
     }))
+}
+
+// ============================================================================
+// Export Endpoints (FLO-249)
+// ============================================================================
+
+/// Exported block structure for JSON export
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedBlock {
+    pub content: String,
+    pub parent_id: Option<String>,
+    pub child_ids: Vec<String>,
+    #[serde(rename = "type")]
+    pub block_type: String,
+    pub collapsed: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// JSON export response structure
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedOutline {
+    pub version: u32,
+    pub exported: String,
+    pub block_count: usize,
+    pub root_ids: Vec<String>,
+    pub blocks: std::collections::HashMap<String, ExportedBlock>,
+}
+
+/// Generate timestamp string for filenames: YYYY-MM-DD-HHmmss
+fn export_timestamp() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+
+    // Calculate UTC datetime components
+    let days_since_epoch = secs / 86400;
+    let secs_today = secs % 86400;
+
+    // Simple year/month/day calculation (accurate enough for filenames)
+    let mut year = 1970;
+    let mut remaining_days = days_since_epoch as i64;
+
+    loop {
+        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+
+    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_months: [i64; 12] = [
+        31,
+        if is_leap { 29 } else { 28 },
+        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ];
+
+    let mut month = 1;
+    for days in days_in_months {
+        if remaining_days < days {
+            break;
+        }
+        remaining_days -= days;
+        month += 1;
+    }
+    let day = remaining_days + 1;
+
+    let hour = secs_today / 3600;
+    let minute = (secs_today % 3600) / 60;
+    let second = secs_today % 60;
+
+    format!(
+        "{:04}-{:02}-{:02}-{:02}{:02}{:02}",
+        year, month, day, hour, minute, second
+    )
+}
+
+/// GET /api/v1/export/binary - Raw Y.Doc state as downloadable .ydoc file
+///
+/// Returns the full Y.Doc state as binary data with Content-Disposition header
+/// for direct download. Use this for perfect backup/restore.
+async fn export_binary(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let full_state = state.store.get_full_state()?;
+    let timestamp = export_timestamp();
+    let filename = format!("floatty-{}.ydoc", timestamp);
+    let content_disposition = format!("attachment; filename=\"{}\"", filename);
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, header::HeaderValue::from_static("application/octet-stream")),
+            (header::CONTENT_DISPOSITION, header::HeaderValue::from_str(&content_disposition).unwrap()),
+        ],
+        full_state,
+    ))
+}
+
+/// GET /api/v1/export/json - Human-readable JSON export
+///
+/// Returns structured JSON with all blocks. Note: This is a LOSSY export -
+/// CRDT metadata (vector clocks, tombstones) is NOT preserved.
+/// Use /api/v1/export/binary for perfect restore.
+async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let mut blocks = std::collections::HashMap::new();
+    let mut root_ids = Vec::new();
+
+    // Get root IDs
+    if let Some(root_ids_arr) = txn.get_array("rootIds") {
+        for value in root_ids_arr.iter(&txn) {
+            if let yrs::Out::Any(yrs::Any::String(id)) = value {
+                root_ids.push(id.to_string());
+            }
+        }
+    }
+
+    // Get all blocks
+    if let Some(blocks_map) = txn.get_map("blocks") {
+        for (key, value) in blocks_map.iter(&txn) {
+            if let yrs::Out::YMap(block_map) = value {
+                let content = block_map
+                    .get(&txn, "content")
+                    .and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    yrs::Out::Any(yrs::Any::Null) => None,
+                    _ => None,
+                });
+
+                let child_ids = block_map
+                    .get(&txn, "childIds")
+                    .and_then(|v| match v {
+                        yrs::Out::YArray(arr) => Some(
+                            arr.iter(&txn)
+                                .filter_map(|v| match v {
+                                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                    _ => None,
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                let collapsed = block_map
+                    .get(&txn, "collapsed")
+                    .and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::Bool(b)) => Some(b),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+
+                let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
+                let updated_at = extract_timestamp(block_map.get(&txn, "updatedAt"));
+
+                let metadata = block_map
+                    .get(&txn, "metadata")
+                    .and_then(|v| extract_metadata_from_yrs(v, &txn));
+
+                let block_type = floatty_core::parse_block_type(&content);
+
+                blocks.insert(
+                    key.to_string(),
+                    ExportedBlock {
+                        content,
+                        parent_id,
+                        child_ids,
+                        block_type: format!("{:?}", block_type).to_lowercase(),
+                        collapsed,
+                        created_at,
+                        updated_at,
+                        metadata,
+                    },
+                );
+            }
+        }
+    }
+
+    let timestamp = export_timestamp();
+    let filename = format!("floatty-{}.json", timestamp);
+
+    // ISO 8601 timestamp for the exported field
+    let exported = format!(
+        "{}-{}-{}T{}:{}:{}Z",
+        &timestamp[0..4],   // year
+        &timestamp[5..7],   // month
+        &timestamp[8..10],  // day
+        &timestamp[11..13], // hour
+        &timestamp[13..15], // minute
+        &timestamp[15..17], // second
+    );
+
+    let export = ExportedOutline {
+        version: 1,
+        exported,
+        block_count: blocks.len(),
+        root_ids,
+        blocks,
+    };
+
+    let json = serde_json::to_string_pretty(&export)
+        .map_err(|e| ApiError::Search(format!("JSON serialization failed: {}", e)))?;
+
+    let content_disposition = format!("attachment; filename=\"{}\"", filename);
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, header::HeaderValue::from_static("application/json")),
+            (header::CONTENT_DISPOSITION, header::HeaderValue::from_str(&content_disposition).unwrap()),
+        ],
+        json,
+    ))
 }
 
 /// GET /api/v1/blocks - All blocks as JSON
@@ -2065,5 +2305,99 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "Cycle should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_export_binary_returns_ydoc() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create a block first
+        let _response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Test block"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Get binary export
+        let response = app
+            .oneshot(Request::get("/api/v1/export/binary").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Check Content-Type
+        let content_type = response.headers().get("content-type").unwrap();
+        assert_eq!(content_type, "application/octet-stream");
+
+        // Check Content-Disposition has .ydoc filename
+        let disposition = response.headers().get("content-disposition").unwrap();
+        let disposition_str = disposition.to_str().unwrap();
+        assert!(disposition_str.contains("floatty-"), "Should have floatty prefix");
+        assert!(disposition_str.contains(".ydoc"), "Should have .ydoc extension");
+
+        // Body should be non-empty binary data
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        assert!(!body.is_empty(), "Binary export should not be empty");
+    }
+
+    #[tokio::test]
+    async fn test_export_json_returns_valid_json() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system);
+
+        // Create a block first
+        let _response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Test block for JSON export"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Get JSON export
+        let response = app
+            .oneshot(Request::get("/api/v1/export/json").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Check Content-Type
+        let content_type = response.headers().get("content-type").unwrap();
+        assert_eq!(content_type, "application/json");
+
+        // Check Content-Disposition has .json filename
+        let disposition = response.headers().get("content-disposition").unwrap();
+        let disposition_str = disposition.to_str().unwrap();
+        assert!(disposition_str.contains("floatty-"), "Should have floatty prefix");
+        assert!(disposition_str.contains(".json"), "Should have .json extension");
+
+        // Parse and validate JSON structure
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let export: ExportedOutline = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(export.version, 1);
+        assert!(!export.exported.is_empty());
+        assert!(export.block_count >= 1, "Should have at least 1 block");
+        assert!(!export.root_ids.is_empty(), "Should have root IDs");
+        assert!(!export.blocks.is_empty(), "Should have blocks");
     }
 }

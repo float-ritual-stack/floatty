@@ -124,11 +124,11 @@ export function downloadJSON(data: ExportedOutline, filename?: string): void {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    // Include time (HHMM) to avoid (1) (2) (3) collisions
+    // Include time (HHmmss) to avoid (1) (2) (3) collisions and match API format
     const now = new Date();
     const date = now.toISOString().slice(0, 10);
-    const time = now.toTimeString().slice(0, 5).replace(':', '');
-    a.download = filename || `floatty-export-${date}-${time}.json`;
+    const time = now.toTimeString().slice(0, 8).replace(/:/g, '');
+    a.download = filename || `floatty-${date}-${time}.json`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (err) {

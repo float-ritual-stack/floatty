@@ -70,6 +70,24 @@ curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks" |
 | `/api/v1/state/hash` | GET | SHA256 hash + block count (sync health check) |
 | `/api/v1/update` | POST | Apply Y.Doc update (CRDT merge) |
 | `/api/v1/restore` | POST | **DESTRUCTIVE** - Replace entire Y.Doc state |
+| `/api/v1/export/binary` | GET | Download raw Y.Doc as `.ydoc` file (Content-Disposition) |
+| `/api/v1/export/json` | GET | Download human-readable JSON export (Content-Disposition) |
+
+#### Export Endpoints
+
+For agents/cron to trigger exports without UI:
+
+```bash
+# Binary export (perfect CRDT restore)
+curl -o floatty-backup.ydoc -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/export/binary"
+
+# JSON export (human-readable, lossy)
+curl -o floatty-backup.json -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/export/json"
+```
+
+Filenames include timestamp: `floatty-2026-02-02-134512.ydoc`
 
 #### `/api/v1/update` vs `/api/v1/restore`
 
