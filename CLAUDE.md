@@ -311,6 +311,8 @@ Keys that always pass through to terminal: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, 
 | `⌘.` | Toggle collapse | Toggle collapse |
 | `⌘⌫` | Delete block and subtree | Delete block and subtree |
 | `⌘⇧M` | Export outline to clipboard (markdown) | Export outline to clipboard (markdown) |
+| `⌘⇧J` | Export JSON with validation (FLO-247) | Export JSON with validation (FLO-247) |
+| `⌘⇧B` | Export binary Y.Doc (perfect restore) | Export binary Y.Doc (perfect restore) |
 | `⌘[` | Go back (restores zoom AND focus) | Go back (restores zoom AND focus) |
 | `⌘]` | Go forward | Go forward |
 | `Click [[link]]` | Navigate to page | Navigate to page |
