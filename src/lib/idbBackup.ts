@@ -68,7 +68,10 @@ export async function saveBackup(state: Uint8Array): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).put(state, 'current');
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      console.log(`[idbBackup] Saved backup: ${state.length} bytes to ${dbName}`);
+      resolve();
+    };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -81,7 +84,13 @@ export async function getBackup(): Promise<Uint8Array | null> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const request = tx.objectStore(STORE_NAME).get('current');
-    request.onsuccess = () => resolve(request.result ?? null);
+    request.onsuccess = () => {
+      const result = request.result ?? null;
+      if (result) {
+        console.log(`[idbBackup] Loaded backup: ${result.length} bytes from ${dbName}`);
+      }
+      resolve(result);
+    };
     request.onerror = () => reject(request.error);
   });
 }
