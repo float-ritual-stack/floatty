@@ -52,7 +52,11 @@ export function downloadBinary(doc: Y.Doc, filename?: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename || `floatty-${new Date().toISOString().slice(0, 10)}.ydoc`;
+  // Include time (HHMM) to avoid (1) (2) (3) collisions
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  const time = now.toTimeString().slice(0, 5).replace(':', '');
+  a.download = filename || `floatty-${date}-${time}.ydoc`;
   a.click();
   URL.revokeObjectURL(url);
   console.log(`[binaryExport] Downloaded ${state.length} bytes`);

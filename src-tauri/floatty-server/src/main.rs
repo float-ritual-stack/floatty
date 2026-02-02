@@ -7,7 +7,7 @@
 //!   cargo install --path src-tauri/floatty-server
 //!   floatty-server
 
-use axum::{http::Method, middleware, routing::get, Router};
+use axum::{extract::DefaultBodyLimit, http::Method, middleware, routing::get, Router};
 use floatty_core::{HookSystem, YDocStore};
 use floatty_server::{api, auth, config::ServerConfig, ws, WsBroadcaster};
 use std::net::SocketAddr;
@@ -102,9 +102,11 @@ async fn main() {
         .with_state(Arc::clone(&broadcaster));
 
     // Combine routes
+    // 16MB body limit for large .ydoc restore payloads (default is 2MB)
     let app = Router::new()
         .merge(api_routes)
         .merge(ws_routes)
+        .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .layer(cors);
 
     // Bind and serve (port from env overrides config)
