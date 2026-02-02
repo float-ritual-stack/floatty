@@ -7,16 +7,43 @@
  * - Binary storage: no base64 overhead
  */
 
-const DB_NAME = 'floatty-backup';
 const STORE_NAME = 'ydoc';
 const DB_VERSION = 1;
 
+// Mutable - set by initBackupNamespace before first access
+let dbName = 'floatty-backup';
 let dbPromise: Promise<IDBDatabase> | null = null;
+
+/**
+ * Initialize the backup namespace based on build environment and workspace.
+ * MUST be called BEFORE any backup operations (getBackup, saveBackup, etc.)
+ *
+ * Creates isolation between: dev/release builds AND different workspaces
+ * e.g., 'floatty-backup-dev-default' vs 'floatty-backup-release-work'
+ */
+export function initBackupNamespace(workspaceName: string): void {
+  const build = import.meta.env.DEV ? 'dev' : 'release';
+  const newDbName = `floatty-backup-${build}-${workspaceName}`;
+
+  if (newDbName !== dbName) {
+    // CRITICAL: Null the promise SYNCHRONOUSLY before async close to prevent
+    // race where getDB() reuses the old promise while close is pending
+    const oldPromise = dbPromise;
+    dbPromise = null;
+    dbName = newDbName;
+
+    // Fire-and-forget close of old connection (best effort cleanup)
+    if (oldPromise) {
+      oldPromise.then(db => db.close()).catch(() => {});
+    }
+    console.log(`[idbBackup] Namespace set to: ${dbName}`);
+  }
+}
 
 function getDB(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      const request = indexedDB.open(dbName, DB_VERSION);
       request.onerror = () => {
         console.error('[idbBackup] Failed to open database:', request.error);
         reject(request.error);
@@ -41,7 +68,10 @@ export async function saveBackup(state: Uint8Array): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).put(state, 'current');
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      console.log(`[idbBackup] Saved backup: ${state.length} bytes to ${dbName}`);
+      resolve();
+    };
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -54,7 +84,13 @@ export async function getBackup(): Promise<Uint8Array | null> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const request = tx.objectStore(STORE_NAME).get('current');
-    request.onsuccess = () => resolve(request.result ?? null);
+    request.onsuccess = () => {
+      const result = request.result ?? null;
+      if (result) {
+        console.log(`[idbBackup] Loaded backup: ${result.length} bytes from ${dbName}`);
+      }
+      resolve(result);
+    };
     request.onerror = () => reject(request.error);
   });
 }

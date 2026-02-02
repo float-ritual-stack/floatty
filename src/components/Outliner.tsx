@@ -12,6 +12,8 @@ import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
 import { invoke, type AggregatorConfig } from '../lib/tauriTypes';
+import { exportOutlineToJSON, downloadJSON, validateExport } from '../lib/jsonExport';
+import { downloadBinary } from '../lib/binaryExport';
 
 interface OutlinerProps {
   paneId: string;
@@ -262,6 +264,41 @@ export function Outliner(props: OutlinerProps) {
         }
       };
 
+      // FLO-247: JSON export with validation (Cmd+Shift+J)
+      const exportToJSON = () => {
+        // Flush any pending contentEditable edits before export
+        (document.activeElement as HTMLElement)?.blur();
+
+        try {
+          const data = exportOutlineToJSON(store.blocks, store.rootIds);
+          const validation = validateExport(data);
+          if (!validation.valid) {
+            console.error('[FLO-247] Export validation failed:', validation.errors);
+            alert(`Export validation failed:\n${validation.errors.slice(0, 10).join('\n')}${validation.errors.length > 10 ? `\n...and ${validation.errors.length - 10} more` : ''}`);
+            return;
+          }
+          downloadJSON(data);
+          console.log(`[FLO-247] Exported ${data.blockCount} blocks to JSON`);
+        } catch (err) {
+          console.error('[FLO-247] JSON export failed:', err);
+          alert(`JSON export failed: ${err}`);
+        }
+      };
+
+      // FLO-247: Binary Y.Doc export for perfect restore (Cmd+Shift+B)
+      const exportToBinary = () => {
+        // Flush any pending contentEditable edits before export
+        (document.activeElement as HTMLElement)?.blur();
+
+        try {
+          downloadBinary(doc);
+          console.log('[FLO-247] Exported Y.Doc binary');
+        } catch (err) {
+          console.error('[FLO-247] Binary export failed:', err);
+          alert(`Binary export failed: ${err}`);
+        }
+      };
+
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
         const activeEl = document.activeElement as HTMLElement;
         const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
@@ -388,6 +425,18 @@ export function Outliner(props: OutlinerProps) {
         '$mod+Shift+m': (e) => {
           e.preventDefault();
           exportToMarkdown();
+        },
+
+        // FLO-247: JSON export with validation (human-readable, lossy)
+        '$mod+Shift+j': (e) => {
+          e.preventDefault();
+          exportToJSON();
+        },
+
+        // FLO-247: Binary Y.Doc export (perfect restore)
+        '$mod+Shift+b': (e) => {
+          e.preventDefault();
+          exportToBinary();
         },
 
         // FLO-180/211: Navigation history (back/forward) with focus restoration

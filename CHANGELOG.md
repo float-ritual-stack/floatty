@@ -2,6 +2,30 @@
 
 All notable changes to floatty are documented here.
 
+## [Unreleased]
+
+### Features
+
+- **Dual export formats** (FLO-247, PR #110): Insurance against data loss
+  - `⌘⇧B` - Binary Y.Doc export (perfect restore with CRDT metadata)
+  - `⌘⇧J` - JSON export with validation (human-readable fallback)
+  - Export validation catches structural issues before download
+
+- **IndexedDB namespace isolation** (FLO-247): Prevents dev/release data mixing
+  - Database names now include build type and workspace: `floatty-backup-{dev|release}-{workspace}`
+  - Closes old connection before switching namespaces (no race conditions)
+
+- **Startup sanity check** (FLO-247): Warns on suspicious state
+  - Detects empty server when backup exists (possible wipe)
+  - Detects orphaned blocks (roots missing)
+  - Logs block/root count on successful load
+
+### Bug Fixes
+
+- **Export script** (FLO-247): Fixed `export-outline.mjs` to use `childIds` for sibling order instead of Map iteration (which has undefined order)
+
+---
+
 ## [0.7.8] - 2026-02-01
 
 ### Features
