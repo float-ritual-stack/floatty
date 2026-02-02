@@ -88,6 +88,10 @@ async function main() {
   const afterResponse = await fetch(`http://127.0.0.1:${PORT}/api/v1/blocks`, {
     headers: { 'Authorization': `Bearer ${API_KEY}` }
   });
+  if (!afterResponse.ok) {
+    console.error(`Server unavailable after restore: ${afterResponse.status}`);
+    process.exit(1);
+  }
   const afterData = await afterResponse.json() as { blocks?: unknown[] };
   console.log(`\nServer AFTER: ${afterData.blocks?.length ?? 0} blocks`);
 
