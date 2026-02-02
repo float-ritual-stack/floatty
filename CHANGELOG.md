@@ -4,25 +4,35 @@ All notable changes to floatty are documented here.
 
 ## [Unreleased]
 
+---
+
+## [0.7.9] - 2026-02-02
+
 ### Features
 
-- **Dual export formats** (FLO-247, PR #110): Insurance against data loss
+- **Binary restore endpoint** (`/api/v1/restore`) for disaster recovery (FLO-247, PR #111)
+  - Destructive replacement of Y.Doc state from binary backup
+  - Clears search index and rehydrates hooks after restore
+  - Broadcasts new state to all connected WebSocket clients
+
+- **Rolling backup insurance** (FLO-247, PR #110)
   - `⌘⇧B` - Binary Y.Doc export (perfect restore with CRDT metadata)
   - `⌘⇧J` - JSON export with validation (human-readable fallback)
   - Export validation catches structural issues before download
 
 - **IndexedDB namespace isolation** (FLO-247): Prevents dev/release data mixing
   - Database names now include build type and workspace: `floatty-backup-{dev|release}-{workspace}`
-  - Closes old connection before switching namespaces (no race conditions)
 
-- **Startup sanity check** (FLO-247): Warns on suspicious state
-  - Detects empty server when backup exists (possible wipe)
-  - Detects orphaned blocks (roots missing)
-  - Logs block/root count on successful load
+- **Build profile data isolation**: Dev and release can't cross-contaminate
+  - Different bundle identifiers for dev builds
+  - Distinct default ports: dev (33333) vs release (8765)
 
 ### Bug Fixes
 
-- **Export script** (FLO-247): Fixed `export-outline.mjs` to use `childIds` for sibling order instead of Map iteration (which has undefined order)
+- **16MB body limit** for large .ydoc restores (was 2MB axum default)
+- **Timestamped export filenames** to avoid `(1)` `(2)` collisions
+- **Unified port config** - server reads `server_port` from top level
+- **Export script** (FLO-247): Fixed `export-outline.mjs` to use `childIds` for sibling order
 
 ---
 
