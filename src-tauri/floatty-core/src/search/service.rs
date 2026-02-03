@@ -43,6 +43,41 @@ use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
 use tantivy::schema::{IndexRecordOption, Value};
 use tantivy::Term;
 
+/// Escape Tantivy query syntax characters so user input is treated as literal text.
+///
+/// Tantivy special chars: `+`, `-`, `&&`, `||`, `!`, `(`, `)`, `{`, `}`, `[`, `]`,
+/// `^`, `"`, `~`, `*`, `?`, `:`, `\`, `/`
+///
+/// We escape the subset that commonly appears in floatty notes:
+/// - `::` (field syntax) — ubiquitous in ctx::, project::, search::, etc.
+/// - `[` `]` (range queries) — wikilinks [[like this]]
+/// - `(` `)` — grouping, common in prose
+/// - `{` `}` — set syntax
+/// - `"` — phrase syntax
+/// - `*` `?` — wildcards
+/// - `~` — fuzzy
+/// - `^` — boost
+/// - `!` `+` `-` — boolean operators
+fn escape_tantivy_query(input: &str) -> String {
+    let mut result = String::with_capacity(input.len() + 8);
+    for ch in input.chars() {
+        match ch {
+            ':' | '[' | ']' | '(' | ')' | '{' | '}' | '"' | '*' | '?' | '~' | '^' | '!'
+            | '+' | '\\' | '/' => {
+                result.push('\\');
+                result.push(ch);
+            }
+            // `-` only special at start of term, but safer to always escape
+            '-' => {
+                result.push('\\');
+                result.push(ch);
+            }
+            _ => result.push(ch),
+        }
+    }
+    result
+}
+
 /// A search result with block ID and relevance score.
 #[derive(Debug, Clone)]
 pub struct SearchHit {
@@ -130,9 +165,10 @@ impl SearchService {
             return Ok(Vec::new());
         }
 
-        // Pre-process query: escape `::` so Tantivy doesn't interpret as field syntax
-        // e.g., "project::floatty" → "project\:\:floatty"
-        let query_escaped = query_trimmed.replace("::", r"\:\:");
+        // Pre-process query: escape Tantivy special characters so user input
+        // is treated as literal text. Common in floatty notes: `ctx::`, `project::`,
+        // `[[wikilinks]]`, `[tags]`.
+        let query_escaped = escape_tantivy_query(query_trimmed);
 
         // Get reader and searcher
         let reader = self.index.index().reader()?;

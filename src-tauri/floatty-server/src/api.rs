@@ -270,7 +270,7 @@ impl IntoResponse for ApiError {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::InvalidBase64(_) | ApiError::InvalidParent(_) => StatusCode::BAD_REQUEST,
             ApiError::SearchUnavailable => StatusCode::SERVICE_UNAVAILABLE,
-            ApiError::Search(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::Search(_) => StatusCode::BAD_REQUEST,
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let body = Json(ErrorResponse {
@@ -323,6 +323,7 @@ pub fn create_router(
         .route("/api/v1/pages/search", get(search_pages))
         .route("/api/v1/search", get(search_blocks))
         .route("/api/v1/search/clear", post(clear_search_index))
+        .route("/api/v1/search/reindex", post(reindex_search))
         // Backup endpoints
         .route("/api/v1/backup/status", get(backup_status))
         .route("/api/v1/backup/list", get(backup_list))
@@ -1519,6 +1520,21 @@ async fn clear_search_index(State(state): State<AppState>) -> Result<StatusCode,
         .map_err(|e| ApiError::Search(format!("Failed to clear: {}", e)))?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/v1/search/reindex - Rebuild search index from Y.Doc
+///
+/// Rehydrates all blocks through the hook pipeline (metadata extraction → Tantivy indexing).
+/// Use after clear, restore, or when search results are stale.
+async fn reindex_search(State(state): State<AppState>) -> Result<Json<ReindexResponse>, ApiError> {
+    let count = state.hook_system.rehydrate_all_blocks(&state.store);
+    tracing::info!("Reindex triggered: {} blocks rehydrated", count);
+    Ok(Json(ReindexResponse { rehydrated: count }))
+}
+
+#[derive(Serialize)]
+struct ReindexResponse {
+    rehydrated: usize,
 }
 
 // ============================================================================
