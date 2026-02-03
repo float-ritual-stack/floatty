@@ -132,7 +132,7 @@ export async function triggerFullResync(): Promise<void> {
     if (serverState && serverState.length > 2) {
       try {
         isApplyingRemoteGlobal = true;
-        Y.applyUpdate(sharedDoc, serverState, 'server-resync');
+        Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
       } finally {
         isApplyingRemoteGlobal = false;
       }
