@@ -375,7 +375,7 @@ function scheduleBackup() {
       await saveBackupIDB(state);
       console.log('[useSyncedYDoc] Backed up Y.Doc to IndexedDB:', state.length, 'bytes');
     } catch (err) {
-      console.warn('[useSyncedYDoc] Failed to backup Y.Doc:', err);
+      console.error('[useSyncedYDoc] Failed to backup Y.Doc:', err);
     }
   }, BACKUP_DEBOUNCE_MS);
 }

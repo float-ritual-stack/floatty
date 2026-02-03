@@ -6,6 +6,15 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.13] - 2026-02-03
+
+### Bug Fixes
+
+- **Nuke Tantivy index on restart** (FLO-186, PR #116): Delete `search_index/` directory on server startup before creating fresh index — eliminates ghost IDs and stale entries that persisted across restarts
+- **Backup failure log level**: Escalated Y.Doc IndexedDB backup failure from `console.warn` to `console.error` — backup is the crash recovery path, failures shouldn't be quiet
+
+---
+
 ## [0.7.12] - 2026-02-03
 
 ### Features

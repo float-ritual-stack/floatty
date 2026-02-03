@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "float-pty"
-version = "0.7.12"
+version = "0.7.13"
 description = "Float PTY - Terminal Emulator"
 authors = ["evan"]
 license = "MIT"
