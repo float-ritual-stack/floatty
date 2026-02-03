@@ -522,7 +522,9 @@ class TerminalManager {
                     if (base64) {
                       console.log('[TerminalManager] Pasting image:', base64.length, 'bytes base64');
                       const tempPath = await invoke<string>('save_clipboard_image', { base64 });
-                      invoke('plugin:pty|write', { pid, data: tempPath }).catch((err) => {
+                      // Quote path for shell safety (spaces, parens, etc.)
+                      const quotedPath = tempPath.includes(' ') ? `"${tempPath.replace(/"/g, '\\"')}"` : tempPath;
+                      invoke('plugin:pty|write', { pid, data: quotedPath }).catch((err) => {
                         console.error('[TerminalManager] Image paste write failed:', err);
                         term.write('\r\n\x1b[33m[Paste failed: could not write image path]\x1b[0m');
                       });
