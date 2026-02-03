@@ -287,16 +287,9 @@ export function BlockItem(props: BlockItemProps) {
     // When focused + user origin: handleInput already updated displayContent immediately
     const shouldSync = !isFocusedNow || !isUserOrigin;
 
-    // DEBUG: Track unexpected syncs that might cause cursor jumps
+    // Warn on unexpected focused-block syncs (could cause cursor jump)
     if (shouldSync && isFocusedNow && domContent !== storeContent) {
-      console.warn('[BlockItem CURSOR DEBUG] Syncing focused block!', {
-        blockId: currentBlock.id,
-        origin,
-        isUserOrigin,
-        domContent: domContent.slice(0, 50),
-        storeContent: storeContent.slice(0, 50),
-        activeElement: document.activeElement?.tagName,
-      });
+      console.warn('[BlockItem] Syncing focused block (origin:', origin, ')');
     }
 
     if (shouldSync) {
@@ -336,13 +329,8 @@ export function BlockItem(props: BlockItemProps) {
 
     const currentBlock = block();
     if (contentRef && currentBlock) {
-      // DEBUG: Track content mismatch on blur
+      // Sync DOM to store on blur (catches remote updates that arrived while focused)
       if (contentRef.innerText !== currentBlock.content) {
-        console.log('[BlockItem BLUR DEBUG] Content mismatch on blur', {
-          blockId: currentBlock.id,
-          domContent: contentRef.innerText.slice(0, 50),
-          storeContent: currentBlock.content.slice(0, 50),
-        });
         contentRef.innerText = currentBlock.content;
       }
       // CRITICAL: Also sync displayContent for overlay layer
