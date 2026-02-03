@@ -4,8 +4,23 @@ All notable changes to floatty are documented here.
 
 ## [Unreleased]
 
+---
+
+## [0.7.11] - 2026-02-03
+
+### Bug Fixes
+
+- **WebSocket reconnect sync race** (FLO-256, PR #114): Added `reconnect-authority` origin that bypasses `hasLocalChanges()` guard, allowing authoritative server state to sync during reconnect
+- **HMR store preservation**: Preserved `blockStore` instance across hot module replacement via `import.meta.hot.data` to prevent empty state after dev mode file edits
+- **Reconnect echo prevention**: Wrapped reconnect Y.Doc apply with `isApplyingRemoteGlobal` guard to prevent update observer from echoing state back to server
+- **Stale debounce on authority sync**: Cancel pending content debounce and clear dirty flags when authoritative update arrives, preventing stale local content from overwriting server state
+- **Image paste path quoting**: Temp file paths with spaces now quoted before sending to PTY
+- **HTTP client init race**: Moved `initPromise = null` from catch to finally block, preventing stuck rejected promise on transient init failures
+
 ### Improvements
 
+- **Clipboard paste visibility**: Image and text paste failures now display inline warnings in terminal instead of silent console errors
+- **Workspace load error banner**: Yellow warning banner when workspace fails to load instead of silent failure
 - **Friendly PUT error message** (FLO-255): Returns 405 with "Did you mean PATCH?" when agents try PUT on `/api/v1/blocks/:id`
 
 ---
