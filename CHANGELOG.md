@@ -6,6 +6,20 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.14] - 2026-02-03
+
+### Features
+
+- **Search reindex endpoint** (FLO-261, PR #117): `POST /api/v1/search/reindex` triggers full rehydration from Y.Doc without restart
+
+### Bug Fixes
+
+- **Search query escaping** (FLO-261, PR #117): Escape all Tantivy query syntax characters (`::`, `[]`, `()`, `*`, `?`, etc.) — queries containing `ctx::`, `[[wikilinks]]`, or `[project::X]` no longer cause 500 errors
+- **Search error status code**: Query parse errors now return 400 Bad Request instead of 500 Internal Server Error
+- **Search error logging**: Frontend handler properly serializes non-Error objects with cyclic-safe fallback (was logging `{}`)
+
+---
+
 ## [0.7.13] - 2026-02-03
 
 ### Bug Fixes
