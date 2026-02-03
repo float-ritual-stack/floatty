@@ -587,8 +587,9 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
             store.liftChildrenToSiblings(deps.getBlockId(), keyAction.prevId);
           }
 
-          // Mutations: merge content and delete (now childless) block
-          store.updateBlockContent(keyAction.prevId, prevBlock.content + oldContent);
+          // Mutations: merge content with newline separator and delete (now childless) block
+          const separator = (prevBlock.content && oldContent) ? '\n' : '';
+          store.updateBlockContent(keyAction.prevId, prevBlock.content + separator + oldContent);
           store.deleteBlock(deps.getBlockId());
 
           // FIX 2: Use queueMicrotask chain (not rAF)
