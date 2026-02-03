@@ -23,7 +23,7 @@ use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
     response::IntoResponse,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -317,6 +317,7 @@ pub fn create_router(
         .route("/api/v1/blocks", post(create_block))
         .route("/api/v1/blocks/:id", get(get_block))
         .route("/api/v1/blocks/:id", patch(update_block))
+        .route("/api/v1/blocks/:id", put(put_not_supported))
         .route("/api/v1/blocks/:id", delete(delete_block))
         // Search endpoints
         .route("/api/v1/pages/search", get(search_pages))
@@ -944,6 +945,21 @@ async fn create_block(
             updated_at: now as i64,
         }),
     ))
+}
+
+/// PUT /api/v1/blocks/:id - Not supported, suggest PATCH
+///
+/// Friendly error for kitty and other agents who try PUT instead of PATCH.
+async fn put_not_supported(Path(id): Path<String>) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(ErrorResponse {
+            error: format!(
+                "PUT not supported. Did you mean PATCH? Use: PATCH /api/v1/blocks/{} with {{\042content\042: ..., \042parentId\042: ...}}",
+                id
+            ),
+        }),
+    )
 }
 
 /// PATCH /api/v1/blocks/:id - Update content, metadata, and/or parent
