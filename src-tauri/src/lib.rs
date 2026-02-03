@@ -299,6 +299,11 @@ pub fn run() {
         builder = builder.plugin(tauri_nspanel::init());
     }
 
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+    }
+
     builder
         .manage(state)
         .invoke_handler({
