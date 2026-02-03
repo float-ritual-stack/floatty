@@ -137,7 +137,7 @@ export function BlockItem(props: BlockItemProps) {
   // Debounced Y.Doc updates - DOM stays immediate via contentEditable
   // Flush on blur, cancel on unmount
   // FLO-197: Clear dirty flag after store commit (enables content sync for non-local changes)
-  const { debounced: debouncedUpdateContent, flush: flushContentUpdate } =
+  const { debounced: debouncedUpdateContent, flush: flushContentUpdate, cancel: cancelContentUpdate } =
     createDebouncedUpdater((id: string, content: string) => {
       store.updateBlockContent(id, content);
       setHasLocalChanges(false);
@@ -253,13 +253,31 @@ export function BlockItem(props: BlockItemProps) {
     const currentBlock = block();
     if (!contentRef || !currentBlock) return;
 
+    const origin = store.lastUpdateOrigin;
+
+    // FLO-256: Authoritative origins bypass the hasLocalChanges guard
+    // These origins represent state that MUST sync to DOM:
+    // - 'reconnect-authority': Server state on WebSocket reconnect (server is truth)
+    // - UndoManager instance: Undo/redo operations (CRDT history is truth)
+    const isAuthoritative =
+      origin === 'reconnect-authority' ||
+      (origin && typeof origin === 'object' && 'undo' in origin);
+
     // FLO-197: CRITICAL - Skip sync if we have uncommitted local changes
+    // UNLESS the origin is authoritative (reconnect, undo/redo)
     // This prevents the race condition where:
     // 1. User types in block A, debounce pending
     // 2. Block B changes with 'remote'/'hook' origin
     // 3. This effect re-runs (triggered by global lastUpdateOrigin)
     // 4. Without this guard, DOM would be overwritten with stale store content
-    if (hasLocalChanges()) return;
+    // FLO-256: With reconnect-authority, we WANT to overwrite - server is truth
+    if (hasLocalChanges()) {
+      if (!isAuthoritative) return;
+      // Authoritative update while local changes pending:
+      // Cancel debounce and clear dirty flag to prevent stale content from being flushed
+      cancelContentUpdate();
+      setHasLocalChanges(false);
+    }
 
     const domContent = contentRef.innerText;
     const storeContent = currentBlock.content;
@@ -267,7 +285,7 @@ export function BlockItem(props: BlockItemProps) {
 
     // Check if this update is from user's own typing (should skip when focused)
     // UndoManager sets its own instance as origin, not 'user'
-    const origin = store.lastUpdateOrigin;
+    // NOTE: origin already captured above for authoritative check
     const isUserOrigin = origin === 'user';
 
     // Gate: sync if not focused, OR if focused but not from user typing
@@ -275,16 +293,9 @@ export function BlockItem(props: BlockItemProps) {
     // When focused + user origin: handleInput already updated displayContent immediately
     const shouldSync = !isFocusedNow || !isUserOrigin;
 
-    // DEBUG: Track unexpected syncs that might cause cursor jumps
+    // Warn on unexpected focused-block syncs (could cause cursor jump)
     if (shouldSync && isFocusedNow && domContent !== storeContent) {
-      console.warn('[BlockItem CURSOR DEBUG] Syncing focused block!', {
-        blockId: currentBlock.id,
-        origin,
-        isUserOrigin,
-        domContent: domContent.slice(0, 50),
-        storeContent: storeContent.slice(0, 50),
-        activeElement: document.activeElement?.tagName,
-      });
+      console.warn('[BlockItem] Syncing focused block (origin:', origin, ')');
     }
 
     if (shouldSync) {
@@ -297,6 +308,12 @@ export function BlockItem(props: BlockItemProps) {
       if (domContent !== storeContent) {
         // If focused, save cursor position before DOM manipulation
         const savedOffset = isFocusedNow ? getAbsoluteCursorOffset(contentRef) : -1;
+
+        // DEFENSIVE: Verify ref is actually in document (ghost node detection)
+        if (!document.contains(contentRef)) {
+          console.warn('[BlockItem] Ghost node detected - skipping DOM sync', currentBlock.id);
+          return;
+        }
 
         contentRef.innerText = storeContent;
 
@@ -318,13 +335,8 @@ export function BlockItem(props: BlockItemProps) {
 
     const currentBlock = block();
     if (contentRef && currentBlock) {
-      // DEBUG: Track content mismatch on blur
+      // Sync DOM to store on blur (catches remote updates that arrived while focused)
       if (contentRef.innerText !== currentBlock.content) {
-        console.log('[BlockItem BLUR DEBUG] Content mismatch on blur', {
-          blockId: currentBlock.id,
-          domContent: contentRef.innerText.slice(0, 50),
-          storeContent: currentBlock.content.slice(0, 50),
-        });
         contentRef.innerText = currentBlock.content;
       }
       // CRITICAL: Also sync displayContent for overlay layer

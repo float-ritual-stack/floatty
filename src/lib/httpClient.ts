@@ -198,9 +198,10 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
       console.log(`[httpClient] Connected to floatty-server at ${serverInfo.url}`);
       return clientInstance;
     } catch (err) {
-      // Clear promise AFTER rejection propagates (prevents race with concurrent callers)
-      initPromise = null;
       throw err;
+    } finally {
+      // Always clear promise so next caller retries fresh (prevents stuck rejected promise)
+      initPromise = null;
     }
   })();
 

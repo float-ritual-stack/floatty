@@ -132,7 +132,7 @@ export async function triggerFullResync(): Promise<void> {
     if (serverState && serverState.length > 2) {
       try {
         isApplyingRemoteGlobal = true;
-        Y.applyUpdate(sharedDoc, serverState, 'server-resync');
+        Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
       } finally {
         isApplyingRemoteGlobal = false;
       }
@@ -579,12 +579,20 @@ function connectWebSocket() {
 
           // 2. Fetch any updates we missed during disconnection
           // Server state includes all updates; applyUpdate is idempotent (no-op for already-seen)
+          // FLO-256: Use 'reconnect-authority' origin to bypass hasLocalChanges guard in BlockItem
+          // This ensures server state syncs to DOM even when blocks have pending local changes
           const { getHttpClient } = await import('../lib/httpClient');
           const httpClient = getHttpClient();
           const serverState = await httpClient.getState();
           if (serverState && serverState.length > 2) {
             console.log('[WS] Syncing server state after reconnect:', serverState.length, 'bytes');
-            Y.applyUpdate(sharedDoc, serverState, 'remote');
+            // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
+            try {
+              isApplyingRemoteGlobal = true;
+              Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
+            } finally {
+              isApplyingRemoteGlobal = false;
+            }
           }
 
           // FLO-152: Guard against stale IIFE from previous connection

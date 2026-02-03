@@ -55,6 +55,7 @@ function mapTransactionOrigin(txOrigin: unknown): OriginType {
   if (txOrigin === 'api') return Origin.Api;
   if (txOrigin === 'bulk_import') return Origin.BulkImport;
   if (txOrigin === 'system') return Origin.System;
+  if (txOrigin === 'reconnect-authority') return Origin.ReconnectAuthority;
   // Y.UndoManager passes itself as origin
   if (txOrigin && typeof txOrigin === 'object' && 'undo' in txOrigin) {
     return Origin.Undo;
@@ -1142,4 +1143,19 @@ function createBlockStore() {
   };
 }
 
-export const blockStore = createRoot(createBlockStore);
+// HMR: Preserve blockStore across hot reloads to prevent empty store state
+// Without this, HMR re-executes the module, creating a fresh store with empty blocks
+let _blockStoreInstance: ReturnType<typeof createBlockStore> | null = null;
+
+if (import.meta.hot) {
+  // Restore from previous module instance if available
+  _blockStoreInstance = import.meta.hot.data?.blockStore ?? null;
+
+  import.meta.hot.dispose((data) => {
+    // Save store instance for next module load
+    data.blockStore = blockStore;
+    console.log('[BlockStore] HMR dispose - preserving store');
+  });
+}
+
+export const blockStore = _blockStoreInstance ?? createRoot(createBlockStore);
