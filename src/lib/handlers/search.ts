@@ -160,10 +160,11 @@ export const searchHandler: BlockHandler = {
         actions.setBlockStatus(outputId, 'complete');
       }
     } catch (err) {
-      console.error('[search] Error:', err);
-      actions.updateBlockContent(outputId, `error::${String(err)}`);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      console.error('[search] Error:', msg);
+      actions.updateBlockContent(outputId, `error::${msg}`);
       if (actions.setBlockOutput && actions.setBlockStatus) {
-        actions.setBlockOutput(outputId, { error: String(err), query }, 'search-error');
+        actions.setBlockOutput(outputId, { error: msg, query }, 'search-error');
         actions.setBlockStatus(outputId, 'error');
       }
     }
