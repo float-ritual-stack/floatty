@@ -130,7 +130,18 @@ impl HookSystem {
     ) -> Result<(Arc<IndexManager>, WriterHandle, tokio::task::JoinHandle<()>), SearchError> {
         info!("Initializing search infrastructure...");
 
-        // Create or open the search index
+        // Nuke existing index for clean rebuild from Y.Doc (FLO-186)
+        // Search index is derived state — Y.Doc is source of truth.
+        // Stale entries (ghost IDs, pre-data-loss cruft) persist otherwise.
+        let index_path = IndexManager::index_path()?;
+        if index_path.exists() {
+            info!("Nuking search index at {:?} for clean rebuild", index_path);
+            if let Err(e) = std::fs::remove_dir_all(&index_path) {
+                warn!("Failed to remove search index dir: {}. Continuing with open_or_create.", e);
+            }
+        }
+
+        // Create fresh index (directory was just removed)
         let index_manager = Arc::new(IndexManager::open_or_create()?);
 
         // Spawn the writer actor
