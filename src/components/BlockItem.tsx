@@ -310,6 +310,12 @@ export function BlockItem(props: BlockItemProps) {
         // If focused, save cursor position before DOM manipulation
         const savedOffset = isFocusedNow ? getAbsoluteCursorOffset(contentRef) : -1;
 
+        // DEFENSIVE: Verify ref is actually in document (ghost node detection)
+        if (!document.contains(contentRef)) {
+          console.warn('[BlockItem] Ghost node detected - skipping DOM sync', currentBlock.id);
+          return;
+        }
+
         contentRef.innerText = storeContent;
 
         // Restore cursor position if we were focused
