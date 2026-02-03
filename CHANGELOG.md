@@ -6,6 +6,18 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.12] - 2026-02-03
+
+### Features
+
+- **MCP bridge plugin** (PR #115): Added `tauri-plugin-mcp-bridge` for dev-mode automation — WebSocket on port 9223 enables screenshot capture, DOM inspection, console log reading, and keyboard/mouse automation from Claude Code
+
+### Bug Fixes
+
+- **Backspace merge newline** (PR #115): Blocks now merge with `\n` separator when pressing backspace at start, turning siblings into multi-line blocks instead of concatenating content
+
+---
+
 ## [0.7.11] - 2026-02-03
 
 ### Bug Fixes
