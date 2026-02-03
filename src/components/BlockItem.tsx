@@ -253,13 +253,25 @@ export function BlockItem(props: BlockItemProps) {
     const currentBlock = block();
     if (!contentRef || !currentBlock) return;
 
+    const origin = store.lastUpdateOrigin;
+
+    // FLO-256: Authoritative origins bypass the hasLocalChanges guard
+    // These origins represent state that MUST sync to DOM:
+    // - 'reconnect-authority': Server state on WebSocket reconnect (server is truth)
+    // - UndoManager instance: Undo/redo operations (CRDT history is truth)
+    const isAuthoritative =
+      origin === 'reconnect-authority' ||
+      (origin && typeof origin === 'object' && 'undo' in origin);
+
     // FLO-197: CRITICAL - Skip sync if we have uncommitted local changes
+    // UNLESS the origin is authoritative (reconnect, undo/redo)
     // This prevents the race condition where:
     // 1. User types in block A, debounce pending
     // 2. Block B changes with 'remote'/'hook' origin
     // 3. This effect re-runs (triggered by global lastUpdateOrigin)
     // 4. Without this guard, DOM would be overwritten with stale store content
-    if (hasLocalChanges()) return;
+    // FLO-256: With reconnect-authority, we WANT to overwrite - server is truth
+    if (hasLocalChanges() && !isAuthoritative) return;
 
     const domContent = contentRef.innerText;
     const storeContent = currentBlock.content;
@@ -267,7 +279,7 @@ export function BlockItem(props: BlockItemProps) {
 
     // Check if this update is from user's own typing (should skip when focused)
     // UndoManager sets its own instance as origin, not 'user'
-    const origin = store.lastUpdateOrigin;
+    // NOTE: origin already captured above for authoritative check
     const isUserOrigin = origin === 'user';
 
     // Gate: sync if not focused, OR if focused but not from user typing

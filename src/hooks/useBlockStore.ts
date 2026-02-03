@@ -55,6 +55,7 @@ function mapTransactionOrigin(txOrigin: unknown): OriginType {
   if (txOrigin === 'api') return Origin.Api;
   if (txOrigin === 'bulk_import') return Origin.BulkImport;
   if (txOrigin === 'system') return Origin.System;
+  if (txOrigin === 'reconnect-authority') return Origin.ReconnectAuthority;
   // Y.UndoManager passes itself as origin
   if (txOrigin && typeof txOrigin === 'object' && 'undo' in txOrigin) {
     return Origin.Undo;

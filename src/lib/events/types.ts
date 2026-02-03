@@ -41,6 +41,8 @@ export const Origin = {
   System: 'system',
   /** Handler/executor-generated changes (execution outputs, etc.) */
   Executor: 'executor',
+  /** Authoritative server state on WebSocket reconnect - bypasses hasLocalChanges guard */
+  ReconnectAuthority: 'reconnect-authority',
 } as const;
 
 export type OriginType = (typeof Origin)[keyof typeof Origin];
