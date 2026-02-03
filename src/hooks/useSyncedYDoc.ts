@@ -586,7 +586,13 @@ function connectWebSocket() {
           const serverState = await httpClient.getState();
           if (serverState && serverState.length > 2) {
             console.log('[WS] Syncing server state after reconnect:', serverState.length, 'bytes');
-            Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
+            // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
+            try {
+              isApplyingRemoteGlobal = true;
+              Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
+            } finally {
+              isApplyingRemoteGlobal = false;
+            }
           }
 
           // FLO-152: Guard against stale IIFE from previous connection

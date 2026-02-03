@@ -137,7 +137,7 @@ export function BlockItem(props: BlockItemProps) {
   // Debounced Y.Doc updates - DOM stays immediate via contentEditable
   // Flush on blur, cancel on unmount
   // FLO-197: Clear dirty flag after store commit (enables content sync for non-local changes)
-  const { debounced: debouncedUpdateContent, flush: flushContentUpdate } =
+  const { debounced: debouncedUpdateContent, flush: flushContentUpdate, cancel: cancelContentUpdate } =
     createDebouncedUpdater((id: string, content: string) => {
       store.updateBlockContent(id, content);
       setHasLocalChanges(false);
@@ -271,7 +271,13 @@ export function BlockItem(props: BlockItemProps) {
     // 3. This effect re-runs (triggered by global lastUpdateOrigin)
     // 4. Without this guard, DOM would be overwritten with stale store content
     // FLO-256: With reconnect-authority, we WANT to overwrite - server is truth
-    if (hasLocalChanges() && !isAuthoritative) return;
+    if (hasLocalChanges()) {
+      if (!isAuthoritative) return;
+      // Authoritative update while local changes pending:
+      // Cancel debounce and clear dirty flag to prevent stale content from being flushed
+      cancelContentUpdate();
+      setHasLocalChanges(false);
+    }
 
     const domContent = contentRef.innerText;
     const storeContent = currentBlock.content;
