@@ -150,6 +150,13 @@ impl IndexManager {
     pub fn path(&self) -> &PathBuf {
         &self.index_path
     }
+
+    /// Get the default index directory path (static, no instance needed).
+    ///
+    /// Used by nuke-on-startup to delete stale index before open_or_create().
+    pub fn index_path() -> Result<PathBuf, SearchError> {
+        get_index_path()
+    }
 }
 
 /// Get the data directory root.
@@ -169,6 +176,7 @@ fn data_dir() -> Result<PathBuf, SearchError> {
 fn get_index_path() -> Result<PathBuf, SearchError> {
     Ok(data_dir()?.join(INDEX_DIR_NAME))
 }
+
 
 #[cfg(test)]
 mod tests {
