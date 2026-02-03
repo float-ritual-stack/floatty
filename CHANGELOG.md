@@ -4,6 +4,10 @@ All notable changes to floatty are documented here.
 
 ## [Unreleased]
 
+### Improvements
+
+- **Friendly PUT error message** (FLO-255): Returns 405 with "Did you mean PATCH?" when agents try PUT on `/api/v1/blocks/:id`
+
 ---
 
 ## [0.7.10] - 2026-02-02
