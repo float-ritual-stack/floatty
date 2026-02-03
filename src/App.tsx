@@ -29,6 +29,7 @@ function App() {
   const [serverConnected, setServerConnected] = createSignal(false);
   const [serverError, setServerError] = createSignal<string | null>(null);
   const [workspaceLoaded, setWorkspaceLoaded] = createSignal(false);
+  const [workspaceError, setWorkspaceError] = createSignal<string | null>(null);
   const persistence = getWorkspacePersistence();
 
   // Phase 3: Initialize HTTP client before loading workspace
@@ -67,10 +68,13 @@ function App() {
     // This must happen before Terminal component renders to avoid flickering
     try {
       await persistence.loadWorkspace();
+      setWorkspaceLoaded(true);
     } catch (err) {
       console.error('[App] Failed to load workspace:', err);
+      setWorkspaceError(String(err));
+      // Still mark loaded so app isn't permanently stuck, but error is visible
+      setWorkspaceLoaded(true);
     }
-    setWorkspaceLoaded(true);
   });
 
   // Listen for file drag-drop from Finder
@@ -241,6 +245,11 @@ function App() {
       }
     >
       <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
+        <Show when={workspaceError()}>
+          <div class="workspace-error-banner" style="background: var(--color-ansi-yellow, #b58900); color: #000; padding: 4px 12px; font-size: 12px;">
+            ⚠ Workspace layout failed to load: {workspaceError()} — using defaults
+          </div>
+        </Show>
         <WorkspaceProvider>
           <Terminal />
         </WorkspaceProvider>

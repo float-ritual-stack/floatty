@@ -520,8 +520,15 @@ class TerminalManager {
                     // Image in clipboard - save to temp file, paste path
                     const base64 = await readImageBase64();
                     if (base64) {
+                      console.log('[TerminalManager] Pasting image:', base64.length, 'bytes base64');
                       const tempPath = await invoke<string>('save_clipboard_image', { base64 });
-                      invoke('plugin:pty|write', { pid, data: tempPath }).catch(console.error);
+                      invoke('plugin:pty|write', { pid, data: tempPath }).catch((err) => {
+                        console.error('[TerminalManager] Image paste write failed:', err);
+                        term.write('\r\n\x1b[33m[Paste failed: could not write image path]\x1b[0m');
+                      });
+                    } else {
+                      console.warn('[TerminalManager] Image paste: readImageBase64 returned empty');
+                      term.write('\r\n\x1b[33m[Paste failed: could not read image from clipboard]\x1b[0m');
                     }
                   } else if (info.has_text) {
                     // Text in clipboard - paste directly
@@ -529,9 +536,12 @@ class TerminalManager {
                     if (text) {
                       invoke('plugin:pty|write', { pid, data: text }).catch(console.error);
                     }
+                  } else {
+                    console.warn('[TerminalManager] Clipboard empty or unsupported format:', info);
                   }
                 } catch (err) {
                   console.error('[TerminalManager] Clipboard paste failed:', err);
+                  term.write(`\r\n\x1b[33m[Paste failed: ${String(err)}]\x1b[0m`);
                 }
               })();
             }
