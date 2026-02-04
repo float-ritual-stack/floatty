@@ -6,6 +6,33 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.15] - 2026-02-03
+
+### Features
+
+- **Inline breadcrumb tree expansion** (FLO-263, PR #118): Search result breadcrumbs unfold inline as a tree — click `▸` between crumbs to peek at siblings, on-path child continues with remaining trail, multiple peeks supported concurrently
+- **Output block keyboard navigation** (FLO-263, PR #118): Arrow keys enter/exit search results, Escape deselects, Enter navigates to focused result, Cmd+Enter opens in split. Output blocks are no longer keyboard dead zones
+- **Output block operations** (FLO-263, PR #118): Tab/⇧Tab indent/outdent, ⌘↑↓ move, Backspace delete (with child-protection guard) — all work on search/daily output blocks
+
+### Bug Fixes
+
+- **Output block focus routing** (FLO-263): Separate `outputFocusRef` wrapper prevents focus from being stolen by the main contentEditable routing effect
+- **Platform-aware modifier keys**: Use `isMac ? metaKey : ctrlKey` consistently across output block keyboard handler and search result split-click
+- **Breadcrumb empty ancestors**: Empty parent blocks show `(empty)` placeholder instead of being silently skipped (prevents peek index misalignment)
+- **Breadcrumb sibling rendering**: Siblings appearing after the on-path child in tree order are now rendered
+- **ARIA on non-focused element**: Removed `aria-activedescendant` from display-only listbox (focus lives on parent wrapper)
+
+### Documentation
+
+- **Architecture map** (`ARCHITECTURE_MAP.md`): Canonical four-layer model with status markers, six invariants, document index
+- **Keyboard control patterns** (`KEYBOARD_CONTROL_PATTERNS.md`): Four keyboard patterns with decision tree
+- **Rich output handler guide** (`RICH_OUTPUT_HANDLER_GUIDE.md`): Step-by-step guide for adding new `prefix::` handlers
+- **Inline expansion patterns** (`INLINE_EXPANSION_PATTERNS.md`): Per-item state signals within output views
+- **MDX-lite vision** (`MDX_LITE_VISION.md`): Ghost spec for outline hierarchy as component container syntax
+- **Output block patterns rule** (`.claude/rules/output-block-patterns.md`): Display-only views, single focus point, dual-focus anti-pattern
+
+---
+
 ## [0.7.14] - 2026-02-03
 
 ### Features
