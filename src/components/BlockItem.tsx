@@ -203,7 +203,7 @@ export function BlockItem(props: BlockItemProps) {
     const idx = searchFocusedIdx();
 
     // Block-level operations (work at any idx)
-    const modKey = e.metaKey || e.ctrlKey;
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
 
     // Re-focus after DOM rearrangement — SolidJS moves nodes but browser drops focus
     const refocusAfterMove = () => {

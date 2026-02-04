@@ -15,6 +15,7 @@
 import { For, Show, createSignal, createEffect, createMemo } from 'solid-js';
 import type { SearchResults, SearchHit } from '../../lib/handlers/search';
 import { navigateToBlock } from '../../lib/navigation';
+import { isMac } from '../../lib/keybinds';
 import { blockStore } from '../../hooks/useBlockStore';
 
 interface SearchResultsViewProps {
@@ -150,6 +151,7 @@ function buildBreadcrumbRows(
     if (child.isOnPath) {
       // On-path child → recurse with remaining trail
       rows.push(...buildBreadcrumbRows(crumbs, openPeeks, nextPeek, depth + 1));
+      break; // Only one child can be on-path in a valid tree
     } else {
       // Sibling → leaf child row
       rows.push({ type: 'child', depth: depth + 1, id: child.id, content: child.content || '(empty)' });
@@ -190,7 +192,8 @@ function SearchResultItem(props: {
     e.stopPropagation();
 
     let splitDirection: 'horizontal' | 'vertical' | undefined;
-    if (e.metaKey || e.ctrlKey) {
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
+    if (modKey) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
