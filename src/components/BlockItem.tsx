@@ -231,6 +231,10 @@ export function BlockItem(props: BlockItemProps) {
       return;
     } else if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
+      // Guard: don't delete blocks with children unless explicitly selected
+      const hasChildren = !!block()?.childIds?.length;
+      const isSelected = props.isBlockSelected?.(props.id) ?? false;
+      if (hasChildren && !isSelected) return;
       const target = findFocusAfterDelete(props.id, props.paneId);
       store.deleteBlock(props.id);
       if (target) props.onFocus(target);
