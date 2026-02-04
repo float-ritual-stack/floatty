@@ -77,8 +77,88 @@ function getSurroundingContext(blockId: string, radius: number = 2): { before: s
 }
 
 /**
- * Single search result with expandable context
+ * Get children of an ancestor block for breadcrumb peek.
+ * Returns child IDs, content, and whether each child is on the ancestor path.
  */
+function getAncestorChildren(
+  ancestorId: string,
+  highlightId: string
+): { id: string; content: string; isOnPath: boolean }[] {
+  const ancestor = blockStore.getBlock(ancestorId);
+  if (!ancestor?.childIds?.length) return [];
+  return ancestor.childIds.map(id => {
+    const child = blockStore.getBlock(id);
+    return {
+      id,
+      content: (child?.content || '').replace(/\n/g, ' ').trim().slice(0, 80),
+      isOnPath: id === highlightId,
+    };
+  });
+}
+
+/**
+ * Row types for inline breadcrumb tree expansion.
+ * - trail: a flat segment of crumbs with clickable separators
+ * - child: a non-on-path sibling item, navigable
+ */
+type BreadcrumbRow =
+  | { type: 'trail'; depth: number; crumbs: { label: string; blockId: string }[]; hasOpenPeek: boolean }
+  | { type: 'child'; depth: number; id: string; content: string };
+
+/**
+ * Pure recursive row builder for inline breadcrumb tree.
+ *
+ * Walks the crumb trail, splitting at open peek points into
+ * trail rows (on-path continuation) and child rows (siblings).
+ */
+function buildBreadcrumbRows(
+  crumbs: { label: string; blockId: string }[],
+  openPeeks: Set<number>,
+  fromIdx: number,
+  depth: number,
+): BreadcrumbRow[] {
+  if (fromIdx >= crumbs.length) return [];
+
+  // Find next open peek separator after fromIdx
+  // Separator i sits between crumbs[i-1] and crumbs[i], so valid peeks are > fromIdx
+  let nextPeek = -1;
+  for (let i = fromIdx + 1; i < crumbs.length; i++) {
+    if (openPeeks.has(i)) { nextPeek = i; break; }
+  }
+
+  if (nextPeek === -1) {
+    // No more open peeks — emit remaining trail as one row
+    return [{ type: 'trail', depth, crumbs: crumbs.slice(fromIdx), hasOpenPeek: false }];
+  }
+
+  const rows: BreadcrumbRow[] = [];
+
+  // Emit trail segment up to the peek point (inclusive of the ancestor)
+  rows.push({
+    type: 'trail',
+    depth,
+    crumbs: crumbs.slice(fromIdx, nextPeek),
+    hasOpenPeek: true,
+  });
+
+  // Get children of the ancestor (crumbs[nextPeek-1]) to show siblings
+  const ancestor = crumbs[nextPeek - 1];
+  const onPathChild = crumbs[nextPeek];
+  const children = getAncestorChildren(ancestor.blockId, onPathChild.blockId);
+
+  for (const child of children) {
+    if (child.isOnPath) {
+      // On-path child → recurse with remaining trail
+      rows.push(...buildBreadcrumbRows(crumbs, openPeeks, nextPeek, depth + 1));
+    } else {
+      // Sibling → leaf child row
+      rows.push({ type: 'child', depth: depth + 1, id: child.id, content: child.content || '(empty)' });
+    }
+  }
+
+  return rows;
+}
+
 function SearchResultItem(props: {
   hit: SearchHit;
   paneId?: string;
@@ -87,12 +167,23 @@ function SearchResultItem(props: {
   index: number;
 }) {
   const [expanded, setExpanded] = createSignal(false);
+  // Set of open separator indices (supports multiple concurrent peeks)
+  // Separator at position i sits between crumbs[i-1] and crumbs[i]
+  const [peekIndices, setPeekIndices] = createSignal<Set<number>>(new Set());
 
   // Memoize parent chain walk — only recalculates when blockId changes
   const crumbs = createMemo(() => getBreadcrumbs(props.hit.blockId));
 
   // Memoize context — only computed when expanded
   const ctx = createMemo(() => expanded() ? getSurroundingContext(props.hit.blockId) : null);
+
+  // Build breadcrumb rows from crumbs + open peeks
+  const breadcrumbRows = createMemo(() => {
+    const crumbList = crumbs();
+    const openPeeks = peekIndices();
+    if (!crumbList.length) return [];
+    return buildBreadcrumbRows(crumbList, openPeeks, 0, 0);
+  });
 
   const handleClick = (e: MouseEvent) => {
     e.preventDefault();
@@ -117,6 +208,28 @@ function SearchResultItem(props: {
     setExpanded(!expanded());
   };
 
+  /**
+   * Toggle a separator peek. The separatorIdx is the global index
+   * in the crumbs array (between crumbs[idx-1] and crumbs[idx]).
+   */
+  const togglePeek = (separatorIdx: number, e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = new Set(peekIndices());
+    if (next.has(separatorIdx)) next.delete(separatorIdx); else next.add(separatorIdx);
+    setPeekIndices(next);
+  };
+
+  /**
+   * Compute the global crumb index for a crumb within a trail row.
+   * Trail rows have a slice of the original crumbs array — we match by blockId
+   * to recover the original index for separator toggle.
+   */
+  const getGlobalCrumbIndex = (crumb: { blockId: string }): number => {
+    const allCrumbs = crumbs();
+    return allCrumbs.findIndex(c => c.blockId === crumb.blockId);
+  };
+
   return (
     <div
       class="search-result-item"
@@ -125,29 +238,100 @@ function SearchResultItem(props: {
       aria-selected={props.isFocused ?? false}
       classList={{ 'search-result-expanded': expanded(), 'search-result-focused': props.isFocused ?? false }}
     >
-      {/* Breadcrumb row */}
+      {/* Inline breadcrumb tree */}
       <Show when={crumbs().length > 0}>
         <div class="search-result-breadcrumbs">
-          <For each={crumbs()}>
-            {(crumb, i) => (
-              <>
-                <Show when={i() > 0}>
-                  <span class="search-breadcrumb-sep"> › </span>
-                </Show>
-                <Show when={crumb.blockId} fallback={<span class="search-breadcrumb-ellipsis">{crumb.label}</span>}>
-                  <span
-                    class="search-breadcrumb-segment"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      navigateToBlock(crumb.blockId, { paneId: props.paneId, highlight: true, originBlockId: props.blockId });
-                    }}
+          <For each={breadcrumbRows()}>
+            {(row) => {
+              if (row.type === 'trail') {
+                return (
+                  <div
+                    class="search-breadcrumb-line"
+                    style={{ 'padding-left': `${row.depth * 12}px` }}
                   >
-                    {crumb.label}
-                  </span>
-                </Show>
-              </>
-            )}
+                    <For each={row.crumbs}>
+                      {(crumb, i) => {
+                        const globalIdx = getGlobalCrumbIndex(crumb);
+                        return (
+                          <>
+                            <Show when={i() > 0}>
+                              <span
+                                class="search-breadcrumb-sep"
+                                classList={{ 'search-breadcrumb-sep-active': peekIndices().has(globalIdx) }}
+                                onClick={[togglePeek, globalIdx]}
+                                title="Peek siblings"
+                              >
+                                ▸
+                              </span>
+                            </Show>
+                            <span
+                              class="search-breadcrumb-segment"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                navigateToBlock(crumb.blockId, { paneId: props.paneId, highlight: true, originBlockId: props.blockId });
+                              }}
+                            >
+                              {crumb.label}
+                            </span>
+                          </>
+                        );
+                      }}
+                    </For>
+                    {/* Trailing glyph: ▾ if peek is open, ▸ for the next separator if available */}
+                    <Show when={row.hasOpenPeek && row.crumbs.length > 0}>
+                      {(() => {
+                        const lastCrumb = row.crumbs[row.crumbs.length - 1];
+                        const peekIdx = getGlobalCrumbIndex(lastCrumb) + 1;
+                        return (
+                          <span
+                            class="search-breadcrumb-sep search-breadcrumb-sep-active"
+                            onClick={[togglePeek, peekIdx]}
+                            title="Close peek"
+                          >
+                            ▾
+                          </span>
+                        );
+                      })()}
+                    </Show>
+                    <Show when={!row.hasOpenPeek && row.crumbs.length > 0}>
+                      {(() => {
+                        const lastCrumb = row.crumbs[row.crumbs.length - 1];
+                        const lastGlobalIdx = getGlobalCrumbIndex(lastCrumb);
+                        const nextIdx = lastGlobalIdx + 1;
+                        // Only show trailing ▸ if there's a next crumb to peek into
+                        return (
+                          <Show when={nextIdx < crumbs().length}>
+                            <span
+                              class="search-breadcrumb-sep"
+                              onClick={[togglePeek, nextIdx]}
+                              title="Peek siblings"
+                            >
+                              ▸
+                            </span>
+                          </Show>
+                        );
+                      })()}
+                    </Show>
+                  </div>
+                );
+              }
+              // child row
+              return (
+                <div
+                  class="search-breadcrumb-line search-breadcrumb-child"
+                  style={{ 'padding-left': `${row.depth * 12}px` }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navigateToBlock(row.id, { paneId: props.paneId, highlight: true, originBlockId: props.blockId });
+                  }}
+                >
+                  <span class="search-breadcrumb-child-arrow">▸</span>
+                  <span class="search-breadcrumb-child-label">{row.content}</span>
+                </div>
+              );
+            }}
           </For>
         </div>
       </Show>

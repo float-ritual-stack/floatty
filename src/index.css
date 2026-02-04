@@ -1628,13 +1628,62 @@ body.resizing .terminal-pane-positioned {
   text-decoration: underline;
 }
 
+/* Breadcrumb separator glyphs (▸ / ▾) */
 .search-breadcrumb-sep {
-  color: var(--color-fg-muted);
-  margin: 0 2px;
+  color: var(--color-fg);
+  margin: 0 3px;
+  padding: 2px 5px;
+  cursor: pointer;
+  border-radius: 2px;
+  font-size: 13px;
+  line-height: 1;
+  vertical-align: middle;
+  opacity: 0.6;
+}
+
+.search-breadcrumb-sep:hover {
+  opacity: 1;
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.search-breadcrumb-sep-active {
+  color: var(--color-accent);
+  opacity: 1;
 }
 
 .search-breadcrumb-ellipsis {
   color: var(--color-fg-muted);
+}
+
+/* Breadcrumb inline tree rows */
+.search-breadcrumb-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  line-height: 1.5;
+}
+
+/* Child row (non-on-path sibling) */
+.search-breadcrumb-child {
+  cursor: pointer;
+  color: var(--color-fg-muted);
+}
+
+.search-breadcrumb-child:hover {
+  color: var(--color-fg);
+}
+
+.search-breadcrumb-child-arrow {
+  color: var(--color-fg-muted);
+  margin-right: 4px;
+  font-size: 10px;
+}
+
+.search-breadcrumb-child-label {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .search-result-row {
