@@ -46,8 +46,8 @@ function getBreadcrumbs(blockId: string): { label: string; blockId: string }[] {
   const block = blockStore.getBlock(blockId);
   let current = block?.parentId ? blockStore.getBlock(block.parentId) : undefined;
   while (current) {
-    const label = (current.content || '').replace(/\n/g, ' ').trim().slice(0, 30);
-    if (label) crumbs.unshift({ label, blockId: current.id });
+    const label = (current.content || '').replace(/\n/g, ' ').trim().slice(0, 30) || '(empty)';
+    crumbs.unshift({ label, blockId: current.id });
     current = current.parentId ? blockStore.getBlock(current.parentId) : undefined;
   }
   return crumbs;
@@ -412,7 +412,6 @@ export function SearchResultsView(props: SearchResultsViewProps) {
       ref={listRef}
       role="listbox"
       aria-label={`Search results for "${props.data.query}"`}
-      aria-activedescendant={getFocusedIdx() >= 0 ? `search-hit-${getFocusedIdx()}` : undefined}
     >
       <div class="search-results-header">
         <span class="search-query">"{props.data.query}"</span>
