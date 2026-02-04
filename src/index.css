@@ -1586,17 +1586,112 @@ body.resizing .terminal-pane-positioned {
 
 .search-result-item {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 8px;
+  flex-direction: column;
   background: var(--color-bg);
   border-radius: 3px;
-  cursor: pointer;
   transition: background 0.1s;
 }
 
 .search-result-item:hover {
   background: var(--color-bg-hover);
+}
+
+.search-result-focused {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+}
+
+.search-result-expanded {
+  background: var(--color-bg-hover);
+}
+
+.search-result-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 11px;
+  padding: 4px 8px 0;
+  line-height: 1.4;
+}
+
+.search-breadcrumb-segment {
+  color: var(--color-ansi-cyan);
+  cursor: pointer;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+.search-breadcrumb-segment:hover {
+  text-decoration: underline;
+}
+
+/* Breadcrumb separator glyphs (▸ / ▾) */
+.search-breadcrumb-sep {
+  color: var(--color-fg);
+  margin: 0 3px;
+  padding: 2px 5px;
+  cursor: pointer;
+  border-radius: 2px;
+  font-size: 13px;
+  line-height: 1;
+  vertical-align: middle;
+  opacity: 0.6;
+}
+
+.search-breadcrumb-sep:hover {
+  opacity: 1;
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.search-breadcrumb-sep-active {
+  color: var(--color-accent);
+  opacity: 1;
+}
+
+.search-breadcrumb-ellipsis {
+  color: var(--color-fg-muted);
+}
+
+/* Breadcrumb inline tree rows */
+.search-breadcrumb-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  line-height: 1.5;
+}
+
+/* Child row (non-on-path sibling) */
+.search-breadcrumb-child {
+  cursor: pointer;
+  color: var(--color-fg-muted);
+}
+
+.search-breadcrumb-child:hover {
+  color: var(--color-fg);
+}
+
+.search-breadcrumb-child-arrow {
+  color: var(--color-fg-muted);
+  margin-right: 4px;
+  font-size: 10px;
+}
+
+.search-breadcrumb-child-label {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
 }
 
 .search-result-content {
@@ -1607,11 +1702,69 @@ body.resizing .terminal-pane-positioned {
   color: var(--color-fg);
 }
 
+.search-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
 .search-result-score {
   color: var(--color-fg-dimmed);
   font-size: 10px;
-  margin-left: 8px;
-  flex-shrink: 0;
+}
+
+.search-result-expand-btn {
+  background: none;
+  border: none;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 12px;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+
+.search-result-item:hover .search-result-expand-btn,
+.search-result-expanded .search-result-expand-btn {
+  opacity: 1;
+}
+
+.search-result-expand-btn:hover {
+  color: var(--color-fg);
+}
+
+.search-result-expand-btn:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+/* Expanded context */
+.search-result-context {
+  padding: 4px 8px 6px;
+  border-top: 1px solid var(--color-border);
+  font-size: 11px;
+}
+
+.search-context-line {
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-context-before,
+.search-context-after {
+  color: var(--color-fg-muted);
+}
+
+.search-context-match {
+  color: var(--color-fg);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border-radius: 2px;
+  padding: 2px 4px;
 }
 
 .search-no-results {
@@ -1636,6 +1789,18 @@ body.resizing .terminal-pane-positioned {
 
 .search-error-message {
   color: var(--color-error);
+}
+
+/* Output block focus: accent border parallel to .block-content focus rule (line 911)
+   Regular blocks use :focus-within .block-content — output blocks don't have .block-content */
+.block-item:not(.block-selected):focus-within .output-block-focus-target {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.output-block-focus-target:focus {
+  /* Suppress default browser outline — the parent rule above handles it */
+  outline: none;
 }
 
 /* ═══════════════════════════════════════════════════════════════

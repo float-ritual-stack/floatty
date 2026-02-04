@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup, on } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -6,6 +6,7 @@ import { useCursor } from '../hooks/useCursor';
 import { useBlockInput } from '../hooks/useBlockInput';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { navigateToBlock } from '../lib/navigation';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
@@ -101,6 +102,7 @@ export function BlockItem(props: BlockItemProps) {
   // (remounts happen when raw editing temporarily breaks table syntax)
   const [tableShowRaw, setTableShowRaw] = createSignal(false);
   let contentRef: HTMLDivElement | undefined;
+  let outputFocusRef: HTMLDivElement | undefined;
 
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
   // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
@@ -167,6 +169,151 @@ export function BlockItem(props: BlockItemProps) {
     return null;
   };
 
+  // Detect output blocks that need special keyboard handling
+  const isOutputBlock = createMemo(() => {
+    const ot = block()?.outputType;
+    return ot?.startsWith('daily-') || ot?.startsWith('search-');
+  });
+
+  // Search results keyboard navigation state
+  // Focus stays on outputFocusRef — SearchResultsView is display-only.
+  // All keyboard nav handled here because moving focus to a child element
+  // would trigger the focus routing effect which steals it back.
+  const [searchFocusedIdx, setSearchFocusedIdx] = createSignal(-1);
+
+  // Reset search focus when output type/status changes (prevents stale state)
+  createEffect(() => {
+    const ot = block()?.outputType;
+    const st = block()?.outputStatus;
+    if (ot !== 'search-results' || st !== 'complete') {
+      setSearchFocusedIdx(-1);
+    }
+  });
+
+  // Reset search focus on focus GAIN (e.g., back-navigation via Cmd+[)
+  // Uses on() to fire only on false→true transition — interior nav doesn't change isFocused()
+  createEffect(on(isFocused, (focused, wasFocused) => {
+    if (focused && !wasFocused && isOutputBlock()) {
+      setSearchFocusedIdx(-1);
+    }
+  }));
+
+  // Keyboard handler for output blocks (no contentEditable → need manual nav)
+  const handleOutputBlockKeyDown = (e: KeyboardEvent) => {
+    const idx = searchFocusedIdx();
+
+    // Block-level operations (work at any idx)
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+    // Re-focus after DOM rearrangement — SolidJS moves nodes but browser drops focus
+    const refocusAfterMove = () => {
+      requestAnimationFrame(() => outputFocusRef?.focus({ preventScroll: true }));
+    };
+
+    if (modKey && e.key === 'ArrowUp') {
+      e.preventDefault();
+      store.moveBlockUp(props.id);
+      refocusAfterMove();
+      return;
+    } else if (modKey && e.key === 'ArrowDown') {
+      e.preventDefault();
+      store.moveBlockDown(props.id);
+      refocusAfterMove();
+      return;
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        store.outdentBlock(props.id);
+      } else {
+        store.indentBlock(props.id);
+      }
+      refocusAfterMove();
+      return;
+    } else if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault();
+      // Guard: don't delete blocks with children unless explicitly selected
+      const hasChildren = !!block()?.childIds?.length;
+      const isSelected = props.isBlockSelected?.(props.id) ?? false;
+      if (hasChildren && !isSelected) return;
+      const target = findFocusAfterDelete(props.id, props.paneId);
+      store.deleteBlock(props.id);
+      if (target) props.onFocus(target);
+      return;
+    }
+
+    // When navigating inside search results (idx >= 0)
+    if (idx >= 0) {
+      const data = block()?.output as SearchResults | undefined;
+      const hits = data?.hits ?? [];
+      if (!hits.length) { setSearchFocusedIdx(-1); return; }
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (idx < hits.length - 1) {
+          setSearchFocusedIdx(idx + 1);
+        } else {
+          // At last result — escape to next block
+          setSearchFocusedIdx(-1);
+          const next = findNextVisibleBlock(props.id, props.paneId);
+          if (next) props.onFocus(next);
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (idx > 0) {
+          setSearchFocusedIdx(idx - 1);
+        } else {
+          // At first result — escape to prev block (symmetric with ArrowDown at last)
+          setSearchFocusedIdx(-1);
+          const prev = findPrevVisibleBlock(props.id, props.paneId);
+          if (prev) props.onFocus(prev);
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const hit = hits[idx];
+        if (hit) {
+          navigateToBlock(hit.blockId, {
+            paneId: props.paneId,
+            highlight: true,
+            originBlockId: props.id,
+          });
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setSearchFocusedIdx(-1);
+      }
+      return;
+    }
+
+    // Block-level navigation (idx === -1, accent border shown)
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      // Enter results from the bottom (symmetric with ArrowDown entering from top)
+      const ot = block()?.outputType;
+      if (ot === 'search-results' && block()?.outputStatus === 'complete') {
+        const data = block()?.output as SearchResults | undefined;
+        if (data?.hits?.length) {
+          setSearchFocusedIdx(data.hits.length - 1);
+          return;
+        }
+      }
+      const prev = findPrevVisibleBlock(props.id, props.paneId);
+      if (prev) props.onFocus(prev);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      // If this is a search output block with results, enter the results list
+      const ot = block()?.outputType;
+      if (ot === 'search-results' && block()?.outputStatus === 'complete') {
+        const data = block()?.output as SearchResults | undefined;
+        if (data?.hits?.length) {
+          setSearchFocusedIdx(0);
+          return;
+        }
+      }
+      const next = findNextVisibleBlock(props.id, props.paneId);
+      if (next) props.onFocus(next);
+    }
+  };
+
   // Wrapper for navigateToPage that matches hook's expected signature
   const navigateToPageForHook = (target: string, paneId: string) => {
     const result = navigateToPage(target, paneId, 'none');
@@ -204,7 +351,7 @@ export function BlockItem(props: BlockItemProps) {
     // Cancel any pending focus from previous effect run
     if (prevFrameId) cancelAnimationFrame(prevFrameId);
 
-    if (isFocused() && contentRef) {
+    if (isFocused() && contentRef && !isOutputBlock()) {
       const frameId = requestAnimationFrame(() => {
         // If outliner container has focus (block selection mode), don't steal it
         const activeEl = document.activeElement;
@@ -236,6 +383,16 @@ export function BlockItem(props: BlockItemProps) {
       return frameId; // Pass to next effect run for cleanup
     }
     return undefined;
+  });
+
+  // Focus routing for output blocks (no contentEditable to receive focus)
+  createEffect(() => {
+    if (isFocused() && isOutputBlock() && outputFocusRef) {
+      requestAnimationFrame(() => {
+        outputFocusRef?.focus({ preventScroll: true });
+        outputFocusRef?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      });
+    }
   });
 
   // TODO: AUTO-EXECUTE for external blocks (API/CRDT sync)
@@ -573,45 +730,61 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* DAILY OUTPUT VIEW: replaces normal content when outputType is daily-* */}
-          <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
-            <div class="daily-output">
-              <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
-                <div class="daily-running">
-                  <span class="daily-running-spinner">◐</span>
-                  <span class="daily-running-text">Extracting...</span>
+          {/* OUTPUT BLOCKS: daily-* and search-* get a focusable wrapper for keyboard nav */}
+          <Show when={isOutputBlock()}>
+            <div
+              ref={outputFocusRef}
+              tabIndex={0}
+              class="output-block-focus-target"
+              onKeyDown={handleOutputBlockKeyDown}
+              onFocus={() => props.onFocus(props.id)}
+            >
+              {/* DAILY OUTPUT VIEW */}
+              <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
+                <div class="daily-output">
+                  <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
+                    <div class="daily-running">
+                      <span class="daily-running-spinner">◐</span>
+                      <span class="daily-running-text">Extracting...</span>
+                    </div>
+                  </Show>
+                  <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
+                    <DailyView data={block()!.output as DailyNoteData} />
+                  </Show>
+                  <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
+                    <DailyErrorView error={(block()!.output as { error: string }).error} />
+                  </Show>
                 </div>
               </Show>
-              <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
-                <DailyView data={block()!.output as DailyNoteData} />
-              </Show>
-              <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
-                <DailyErrorView error={(block()!.output as { error: string }).error} />
-              </Show>
-            </div>
-          </Show>
 
-          {/* SEARCH OUTPUT VIEW: replaces normal content when outputType is search-* */}
-          <Show when={block()?.outputType === 'search-results' || block()?.outputType === 'search-error'}>
-            <div class="search-output">
-              <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
-                <div class="daily-running">
-                  <span class="daily-running-spinner">◐</span>
-                  <span class="daily-running-text">Searching...</span>
+              {/* SEARCH OUTPUT VIEW */}
+              <Show when={block()?.outputType === 'search-results' || block()?.outputType === 'search-error'}>
+                <div class="search-output">
+                  <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
+                    <div class="daily-running">
+                      <span class="daily-running-spinner">◐</span>
+                      <span class="daily-running-text">Searching...</span>
+                    </div>
+                  </Show>
+                  <Show when={block()?.outputType === 'search-results' && block()?.outputStatus === 'complete'}>
+                    <SearchResultsView
+                      data={block()!.output as SearchResults}
+                      paneId={props.paneId}
+                      blockId={props.id}
+                      focusedIdx={searchFocusedIdx}
+                    />
+                  </Show>
+                  <Show when={block()?.outputType === 'search-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
+                    <SearchErrorView data={block()!.output as { error: string; query?: string }} />
+                  </Show>
                 </div>
-              </Show>
-              <Show when={block()?.outputType === 'search-results' && block()?.outputStatus === 'complete'}>
-                <SearchResultsView data={block()!.output as SearchResults} paneId={props.paneId} />
-              </Show>
-              <Show when={block()?.outputType === 'search-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
-                <SearchErrorView data={block()!.output as { error: string; query?: string }} />
               </Show>
             </div>
           </Show>
 
           {/* REGULAR BLOCK: display + edit layers (hidden for special block types) */}
           {/* FLO-58: Also show for table blocks in raw mode - use contentEditable for raw markdown editing */}
-          <Show when={block()?.type !== 'picker' && (!isTableBlock() || tableShowRaw()) && !block()?.outputType?.startsWith('daily-') && !block()?.outputType?.startsWith('search-')}>
+          <Show when={block()?.type !== 'picker' && (!isTableBlock() || tableShowRaw()) && !isOutputBlock()}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
             {/* Skip for table raw mode - just show contentEditable directly */}
             <Show when={!tableShowRaw()}>
