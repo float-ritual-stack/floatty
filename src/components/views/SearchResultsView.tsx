@@ -151,7 +151,6 @@ function buildBreadcrumbRows(
     if (child.isOnPath) {
       // On-path child → recurse with remaining trail
       rows.push(...buildBreadcrumbRows(crumbs, openPeeks, nextPeek, depth + 1));
-      break; // Only one child can be on-path in a valid tree
     } else {
       // Sibling → leaf child row
       rows.push({ type: 'child', depth: depth + 1, id: child.id, content: child.content || '(empty)' });
