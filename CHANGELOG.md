@@ -6,6 +6,16 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.16] - 2026-02-04
+
+### Bug Fixes
+
+- Fixed first API PATCH not rendering in client by skipping redundant HTTP fetch on initial WS connect (FLO-269)
+- Bumped server broadcast logging to info level for sync diagnostics
+- Redirected floatty-server stderr to `server.log` for release build visibility
+
+---
+
 ## [0.7.15] - 2026-02-03
 
 ### Features
