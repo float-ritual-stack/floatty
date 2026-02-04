@@ -302,6 +302,7 @@ function setApplyingRemote(value: boolean) {
 let sharedWebSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
 let wsRetryCount = 0;
+let wsHasConnectedOnce = false; // FLO-269: Distinguish first connect from reconnect
 const WS_RECONNECT_DELAY = 2000;
 const WS_MAX_RECONNECT_DELAY = 30000;
 
@@ -348,7 +349,6 @@ function applyWsMessage(msg: { txId?: string; data: string }) {
 
   // Decode base64 and apply
   const update = base64ToBytes(msg.data);
-  console.log('[WS] Received update:', update.length, 'bytes');
   Y.applyUpdate(sharedDoc, update, 'remote');
 }
 
@@ -549,12 +549,11 @@ function connectWebSocket() {
       // Reset retry count on successful connection
       wsRetryCount = 0;
 
+      const isReconnect = wsHasConnectedOnce;
+      wsHasConnectedOnce = true;
+
       // FLO-152: Increment connection ID to invalidate any stale IIFEs
       const thisConnectionId = ++wsConnectionId;
-
-      // FLO-152: Mark NOT ready for messages - buffer incoming until sync completes
-      wsReadyForMessages = false;
-      wsMessageBuffer = [];
 
       // Clear any previous connection error now that we're connected
       if (sharedPendingUpdates.length === 0) {
@@ -562,64 +561,82 @@ function connectWebSocket() {
         setLastSyncError(null);
       }
 
-      // Reconnection sync: flush local pending, then fetch any missed server updates.
-      // This prevents stale state if server received updates while we were disconnected.
-      // FLO-152: Use IIFE instead of queueMicrotask to control message buffering
-      (async () => {
-        try {
-          // 1. Flush local pending updates first
-          if (sharedPendingUpdates.length > 0) {
-            console.log('[WS] Flushing', sharedPendingUpdates.length, 'pending updates on reconnect');
-            if (sharedSyncTimer) {
-              clearTimeout(sharedSyncTimer);
-              sharedSyncTimer = null;
+      if (isReconnect) {
+        // RECONNECT: full sync with buffering (existing FLO-152 logic)
+        // FLO-152: Mark NOT ready for messages - buffer incoming until sync completes
+        wsReadyForMessages = false;
+        wsMessageBuffer = [];
+
+        // Reconnection sync: flush local pending, then fetch any missed server updates.
+        // This prevents stale state if server received updates while we were disconnected.
+        // FLO-152: Use IIFE instead of queueMicrotask to control message buffering
+        (async () => {
+          try {
+            // 1. Flush local pending updates first
+            if (sharedPendingUpdates.length > 0) {
+              console.log('[WS] Flushing', sharedPendingUpdates.length, 'pending updates on reconnect');
+              if (sharedSyncTimer) {
+                clearTimeout(sharedSyncTimer);
+                sharedSyncTimer = null;
+              }
+              await forceFlushOnReconnect();
             }
-            await forceFlushOnReconnect();
-          }
 
-          // 2. Fetch any updates we missed during disconnection
-          // Server state includes all updates; applyUpdate is idempotent (no-op for already-seen)
-          // FLO-256: Use 'reconnect-authority' origin to bypass hasLocalChanges guard in BlockItem
-          // This ensures server state syncs to DOM even when blocks have pending local changes
-          const { getHttpClient } = await import('../lib/httpClient');
-          const httpClient = getHttpClient();
-          const serverState = await httpClient.getState();
-          if (serverState && serverState.length > 2) {
-            console.log('[WS] Syncing server state after reconnect:', serverState.length, 'bytes');
-            // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
-            try {
-              isApplyingRemoteGlobal = true;
-              Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
-            } finally {
-              isApplyingRemoteGlobal = false;
+            // 2. Fetch any updates we missed during disconnection
+            // Server state includes all updates; applyUpdate is idempotent (no-op for already-seen)
+            // FLO-256: Use 'reconnect-authority' origin to bypass hasLocalChanges guard in BlockItem
+            // This ensures server state syncs to DOM even when blocks have pending local changes
+            const { getHttpClient } = await import('../lib/httpClient');
+            const httpClient = getHttpClient();
+            const serverState = await httpClient.getState();
+            if (serverState && serverState.length > 2) {
+              console.log('[WS] Syncing server state after reconnect:', serverState.length, 'bytes');
+              // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
+              try {
+                isApplyingRemoteGlobal = true;
+                Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
+              } finally {
+                isApplyingRemoteGlobal = false;
+              }
             }
-          }
 
-          // FLO-152: Guard against stale IIFE from previous connection
-          if (thisConnectionId !== wsConnectionId) {
-            console.log('[WS] Stale connection IIFE, ignoring');
-            return;
-          }
+            // FLO-152: Guard against stale IIFE from previous connection
+            if (thisConnectionId !== wsConnectionId) {
+              console.log('[WS] Stale connection IIFE, ignoring');
+              return;
+            }
 
-          // FLO-152: NOW safe to process messages - replay buffered ones
-          console.log('[WS] Reconnect sync complete, replaying', wsMessageBuffer.length, 'buffered messages');
-          wsReadyForMessages = true;
-          for (const msg of wsMessageBuffer) {
-            applyWsMessage(msg);
+            // FLO-152: NOW safe to process messages - replay buffered ones
+            console.log('[WS] Reconnect sync complete, replaying', wsMessageBuffer.length, 'buffered messages');
+            wsReadyForMessages = true;
+            for (const msg of wsMessageBuffer) {
+              applyWsMessage(msg);
+            }
+            wsMessageBuffer = [];
+          } catch (err) {
+            console.error('[WS] Reconnect sync failed:', err);
+            // FLO-152: Guard against stale IIFE from previous connection
+            if (thisConnectionId !== wsConnectionId) {
+              console.log('[WS] Stale connection IIFE error path, ignoring');
+              return;
+            }
+            // Even on failure, start accepting messages (better than blocking forever)
+            wsReadyForMessages = true;
+            wsMessageBuffer = [];
           }
-          wsMessageBuffer = [];
-        } catch (err) {
-          console.error('[WS] Reconnect sync failed:', err);
-          // FLO-152: Guard against stale IIFE from previous connection
-          if (thisConnectionId !== wsConnectionId) {
-            console.log('[WS] Stale connection IIFE error path, ignoring');
-            return;
-          }
-          // Even on failure, start accepting messages (better than blocking forever)
-          wsReadyForMessages = true;
-          wsMessageBuffer = [];
-        }
-      })();
+        })();
+      } else {
+        // FLO-269: FIRST CONNECTION - state just loaded in loadInitialState()
+        // No buffering needed — just start accepting WS messages immediately.
+        // This eliminates the race where:
+        //   1. loadInitialState() fetches full state
+        //   2. WS connects, IIFE re-fetches same state (redundant)
+        //   3. PATCH arrives between load and re-fetch → absorbed into HTTP response
+        //   4. WS delta becomes CRDT no-op → observeDeep never fires → block never renders
+        wsReadyForMessages = true;
+        wsMessageBuffer = [];
+        console.log('[WS] First connection — accepting messages immediately (no redundant fetch)');
+      }
     };
 
     sharedWebSocket.onmessage = (event) => {
@@ -970,6 +987,7 @@ function cleanupForHMR(): void {
   isApplyingRemoteGlobal = false;
 
   // Reset WebSocket state
+  wsHasConnectedOnce = false; // FLO-269: Reset for clean HMR cycle
   wsReadyForMessages = true;
   wsMessageBuffer = [];
   wsConnectionId = 0;

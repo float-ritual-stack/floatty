@@ -154,13 +154,25 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
 
     // Spawn server with FLOATTY_DATA_DIR env var
     // This ensures the server uses the same data directory as the main app
-    // Use null/inherit instead of piped to prevent deadlock when buffer fills
-    // (piped stdout/stderr would block writes if parent never reads - ~64KB buffer on Unix)
-    let child = std::process::Command::new(&server_binary)
-        .env("FLOATTY_DATA_DIR", &paths.root)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
+    // Redirect stderr to a log file so server tracing output is captured in release builds
+    // (inherit goes nowhere when launched from .app bundle)
+    let log_dir = paths.root.join("logs");
+    std::fs::create_dir_all(&log_dir).ok();
+    let server_log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("server.log"))
+        .ok();
+
+    let mut cmd = std::process::Command::new(&server_binary);
+    cmd.env("FLOATTY_DATA_DIR", &paths.root)
+        .stdout(std::process::Stdio::null());
+    if let Some(log_file) = server_log {
+        cmd.stderr(std::process::Stdio::from(log_file));
+    } else {
+        cmd.stderr(std::process::Stdio::inherit());
+    }
+    let child = cmd.spawn()
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to spawn floatty-server");
             e

@@ -267,7 +267,6 @@ function createBlockStore() {
       // 'user' = local typing, UndoManager instance = undo/redo, other = remote/external
       const txOrigin = events[0]?.transaction.origin;
       const origin = mapTransactionOrigin(txOrigin);
-
       // Collect BlockEvents for the EventBus
       const blockEvents: BlockEvent[] = [];
       // Track previous block state for update events (before we modify state)

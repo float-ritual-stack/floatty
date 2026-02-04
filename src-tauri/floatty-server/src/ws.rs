@@ -50,14 +50,10 @@ impl WsBroadcaster {
         };
         match self.tx.send(msg) {
             Ok(receiver_count) => {
-                if receiver_count > 0 {
-                    tracing::debug!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
-                }
+                tracing::info!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
             }
             Err(_) => {
-                // No receivers connected - this is expected when no WebSocket clients
-                // are connected. Only log at debug level to avoid noise.
-                tracing::debug!("Broadcast skipped (no WebSocket clients connected)");
+                tracing::info!("Broadcast skipped (no WebSocket clients connected)");
             }
         }
     }
