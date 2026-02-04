@@ -26,6 +26,15 @@ export function useBlockOperations() {
   };
 
   /**
+   * Check if a block is navigable (can receive focus via arrow keys)
+   * Output blocks aren't editable but ARE navigable — they have outputFocusRef
+   */
+  const isNavigableBlock = (blockId: string): boolean => {
+    const b = store.getBlock(blockId);
+    return !!b;
+  };
+
+  /**
    * Find the next visible block in the tree (for arrow key navigation)
    * Respects zoom boundary - won't navigate outside zoomed subtree
    * Skips non-editable blocks (like daily output views)
@@ -40,19 +49,19 @@ export function useBlockOperations() {
     // Check pane-specific collapse state
     const isCollapsed = paneStore.isCollapsed(paneId, id, block.collapsed);
 
-    // 1. If has children and not collapsed, go to first EDITABLE child
+    // 1. If has children and not collapsed, go to first navigable child
     if (block.childIds.length > 0 && !isCollapsed) {
-      const firstEditableChild = block.childIds.find(isEditableBlock);
-      if (firstEditableChild) return firstEditableChild;
-      // No editable children - fall through to find next sibling
+      const firstNavChild = block.childIds.find(isNavigableBlock);
+      if (firstNavChild) return firstNavChild;
+      // No navigable children - fall through to find next sibling
     }
 
     // 1b. SPECIAL CASE: At zoomed root with children (even if collapsed)
     // Zooming implies intent to navigate into children, so allow navigation
     // This is a safety net if collapse state gets out of sync with zoom
     if (id === zoomedRootId && block.childIds.length > 0) {
-      const firstEditableChild = block.childIds.find(isEditableBlock);
-      if (firstEditableChild) return firstEditableChild;
+      const firstNavChild = block.childIds.find(isNavigableBlock);
+      if (firstNavChild) return firstNavChild;
     }
 
     // 2. Otherwise, find next sibling or ancestor's next sibling
@@ -125,23 +134,23 @@ export function useBlockOperations() {
         isCollapsed = paneStore.isCollapsed(paneId, currentId, current.collapsed);
       }
 
-      // If the descendant is editable, return it
-      if (isEditableBlock(currentId)) return currentId;
+      // If the descendant is navigable, return it
+      if (isNavigableBlock(currentId)) return currentId;
 
       // Otherwise, recursively find previous from this position
       return findPrevVisibleBlock(currentId, paneId);
     };
 
-    // 1. If has previous sibling, go to its last editable descendant
+    // 1. If has previous sibling, go to its last navigable descendant
     if (index > 0) {
       const prevSiblingId = siblings[index - 1];
 
-      // Check if sibling itself is editable
-      if (isEditableBlock(prevSiblingId)) {
+      // Check if sibling itself is navigable
+      if (isNavigableBlock(prevSiblingId)) {
         return findLastEditableDescendant(prevSiblingId);
       }
 
-      // Sibling not editable, keep looking
+      // Sibling not navigable, keep looking
       return findPrevVisibleBlock(prevSiblingId, paneId);
     }
 

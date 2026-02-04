@@ -21,6 +21,8 @@ export interface NavigateOptions {
   splitDirection?: 'horizontal' | 'vertical';
   /** Briefly highlight the target block */
   highlight?: boolean;
+  /** Block where navigation originated (for focus restoration on back navigation) */
+  originBlockId?: string;
 }
 
 export interface NavigateResult {
@@ -43,7 +45,7 @@ export interface NavigateResult {
  * @param options - Navigation options
  */
 export function navigateToBlock(blockId: string, options: NavigateOptions = {}): NavigateResult {
-  const { paneId, splitDirection, highlight } = options;
+  const { paneId, splitDirection, highlight, originBlockId } = options;
 
   if (!paneId) {
     console.warn('[navigation] navigateToBlock: no paneId provided');
@@ -85,8 +87,12 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
     }
   }
 
-  // Zoom to context block
-  paneStore.setZoomedRoot(targetPaneId, zoomTarget);
+  // Zoom to context block (zoomTo pushes to nav history so Cmd+[ works)
+  // Pass originBlockId so goBack() can restore focus to the search output block
+  paneStore.zoomTo(targetPaneId, zoomTarget, { originBlockId });
+
+  // Set focus on the target block so it receives DOM focus after zoom
+  paneStore.setFocusedBlockId(targetPaneId, blockId);
 
   // Scroll to and highlight the actual target block (after DOM settles)
   if (highlight) {

@@ -7,6 +7,7 @@ Critical anti-patterns that will break floatty.
 - Claim architecture/system "doesn't exist" without grepping first (e.g., "no hook system exists" when `HookSystem` is in 13 files)
 - Mark PR review comments as "out of scope" without verifying the infrastructure isn't already there
 - Trust compacted conversation summary over actual codebase state
+- Assume behavior is a regression without checking `git show HEAD:file` (the original may already work that way — e.g., output blocks already hid contentEditable before any changes)
 
 ## PTY/Rust
 
@@ -33,6 +34,7 @@ Critical anti-patterns that will break floatty.
 - Forget `containerRef?.focus()` after blurring contentEditable (tinykeys needs focus)
 - Use `next` in Shift+Arrow range extension (use `props.id`, then move focus)
 - Block merge just because block has children (only block when children are COLLAPSED/hidden - see @.claude/rules/contenteditable-patterns.md)
+- Give embedded views (search results, daily views) their own `tabIndex` or `onKeyDown` (creates dual-focus event bubbling — `preventDefault()` does NOT stop propagation, both handlers fire. Keep focus on parent wrapper, pass visual state via props — see @.claude/rules/output-block-patterns.md)
 
 ## contentEditable (see @.claude/rules/contenteditable-patterns.md)
 

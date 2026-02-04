@@ -1,19 +1,29 @@
 /**
- * Search Results View Component
+ * Search Results View Component (display-only)
  *
  * Renders search:: block results with clickable navigation.
  * - Click result → navigate to block (zoom)
  * - Cmd+Click → open in horizontal split
  * - Cmd+Shift+Click → open in vertical split
+ * - Click breadcrumb → expand surrounding context in-place
+ *
+ * Keyboard navigation is handled by BlockItem's handleOutputBlockKeyDown.
+ * Focus stays on the output block wrapper (outputFocusRef) — this component
+ * only renders the visual focus state via focusedIdx prop.
  */
 
-import { For, Show } from 'solid-js';
+import { For, Show, createSignal, createEffect, createMemo } from 'solid-js';
 import type { SearchResults, SearchHit } from '../../lib/handlers/search';
 import { navigateToBlock } from '../../lib/navigation';
+import { blockStore } from '../../hooks/useBlockStore';
 
 interface SearchResultsViewProps {
   data: SearchResults;
   paneId?: string;
+  /** ID of the search output block (for originBlockId in navigation) */
+  blockId?: string;
+  /** Signal accessor for which result is keyboard-focused (-1 = none) */
+  focusedIdx?: () => number;
 }
 
 /**
@@ -27,28 +37,196 @@ function truncate(text: string, maxLen: number): string {
 }
 
 /**
- * Main search results view
+ * Build breadcrumb trail by walking parent chain.
+ * Returns array of { label, blockId } for clickable segments.
  */
-export function SearchResultsView(props: SearchResultsViewProps) {
-  const handleResultClick = (hit: SearchHit, e: MouseEvent) => {
+function getBreadcrumbs(blockId: string): { label: string; blockId: string }[] {
+  const crumbs: { label: string; blockId: string }[] = [];
+  const block = blockStore.getBlock(blockId);
+  let current = block?.parentId ? blockStore.getBlock(block.parentId) : undefined;
+  while (current) {
+    const label = (current.content || '').replace(/\n/g, ' ').trim().slice(0, 30);
+    if (label) crumbs.unshift({ label, blockId: current.id });
+    current = current.parentId ? blockStore.getBlock(current.parentId) : undefined;
+  }
+  return crumbs;
+}
+
+/**
+ * Get surrounding sibling blocks for context expansion.
+ * Returns up to `radius` siblings before and after the target.
+ */
+function getSurroundingContext(blockId: string, radius: number = 2): { before: string[]; after: string[] } {
+  const block = blockStore.getBlock(blockId);
+  if (!block?.parentId) return { before: [], after: [] };
+
+  const parent = blockStore.getBlock(block.parentId);
+  if (!parent?.childIds) return { before: [], after: [] };
+
+  const idx = parent.childIds.indexOf(blockId);
+  if (idx === -1) return { before: [], after: [] };
+
+  const before = parent.childIds.slice(Math.max(0, idx - radius), idx)
+    .map(id => blockStore.getBlock(id)?.content || '')
+    .filter(c => c.trim());
+  const after = parent.childIds.slice(idx + 1, idx + 1 + radius)
+    .map(id => blockStore.getBlock(id)?.content || '')
+    .filter(c => c.trim());
+
+  return { before, after };
+}
+
+/**
+ * Single search result with expandable context
+ */
+function SearchResultItem(props: {
+  hit: SearchHit;
+  paneId?: string;
+  blockId?: string;
+  isFocused?: boolean;
+  index: number;
+}) {
+  const [expanded, setExpanded] = createSignal(false);
+
+  // Memoize parent chain walk — only recalculates when blockId changes
+  const crumbs = createMemo(() => getBreadcrumbs(props.hit.blockId));
+
+  // Memoize context — only computed when expanded
+  const ctx = createMemo(() => expanded() ? getSurroundingContext(props.hit.blockId) : null);
+
+  const handleClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    // Determine split direction from modifiers
     let splitDirection: 'horizontal' | 'vertical' | undefined;
     if (e.metaKey || e.ctrlKey) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
-    navigateToBlock(hit.blockId, {
+    navigateToBlock(props.hit.blockId, {
       paneId: props.paneId,
       splitDirection,
       highlight: true,
+      originBlockId: props.blockId,
     });
   };
 
+  const toggleExpand = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setExpanded(!expanded());
+  };
+
   return (
-    <div class="search-results-view">
+    <div
+      class="search-result-item"
+      id={`search-hit-${props.index}`}
+      role="option"
+      aria-selected={props.isFocused ?? false}
+      classList={{ 'search-result-expanded': expanded(), 'search-result-focused': props.isFocused ?? false }}
+    >
+      {/* Breadcrumb row */}
+      <Show when={crumbs().length > 0}>
+        <div class="search-result-breadcrumbs">
+          <For each={crumbs()}>
+            {(crumb, i) => (
+              <>
+                <Show when={i() > 0}>
+                  <span class="search-breadcrumb-sep"> › </span>
+                </Show>
+                <Show when={crumb.blockId} fallback={<span class="search-breadcrumb-ellipsis">{crumb.label}</span>}>
+                  <span
+                    class="search-breadcrumb-segment"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      navigateToBlock(crumb.blockId, { paneId: props.paneId, highlight: true, originBlockId: props.blockId });
+                    }}
+                  >
+                    {crumb.label}
+                  </span>
+                </Show>
+              </>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {/* Main result row */}
+      <div class="search-result-row" onClick={handleClick}>
+        <span class="search-result-content">{truncate(props.hit.content, expanded() ? 300 : 100)}</span>
+        <div class="search-result-actions">
+          <Show when={props.hit.score > 0}>
+            <span class="search-result-score">{(props.hit.score * 100).toFixed(0)}%</span>
+          </Show>
+          <span
+            class="search-result-expand-btn"
+            onClick={toggleExpand}
+            aria-label={expanded() ? 'Collapse context' : 'Show more context'}
+            title={expanded() ? 'Less' : 'More context'}
+          >
+            {expanded() ? '▴' : '▾'}
+          </span>
+        </div>
+      </div>
+
+      {/* Expanded context: surrounding siblings */}
+      <Show when={ctx()}>
+        {(ctxData) => (
+          <div class="search-result-context">
+            <For each={ctxData().before}>
+              {(text) => (
+                <div class="search-context-line search-context-before">
+                  {truncate(text, 120)}
+                </div>
+              )}
+            </For>
+            <div class="search-context-line search-context-match">
+              {truncate(props.hit.content, 300)}
+            </div>
+            <For each={ctxData().after}>
+              {(text) => (
+                <div class="search-context-line search-context-after">
+                  {truncate(text, 120)}
+                </div>
+              )}
+            </For>
+          </div>
+        )}
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * Main search results view (display-only)
+ *
+ * Keyboard navigation is handled by BlockItem's handleOutputBlockKeyDown.
+ * Focus stays on outputFocusRef (the output block wrapper) — this view
+ * only renders visual state via the focusedIdx prop.
+ */
+export function SearchResultsView(props: SearchResultsViewProps) {
+  let listRef: HTMLDivElement | undefined;
+
+  const getFocusedIdx = () => props.focusedIdx?.() ?? -1;
+
+  // Scroll focused result into view
+  createEffect(() => {
+    const idx = getFocusedIdx();
+    if (idx >= 0 && listRef) {
+      const items = listRef.querySelectorAll('.search-result-item');
+      items[idx]?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    }
+  });
+
+  return (
+    <div
+      class="search-results-view"
+      ref={listRef}
+      role="listbox"
+      aria-label={`Search results for "${props.data.query}"`}
+      aria-activedescendant={getFocusedIdx() >= 0 ? `search-hit-${getFocusedIdx()}` : undefined}
+    >
       <div class="search-results-header">
         <span class="search-query">"{props.data.query}"</span>
         <span class="search-stats">
@@ -62,13 +240,14 @@ export function SearchResultsView(props: SearchResultsViewProps) {
       >
         <div class="search-results-list">
           <For each={props.data.hits}>
-            {(hit) => (
-              <div class="search-result-item" onClick={(e) => handleResultClick(hit, e)}>
-                <span class="search-result-content">{truncate(hit.content, 100)}</span>
-                <Show when={hit.score > 0}>
-                  <span class="search-result-score">{(hit.score * 100).toFixed(0)}%</span>
-                </Show>
-              </div>
+            {(hit, i) => (
+              <SearchResultItem
+                hit={hit}
+                paneId={props.paneId}
+                blockId={props.blockId}
+                isFocused={getFocusedIdx() === i()}
+                index={i()}
+              />
             )}
           </For>
         </div>
