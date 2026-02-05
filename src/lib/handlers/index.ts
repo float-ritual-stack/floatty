@@ -17,6 +17,7 @@ import { backupHandler } from './backup';
 import { hookRegistry } from '../hooks';
 import { sendContextHook } from './hooks/sendContextHook';
 import { registerCtxRouterHook } from './hooks/ctxRouterHook';
+import { registerOutlinksHook } from './hooks/outlinksHook';
 
 // Re-export registry and types for convenience
 export { registry } from './registry';
@@ -67,6 +68,7 @@ export function registerHandlers(): void {
 
   // Register EventBus subscriptions (block lifecycle hooks)
   registerCtxRouterHook();
+  registerOutlinksHook();
 
   console.log('[handlers] Registered handlers:', registry.getRegisteredPrefixes().join(', '));
   console.log('[handlers] Registered hooks:', hookRegistry.getHookIds().join(', '));
