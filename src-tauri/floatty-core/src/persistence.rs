@@ -310,14 +310,17 @@ impl YDocPersistence {
     /// Returns None if no updates exist.
     pub fn get_latest_seq(&self, doc_key: &str) -> Result<Option<i64>, PersistenceError> {
         let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
-        let result: Option<i64> = conn
+        // MAX(id) returns NULL when table is empty (still returns a row, just with NULL value)
+        // Use Option<i64> in the row mapper to handle NULL, then flatten
+        let result: Option<Option<i64>> = conn
             .query_row(
                 "SELECT MAX(id) FROM ydoc_updates WHERE doc_key = ?",
                 [doc_key],
                 |row| row.get(0),
             )
-            .unwrap_or(None);
-        Ok(result)
+            .optional()?;
+        // Flatten: Some(Some(x)) -> Some(x), Some(None) -> None, None -> None
+        Ok(result.flatten())
     }
 
     /// Get the compaction boundary for a document.
