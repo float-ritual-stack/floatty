@@ -128,7 +128,7 @@ export async function triggerFullResync(): Promise<void> {
   const httpClient = getHttpClient();
 
   try {
-    const serverState = await httpClient.getState();
+    const { state: serverState, latestSeq } = await httpClient.getState();
     if (serverState && serverState.length > 2) {
       try {
         isApplyingRemoteGlobal = true;
@@ -136,7 +136,13 @@ export async function triggerFullResync(): Promise<void> {
       } finally {
         isApplyingRemoteGlobal = false;
       }
-      console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied');
+      // Re-seed sequence tracking from server's latestSeq
+      if (latestSeq !== null) {
+        updateLastSeenSeq(latestSeq);
+        console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied, seq:', latestSeq);
+      } else {
+        console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied (no seq)');
+      }
     } else {
       console.log('[useSyncedYDoc] Server state empty, nothing to apply');
     }
@@ -811,7 +817,7 @@ function connectWebSocket() {
 
             // Fall back to full state sync if incremental sync not possible/failed
             if (!syncedIncrementally) {
-              const serverState = await httpClient.getState();
+              const { state: serverState, latestSeq } = await httpClient.getState();
               if (serverState && serverState.length > 2) {
                 console.log('[WS] Full state sync after reconnect:', serverState.length, 'bytes');
                 // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
@@ -822,9 +828,11 @@ function connectWebSocket() {
                   isApplyingRemoteGlobal = false;
                 }
               }
-              // Reset lastSeenSeq - we don't know what seq the full state represents
-              // Will be set by next WS message
-              lastSeenSeq = null;
+              // Re-seed lastSeenSeq from server's latestSeq
+              if (latestSeq !== null) {
+                updateLastSeenSeq(latestSeq);
+                console.log('[WS] Seq tracking re-seeded to:', latestSeq);
+              }
             }
 
             // FLO-152: Guard against stale IIFE from previous connection
@@ -1039,25 +1047,33 @@ export function useSyncedYDoc(
               }
 
               // Now get server's full state (which now includes our pushed changes)
-              const serverState = await httpClient.getState();
+              const { state: serverState, latestSeq } = await httpClient.getState();
 
               // Apply server state to our doc - this already contains our pushed diff
               setApplyingRemote(true);
               Y.applyUpdate(doc, serverState, 'remote');
               setApplyingRemote(false);
 
-              console.log('[useSyncedYDoc] Reconciliation complete, clearing backup');
+              // Seed sequence tracking from server
+              if (latestSeq !== null) {
+                updateLastSeenSeq(latestSeq);
+              }
+
+              console.log('[useSyncedYDoc] Reconciliation complete, seq:', latestSeq, ', clearing backup');
               clearBackup();
             } catch (reconcileErr) {
               console.error('[useSyncedYDoc] Reconciliation failed, falling back to server state:', reconcileErr);
 
               // Try to load server state as fallback
               try {
-                const stateBytes = await httpClient.getState();
+                const { state: stateBytes, latestSeq } = await httpClient.getState();
                 if (stateBytes && stateBytes.length > 0) {
                   setApplyingRemote(true);
                   Y.applyUpdate(doc, stateBytes, 'remote');
                   setApplyingRemote(false);
+                  if (latestSeq !== null) {
+                    updateLastSeenSeq(latestSeq);
+                  }
                 }
               } catch (stateErr) {
                 console.error('[useSyncedYDoc] Failed to load server state:', stateErr);
@@ -1076,12 +1092,17 @@ export function useSyncedYDoc(
             }
           } else {
             // Normal load - no local backup
-            const stateBytes = await httpClient.getState();
+            const { state: stateBytes, latestSeq } = await httpClient.getState();
 
             if (stateBytes && stateBytes.length > 0) {
               setApplyingRemote(true);
               Y.applyUpdate(doc, stateBytes, 'remote');
               setApplyingRemote(false);
+              // Seed sequence tracking from server
+              if (latestSeq !== null) {
+                updateLastSeenSeq(latestSeq);
+                console.log('[useSyncedYDoc] Initial load complete, seq:', latestSeq);
+              }
             }
           }
 

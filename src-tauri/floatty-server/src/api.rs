@@ -133,8 +133,12 @@ pub struct HealthResponse {
 
 /// Full state response (for sync)
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StateResponse {
-    pub state: String, // base64 encoded Y.Doc state
+    /// Base64-encoded full Y.Doc state
+    pub state: String,
+    /// Latest sequence number in the database (for client to re-seed seq tracking after full sync)
+    pub latest_seq: Option<i64>,
 }
 
 /// State vector response (for reconciliation)
@@ -416,10 +420,15 @@ async fn health() -> Json<HealthResponse> {
 }
 
 /// GET /api/v1/state - Full Y.Doc state for sync
+///
+/// Returns the full Y.Doc state along with the latest sequence number.
+/// Client should use latestSeq to re-seed sequence tracking after a full sync.
 async fn get_state(State(state): State<AppState>) -> Result<Json<StateResponse>, ApiError> {
     let update = state.store.get_full_state()?;
+    let latest_seq = state.store.get_latest_seq()?;
     Ok(Json(StateResponse {
         state: BASE64.encode(update),
+        latest_seq,
     }))
 }
 

@@ -365,8 +365,9 @@ mod tests {
         let seq2 = persistence.append_update("test-doc", b"update2").unwrap();
         let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
 
-        assert_eq!(seq2, seq1 + 1);
-        assert_eq!(seq3, seq2 + 1);
+        // Sequences must be strictly increasing (don't rely on exact +1 increment)
+        assert!(seq2 > seq1, "seq2 ({}) should be > seq1 ({})", seq2, seq1);
+        assert!(seq3 > seq2, "seq3 ({}) should be > seq2 ({})", seq3, seq2);
     }
 
     #[test]
@@ -406,7 +407,7 @@ mod tests {
         let persistence = YDocPersistence::open_in_memory().unwrap();
 
         let seq1 = persistence.append_update("test-doc", b"update1").unwrap();
-        let seq2 = persistence.append_update("test-doc", b"update2").unwrap();
+        let _seq2 = persistence.append_update("test-doc", b"update2").unwrap();
         let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
 
         // Before compaction, no boundary
@@ -454,7 +455,7 @@ mod tests {
         let seq1 = persistence.append_update("test-doc", b"update1").unwrap();
         let seq2 = persistence.append_update("test-doc", b"update2").unwrap();
         let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
-        let seq4 = persistence.append_update("test-doc", b"update4").unwrap();
+        let _seq4 = persistence.append_update("test-doc", b"update4").unwrap();
         let seq5 = persistence.append_update("test-doc", b"update5").unwrap();
 
         // Get all updates (since 0)

@@ -60,10 +60,18 @@ export type UpdatesSinceResult =
   | { ok: true; response: UpdatesResponse }
   | { ok: false; compactedThrough: number };
 
+/** Full state response with sequence tracking info */
+export interface FullStateResponse {
+  /** Full Y.Doc state as Uint8Array */
+  state: Uint8Array;
+  /** Latest sequence number (for re-seeding seq tracking after full sync) */
+  latestSeq: number | null;
+}
+
 /** HTTP client interface for Y.Doc sync */
 export interface FloattyHttpClient {
-  /** Get full Y.Doc state from server */
-  getState(): Promise<Uint8Array>;
+  /** Get full Y.Doc state from server with latest sequence number */
+  getState(): Promise<FullStateResponse>;
   /** Get state vector for reconciliation (what updates server has) */
   getStateVector(): Promise<Uint8Array>;
   /** Send update delta to server. Optional txId for echo prevention. */
@@ -103,7 +111,7 @@ class HttpClient implements FloattyHttpClient {
     };
   }
 
-  async getState(): Promise<Uint8Array> {
+  async getState(): Promise<FullStateResponse> {
     const response = await fetch(`${this.url}/api/v1/state`, {
       method: 'GET',
       headers: this.headers(),
@@ -114,12 +122,15 @@ class HttpClient implements FloattyHttpClient {
     }
 
     const data = await response.json();
-    // Server returns { state: "base64..." }
+    // Server returns { state: "base64...", latestSeq: number | null }
     if (!data.state) {
       throw new Error('Invalid response: missing state field');
     }
 
-    return base64ToBytes(data.state);
+    return {
+      state: base64ToBytes(data.state),
+      latestSeq: data.latestSeq ?? null,
+    };
   }
 
   async getStateVector(): Promise<Uint8Array> {
