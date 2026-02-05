@@ -508,6 +508,16 @@ function applyWsMessage(msg: WsMessage) {
     }
   }
 
+  // Detect restore/full-state broadcasts: has data but no seq
+  // These replace the entire Y.Doc state, so pre-restore seq tracking is stale.
+  // Reset before applying to avoid false gap detection against old seq values.
+  if (msg.seq === undefined && msg.data) {
+    console.log('[WS] Restore broadcast detected (data without seq), resetting seq tracking');
+    lastSeenSeq = null;
+    lastContiguousSeq = null;
+    pendingGapQueue = [];
+  }
+
   // Track sequence number monotonically (if provided - restore broadcasts don't have seq)
   if (msg.seq !== undefined) {
     updateLastSeenSeq(msg.seq);
