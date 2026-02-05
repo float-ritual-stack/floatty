@@ -331,16 +331,26 @@ interface WsMessage {
 /**
  * Last seen sequence number from WebSocket.
  * - null: haven't seen any seq-bearing messages yet
- * - number: last seq we successfully applied
+ * - number: highest seq we've successfully processed
+ *
+ * IMPORTANT: This must be monotonically increasing to prevent reopening gaps.
+ * Only update via updateLastSeenSeq() which enforces monotonicity.
  *
  * Used for:
  * - Gap detection: seq 417 → seq 419 means we missed 418
- * - Incremental reconnect: fetch updates since lastSeenSeq instead of full state
+ * - Incremental reconnect: fetch only updates since lastSeenSeq
  */
 let lastSeenSeq: number | null = null;
 
 /** Track if we're currently fetching missing updates (prevent concurrent fetches) */
 let isFetchingMissingUpdates = false;
+
+/** Queue of pending gap fetches - processed after current fetch completes */
+interface PendingGap {
+  fromSeq: number;
+  toSeq: number;
+}
+let pendingGapQueue: PendingGap[] = [];
 
 /**
  * Threshold for gap size before falling back to full resync.
@@ -350,6 +360,17 @@ const GAP_THRESHOLD_FOR_FULL_RESYNC = 100;
 
 /** Message buffer (seq-aware) */
 let wsMessageBuffer: WsMessage[] = [];
+
+/**
+ * Update lastSeenSeq monotonically.
+ * Only updates if newSeq > current lastSeenSeq (or if lastSeenSeq is null).
+ * This prevents out-of-order or gap-fill updates from regressing the counter.
+ */
+function updateLastSeenSeq(newSeq: number): void {
+  if (lastSeenSeq === null || newSeq > lastSeenSeq) {
+    lastSeenSeq = newSeq;
+  }
+}
 
 // Echo prevention: track txIds we sent to filter them from broadcasts
 const recentTxIds = new Set<string>();
@@ -382,9 +403,9 @@ function applyWsMessage(msg: WsMessage) {
   if (msg.txId && recentTxIds.has(msg.txId)) {
     console.log('[WS] Skipping own update (txId:', msg.txId, ')');
     recentTxIds.delete(msg.txId);
-    // Still track seq even for our own updates
+    // Still track seq even for our own updates (monotonic)
     if (msg.seq !== undefined) {
-      lastSeenSeq = msg.seq;
+      updateLastSeenSeq(msg.seq);
     }
     return;
   }
@@ -395,14 +416,14 @@ function applyWsMessage(msg: WsMessage) {
     if (msg.seq > expectedSeq) {
       // Gap detected! We missed seq(s) between lastSeenSeq and msg.seq
       console.warn(`[WS] Gap detected: ${lastSeenSeq} → ${msg.seq} (missing ${msg.seq - expectedSeq} updates)`);
-      // Trigger async fetch of missing updates
-      fetchMissingUpdates(lastSeenSeq, msg.seq);
+      // Queue gap fetch (will be processed after any current fetch completes)
+      queueGapFetch(lastSeenSeq, msg.seq);
     }
   }
 
-  // Track sequence number (if provided - restore broadcasts don't have seq)
+  // Track sequence number monotonically (if provided - restore broadcasts don't have seq)
   if (msg.seq !== undefined) {
-    lastSeenSeq = msg.seq;
+    updateLastSeenSeq(msg.seq);
   }
 
   // Decode base64 and apply
@@ -411,14 +432,59 @@ function applyWsMessage(msg: WsMessage) {
 }
 
 /**
+ * Queue a gap fetch. If no fetch is in progress, starts immediately.
+ * If a fetch is in progress, queues the gap to be processed after.
+ */
+function queueGapFetch(fromSeq: number, toSeq: number): void {
+  if (isFetchingMissingUpdates) {
+    // Queue the gap - will be processed after current fetch
+    pendingGapQueue.push({ fromSeq, toSeq });
+    console.log(`[WS] Queued gap fetch (${fromSeq} → ${toSeq}), queue size: ${pendingGapQueue.length}`);
+    return;
+  }
+
+  // No fetch in progress - start immediately
+  fetchMissingUpdates(fromSeq, toSeq);
+}
+
+/**
+ * Process the next gap in the queue, if any.
+ * Called after a gap fetch completes.
+ */
+function processNextQueuedGap(): void {
+  if (pendingGapQueue.length === 0) {
+    return;
+  }
+
+  // Consolidate queued gaps: find the overall range needed
+  // This handles cases where multiple gaps were queued during a long fetch
+  const minFrom = Math.min(...pendingGapQueue.map((g) => g.fromSeq));
+  const maxTo = Math.max(...pendingGapQueue.map((g) => g.toSeq));
+
+  // Clear queue before processing
+  pendingGapQueue = [];
+
+  // Only fetch if we still need updates beyond what we've seen
+  if (lastSeenSeq !== null && maxTo <= lastSeenSeq) {
+    console.log('[WS] Queued gaps already covered by lastSeenSeq, skipping');
+    return;
+  }
+
+  const effectiveFrom = lastSeenSeq !== null ? Math.max(minFrom, lastSeenSeq) : minFrom;
+  console.log(`[WS] Processing consolidated queued gap: ${effectiveFrom} → ${maxTo}`);
+  fetchMissingUpdates(effectiveFrom, maxTo);
+}
+
+/**
  * Fetch missing updates when a gap is detected.
  * Runs async - doesn't block current message processing.
  * Falls back to full resync if gap is too large or updates are compacted.
  */
 async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void> {
-  // Prevent concurrent fetches
+  // Guard against concurrent fetches (shouldn't happen with queue, but be safe)
   if (isFetchingMissingUpdates) {
-    console.log('[WS] Already fetching missing updates, skipping');
+    console.warn('[WS] Unexpected concurrent fetch attempt, queueing');
+    pendingGapQueue.push({ fromSeq, toSeq });
     return;
   }
 
@@ -427,6 +493,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
   // Large gap - full resync is faster
   if (gapSize > GAP_THRESHOLD_FOR_FULL_RESYNC) {
     console.log(`[WS] Gap too large (${gapSize} updates), triggering full resync`);
+    pendingGapQueue = []; // Clear queue - full resync covers everything
     await triggerFullResync();
     return;
   }
@@ -445,6 +512,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
     if (!result.ok) {
       // 410 Gone - updates were compacted, need full resync
       console.warn('[WS] Updates compacted (through seq', result.compactedThrough, '), triggering full resync');
+      pendingGapQueue = []; // Clear queue - full resync covers everything
       await triggerFullResync();
       return;
     }
@@ -458,8 +526,8 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
       for (const entry of updates) {
         const update = base64ToBytes(entry.data);
         Y.applyUpdate(sharedDoc, update, 'gap-fill');
-        // Update lastSeenSeq as we apply each update
-        lastSeenSeq = entry.seq;
+        // Update lastSeenSeq monotonically as we apply each update
+        updateLastSeenSeq(entry.seq);
       }
     } finally {
       isApplyingRemoteGlobal = false;
@@ -467,9 +535,12 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
   } catch (err) {
     console.error('[WS] Failed to fetch missing updates:', err);
     // Fall back to full resync on any error
+    pendingGapQueue = []; // Clear queue - full resync covers everything
     await triggerFullResync();
   } finally {
     isFetchingMissingUpdates = false;
+    // Process any gaps that were queued during this fetch
+    processNextQueuedGap();
   }
 }
 
@@ -723,7 +794,7 @@ function connectWebSocket() {
                     for (const entry of updates) {
                       const update = base64ToBytes(entry.data);
                       Y.applyUpdate(sharedDoc, update, 'reconnect-authority');
-                      lastSeenSeq = entry.seq;
+                      updateLastSeenSeq(entry.seq);
                     }
                   } finally {
                     isApplyingRemoteGlobal = false;
@@ -1156,6 +1227,7 @@ function cleanupForHMR(): void {
   // Reset sequence tracking
   lastSeenSeq = null;
   isFetchingMissingUpdates = false;
+  pendingGapQueue = [];
 
   // Reset handler tracking
   handlerRefCount = 0;

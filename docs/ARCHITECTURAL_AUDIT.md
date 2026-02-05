@@ -178,16 +178,17 @@ UI updates via SolidJS reactivity
 
 | Issue | Severity | Code Location | Mitigation |
 |-------|----------|---------------|------------|
-| **Persist → Broadcast window** | Medium | `api.rs:922-923` | Periodic hash-based resync (useSyncHealth) |
-| **WS client lagging** | Medium | `ws.rs:100-103` | FLO-152: 256-message buffer, warn on lag |
-| **Reconnect message ordering** | Medium | `useSyncedYDoc.ts:564-627` | FLO-152: Buffer messages during resync |
-| **First connect redundant fetch** | Low | `useSyncedYDoc.ts:629-639` | FLO-269: Skip fetch on first connect |
+| **Persist → Broadcast window** | Medium | `api.rs` (apply_update) | Sequence tracking + periodic block count resync |
+| **WS client lagging** | Medium | `ws.rs` (handle_socket) | FLO-152: 256-message buffer, warn on lag |
+| **Reconnect message ordering** | Medium | `useSyncedYDoc.ts` (connectWebSocket) | FLO-152: Buffer messages during resync |
+| **First connect redundant fetch** | Low | `useSyncedYDoc.ts` (onopen handler) | FLO-269: Skip fetch on first connect |
+| **Missed gaps during disconnect** | Low | `useSyncedYDoc.ts` (gap detection) | Sequence numbers + incremental reconnect |
 
 ### Silent No-Op Risk
 
 **Scenario**: REST client sends update, but WS client already has that state (e.g., from previous sync). The `applyUpdate()` is a CRDT no-op — **no observeDeep fires, no UI change**.
 
-**Detection**: `useSyncHealth.ts` polls block count every 30s. If server block count differs from local for 2 consecutive checks, triggers full resync.
+**Detection**: Primary detection via sequence numbers (gaps detected immediately). Fallback: `useSyncHealth.ts` polls block count every 120s. If server block count differs from local for 2 consecutive checks, triggers full resync.
 
 ---
 
@@ -244,8 +245,10 @@ for update_bytes in updates {
 
 **Why block count, not hash**: Y.Doc encoding includes client IDs and tombstones. Same content → different hashes. Block count is deterministic.
 
+**Note**: With sequence number tracking, most sync issues are detected immediately via gap detection. This poll runs at reduced frequency (120s) as a safety net.
+
 ```typescript
-// Poll every 30s
+// Poll every 120s (safety net — gaps now caught via seq)
 const serverHealth = await httpClient.getStateHash();
 const localBlockCount = doc.getMap('blocks').size;
 
@@ -261,11 +264,12 @@ if (serverHealth.blockCount !== localBlockCount) {
 
 | Location | Log | Purpose |
 |----------|-----|---------|
-| `useSyncedYDoc.ts:270` | `[useSyncedYDoc] Attached singleton update handler` | Handler lifecycle |
-| `useSyncedYDoc.ts:638` | `[WS] First connection — accepting messages immediately` | FLO-269 fix |
-| `useSyncHealth.ts:101` | `[SyncHealth] Block count mismatch detected` | Drift detection |
-| `ws.rs:53` | `Broadcast {} bytes to {} client(s)` | Server-side broadcast |
-| `useBlockStore.ts:390` | `[BlockStore] Root IDs updated` | Y.Doc observer |
+| `useSyncedYDoc.ts` | `[useSyncedYDoc] Attached singleton update handler` | Handler lifecycle |
+| `useSyncedYDoc.ts` | `[WS] First connection — accepting messages immediately` | FLO-269 fix |
+| `useSyncedYDoc.ts` | `[WS] Gap detected: X → Y` | Sequence gap detection |
+| `useSyncHealth.ts` | `[SyncHealth] Block count mismatch detected` | Drift detection |
+| `ws.rs` | `Broadcast {} bytes (seq={}) to {} client(s)` | Server-side broadcast |
+| `useBlockStore.ts` | `[BlockStore] Root IDs updated` | Y.Doc observer |
 
 ### State Validation (`FLO-247`)
 
