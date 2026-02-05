@@ -215,6 +215,7 @@ pub struct UpdatesCompactedResponse {
 
 /// Apply update request
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateRequest {
     pub update: String, // base64 encoded Y.Doc update
     /// Optional transaction ID for echo prevention.
@@ -251,7 +252,7 @@ pub struct BlockDto {
 
 /// Create block request
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateBlockRequest {
     pub content: String,
     pub parent_id: Option<String>,
@@ -261,7 +262,7 @@ pub struct CreateBlockRequest {
 
 /// Update block request
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateBlockRequest {
     /// New content for the block (optional if only updating metadata)
     pub content: Option<String>,
@@ -500,6 +501,7 @@ async fn apply_update(
 
 /// Restore request - same as update but for full state replacement
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RestoreRequest {
     /// Base64 encoded Y.Doc state (from binary export)
     pub state: String,
@@ -1749,6 +1751,7 @@ pub struct BackupTriggerResponse {
 
 /// Backup restore request
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BackupRestoreRequest {
     pub filename: String,
 }
