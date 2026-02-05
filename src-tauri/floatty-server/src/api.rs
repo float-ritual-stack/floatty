@@ -1824,10 +1824,24 @@ async fn backup_trigger(State(state): State<AppState>) -> Result<Json<BackupTrig
 }
 
 /// POST /api/v1/backup/restore - Restore from backup file
+///
+/// **DESTRUCTIVE**: Requires `x-floatty-confirm-destructive: true` header.
 async fn backup_restore(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<BackupRestoreRequest>,
 ) -> Result<Json<RestoreResponse>, ApiError> {
+    // Safety check: require explicit confirmation header for destructive operation
+    let confirmed = headers
+        .get("x-floatty-confirm-destructive")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if !confirmed {
+        return Err(ApiError::MissingConfirmationHeader);
+    }
+
     let daemon = state.backup_daemon.as_ref()
         .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
 

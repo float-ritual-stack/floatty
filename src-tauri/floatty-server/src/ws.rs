@@ -3,6 +3,40 @@
 //! Clients connect to /ws and receive Y.Doc updates as they happen.
 //! Updates are broadcast when POST /api/v1/update is called.
 //!
+//! ## Message Format (BroadcastMessage)
+//!
+//! The server sends JSON messages with three variants. Fields use `skip_serializing_if`
+//! so clients MUST null-check before using `seq` or `data`.
+//!
+//! ### 1. Update Message
+//! Normal CRDT update with sequence number for gap detection:
+//! ```json
+//! { "seq": 417, "txId": "1706789123456-42", "data": "<base64>" }
+//! ```
+//! - `seq`: Sequence number from persistence (always present)
+//! - `txId`: Transaction ID for echo prevention (optional, present when sender provided one)
+//! - `data`: Base64-encoded Y.Doc update bytes
+//!
+//! ### 2. Heartbeat Message
+//! Periodic gap-detection signal (every 30s when no updates sent):
+//! ```json
+//! { "seq": 525 }
+//! ```
+//! - `seq`: Latest sequence number from server
+//! - `data`: **ABSENT** (not null, the field is omitted)
+//! - Clients should run gap detection against this seq but NOT apply any update
+//!
+//! ### 3. Restore/Full-State Message
+//! Full Y.Doc replacement (after `/api/v1/restore` or `/api/v1/backup/restore`):
+//! ```json
+//! { "data": "<base64>" }
+//! ```
+//! - `seq`: **ABSENT** (pre-restore seq tracking is stale)
+//! - `data`: Base64-encoded full Y.Doc state
+//! - Clients MUST reset their seq tracking before applying (avoid false gap detection)
+//!
+//! ## Heartbeat Mechanism
+//!
 //! Includes a heartbeat mechanism (30s interval) that broadcasts the latest
 //! sequence number when no updates have been sent, allowing clients to detect
 //! gaps that may have occurred during the non-atomic persist-broadcast window.
