@@ -11,7 +11,7 @@
     "tauri": "tauri",
     "tauri:dev": "lsof -ti :8766 | xargs kill 2>/dev/null || true; RUST_LOG=debug FLOATTY_DATA_DIR=$HOME/.floatty-dev tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:dev:fresh": "lsof -ti :8766 | xargs kill 2>/dev/null || true; cd src-tauri && cargo build -p floatty-server && cd .. && RUST_LOG=debug FLOATTY_DATA_DIR=$HOME/.floatty-dev tauri dev --config src-tauri/tauri.dev.conf.json",
-    "kill-server": "lsof -ti :8766 | xargs kill 2>/dev/null || echo 'No dev server on 8766'",
+    "kill-server": "lsof -ti :8765 :8766 :33333 2>/dev/null | xargs kill 2>/dev/null && echo 'Killed servers' || echo 'No servers running'",
     "test": "vitest",
     "test:run": "vitest run"
   },
