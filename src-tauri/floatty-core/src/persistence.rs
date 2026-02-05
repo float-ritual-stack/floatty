@@ -4,7 +4,7 @@
 //! On startup, replay all updates to reconstruct state.
 //! Periodically compact to a single snapshot.
 
-use rusqlite::{params, Connection, Result as SqliteResult};
+use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use thiserror::Error;
@@ -225,13 +225,14 @@ impl YDocPersistence {
         let tx = conn.unchecked_transaction()?;
 
         // Get the max seq before deletion (this is what we're compacting away)
+        // Use .optional()? to properly propagate DB errors while handling empty result
         let max_seq_before: Option<i64> = tx
             .query_row(
                 "SELECT MAX(id) FROM ydoc_updates WHERE doc_key = ?",
                 [doc_key],
                 |row| row.get(0),
             )
-            .unwrap_or(None);
+            .optional()?;
 
         // Delete all existing updates for this doc
         tx.execute("DELETE FROM ydoc_updates WHERE doc_key = ?", [doc_key])?;

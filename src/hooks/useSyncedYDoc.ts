@@ -440,11 +440,23 @@ function generateTxId(): string {
  * Now includes sequence number tracking for gap detection.
  */
 function applyWsMessage(msg: WsMessage) {
-  // Echo prevention: skip if this is our own update
+  // Echo prevention: skip APPLICATION if this is our own update
+  // But still run gap detection - the seq may reveal missed updates from others
   if (msg.txId && recentTxIds.has(msg.txId)) {
-    console.log('[WS] Skipping own update (txId:', msg.txId, ')');
+    console.log('[WS] Skipping own update application (txId:', msg.txId, ')');
     recentTxIds.delete(msg.txId);
-    // Still track seq even for our own updates (monotonic + contiguous)
+
+    // Gap detection for echoed messages - don't skip this!
+    // Our message's seq may reveal we missed updates from other clients
+    if (msg.seq !== undefined && lastSeenSeq !== null) {
+      const expectedSeq = lastSeenSeq + 1;
+      if (msg.seq > expectedSeq) {
+        console.warn(`[WS] Gap detected (echo): ${lastSeenSeq} → ${msg.seq} (missing ${msg.seq - expectedSeq} updates)`);
+        queueGapFetch(lastSeenSeq, msg.seq);
+      }
+    }
+
+    // Track seq even for our own updates (monotonic + contiguous)
     if (msg.seq !== undefined) {
       updateLastSeenSeq(msg.seq);
       // Our own update was applied locally, so it's contiguous
