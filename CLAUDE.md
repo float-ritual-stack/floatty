@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Philosophy**: Shacks Not Cathedrals. Walls that can move.
 
 **The Pattern** (40 Years Deep):
-```
+```text
 Event → Handler → Transform → Project
 BBS (1985) → mIRC (1995) → Redux (2015) → floatty (2026)
 ```
@@ -38,7 +38,7 @@ BBS (1985) → mIRC (1995) → Redux (2015) → floatty (2026)
 
 ## Three-Layer Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  FRONTEND (SolidJS)                                             │
 │  - Y.Doc (local), debounced sync, reactive UI                   │
@@ -184,7 +184,7 @@ npx tsx scripts/binary-import.ts ~/path/to/backup.ydoc
 
 When external tools (CLI agents, automation) write to the server via REST, changes propagate to all connected WebSocket clients:
 
-```
+```text
 REST Client
     │ POST /api/v1/update { update: "<base64>", tx_id: "..." }
     ▼

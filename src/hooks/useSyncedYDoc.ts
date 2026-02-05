@@ -488,7 +488,9 @@ function processNextQueuedGap(): void {
   }
 
   console.log(`[WS] Processing consolidated queued gap: ${consolidated.fromSeq} → ${consolidated.toSeq} (contiguous: ${seqTracker.lastContiguousSeq})`);
-  fetchMissingUpdates(consolidated.fromSeq, consolidated.toSeq);
+  fetchMissingUpdates(consolidated.fromSeq, consolidated.toSeq).catch((err) =>
+    console.error('[WS] Unhandled error in queued gap fetch:', err)
+  );
 }
 
 /**
