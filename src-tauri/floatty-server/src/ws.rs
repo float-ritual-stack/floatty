@@ -2,6 +2,10 @@
 //!
 //! Clients connect to /ws and receive Y.Doc updates as they happen.
 //! Updates are broadcast when POST /api/v1/update is called.
+//!
+//! Includes a heartbeat mechanism (30s interval) that broadcasts the latest
+//! sequence number when no updates have been sent, allowing clients to detect
+//! gaps that may have occurred during the non-atomic persist-broadcast window.
 
 use axum::{
     extract::{
@@ -11,10 +15,16 @@ use axum::{
     response::Response,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use floatty_core::YDocStore;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
+
+/// Heartbeat interval - broadcast latest seq if no updates sent
+const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 
 /// Message format for WebSocket broadcasts
 #[derive(Clone, Serialize)]
@@ -28,21 +38,27 @@ pub struct BroadcastMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_id: Option<String>,
     /// Base64-encoded Y.Doc update bytes
-    pub data: String,
+    /// None for heartbeat messages (seq-only, triggers gap detection)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
 }
 
 /// Shared state for WebSocket broadcasting
-#[derive(Clone)]
 pub struct WsBroadcaster {
     /// Channel for broadcasting Y.Doc updates to all connected clients
     tx: broadcast::Sender<BroadcastMessage>,
+    /// Flag to track if any update was broadcast since last heartbeat check
+    update_sent_since_heartbeat: AtomicBool,
 }
 
 impl WsBroadcaster {
     /// Create a new broadcaster with the given channel capacity
     pub fn new(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity);
-        Self { tx }
+        Self {
+            tx,
+            update_sent_since_heartbeat: AtomicBool::new(false),
+        }
     }
 
     /// Broadcast a Y.Doc update to all connected clients
@@ -56,8 +72,10 @@ impl WsBroadcaster {
         let msg = BroadcastMessage {
             seq,
             tx_id,
-            data: BASE64.encode(&update),
+            data: Some(BASE64.encode(&update)),
         };
+        // Mark that we sent an update (heartbeat will skip if true)
+        self.update_sent_since_heartbeat.store(true, Ordering::Relaxed);
         match self.tx.send(msg) {
             Ok(receiver_count) => {
                 if let Some(s) = seq {
@@ -72,10 +90,69 @@ impl WsBroadcaster {
         }
     }
 
+    /// Broadcast a heartbeat message with only the latest sequence number.
+    /// Used to trigger client gap detection without sending actual data.
+    /// Called periodically (every 30s) when no updates have been broadcast.
+    pub fn broadcast_heartbeat(&self, seq: i64) {
+        let msg = BroadcastMessage {
+            seq: Some(seq),
+            tx_id: None,
+            data: None,
+        };
+        match self.tx.send(msg) {
+            Ok(receiver_count) => {
+                tracing::debug!("Heartbeat seq={} to {} client(s)", seq, receiver_count);
+            }
+            Err(_) => {
+                // No clients connected, heartbeat not needed
+            }
+        }
+    }
+
+    /// Check and reset the update-sent flag.
+    /// Returns true if an update was sent since last check.
+    fn check_and_reset_update_flag(&self) -> bool {
+        self.update_sent_since_heartbeat.swap(false, Ordering::Relaxed)
+    }
+
     /// Subscribe to updates (called by each WebSocket connection)
     fn subscribe(&self) -> broadcast::Receiver<BroadcastMessage> {
         self.tx.subscribe()
     }
+}
+
+/// Start the heartbeat background task.
+/// Broadcasts the latest sequence number every 30s if no updates were sent.
+/// This allows clients to detect gaps from the non-atomic persist-broadcast window.
+pub fn start_heartbeat(broadcaster: Arc<WsBroadcaster>, store: Arc<YDocStore>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+        // Skip the first tick (fires immediately)
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+
+            // Only send heartbeat if no updates were broadcast since last check
+            if broadcaster.check_and_reset_update_flag() {
+                continue; // Updates were sent, no heartbeat needed
+            }
+
+            // Get latest seq from store
+            match store.get_latest_seq() {
+                Ok(Some(seq)) => {
+                    broadcaster.broadcast_heartbeat(seq);
+                }
+                Ok(None) => {
+                    // No updates in database, nothing to heartbeat
+                }
+                Err(e) => {
+                    tracing::warn!("Heartbeat failed to get latest seq: {}", e);
+                }
+            }
+        }
+    });
+    tracing::info!("Heartbeat task started (interval: {}s)", HEARTBEAT_INTERVAL_SECS);
 }
 
 /// WebSocket upgrade handler

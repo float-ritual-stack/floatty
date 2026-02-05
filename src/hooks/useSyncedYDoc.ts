@@ -18,6 +18,8 @@ import {
   clearBackup as clearBackupIDB,
   hasBackup as hasBackupIDB,
   initBackupNamespace,
+  saveLastSeenSeq as saveLastSeenSeqIDB,
+  getLastSeenSeq as getLastSeenSeqIDB,
 } from '../lib/idbBackup';
 import { invoke } from '@tauri-apps/api/core';
 import type { AggregatorConfig } from '../lib/tauriTypes';
@@ -334,8 +336,8 @@ interface WsMessage {
   seq?: number;
   /** Transaction ID for echo prevention */
   txId?: string;
-  /** Base64-encoded Y.Doc update bytes */
-  data: string;
+  /** Base64-encoded Y.Doc update bytes. Undefined for heartbeat messages (seq-only). */
+  data?: string;
 }
 
 /**
@@ -385,14 +387,41 @@ const GAP_THRESHOLD_FOR_FULL_RESYNC = 100;
 /** Message buffer (seq-aware) */
 let wsMessageBuffer: WsMessage[] = [];
 
+/** Debounce timer for persisting lastSeenSeq to IndexedDB */
+let lastSeenSeqPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** How often to persist lastSeenSeq (debounce interval) */
+const LAST_SEEN_SEQ_PERSIST_DEBOUNCE_MS = 5000;
+
+/**
+ * Schedule a debounced save of lastSeenSeq to IndexedDB.
+ * Uses 5s debounce to batch rapid updates.
+ */
+function scheduleLastSeenSeqPersist(): void {
+  if (lastSeenSeqPersistTimer !== null) {
+    clearTimeout(lastSeenSeqPersistTimer);
+  }
+  lastSeenSeqPersistTimer = setTimeout(() => {
+    lastSeenSeqPersistTimer = null;
+    if (lastSeenSeq !== null) {
+      saveLastSeenSeqIDB(lastSeenSeq).catch(err => {
+        console.warn('[useSyncedYDoc] Failed to persist lastSeenSeq:', err);
+      });
+    }
+  }, LAST_SEEN_SEQ_PERSIST_DEBOUNCE_MS);
+}
+
 /**
  * Update lastSeenSeq monotonically.
  * Only updates if newSeq > current lastSeenSeq (or if lastSeenSeq is null).
  * This prevents out-of-order or gap-fill updates from regressing the counter.
+ *
+ * Also schedules a debounced persist to IndexedDB for crash recovery.
  */
 function updateLastSeenSeq(newSeq: number): void {
   if (lastSeenSeq === null || newSeq > lastSeenSeq) {
     lastSeenSeq = newSeq;
+    scheduleLastSeenSeqPersist();
   }
 }
 
@@ -489,9 +518,11 @@ function applyWsMessage(msg: WsMessage) {
     }
   }
 
-  // Decode base64 and apply
-  const update = base64ToBytes(msg.data);
-  Y.applyUpdate(sharedDoc, update, 'remote');
+  // Decode base64 and apply (skip for heartbeat messages with no data)
+  if (msg.data) {
+    const update = base64ToBytes(msg.data);
+    Y.applyUpdate(sharedDoc, update, 'remote');
+  }
 }
 
 /**
@@ -1122,6 +1153,17 @@ export function useSyncedYDoc(
             initBackupNamespace('unknown');
           }
 
+          // Load persisted lastSeenSeq for incremental sync after browser refresh
+          try {
+            const persistedSeq = await getLastSeenSeqIDB();
+            if (persistedSeq !== null) {
+              lastSeenSeq = persistedSeq;
+              console.log('[useSyncedYDoc] Loaded persisted lastSeenSeq:', persistedSeq);
+            }
+          } catch (seqErr) {
+            console.warn('[useSyncedYDoc] Failed to load lastSeenSeq:', seqErr);
+          }
+
           // Ensure HTTP client is initialized
           if (!isClientInitialized()) {
             throw new Error('HTTP client not initialized');
@@ -1335,6 +1377,10 @@ function cleanupForHMR(): void {
   if (backupTimer) {
     clearTimeout(backupTimer);
     backupTimer = null;
+  }
+  if (lastSeenSeqPersistTimer) {
+    clearTimeout(lastSeenSeqPersistTimer);
+    lastSeenSeqPersistTimer = null;
   }
 
   // Remove Y.Doc update handler if attached

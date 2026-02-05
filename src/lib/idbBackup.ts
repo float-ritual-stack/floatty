@@ -115,3 +115,47 @@ export async function hasBackup(): Promise<boolean> {
   const backup = await getBackup();
   return backup !== null;
 }
+
+/**
+ * Save last seen sequence number to IndexedDB.
+ * Used for gap detection on reconnect after browser refresh/crash.
+ */
+export async function saveLastSeenSeq(seq: number): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(seq, 'lastSeenSeq');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Get last seen sequence number from IndexedDB.
+ * Returns null if not previously saved.
+ */
+export async function getLastSeenSeq(): Promise<number | null> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const request = tx.objectStore(STORE_NAME).get('lastSeenSeq');
+    request.onsuccess = () => {
+      const result = request.result;
+      resolve(typeof result === 'number' ? result : null);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * Clear last seen sequence number (called on workspace switch).
+ */
+export async function clearLastSeenSeq(): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete('lastSeenSeq');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}

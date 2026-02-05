@@ -22,7 +22,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Json, Router,
@@ -327,6 +327,9 @@ pub enum ApiError {
         requested: i64,
         compacted_through: i64,
     },
+
+    #[error("Missing confirmation header: X-Floatty-Confirm-Destructive: true")]
+    MissingConfirmationHeader,
 }
 
 impl IntoResponse for ApiError {
@@ -338,6 +341,7 @@ impl IntoResponse for ApiError {
             ApiError::Search(_) => StatusCode::BAD_REQUEST,
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::UpdatesCompacted { .. } => StatusCode::GONE,
+            ApiError::MissingConfirmationHeader => StatusCode::BAD_REQUEST,
         };
 
         // For UpdatesCompacted, return structured JSON with compaction info
@@ -531,8 +535,20 @@ pub struct RestoreResponse {
 /// ```
 async fn restore_state(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<RestoreRequest>,
 ) -> Result<Json<RestoreResponse>, ApiError> {
+    // Safety check: require explicit confirmation header for destructive operation
+    let confirmed = headers
+        .get("x-floatty-confirm-destructive")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if !confirmed {
+        return Err(ApiError::MissingConfirmationHeader);
+    }
+
     let state_bytes = BASE64
         .decode(&req.state)
         .map_err(|e| ApiError::InvalidBase64(e.to_string()))?;
