@@ -4,6 +4,7 @@
 //! - GET /api/v1/state - Full Y.Doc state (base64)
 //! - GET /api/v1/state-vector - State vector for reconciliation
 //! - GET /api/v1/state/hash - SHA256 hash for sync health check
+//! - GET /api/v1/updates - Incremental updates since sequence number
 //! - POST /api/v1/update - Apply Y.Doc update
 //! - POST /api/v1/restore - Replace Y.Doc state from backup
 //! - GET /api/v1/health - Health check
@@ -154,6 +155,60 @@ pub struct StateHashResponse {
     pub timestamp: u128,
 }
 
+// ============================================================================
+// Incremental Sync (Sequence Number Support)
+// ============================================================================
+
+/// Query parameters for GET /api/v1/updates
+#[derive(Deserialize)]
+pub struct UpdatesQuery {
+    /// Sequence number to start from (exclusive - returns updates AFTER this seq)
+    pub since: i64,
+    /// Maximum number of updates to return (default: 100, max: 1000)
+    #[serde(default = "default_updates_limit")]
+    pub limit: usize,
+}
+
+fn default_updates_limit() -> usize {
+    100
+}
+
+/// Single update entry in response
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEntry {
+    /// Sequence number (monotonically increasing)
+    pub seq: i64,
+    /// Base64-encoded Y.Doc update bytes
+    pub data: String,
+    /// Unix timestamp when update was persisted
+    pub created_at: i64,
+}
+
+/// Response for GET /api/v1/updates
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatesResponse {
+    /// List of updates since the requested sequence
+    pub updates: Vec<UpdateEntry>,
+    /// Highest sequence number that was compacted (updates <= this are gone)
+    /// Null if no compaction has occurred
+    pub compacted_through: Option<i64>,
+    /// Latest sequence number in the database (for client to know if fully caught up)
+    pub latest_seq: Option<i64>,
+}
+
+/// Error response when client requests updates that have been compacted
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatesCompactedResponse {
+    pub error: String,
+    /// Highest sequence that was compacted
+    pub compacted_through: i64,
+    /// What the client requested
+    pub requested_since: i64,
+}
+
 /// Apply update request
 #[derive(Deserialize)]
 pub struct UpdateRequest {
@@ -262,6 +317,12 @@ pub enum ApiError {
 
     #[error("Invalid parent: {0}")]
     InvalidParent(String),
+
+    #[error("Updates compacted: requested since {requested}, compacted through {compacted_through}")]
+    UpdatesCompacted {
+        requested: i64,
+        compacted_through: i64,
+    },
 }
 
 impl IntoResponse for ApiError {
@@ -272,7 +333,19 @@ impl IntoResponse for ApiError {
             ApiError::SearchUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Search(_) => StatusCode::BAD_REQUEST,
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::UpdatesCompacted { .. } => StatusCode::GONE,
         };
+
+        // For UpdatesCompacted, return structured JSON with compaction info
+        if let ApiError::UpdatesCompacted { requested, compacted_through } = &self {
+            let body = Json(UpdatesCompactedResponse {
+                error: self.to_string(),
+                compacted_through: *compacted_through,
+                requested_since: *requested,
+            });
+            return (status, body).into_response();
+        }
+
         let body = Json(ErrorResponse {
             error: self.to_string(),
         });
@@ -307,6 +380,7 @@ pub fn create_router(
         .route("/api/v1/state", get(get_state))
         .route("/api/v1/state-vector", get(get_state_vector))
         .route("/api/v1/state/hash", get(get_state_hash))
+        .route("/api/v1/updates", get(get_updates_since))
         .route("/api/v1/update", post(apply_update))
         .route("/api/v1/restore", post(restore_state))
         // Export endpoints
@@ -402,10 +476,11 @@ async fn apply_update(
         .decode(&req.update)
         .map_err(|e| ApiError::InvalidBase64(e.to_string()))?;
 
-    state.store.apply_update(&update_bytes)?;
+    // apply_update persists first, returns sequence number
+    let seq = state.store.apply_update(&update_bytes)?;
 
-    // Broadcast to all WebSocket clients (include tx_id for echo prevention)
-    state.broadcaster.broadcast(update_bytes, req.tx_id);
+    // Broadcast to all WebSocket clients (include tx_id for echo prevention, seq for gap detection)
+    state.broadcaster.broadcast(update_bytes, req.tx_id, Some(seq));
 
     Ok(StatusCode::OK)
 }
@@ -467,7 +542,8 @@ async fn restore_state(
 
     // 4. Broadcast the new state to all WebSocket clients
     // They'll need to reset their local Y.Doc too
-    state.broadcaster.broadcast(new_state, None);
+    // No seq for restore - this is a full state replacement, not an incremental update
+    state.broadcaster.broadcast(new_state, None, None);
 
     // 5. Rehydrate hooks (metadata extraction, search indexing, etc.)
     let rehydrated = state.hook_system.rehydrate_all_blocks(&state.store);
@@ -492,6 +568,76 @@ async fn restore_state(
     Ok(Json(RestoreResponse {
         block_count,
         root_count,
+    }))
+}
+
+/// GET /api/v1/updates - Get incremental updates since a sequence number
+///
+/// Used for:
+/// - Gap detection: client sees seq 417 → 419, fetches missing 418
+/// - Incremental reconnect: client has seq 500, fetches only seq > 500
+/// - Agent polling: stateless API clients that don't use WebSocket
+///
+/// # Query Parameters
+/// - `since`: Sequence number to start from (exclusive - returns updates AFTER this seq)
+/// - `limit`: Maximum updates to return (default: 100, max: 1000)
+///
+/// # Response (200 OK)
+/// ```json
+/// {
+///   "updates": [{ "seq": 501, "data": "<base64>", "createdAt": 1707123456 }, ...],
+///   "compactedThrough": 100,
+///   "latestSeq": 525
+/// }
+/// ```
+///
+/// # Response (410 Gone)
+/// Returned when `since` < `compactedThrough` - client must do full state sync.
+/// ```json
+/// {
+///   "error": "Updates compacted: requested since 50, compacted through 100",
+///   "compactedThrough": 100,
+///   "requestedSince": 50
+/// }
+/// ```
+async fn get_updates_since(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<UpdatesQuery>,
+) -> Result<Json<UpdatesResponse>, ApiError> {
+    // Clamp limit to max 1000
+    let limit = query.limit.min(1000);
+
+    // Check if requested seq is before compaction boundary
+    let compacted_through = state.store.get_compacted_through()?;
+    if let Some(boundary) = compacted_through {
+        if query.since < boundary {
+            return Err(ApiError::UpdatesCompacted {
+                requested: query.since,
+                compacted_through: boundary,
+            });
+        }
+    }
+
+    // Fetch updates
+    let updates_raw = state.store.get_updates_since(query.since, limit)?;
+
+    // Convert to response format (base64 encode the update bytes)
+    let updates: Vec<UpdateEntry> = updates_raw
+        .into_iter()
+        .map(|(seq, data, created_at)| UpdateEntry {
+            seq,
+            data: BASE64.encode(&data),
+            created_at,
+        })
+        .collect();
+
+    // Get latest seq for client to know if fully caught up
+    let latest_seq = state.store.get_latest_seq()?;
+
+    Ok(Json(UpdatesResponse {
+        updates,
+        compacted_through,
+        latest_seq,
     }))
 }
 
@@ -919,8 +1065,8 @@ async fn create_block(
     drop(doc_guard);
 
     // Persist and broadcast to WebSocket clients
-    state.store.persist_update(&update)?;
-    state.broadcaster.broadcast(update, None);
+    let seq = state.store.persist_update(&update)?;
+    state.broadcaster.broadcast(update, None, Some(seq));
 
     // Emit to hook system for metadata extraction
     let _ = state.hook_system.emit_change(BlockChange::Created {
@@ -1185,8 +1331,8 @@ async fn update_block(
     drop(doc_guard);
 
     // Persist and broadcast to WebSocket clients
-    state.store.persist_update(&update)?;
-    state.broadcaster.broadcast(update, None);
+    let seq = state.store.persist_update(&update)?;
+    state.broadcaster.broadcast(update, None, Some(seq));
 
     // Emit to hook system for metadata extraction (only if content changed)
     if content_changed {
@@ -1301,8 +1447,8 @@ async fn delete_block(
     drop(doc_guard);
 
     // Persist and broadcast to WebSocket clients
-    state.store.persist_update(&update)?;
-    state.broadcaster.broadcast(update, None);
+    let seq = state.store.persist_update(&update)?;
+    state.broadcaster.broadcast(update, None, Some(seq));
 
     // Emit to hook system for cleanup (search index removal, etc.)
     let _ = state.hook_system.emit_change(BlockChange::Deleted {
@@ -1681,8 +1827,9 @@ async fn backup_restore(
     let block_count = state.store.reset_from_state(&state_bytes)?;
 
     // Broadcast new state to connected clients
+    // No seq for restore - this is a full state replacement, not an incremental update
     let new_state = state.store.get_full_state()?;
-    state.broadcaster.broadcast(new_state, None);
+    state.broadcaster.broadcast(new_state, None, None);
 
     // Rehydrate hooks
     let rehydrated = state.hook_system.rehydrate_all_blocks(&state.store);

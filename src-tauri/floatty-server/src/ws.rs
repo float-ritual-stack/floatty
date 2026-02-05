@@ -20,6 +20,10 @@ use tokio::sync::broadcast;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BroadcastMessage {
+    /// Sequence number from persistence layer (for gap detection)
+    /// None for legacy broadcasts (restore, bulk operations)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
     /// Transaction ID from the sender (for echo prevention)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_id: Option<String>,
@@ -42,15 +46,25 @@ impl WsBroadcaster {
     }
 
     /// Broadcast a Y.Doc update to all connected clients
-    pub fn broadcast(&self, update: Vec<u8>, tx_id: Option<String>) {
+    ///
+    /// # Arguments
+    /// - `update`: Raw Y.Doc update bytes
+    /// - `tx_id`: Transaction ID for echo prevention (sender filters its own updates)
+    /// - `seq`: Sequence number from persistence layer (for gap detection)
+    pub fn broadcast(&self, update: Vec<u8>, tx_id: Option<String>, seq: Option<i64>) {
         let update_len = update.len();
         let msg = BroadcastMessage {
+            seq,
             tx_id,
             data: BASE64.encode(&update),
         };
         match self.tx.send(msg) {
             Ok(receiver_count) => {
-                tracing::info!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
+                if let Some(s) = seq {
+                    tracing::info!("Broadcast {} bytes (seq={}) to {} client(s)", update_len, s, receiver_count);
+                } else {
+                    tracing::info!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
+                }
             }
             Err(_) => {
                 tracing::info!("Broadcast skipped (no WebSocket clients connected)");

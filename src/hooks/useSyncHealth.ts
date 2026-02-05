@@ -10,6 +10,11 @@
  * Block count comparison catches actual drift (create/delete mismatch) without
  * false positives from encoding differences.
  *
+ * With sequence number tracking (seq field in WS broadcasts), most sync issues
+ * are now detected immediately via gap detection. This poll runs at a reduced
+ * frequency (120s vs 30s) as a safety net for edge cases like silent WebSocket
+ * drops or compaction-related drift.
+ *
  * This is the "safety net" - even if WebSocket is zombied, we eventually catch up.
  */
 
@@ -21,8 +26,14 @@ import { getSharedDoc, triggerFullResync } from './useSyncedYDoc';
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════
 
-/** How often to check sync health (ms) */
-const POLL_INTERVAL = 30_000; // 30 seconds
+/**
+ * How often to check sync health (ms).
+ *
+ * With sequence number tracking, gaps are now detected immediately via WebSocket.
+ * This poll is just a safety net for edge cases (e.g., missed compaction, silent
+ * WebSocket issues). Increased from 30s to 120s since seq provides faster detection.
+ */
+const POLL_INTERVAL = 120_000; // 120 seconds (2 minutes)
 
 /** How many consecutive mismatches before triggering resync */
 const MISMATCH_THRESHOLD = 2;

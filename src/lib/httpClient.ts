@@ -28,6 +28,38 @@ export interface StateHashResponse {
   timestamp: number;
 }
 
+/** Single update entry from incremental sync */
+export interface UpdateEntry {
+  /** Sequence number (monotonically increasing) */
+  seq: number;
+  /** Base64-encoded Y.Doc update bytes */
+  data: string;
+  /** Unix timestamp when update was persisted */
+  createdAt: number;
+}
+
+/** Response for GET /api/v1/updates */
+export interface UpdatesResponse {
+  /** List of updates since the requested sequence */
+  updates: UpdateEntry[];
+  /** Highest sequence that was compacted (updates <= this are gone). Null if no compaction. */
+  compactedThrough: number | null;
+  /** Latest sequence number in database (for client to know if fully caught up) */
+  latestSeq: number | null;
+}
+
+/** Error response when client requests updates that have been compacted (410 Gone) */
+export interface UpdatesCompactedError {
+  error: string;
+  compactedThrough: number;
+  requestedSince: number;
+}
+
+/** Result of getUpdatesSince - either updates or compaction error */
+export type UpdatesSinceResult =
+  | { ok: true; response: UpdatesResponse }
+  | { ok: false; compactedThrough: number };
+
 /** HTTP client interface for Y.Doc sync */
 export interface FloattyHttpClient {
   /** Get full Y.Doc state from server */
@@ -40,6 +72,15 @@ export interface FloattyHttpClient {
   isHealthy(): Promise<boolean>;
   /** Get state hash for sync health check (lightweight) */
   getStateHash(): Promise<StateHashResponse>;
+  /**
+   * Get incremental updates since a sequence number.
+   * Used for gap detection and incremental reconnect.
+   *
+   * @param since - Sequence number to start from (exclusive - returns updates AFTER this seq)
+   * @param limit - Maximum updates to return (default: 100, max: 1000)
+   * @returns Updates if available, or compactedThrough if client is too far behind
+   */
+  getUpdatesSince(since: number, limit?: number): Promise<UpdatesSinceResult>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -152,6 +193,33 @@ class HttpClient implements FloattyHttpClient {
       blockCount: data.blockCount,
       timestamp: data.timestamp,
     };
+  }
+
+  async getUpdatesSince(since: number, limit: number = 100): Promise<UpdatesSinceResult> {
+    const url = new URL(`${this.url}/api/v1/updates`);
+    url.searchParams.set('since', String(since));
+    url.searchParams.set('limit', String(limit));
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: this.headers(),
+    });
+
+    // 410 Gone - client requested updates that have been compacted
+    if (response.status === 410) {
+      const data: UpdatesCompactedError = await response.json();
+      console.warn(
+        `[httpClient] Updates compacted: requested since ${data.requestedSince}, compacted through ${data.compactedThrough}`
+      );
+      return { ok: false, compactedThrough: data.compactedThrough };
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to get updates: ${response.status} ${response.statusText}`);
+    }
+
+    const data: UpdatesResponse = await response.json();
+    return { ok: true, response: data };
   }
 }
 

@@ -311,9 +311,45 @@ const WS_MAX_RECONNECT_DELAY = 30000;
 // causing live updates to be overwritten by the subsequent full state fetch.
 // Solution: Buffer incoming messages until reconnect sync completes, then replay.
 let wsReadyForMessages = true; // Start true - only false during reconnect sync
-let wsMessageBuffer: { txId?: string; data: string }[] = [];
 let wsConnectionId = 0; // FLO-152: Guards against stale IIFE setting wsReadyForMessages
 const WS_MESSAGE_BUFFER_MAX = 100; // Prevent unbounded growth if sync hangs
+
+// ═══════════════════════════════════════════════════════════════
+// SEQUENCE NUMBER TRACKING (gap detection & incremental reconnect)
+// ═══════════════════════════════════════════════════════════════
+
+/** WS message from server (now includes seq for gap detection) */
+interface WsMessage {
+  /** Sequence number from persistence layer (for gap detection). Missing on restore broadcasts. */
+  seq?: number;
+  /** Transaction ID for echo prevention */
+  txId?: string;
+  /** Base64-encoded Y.Doc update bytes */
+  data: string;
+}
+
+/**
+ * Last seen sequence number from WebSocket.
+ * - null: haven't seen any seq-bearing messages yet
+ * - number: last seq we successfully applied
+ *
+ * Used for:
+ * - Gap detection: seq 417 → seq 419 means we missed 418
+ * - Incremental reconnect: fetch updates since lastSeenSeq instead of full state
+ */
+let lastSeenSeq: number | null = null;
+
+/** Track if we're currently fetching missing updates (prevent concurrent fetches) */
+let isFetchingMissingUpdates = false;
+
+/**
+ * Threshold for gap size before falling back to full resync.
+ * If gap > 100, fetching individual updates may be slower than full state.
+ */
+const GAP_THRESHOLD_FOR_FULL_RESYNC = 100;
+
+/** Message buffer (seq-aware) */
+let wsMessageBuffer: WsMessage[] = [];
 
 // Echo prevention: track txIds we sent to filter them from broadcasts
 const recentTxIds = new Set<string>();
@@ -338,18 +374,103 @@ function generateTxId(): string {
 /**
  * Apply a WebSocket message to the Y.Doc.
  * Extracted to support buffering during reconnect (FLO-152).
+ *
+ * Now includes sequence number tracking for gap detection.
  */
-function applyWsMessage(msg: { txId?: string; data: string }) {
+function applyWsMessage(msg: WsMessage) {
   // Echo prevention: skip if this is our own update
   if (msg.txId && recentTxIds.has(msg.txId)) {
     console.log('[WS] Skipping own update (txId:', msg.txId, ')');
     recentTxIds.delete(msg.txId);
+    // Still track seq even for our own updates
+    if (msg.seq !== undefined) {
+      lastSeenSeq = msg.seq;
+    }
     return;
+  }
+
+  // Gap detection: check if we missed any updates
+  if (msg.seq !== undefined && lastSeenSeq !== null) {
+    const expectedSeq = lastSeenSeq + 1;
+    if (msg.seq > expectedSeq) {
+      // Gap detected! We missed seq(s) between lastSeenSeq and msg.seq
+      console.warn(`[WS] Gap detected: ${lastSeenSeq} → ${msg.seq} (missing ${msg.seq - expectedSeq} updates)`);
+      // Trigger async fetch of missing updates
+      fetchMissingUpdates(lastSeenSeq, msg.seq);
+    }
+  }
+
+  // Track sequence number (if provided - restore broadcasts don't have seq)
+  if (msg.seq !== undefined) {
+    lastSeenSeq = msg.seq;
   }
 
   // Decode base64 and apply
   const update = base64ToBytes(msg.data);
   Y.applyUpdate(sharedDoc, update, 'remote');
+}
+
+/**
+ * Fetch missing updates when a gap is detected.
+ * Runs async - doesn't block current message processing.
+ * Falls back to full resync if gap is too large or updates are compacted.
+ */
+async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void> {
+  // Prevent concurrent fetches
+  if (isFetchingMissingUpdates) {
+    console.log('[WS] Already fetching missing updates, skipping');
+    return;
+  }
+
+  const gapSize = toSeq - fromSeq - 1;
+
+  // Large gap - full resync is faster
+  if (gapSize > GAP_THRESHOLD_FOR_FULL_RESYNC) {
+    console.log(`[WS] Gap too large (${gapSize} updates), triggering full resync`);
+    await triggerFullResync();
+    return;
+  }
+
+  isFetchingMissingUpdates = true;
+  try {
+    const { getHttpClient, isClientInitialized } = await import('../lib/httpClient');
+    if (!isClientInitialized()) {
+      console.warn('[WS] HTTP client not initialized, cannot fetch missing updates');
+      return;
+    }
+
+    const httpClient = getHttpClient();
+    const result = await httpClient.getUpdatesSince(fromSeq, gapSize + 1);
+
+    if (!result.ok) {
+      // 410 Gone - updates were compacted, need full resync
+      console.warn('[WS] Updates compacted (through seq', result.compactedThrough, '), triggering full resync');
+      await triggerFullResync();
+      return;
+    }
+
+    // Apply the missing updates
+    const { updates, latestSeq } = result.response;
+    console.log(`[WS] Fetched ${updates.length} missing updates (seq ${fromSeq} → ${latestSeq ?? 'unknown'})`);
+
+    try {
+      isApplyingRemoteGlobal = true;
+      for (const entry of updates) {
+        const update = base64ToBytes(entry.data);
+        Y.applyUpdate(sharedDoc, update, 'gap-fill');
+        // Update lastSeenSeq as we apply each update
+        lastSeenSeq = entry.seq;
+      }
+    } finally {
+      isApplyingRemoteGlobal = false;
+    }
+  } catch (err) {
+    console.error('[WS] Failed to fetch missing updates:', err);
+    // Fall back to full resync on any error
+    await triggerFullResync();
+  } finally {
+    isFetchingMissingUpdates = false;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -562,7 +683,8 @@ function connectWebSocket() {
       }
 
       if (isReconnect) {
-        // RECONNECT: full sync with buffering (existing FLO-152 logic)
+        // RECONNECT: sync with buffering (FLO-152)
+        // Now supports incremental sync via lastSeenSeq when available
         // FLO-152: Mark NOT ready for messages - buffer incoming until sync completes
         wsReadyForMessages = false;
         wsMessageBuffer = [];
@@ -583,21 +705,55 @@ function connectWebSocket() {
             }
 
             // 2. Fetch any updates we missed during disconnection
-            // Server state includes all updates; applyUpdate is idempotent (no-op for already-seen)
-            // FLO-256: Use 'reconnect-authority' origin to bypass hasLocalChanges guard in BlockItem
-            // This ensures server state syncs to DOM even when blocks have pending local changes
             const { getHttpClient } = await import('../lib/httpClient');
             const httpClient = getHttpClient();
-            const serverState = await httpClient.getState();
-            if (serverState && serverState.length > 2) {
-              console.log('[WS] Syncing server state after reconnect:', serverState.length, 'bytes');
-              // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
-              try {
-                isApplyingRemoteGlobal = true;
-                Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
-              } finally {
-                isApplyingRemoteGlobal = false;
+
+            // Try incremental sync if we have a lastSeenSeq
+            let syncedIncrementally = false;
+            if (lastSeenSeq !== null) {
+              console.log('[WS] Attempting incremental reconnect sync (since seq:', lastSeenSeq, ')');
+              const result = await httpClient.getUpdatesSince(lastSeenSeq);
+
+              if (result.ok) {
+                const { updates, latestSeq } = result.response;
+                if (updates.length > 0) {
+                  console.log(`[WS] Incremental sync: applying ${updates.length} updates (seq ${lastSeenSeq} → ${latestSeq ?? 'unknown'})`);
+                  try {
+                    isApplyingRemoteGlobal = true;
+                    for (const entry of updates) {
+                      const update = base64ToBytes(entry.data);
+                      Y.applyUpdate(sharedDoc, update, 'reconnect-authority');
+                      lastSeenSeq = entry.seq;
+                    }
+                  } finally {
+                    isApplyingRemoteGlobal = false;
+                  }
+                } else {
+                  console.log('[WS] Incremental sync: no new updates (already up to date)');
+                }
+                syncedIncrementally = true;
+              } else {
+                // 410 Gone - updates were compacted, need full resync
+                console.warn('[WS] Incremental sync unavailable (compacted through', result.compactedThrough, '), falling back to full sync');
               }
+            }
+
+            // Fall back to full state sync if incremental sync not possible/failed
+            if (!syncedIncrementally) {
+              const serverState = await httpClient.getState();
+              if (serverState && serverState.length > 2) {
+                console.log('[WS] Full state sync after reconnect:', serverState.length, 'bytes');
+                // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
+                try {
+                  isApplyingRemoteGlobal = true;
+                  Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
+                } finally {
+                  isApplyingRemoteGlobal = false;
+                }
+              }
+              // Reset lastSeenSeq - we don't know what seq the full state represents
+              // Will be set by next WS message
+              lastSeenSeq = null;
             }
 
             // FLO-152: Guard against stale IIFE from previous connection
@@ -640,16 +796,20 @@ function connectWebSocket() {
     };
 
     sharedWebSocket.onmessage = (event) => {
-      // Server sends JSON text messages: { txId?: string, data: string (base64) }
+      // Server sends JSON text messages: { seq?: number, txId?: string, data: string (base64) }
       if (typeof event.data === 'string') {
         try {
-          const msg = JSON.parse(event.data) as { txId?: string; data: string };
+          const msg = JSON.parse(event.data) as WsMessage;
 
           // FLO-152: Buffer messages during reconnect sync to prevent race condition
           if (!wsReadyForMessages) {
             if (wsMessageBuffer.length < WS_MESSAGE_BUFFER_MAX) {
               wsMessageBuffer.push(msg);
-              console.log('[WS] Buffered message during reconnect sync (total:', wsMessageBuffer.length, ')');
+              if (msg.seq !== undefined) {
+                console.log('[WS] Buffered message during reconnect sync (seq:', msg.seq, ', total:', wsMessageBuffer.length, ')');
+              } else {
+                console.log('[WS] Buffered message during reconnect sync (total:', wsMessageBuffer.length, ')');
+              }
             } else {
               console.warn('[WS] Message buffer full, dropping message');
             }
@@ -992,6 +1152,10 @@ function cleanupForHMR(): void {
   wsMessageBuffer = [];
   wsConnectionId = 0;
   wsRetryCount = 0;
+
+  // Reset sequence tracking
+  lastSeenSeq = null;
+  isFetchingMissingUpdates = false;
 
   // Reset handler tracking
   handlerRefCount = 0;

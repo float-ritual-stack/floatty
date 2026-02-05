@@ -110,6 +110,13 @@ impl YDocPersistence {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            -- Sync metadata for sequence tracking
+            -- Stores compaction boundary and other sync-related state
+            CREATE TABLE IF NOT EXISTS sync_meta (
+                key TEXT PRIMARY KEY,
+                value INTEGER NOT NULL
+            );
         "#,
         )?;
         Ok(())
@@ -150,19 +157,30 @@ impl YDocPersistence {
 
     /// Append a Y.Doc update delta.
     ///
-    /// This is the fast path - single row insert.
-    pub fn append_update(&self, doc_key: &str, update: &[u8]) -> Result<(), PersistenceError> {
+    /// Returns the sequence number (rowid) assigned to this update.
+    /// The sequence number is monotonically increasing and can be used for
+    /// gap detection and incremental sync.
+    ///
+    /// This is the fast path - single row insert wrapped in transaction
+    /// to ensure last_insert_rowid returns our insert's id.
+    pub fn append_update(&self, doc_key: &str, update: &[u8]) -> Result<i64, PersistenceError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
 
         let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
-        conn.execute(
+
+        // Use transaction to guarantee last_insert_rowid returns our insert
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO ydoc_updates (doc_key, update_data, created_at) VALUES (?, ?, ?)",
             params![doc_key, update, now],
         )?;
-        Ok(())
+        let seq = tx.last_insert_rowid();
+        tx.commit()?;
+
+        Ok(seq)
     }
 
     /// Get all updates for a document (for replay on load).
@@ -193,10 +211,22 @@ impl YDocPersistence {
 
     /// Compact: delete all updates and replace with single snapshot.
     ///
-    /// This is a transaction to ensure atomicity.
-    pub fn compact(&self, doc_key: &str, snapshot: &[u8]) -> Result<(), PersistenceError> {
+    /// This is a transaction to ensure atomicity. Also records the compaction
+    /// boundary in sync_meta so clients know when they've fallen too far behind.
+    ///
+    /// Returns the sequence number of the snapshot row.
+    pub fn compact(&self, doc_key: &str, snapshot: &[u8]) -> Result<i64, PersistenceError> {
         let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
         let tx = conn.unchecked_transaction()?;
+
+        // Get the max seq before deletion (this is what we're compacting away)
+        let max_seq_before: Option<i64> = tx
+            .query_row(
+                "SELECT MAX(id) FROM ydoc_updates WHERE doc_key = ?",
+                [doc_key],
+                |row| row.get(0),
+            )
+            .unwrap_or(None);
 
         // Delete all existing updates for this doc
         tx.execute("DELETE FROM ydoc_updates WHERE doc_key = ?", [doc_key])?;
@@ -211,10 +241,25 @@ impl YDocPersistence {
             "INSERT INTO ydoc_updates (doc_key, update_data, created_at) VALUES (?, ?, ?)",
             params![doc_key, snapshot, now],
         )?;
+        let snapshot_seq = tx.last_insert_rowid();
+
+        // Record compaction boundary: the last seq that was compacted away
+        // Clients requesting since < compacted_through should do full resync
+        if let Some(old_max) = max_seq_before {
+            tx.execute(
+                "INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('compacted_through', ?)",
+                params![old_max],
+            )?;
+        }
 
         tx.commit()?;
-        log::info!("Compacted Y.Doc '{}' to single snapshot", doc_key);
-        Ok(())
+        log::info!(
+            "Compacted Y.Doc '{}' to single snapshot (seq {}), compacted_through: {:?}",
+            doc_key,
+            snapshot_seq,
+            max_seq_before
+        );
+        Ok(snapshot_seq)
     }
 
     /// Check if any updates exist for a document.
@@ -227,6 +272,66 @@ impl YDocPersistence {
         )?;
         Ok(count > 0)
     }
+
+    // =========================================================================
+    // Sequence-based sync methods (FLO-XXX)
+    // =========================================================================
+
+    /// Get updates since a given sequence number.
+    ///
+    /// Returns tuples of (seq, update_data, created_at) for updates with id > since_seq.
+    /// Used for incremental sync - clients track lastSeenSeq and fetch only what they missed.
+    pub fn get_updates_since(
+        &self,
+        doc_key: &str,
+        since_seq: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, Vec<u8>, i64)>, PersistenceError> {
+        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, update_data, created_at FROM ydoc_updates \
+             WHERE doc_key = ? AND id > ? ORDER BY id ASC LIMIT ?",
+        )?;
+        let rows = stmt.query_map(params![doc_key, since_seq, limit as i64], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, i64>(2)?))
+        })?;
+        rows.collect::<SqliteResult<Vec<_>>>()
+            .map_err(PersistenceError::from)
+    }
+
+    /// Get the latest sequence number for a document.
+    ///
+    /// Returns None if no updates exist.
+    pub fn get_latest_seq(&self, doc_key: &str) -> Result<Option<i64>, PersistenceError> {
+        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let result: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(id) FROM ydoc_updates WHERE doc_key = ?",
+                [doc_key],
+                |row| row.get(0),
+            )
+            .unwrap_or(None);
+        Ok(result)
+    }
+
+    /// Get the compaction boundary.
+    ///
+    /// Returns the highest sequence number that was compacted away.
+    /// Clients requesting since < compacted_through are too far behind
+    /// and should do a full state resync instead of incremental.
+    pub fn get_compacted_through(&self) -> Result<Option<i64>, PersistenceError> {
+        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let result: Result<i64, _> = conn.query_row(
+            "SELECT value FROM sync_meta WHERE key = 'compacted_through'",
+            [],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(PersistenceError::Sqlite(e)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -237,15 +342,31 @@ mod tests {
     fn test_append_and_get_updates() {
         let persistence = YDocPersistence::open_in_memory().unwrap();
 
-        persistence.append_update("test-doc", b"update1").unwrap();
-        persistence.append_update("test-doc", b"update2").unwrap();
-        persistence.append_update("test-doc", b"update3").unwrap();
+        let seq1 = persistence.append_update("test-doc", b"update1").unwrap();
+        let seq2 = persistence.append_update("test-doc", b"update2").unwrap();
+        let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
+
+        // Verify monotonically increasing sequence numbers
+        assert!(seq2 > seq1);
+        assert!(seq3 > seq2);
 
         let updates = persistence.get_updates("test-doc").unwrap();
         assert_eq!(updates.len(), 3);
         assert_eq!(updates[0], b"update1");
         assert_eq!(updates[1], b"update2");
         assert_eq!(updates[2], b"update3");
+    }
+
+    #[test]
+    fn test_append_returns_monotonic_seq() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        let seq1 = persistence.append_update("test-doc", b"update1").unwrap();
+        let seq2 = persistence.append_update("test-doc", b"update2").unwrap();
+        let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
+
+        assert_eq!(seq2, seq1 + 1);
+        assert_eq!(seq3, seq2 + 1);
     }
 
     #[test]
@@ -266,15 +387,45 @@ mod tests {
 
         persistence.append_update("test-doc", b"update1").unwrap();
         persistence.append_update("test-doc", b"update2").unwrap();
-        persistence.append_update("test-doc", b"update3").unwrap();
+        let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
 
         assert_eq!(persistence.get_update_count("test-doc").unwrap(), 3);
 
-        persistence.compact("test-doc", b"snapshot").unwrap();
+        let snapshot_seq = persistence.compact("test-doc", b"snapshot").unwrap();
+
+        // Snapshot gets a new seq after the old ones
+        assert!(snapshot_seq > seq3);
 
         assert_eq!(persistence.get_update_count("test-doc").unwrap(), 1);
         let updates = persistence.get_updates("test-doc").unwrap();
         assert_eq!(updates[0], b"snapshot");
+    }
+
+    #[test]
+    fn test_compact_sets_boundary() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        let seq1 = persistence.append_update("test-doc", b"update1").unwrap();
+        let seq2 = persistence.append_update("test-doc", b"update2").unwrap();
+        let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
+
+        // Before compaction, no boundary
+        assert_eq!(persistence.get_compacted_through().unwrap(), None);
+
+        persistence.compact("test-doc", b"snapshot").unwrap();
+
+        // After compaction, boundary is the max seq that was deleted
+        let boundary = persistence.get_compacted_through().unwrap();
+        assert_eq!(boundary, Some(seq3));
+
+        // Verify old seqs are gone
+        let updates_since_0 = persistence.get_updates_since("test-doc", 0, 100).unwrap();
+        assert_eq!(updates_since_0.len(), 1); // Just the snapshot
+        assert!(updates_since_0[0].0 > seq3); // Snapshot seq is higher
+
+        // Requesting since seq1 should also just return the snapshot
+        let updates_since_1 = persistence.get_updates_since("test-doc", seq1, 100).unwrap();
+        assert_eq!(updates_since_1.len(), 1);
     }
 
     #[test]
@@ -287,6 +438,96 @@ mod tests {
 
         let a_updates = persistence.get_updates("doc-a").unwrap();
         let b_updates = persistence.get_updates("doc-b").unwrap();
+
+        assert_eq!(a_updates.len(), 2);
+        assert_eq!(b_updates.len(), 1);
+    }
+
+    // =========================================================================
+    // Sequence-based sync tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_updates_since() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        let seq1 = persistence.append_update("test-doc", b"update1").unwrap();
+        let seq2 = persistence.append_update("test-doc", b"update2").unwrap();
+        let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
+        let seq4 = persistence.append_update("test-doc", b"update4").unwrap();
+        let seq5 = persistence.append_update("test-doc", b"update5").unwrap();
+
+        // Get all updates (since 0)
+        let all = persistence.get_updates_since("test-doc", 0, 100).unwrap();
+        assert_eq!(all.len(), 5);
+        assert_eq!(all[0].0, seq1);
+        assert_eq!(all[4].0, seq5);
+
+        // Get updates since seq2 (should return 3, 4, 5)
+        let since_2 = persistence.get_updates_since("test-doc", seq2, 100).unwrap();
+        assert_eq!(since_2.len(), 3);
+        assert_eq!(since_2[0].0, seq3);
+        assert_eq!(since_2[0].1, b"update3".to_vec());
+
+        // Get updates since seq5 (should return empty)
+        let since_5 = persistence.get_updates_since("test-doc", seq5, 100).unwrap();
+        assert_eq!(since_5.len(), 0);
+
+        // Test limit
+        let limited = persistence.get_updates_since("test-doc", 0, 2).unwrap();
+        assert_eq!(limited.len(), 2);
+        assert_eq!(limited[0].0, seq1);
+        assert_eq!(limited[1].0, seq2);
+    }
+
+    #[test]
+    fn test_get_latest_seq() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        // No updates yet
+        assert_eq!(persistence.get_latest_seq("test-doc").unwrap(), None);
+
+        let seq1 = persistence.append_update("test-doc", b"update1").unwrap();
+        assert_eq!(persistence.get_latest_seq("test-doc").unwrap(), Some(seq1));
+
+        let seq2 = persistence.append_update("test-doc", b"update2").unwrap();
+        assert_eq!(persistence.get_latest_seq("test-doc").unwrap(), Some(seq2));
+
+        let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
+        assert_eq!(persistence.get_latest_seq("test-doc").unwrap(), Some(seq3));
+    }
+
+    #[test]
+    fn test_get_compacted_through() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        // No compaction yet
+        assert_eq!(persistence.get_compacted_through().unwrap(), None);
+
+        persistence.append_update("test-doc", b"update1").unwrap();
+        persistence.append_update("test-doc", b"update2").unwrap();
+        let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
+
+        // Still no compaction
+        assert_eq!(persistence.get_compacted_through().unwrap(), None);
+
+        // Compact
+        persistence.compact("test-doc", b"snapshot").unwrap();
+
+        // Now we have a boundary
+        assert_eq!(persistence.get_compacted_through().unwrap(), Some(seq3));
+    }
+
+    #[test]
+    fn test_updates_since_respects_doc_key() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        persistence.append_update("doc-a", b"a1").unwrap();
+        persistence.append_update("doc-a", b"a2").unwrap();
+        persistence.append_update("doc-b", b"b1").unwrap();
+
+        let a_updates = persistence.get_updates_since("doc-a", 0, 100).unwrap();
+        let b_updates = persistence.get_updates_since("doc-b", 0, 100).unwrap();
 
         assert_eq!(a_updates.len(), 2);
         assert_eq!(b_updates.len(), 1);
