@@ -649,6 +649,12 @@ body.resizing .terminal-pane-positioned {
   background: var(--color-bg);
 }
 
+/* FLO-278: Scroll lock for focus routing - CSS class instead of inline style
+   prevents race condition between focus lock and RAF scroll preservation */
+.outliner-container.scroll-locked {
+  overflow-y: hidden !important;
+}
+
 /* Outliner clear button - uses CSS variables instead of hardcoded colors */
 .outliner-clear-button {
   font-size: 10px;
