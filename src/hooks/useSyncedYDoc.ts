@@ -397,18 +397,15 @@ function updateLastSeenSeq(newSeq: number): void {
 }
 
 /**
- * Update lastContiguousSeq when we receive the next expected seq.
- * Call this when applying updates that are known to be contiguous
- * (e.g., gap-fill results, reconnect sync pages, or initial load).
+ * Advance lastContiguousSeq when applying the next expected seq.
+ * Only call this when applying updates that are known to be contiguous
+ * (gap-fill results, reconnect sync pages, initial load).
+ *
+ * Callers must iterate in seq order — this only advances if seq is exactly
+ * lastContiguousSeq + 1 (or if this is the first seq we track).
  */
 function advanceContiguousSeq(seq: number): void {
-  // If we don't have a contiguous seq yet, or this is the next expected seq,
-  // or this is filling in a gap up to lastSeenSeq, advance contiguous tracking
-  if (
-    lastContiguousSeq === null ||
-    seq === lastContiguousSeq + 1 ||
-    (seq > lastContiguousSeq && seq <= (lastSeenSeq ?? seq))
-  ) {
+  if (lastContiguousSeq === null || seq === lastContiguousSeq + 1) {
     lastContiguousSeq = seq;
   }
 }
@@ -510,7 +507,11 @@ function queueGapFetch(fromSeq: number, toSeq: number): void {
   }
 
   // No fetch in progress - start immediately
-  fetchMissingUpdates(fromSeq, toSeq);
+  // Note: fetchMissingUpdates has internal try/catch, but add .catch() for any
+  // unexpected throws (e.g., dynamic import failure) to prevent unhandled rejection
+  fetchMissingUpdates(fromSeq, toSeq).catch((err) =>
+    console.error('[WS] Unhandled error in gap fetch:', err)
+  );
 }
 
 /**
@@ -852,14 +853,19 @@ function connectWebSocket() {
 
             // Try incremental sync if we have a lastSeenSeq
             // Loop through pages since server may paginate results (default limit 100)
+            // Cap at 50 pages (5000 updates) to prevent infinite loop if server is receiving
+            // updates faster than we can fetch them
+            const MAX_RECONNECT_PAGES = 50;
             let syncedIncrementally = false;
             if (lastSeenSeq !== null) {
               console.log('[WS] Attempting incremental reconnect sync (since seq:', lastSeenSeq, ')');
               let currentSeq = lastSeenSeq;
               let totalApplied = 0;
+              let pageCount = 0;
 
-              // Loop until we've fetched all pages
-              while (true) {
+              // Loop until we've fetched all pages (or hit ceiling)
+              while (pageCount < MAX_RECONNECT_PAGES) {
+                pageCount++;
                 const result = await httpClient.getUpdatesSince(currentSeq);
 
                 if (!result.ok) {
@@ -906,6 +912,11 @@ function connectWebSocket() {
                 }
 
                 // Continue fetching more pages
+              }
+
+              // Hit page ceiling without catching up - fall back to full sync
+              if (pageCount >= MAX_RECONNECT_PAGES && !syncedIncrementally) {
+                console.warn(`[WS] Incremental sync exceeded ${MAX_RECONNECT_PAGES} pages (${totalApplied} updates), falling back to full sync`);
               }
             }
 
