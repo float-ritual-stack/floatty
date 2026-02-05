@@ -23,6 +23,7 @@ import {
 } from '../lib/idbBackup';
 import { invoke } from '@tauri-apps/api/core';
 import type { AggregatorConfig } from '../lib/tauriTypes';
+import { SyncSequenceTracker } from '../lib/syncSequenceTracker';
 
 // ═══════════════════════════════════════════════════════════════
 // SYNC STATUS (singleton signals for UI visibility)
@@ -138,17 +139,14 @@ export async function triggerFullResync(): Promise<void> {
       } finally {
         isApplyingRemoteGlobal = false;
       }
-      // Re-seed both seq trackers from server's latestSeq
-      // Full state means all seqs up to latestSeq are covered
+      // Re-seed seq tracking from server's latestSeq via tracker
+      // Full state means all seqs up to latestSeq are covered + clears gap queue
       if (latestSeq !== null) {
-        updateLastSeenSeq(latestSeq);
-        lastContiguousSeq = latestSeq;
+        seqTracker.seedFromFullSync(latestSeq);
         console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied, seq:', latestSeq);
       } else {
         console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied (no seq)');
       }
-      // Clear any pending gaps - full sync covers everything
-      pendingGapQueue = [];
     } else {
       console.log('[useSyncedYDoc] Server state empty, nothing to apply');
     }
@@ -340,43 +338,38 @@ interface WsMessage {
   data?: string;
 }
 
-/**
- * Last seen sequence number from WebSocket.
- * - null: haven't seen any seq-bearing messages yet
- * - number: highest seq we've successfully processed
- *
- * IMPORTANT: This must be monotonically increasing to prevent reopening gaps.
- * Only update via updateLastSeenSeq() which enforces monotonicity.
- *
- * Used for:
- * - Gap detection: seq 417 → seq 419 means we missed 418
- * - Incremental reconnect: fetch only updates since lastSeenSeq
- */
-let lastSeenSeq: number | null = null;
+// ═══════════════════════════════════════════════════════════════
+// SEQUENCE TRACKING (extracted to SyncSequenceTracker)
+// ═══════════════════════════════════════════════════════════════
+
+/** How often to persist lastSeenSeq (debounce interval) */
+const LAST_SEEN_SEQ_PERSIST_DEBOUNCE_MS = 5000;
+
+/** Debounce timer for persisting lastSeenSeq to IndexedDB */
+let lastSeenSeqPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Track the highest seq for which ALL prior seqs have been received.
- * Unlike lastSeenSeq (which can jump on out-of-order messages), this only
- * advances when updates are applied in contiguous order.
- *
- * Used for gap queue processing - determines when queued gaps are truly covered.
- *
- * Example:
- * - Receive seq 100: lastContiguousSeq = 100, lastSeenSeq = 100
- * - Receive seq 105: lastContiguousSeq = 100, lastSeenSeq = 105 (gap queued for 101-104)
- * - Gap-fill applies 101-104: lastContiguousSeq = 105, lastSeenSeq = 105
+ * Schedule a debounced save of lastSeenSeq to IndexedDB.
+ * Used as callback for SyncSequenceTracker.
  */
-let lastContiguousSeq: number | null = null;
-
-/** Track if we're currently fetching missing updates (prevent concurrent fetches) */
-let isFetchingMissingUpdates = false;
-
-/** Queue of pending gap fetches - processed after current fetch completes */
-interface PendingGap {
-  fromSeq: number;
-  toSeq: number;
+function scheduleLastSeenSeqPersist(seq: number): void {
+  if (lastSeenSeqPersistTimer !== null) {
+    clearTimeout(lastSeenSeqPersistTimer);
+  }
+  lastSeenSeqPersistTimer = setTimeout(() => {
+    lastSeenSeqPersistTimer = null;
+    saveLastSeenSeqIDB(seq).catch(err => {
+      console.warn('[useSyncedYDoc] Failed to persist lastSeenSeq:', err);
+    });
+  }, LAST_SEEN_SEQ_PERSIST_DEBOUNCE_MS);
 }
-let pendingGapQueue: PendingGap[] = [];
+
+/**
+ * Singleton sequence tracker instance.
+ * Manages lastSeenSeq, lastContiguousSeq, gap queue, and fetch coordination.
+ * Created with persistence callback for crash recovery.
+ */
+const seqTracker = new SyncSequenceTracker(scheduleLastSeenSeqPersist);
 
 /**
  * Threshold for gap size before falling back to full resync.
@@ -386,58 +379,6 @@ const GAP_THRESHOLD_FOR_FULL_RESYNC = 100;
 
 /** Message buffer (seq-aware) */
 let wsMessageBuffer: WsMessage[] = [];
-
-/** Debounce timer for persisting lastSeenSeq to IndexedDB */
-let lastSeenSeqPersistTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** How often to persist lastSeenSeq (debounce interval) */
-const LAST_SEEN_SEQ_PERSIST_DEBOUNCE_MS = 5000;
-
-/**
- * Schedule a debounced save of lastSeenSeq to IndexedDB.
- * Uses 5s debounce to batch rapid updates.
- */
-function scheduleLastSeenSeqPersist(): void {
-  if (lastSeenSeqPersistTimer !== null) {
-    clearTimeout(lastSeenSeqPersistTimer);
-  }
-  lastSeenSeqPersistTimer = setTimeout(() => {
-    lastSeenSeqPersistTimer = null;
-    if (lastSeenSeq !== null) {
-      saveLastSeenSeqIDB(lastSeenSeq).catch(err => {
-        console.warn('[useSyncedYDoc] Failed to persist lastSeenSeq:', err);
-      });
-    }
-  }, LAST_SEEN_SEQ_PERSIST_DEBOUNCE_MS);
-}
-
-/**
- * Update lastSeenSeq monotonically.
- * Only updates if newSeq > current lastSeenSeq (or if lastSeenSeq is null).
- * This prevents out-of-order or gap-fill updates from regressing the counter.
- *
- * Also schedules a debounced persist to IndexedDB for crash recovery.
- */
-function updateLastSeenSeq(newSeq: number): void {
-  if (lastSeenSeq === null || newSeq > lastSeenSeq) {
-    lastSeenSeq = newSeq;
-    scheduleLastSeenSeqPersist();
-  }
-}
-
-/**
- * Advance lastContiguousSeq when applying the next expected seq.
- * Only call this when applying updates that are known to be contiguous
- * (gap-fill results, reconnect sync pages, initial load).
- *
- * Callers must iterate in seq order — this only advances if seq is exactly
- * lastContiguousSeq + 1 (or if this is the first seq we track).
- */
-function advanceContiguousSeq(seq: number): void {
-  if (lastContiguousSeq === null || seq === lastContiguousSeq + 1) {
-    lastContiguousSeq = seq;
-  }
-}
 
 // Echo prevention: track txIds we sent to filter them from broadcasts
 const recentTxIds = new Set<string>();
@@ -463,7 +404,7 @@ function generateTxId(): string {
  * Apply a WebSocket message to the Y.Doc.
  * Extracted to support buffering during reconnect (FLO-152).
  *
- * Now includes sequence number tracking for gap detection.
+ * Now includes sequence number tracking for gap detection via SyncSequenceTracker.
  */
 function applyWsMessage(msg: WsMessage) {
   // Echo prevention: skip APPLICATION if this is our own update
@@ -472,40 +413,16 @@ function applyWsMessage(msg: WsMessage) {
     console.log('[WS] Skipping own update application (txId:', msg.txId, ')');
     recentTxIds.delete(msg.txId);
 
-    // Gap detection for echoed messages - don't skip this!
+    // Gap detection for echoed messages via tracker
     // Our message's seq may reveal we missed updates from other clients
-    if (msg.seq !== undefined && lastSeenSeq !== null) {
-      const expectedSeq = lastSeenSeq + 1;
-      if (msg.seq > expectedSeq) {
-        console.warn(`[WS] Gap detected (echo): ${lastSeenSeq} → ${msg.seq} (missing ${msg.seq - expectedSeq} updates)`);
-        queueGapFetch(lastSeenSeq, msg.seq);
-      }
-    }
-
-    // Track seq even for our own updates (monotonic + contiguous)
     if (msg.seq !== undefined) {
-      updateLastSeenSeq(msg.seq);
-      // Our own update was applied locally, so it's contiguous
-      if (lastContiguousSeq === null || msg.seq === lastContiguousSeq + 1) {
-        lastContiguousSeq = msg.seq;
+      const gap = seqTracker.observeEcho(msg.seq);
+      if (gap) {
+        console.warn(`[WS] Gap detected (echo): ${gap.fromSeq} → ${gap.toSeq} (missing ${gap.toSeq - gap.fromSeq - 1} updates)`);
+        queueGapFetch(gap.fromSeq, gap.toSeq);
       }
     }
     return;
-  }
-
-  // Gap detection: check if we missed any updates
-  if (msg.seq !== undefined && lastSeenSeq !== null) {
-    const expectedSeq = lastSeenSeq + 1;
-    if (msg.seq > expectedSeq) {
-      // Gap detected! We missed seq(s) between lastSeenSeq and msg.seq
-      console.warn(`[WS] Gap detected: ${lastSeenSeq} → ${msg.seq} (missing ${msg.seq - expectedSeq} updates)`);
-
-      // NOTE: We apply this message immediately even though earlier seq(s) are missing.
-      // This is safe because Y.Doc CRDT merge is commutative — application order doesn't
-      // affect the final document state. The gap-fill fetch runs async and applies the
-      // missing updates when they arrive. The end state is identical regardless of order.
-      queueGapFetch(lastSeenSeq, msg.seq);
-    }
   }
 
   // Detect restore/full-state broadcasts: has data but no seq
@@ -513,18 +430,21 @@ function applyWsMessage(msg: WsMessage) {
   // Reset before applying to avoid false gap detection against old seq values.
   if (msg.seq === undefined && msg.data) {
     console.log('[WS] Restore broadcast detected (data without seq), resetting seq tracking');
-    lastSeenSeq = null;
-    lastContiguousSeq = null;
-    pendingGapQueue = [];
+    seqTracker.resetForRestore();
   }
 
-  // Track sequence number monotonically (if provided - restore broadcasts don't have seq)
+  // Gap detection for regular (non-echo) messages via tracker
   if (msg.seq !== undefined) {
-    updateLastSeenSeq(msg.seq);
-    // Also advance contiguous tracking if this is the next expected seq
-    // (or the first seq we see when lastContiguousSeq is null)
-    if (lastContiguousSeq === null || msg.seq === lastContiguousSeq + 1) {
-      lastContiguousSeq = msg.seq;
+    const gap = seqTracker.observeSeq(msg.seq);
+    if (gap) {
+      // Gap detected! We missed seq(s) between gap.fromSeq and gap.toSeq
+      console.warn(`[WS] Gap detected: ${gap.fromSeq} → ${gap.toSeq} (missing ${gap.toSeq - gap.fromSeq - 1} updates)`);
+
+      // NOTE: We apply this message immediately even though earlier seq(s) are missing.
+      // This is safe because Y.Doc CRDT merge is commutative — application order doesn't
+      // affect the final document state. The gap-fill fetch runs async and applies the
+      // missing updates when they arrive. The end state is identical regardless of order.
+      queueGapFetch(gap.fromSeq, gap.toSeq);
     }
   }
 
@@ -540,10 +460,10 @@ function applyWsMessage(msg: WsMessage) {
  * If a fetch is in progress, queues the gap to be processed after.
  */
 function queueGapFetch(fromSeq: number, toSeq: number): void {
-  if (isFetchingMissingUpdates) {
+  if (seqTracker.isFetching) {
     // Queue the gap - will be processed after current fetch
-    pendingGapQueue.push({ fromSeq, toSeq });
-    console.log(`[WS] Queued gap fetch (${fromSeq} → ${toSeq}), queue size: ${pendingGapQueue.length}`);
+    seqTracker.queueGap(fromSeq, toSeq);
+    console.log(`[WS] Queued gap fetch (${fromSeq} → ${toSeq}), queue size: ${seqTracker.pendingGapQueue.length}`);
     return;
   }
 
@@ -560,31 +480,15 @@ function queueGapFetch(fromSeq: number, toSeq: number): void {
  * Called after a gap fetch completes.
  */
 function processNextQueuedGap(): void {
-  if (pendingGapQueue.length === 0) {
+  // consolidateGaps handles: empty check, gap consolidation, coverage check, queue clearing
+  const consolidated = seqTracker.consolidateGaps();
+  if (!consolidated) {
+    // Either no gaps queued, or already covered by lastContiguousSeq
     return;
   }
 
-  // Consolidate queued gaps: find the overall range needed
-  // This handles cases where multiple gaps were queued during a long fetch
-  const minFrom = Math.min(...pendingGapQueue.map((g) => g.fromSeq));
-  const maxTo = Math.max(...pendingGapQueue.map((g) => g.toSeq));
-
-  // Clear queue before processing
-  pendingGapQueue = [];
-
-  // Use lastContiguousSeq (not lastSeenSeq) to determine if gaps are truly covered.
-  // lastSeenSeq can jump ahead on out-of-order messages, making it seem like
-  // gaps are covered when they're not. lastContiguousSeq only advances when
-  // all prior seqs have been received.
-  if (lastContiguousSeq !== null && maxTo <= lastContiguousSeq) {
-    console.log('[WS] Queued gaps already covered by lastContiguousSeq:', lastContiguousSeq);
-    return;
-  }
-
-  // Compute effective range using lastContiguousSeq
-  const effectiveFrom = lastContiguousSeq !== null ? Math.max(minFrom, lastContiguousSeq) : minFrom;
-  console.log(`[WS] Processing consolidated queued gap: ${effectiveFrom} → ${maxTo} (contiguous: ${lastContiguousSeq})`);
-  fetchMissingUpdates(effectiveFrom, maxTo);
+  console.log(`[WS] Processing consolidated queued gap: ${consolidated.fromSeq} → ${consolidated.toSeq} (contiguous: ${seqTracker.lastContiguousSeq})`);
+  fetchMissingUpdates(consolidated.fromSeq, consolidated.toSeq);
 }
 
 /**
@@ -594,9 +498,9 @@ function processNextQueuedGap(): void {
  */
 async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void> {
   // Guard against concurrent fetches (shouldn't happen with queue, but be safe)
-  if (isFetchingMissingUpdates) {
+  if (!seqTracker.markFetchStarted()) {
     console.warn('[WS] Unexpected concurrent fetch attempt, queueing');
-    pendingGapQueue.push({ fromSeq, toSeq });
+    seqTracker.queueGap(fromSeq, toSeq);
     return;
   }
 
@@ -605,12 +509,12 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
   // Large gap - full resync is faster
   if (gapSize > GAP_THRESHOLD_FOR_FULL_RESYNC) {
     console.log(`[WS] Gap too large (${gapSize} updates), triggering full resync`);
-    pendingGapQueue = []; // Clear queue - full resync covers everything
+    seqTracker.resetForRestore(); // Clear queue and reset seq tracking
+    seqTracker.markFetchDone();
     await triggerFullResync();
     return;
   }
 
-  isFetchingMissingUpdates = true;
   try {
     const { getHttpClient, isClientInitialized } = await import('../lib/httpClient');
     if (!isClientInitialized()) {
@@ -624,7 +528,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
     if (!result.ok) {
       // 410 Gone - updates were compacted, need full resync
       console.warn('[WS] Updates compacted (through seq', result.compactedThrough, '), triggering full resync');
-      pendingGapQueue = []; // Clear queue - full resync covers everything
+      seqTracker.resetForRestore(); // Clear queue and reset seq tracking
       await triggerFullResync();
       return;
     }
@@ -638,9 +542,8 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
       for (const entry of updates) {
         const update = base64ToBytes(entry.data);
         Y.applyUpdate(sharedDoc, update, 'gap-fill');
-        // Update both seq trackers - gap-fill updates are contiguous
-        updateLastSeenSeq(entry.seq);
-        advanceContiguousSeq(entry.seq);
+        // Gap-fill updates are contiguous - advance contiguous tracking
+        seqTracker.advanceContiguous(entry.seq);
       }
     } finally {
       isApplyingRemoteGlobal = false;
@@ -648,10 +551,10 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
   } catch (err) {
     console.error('[WS] Failed to fetch missing updates:', err);
     // Fall back to full resync on any error
-    pendingGapQueue = []; // Clear queue - full resync covers everything
+    seqTracker.resetForRestore(); // Clear queue and reset seq tracking
     await triggerFullResync();
   } finally {
-    isFetchingMissingUpdates = false;
+    seqTracker.markFetchDone();
     // Process any gaps that were queued during this fetch
     processNextQueuedGap();
   }
@@ -898,9 +801,9 @@ function connectWebSocket() {
             // updates faster than we can fetch them
             const MAX_RECONNECT_PAGES = 50;
             let syncedIncrementally = false;
-            if (lastSeenSeq !== null) {
-              console.log('[WS] Attempting incremental reconnect sync (since seq:', lastSeenSeq, ')');
-              let currentSeq = lastSeenSeq;
+            if (seqTracker.lastSeenSeq !== null) {
+              console.log('[WS] Attempting incremental reconnect sync (since seq:', seqTracker.lastSeenSeq, ')');
+              let currentSeq = seqTracker.lastSeenSeq;
               let totalApplied = 0;
               let pageCount = 0;
 
@@ -935,9 +838,8 @@ function connectWebSocket() {
                   for (const entry of updates) {
                     const update = base64ToBytes(entry.data);
                     Y.applyUpdate(sharedDoc, update, 'reconnect-authority');
-                    // Update both seq trackers - reconnect sync updates are contiguous
-                    updateLastSeenSeq(entry.seq);
-                    advanceContiguousSeq(entry.seq);
+                    // Reconnect sync updates are contiguous - observeSeq handles both seen + contiguous
+                    seqTracker.observeSeq(entry.seq);
                     currentSeq = entry.seq;
                   }
                 } finally {
@@ -974,15 +876,12 @@ function connectWebSocket() {
                   isApplyingRemoteGlobal = false;
                 }
               }
-              // Re-seed both seq trackers from server's latestSeq
-              // Full state means all seqs up to latestSeq are covered
+              // Re-seed both seq trackers from server's latestSeq via tracker
+              // Full state means all seqs up to latestSeq are covered + clears gap queue
               if (latestSeq !== null) {
-                updateLastSeenSeq(latestSeq);
-                lastContiguousSeq = latestSeq;
+                seqTracker.seedFromFullSync(latestSeq);
                 console.log('[WS] Seq tracking re-seeded to:', latestSeq);
               }
-              // Clear any pending gaps - full sync covers everything
-              pendingGapQueue = [];
             }
 
             // FLO-152: Guard against stale IIFE from previous connection
@@ -1167,7 +1066,8 @@ export function useSyncedYDoc(
           try {
             const persistedSeq = await getLastSeenSeqIDB();
             if (persistedSeq !== null) {
-              lastSeenSeq = persistedSeq;
+              // Seed tracker with persisted seq (sets both lastSeenSeq and lastContiguousSeq)
+              seqTracker.seedFromFullSync(persistedSeq);
               console.log('[useSyncedYDoc] Loaded persisted lastSeenSeq:', persistedSeq);
             }
           } catch (seqErr) {
@@ -1215,10 +1115,9 @@ export function useSyncedYDoc(
               Y.applyUpdate(doc, serverState, 'remote');
               setApplyingRemote(false);
 
-              // Seed both seq trackers from server (full state = all seqs covered)
+              // Seed seq tracking from server via tracker (full state = all seqs covered)
               if (latestSeq !== null) {
-                updateLastSeenSeq(latestSeq);
-                lastContiguousSeq = latestSeq;
+                seqTracker.seedFromFullSync(latestSeq);
               }
 
               console.log('[useSyncedYDoc] Reconciliation complete, seq:', latestSeq, ', clearing backup');
@@ -1233,10 +1132,9 @@ export function useSyncedYDoc(
                   setApplyingRemote(true);
                   Y.applyUpdate(doc, stateBytes, 'remote');
                   setApplyingRemote(false);
-                  // Seed both seq trackers (full state = all seqs covered)
+                  // Seed seq tracking via tracker (full state = all seqs covered)
                   if (latestSeq !== null) {
-                    updateLastSeenSeq(latestSeq);
-                    lastContiguousSeq = latestSeq;
+                    seqTracker.seedFromFullSync(latestSeq);
                   }
                 }
               } catch (stateErr) {
@@ -1262,10 +1160,9 @@ export function useSyncedYDoc(
               setApplyingRemote(true);
               Y.applyUpdate(doc, stateBytes, 'remote');
               setApplyingRemote(false);
-              // Seed both seq trackers from server (full state = all seqs covered)
+              // Seed seq tracking via tracker (full state = all seqs covered)
               if (latestSeq !== null) {
-                updateLastSeenSeq(latestSeq);
-                lastContiguousSeq = latestSeq;
+                seqTracker.seedFromFullSync(latestSeq);
                 console.log('[useSyncedYDoc] Initial load complete, seq:', latestSeq);
               }
             }
@@ -1414,11 +1311,8 @@ function cleanupForHMR(): void {
   wsConnectionId = 0;
   wsRetryCount = 0;
 
-  // Reset sequence tracking
-  lastSeenSeq = null;
-  lastContiguousSeq = null;
-  isFetchingMissingUpdates = false;
-  pendingGapQueue = [];
+  // Reset sequence tracking via tracker (full reset including fetch state)
+  seqTracker.resetAll();
 
   // Reset handler tracking
   handlerRefCount = 0;

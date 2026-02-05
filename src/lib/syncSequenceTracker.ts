@@ -51,6 +51,20 @@ export class SyncSequenceTracker {
   /** Whether we're currently fetching missing updates */
   private _isFetching = false;
 
+  /**
+   * Optional callback when lastSeenSeq changes.
+   * Used by useSyncedYDoc.ts to schedule persistence.
+   */
+  private onSeqChanged?: (seq: number) => void;
+
+  /**
+   * @param onSeqChanged Optional callback fired when lastSeenSeq increases.
+   *        Used for debounced persistence. Tests can omit this.
+   */
+  constructor(onSeqChanged?: (seq: number) => void) {
+    this.onSeqChanged = onSeqChanged;
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // GETTERS (read-only access to state)
   // ═══════════════════════════════════════════════════════════════
@@ -129,10 +143,12 @@ export class SyncSequenceTracker {
   /**
    * Update lastSeenSeq monotonically.
    * Only updates if newSeq > current lastSeenSeq (or if lastSeenSeq is null).
+   * Calls onSeqChanged callback if seq actually changed.
    */
   private updateLastSeen(newSeq: number): void {
     if (this._lastSeenSeq === null || newSeq > this._lastSeenSeq) {
       this._lastSeenSeq = newSeq;
+      this.onSeqChanged?.(newSeq);
     }
   }
 
@@ -163,6 +179,14 @@ export class SyncSequenceTracker {
     this._lastSeenSeq = null;
     this._lastContiguousSeq = null;
     this._pendingGapQueue = [];
+  }
+
+  /**
+   * Full reset including fetch state. Used for HMR/testing.
+   */
+  resetAll(): void {
+    this.resetForRestore();
+    this._isFetching = false;
   }
 
   // ═══════════════════════════════════════════════════════════════

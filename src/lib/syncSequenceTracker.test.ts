@@ -209,6 +209,24 @@ describe('SyncSequenceTracker', () => {
       expect(gap).toBeNull(); // No gap on first seq after reset
       expect(tracker.lastSeenSeq).toBe(1);
     });
+
+    it('resetAll clears everything including fetch state', () => {
+      // Build up state including fetch
+      tracker.observeSeq(100);
+      tracker.observeSeq(105);
+      tracker.queueGap(100, 105);
+      tracker.markFetchStarted();
+
+      expect(tracker.isFetching).toBe(true);
+
+      // Full reset
+      tracker.resetAll();
+
+      expect(tracker.lastSeenSeq).toBeNull();
+      expect(tracker.lastContiguousSeq).toBeNull();
+      expect(tracker.pendingGapQueue).toEqual([]);
+      expect(tracker.isFetching).toBe(false);
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════
