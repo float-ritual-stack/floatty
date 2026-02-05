@@ -178,7 +178,7 @@ fn default_updates_limit() -> usize {
 }
 
 /// Single update entry in response
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateEntry {
     /// Sequence number (monotonically increasing)
@@ -190,7 +190,7 @@ pub struct UpdateEntry {
 }
 
 /// Response for GET /api/v1/updates
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatesResponse {
     /// List of updates since the requested sequence
@@ -2754,5 +2754,122 @@ mod tests {
         assert!(export.block_count >= 1, "Should have at least 1 block");
         assert!(!export.root_ids.is_empty(), "Should have root IDs");
         assert!(!export.blocks.is_empty(), "Should have blocks");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // UPDATES ENDPOINT TESTS (FLO-SEQ)
+    // ═══════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_updates_endpoint_returns_410_when_behind_compaction() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+
+        // Create some updates via API (creates blocks which generate Y.Doc updates)
+        for i in 0..5 {
+            let content = format!(r#"{{"content": "Block {}"}}"#, i);
+            let _response = app
+                .clone()
+                .oneshot(
+                    Request::post("/api/v1/blocks")
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(content))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Get the latest seq before compaction
+        let latest_seq = store.get_latest_seq().unwrap().unwrap();
+        assert!(latest_seq >= 5, "Should have at least 5 updates");
+
+        // Compact - this creates a snapshot and deletes old updates
+        store.force_compact().unwrap();
+
+        // Now request updates since seq 1 (before compaction boundary)
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/updates?since=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::GONE, "Should return 410 Gone");
+
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(error.get("compactedThrough").is_some(), "Should include compactedThrough");
+        assert!(error.get("requestedSince").is_some(), "Should include requestedSince");
+    }
+
+    #[tokio::test]
+    async fn test_updates_endpoint_boundary_exact_match() {
+        // Edge case: client's lastSeenSeq == compacted_through
+        // This SHOULD work (they've seen everything up to compaction)
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
+        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+
+        // Create initial updates
+        for i in 0..3 {
+            let content = format!(r#"{{"content": "Block {}"}}"#, i);
+            let _response = app
+                .clone()
+                .oneshot(
+                    Request::post("/api/v1/blocks")
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(content))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Get seq before compaction (this will be the boundary)
+        let boundary_seq = store.get_latest_seq().unwrap().unwrap();
+
+        // Compact
+        store.force_compact().unwrap();
+
+        // Create one more update AFTER compaction
+        let _response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/blocks")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content": "Post-compaction block"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Request since=boundary_seq (exactly at boundary) — should work
+        let response = app
+            .oneshot(
+                Request::get(&format!("/api/v1/updates?since={}", boundary_seq))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK, "Boundary exact match should return 200");
+
+        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: UpdatesResponse = serde_json::from_slice(&body).unwrap();
+
+        // Should return at least the post-compaction update
+        // Note: may also include the compaction snapshot itself
+        assert!(!result.updates.is_empty(), "Should have updates after boundary");
     }
 }

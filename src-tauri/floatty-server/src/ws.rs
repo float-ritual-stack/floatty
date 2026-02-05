@@ -225,3 +225,108 @@ async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) {
     send_task.abort();
     tracing::info!("WebSocket client disconnected");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ═══════════════════════════════════════════════════════════════
+    // BROADCAST MESSAGE SERIALIZATION TESTS (wire format contract)
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_broadcast_message_serialization_heartbeat() {
+        // Heartbeat: seq present, no data, no txId
+        let msg = BroadcastMessage {
+            seq: Some(525),
+            tx_id: None,
+            data: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+
+        assert!(json.contains("\"seq\":525"), "Should have seq field");
+        assert!(!json.contains("\"data\""), "Should NOT have data field (skip_serializing_if)");
+        assert!(!json.contains("\"txId\""), "Should NOT have txId field");
+
+        // Verify it parses as expected JSON shape
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.get("seq").unwrap(), 525);
+        assert!(parsed.get("data").is_none());
+        assert!(parsed.get("txId").is_none());
+    }
+
+    #[test]
+    fn test_broadcast_message_serialization_update() {
+        // Normal update: seq + txId + data
+        let msg = BroadcastMessage {
+            seq: Some(526),
+            tx_id: Some("tx-abc".into()),
+            data: Some("AQID".into()), // base64
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+
+        assert!(json.contains("\"seq\":526"), "Should have seq");
+        assert!(json.contains("\"data\":\"AQID\""), "Should have data");
+        assert!(json.contains("\"txId\":\"tx-abc\""), "Should have txId");
+    }
+
+    #[test]
+    fn test_broadcast_message_serialization_restore() {
+        // Restore/full-state: data present, no seq (legacy)
+        let msg = BroadcastMessage {
+            seq: None,
+            tx_id: None,
+            data: Some("AQID".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+
+        assert!(json.contains("\"data\""), "Should have data field");
+        assert!(!json.contains("\"seq\""), "Should NOT have seq field");
+        assert!(!json.contains("\"txId\""), "Should NOT have txId field");
+
+        // Verify shape
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("seq").is_none(), "seq should be absent");
+        assert_eq!(parsed.get("data").unwrap(), "AQID");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // HEARTBEAT FLAG LIFECYCLE TEST
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_heartbeat_flag_lifecycle() {
+        let broadcaster = WsBroadcaster::new(16);
+
+        // Initially: no updates sent
+        assert!(
+            !broadcaster.check_and_reset_update_flag(),
+            "Flag should be false initially"
+        );
+
+        // After broadcast: flag is set
+        broadcaster.broadcast(vec![1, 2, 3], None, Some(1));
+        assert!(
+            broadcaster.check_and_reset_update_flag(),
+            "Flag should be true after broadcast"
+        );
+
+        // After check_and_reset: flag is cleared
+        assert!(
+            !broadcaster.check_and_reset_update_flag(),
+            "Flag should be false after reset"
+        );
+
+        // Multiple broadcasts before check: still just one flag
+        broadcaster.broadcast(vec![1], None, Some(2));
+        broadcaster.broadcast(vec![2], None, Some(3));
+        assert!(
+            broadcaster.check_and_reset_update_flag(),
+            "Flag should be true after multiple broadcasts"
+        );
+        assert!(
+            !broadcaster.check_and_reset_update_flag(),
+            "Flag should be false after second reset"
+        );
+    }
+}
