@@ -644,6 +644,38 @@ This prevents accidental deletion of large branches. Document as intentional, no
 
 **Health Check** (`useSyncHealth.ts`): Polls server every 120s comparing block counts (NOT hash — Y.Doc encoding varies). Reduced from 30s — sequence numbers now handle fast gap detection, this is a safety net. Two consecutive mismatches trigger full resync.
 
+### Sequence Number Architecture (PR #119)
+
+Fast gap detection layer complementing CRDT eventual consistency.
+
+```
+Server broadcasts:  seq 100 → 101 → 102 → [client offline] → 105
+Client receives:    seq 100 → 101 → 102 → reconnect → 105 (gap: 103-104!)
+                                                      ↓
+                                          Fetch GET /api/v1/updates?after=102&before=105
+                                                      ↓
+                                          Apply 103, 104, then 105
+```
+
+**Key Components**:
+| File | Purpose |
+|------|---------|
+| `SyncSequenceTracker.ts` | Gap detection, contiguous range tracking, fill orchestration |
+| `useSyncedYDoc.ts` | Integrates tracker, handles echo vs external messages |
+| `api.rs` | `GET /api/v1/updates` - paginated update retrieval (50/batch) |
+
+**Heartbeat**: Server broadcasts seq-only messages every 30s when idle. Closes the window between persist and broadcast—if server persists update but crashes before broadcast, heartbeat reveals the gap on next connection.
+
+**Two Observer Paths**:
+- `observeSeq(seq)` - External messages: detect gaps, trigger fill
+- `observeEcho(seq)` - Own messages echoed back: still detect gaps (your update at seq 105 reveals you missed 101-104)
+
+**IndexedDB Persistence**: `lastKnownSeq` survives page reload. On reconnect, client requests updates since persisted seq rather than full state fetch.
+
+**Restore Handling**: Full state restore (`/api/v1/restore`) broadcasts special message that resets all clients' seq baselines—prevents "gap from beginning of time" scenario.
+
+See @.claude/rules/serde-api-patterns.md for API contract patterns discovered during this work.
+
 **Key Logging Points**:
 | Location | Log | Purpose |
 |----------|-----|---------|
