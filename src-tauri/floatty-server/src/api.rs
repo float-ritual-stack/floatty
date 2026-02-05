@@ -126,9 +126,16 @@ pub struct AppState {
 
 /// Health check response
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+    /// Git commit SHA (short, 7 chars)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_sha: Option<String>,
+    /// Whether there were uncommitted changes at build time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_dirty: Option<bool>,
 }
 
 /// Full state response (for sync)
@@ -418,9 +425,15 @@ pub fn create_router(
 
 /// GET /api/v1/health
 async fn health() -> Json<HealthResponse> {
+    // Get git info from vergen (populated at build time)
+    let git_sha = option_env!("VERGEN_GIT_SHA").map(|s| s[..7.min(s.len())].to_string());
+    let git_dirty = option_env!("VERGEN_GIT_DIRTY").map(|s| s == "true");
+
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        git_sha,
+        git_dirty,
     })
 }
 

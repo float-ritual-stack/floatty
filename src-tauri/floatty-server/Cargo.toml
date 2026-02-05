@@ -1,6 +1,6 @@
 [package]
 name = "floatty-server"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Headless HTTP server for floatty block store"
 license = "MIT"
@@ -51,6 +51,9 @@ path = "src/main.rs"
 [lib]
 name = "floatty_server"
 path = "src/lib.rs"
+
+[build-dependencies]
+vergen-gix = { version = "1", features = ["build", "cargo", "rustc"] }
 
 [dev-dependencies]
 tempfile = "3"
