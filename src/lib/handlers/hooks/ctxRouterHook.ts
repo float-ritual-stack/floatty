@@ -34,15 +34,30 @@ function extractCtxMarkers(content: string): Marker[] {
   const tokens = parseAllInlineTokens(content);
   const markers: Marker[] = [];
 
-  for (const token of tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
     if (token.type === 'ctx-prefix') {
-      // ctx:: prefix itself
-      markers.push({ markerType: 'ctx', value: null });
+      // ctx:: prefix - check if followed by a timestamp
+      // Look for ctx-timestamp in next few tokens (may have whitespace text between)
+      let dateValue: string | null = null;
+      for (let j = i + 1; j < Math.min(i + 3, tokens.length); j++) {
+        if (tokens[j].type === 'ctx-timestamp') {
+          // Extract just YYYY-MM-DD from timestamp (ignore time portion)
+          const dateMatch = tokens[j].content.match(/^(\d{4}-\d{2}-\d{2})/);
+          if (dateMatch) {
+            dateValue = dateMatch[1];
+          }
+          break;
+        }
+        // Stop if we hit a non-text token (means no timestamp follows)
+        if (tokens[j].type !== 'text') break;
+      }
+      markers.push({ markerType: 'ctx', value: dateValue });
     } else if (token.type === 'ctx-tag' && token.tagType) {
       // [project::floatty], [mode::work], [issue::123]
       markers.push({ markerType: token.tagType, value: token.content });
     }
-    // ctx-timestamp is display-only, not stored as marker
   }
 
   return markers;

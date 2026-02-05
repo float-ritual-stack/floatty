@@ -72,7 +72,7 @@ describe('ctxRouterHook', () => {
       'test-block',
       expect.objectContaining({
         markers: [
-          { markerType: 'ctx', value: null },
+          { markerType: 'ctx', value: '2026-02-05' },  // Date extracted from timestamp
           { markerType: 'project', value: 'floatty' },
           { markerType: 'mode', value: 'work' },
         ],
@@ -128,7 +128,7 @@ describe('ctxRouterHook', () => {
       'test-block',
       expect.objectContaining({
         markers: [
-          { markerType: 'ctx', value: null },
+          { markerType: 'ctx', value: '2026-02-05' },  // Date extracted from timestamp
           { markerType: 'issue', value: '123' },
         ],
       }),
@@ -141,7 +141,7 @@ describe('ctxRouterHook', () => {
     // Pre-set existing markers to match what would be extracted
     block.metadata = {
       markers: [
-        { markerType: 'ctx', value: null },
+        { markerType: 'ctx', value: '2026-02-05' },  // Date matches extracted value
         { markerType: 'project', value: 'floatty' },
       ],
       outlinks: [],
@@ -151,6 +151,17 @@ describe('ctxRouterHook', () => {
 
     emitBlockEvent(block, 'block:update');
 
+    expect(blockStore.updateBlockMetadata).not.toHaveBeenCalled();
+  });
+
+  it('requires date after ctx:: to trigger extraction', () => {
+    // ctx:: without YYYY-MM-DD is treated as prose, not a marker
+    // This prevents false positives like "we discussed ctx:: patterns"
+    const block = createTestBlock('ctx:: [project::floatty] notes without date');
+
+    emitBlockEvent(block);
+
+    // Should NOT extract - hasCtxPatterns requires ctx::YYYY-MM-DD
     expect(blockStore.updateBlockMetadata).not.toHaveBeenCalled();
   });
 });
