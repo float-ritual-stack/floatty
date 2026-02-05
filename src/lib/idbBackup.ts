@@ -117,43 +117,61 @@ export async function hasBackup(): Promise<boolean> {
 }
 
 /**
- * Save last seen sequence number to IndexedDB.
- * Used for gap detection on reconnect after browser refresh/crash.
+ * Save last contiguous sequence number to IndexedDB.
+ * Used for incremental sync on reconnect after browser refresh/crash.
+ *
+ * IMPORTANT: We persist lastContiguousSeq, NOT lastSeenSeq!
+ * - lastSeenSeq may jump if we receive out-of-order messages (e.g., see seq 419 but missed 418)
+ * - lastContiguousSeq only advances when ALL prior seqs have been received
+ * - On reload, we fetch "since lastContiguousSeq" to get any gaps + new updates
  */
-export async function saveLastSeenSeq(seq: number): Promise<void> {
+export async function saveLastContiguousSeq(seq: number): Promise<void> {
   const db = await getDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(seq, 'lastSeenSeq');
+    tx.objectStore(STORE_NAME).put(seq, 'lastContiguousSeq');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
 /**
- * Get last seen sequence number from IndexedDB.
+ * Get last contiguous sequence number from IndexedDB.
  * Returns null if not previously saved.
  */
-export async function getLastSeenSeq(): Promise<number | null> {
+export async function getLastContiguousSeq(): Promise<number | null> {
   const db = await getDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
-    const request = tx.objectStore(STORE_NAME).get('lastSeenSeq');
+    const request = tx.objectStore(STORE_NAME).get('lastContiguousSeq');
     request.onsuccess = () => {
       const result = request.result;
-      resolve(typeof result === 'number' ? result : null);
+      // Migration: also check for old 'lastSeenSeq' key if no contiguous found
+      if (typeof result === 'number') {
+        resolve(result);
+      } else {
+        // Try legacy key migration
+        const legacyRequest = tx.objectStore(STORE_NAME).get('lastSeenSeq');
+        legacyRequest.onsuccess = () => {
+          const legacyResult = legacyRequest.result;
+          resolve(typeof legacyResult === 'number' ? legacyResult : null);
+        };
+        legacyRequest.onerror = () => resolve(null);
+      }
     };
     request.onerror = () => reject(request.error);
   });
 }
 
 /**
- * Clear last seen sequence number (called on workspace switch).
+ * Clear last contiguous sequence number (called on workspace switch).
  */
-export async function clearLastSeenSeq(): Promise<void> {
+export async function clearLastContiguousSeq(): Promise<void> {
   const db = await getDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
+    // Clear both new and legacy keys
+    tx.objectStore(STORE_NAME).delete('lastContiguousSeq');
     tx.objectStore(STORE_NAME).delete('lastSeenSeq');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);

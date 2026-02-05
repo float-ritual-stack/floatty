@@ -18,8 +18,8 @@ import {
   clearBackup as clearBackupIDB,
   hasBackup as hasBackupIDB,
   initBackupNamespace,
-  saveLastSeenSeq as saveLastSeenSeqIDB,
-  getLastSeenSeq as getLastSeenSeqIDB,
+  saveLastContiguousSeq as saveLastContiguousSeqIDB,
+  getLastContiguousSeq as getLastContiguousSeqIDB,
 } from '../lib/idbBackup';
 import { invoke } from '@tauri-apps/api/core';
 import type { AggregatorConfig } from '../lib/tauriTypes';
@@ -342,34 +342,39 @@ interface WsMessage {
 // SEQUENCE TRACKING (extracted to SyncSequenceTracker)
 // ═══════════════════════════════════════════════════════════════
 
-/** How often to persist lastSeenSeq (debounce interval) */
-const LAST_SEEN_SEQ_PERSIST_DEBOUNCE_MS = 5000;
+/** How often to persist lastContiguousSeq (debounce interval) */
+const CONTIGUOUS_SEQ_PERSIST_DEBOUNCE_MS = 5000;
 
-/** Debounce timer for persisting lastSeenSeq to IndexedDB */
-let lastSeenSeqPersistTimer: ReturnType<typeof setTimeout> | null = null;
+/** Debounce timer for persisting lastContiguousSeq to IndexedDB */
+let contiguousSeqPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Schedule a debounced save of lastSeenSeq to IndexedDB.
+ * Schedule a debounced save of lastContiguousSeq to IndexedDB.
  * Used as callback for SyncSequenceTracker.
+ *
+ * IMPORTANT: We persist lastContiguousSeq, NOT lastSeenSeq!
+ * - lastSeenSeq may jump on gaps (e.g., receive seq 419 but missed 418)
+ * - lastContiguousSeq only advances when ALL prior seqs are received
+ * - On reload, "since lastContiguousSeq" fetches gaps + new updates safely
  */
-function scheduleLastSeenSeqPersist(seq: number): void {
-  if (lastSeenSeqPersistTimer !== null) {
-    clearTimeout(lastSeenSeqPersistTimer);
+function scheduleContiguousSeqPersist(seq: number): void {
+  if (contiguousSeqPersistTimer !== null) {
+    clearTimeout(contiguousSeqPersistTimer);
   }
-  lastSeenSeqPersistTimer = setTimeout(() => {
-    lastSeenSeqPersistTimer = null;
-    saveLastSeenSeqIDB(seq).catch(err => {
-      console.warn('[useSyncedYDoc] Failed to persist lastSeenSeq:', err);
+  contiguousSeqPersistTimer = setTimeout(() => {
+    contiguousSeqPersistTimer = null;
+    saveLastContiguousSeqIDB(seq).catch((err: unknown) => {
+      console.warn('[useSyncedYDoc] Failed to persist lastContiguousSeq:', err);
     });
-  }, LAST_SEEN_SEQ_PERSIST_DEBOUNCE_MS);
+  }, CONTIGUOUS_SEQ_PERSIST_DEBOUNCE_MS);
 }
 
 /**
  * Singleton sequence tracker instance.
  * Manages lastSeenSeq, lastContiguousSeq, gap queue, and fetch coordination.
- * Created with persistence callback for crash recovery.
+ * Created with persistence callback that fires on CONTIGUOUS advancement.
  */
-const seqTracker = new SyncSequenceTracker(scheduleLastSeenSeqPersist);
+const seqTracker = new SyncSequenceTracker(scheduleContiguousSeqPersist);
 
 /**
  * Threshold for gap size before falling back to full resync.
@@ -1064,16 +1069,20 @@ export function useSyncedYDoc(
             initBackupNamespace('unknown');
           }
 
-          // Load persisted lastSeenSeq for incremental sync after browser refresh
+          // Load persisted lastContiguousSeq for incremental sync after browser refresh
+          // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:
+          // - lastSeenSeq may have jumped due to gaps (e.g., saw 419 but missed 418)
+          // - lastContiguousSeq is safe baseline where ALL prior seqs were received
+          // - Requesting "since lastContiguousSeq" will fetch any gaps + new updates
           try {
-            const persistedSeq = await getLastSeenSeqIDB();
+            const persistedSeq = await getLastContiguousSeqIDB();
             if (persistedSeq !== null) {
-              // Seed tracker with persisted seq (sets both lastSeenSeq and lastContiguousSeq)
+              // Seed tracker with persisted contiguous seq (sets both values)
               seqTracker.seedFromFullSync(persistedSeq);
-              console.log('[useSyncedYDoc] Loaded persisted lastSeenSeq:', persistedSeq);
+              console.log('[useSyncedYDoc] Loaded persisted lastContiguousSeq:', persistedSeq);
             }
           } catch (seqErr) {
-            console.warn('[useSyncedYDoc] Failed to load lastSeenSeq:', seqErr);
+            console.warn('[useSyncedYDoc] Failed to load lastContiguousSeq:', seqErr);
           }
 
           // Ensure HTTP client is initialized

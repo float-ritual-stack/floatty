@@ -52,17 +52,22 @@ export class SyncSequenceTracker {
   private _isFetching = false;
 
   /**
-   * Optional callback when lastSeenSeq changes.
+   * Optional callback when lastContiguousSeq changes.
    * Used by useSyncedYDoc.ts to schedule persistence.
+   *
+   * IMPORTANT: We persist lastContiguousSeq, NOT lastSeenSeq!
+   * - lastSeenSeq may jump on out-of-order messages (e.g., receive seq 419 but missed 418)
+   * - lastContiguousSeq only advances when ALL prior seqs have been received
+   * - On reload, "since lastContiguousSeq" fetches gaps + new updates safely
    */
-  private onSeqChanged?: (seq: number) => void;
+  private onContiguousChanged?: (seq: number) => void;
 
   /**
-   * @param onSeqChanged Optional callback fired when lastSeenSeq increases.
+   * @param onContiguousChanged Optional callback fired when lastContiguousSeq advances.
    *        Used for debounced persistence. Tests can omit this.
    */
-  constructor(onSeqChanged?: (seq: number) => void) {
-    this.onSeqChanged = onSeqChanged;
+  constructor(onContiguousChanged?: (seq: number) => void) {
+    this.onContiguousChanged = onContiguousChanged;
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -107,9 +112,7 @@ export class SyncSequenceTracker {
     this.updateLastSeen(seq);
 
     // Also advance contiguous tracking if this is the next expected seq
-    if (this._lastContiguousSeq === null || seq === this._lastContiguousSeq + 1) {
-      this._lastContiguousSeq = seq;
-    }
+    this.updateContiguous(seq);
 
     return gap;
   }
@@ -133,9 +136,7 @@ export class SyncSequenceTracker {
     this.updateLastSeen(seq);
 
     // Our own update was applied locally, so it's contiguous
-    if (this._lastContiguousSeq === null || seq === this._lastContiguousSeq + 1) {
-      this._lastContiguousSeq = seq;
-    }
+    this.updateContiguous(seq);
 
     return gap;
   }
@@ -143,23 +144,32 @@ export class SyncSequenceTracker {
   /**
    * Update lastSeenSeq monotonically.
    * Only updates if newSeq > current lastSeenSeq (or if lastSeenSeq is null).
-   * Calls onSeqChanged callback if seq actually changed.
+   * Does NOT fire persistence callback - that happens when contiguous advances.
    */
   private updateLastSeen(newSeq: number): void {
     if (this._lastSeenSeq === null || newSeq > this._lastSeenSeq) {
       this._lastSeenSeq = newSeq;
-      this.onSeqChanged?.(newSeq);
+    }
+  }
+
+  /**
+   * Update lastContiguousSeq if this is the next expected seq.
+   * Fires persistence callback since contiguous is the safe baseline.
+   */
+  private updateContiguous(newSeq: number): void {
+    if (this._lastContiguousSeq === null || newSeq === this._lastContiguousSeq + 1) {
+      this._lastContiguousSeq = newSeq;
+      this.onContiguousChanged?.(newSeq);
     }
   }
 
   /**
    * Advance lastContiguousSeq when applying the next expected seq.
    * Called when applying contiguous updates (gap-fill, reconnect sync).
+   * Fires persistence callback since this is a safe baseline advancement.
    */
   advanceContiguous(seq: number): void {
-    if (this._lastContiguousSeq === null || seq === this._lastContiguousSeq + 1) {
-      this._lastContiguousSeq = seq;
-    }
+    this.updateContiguous(seq);
   }
 
   /**

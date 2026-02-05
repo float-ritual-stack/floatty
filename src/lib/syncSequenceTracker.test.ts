@@ -254,4 +254,61 @@ describe('SyncSequenceTracker', () => {
       expect(tracker.lastContiguousSeq).toBe(100); // Unchanged
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // PERSISTENCE CALLBACK (FLO-SEQ safety)
+  // ═══════════════════════════════════════════════════════════════
+
+  describe('persistence callback', () => {
+    it('fires callback only on contiguous advancement, not on lastSeenSeq jumps', () => {
+      const callbacks: number[] = [];
+      const trackerWithCallback = new SyncSequenceTracker((seq) => callbacks.push(seq));
+
+      // First seq: contiguous advances
+      trackerWithCallback.observeSeq(100);
+      expect(callbacks).toEqual([100]);
+
+      // Contiguous advancement
+      trackerWithCallback.observeSeq(101);
+      expect(callbacks).toEqual([100, 101]);
+
+      // Gap! lastSeenSeq jumps to 105, but contiguous stays at 101
+      trackerWithCallback.observeSeq(105);
+      expect(callbacks).toEqual([100, 101]); // NO new callback (contiguous didn't advance)
+
+      // Fill gap at 102 - contiguous advances
+      trackerWithCallback.advanceContiguous(102);
+      expect(callbacks).toEqual([100, 101, 102]);
+
+      // Fill gap at 103 - contiguous advances
+      trackerWithCallback.advanceContiguous(103);
+      expect(callbacks).toEqual([100, 101, 102, 103]);
+    });
+
+    it('does not fire callback on seedFromFullSync (seeding is initialization)', () => {
+      const callbacks: number[] = [];
+      const trackerWithCallback = new SyncSequenceTracker((seq) => callbacks.push(seq));
+
+      // Seeding sets both values but doesn't fire callback
+      // (This is intentional - on reload we don't want to persist what we just loaded)
+      trackerWithCallback.seedFromFullSync(500);
+      expect(callbacks).toEqual([]);
+    });
+
+    it('fires callback on echo messages when contiguous advances', () => {
+      const callbacks: number[] = [];
+      const trackerWithCallback = new SyncSequenceTracker((seq) => callbacks.push(seq));
+
+      trackerWithCallback.observeSeq(100);
+      expect(callbacks).toEqual([100]);
+
+      // Echo at 101 - contiguous advances
+      trackerWithCallback.observeEcho(101);
+      expect(callbacks).toEqual([100, 101]);
+
+      // Echo with gap (shouldn't happen but tests the guard)
+      trackerWithCallback.observeEcho(105);
+      expect(callbacks).toEqual([100, 101]); // NO callback - contiguous didn't advance
+    });
+  });
 });
