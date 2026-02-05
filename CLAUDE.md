@@ -2,6 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## TL;DR: Critical Context
+
+**Tech Stack** (NOT React):
+- **Frontend**: SolidJS (fine-grained reactivity, no virtual DOM)
+- **Backend**: Tauri v2 + Rust (IPC, subprocess management)
+- **Server**: Axum (headless Y.Doc authority)
+- **CRDT**: Yjs (frontend) ↔ Yrs (backend) via base64-encoded updates
+
+**Philosophy**: Shacks Not Cathedrals. Walls that can move.
+
+**The Pattern** (40 Years Deep):
+```
+Event → Handler → Transform → Project
+BBS (1985) → mIRC (1995) → Redux (2015) → floatty (2026)
+```
+
+**Three Fatal Mistakes**:
+1. Don't destructure SolidJS props (breaks reactivity)
+2. Don't use `<For>` for heavy components (use `<Key>` from @solid-primitives/keyed)
+3. Don't skip origin filtering in Y.Doc observers (causes sync loops)
+
+---
+
 ## What This Is
 
 **floatty** - A Tauri v2 terminal emulator with integrated outliner and consciousness siphon:
@@ -10,6 +35,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. **Block-based outliner** - CRDT-backed (yjs), inline markdown formatting, zoom navigation, [[wikilinks]] for page navigation
 4. **ctx:: Aggregation** - watches JSONL session logs, extracts markers, parses via Ollama, displays in sidebar
 5. **Theming system** - 5 bundled themes (Dark, Light, Solarized Dark/Light, High Contrast), hot-swap via ⌘;
+
+## Three-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  FRONTEND (SolidJS)                                             │
+│  - Y.Doc (local), debounced sync, reactive UI                   │
+│  - Key: useSyncedYDoc.ts, useBlockStore.ts, httpClient.ts       │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ invoke() for commands
+                         │ HTTP/WS for Y.Doc sync
+┌────────────────────────▼────────────────────────────────────────┐
+│  TAURI BACKEND (Rust)                                           │
+│  - Spawns floatty-server subprocess                             │
+│  - ctx:: watcher, PTY management, shell execution               │
+│  - Key: lib.rs, server.rs, commands/                            │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ env: FLOATTY_PORT, FLOATTY_API_KEY
+┌────────────────────────▼────────────────────────────────────────┐
+│  HEADLESS SERVER (floatty-server)                               │
+│  - Y.Doc authority, REST/WS API, SQLite persistence             │
+│  - Key: api.rs, ws.rs, floatty-core/store.rs                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**CRDT Sync Flow**:
+1. User types → Y.Doc update → debounced queue (50ms)
+2. `POST /api/v1/update` → server persists → applies to Yrs
+3. Server broadcasts via WebSocket (with txId for echo prevention)
+4. Other clients receive → decode base64 → `Y.applyUpdate(doc, bytes, 'remote')`
+
+**Persistence**: SQLite append-only log + hourly .ydoc backups. Compacts every 100 updates.
 
 ## Commands
 
@@ -122,6 +179,26 @@ curl -X POST -H "Authorization: Bearer $KEY" \
 # Restore from .ydoc backup (uses /api/v1/restore)
 npx tsx scripts/binary-import.ts ~/path/to/backup.ydoc
 ```
+
+### Ghost Writer Path (REST → WebSocket Clients)
+
+When external tools (CLI agents, automation) write to the server via REST, changes propagate to all connected WebSocket clients:
+
+```
+REST Client
+    │ POST /api/v1/update { update: "<base64>", tx_id: "..." }
+    ▼
+Server (api.rs)
+    ├─ 1. Persist to SQLite (FIRST)
+    ├─ 2. Apply to in-memory Y.Doc
+    └─ 3. broadcaster.broadcast(update, tx_id)
+    ▼
+WebSocket Clients (via tokio::broadcast)
+    └─ Each client receives: { txId: "...", data: "<base64>" }
+        └─ Client applies if txId doesn't match recent sent IDs
+```
+
+**Known Risk**: Non-atomic persist→broadcast. Server crash between steps 1 and 3 means update is persisted but not broadcast. Mitigated by 30-second health check (`useSyncHealth.ts`) which detects block count drift and triggers full resync.
 
 ## Testing
 
@@ -467,7 +544,17 @@ User input     →  Keybind matches         →  Transform (action)   →  Proje
 
 This is store-and-forward. BBS message handlers. mIRC bots. Redux middleware. Same shape.
 
-See `docs/ARCHITECTURE_LINEAGE.md` for the full philosophy.
+See `docs/architecture/FORTY_YEAR_PATTERN.md` for the full philosophy.
+
+### Shacks Not Cathedrals
+
+This codebase follows a "shacks not cathedrals" philosophy:
+- **Prefer pragmatic solutions** over elegant abstractions
+- **Walls that can move** — avoid over-engineering future flexibility
+- **Store-and-forward** — the 40-year invariant from BBS to floatty
+- **Transcribe, don't invent** — the patterns are known, just write them down
+
+The architecture isn't designed — it's emerged from BBS thinking (1985), mIRC bots (1995), Redux middleware (2015), and floatty hooks (2026). Same shape. Event-driven. Interceptable. Transformable. Projectable.
 
 ## Four Bug Categories
 
@@ -552,6 +639,22 @@ These are independent states. Selection always wins visually (`:not(.block-selec
 2. Cmd+A → Backspace → deletes block + subtree
 
 This prevents accidental deletion of large branches. Document as intentional, not a bug.
+
+## Sync Debugging Infrastructure
+
+**Health Check** (`useSyncHealth.ts`): Polls server every 30s comparing block counts (NOT hash — Y.Doc encoding varies). Two consecutive mismatches trigger full resync.
+
+**Key Logging Points**:
+| Location | Log | Purpose |
+|----------|-----|---------|
+| `useSyncedYDoc.ts:270` | `[useSyncedYDoc] Attached singleton update handler` | Handler lifecycle |
+| `useSyncedYDoc.ts:638` | `[WS] First connection — accepting messages immediately` | FLO-269 fix |
+| `useSyncHealth.ts:101` | `[SyncHealth] Block count mismatch detected` | Drift detection |
+| `ws.rs:53` | `Broadcast {} bytes to {} client(s)` | Server broadcasts |
+
+**State Validation** (`FLO-247`): `validateSyncedState()` warns on suspicious conditions (zero blocks but backup exists, orphaned blocks, etc.)
+
+**Silent No-Op Risk**: CRDT merge is idempotent. If server already has an update, `applyUpdate()` is a no-op — no observeDeep fires, no UI change. This is correct CRDT behavior, not a bug.
 
 ## Known Issues
 
