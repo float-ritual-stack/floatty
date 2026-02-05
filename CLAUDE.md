@@ -198,7 +198,7 @@ WebSocket Clients (via tokio::broadcast)
         └─ Client applies if txId doesn't match recent sent IDs
 ```
 
-**Known Risk**: Non-atomic persist→broadcast. Server crash between steps 1 and 3 means update is persisted but not broadcast. Mitigated by 30-second health check (`useSyncHealth.ts`) which detects block count drift and triggers full resync.
+**Known Risk**: Non-atomic persist→broadcast. Server crash between steps 1 and 3 means update is persisted but not broadcast. Mitigated by 120-second health check (`useSyncHealth.ts`) which detects block count drift and triggers full resync.
 
 ## Testing
 
@@ -642,7 +642,7 @@ This prevents accidental deletion of large branches. Document as intentional, no
 
 ## Sync Debugging Infrastructure
 
-**Health Check** (`useSyncHealth.ts`): Polls server every 30s comparing block counts (NOT hash — Y.Doc encoding varies). Two consecutive mismatches trigger full resync.
+**Health Check** (`useSyncHealth.ts`): Polls server every 120s comparing block counts (NOT hash — Y.Doc encoding varies). Reduced from 30s — sequence numbers now handle fast gap detection, this is a safety net. Two consecutive mismatches trigger full resync.
 
 **Key Logging Points**:
 | Location | Log | Purpose |

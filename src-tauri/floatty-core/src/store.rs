@@ -630,7 +630,7 @@ impl YDocStore {
     }
 
     // =========================================================================
-    // Sequence-based sync methods (FLO-XXX)
+    // Sequence-based sync methods (FLO-SEQ)
     // =========================================================================
 
     /// Get updates since a given sequence number.

@@ -422,7 +422,11 @@ function applyWsMessage(msg: WsMessage) {
     if (msg.seq > expectedSeq) {
       // Gap detected! We missed seq(s) between lastSeenSeq and msg.seq
       console.warn(`[WS] Gap detected: ${lastSeenSeq} → ${msg.seq} (missing ${msg.seq - expectedSeq} updates)`);
-      // Queue gap fetch (will be processed after any current fetch completes)
+
+      // NOTE: We apply this message immediately even though earlier seq(s) are missing.
+      // This is safe because Y.Doc CRDT merge is commutative — application order doesn't
+      // affect the final document state. The gap-fill fetch runs async and applies the
+      // missing updates when they arrive. The end state is identical regardless of order.
       queueGapFetch(lastSeenSeq, msg.seq);
     }
   }

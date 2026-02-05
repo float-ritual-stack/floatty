@@ -111,8 +111,10 @@ impl YDocPersistence {
                 value TEXT NOT NULL
             );
 
-            -- Sync metadata for sequence tracking
-            -- Stores compaction boundary and other sync-related state
+            -- Sync metadata for sequence tracking.
+            -- Separate from schema_meta (which tracks schema versions) because sync state
+            -- is runtime data that changes during normal operation, while schema_meta is
+            -- migration infrastructure that changes only on upgrades.
             CREATE TABLE IF NOT EXISTS sync_meta (
                 key TEXT PRIMARY KEY,
                 value INTEGER NOT NULL
@@ -274,7 +276,7 @@ impl YDocPersistence {
     }
 
     // =========================================================================
-    // Sequence-based sync methods (FLO-XXX)
+    // Sequence-based sync methods (FLO-SEQ)
     // =========================================================================
 
     /// Get updates since a given sequence number.
