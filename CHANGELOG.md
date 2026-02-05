@@ -6,6 +6,30 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.17] - 2026-02-05
+
+### Features
+
+- **Sequence number sync hardening** (PR #119): Complete CRDT sync layer with gap detection, incremental reconnect, and 30-second heartbeat for reliable message ordering
+- **SyncSequenceTracker** (PR #119): Extracted pure state machine class for sequence tracking with 23 unit tests — tracks `lastSeenSeq`, `lastContiguousSeq`, gap queue management
+- **Incremental reconnect** (PR #119): On WebSocket reconnect, fetch only missing updates via `/api/v1/updates?since=X` instead of full resync — bandwidth optimization for stable connections
+- **REST→WS broadcast** (PR #119): External tools (CLI agents, automation) can write via REST `/api/v1/update` and changes automatically broadcast to all WebSocket clients
+
+### Bug Fixes
+
+- **Split-brain prevention** (PR #119): Persist `lastContiguousSeq` instead of `lastSeenSeq` — prevents missing updates after reload when gaps exist (lastSeenSeq can jump on out-of-order messages)
+- **Gap detection on echo** (PR #119): Own messages returning with higher-than-expected seq now trigger gap detection (your update at seq 105 reveals you missed 101-104)
+- **HMR timer cleanup** (PR #119): Fixed reference to renamed timer variable in HMR disposal block
+- **API unknown fields rejection** (PR #119): Added `deny_unknown_fields` to all request structs — snake_case `parent_id` now returns 400 instead of being silently ignored
+
+### Documentation
+
+- **Architectural audit report** (`docs/ARCHITECTURAL_AUDIT.md`): Complete review of sync layer including known risks and mitigations
+- **Sequence number review** (`docs/architecture/SEQUENCE_NUMBER_REVIEW.md`): Deep dive into gap detection, persistence safety, and edge cases
+- **serde API patterns rule** (`.claude/rules/serde-api-patterns.md`): Codifies `deny_unknown_fields` requirement and camelCase conventions
+
+---
+
 ## [0.7.16] - 2026-02-04
 
 ### Bug Fixes
