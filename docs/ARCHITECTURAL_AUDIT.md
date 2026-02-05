@@ -296,7 +296,7 @@ if (serverHealth.blockCount !== localBlockCount) {
 
 1. **Persist→Broadcast Non-Atomicity**
    *Risk*: Server crash between SQLite write and WS broadcast → update persisted but not propagated.
-   *Impact*: WS clients miss update until next resync (30s poll).
+   *Impact*: WS clients miss update until next resync (120s poll).
    *Recommendation*: Accept as tolerable (CRDT recovers on resync) or implement WAL-based broadcast replay.
 
 ### Medium Priority
