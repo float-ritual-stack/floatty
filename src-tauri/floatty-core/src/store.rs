@@ -663,7 +663,7 @@ impl YDocStore {
     /// and should do a full state resync instead of incremental.
     pub fn get_compacted_through(&self) -> Result<Option<i64>, StoreError> {
         self.persistence
-            .get_compacted_through()
+            .get_compacted_through(&self.doc_key)
             .map_err(StoreError::from)
     }
 

@@ -115,9 +115,12 @@ impl YDocPersistence {
             -- Separate from schema_meta (which tracks schema versions) because sync state
             -- is runtime data that changes during normal operation, while schema_meta is
             -- migration infrastructure that changes only on upgrades.
+            -- Namespaced by doc_key so each document has its own sync state.
             CREATE TABLE IF NOT EXISTS sync_meta (
-                key TEXT PRIMARY KEY,
-                value INTEGER NOT NULL
+                doc_key TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value INTEGER NOT NULL,
+                PRIMARY KEY (doc_key, key)
             );
         "#,
         )?;
@@ -249,8 +252,8 @@ impl YDocPersistence {
         // Clients requesting since < compacted_through should do full resync
         if let Some(old_max) = max_seq_before {
             tx.execute(
-                "INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('compacted_through', ?)",
-                params![old_max],
+                "INSERT OR REPLACE INTO sync_meta (doc_key, key, value) VALUES (?, 'compacted_through', ?)",
+                params![doc_key, old_max],
             )?;
         }
 
@@ -316,16 +319,16 @@ impl YDocPersistence {
         Ok(result)
     }
 
-    /// Get the compaction boundary.
+    /// Get the compaction boundary for a document.
     ///
     /// Returns the highest sequence number that was compacted away.
     /// Clients requesting since < compacted_through are too far behind
     /// and should do a full state resync instead of incremental.
-    pub fn get_compacted_through(&self) -> Result<Option<i64>, PersistenceError> {
+    pub fn get_compacted_through(&self, doc_key: &str) -> Result<Option<i64>, PersistenceError> {
         let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
         let result: Result<i64, _> = conn.query_row(
-            "SELECT value FROM sync_meta WHERE key = 'compacted_through'",
-            [],
+            "SELECT value FROM sync_meta WHERE doc_key = ? AND key = 'compacted_through'",
+            [doc_key],
             |row| row.get(0),
         );
         match result {
@@ -413,12 +416,12 @@ mod tests {
         let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
 
         // Before compaction, no boundary
-        assert_eq!(persistence.get_compacted_through().unwrap(), None);
+        assert_eq!(persistence.get_compacted_through("test-doc").unwrap(), None);
 
         persistence.compact("test-doc", b"snapshot").unwrap();
 
         // After compaction, boundary is the max seq that was deleted
-        let boundary = persistence.get_compacted_through().unwrap();
+        let boundary = persistence.get_compacted_through("test-doc").unwrap();
         assert_eq!(boundary, Some(seq3));
 
         // Verify old seqs are gone
@@ -505,20 +508,23 @@ mod tests {
         let persistence = YDocPersistence::open_in_memory().unwrap();
 
         // No compaction yet
-        assert_eq!(persistence.get_compacted_through().unwrap(), None);
+        assert_eq!(persistence.get_compacted_through("test-doc").unwrap(), None);
 
         persistence.append_update("test-doc", b"update1").unwrap();
         persistence.append_update("test-doc", b"update2").unwrap();
         let seq3 = persistence.append_update("test-doc", b"update3").unwrap();
 
         // Still no compaction
-        assert_eq!(persistence.get_compacted_through().unwrap(), None);
+        assert_eq!(persistence.get_compacted_through("test-doc").unwrap(), None);
 
         // Compact
         persistence.compact("test-doc", b"snapshot").unwrap();
 
         // Now we have a boundary
-        assert_eq!(persistence.get_compacted_through().unwrap(), Some(seq3));
+        assert_eq!(persistence.get_compacted_through("test-doc").unwrap(), Some(seq3));
+
+        // Different doc has no boundary
+        assert_eq!(persistence.get_compacted_through("other-doc").unwrap(), None);
     }
 
     #[test]

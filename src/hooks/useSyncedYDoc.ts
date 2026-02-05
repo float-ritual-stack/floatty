@@ -136,13 +136,17 @@ export async function triggerFullResync(): Promise<void> {
       } finally {
         isApplyingRemoteGlobal = false;
       }
-      // Re-seed sequence tracking from server's latestSeq
+      // Re-seed both seq trackers from server's latestSeq
+      // Full state means all seqs up to latestSeq are covered
       if (latestSeq !== null) {
         updateLastSeenSeq(latestSeq);
+        lastContiguousSeq = latestSeq;
         console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied, seq:', latestSeq);
       } else {
         console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied (no seq)');
       }
+      // Clear any pending gaps - full sync covers everything
+      pendingGapQueue = [];
     } else {
       console.log('[useSyncedYDoc] Server state empty, nothing to apply');
     }
@@ -348,6 +352,20 @@ interface WsMessage {
  */
 let lastSeenSeq: number | null = null;
 
+/**
+ * Track the highest seq for which ALL prior seqs have been received.
+ * Unlike lastSeenSeq (which can jump on out-of-order messages), this only
+ * advances when updates are applied in contiguous order.
+ *
+ * Used for gap queue processing - determines when queued gaps are truly covered.
+ *
+ * Example:
+ * - Receive seq 100: lastContiguousSeq = 100, lastSeenSeq = 100
+ * - Receive seq 105: lastContiguousSeq = 100, lastSeenSeq = 105 (gap queued for 101-104)
+ * - Gap-fill applies 101-104: lastContiguousSeq = 105, lastSeenSeq = 105
+ */
+let lastContiguousSeq: number | null = null;
+
 /** Track if we're currently fetching missing updates (prevent concurrent fetches) */
 let isFetchingMissingUpdates = false;
 
@@ -375,6 +393,23 @@ let wsMessageBuffer: WsMessage[] = [];
 function updateLastSeenSeq(newSeq: number): void {
   if (lastSeenSeq === null || newSeq > lastSeenSeq) {
     lastSeenSeq = newSeq;
+  }
+}
+
+/**
+ * Update lastContiguousSeq when we receive the next expected seq.
+ * Call this when applying updates that are known to be contiguous
+ * (e.g., gap-fill results, reconnect sync pages, or initial load).
+ */
+function advanceContiguousSeq(seq: number): void {
+  // If we don't have a contiguous seq yet, or this is the next expected seq,
+  // or this is filling in a gap up to lastSeenSeq, advance contiguous tracking
+  if (
+    lastContiguousSeq === null ||
+    seq === lastContiguousSeq + 1 ||
+    (seq > lastContiguousSeq && seq <= (lastSeenSeq ?? seq))
+  ) {
+    lastContiguousSeq = seq;
   }
 }
 
@@ -409,9 +444,13 @@ function applyWsMessage(msg: WsMessage) {
   if (msg.txId && recentTxIds.has(msg.txId)) {
     console.log('[WS] Skipping own update (txId:', msg.txId, ')');
     recentTxIds.delete(msg.txId);
-    // Still track seq even for our own updates (monotonic)
+    // Still track seq even for our own updates (monotonic + contiguous)
     if (msg.seq !== undefined) {
       updateLastSeenSeq(msg.seq);
+      // Our own update was applied locally, so it's contiguous
+      if (lastContiguousSeq === null || msg.seq === lastContiguousSeq + 1) {
+        lastContiguousSeq = msg.seq;
+      }
     }
     return;
   }
@@ -434,6 +473,11 @@ function applyWsMessage(msg: WsMessage) {
   // Track sequence number monotonically (if provided - restore broadcasts don't have seq)
   if (msg.seq !== undefined) {
     updateLastSeenSeq(msg.seq);
+    // Also advance contiguous tracking if this is the next expected seq
+    // (or the first seq we see when lastContiguousSeq is null)
+    if (lastContiguousSeq === null || msg.seq === lastContiguousSeq + 1) {
+      lastContiguousSeq = msg.seq;
+    }
   }
 
   // Decode base64 and apply
@@ -474,14 +518,18 @@ function processNextQueuedGap(): void {
   // Clear queue before processing
   pendingGapQueue = [];
 
-  // Only fetch if we still need updates beyond what we've seen
-  if (lastSeenSeq !== null && maxTo <= lastSeenSeq) {
-    console.log('[WS] Queued gaps already covered by lastSeenSeq, skipping');
+  // Use lastContiguousSeq (not lastSeenSeq) to determine if gaps are truly covered.
+  // lastSeenSeq can jump ahead on out-of-order messages, making it seem like
+  // gaps are covered when they're not. lastContiguousSeq only advances when
+  // all prior seqs have been received.
+  if (lastContiguousSeq !== null && maxTo <= lastContiguousSeq) {
+    console.log('[WS] Queued gaps already covered by lastContiguousSeq:', lastContiguousSeq);
     return;
   }
 
-  const effectiveFrom = lastSeenSeq !== null ? Math.max(minFrom, lastSeenSeq) : minFrom;
-  console.log(`[WS] Processing consolidated queued gap: ${effectiveFrom} → ${maxTo}`);
+  // Compute effective range using lastContiguousSeq
+  const effectiveFrom = lastContiguousSeq !== null ? Math.max(minFrom, lastContiguousSeq) : minFrom;
+  console.log(`[WS] Processing consolidated queued gap: ${effectiveFrom} → ${maxTo} (contiguous: ${lastContiguousSeq})`);
   fetchMissingUpdates(effectiveFrom, maxTo);
 }
 
@@ -536,8 +584,9 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
       for (const entry of updates) {
         const update = base64ToBytes(entry.data);
         Y.applyUpdate(sharedDoc, update, 'gap-fill');
-        // Update lastSeenSeq monotonically as we apply each update
+        // Update both seq trackers - gap-fill updates are contiguous
         updateLastSeenSeq(entry.seq);
+        advanceContiguousSeq(entry.seq);
       }
     } finally {
       isApplyingRemoteGlobal = false;
@@ -790,32 +839,61 @@ function connectWebSocket() {
             const httpClient = getHttpClient();
 
             // Try incremental sync if we have a lastSeenSeq
+            // Loop through pages since server may paginate results (default limit 100)
             let syncedIncrementally = false;
             if (lastSeenSeq !== null) {
               console.log('[WS] Attempting incremental reconnect sync (since seq:', lastSeenSeq, ')');
-              const result = await httpClient.getUpdatesSince(lastSeenSeq);
+              let currentSeq = lastSeenSeq;
+              let totalApplied = 0;
 
-              if (result.ok) {
-                const { updates, latestSeq } = result.response;
-                if (updates.length > 0) {
-                  console.log(`[WS] Incremental sync: applying ${updates.length} updates (seq ${lastSeenSeq} → ${latestSeq ?? 'unknown'})`);
-                  try {
-                    isApplyingRemoteGlobal = true;
-                    for (const entry of updates) {
-                      const update = base64ToBytes(entry.data);
-                      Y.applyUpdate(sharedDoc, update, 'reconnect-authority');
-                      updateLastSeenSeq(entry.seq);
-                    }
-                  } finally {
-                    isApplyingRemoteGlobal = false;
-                  }
-                } else {
-                  console.log('[WS] Incremental sync: no new updates (already up to date)');
+              // Loop until we've fetched all pages
+              while (true) {
+                const result = await httpClient.getUpdatesSince(currentSeq);
+
+                if (!result.ok) {
+                  // 410 Gone - updates were compacted, need full resync
+                  console.warn('[WS] Incremental sync unavailable (compacted through', result.compactedThrough, '), falling back to full sync');
+                  break;
                 }
-                syncedIncrementally = true;
-              } else {
-                // 410 Gone - updates were compacted, need full resync
-                console.warn('[WS] Incremental sync unavailable (compacted through', result.compactedThrough, '), falling back to full sync');
+
+                const { updates, latestSeq } = result.response;
+
+                if (updates.length === 0) {
+                  // No more updates to fetch
+                  if (totalApplied > 0) {
+                    console.log(`[WS] Incremental sync complete: applied ${totalApplied} updates total`);
+                  } else {
+                    console.log('[WS] Incremental sync: no new updates (already up to date)');
+                  }
+                  syncedIncrementally = true;
+                  break;
+                }
+
+                // Apply this page of updates
+                console.log(`[WS] Incremental sync: applying ${updates.length} updates (seq ${currentSeq} → ${updates[updates.length - 1].seq})`);
+                try {
+                  isApplyingRemoteGlobal = true;
+                  for (const entry of updates) {
+                    const update = base64ToBytes(entry.data);
+                    Y.applyUpdate(sharedDoc, update, 'reconnect-authority');
+                    // Update both seq trackers - reconnect sync updates are contiguous
+                    updateLastSeenSeq(entry.seq);
+                    advanceContiguousSeq(entry.seq);
+                    currentSeq = entry.seq;
+                  }
+                } finally {
+                  isApplyingRemoteGlobal = false;
+                }
+                totalApplied += updates.length;
+
+                // Check if we've caught up (latestSeq matches what we just applied)
+                if (latestSeq !== null && currentSeq >= latestSeq) {
+                  console.log(`[WS] Incremental sync complete: applied ${totalApplied} updates, caught up to seq ${latestSeq}`);
+                  syncedIncrementally = true;
+                  break;
+                }
+
+                // Continue fetching more pages
               }
             }
 
@@ -832,11 +910,15 @@ function connectWebSocket() {
                   isApplyingRemoteGlobal = false;
                 }
               }
-              // Re-seed lastSeenSeq from server's latestSeq
+              // Re-seed both seq trackers from server's latestSeq
+              // Full state means all seqs up to latestSeq are covered
               if (latestSeq !== null) {
                 updateLastSeenSeq(latestSeq);
+                lastContiguousSeq = latestSeq;
                 console.log('[WS] Seq tracking re-seeded to:', latestSeq);
               }
+              // Clear any pending gaps - full sync covers everything
+              pendingGapQueue = [];
             }
 
             // FLO-152: Guard against stale IIFE from previous connection
@@ -1058,9 +1140,10 @@ export function useSyncedYDoc(
               Y.applyUpdate(doc, serverState, 'remote');
               setApplyingRemote(false);
 
-              // Seed sequence tracking from server
+              // Seed both seq trackers from server (full state = all seqs covered)
               if (latestSeq !== null) {
                 updateLastSeenSeq(latestSeq);
+                lastContiguousSeq = latestSeq;
               }
 
               console.log('[useSyncedYDoc] Reconciliation complete, seq:', latestSeq, ', clearing backup');
@@ -1075,8 +1158,10 @@ export function useSyncedYDoc(
                   setApplyingRemote(true);
                   Y.applyUpdate(doc, stateBytes, 'remote');
                   setApplyingRemote(false);
+                  // Seed both seq trackers (full state = all seqs covered)
                   if (latestSeq !== null) {
                     updateLastSeenSeq(latestSeq);
+                    lastContiguousSeq = latestSeq;
                   }
                 }
               } catch (stateErr) {
@@ -1102,9 +1187,10 @@ export function useSyncedYDoc(
               setApplyingRemote(true);
               Y.applyUpdate(doc, stateBytes, 'remote');
               setApplyingRemote(false);
-              // Seed sequence tracking from server
+              // Seed both seq trackers from server (full state = all seqs covered)
               if (latestSeq !== null) {
                 updateLastSeenSeq(latestSeq);
+                lastContiguousSeq = latestSeq;
                 console.log('[useSyncedYDoc] Initial load complete, seq:', latestSeq);
               }
             }
@@ -1251,6 +1337,7 @@ function cleanupForHMR(): void {
 
   // Reset sequence tracking
   lastSeenSeq = null;
+  lastContiguousSeq = null;
   isFetchingMissingUpdates = false;
   pendingGapQueue = [];
 
