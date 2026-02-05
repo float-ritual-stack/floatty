@@ -1093,6 +1093,30 @@ function createBlockStore() {
     }, 'user');
   };
 
+  /**
+   * Update block metadata (for hooks, projections).
+   * Merges new metadata with existing (doesn't replace).
+   *
+   * @param id - Block ID
+   * @param metadata - Metadata fields to merge
+   * @param origin - Transaction origin (default: 'hook')
+   */
+  const updateBlockMetadata = (
+    id: string,
+    metadata: Partial<NonNullable<Block['metadata']>>,
+    origin: string = 'hook'
+  ) => {
+    if (!_doc) { warnDocNotReady('updateBlockMetadata'); return; }
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      const existing = getValue(blocksMap.get(id), 'metadata') as Block['metadata'] | undefined;
+      const merged = { ...existing, ...metadata };
+      setValueOnYMap(blocksMap, id, 'metadata', merged);
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    }, origin);
+  };
+
   const createInitialBlock = () => {
     if (!_doc) { warnDocNotReady('createInitialBlock'); return ''; }
     
@@ -1137,6 +1161,7 @@ function createBlockStore() {
     moveBlockDown,
     toggleCollapsed,
     updateTableConfig,  // FLO-58: table column widths
+    updateBlockMetadata,  // For hooks/projections to write metadata
     createInitialBlock,
     clearWorkspace,
   };
