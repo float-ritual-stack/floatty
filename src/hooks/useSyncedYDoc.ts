@@ -1296,9 +1296,9 @@ function cleanupForHMR(): void {
     clearTimeout(backupTimer);
     backupTimer = null;
   }
-  if (lastSeenSeqPersistTimer) {
-    clearTimeout(lastSeenSeqPersistTimer);
-    lastSeenSeqPersistTimer = null;
+  if (contiguousSeqPersistTimer) {
+    clearTimeout(contiguousSeqPersistTimer);
+    contiguousSeqPersistTimer = null;
   }
 
   // Remove Y.Doc update handler if attached
