@@ -22,4 +22,4 @@ pub use api::create_router;
 pub use auth::ApiKeyAuth;
 pub use backup::{BackupDaemon, BackupInfo, DaemonStatus};
 pub use config::{BackupConfig, ServerConfig};
-pub use ws::WsBroadcaster;
+pub use ws::{start_heartbeat, WsBroadcaster};

@@ -506,18 +506,22 @@ impl YDocStore {
     ///
     /// Use this for updates received from external sources (HTTP POST /update).
     ///
+    /// Returns the sequence number assigned to this update in the persistence layer.
+    /// This can be used for gap detection and incremental sync.
+    ///
     /// If a change callback is registered, this method will:
     /// 1. Snapshot current block state
     /// 2. Apply the update
     /// 3. Diff to detect changes
     /// 4. Invoke the callback with BlockChange events
-    pub fn apply_update(&self, update_bytes: &[u8]) -> Result<(), StoreError> {
+    pub fn apply_update(&self, update_bytes: &[u8]) -> Result<i64, StoreError> {
         // Validate update format before any mutations
         let update = Update::decode_v1(update_bytes)
             .map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
 
         // PERSIST FIRST: Write to DB before applying to memory
-        self.persistence
+        // Returns the sequence number assigned to this update
+        let seq = self.persistence
             .append_update(&self.doc_key, update_bytes)?;
 
         // Now apply to in-memory doc
@@ -562,27 +566,29 @@ impl YDocStore {
             self.emit_changes(changes);
         }
 
-        Ok(())
+        Ok(seq)
     }
 
     /// Persist an update that was already applied to the in-memory doc.
     ///
     /// Use this when you've already mutated the Y.Doc via transact_mut() and
     /// just need to persist the encoded update. Avoids double-application.
-    pub fn persist_update(&self, update_bytes: &[u8]) -> Result<(), StoreError> {
+    ///
+    /// Returns the sequence number assigned to this update.
+    pub fn persist_update(&self, update_bytes: &[u8]) -> Result<i64, StoreError> {
         // Validate update format
         let _ = Update::decode_v1(update_bytes)
             .map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
 
         // Persist only - memory already has the changes
-        self.persistence
+        let seq = self.persistence
             .append_update(&self.doc_key, update_bytes)?;
 
         // Check for compaction using current doc state
         let doc = self.doc.read().map_err(|_| StoreError::LockPoisoned)?;
         self.maybe_compact(&doc)?;
 
-        Ok(())
+        Ok(seq)
     }
 
     /// Check if compaction is needed and perform it.
@@ -621,6 +627,44 @@ impl YDocStore {
             .encode_state_as_update_v1(&StateVector::default());
         self.persistence.compact(&self.doc_key, &full_state)?;
         Ok(())
+    }
+
+    // =========================================================================
+    // Sequence-based sync methods (FLO-SEQ)
+    // =========================================================================
+
+    /// Get updates since a given sequence number.
+    ///
+    /// Returns tuples of (seq, update_data, created_at) for updates with id > since_seq.
+    /// Used for incremental sync - clients track lastSeenSeq and fetch only what they missed.
+    pub fn get_updates_since(
+        &self,
+        since_seq: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, Vec<u8>, i64)>, StoreError> {
+        self.persistence
+            .get_updates_since(&self.doc_key, since_seq, limit)
+            .map_err(StoreError::from)
+    }
+
+    /// Get the latest sequence number.
+    ///
+    /// Returns None if no updates exist.
+    pub fn get_latest_seq(&self) -> Result<Option<i64>, StoreError> {
+        self.persistence
+            .get_latest_seq(&self.doc_key)
+            .map_err(StoreError::from)
+    }
+
+    /// Get the compaction boundary.
+    ///
+    /// Returns the highest sequence number that was compacted away.
+    /// Clients requesting since < compacted_through are too far behind
+    /// and should do a full state resync instead of incremental.
+    pub fn get_compacted_through(&self) -> Result<Option<i64>, StoreError> {
+        self.persistence
+            .get_compacted_through(&self.doc_key)
+            .map_err(StoreError::from)
     }
 
     /// Reset the Y.Doc to a new state from a binary backup.

@@ -13,7 +13,7 @@ use floatty_server::{
     api, auth,
     backup::{self, BackupDaemon},
     config::{BackupConfig, ServerConfig},
-    ws, WsBroadcaster,
+    start_heartbeat, ws, WsBroadcaster,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -83,6 +83,10 @@ async fn main() {
     // Create WebSocket broadcaster for real-time sync
     // FLO-152: Bumped from 64 to 256 to reduce likelihood of Lagged errors
     let broadcaster = Arc::new(WsBroadcaster::new(256));
+
+    // Start heartbeat task - broadcasts latest seq every 30s if no updates sent
+    // This closes the non-atomic persist-broadcast window gap
+    start_heartbeat(Arc::clone(&broadcaster), Arc::clone(&store));
 
     // Initialize backup daemon if enabled (FLO-251)
     let backup_config = BackupConfig::load();
