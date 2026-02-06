@@ -703,6 +703,113 @@ describe('deduplicateChildIds', () => {
     expect(((blocksMap.get('real-parent-b') as Y.Map<unknown>).get('childIds') as Y.Array<string>).toArray()).not.toContain('orphan-child');
   });
 
+  it('removes phantom children (childIds referencing non-existent blocks)', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+
+    doc.transact(() => {
+      const parent = new Y.Map<unknown>();
+      parent.set('id', 'parent');
+      const arr = new Y.Array<string>();
+      arr.push(['real-child', 'phantom-1', 'real-child-2', 'phantom-2']);
+      parent.set('childIds', arr);
+      blocksMap.set('parent', parent);
+
+      // Only create the real children — phantoms don't exist
+      const child1 = new Y.Map<unknown>();
+      child1.set('id', 'real-child');
+      child1.set('childIds', new Y.Array<string>());
+      blocksMap.set('real-child', child1);
+
+      const child2 = new Y.Map<unknown>();
+      child2.set('id', 'real-child-2');
+      child2.set('childIds', new Y.Array<string>());
+      blocksMap.set('real-child-2', child2);
+    });
+
+    // Detect phantoms
+    const phantoms: Array<{ parentId: string; childId: string }> = [];
+    blocksMap.forEach((value, parentId) => {
+      if (!(value instanceof Y.Map)) return;
+      const arr = value.get('childIds');
+      if (!(arr instanceof Y.Array)) return;
+      for (const cid of arr.toArray() as string[]) {
+        if (!blocksMap.has(cid)) phantoms.push({ parentId, childId: cid });
+      }
+    });
+
+    expect(phantoms.length).toBe(2);
+
+    // Remove phantoms
+    doc.transact(() => {
+      for (const { parentId, childId } of phantoms) {
+        const pm = blocksMap.get(parentId) as Y.Map<unknown>;
+        const arr = pm.get('childIds') as Y.Array<string>;
+        const idx = (arr.toArray() as string[]).indexOf(childId);
+        if (idx >= 0) arr.delete(idx, 1);
+      }
+    }, 'system');
+
+    const finalArr = (blocksMap.get('parent') as Y.Map<unknown>).get('childIds') as Y.Array<string>;
+    expect(finalArr.toArray()).toEqual(['real-child', 'real-child-2']);
+  });
+
+  it('deletes orphan blocks (unreachable from any parent)', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+
+    doc.transact(() => {
+      rootIds.push(['root-1']);
+      const root = new Y.Map<unknown>();
+      root.set('id', 'root-1');
+      const arr = new Y.Array<string>();
+      arr.push(['child-1']);
+      root.set('childIds', arr);
+      blocksMap.set('root-1', root);
+
+      const child = new Y.Map<unknown>();
+      child.set('id', 'child-1');
+      child.set('parentId', 'root-1');
+      child.set('childIds', new Y.Array<string>());
+      blocksMap.set('child-1', child);
+
+      // Orphan: exists but not referenced by anyone
+      const orphan = new Y.Map<unknown>();
+      orphan.set('id', 'orphan-1');
+      orphan.set('parentId', 'non-existent');
+      orphan.set('content', 'ghost block');
+      orphan.set('childIds', new Y.Array<string>());
+      blocksMap.set('orphan-1', orphan);
+    });
+
+    expect(blocksMap.has('orphan-1')).toBe(true);
+
+    // Detect orphans
+    const referenced = new Set<string>(rootIds.toArray());
+    blocksMap.forEach((value) => {
+      if (!(value instanceof Y.Map)) return;
+      const arr = value.get('childIds');
+      if (!(arr instanceof Y.Array)) return;
+      for (const cid of arr.toArray() as string[]) referenced.add(cid);
+    });
+    const orphans: string[] = [];
+    blocksMap.forEach((_value, blockId) => {
+      if (!referenced.has(blockId)) orphans.push(blockId);
+    });
+
+    expect(orphans).toEqual(['orphan-1']);
+
+    // Delete orphans
+    doc.transact(() => {
+      for (const oid of orphans) blocksMap.delete(oid);
+    }, 'system');
+
+    expect(blocksMap.has('orphan-1')).toBe(false);
+    expect(blocksMap.has('root-1')).toBe(true);
+    expect(blocksMap.has('child-1')).toBe(true);
+  });
+
   it('no-ops when no duplicates exist', () => {
     const doc = new Y.Doc();
     const blocksMap = doc.getMap('blocks');

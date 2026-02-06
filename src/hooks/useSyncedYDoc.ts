@@ -185,15 +185,20 @@ export function deduplicateChildIds(): number {
     }
   }
 
-  // Phase 2: Cross-parent dedup — detect blocks claimed by multiple parents
-  // This happens when pre-fix delete-all-then-push created divergent CRDT ops
-  // and the same childId ended up in multiple parents' arrays after merge.
+  // Phase 2: Cross-parent dedup + phantom child detection
+  // Builds childId → [parentIds] map and detects childIds pointing to non-existent blocks.
   const childToParents = new Map<string, string[]>();
+  const phantomChildren: Array<{ parentId: string; childId: string }> = [];
   blocksMap.forEach((value, parentId) => {
     if (!(value instanceof Y.Map)) return;
     const arr = value.get('childIds');
     if (!(arr instanceof Y.Array)) return;
     for (const childId of arr.toArray() as string[]) {
+      // Phantom: childIds references a block that doesn't exist
+      if (!blocksMap.has(childId)) {
+        phantomChildren.push({ parentId, childId });
+        continue; // Don't add to cross-parent map
+      }
       const parents = childToParents.get(childId) || [];
       parents.push(parentId);
       childToParents.set(childId, parents);
@@ -228,7 +233,28 @@ export function deduplicateChildIds(): number {
     }
   }
 
-  if (blockDups.length === 0 && rootIndicesToRemove.length === 0 && crossParentRemovals.length === 0) {
+  // Phase 3: Orphan blocks — exist in blocksMap but no parent's childIds references them
+  // and they're not in rootIds. These are unreachable and cause ghost rendering issues.
+  const referenced = new Set<string>(rootIds.toArray());
+  blocksMap.forEach((value) => {
+    if (!(value instanceof Y.Map)) return;
+    const arr = value.get('childIds');
+    if (!(arr instanceof Y.Array)) return;
+    for (const cid of arr.toArray() as string[]) {
+      referenced.add(cid);
+    }
+  });
+  const orphanBlockIds: string[] = [];
+  blocksMap.forEach((_value, blockId) => {
+    if (!referenced.has(blockId)) {
+      orphanBlockIds.push(blockId);
+    }
+  });
+
+  const hasWork = blockDups.length > 0 || rootIndicesToRemove.length > 0
+    || crossParentRemovals.length > 0 || phantomChildren.length > 0
+    || orphanBlockIds.length > 0;
+  if (!hasWork) {
     return 0;
   }
 
@@ -274,6 +300,26 @@ export function deduplicateChildIds(): number {
         childBlock.set('parentId', newParentId);
       }
     }
+
+    // Remove phantom children (childIds referencing non-existent blocks)
+    for (const { parentId, childId } of phantomChildren) {
+      const parentMap = blocksMap.get(parentId);
+      if (!(parentMap instanceof Y.Map)) continue;
+      const arr = parentMap.get('childIds');
+      if (!(arr instanceof Y.Array)) continue;
+      const items = arr.toArray() as string[];
+      const idx = items.indexOf(childId);
+      if (idx >= 0) {
+        arr.delete(idx, 1);
+        totalRemoved++;
+      }
+    }
+
+    // Delete orphan blocks (unreachable from any parent or rootIds)
+    for (const orphanId of orphanBlockIds) {
+      blocksMap.delete(orphanId);
+      totalRemoved++;
+    }
   }, 'system');
 
   if (totalRemoved > 0 || parentIdUpdates.length > 0) {
@@ -282,12 +328,18 @@ export function deduplicateChildIds(): number {
       parts.push('within-array duplicates');
     }
     if (crossParentRemovals.length > 0) {
-      parts.push(`${crossParentRemovals.length} cross-parent orphan(s)`);
+      parts.push(`${crossParentRemovals.length} cross-parent`);
     }
     if (parentIdUpdates.length > 0) {
-      parts.push(`${parentIdUpdates.length} parentId re-homed`);
+      parts.push(`${parentIdUpdates.length} re-homed`);
     }
-    console.warn(`[useSyncedYDoc] Deduplication removed ${totalRemoved} entries (${parts.join(', ')})`);
+    if (phantomChildren.length > 0) {
+      parts.push(`${phantomChildren.length} phantom children`);
+    }
+    if (orphanBlockIds.length > 0) {
+      parts.push(`${orphanBlockIds.length} orphan blocks deleted`);
+    }
+    console.warn(`[useSyncedYDoc] Tree integrity: fixed ${totalRemoved} issues (${parts.join(', ')})`);
   }
 
   return totalRemoved;
