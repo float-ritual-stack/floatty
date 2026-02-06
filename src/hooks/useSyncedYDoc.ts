@@ -200,18 +200,29 @@ export function deduplicateChildIds(): number {
     }
   });
 
-  // For multi-parent blocks: keep canonical parent (matches block.parentId), remove from others
+  // For multi-parent blocks: keep one parent, remove from the rest.
+  // Prefer the canonical parent (matches block.parentId), but if it doesn't actually
+  // claim the block in its childIds, adopt the first real parent instead.
   const crossParentRemovals: Array<{ parentId: string; childId: string }> = [];
+  const parentIdUpdates: Array<{ childId: string; newParentId: string }> = [];
   for (const [childId, parents] of childToParents) {
     if (parents.length <= 1) continue;
-    // Find the canonical parent from the block's own parentId field
     const childBlock = blocksMap.get(childId);
-    const canonicalParent = childBlock instanceof Y.Map
+    const declaredParent = childBlock instanceof Y.Map
       ? (childBlock.get('parentId') as string | null)
       : null;
 
+    // Check if declared parent is among the ones that actually have this child
+    const declaredParentClaims = declaredParent !== null && parents.includes(declaredParent);
+    const keepParent = declaredParentClaims ? declaredParent : parents[0];
+
+    // If we're adopting a different parent, update block.parentId
+    if (keepParent !== declaredParent) {
+      parentIdUpdates.push({ childId, newParentId: keepParent });
+    }
+
     for (const pid of parents) {
-      if (pid !== canonicalParent) {
+      if (pid !== keepParent) {
         crossParentRemovals.push({ parentId: pid, childId });
       }
     }
@@ -255,15 +266,26 @@ export function deduplicateChildIds(): number {
         totalRemoved++;
       }
     }
+
+    // Update parentId for blocks adopted by a different parent
+    for (const { childId, newParentId } of parentIdUpdates) {
+      const childBlock = blocksMap.get(childId);
+      if (childBlock instanceof Y.Map) {
+        childBlock.set('parentId', newParentId);
+      }
+    }
   }, 'system');
 
-  if (totalRemoved > 0) {
+  if (totalRemoved > 0 || parentIdUpdates.length > 0) {
     const parts = [];
     if (blockDups.length > 0 || rootIndicesToRemove.length > 0) {
       parts.push('within-array duplicates');
     }
     if (crossParentRemovals.length > 0) {
       parts.push(`${crossParentRemovals.length} cross-parent orphan(s)`);
+    }
+    if (parentIdUpdates.length > 0) {
+      parts.push(`${parentIdUpdates.length} parentId re-homed`);
     }
     console.warn(`[useSyncedYDoc] Deduplication removed ${totalRemoved} entries (${parts.join(', ')})`);
   }

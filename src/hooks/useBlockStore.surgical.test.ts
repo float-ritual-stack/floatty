@@ -618,6 +618,91 @@ describe('deduplicateChildIds', () => {
     expect(((blocksMap.get('parent-c') as Y.Map<unknown>).get('childIds') as Y.Array<string>).toArray()).toEqual(['child-w']);
   });
 
+  it('re-homes parentId when canonical parent does not claim the block', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+
+    // Block declares parentId='stale-parent', but stale-parent doesn't have it.
+    // Only 'real-parent-a' and 'real-parent-b' have it in childIds.
+    doc.transact(() => {
+      const staleParent = new Y.Map<unknown>();
+      staleParent.set('id', 'stale-parent');
+      staleParent.set('childIds', new Y.Array<string>()); // empty!
+      blocksMap.set('stale-parent', staleParent);
+
+      const realA = new Y.Map<unknown>();
+      realA.set('id', 'real-parent-a');
+      const arrA = new Y.Array<string>();
+      arrA.push(['orphan-child', 'other-a']);
+      realA.set('childIds', arrA);
+      blocksMap.set('real-parent-a', realA);
+
+      const realB = new Y.Map<unknown>();
+      realB.set('id', 'real-parent-b');
+      const arrB = new Y.Array<string>();
+      arrB.push(['orphan-child', 'other-b']);
+      realB.set('childIds', arrB);
+      blocksMap.set('real-parent-b', realB);
+
+      const child = new Y.Map<unknown>();
+      child.set('id', 'orphan-child');
+      child.set('parentId', 'stale-parent'); // stale!
+      child.set('childIds', new Y.Array<string>());
+      blocksMap.set('orphan-child', child);
+    });
+
+    // Run cross-parent logic (inline)
+    const childToParents = new Map<string, string[]>();
+    blocksMap.forEach((value, parentId) => {
+      if (!(value instanceof Y.Map)) return;
+      const arr = value.get('childIds');
+      if (!(arr instanceof Y.Array)) return;
+      for (const cid of arr.toArray() as string[]) {
+        const p = childToParents.get(cid) || [];
+        p.push(parentId);
+        childToParents.set(cid, p);
+      }
+    });
+
+    const removals: Array<{ parentId: string; childId: string }> = [];
+    const updates: Array<{ childId: string; newParentId: string }> = [];
+
+    for (const [childId, parents] of childToParents) {
+      if (parents.length <= 1) continue;
+      const childBlock = blocksMap.get(childId);
+      const declared = childBlock instanceof Y.Map ? (childBlock.get('parentId') as string | null) : null;
+      const declaredClaims = declared !== null && parents.includes(declared);
+      const keep = declaredClaims ? declared : parents[0];
+      if (keep !== declared) updates.push({ childId, newParentId: keep });
+      for (const pid of parents) {
+        if (pid !== keep) removals.push({ parentId: pid, childId });
+      }
+    }
+
+    doc.transact(() => {
+      for (const { parentId, childId } of removals) {
+        const pm = blocksMap.get(parentId) as Y.Map<unknown>;
+        const arr = pm.get('childIds') as Y.Array<string>;
+        const idx = arr.toArray().indexOf(childId);
+        if (idx >= 0) arr.delete(idx, 1);
+      }
+      for (const { childId, newParentId } of updates) {
+        const cb = blocksMap.get(childId) as Y.Map<unknown>;
+        cb.set('parentId', newParentId);
+      }
+    }, 'system');
+
+    // orphan-child should now belong to real-parent-a (first in list)
+    expect(updates.length).toBe(1);
+    expect(updates[0].newParentId).toBe('real-parent-a');
+    const child = blocksMap.get('orphan-child') as Y.Map<unknown>;
+    expect(child.get('parentId')).toBe('real-parent-a');
+    // real-parent-a still has it
+    expect(((blocksMap.get('real-parent-a') as Y.Map<unknown>).get('childIds') as Y.Array<string>).toArray()).toContain('orphan-child');
+    // real-parent-b lost it
+    expect(((blocksMap.get('real-parent-b') as Y.Map<unknown>).get('childIds') as Y.Array<string>).toArray()).not.toContain('orphan-child');
+  });
+
   it('no-ops when no duplicates exist', () => {
     const doc = new Y.Doc();
     const blocksMap = doc.getMap('blocks');
