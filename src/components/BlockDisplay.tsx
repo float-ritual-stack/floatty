@@ -674,6 +674,13 @@ function InlineTokenSpan(props: TokenSpanProps) {
     'line-comment': 'md-line-comment',
     'filter-function': 'md-filter-function',
     'filter-prefix': 'filter-inline-prefix',
+    'box-heavy': 'md-box-heavy',
+    'box-double': 'md-box-double',
+    'box-tree': 'md-box-tree',
+    'box-indicator': 'md-box-indicator',
+    'heading-marker': 'md-heading-marker',
+    'time': 'md-time',
+    'prefix-marker': 'md-prefix-marker',
     table: '', // Tables are rendered separately via TableView
   };
 
@@ -706,22 +713,40 @@ function InlineTokenSpan(props: TokenSpanProps) {
   }
 
   // Code fences render with line-by-line structure for fence marker styling
+  // Unlanguaged fences (or text/ascii) get box-drawing coloring instead of flat green
   if (props.token.type === 'code-fence') {
     const lines = props.token.raw.split('\n');
+    const lang = props.token.lang?.toLowerCase() ?? '';
+    const isPlainFence = !lang || lang === 'text' || lang === 'ascii';
     return (
       <span class={getClass()} data-lang={props.token.lang}>
         <For each={lines}>
           {(line, i) => {
             const isLastLine = i() === lines.length - 1;
             const isFenceMarker = line.trimStart().startsWith('```');
-            return (
-              <>
-                <span class={isFenceMarker ? 'md-fence-marker' : 'md-fence-content'}>
-                  {line}
-                </span>
-                {!isLastLine && '\n'}
-              </>
-            );
+
+            if (isFenceMarker) {
+              return <><span class="md-fence-marker">{line}</span>{!isLastLine && '\n'}</>;
+            }
+
+            // Plain fences: run full inline parser for wikilinks, ctx::, box-drawing, etc.
+            if (isPlainFence) {
+              const lineTokens = parseAllInlineTokens(line);
+              if (lineTokens.length > 0) {
+                return (
+                  <>
+                    <For each={lineTokens}>
+                      {(sub) => <InlineTokenSpan token={sub} onWikilinkClick={props.onWikilinkClick} />}
+                    </For>
+                    {!isLastLine && '\n'}
+                  </>
+                );
+              }
+              // No formatting found — plain text, inherit foreground
+              return <><span>{line}</span>{!isLastLine && '\n'}</>;
+            }
+
+            return <><span class="md-fence-content">{line}</span>{!isLastLine && '\n'}</>;
           }}
         </For>
       </span>

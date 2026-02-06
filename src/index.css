@@ -778,6 +778,41 @@ body.resizing .terminal-pane-positioned {
   color: var(--color-ansi-bright-green);  /* Code-like color */
 }
 
+/* Box-drawing characters: per-class coloring (Option 3) */
+.block-display .md-box-heavy {
+  color: var(--color-ansi-yellow);
+  opacity: 0.7;
+}
+
+.block-display .md-box-double {
+  color: var(--color-ansi-magenta);
+  opacity: 0.8;
+}
+
+.block-display .md-box-tree {
+  color: var(--color-ansi-bright-black);
+}
+
+.block-display .md-box-indicator {
+  color: var(--color-ansi-bright-green);
+}
+
+/* Heading markers: dimmed ## prefix */
+.block-display .md-heading-marker {
+  color: var(--color-ansi-bright-black);
+}
+
+/* Time patterns: subtle timestamp coloring */
+.block-display .md-time {
+  color: var(--color-ansi-cyan);
+  opacity: 0.6;
+}
+
+/* Prefix markers: word:: patterns (scratch::, pages::, sh::) */
+.block-display .md-prefix-marker {
+  color: var(--color-ansi-bright-cyan);
+}
+
 /* Line comments: muted for //,%%, --, # prefixed lines */
 .block-display .md-line-comment {
   color: var(--color-fg-muted);

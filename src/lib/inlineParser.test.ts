@@ -4,7 +4,7 @@
  * Tests parseInlineTokens which extracts **bold**, *italic*, `code` spans.
  */
 import { describe, it, expect } from 'vitest';
-import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, hasCodeFencePatterns, hasTablePattern, type InlineToken } from './inlineParser';
+import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, hasCodeFencePatterns, hasTablePattern, hasBoxDrawingPattern, type InlineToken } from './inlineParser';
 
 // Helper to extract just types and content for easier assertions
 function tokenSummary(tokens: InlineToken[]): Array<{ type: string; content: string }> {
@@ -225,8 +225,10 @@ describe('hasInlineFormatting', () => {
     expect(hasInlineFormatting('- ctx::2026-01-03 [project::floatty]')).toBe(true);
   });
 
-  it('returns false for ctx:: without timestamp', () => {
-    expect(hasInlineFormatting('talking about ctx:: in general')).toBe(false);
+  it('returns true for ctx:: without timestamp (matches prefix-marker pattern)', () => {
+    // hasPrefixMarker detects ctx:: as a word:: pattern (broader gatekeeper)
+    // Parser won't find match at token start, returns empty — slight over-parse is fine
+    expect(hasInlineFormatting('talking about ctx:: in general')).toBe(true);
   });
 });
 
@@ -546,10 +548,10 @@ describe('wikilink parsing', () => {
       expect(tokens[0].commentPrefix).toBe('--');
     });
 
-    it('parses # comment lines', () => {
+    it('does NOT parse # as comment (it is markdown heading, needs wikilinks inside)', () => {
+      // # is markdown heading, not a comment - wikilinks must parse inside
       const tokens = parseInlineTokens('# shell style comment');
-      expect(tokens[0].type).toBe('line-comment');
-      expect(tokens[0].commentPrefix).toBe('#');
+      expect(tokens[0].type).not.toBe('line-comment');
     });
 
     it('strips bullet prefix before detecting comment', () => {
@@ -599,7 +601,7 @@ describe('wikilink parsing', () => {
       expect(hasInlineFormatting('// comment')).toBe(true);
       expect(hasInlineFormatting('%% comment')).toBe(true);
       expect(hasInlineFormatting('-- comment')).toBe(true);
-      expect(hasInlineFormatting('# comment')).toBe(true);
+      // Note: # is NOT a comment - it's markdown heading (needs wikilinks inside)
     });
 
     it('returns true for filter functions', () => {
@@ -809,6 +811,103 @@ describe('markdown table parsing', () => {
 | x \\| y | z |`;
       const tokens = parseAllInlineTokens(table);
       expect(tokens[0].rows).toEqual([['x | y', 'z']]);
+    });
+  });
+
+  describe('box-drawing characters', () => {
+    describe('hasBoxDrawingPattern', () => {
+      it('detects heavy box chars (shade blocks)', () => {
+        expect(hasBoxDrawingPattern('▒▓█░')).toBe(true);
+      });
+
+      it('detects double-line box chars', () => {
+        expect(hasBoxDrawingPattern('╔═══╗')).toBe(true);
+      });
+
+      it('detects tree-drawing chars', () => {
+        expect(hasBoxDrawingPattern('├── folder')).toBe(true);
+      });
+
+      it('returns false for plain text', () => {
+        expect(hasBoxDrawingPattern('just text')).toBe(false);
+      });
+    });
+
+    describe('parseAllInlineTokens - box drawing', () => {
+      it('classifies shade blocks as box-heavy', () => {
+        const tokens = parseAllInlineTokens('▒▓█░ header');
+        expect(tokenSummary(tokens)).toEqual([
+          { type: 'box-heavy', content: '▒▓█░' },
+          { type: 'text', content: ' header' },
+        ]);
+      });
+
+      it('classifies double-line borders as box-double', () => {
+        const tokens = parseAllInlineTokens('╔═══╗');
+        expect(tokenSummary(tokens)).toEqual([
+          { type: 'box-double', content: '╔═══╗' },
+        ]);
+      });
+
+      it('classifies tree chars as box-tree', () => {
+        const tokens = parseAllInlineTokens('├── src/');
+        expect(tokenSummary(tokens)).toEqual([
+          { type: 'box-tree', content: '├──' },
+          { type: 'text', content: ' src/' },
+        ]);
+      });
+
+      it('handles mixed box types in one line', () => {
+        const tokens = parseAllInlineTokens('▓▓ header ▓▓');
+        const types = tokens.map(t => t.type);
+        expect(types).toEqual(['box-heavy', 'text', 'box-heavy']);
+      });
+
+      it('preserves wikilinks inside box-drawing content', () => {
+        const tokens = parseAllInlineTokens('├── [[my page]]');
+        const types = tokens.map(t => t.type);
+        expect(types).toContain('box-tree');
+        expect(types).toContain('wikilink');
+      });
+
+      it('preserves bold inside box-drawing lines', () => {
+        const tokens = parseAllInlineTokens('│ **important** │');
+        const types = tokens.map(t => t.type);
+        expect(types).toContain('box-tree');
+        expect(types).toContain('bold');
+      });
+
+      it('handles The Gurgle style headers', () => {
+        const tokens = parseAllInlineTokens('▓▓ float.dispatch/ (today\'s activity) ▓▓');
+        expect(tokens[0].type).toBe('box-heavy');
+        expect(tokens[tokens.length - 1].type).toBe('box-heavy');
+      });
+
+      it('finds heading after box-drawing chars (code fence content)', () => {
+        const tokens = parseAllInlineTokens('│ ## Day Shape     │');
+        const types = tokens.map(t => t.type);
+        expect(types).toContain('box-tree');
+        expect(types).toContain('heading-marker');
+        const heading = tokens.find(t => t.type === 'heading-marker');
+        expect(heading?.raw).toMatch(/##/);
+      });
+
+      it('finds prefix-marker after box-drawing chars (code fence content)', () => {
+        const tokens = parseAllInlineTokens('│ scratch::        │');
+        const types = tokens.map(t => t.type);
+        expect(types).toContain('box-tree');
+        expect(types).toContain('prefix-marker');
+        const prefix = tokens.find(t => t.type === 'prefix-marker');
+        expect(prefix?.raw).toMatch(/scratch::/);
+      });
+
+      it('finds time + heading in box-framed content', () => {
+        const tokens = parseAllInlineTokens('│ ## 08:00 - morning │');
+        const types = tokens.map(t => t.type);
+        expect(types).toContain('heading-marker');
+        expect(types).toContain('time');
+        expect(types).toContain('box-tree');
+      });
     });
   });
 });

@@ -10,7 +10,7 @@
 import { findWikilinkEnd, parseWikilinkInner } from './wikilinkUtils';
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'filter-function' | 'filter-prefix' | 'table';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'filter-function' | 'filter-prefix' | 'table' | 'box-heavy' | 'box-double' | 'box-tree' | 'box-indicator' | 'heading-marker' | 'time' | 'prefix-marker';
   content: string;  // inner text without markers (for wikilink: display text)
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
@@ -58,8 +58,9 @@ export function hasFilterPrefixPattern(content: string): boolean {
  * Check if content is a line-comment (starts with //, %%, --, #).
  */
 export function hasLineCommentPattern(content: string): boolean {
+  // Note: # is NOT a comment - it's a markdown heading, needs wikilinks to parse inside
   const trimmed = content.replace(/^[-•]\s+/, '').trim();
-  return /^(\/\/|%%|--|#)\s/.test(trimmed);
+  return /^(\/\/|%%|--)\s/.test(trimmed);
 }
 
 /**
@@ -68,6 +69,105 @@ export function hasLineCommentPattern(content: string): boolean {
 export function hasFilterFunctionPattern(content: string): boolean {
   const trimmed = content.replace(/^[-•]\s+/, '').trim();
   return /^(include|exclude)\s*\([^)]*\)\s*$/i.test(trimmed);
+}
+
+/**
+ * Check if content starts with a markdown heading prefix (# to ######).
+ * Allows leading whitespace (common inside code fences).
+ */
+export function hasHeadingPrefix(content: string): boolean {
+  // No ^ anchor — inside code fences, line may start with box-drawing chars like │
+  // The heading pass itself uses ^ on individual tokens for precision
+  return /#{1,6}\s/.test(content);
+}
+
+/**
+ * Check if content contains a time pattern (HH:MM).
+ */
+export function hasTimePattern(content: string): boolean {
+  return /\b\d{1,2}:\d{2}\b/.test(content);
+}
+
+/**
+ * Check if content starts with a word:: prefix (scratch::, pages::, sh::, ctx::, etc.).
+ * Allows leading whitespace.
+ */
+export function hasPrefixMarker(content: string): boolean {
+  // No ^ anchor — inside code fences, line may start with box-drawing chars like │
+  // The prefix pass itself uses ^ on individual tokens for precision
+  return /\w+::/.test(content);
+}
+
+// Box-drawing character classes for colored structural rendering
+// Heavy: shade/block elements (▒▓█░) — warm, section-header feel
+// Double: double-line box drawing (╔═║╚╗╝╬╦╩╠╣) — architectural frames
+// Tree: single-line box/tree drawing (├└│─┌┐┘┤┬┴┼) — structural scaffolding
+const BOX_HEAVY_RE = /[▒▓█░]+/g;
+const BOX_DOUBLE_RE = /[╔╗╚╝║═╬╦╩╠╣]+/g;
+const BOX_TREE_RE = /[├└│─┌┐┘┤┬┴┼]+/g;
+const BOX_INDICATOR_RE = /[▼▶►▲◀◄▽△↓↑→←]+/g;
+
+/**
+ * Check if content contains box-drawing characters worth coloring.
+ */
+export function hasBoxDrawingPattern(content: string): boolean {
+  return /[▒▓█░╔╗╚╝║═╬╦╩╠╣├└│─┌┐┘┤┬┴┼▼▶►▲◀◄▽△↓↑→←]/.test(content);
+}
+
+/**
+ * Split a text token's raw content into alternating text/box-drawing tokens.
+ * Preserves positions relative to the token's start offset.
+ */
+export function splitBoxDrawingTokens(raw: string, baseStart: number): InlineToken[] {
+  // Build a map of character positions to their box type
+  type BoxType = 'box-heavy' | 'box-double' | 'box-tree' | 'box-indicator';
+  const charTypes = new Map<number, BoxType>();
+
+  for (const match of raw.matchAll(BOX_HEAVY_RE)) {
+    for (let i = 0; i < match[0].length; i++) {
+      charTypes.set(match.index! + i, 'box-heavy');
+    }
+  }
+  for (const match of raw.matchAll(BOX_DOUBLE_RE)) {
+    for (let i = 0; i < match[0].length; i++) {
+      charTypes.set(match.index! + i, 'box-double');
+    }
+  }
+  for (const match of raw.matchAll(BOX_TREE_RE)) {
+    for (let i = 0; i < match[0].length; i++) {
+      charTypes.set(match.index! + i, 'box-tree');
+    }
+  }
+  for (const match of raw.matchAll(BOX_INDICATOR_RE)) {
+    for (let i = 0; i < match[0].length; i++) {
+      charTypes.set(match.index! + i, 'box-indicator');
+    }
+  }
+
+  if (charTypes.size === 0) return [];
+
+  // Walk content, emit runs of same type
+  const tokens: InlineToken[] = [];
+  let runStart = 0;
+  let runType: 'text' | BoxType = charTypes.has(0) ? charTypes.get(0)! : 'text';
+
+  for (let i = 1; i <= raw.length; i++) {
+    const currentType = i < raw.length ? (charTypes.get(i) ?? 'text') : 'end' as string;
+    if (currentType !== runType || i === raw.length) {
+      const slice = raw.slice(runStart, i);
+      tokens.push({
+        type: runType,
+        content: slice,
+        raw: slice,
+        start: baseStart + runStart,
+        end: baseStart + i,
+      });
+      runStart = i;
+      runType = currentType === 'end' ? 'text' : currentType as typeof runType;
+    }
+  }
+
+  return tokens;
 }
 
 /**
@@ -471,8 +571,9 @@ export function parseInlineTokens(content: string): InlineToken[] {
   // Check for line-level comment patterns (entire line is a comment)
   // Only matches if content STARTS with comment prefix (after optional bullet/whitespace)
   // Note: bullet pattern must be `- ` (dash + space) to avoid stripping `--` comments
+  // Note: # is NOT a comment - it's a markdown heading, needs wikilinks to parse inside
   const trimmed = content.replace(/^[-•]\s+/, '').trim();
-  const commentMatch = trimmed.match(/^(\/\/|%%|--|#)\s*/);
+  const commentMatch = trimmed.match(/^(\/\/|%%|--)\s*/);
   if (commentMatch) {
     return [{
       type: 'line-comment',
@@ -582,7 +683,11 @@ export function hasInlineFormatting(content: string): boolean {
     || hasWikilinkPatterns(content)
     || hasLineCommentPattern(content)
     || hasFilterFunctionPattern(content)
-    || hasFilterPrefixPattern(content);
+    || hasFilterPrefixPattern(content)
+    || hasBoxDrawingPattern(content)
+    || hasHeadingPrefix(content)
+    || hasTimePattern(content)
+    || hasPrefixMarker(content);
 }
 
 /**
@@ -608,8 +713,12 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
   const hasLineComment = hasLineCommentPattern(content);
   const hasFilterFunc = hasFilterFunctionPattern(content);
   const hasFilterPrefix = hasFilterPrefixPattern(content);
+  const hasBoxDrawing = hasBoxDrawingPattern(content);
+  const hasHeading = hasHeadingPrefix(content);
+  const hasTime = hasTimePattern(content);
+  const hasPrefix = hasPrefixMarker(content);
 
-  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks && !hasLineComment && !hasFilterFunc && !hasFilterPrefix) {
+  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks && !hasLineComment && !hasFilterFunc && !hasFilterPrefix && !hasBoxDrawing && !hasHeading && !hasTime && !hasPrefix) {
     return [];
   }
 
@@ -695,6 +804,93 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
       }
     }
     tokens = mdMerged;
+  }
+
+  // Box-drawing pass: classify box/ASCII art characters by weight
+  if (hasBoxDrawing) {
+    const boxMerged: InlineToken[] = [];
+    for (const token of tokens) {
+      if (token.type === 'text' && hasBoxDrawingPattern(token.raw)) {
+        boxMerged.push(...splitBoxDrawingTokens(token.raw, token.start));
+      } else {
+        boxMerged.push(token);
+      }
+    }
+    tokens = boxMerged;
+  }
+
+  // Heading prefix pass: split ## marker from heading text (allows leading whitespace)
+  // Scan ALL text tokens (not just first) — after box-drawing split, heading may be in a later token
+  if (hasHeading) {
+    const headingMerged: InlineToken[] = [];
+    let headingApplied = false;
+    for (const token of tokens) {
+      if (!headingApplied && token.type === 'text') {
+        const match = token.raw.match(/^(\s*#{1,6})\s/);
+        if (match) {
+          headingApplied = true;
+          const marker = match[0];
+          headingMerged.push({ type: 'heading-marker', content: marker, raw: marker, start: token.start, end: token.start + marker.length });
+          if (marker.length < token.raw.length) {
+            const rest = token.raw.slice(marker.length);
+            headingMerged.push({ type: 'text', content: rest, raw: rest, start: token.start + marker.length, end: token.end });
+          }
+          continue;
+        }
+      }
+      headingMerged.push(token);
+    }
+    tokens = headingMerged;
+  }
+
+  // Prefix-marker pass: color word:: patterns (scratch::, pages::, sh::, ctx::, etc.)
+  if (hasPrefix) {
+    const prefixMerged: InlineToken[] = [];
+    for (const token of tokens) {
+      if (token.type === 'text' && hasPrefixMarker(token.raw)) {
+        const match = token.raw.match(/^(\s*\w+::)/);
+        if (match) {
+          const pfx = match[0];
+          prefixMerged.push({ type: 'prefix-marker', content: pfx, raw: pfx, start: token.start, end: token.start + pfx.length });
+          if (pfx.length < token.raw.length) {
+            const rest = token.raw.slice(pfx.length);
+            prefixMerged.push({ type: 'text', content: rest, raw: rest, start: token.start + pfx.length, end: token.end });
+          }
+        } else {
+          prefixMerged.push(token);
+        }
+      } else {
+        prefixMerged.push(token);
+      }
+    }
+    tokens = prefixMerged;
+  }
+
+  // Time pass: highlight HH:MM patterns in text tokens
+  if (hasTime) {
+    const timeMerged: InlineToken[] = [];
+    for (const token of tokens) {
+      if (token.type === 'text' && hasTimePattern(token.raw)) {
+        let lastIdx = 0;
+        const re = /\b\d{1,2}:\d{2}\b/g;
+        let m;
+        while ((m = re.exec(token.raw)) !== null) {
+          if (m.index > lastIdx) {
+            const before = token.raw.slice(lastIdx, m.index);
+            timeMerged.push({ type: 'text', content: before, raw: before, start: token.start + lastIdx, end: token.start + m.index });
+          }
+          timeMerged.push({ type: 'time', content: m[0], raw: m[0], start: token.start + m.index, end: token.start + m.index + m[0].length });
+          lastIdx = m.index + m[0].length;
+        }
+        if (lastIdx < token.raw.length) {
+          const after = token.raw.slice(lastIdx);
+          timeMerged.push({ type: 'text', content: after, raw: after, start: token.start + lastIdx, end: token.end });
+        }
+      } else {
+        timeMerged.push(token);
+      }
+    }
+    tokens = timeMerged;
   }
 
   // Filter out pure text tokens if they're the only thing (no formatting)
