@@ -20,7 +20,7 @@
 
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
-import { getSharedDoc, triggerFullResync, setSyncStatusExternal } from './useSyncedYDoc';
+import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates } from './useSyncedYDoc';
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -131,7 +131,9 @@ async function performHealthCheck(): Promise<void> {
 
           if (postServerHealth.blockCount === postLocalCount) {
             setConsecutiveMismatches(0);
-            setSyncStatusExternal('synced', null);
+            if (!hasPendingUpdates()) {
+              setSyncStatusExternal('synced', null);
+            }
             console.log('[SyncHealth] Resync complete, drift resolved');
           } else {
             // Still mismatched after resync — show drift state, don't fake green

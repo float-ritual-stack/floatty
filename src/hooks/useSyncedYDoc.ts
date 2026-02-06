@@ -51,6 +51,15 @@ export function setSyncStatusExternal(status: SyncStatus, error?: string | null)
   if (error !== undefined) setLastSyncError(error);
 }
 
+/**
+ * Check if drift status is currently set.
+ * Used to prevent normal sync paths from clobbering drift indicator —
+ * only the health check should clear drift (after verifying counts match).
+ */
+export function isDriftStatus(): boolean {
+  return syncStatus() === 'drift';
+}
+
 /** Check if there are pending updates (for close gate) */
 export function hasPendingUpdates(): boolean {
   return sharedPendingUpdates.length > 0 || sharedIsFlushing;
@@ -88,8 +97,10 @@ export async function forceSyncNow(): Promise<void> {
       sentCount++;
     }
     sharedRetryCount = 0;
-    setSyncStatus('synced');
-    setLastSyncError(null);
+    if (!isDriftStatus()) {
+      setSyncStatus('synced');
+      setLastSyncError(null);
+    }
     setPendingCount(0);
     clearBackup(); // All synced - clear crash backup
     console.log('[useSyncedYDoc] Force sync completed successfully');
@@ -262,8 +273,10 @@ async function flushUpdatesModule() {
     sharedRetryCount = 0;
 
     if (sharedPendingUpdates.length === 0) {
-      setSyncStatus('synced');
-      setLastSyncError(null);
+      if (!isDriftStatus()) {
+        setSyncStatus('synced');
+        setLastSyncError(null);
+      }
       clearBackup();
     }
     setPendingCount(sharedPendingUpdates.length);
@@ -803,7 +816,7 @@ function connectWebSocket() {
       const thisConnectionId = ++wsConnectionId;
 
       // Clear any previous connection error now that we're connected
-      if (sharedPendingUpdates.length === 0) {
+      if (sharedPendingUpdates.length === 0 && !isDriftStatus()) {
         setSyncStatus('synced');
         setLastSyncError(null);
       }
