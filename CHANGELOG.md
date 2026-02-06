@@ -6,6 +6,19 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.18] - 2026-02-05
+
+### Features
+
+- **Server health endpoint** (b2b0c49): Added version and git info to health endpoint for operational visibility
+
+### Bug Fixes
+
+- **Scroll lock race condition** (FLO-278, PR #121): Replaced inline `overflow: hidden` manipulation with CSS class toggle (`scroll-locked`), eliminating race between focus routing and RAF-based scroll preservation that caused scroll to stop responding after zoom/paste/wikilink/history operations
+- **Stale server cleanup** (427031a): Kill stale servers by port before rebuild to prevent port conflicts
+
+---
+
 ## [0.7.17] - 2026-02-05
 
 ### Features
