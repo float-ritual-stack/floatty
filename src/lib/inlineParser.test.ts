@@ -546,10 +546,10 @@ describe('wikilink parsing', () => {
       expect(tokens[0].commentPrefix).toBe('--');
     });
 
-    it('parses # comment lines', () => {
+    it('does NOT parse # as comment (it is markdown heading, needs wikilinks inside)', () => {
+      // # is markdown heading, not a comment - wikilinks must parse inside
       const tokens = parseInlineTokens('# shell style comment');
-      expect(tokens[0].type).toBe('line-comment');
-      expect(tokens[0].commentPrefix).toBe('#');
+      expect(tokens[0].type).not.toBe('line-comment');
     });
 
     it('strips bullet prefix before detecting comment', () => {
@@ -599,7 +599,7 @@ describe('wikilink parsing', () => {
       expect(hasInlineFormatting('// comment')).toBe(true);
       expect(hasInlineFormatting('%% comment')).toBe(true);
       expect(hasInlineFormatting('-- comment')).toBe(true);
-      expect(hasInlineFormatting('# comment')).toBe(true);
+      // Note: # is NOT a comment - it's markdown heading (needs wikilinks inside)
     });
 
     it('returns true for filter functions', () => {

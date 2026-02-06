@@ -58,8 +58,9 @@ export function hasFilterPrefixPattern(content: string): boolean {
  * Check if content is a line-comment (starts with //, %%, --, #).
  */
 export function hasLineCommentPattern(content: string): boolean {
+  // Note: # is NOT a comment - it's a markdown heading, needs wikilinks to parse inside
   const trimmed = content.replace(/^[-•]\s+/, '').trim();
-  return /^(\/\/|%%|--|#)\s/.test(trimmed);
+  return /^(\/\/|%%|--)\s/.test(trimmed);
 }
 
 /**
@@ -471,8 +472,9 @@ export function parseInlineTokens(content: string): InlineToken[] {
   // Check for line-level comment patterns (entire line is a comment)
   // Only matches if content STARTS with comment prefix (after optional bullet/whitespace)
   // Note: bullet pattern must be `- ` (dash + space) to avoid stripping `--` comments
+  // Note: # is NOT a comment - it's a markdown heading, needs wikilinks to parse inside
   const trimmed = content.replace(/^[-•]\s+/, '').trim();
-  const commentMatch = trimmed.match(/^(\/\/|%%|--|#)\s*/);
+  const commentMatch = trimmed.match(/^(\/\/|%%|--)\s*/);
   if (commentMatch) {
     return [{
       type: 'line-comment',
