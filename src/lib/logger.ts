@@ -123,6 +123,13 @@ if (INTERCEPT_CONSOLE) {
 
   console.warn = (...args: unknown[]) => {
     originalConsole.warn(...args);
+    // Skip forwarding stale Tauri channel callback warnings to Rust —
+    // after HMR, PTY batcher sends to old channels at high rate,
+    // each warn → invoke('log_js') → new callback → IPC flood → freeze
+    const firstArg = args[0];
+    if (typeof firstArg === 'string' && firstArg.includes("Couldn't find callback id")) {
+      return;
+    }
     const { target, message } = parseConsoleArgs(args);
     logToRust('warn', target, message);
   };
