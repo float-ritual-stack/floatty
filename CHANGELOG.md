@@ -4,18 +4,18 @@ All notable changes to floatty are documented here.
 
 ## [Unreleased]
 
+---
+
+## [0.7.19] - 2026-02-05
+
 ### Features
 
-- **Block lifecycle hooks** (`ctxRouterHook`, `outlinksHook`): New hook system using `blockEventBus` for metadata extraction on block create/update
-  - `ctxRouterHook` extracts `ctx::` markers and `[project::X]`, `[mode::Y]`, `[issue::Z]` tags → stores in `block.metadata.markers`
-  - `outlinksHook` extracts `[[wikilink]]` targets → stores in `block.metadata.outlinks` (enables backlink queries)
+- **Block lifecycle hooks** (PR #120): Hook system using `blockEventBus` for metadata extraction
+  - `ctxRouterHook` extracts `ctx::` markers and `[project::X]`, `[mode::Y]`, `[issue::Z]` tags → `block.metadata.markers`
+  - `outlinksHook` extracts `[[wikilink]]` targets → `block.metadata.outlinks` (enables backlink queries)
   - Hooks use Origin filtering to prevent infinite loops
-  - See `src/lib/handlers/hooks/` and `docs/architecture/FLOATTY_HOOK_SYSTEM.md`
-
-- **Health endpoint enhancements**: `/health` now returns version and git info from build
-  - `version`: Inherits workspace version (e.g., "0.7.17") instead of hardcoded "0.1.0"
-  - `gitSha`: Short (7-char) commit SHA at build time
-  - `gitDirty`: Boolean indicating uncommitted changes at build time
+  - Null-safe metadata merge guards against legacy data
+  - Stale metadata cleared when patterns removed from blocks
 
 ---
 
