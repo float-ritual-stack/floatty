@@ -12,7 +12,7 @@
  */
 
 import { createMemo, createSignal, createEffect, on, onCleanup, For, Show } from 'solid-js';
-import { parseAllInlineTokens, hasInlineFormatting, hasBoxDrawingPattern, splitBoxDrawingTokens, type InlineToken } from '../lib/inlineParser';
+import { parseAllInlineTokens, hasInlineFormatting, type InlineToken } from '../lib/inlineParser';
 import { findWikilinkEnd, parseWikilinkInner } from '../lib/wikilinkUtils';
 import type { TableConfig } from '../lib/blockTypes';
 
@@ -736,7 +736,7 @@ function InlineTokenSpan(props: TokenSpanProps) {
                 return (
                   <>
                     <For each={lineTokens}>
-                      {(sub) => <InlineTokenSpan token={sub} blockId={props.blockId} paneId={props.paneId} />}
+                      {(sub) => <InlineTokenSpan token={sub} onWikilinkClick={props.onWikilinkClick} />}
                     </For>
                     {!isLastLine && '\n'}
                   </>
