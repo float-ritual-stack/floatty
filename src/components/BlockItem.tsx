@@ -344,9 +344,10 @@ export function BlockItem(props: BlockItemProps) {
 
   // Handle focus changes from props
   // NOTE: Don't steal focus from block selection mode (when outliner container is focused)
-  // FLO-147: Disable scroll during focus - preventScroll unreliable on contentEditable
+  // FLO-147/FLO-278: Disable scroll during focus using CSS class toggle
   // Browser can queue its own scroll task AFTER our restore logic runs.
-  // Solution: Lock scrolling entirely via overflow:hidden during focus transition.
+  // Solution: Lock scrolling via CSS class (not inline style) during focus transition.
+  // CSS class approach prevents race condition with RAF-based scroll preservation.
   createEffect((prevFrameId: number | undefined) => {
     // Cancel any pending focus from previous effect run
     if (prevFrameId) cancelAnimationFrame(prevFrameId);
@@ -360,16 +361,15 @@ export function BlockItem(props: BlockItemProps) {
           const container = contentRef?.closest('.outliner-container') as HTMLElement | null;
 
           if (container) {
-            // Lock scroll by disabling overflow - browser can't scroll what can't scroll
-            const originalOverflow = container.style.overflow;
-            container.style.overflow = 'hidden';
+            // FLO-278: Lock scroll via CSS class - cleaner than inline style
+            container.classList.add('scroll-locked');
 
             contentRef?.focus({ preventScroll: true });
 
             // Re-enable scroll after browser's focus handling completes
             // setTimeout(0) pushes past any queued scroll tasks
             setTimeout(() => {
-              container.style.overflow = originalOverflow || '';
+              container.classList.remove('scroll-locked');
               // FLO-XXX: Scroll focused block into view if outside viewport
               // 'nearest' = minimal scroll (no movement if already visible)
               // 'instant' = no animation (rapid keyboard nav would lag with smooth)
@@ -651,20 +651,8 @@ export function BlockItem(props: BlockItemProps) {
         role="option"
         aria-selected={props.isBlockSelected?.(props.id) || false}
         classList={{ 'block-focused': isFocused(), 'block-selected': props.isBlockSelected?.(props.id) }}
-        onMouseDown={(e: MouseEvent) => {
-          // Save scroll position BEFORE browser focus/scroll happens
-          // This runs before onClick and before native contentEditable focus
-          const container = (e.target as HTMLElement)?.closest('.outliner-container') as HTMLElement | null;
-          if (container) {
-            const savedScrollTop = container.scrollTop;
-            // Restore after browser's focus handling completes
-            requestAnimationFrame(() => {
-              if (container.scrollTop !== savedScrollTop) {
-                container.scrollTop = savedScrollTop;
-              }
-            });
-          }
-        }}
+        // FLO-278: Removed onMouseDown scroll preservation - was causing race condition
+        // with focus routing's scroll lock. CSS class-based scroll lock now handles this.
         onClick={(e: MouseEvent) => {
           // FLO-74: Handle selection modifiers
           if (props.onSelect) {
