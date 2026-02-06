@@ -20,7 +20,7 @@
 
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
-import { getSharedDoc, triggerFullResync } from './useSyncedYDoc';
+import { getSharedDoc, triggerFullResync, setSyncStatusExternal } from './useSyncedYDoc';
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -116,13 +116,37 @@ async function performHealthCheck(): Promise<void> {
       );
 
       if (newCount >= MISMATCH_THRESHOLD) {
-        console.warn('[SyncHealth] Persistent drift detected, triggering full resync');
+        console.warn('[SyncHealth] Persistent drift detected, triggering bidirectional resync');
         setIsResyncing(true);
 
         try {
-          await triggerFullResync();
-          setConsecutiveMismatches(0);
-          console.log('[SyncHealth] Resync complete, drift resolved');
+          const { pushedBytes } = await triggerFullResync();
+          if (pushedBytes > 0) {
+            console.log(`[SyncHealth] Pushed ${pushedBytes} bytes of local-only data to server`);
+          }
+
+          // Post-resync verification: re-check block counts
+          const postServerHealth = await httpClient.getStateHash();
+          const postLocalCount = getLocalBlockCount();
+
+          if (postServerHealth.blockCount === postLocalCount) {
+            setConsecutiveMismatches(0);
+            setSyncStatusExternal('synced', null);
+            console.log('[SyncHealth] Resync complete, drift resolved');
+          } else {
+            // Still mismatched after resync — show drift state, don't fake green
+            console.warn(
+              `[SyncHealth] Drift persists after resync!`,
+              `\n  Server: ${postServerHealth.blockCount} blocks`,
+              `\n  Local:  ${postLocalCount} blocks`,
+              `\n  Delta:  ${postLocalCount - postServerHealth.blockCount}`
+            );
+            setSyncStatusExternal(
+              'drift',
+              `Sync drift: local has ${postLocalCount - postServerHealth.blockCount} blocks server doesn't know about`
+            );
+            // Don't reset counter — will retry next check
+          }
         } catch (err) {
           console.error('[SyncHealth] Resync failed:', err);
           // Don't reset counter - will retry on next check

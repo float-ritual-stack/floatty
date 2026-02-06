@@ -29,7 +29,7 @@ import { SyncSequenceTracker } from '../lib/syncSequenceTracker';
 // SYNC STATUS (singleton signals for UI visibility)
 // ═══════════════════════════════════════════════════════════════
 
-export type SyncStatus = 'synced' | 'pending' | 'error';
+export type SyncStatus = 'synced' | 'pending' | 'error' | 'drift';
 
 // Singleton signals - survive component remount like sharedDoc
 const [syncStatus, setSyncStatus] = createSignal<SyncStatus>('synced');
@@ -44,6 +44,12 @@ export const getPendingCount: Accessor<number> = pendingCount;
 
 /** Get last sync error message (reactive) */
 export const getLastSyncError: Accessor<string | null> = lastSyncError;
+
+/** Set sync status externally (used by useSyncHealth for drift detection) */
+export function setSyncStatusExternal(status: SyncStatus, error?: string | null): void {
+  setSyncStatus(status);
+  if (error !== undefined) setLastSyncError(error);
+}
 
 /** Check if there are pending updates (for close gate) */
 export function hasPendingUpdates(): boolean {
@@ -117,20 +123,47 @@ export function getSharedDoc(): Y.Doc {
 }
 
 /**
- * Trigger a full resync from server.
- * Fetches full Y.Doc state and applies it (idempotent - only new updates have effect).
- * Used by sync health check when hash mismatch detected.
+ * Trigger a full bidirectional resync.
+ *
+ * Flow:
+ * 1. GET /state-vector → compute what local has that server doesn't
+ * 2. If non-trivial diff: POST /update → push local-only changes to server
+ * 3. GET /state → pull server state to local (existing behavior)
+ *
+ * Push MUST happen before pull. If we pull first, CRDT merge makes local match
+ * server (from server's perspective), so the subsequent diff would be empty.
+ *
+ * Returns { pushedBytes } for logging by health check.
  */
-export async function triggerFullResync(): Promise<void> {
+export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
   if (!isClientInitialized()) {
     console.warn('[useSyncedYDoc] HTTP client not initialized, cannot trigger resync');
-    return;
+    return { pushedBytes: 0 };
   }
 
-  console.log('[useSyncedYDoc] Triggering full resync from server');
+  console.log('[useSyncedYDoc] Triggering bidirectional resync');
   const httpClient = getHttpClient();
+  let pushedBytes = 0;
 
   try {
+    // Step 1: Push local-only changes to server (if any)
+    try {
+      const serverStateVector = await httpClient.getStateVector();
+      const localDiff = Y.encodeStateAsUpdate(sharedDoc, serverStateVector);
+
+      // Empty diff is ~2 bytes (just header)
+      if (localDiff.length > 2) {
+        console.log(`[useSyncedYDoc] Pushing local-only diff to server: ${localDiff.length} bytes`);
+        const txId = generateTxId();
+        await httpClient.applyUpdate(localDiff, txId);
+        pushedBytes = localDiff.length;
+      }
+    } catch (pushErr) {
+      // Push failure is non-fatal — we still pull server state
+      console.error('[useSyncedYDoc] Failed to push local diff (continuing with pull):', pushErr);
+    }
+
+    // Step 2: Pull server state to local (existing behavior)
     const { state: serverState, latestSeq } = await httpClient.getState();
     if (serverState && serverState.length > 2) {
       try {
@@ -143,14 +176,13 @@ export async function triggerFullResync(): Promise<void> {
       // Full state means all seqs up to latestSeq are covered + clears gap queue
       if (latestSeq !== null) {
         seqTracker.seedFromFullSync(latestSeq);
-        console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied, seq:', latestSeq);
-      } else {
-        console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied (no seq)');
       }
+      console.log(`[useSyncedYDoc] Bidirectional resync complete: pushed ${pushedBytes} bytes, pulled ${serverState.length} bytes, seq: ${latestSeq}`);
     } else {
-      console.log('[useSyncedYDoc] Server state empty, nothing to apply');
+      console.log('[useSyncedYDoc] Server state empty, nothing to pull');
     }
     setLastSyncError(null);
+    return { pushedBytes };
   } catch (err) {
     console.error('[useSyncedYDoc] Full resync failed:', err);
     setLastSyncError(`Resync failed: ${String(err)}`);
