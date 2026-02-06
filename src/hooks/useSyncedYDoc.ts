@@ -134,6 +134,144 @@ export function getSharedDoc(): Y.Doc {
 }
 
 /**
+ * Scan all blocks' childIds and rootIds for duplicate entries, remove them.
+ * Safety net for edge cases where CRDT merge produces duplicated array entries
+ * (e.g., from the old delete-all-then-push childIds mutation pattern).
+ *
+ * Returns the number of duplicates removed. All removals happen in a single
+ * transaction with 'system' origin (excluded from UndoManager).
+ */
+export function deduplicateChildIds(): number {
+  const doc = sharedDoc;
+  const blocksMap = doc.getMap('blocks');
+  const rootIds = doc.getArray<string>('rootIds');
+
+  let totalRemoved = 0;
+
+  // Collect duplicates before transacting (read phase)
+  const blockDups: Array<{ blockId: string; indicesToRemove: number[] }> = [];
+
+  blocksMap.forEach((value, blockId) => {
+    if (!(value instanceof Y.Map)) return;
+    const arr = value.get('childIds');
+    if (!(arr instanceof Y.Array)) return;
+
+    const items = arr.toArray() as string[];
+    const seen = new Set<string>();
+    const indicesToRemove: number[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      if (seen.has(items[i])) {
+        indicesToRemove.push(i);
+      } else {
+        seen.add(items[i]);
+      }
+    }
+
+    if (indicesToRemove.length > 0) {
+      blockDups.push({ blockId, indicesToRemove });
+    }
+  });
+
+  // Check rootIds
+  const rootItems = rootIds.toArray();
+  const rootSeen = new Set<string>();
+  const rootIndicesToRemove: number[] = [];
+  for (let i = 0; i < rootItems.length; i++) {
+    if (rootSeen.has(rootItems[i])) {
+      rootIndicesToRemove.push(i);
+    } else {
+      rootSeen.add(rootItems[i]);
+    }
+  }
+
+  // Phase 2: Cross-parent dedup — detect blocks claimed by multiple parents
+  // This happens when pre-fix delete-all-then-push created divergent CRDT ops
+  // and the same childId ended up in multiple parents' arrays after merge.
+  const childToParents = new Map<string, string[]>();
+  blocksMap.forEach((value, parentId) => {
+    if (!(value instanceof Y.Map)) return;
+    const arr = value.get('childIds');
+    if (!(arr instanceof Y.Array)) return;
+    for (const childId of arr.toArray() as string[]) {
+      const parents = childToParents.get(childId) || [];
+      parents.push(parentId);
+      childToParents.set(childId, parents);
+    }
+  });
+
+  // For multi-parent blocks: keep canonical parent (matches block.parentId), remove from others
+  const crossParentRemovals: Array<{ parentId: string; childId: string }> = [];
+  for (const [childId, parents] of childToParents) {
+    if (parents.length <= 1) continue;
+    // Find the canonical parent from the block's own parentId field
+    const childBlock = blocksMap.get(childId);
+    const canonicalParent = childBlock instanceof Y.Map
+      ? (childBlock.get('parentId') as string | null)
+      : null;
+
+    for (const pid of parents) {
+      if (pid !== canonicalParent) {
+        crossParentRemovals.push({ parentId: pid, childId });
+      }
+    }
+  }
+
+  if (blockDups.length === 0 && rootIndicesToRemove.length === 0 && crossParentRemovals.length === 0) {
+    return 0;
+  }
+
+  // Write phase — single transaction
+  doc.transact(() => {
+    for (const { blockId, indicesToRemove } of blockDups) {
+      const blockMap = blocksMap.get(blockId);
+      if (!(blockMap instanceof Y.Map)) continue;
+      const arr = blockMap.get('childIds');
+      if (!(arr instanceof Y.Array)) continue;
+
+      // Delete in reverse order so indices stay valid
+      for (let i = indicesToRemove.length - 1; i >= 0; i--) {
+        arr.delete(indicesToRemove[i], 1);
+        totalRemoved++;
+      }
+    }
+
+    // Dedup rootIds
+    for (let i = rootIndicesToRemove.length - 1; i >= 0; i--) {
+      rootIds.delete(rootIndicesToRemove[i], 1);
+      totalRemoved++;
+    }
+
+    // Fix cross-parent duplication: remove from non-canonical parents
+    for (const { parentId, childId } of crossParentRemovals) {
+      const parentMap = blocksMap.get(parentId);
+      if (!(parentMap instanceof Y.Map)) continue;
+      const arr = parentMap.get('childIds');
+      if (!(arr instanceof Y.Array)) continue;
+      const items = arr.toArray() as string[];
+      const idx = items.indexOf(childId);
+      if (idx >= 0) {
+        arr.delete(idx, 1);
+        totalRemoved++;
+      }
+    }
+  }, 'system');
+
+  if (totalRemoved > 0) {
+    const parts = [];
+    if (blockDups.length > 0 || rootIndicesToRemove.length > 0) {
+      parts.push('within-array duplicates');
+    }
+    if (crossParentRemovals.length > 0) {
+      parts.push(`${crossParentRemovals.length} cross-parent orphan(s)`);
+    }
+    console.warn(`[useSyncedYDoc] Deduplication removed ${totalRemoved} entries (${parts.join(', ')})`);
+  }
+
+  return totalRemoved;
+}
+
+/**
  * Trigger a full bidirectional resync.
  *
  * Flow:
@@ -1247,6 +1385,12 @@ export function useSyncedYDoc(
 
           // FLO-247: Startup sanity check - detect suspicious state
           validateSyncedState(doc);
+
+          // FLO-280: Dedup childIds on startup (catches pre-existing duplicates)
+          const startupDeduped = deduplicateChildIds();
+          if (startupDeduped > 0) {
+            console.warn(`[useSyncedYDoc] Startup dedup removed ${startupDeduped} duplicate childIds`);
+          }
         } catch (err) {
           console.error('Failed to load initial state from server:', err);
           sharedDocError = String(err);
