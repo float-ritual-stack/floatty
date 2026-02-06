@@ -1110,7 +1110,8 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      const existing = getValue(blocksMap.get(id), 'metadata') as Block['metadata'] | undefined;
+      const raw = getValue(blocksMap.get(id), 'metadata') as Block['metadata'] | null | undefined;
+      const existing = raw ?? {};
       const merged = { ...existing, ...metadata };
       setValueOnYMap(blocksMap, id, 'metadata', merged);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());

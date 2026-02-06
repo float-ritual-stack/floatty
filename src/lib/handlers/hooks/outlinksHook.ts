@@ -59,22 +59,20 @@ function handleBlockEvent(envelope: EventEnvelope): void {
     const block = event.block;
     if (!block) continue;
 
-    // Skip if no wikilink patterns in content
-    if (!hasWikilinkPatterns(block.content)) continue;
-
-    // Extract outlinks
+    // Extract outlinks (may be empty if wikilinks were removed)
     const outlinks = extractOutlinks(block.content);
-    if (outlinks.length === 0) continue;
 
     // Check if outlinks changed (skip no-op updates)
     const existingOutlinks = block.metadata?.outlinks ?? [];
     if (outlinksEqual(existingOutlinks, outlinks)) continue;
 
-    // Store outlinks in block metadata
-    console.log('[outlinksHook] Extracted outlinks:', {
-      blockId: block.id,
-      outlinks,
-    });
+    // Store outlinks in block metadata (empty array clears stale outlinks)
+    if (outlinks.length > 0) {
+      console.log('[outlinksHook] Extracted outlinks:', {
+        blockId: block.id,
+        outlinks,
+      });
+    }
 
     blockStore.updateBlockMetadata(block.id, {
       outlinks,

@@ -81,22 +81,20 @@ function handleBlockEvent(envelope: EventEnvelope): void {
     const block = event.block;
     if (!block) continue;
 
-    // Skip if no ctx:: patterns in content
-    if (!hasCtxPatterns(block.content)) continue;
-
-    // Extract markers
+    // Extract markers (may be empty if patterns were removed)
     const markers = extractCtxMarkers(block.content);
-    if (markers.length === 0) continue;
 
     // Check if markers changed (skip no-op updates)
     const existingMarkers = block.metadata?.markers ?? [];
     if (markersEqual(existingMarkers, markers)) continue;
 
-    // Store markers in block metadata
-    console.log('[ctxRouterHook] Extracted markers:', {
-      blockId: block.id,
-      markers: markers.map(m => `${m.markerType}::${m.value ?? ''}`),
-    });
+    // Store markers in block metadata (empty array clears stale markers)
+    if (markers.length > 0) {
+      console.log('[ctxRouterHook] Extracted markers:', {
+        blockId: block.id,
+        markers: markers.map(m => `${m.markerType}::${m.value ?? ''}`),
+      });
+    }
 
     blockStore.updateBlockMetadata(block.id, {
       markers,
