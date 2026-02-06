@@ -129,6 +129,23 @@ curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks" |
 | `/api/v1/restore` | POST | **DESTRUCTIVE** - Replace entire Y.Doc state |
 | `/api/v1/export/binary` | GET | Download raw Y.Doc as `.ydoc` file (Content-Disposition) |
 | `/api/v1/export/json` | GET | Download human-readable JSON export (Content-Disposition) |
+| `/health` | GET | Health check with version and git info |
+
+#### Health Endpoint
+
+Returns server version and build info (no auth required):
+
+```bash
+curl http://127.0.0.1:$PORT/health
+# {"status":"ok","version":"0.7.17","gitSha":"b2b0c49","gitDirty":false}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | Always "ok" if server is running |
+| `version` | string | Workspace version from Cargo.toml |
+| `gitSha` | string? | Short (7-char) commit SHA at build time |
+| `gitDirty` | bool? | Whether uncommitted changes existed at build |
 
 #### Export Endpoints
 
@@ -310,6 +327,16 @@ Critical rules:
 | `cursorUtils.ts` | Cursor position utilities for keybind logic |
 | `executor.ts` | Command execution for `sh::` blocks (child_process via Tauri) |
 | `tvResolver.ts` | `$tv()` pattern resolution - spawns TV picker, receives selection from Rust |
+| `events/blockEventBus.ts` | Typed event bus for block lifecycle events (`block:create`, `block:update`, `block:delete`) |
+
+**Block Lifecycle Hooks** (`src/lib/handlers/hooks/`):
+
+| File | Purpose |
+|------|---------|
+| `ctxRouterHook.ts` | Extracts `ctx::` markers → stores in `block.metadata.markers` |
+| `outlinksHook.ts` | Extracts `[[wikilink]]` targets → stores in `block.metadata.outlinks` |
+
+Hooks subscribe to `blockEventBus`, use Origin filtering to prevent infinite loops. See `docs/architecture/FLOATTY_HOOK_SYSTEM.md`.
 
 **State** (`src/hooks/`):
 
