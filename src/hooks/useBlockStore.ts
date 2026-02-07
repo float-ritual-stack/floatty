@@ -126,11 +126,12 @@ function getChildIdsArray(blocksMap: Y.Map<unknown>, blockId: string): Y.Array<s
   return arr as Y.Array<string>;
 }
 
-/** Insert a single child ID at a specific index. */
+/** Insert a single child ID at a specific index (clamped to valid range). */
 function insertChildId(blocksMap: Y.Map<unknown>, parentId: string, childId: string, atIndex: number): void {
   const arr = getChildIdsArray(blocksMap, parentId);
   if (!arr) return;
-  arr.insert(atIndex, [childId]);
+  const safeIndex = Math.max(0, Math.min(atIndex, arr.length));
+  arr.insert(safeIndex, [childId]);
 }
 
 /** Append a single child ID to the end. */
@@ -151,11 +152,12 @@ function removeChildId(blocksMap: Y.Map<unknown>, parentId: string, childId: str
   }
 }
 
-/** Insert multiple child IDs at a specific index. */
+/** Insert multiple child IDs at a specific index (clamped to valid range). */
 function insertChildIds(blocksMap: Y.Map<unknown>, parentId: string, childIds: string[], atIndex: number): void {
   const arr = getChildIdsArray(blocksMap, parentId);
   if (!arr || childIds.length === 0) return;
-  arr.insert(atIndex, childIds);
+  const safeIndex = Math.max(0, Math.min(atIndex, arr.length));
+  arr.insert(safeIndex, childIds);
 }
 
 /** Clear all child IDs from a block (intentional full wipe). */
