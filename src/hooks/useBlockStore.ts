@@ -96,36 +96,91 @@ function getValue(obj: unknown, key: string): unknown {
   return undefined;
 }
 
+/** Set a scalar field on a block's Y.Map. Do NOT use for childIds — use surgical helpers instead. */
 function setValueOnYMap(blocksMap: Y.Map<unknown>, blockId: string, key: string, value: unknown): void {
   const existing = blocksMap.get(blockId);
 
   if (existing instanceof Y.Map) {
-    if (key === 'childIds') {
-      // Mutate existing Y.Array in place (CRDT-safe)
-      const childIdsArr = existing.get('childIds');
-      if (childIdsArr instanceof Y.Array) {
-        const newChildIds = value as string[];
-        childIdsArr.delete(0, childIdsArr.length);  // Clear
-        if (newChildIds.length > 0) {
-          childIdsArr.push(newChildIds);  // Replace with new array
-        }
-      } else {
-        // Fallback: create new Y.Array if somehow missing
-        const newArr = new Y.Array<string>();
-        const newChildIds = value as string[];
-        if (newChildIds.length > 0) {
-          newArr.push(newChildIds);
-        }
-        existing.set('childIds', newArr);
-      }
-    } else {
-      existing.set(key, value);
-    }
+    existing.set(key, value);
   } else if (existing && typeof existing === 'object') {
     // Legacy fallback for plain objects (migration period)
     const updated = { ...(existing as Record<string, unknown>), [key]: value };
     blocksMap.set(blockId, updated);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SURGICAL Y.ARRAY HELPERS
+//
+// These produce minimal CRDT operations instead of the destructive
+// delete-all-then-push pattern that caused childIds duplication
+// during bidirectional sync merges (FLO-280).
+// ═══════════════════════════════════════════════════════════════
+
+/** Get the Y.Array handle for a block's childIds. Returns null if block or array missing. */
+function getChildIdsArray(blocksMap: Y.Map<unknown>, blockId: string): Y.Array<string> | null {
+  const blockMap = blocksMap.get(blockId);
+  if (!(blockMap instanceof Y.Map)) return null;
+  const arr = blockMap.get('childIds');
+  if (!(arr instanceof Y.Array)) return null;
+  return arr as Y.Array<string>;
+}
+
+/** Insert a single child ID at a specific index. */
+function insertChildId(blocksMap: Y.Map<unknown>, parentId: string, childId: string, atIndex: number): void {
+  const arr = getChildIdsArray(blocksMap, parentId);
+  if (!arr) return;
+  arr.insert(atIndex, [childId]);
+}
+
+/** Append a single child ID to the end. */
+function appendChildId(blocksMap: Y.Map<unknown>, parentId: string, childId: string): void {
+  const arr = getChildIdsArray(blocksMap, parentId);
+  if (!arr) return;
+  arr.push([childId]);
+}
+
+/** Remove a single child ID by value (finds index, then deletes). */
+function removeChildId(blocksMap: Y.Map<unknown>, parentId: string, childId: string): void {
+  const arr = getChildIdsArray(blocksMap, parentId);
+  if (!arr) return;
+  const items = arr.toArray();
+  const idx = items.indexOf(childId);
+  if (idx >= 0) {
+    arr.delete(idx, 1);
+  }
+}
+
+/** Insert multiple child IDs at a specific index. */
+function insertChildIds(blocksMap: Y.Map<unknown>, parentId: string, childIds: string[], atIndex: number): void {
+  const arr = getChildIdsArray(blocksMap, parentId);
+  if (!arr || childIds.length === 0) return;
+  arr.insert(atIndex, childIds);
+}
+
+/** Clear all child IDs from a block (intentional full wipe). */
+function clearChildIds(blocksMap: Y.Map<unknown>, blockId: string): void {
+  const arr = getChildIdsArray(blocksMap, blockId);
+  if (!arr || arr.length === 0) return;
+  arr.delete(0, arr.length);
+}
+
+/** Swap two adjacent entries in childIds. Produces 2 delete + 2 insert ops. */
+function swapChildIds(blocksMap: Y.Map<unknown>, parentId: string, indexA: number, indexB: number): void {
+  const arr = getChildIdsArray(blocksMap, parentId);
+  if (!arr) return;
+  // Ensure indexA < indexB
+  const lo = Math.min(indexA, indexB);
+  const hi = Math.max(indexA, indexB);
+  if (lo < 0 || hi >= arr.length || lo === hi) return;
+  const valLo = arr.get(lo);
+  const valHi = arr.get(hi);
+  // Delete hi first (higher index), then lo, to keep indices stable
+  arr.delete(hi, 1);
+  arr.delete(lo, 1);
+  // Insert in order: lo position gets old hi value, hi position gets old lo value
+  arr.insert(lo, [valHi]);
+  arr.insert(hi, [valLo]);
 }
 
 /**
@@ -472,10 +527,9 @@ function createBlockStore() {
 
       if (beforeBlock.parentId) {
         const parentData = blocksMap.get(beforeBlock.parentId);
-        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const beforeIndex = childIds.indexOf(beforeId);
-        childIds.splice(beforeIndex, 0, newId);  // Insert BEFORE
-        setValueOnYMap(blocksMap, beforeBlock.parentId, 'childIds', childIds);
+        insertChildId(blocksMap, beforeBlock.parentId, newId, beforeIndex);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
@@ -502,10 +556,9 @@ function createBlockStore() {
 
       if (afterBlock.parentId) {
         const parentData = blocksMap.get(afterBlock.parentId);
-        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const afterIndex = childIds.indexOf(afterId);
-        childIds.splice(afterIndex + 1, 0, newId);
-        setValueOnYMap(blocksMap, afterBlock.parentId, 'childIds', childIds);
+        insertChildId(blocksMap, afterBlock.parentId, newId, afterIndex + 1);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
@@ -530,10 +583,7 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
       blocksMap.set(newId, blockToYMap(newBlock));
 
-      const parentData = blocksMap.get(parentId);
-      const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
-      childIds.push(newId);
-      setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
+      appendChildId(blocksMap, parentId, newId);
       setValueOnYMap(blocksMap, parentId, 'collapsed', false);
     }, 'user');
 
@@ -553,10 +603,7 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
       blocksMap.set(newId, blockToYMap(newBlock));
 
-      const parentData = blocksMap.get(parentId);
-      const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
-      childIds.unshift(newId); // Insert at start
-      setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
+      insertChildId(blocksMap, parentId, newId, 0);
       setValueOnYMap(blocksMap, parentId, 'collapsed', false);
     }, 'user');
 
@@ -609,10 +656,9 @@ function createBlockStore() {
       // Insert new block after current
       if (block.parentId) {
         const parentData = blocksMap.get(block.parentId);
-        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const afterIndex = childIds.indexOf(id);
-        childIds.splice(afterIndex + 1, 0, newId);
-        setValueOnYMap(blocksMap, block.parentId, 'childIds', childIds);
+        insertChildId(blocksMap, block.parentId, newId, afterIndex + 1);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
@@ -664,10 +710,7 @@ function createBlockStore() {
       blocksMap.set(newId, blockToYMap(newBlock));
 
       // Insert as FIRST child (unshift, not push)
-      const blockData = blocksMap.get(id);
-      const childIds = [...((getValue(blockData, 'childIds') as string[]) || [])];
-      childIds.unshift(newId);  // Insert at start
-      setValueOnYMap(blocksMap, id, 'childIds', childIds);
+      insertChildId(blocksMap, id, newId, 0);
       // Ensure expanded so user sees the new child
       setValueOnYMap(blocksMap, id, 'collapsed', false);
     }, 'user');
@@ -700,9 +743,7 @@ function createBlockStore() {
 
       // Remove from parent's children list
       if (block.parentId) {
-        const parentData = blocksMap.get(block.parentId);
-        const childIds = ((getValue(parentData, 'childIds') as string[]) || []).filter(cid => cid !== id);
-        setValueOnYMap(blocksMap, block.parentId, 'childIds', childIds);
+        removeChildId(blocksMap, block.parentId, id);
       } else {
         // Remove from rootIds
         const rootIds = _doc.getArray<string>('rootIds');
@@ -764,9 +805,7 @@ function createBlockStore() {
         if (parentId) {
           // Skip if parent is also being deleted
           if (toDelete.has(parentId)) continue;
-          const parentData = blocksMap.get(parentId);
-          const childIds = ((getValue(parentData, 'childIds') as string[]) || []).filter(cid => cid !== id);
-          setValueOnYMap(blocksMap, parentId, 'childIds', childIds);
+          removeChildId(blocksMap, parentId, id);
         } else {
           const arr = rootIds.toArray();
           const index = arr.indexOf(id);
@@ -838,9 +877,7 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
 
       if (block.parentId) {
-        const oldParentData = blocksMap.get(block.parentId);
-        const oldChildIds = ((getValue(oldParentData, 'childIds') as string[]) || []).filter(cid => cid !== id);
-        setValueOnYMap(blocksMap, block.parentId, 'childIds', oldChildIds);
+        removeChildId(blocksMap, block.parentId, id);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
@@ -848,9 +885,7 @@ function createBlockStore() {
         if (idx >= 0) rootIds.delete(idx, 1);
       }
 
-      const newParentData = blocksMap.get(newParentId);
-      const newChildIds = [...((getValue(newParentData, 'childIds') as string[]) || []), id];
-      setValueOnYMap(blocksMap, newParentId, 'childIds', newChildIds);
+      appendChildId(blocksMap, newParentId, id);
       setValueOnYMap(blocksMap, newParentId, 'collapsed', false);
 
       setValueOnYMap(blocksMap, id, 'parentId', newParentId);
@@ -870,19 +905,14 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
-      const parentData = blocksMap.get(block.parentId!);
-      if (parentData) {
-        const childIds = ((getValue(parentData, 'childIds') as string[]) || []).filter(cid => cid !== id);
-        setValueOnYMap(blocksMap, block.parentId!, 'childIds', childIds);
-      }
+      removeChildId(blocksMap, block.parentId!, id);
 
       if (parent.parentId) {
         const grandparentData = blocksMap.get(parent.parentId);
         if (grandparentData) {
-          const childIds = [...((getValue(grandparentData, 'childIds') as string[]) || [])];
+          const childIds = (getValue(grandparentData, 'childIds') as string[]) || [];
           const parentIndex = childIds.indexOf(block.parentId!);
-          childIds.splice(parentIndex + 1, 0, id);
-          setValueOnYMap(blocksMap, parent.parentId, 'childIds', childIds);
+          insertChildId(blocksMap, parent.parentId, id, parentIndex + 1);
         }
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
@@ -922,16 +952,15 @@ function createBlockStore() {
         // afterBlock has a parent - insert into parent's childIds
         const parentData = blocksMap.get(newParentId);
         if (!parentData) return;
-        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
+        const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const afterIndex = childIds.indexOf(afterId);
         if (afterIndex < 0) return; // afterId not found - bail to avoid orphaning children
 
         // Clear children from source block (only after confirming valid insert location)
-        setValueOnYMap(blocksMap, blockId, 'childIds', []);
+        clearChildIds(blocksMap, blockId);
 
         // Insert all lifted children after afterId
-        childIds.splice(afterIndex + 1, 0, ...childrenToLift);
-        setValueOnYMap(blocksMap, newParentId, 'childIds', childIds);
+        insertChildIds(blocksMap, newParentId, childrenToLift, afterIndex + 1);
       } else {
         // afterBlock is at root level - insert into rootIds
         const rootIds = _doc.getArray<string>('rootIds');
@@ -940,7 +969,7 @@ function createBlockStore() {
         if (afterIndex < 0) return; // afterId not found - bail to avoid orphaning children
 
         // Clear children from source block (only after confirming valid insert location)
-        setValueOnYMap(blocksMap, blockId, 'childIds', []);
+        clearChildIds(blocksMap, blockId);
 
         rootIds.insert(afterIndex + 1, childrenToLift);
       }
@@ -992,11 +1021,8 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
 
       if (block.parentId) {
-        // Nested block - modify parent's childIds
-        const parentData = blocksMap.get(block.parentId);
-        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
-        [childIds[index - 1], childIds[index]] = [childIds[index], childIds[index - 1]];
-        setValueOnYMap(blocksMap, block.parentId, 'childIds', childIds);
+        // Nested block - swap adjacent in parent's childIds
+        swapChildIds(blocksMap, block.parentId, index - 1, index);
       } else {
         // Root block - modify rootIds array
         const rootIds = _doc.getArray<string>('rootIds');
@@ -1049,11 +1075,8 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
 
       if (block.parentId) {
-        // Nested block - modify parent's childIds
-        const parentData = blocksMap.get(block.parentId);
-        const childIds = [...((getValue(parentData, 'childIds') as string[]) || [])];
-        [childIds[index], childIds[index + 1]] = [childIds[index + 1], childIds[index]];
-        setValueOnYMap(blocksMap, block.parentId, 'childIds', childIds);
+        // Nested block - swap adjacent in parent's childIds
+        swapChildIds(blocksMap, block.parentId, index, index + 1);
       } else {
         // Root block - modify rootIds array
         const rootIds = _doc.getArray<string>('rootIds');

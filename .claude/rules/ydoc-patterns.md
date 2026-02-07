@@ -222,3 +222,38 @@ const updateBlockMetadata = (id: string, metadata: BlockMetadata) => {
 **Why**: CRDT conflict resolution works at the field level. If client A updates `content` and client B updates `collapsed` simultaneously, both should win. Replacing the whole object makes one overwrite the other.
 
 **Correctness note**: Use separate transactions for unrelated field updates. Group related fields (like `metadata` sub-fields) in a single transaction for atomicity.
+
+## 10. Surgical Y.Array Mutations (FLO-280)
+
+**Problem**: Y.Array operations like `delete(0, length)` then `push(newItems)` create fresh CRDT operations with new `(clientId, clock)` tuples. When two docs with divergent operation histories merge (bidirectional resync, crash recovery), both sets of insert operations survive — because the CRDT correctly preserves them as distinct operations. Result: duplicated childIds entries.
+
+```typescript
+// ❌ WRONG - delete-all-then-push creates divergent CRDT ops that duplicate on merge
+const childIds = [...currentChildIds, newId];
+const arr = blockMap.get('childIds') as Y.Array<string>;
+arr.delete(0, arr.length);  // Creates N delete ops
+arr.push(childIds);          // Creates N insert ops (new clientId+clock!)
+
+// ✅ CORRECT - surgical mutation creates minimal CRDT ops
+const arr = blockMap.get('childIds') as Y.Array<string>;
+arr.insert(atIndex, [newId]);  // ONE insert op
+// OR
+arr.delete(idx, 1);           // ONE delete op
+```
+
+**Helpers** (in `useBlockStore.ts`):
+
+| Helper | CRDT ops | Use case |
+|--------|----------|----------|
+| `insertChildId(blocksMap, parentId, childId, atIndex)` | 1 insert | Add child at position |
+| `appendChildId(blocksMap, parentId, childId)` | 1 insert | Add child at end |
+| `removeChildId(blocksMap, parentId, childId)` | 1 delete | Remove by value |
+| `insertChildIds(blocksMap, parentId, ids, atIndex)` | 1 insert | Bulk add (e.g., liftChildren) |
+| `clearChildIds(blocksMap, blockId)` | 1 delete | Intentional full wipe |
+| `swapChildIds(blocksMap, parentId, idxA, idxB)` | 4 ops | Adjacent swap (2 del + 2 ins) |
+
+**Why**: `rootIds` (a Y.Array at root level) already used surgical mutations (`rootIds.insert()`, `rootIds.delete()`). The childIds Y.Arrays nested inside block Y.Maps were the only place using destructive rebuild. Harmonizing them prevents CRDT duplication.
+
+**Safety net**: `deduplicateChildIds()` in `useSyncedYDoc.ts` runs on startup and after resync to catch any pre-existing or edge-case duplicates.
+
+**Correctness note**: For reads that need an index (e.g., `childIds.indexOf(id)` to calculate insert position), read the array into a plain JS array first. The surgical helpers handle the Y.Array write.
