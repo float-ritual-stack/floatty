@@ -11,7 +11,7 @@ import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { themeStore } from '../hooks/useThemeStore';
-import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
+import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
 import type { FocusDirection, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
@@ -355,6 +355,7 @@ export function Terminal() {
       }
 
       if (!action) return;
+      if (!isGlobalKeyAction(action)) return;
 
       e.preventDefault();
 
