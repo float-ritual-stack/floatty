@@ -302,6 +302,10 @@ export function Terminal() {
         return;
       }
 
+      if (attempts >= MAX_FRAME_RETRIES) {
+        console.warn(`[Terminal] fitAndFocusWhenPaneRefsReady exhausted ${MAX_FRAME_RETRIES} frames — refs still missing, proceeding best-effort`);
+      }
+
       for (const paneId of paneIds) {
         paneRefs.get(paneId)?.fit();
       }
@@ -445,6 +449,8 @@ export function Terminal() {
     clientY: number,
     zones: PaneDropZone[] = paneDropZones()
   ): PaneDropTarget | null => {
+    // Left/right zones are emitted before up/down in computePaneDropZones,
+    // so horizontal splits win at corner overlaps (intentional UX default).
     const zone = zones.find((candidate) => {
       const { left, top, width, height } = candidate.rect;
       return (

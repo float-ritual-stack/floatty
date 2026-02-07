@@ -737,6 +737,15 @@ body.pane-dragging .terminal-pane-positioned {
   pointer-events: none;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .pane-drag-handle {
+    transition: none;
+  }
+  .pane-drop-zone {
+    transition: none;
+  }
+}
+
 /* ================================================
    Outliner & Blocks
    ================================================ */
