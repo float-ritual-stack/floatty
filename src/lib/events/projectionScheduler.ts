@@ -192,34 +192,36 @@ export class ProjectionScheduler {
     if (this.queue.length === 0) return;
 
     this.isFlushing = true;
-
-    // Grab current queue and reset
-    const batch = this.queue;
-    this.queue = [];
-
     try {
-      // Run all projections in parallel
-      const promises = Array.from(this.projections.values()).map(
-        async (projection) => {
-          try {
-            // Filter events for this projection
-            const filteredBatch = this.filterBatch(batch, projection);
-            if (filteredBatch.length === 0) return;
+      // Drain until stable so events enqueued during handler execution
+      // are processed in the same flush cycle.
+      while (this.queue.length > 0) {
+        const batch = this.queue;
+        this.queue = [];
 
-            // Merge filtered envelopes into single envelope for handler
-            const merged = this.mergeBatch(filteredBatch);
-            await projection.handler(merged);
-          } catch (error) {
-            // Log but don't propagate - one projection failing shouldn't break others
-            console.error(
-              `[ProjectionScheduler] Projection "${projection.name}" failed:`,
-              error
-            );
+        // Run all projections in parallel
+        const promises = Array.from(this.projections.values()).map(
+          async (projection) => {
+            try {
+              // Filter events for this projection
+              const filteredBatch = this.filterBatch(batch, projection);
+              if (filteredBatch.length === 0) return;
+
+              // Merge filtered envelopes into single envelope for handler
+              const merged = this.mergeBatch(filteredBatch);
+              await projection.handler(merged);
+            } catch (error) {
+              // Log but don't propagate - one projection failing shouldn't break others
+              console.error(
+                `[ProjectionScheduler] Projection "${projection.name}" failed:`,
+                error
+              );
+            }
           }
-        }
-      );
+        );
 
-      await Promise.all(promises);
+        await Promise.all(promises);
+      }
     } finally {
       this.isFlushing = false;
     }

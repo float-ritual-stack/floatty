@@ -116,6 +116,27 @@ describe('ProjectionScheduler', () => {
       expect(scheduler.queueSize).toBe(0);
     });
 
+    it('drains events enqueued during flush in the same cycle', async () => {
+      const seenBlockIds: string[] = [];
+      let enqueuedTail = false;
+
+      scheduler.register('test', async (envelope) => {
+        seenBlockIds.push(...envelope.events.map((event) => event.blockId));
+
+        if (!enqueuedTail) {
+          enqueuedTail = true;
+          scheduler.enqueue(createTestEnvelope([{ blockId: 'tail' }]));
+        }
+      });
+
+      scheduler.enqueue(createTestEnvelope([{ blockId: 'initial' }]));
+
+      await scheduler.flush();
+
+      expect(seenBlockIds).toEqual(['initial', 'tail']);
+      expect(scheduler.queueSize).toBe(0);
+    });
+
     it('does nothing when queue is empty', async () => {
       const handler = vi.fn().mockResolvedValue(undefined);
       scheduler.register('test', handler);
