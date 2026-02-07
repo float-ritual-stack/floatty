@@ -29,6 +29,7 @@ import {
   collectPaneIds,
   clampRatio,
   moveLeafToTarget,
+  moveLeafToRoot,
 } from '../lib/layoutTypes';
 import { paneStore } from './usePaneStore';
 
@@ -342,6 +343,30 @@ function createLayoutStore() {
     return true;
   };
 
+  const movePaneToRoot = (
+    tabId: string,
+    sourcePaneId: string,
+    position: 'left' | 'right'
+  ): boolean => {
+    const layout = state.layouts[tabId];
+    if (!layout) return false;
+
+    const sourceNode = findNode(layout.root, sourcePaneId);
+    if (!sourceNode || sourceNode.type !== 'leaf') return false;
+
+    // Clone store data first; layout.root is a Solid proxy.
+    const rootClone = JSON.parse(JSON.stringify(layout.root)) as LayoutNode;
+    const newRoot = moveLeafToRoot(rootClone, sourcePaneId, position);
+    if (!newRoot) return false;
+
+    batch(() => {
+      setState('layouts', tabId, 'root', newRoot);
+      setState('layouts', tabId, 'activePaneId', sourcePaneId);
+    });
+
+    return true;
+  };
+
   /**
    * FLO-136: Pin an ephemeral pane (make it permanent)
    * Called when user interacts in a way that indicates they want to keep the pane.
@@ -427,6 +452,7 @@ function createLayoutStore() {
     setActivePaneId,
     setRatio,
     movePane,
+    movePaneToRoot,
     setDraggingSplitId,
     focusDirection,
     // Getters

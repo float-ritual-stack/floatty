@@ -724,6 +724,10 @@ body.resizing .terminal-pane-positioned {
   color: var(--color-fg);
 }
 
+.pane-drop-zone.outer {
+  border-radius: 0;
+}
+
 body.pane-dragging {
   user-select: none;
   cursor: grabbing !important;

@@ -19,6 +19,7 @@ import {
   matchesDirection,
   getTargetChildIndex,
   moveLeafToTarget,
+  moveLeafToRoot,
   generatePaneId,
   generateSplitId,
   createInitialLayout,
@@ -521,6 +522,85 @@ describe('moveLeafToTarget', () => {
     expect(movedTarget).not.toBeNull();
     expect(movedSource).not.toBe(source);
     expect(movedTarget).not.toBe(target);
+  });
+});
+
+describe('moveLeafToRoot', () => {
+  it('moves source to left: source left, remaining right', () => {
+    const tree = createSplit(
+      'root',
+      'horizontal',
+      createLeaf('left'),
+      createLeaf('right')
+    );
+
+    const result = moveLeafToRoot(tree, 'right', 'left');
+    expect(result).not.toBeNull();
+
+    const moved = result as PaneSplit;
+    expect(moved.type).toBe('split');
+    expect(moved.direction).toBe('horizontal');
+    // Source 'right' should be left child, remaining 'left' should be right child
+    expect(collectPaneIds(moved)).toEqual(['right', 'left']);
+  });
+
+  it('moves source to right: remaining left, source right', () => {
+    const tree = createSplit(
+      'root',
+      'horizontal',
+      createLeaf('left'),
+      createLeaf('right')
+    );
+
+    const result = moveLeafToRoot(tree, 'left', 'right');
+    expect(result).not.toBeNull();
+
+    const moved = result as PaneSplit;
+    expect(moved.type).toBe('split');
+    expect(moved.direction).toBe('horizontal');
+    // Remaining 'right' should be left child, source 'left' should be right child
+    expect(collectPaneIds(moved)).toEqual(['right', 'left']);
+  });
+
+  it('returns null when source is root (single pane)', () => {
+    const leaf = createLeaf('solo');
+    expect(moveLeafToRoot(leaf, 'solo', 'left')).toBeNull();
+  });
+
+  it('returns null when source does not exist', () => {
+    const tree = createTestTree();
+    expect(moveLeafToRoot(tree, 'ghost', 'left')).toBeNull();
+  });
+
+  it('preserves remaining tree structure for 3-pane nested tree', () => {
+    // Tree: [A | (B / C)]
+    const tree = createTestTree();
+
+    // Move B to left edge → [B | (A / C)] where (A / C) is the remaining tree
+    // But removeNode('pane-b') collapses split-right → remaining = [A | C]
+    const result = moveLeafToRoot(tree, 'pane-b', 'left');
+    expect(result).not.toBeNull();
+
+    const moved = result as PaneSplit;
+    // B is leftmost
+    expect(findFirstLeaf(moved).id).toBe('pane-b');
+    // A and C are still present
+    expect(findNode(moved, 'pane-a')).not.toBeNull();
+    expect(findNode(moved, 'pane-c')).not.toBeNull();
+    expect(collectPaneIds(moved)).toHaveLength(3);
+  });
+
+  it('clones source leaf (no object identity reuse)', () => {
+    const source = createLeaf('source');
+    const other = createLeaf('other');
+    const tree = createSplit('root', 'horizontal', source, other);
+
+    const result = moveLeafToRoot(tree, 'source', 'left');
+    expect(result).not.toBeNull();
+
+    const movedSource = findNode(result!, 'source');
+    expect(movedSource).not.toBeNull();
+    expect(movedSource).not.toBe(source);
   });
 });
 
