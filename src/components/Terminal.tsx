@@ -12,6 +12,7 @@ import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { themeStore } from '../hooks/useThemeStore';
 import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
+import { emitCtxMarkersChanged } from '../lib/ctxEvents';
 import type { FocusDirection, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
@@ -717,6 +718,9 @@ export function Terminal() {
                     }
                   }}
                   onStickyChange={(sticky) => handleStickyChange(info().paneId, sticky)}
+                  onCtxMarker={() => {
+                    emitCtxMarkersChanged('terminal');
+                  }}
                 />
               </Show>
             )}
