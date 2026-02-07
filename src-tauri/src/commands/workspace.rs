@@ -2,6 +2,7 @@
 ///
 /// Thin adapters that extract state and delegate to services.
 
+use crate::db::WorkspaceStateRecord;
 use crate::services::workspace;
 use crate::AppState;
 use tauri::State;
@@ -11,7 +12,7 @@ use tauri::State;
 pub fn get_workspace_state(
     state: State<AppState>,
     key: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<WorkspaceStateRecord>, String> {
     let inner = state
         .inner
         .as_ref()

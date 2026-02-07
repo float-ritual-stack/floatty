@@ -71,6 +71,14 @@ pub struct CtxMarker {
     pub retry_count: i32,
 }
 
+/// Persisted workspace state record from SQLite.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceStateRecord {
+    pub state_json: String,
+    pub save_seq: i64,
+}
+
 /// Main application database.
 ///
 /// Manages all persistent state for floatty:
@@ -563,14 +571,19 @@ impl FloattyDb {
     // Workspace State Persistence (FLO-81)
     // =========================================================================
 
-    /// Get workspace state JSON (returns None if not found)
-    pub fn get_workspace_state(&self, key: &str) -> Result<Option<String>> {
+    /// Get workspace state JSON + sequence (returns None if not found)
+    pub fn get_workspace_state(&self, key: &str) -> Result<Option<WorkspaceStateRecord>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT state_json FROM workspace_state WHERE key = ?")?;
+        let mut stmt = conn.prepare(
+            "SELECT state_json, save_seq FROM workspace_state WHERE key = ?"
+        )?;
         let mut rows = stmt.query([key])?;
 
         if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
+            Ok(Some(WorkspaceStateRecord {
+                state_json: row.get(0)?,
+                save_seq: row.get(1)?,
+            }))
         } else {
             Ok(None)
         }
@@ -631,7 +644,8 @@ mod tests {
             .get_workspace_state("default")
             .expect("read workspace state")
             .expect("workspace state exists");
-        assert_eq!(stored, r#"{"v":2}"#);
+        assert_eq!(stored.state_json, r#"{"v":2}"#);
+        assert_eq!(stored.save_seq, 2);
     }
 
     #[test]
@@ -647,6 +661,7 @@ mod tests {
             .get_workspace_state("default")
             .expect("read workspace state")
             .expect("workspace state exists");
-        assert_eq!(stored, r#"{"v":2}"#);
+        assert_eq!(stored.state_json, r#"{"v":2}"#);
+        assert_eq!(stored.save_seq, 2);
     }
 }
