@@ -580,6 +580,37 @@ const WS_MAX_RECONNECT_DELAY = 30000;
 let wsReadyForMessages = true; // Start true - only false during reconnect sync
 let wsConnectionId = 0; // FLO-152: Guards against stale IIFE setting wsReadyForMessages
 const WS_MESSAGE_BUFFER_MAX = 100; // Prevent unbounded growth if sync hangs
+let wsBufferOverflowLatched = false; // FLO-289: first overflow triggers forced recovery
+let wsOverflowRecoveryInFlight = false; // FLO-289: single-flight recovery guard
+
+type ReconnectBufferAction = 'buffer' | 'overflow-first' | 'overflow-repeat';
+
+/**
+ * Decide reconnect buffering behavior.
+ * - buffer: safe to enqueue message
+ * - overflow-first: first overflow in this reconnect cycle (latch + recovery)
+ * - overflow-repeat: overflow already latched; keep dropping to avoid replaying partial stream
+ */
+export function resolveReconnectBufferAction(
+  bufferLength: number,
+  maxBufferSize: number,
+  overflowLatched: boolean
+): ReconnectBufferAction {
+  if (overflowLatched) return 'overflow-repeat';
+  if (bufferLength < maxBufferSize) return 'buffer';
+  return 'overflow-first';
+}
+
+/**
+ * Returns true when reconnect overflow should trigger a new forced recovery.
+ * Used to prevent resync storms.
+ */
+export function shouldStartOverflowRecovery(
+  overflowLatched: boolean,
+  recoveryInFlight: boolean
+): boolean {
+  return overflowLatched && !recoveryInFlight;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // SEQUENCE NUMBER TRACKING (gap detection & incremental reconnect)
@@ -1039,6 +1070,7 @@ function connectWebSocket() {
         // FLO-152: Mark NOT ready for messages - buffer incoming until sync completes
         wsReadyForMessages = false;
         wsMessageBuffer = [];
+        wsBufferOverflowLatched = false;
 
         // Reconnection sync: flush local pending, then fetch any missed server updates.
         // This prevents stale state if server received updates while we were disconnected.
@@ -1154,9 +1186,34 @@ function connectWebSocket() {
               return;
             }
 
+            wsReadyForMessages = true;
+
+            // FLO-289: Buffer overflow means replay stream is incomplete.
+            // Skip replay and force one full recovery to converge safely.
+            if (wsBufferOverflowLatched) {
+              wsMessageBuffer = [];
+
+              if (shouldStartOverflowRecovery(wsBufferOverflowLatched, wsOverflowRecoveryInFlight)) {
+                wsOverflowRecoveryInFlight = true;
+                console.warn('[WS] Reconnect buffer overflow latched, triggering forced recovery sync');
+                try {
+                  await triggerFullResync();
+                } catch (resyncErr) {
+                  console.error('[WS] Forced overflow recovery failed:', resyncErr);
+                  setLastSyncError(`Overflow recovery failed: ${String(resyncErr)}`);
+                } finally {
+                  wsOverflowRecoveryInFlight = false;
+                }
+              } else {
+                console.warn('[WS] Overflow recovery already running, skipping duplicate trigger');
+              }
+
+              wsBufferOverflowLatched = false;
+              return;
+            }
+
             // FLO-152: NOW safe to process messages - replay buffered ones
             console.log('[WS] Reconnect sync complete, replaying', wsMessageBuffer.length, 'buffered messages');
-            wsReadyForMessages = true;
             for (const msg of wsMessageBuffer) {
               applyWsMessage(msg);
             }
@@ -1171,6 +1228,7 @@ function connectWebSocket() {
             // Even on failure, start accepting messages (better than blocking forever)
             wsReadyForMessages = true;
             wsMessageBuffer = [];
+            wsBufferOverflowLatched = false;
           }
         })();
       } else {
@@ -1183,6 +1241,7 @@ function connectWebSocket() {
         //   4. WS delta becomes CRDT no-op → observeDeep never fires → block never renders
         wsReadyForMessages = true;
         wsMessageBuffer = [];
+        wsBufferOverflowLatched = false;
         console.log('[WS] First connection — accepting messages immediately (no redundant fetch)');
       }
     };
@@ -1195,15 +1254,27 @@ function connectWebSocket() {
 
           // FLO-152: Buffer messages during reconnect sync to prevent race condition
           if (!wsReadyForMessages) {
-            if (wsMessageBuffer.length < WS_MESSAGE_BUFFER_MAX) {
+            const bufferAction = resolveReconnectBufferAction(
+              wsMessageBuffer.length,
+              WS_MESSAGE_BUFFER_MAX,
+              wsBufferOverflowLatched
+            );
+
+            if (bufferAction === 'buffer') {
               wsMessageBuffer.push(msg);
               if (msg.seq !== undefined) {
                 console.log('[WS] Buffered message during reconnect sync (seq:', msg.seq, ', total:', wsMessageBuffer.length, ')');
               } else {
                 console.log('[WS] Buffered message during reconnect sync (total:', wsMessageBuffer.length, ')');
               }
+            } else if (bufferAction === 'overflow-first') {
+              wsBufferOverflowLatched = true;
+              wsMessageBuffer = [];
+              setSyncStatus('drift');
+              setLastSyncError(`WebSocket reconnect buffer overflowed (${WS_MESSAGE_BUFFER_MAX} messages); forcing recovery sync`);
+              console.error('[WS] Message buffer overflow during reconnect sync, replay disabled until forced recovery');
             } else {
-              console.warn('[WS] Message buffer full, dropping message');
+              console.warn('[WS] Message dropped while overflow recovery is latched');
             }
             return;
           }
@@ -1582,6 +1653,8 @@ function cleanupForHMR(): void {
   wsHasConnectedOnce = false; // FLO-269: Reset for clean HMR cycle
   wsReadyForMessages = true;
   wsMessageBuffer = [];
+  wsBufferOverflowLatched = false;
+  wsOverflowRecoveryInFlight = false;
   wsConnectionId = 0;
   wsRetryCount = 0;
 
