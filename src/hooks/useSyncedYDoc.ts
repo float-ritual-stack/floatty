@@ -1228,7 +1228,26 @@ function connectWebSocket() {
             // Even on failure, start accepting messages (better than blocking forever)
             wsReadyForMessages = true;
             wsMessageBuffer = [];
-            wsBufferOverflowLatched = false;
+
+            // FLO-289: If reconnect failed after overflow, still force one recovery sync.
+            if (wsBufferOverflowLatched) {
+              if (shouldStartOverflowRecovery(wsBufferOverflowLatched, wsOverflowRecoveryInFlight)) {
+                wsOverflowRecoveryInFlight = true;
+                console.warn('[WS] Reconnect failed with overflow latched, forcing recovery sync');
+                try {
+                  await triggerFullResync();
+                } catch (resyncErr) {
+                  console.error('[WS] Forced overflow recovery after reconnect failure failed:', resyncErr);
+                  setLastSyncError(`Overflow recovery failed: ${String(resyncErr)}`);
+                } finally {
+                  wsOverflowRecoveryInFlight = false;
+                }
+              } else {
+                console.warn('[WS] Overflow recovery already running after reconnect failure');
+              }
+
+              wsBufferOverflowLatched = false;
+            }
           }
         })();
       } else {

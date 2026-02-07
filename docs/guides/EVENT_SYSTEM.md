@@ -443,5 +443,5 @@ describe('ProjectionScheduler', () => {
 - EventBus: `src/lib/events/eventBus.ts`
 - ProjectionScheduler: `src/lib/events/projectionScheduler.ts`
 - Types: `src/lib/events/types.ts`
-- Convenience filters: `src/lib/events/types.ts` (`EventFilters`)
+- Convenience filters: exported from `src/lib/events/index.ts` (`EventFilters`, implemented in `types.ts`)
 - Y.Doc patterns: `.claude/rules/ydoc-patterns.md`

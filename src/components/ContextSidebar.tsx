@@ -90,32 +90,31 @@ export function ContextSidebar(props: { visible: boolean }) {
     }
     fetchInFlight = true;
 
-    if (!isTauri) {
-      // Mock data for browser mode
-      setMarkers([
-        {
-          id: 'mock-1',
-          session_file: '/mock/session.jsonl',
-          raw_line: 'ctx::2024-03-20 @ 10:30 AM [project::floatty] [mode::coding] Initial setup',
-          status: 'parsed',
-          parsed: {
-            timestamp: '2024-03-20',
-            time: '10:30 AM',
-            project: 'floatty',
-            mode: 'coding',
-            message: 'Initial setup completed',
-          },
-          created_at: new Date().toISOString(),
-          retry_count: 0,
-        },
-      ]);
-      setCounts({ pending: 0, parsed: 1, error: 0, total: 1 });
-      setLoading(false);
-      fetchInFlight = false;
-      return;
-    }
-
     try {
+      if (!isTauri) {
+        // Mock data for browser mode
+        setMarkers([
+          {
+            id: 'mock-1',
+            session_file: '/mock/session.jsonl',
+            raw_line: 'ctx::2024-03-20 @ 10:30 AM [project::floatty] [mode::coding] Initial setup',
+            status: 'parsed',
+            parsed: {
+              timestamp: '2024-03-20',
+              time: '10:30 AM',
+              project: 'floatty',
+              mode: 'coding',
+              message: 'Initial setup completed',
+            },
+            created_at: new Date().toISOString(),
+            retry_count: 0,
+          },
+        ]);
+        setCounts({ pending: 0, parsed: 1, error: 0, total: 1 });
+        setLoading(false);
+        return;
+      }
+
       const [newMarkers, newCounts] = await Promise.all([
         invoke<CtxMarker[]>('get_ctx_markers', { limit: 100 }),
         invoke<MarkerCounts>('get_ctx_counts'),

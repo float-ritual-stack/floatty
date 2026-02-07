@@ -269,6 +269,7 @@ function createLayoutStore() {
     if (!split || split.type !== 'split') return;
 
     const clampedRatio = clampRatio(ratio);
+    if (split.ratio === clampedRatio) return;
 
     const newSplit: PaneSplit = {
       ...split,
@@ -276,8 +277,6 @@ function createLayoutStore() {
     };
 
     const newRoot = replaceNode(layout.root, splitId, newSplit);
-
-    if (split.ratio === clampedRatio) return;
 
     setState('layouts', tabId, 'root', newRoot);
     bumpPersistenceVersion();
@@ -354,6 +353,7 @@ function createLayoutStore() {
       setState('layouts', tabId, 'root', newRoot);
       setState('layouts', tabId, 'activePaneId', sourcePaneId);
     });
+    bumpPersistenceVersion();
 
     return true;
   };

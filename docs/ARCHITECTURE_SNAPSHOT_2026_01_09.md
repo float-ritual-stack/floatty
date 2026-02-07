@@ -124,6 +124,8 @@ function detachHandler() {
 | **HTTP/WebSocket** | floatty-server:8765 | Real-time sync + reconciliation |
 
 > Note: localStorage backup was replaced on 2026-01-23 due to size limits; legacy localStorage is migration fallback only.
+>
+> Post-snapshot update (2026-02-07): `workspace_state` now includes monotonic `save_seq`. Frontend seeds `nextSaveSeq` from persisted state, and DB writes reject stale sequences to prevent out-of-order workspace persistence.
 
 **HTTP Client** (`src/lib/httpClient.ts:53-108`):
 - `getState()` - Full Y.Doc snapshot

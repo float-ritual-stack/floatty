@@ -605,8 +605,9 @@ impl FloattyDb {
 
     /// Save workspace state JSON with monotonic sequence guard.
     ///
-    /// Writes are accepted only if `save_seq` is >= the currently stored sequence.
-    /// This prevents older async saves from overwriting newer state.
+    /// Writes are accepted only if `save_seq` is newer than the stored sequence,
+    /// or if it is an idempotent retry with the same payload.
+    /// This prevents older async saves (or conflicting same-seq writes) from overwriting newer state.
     pub fn set_workspace_state(&self, key: &str, state_json: &str, save_seq: i64) -> Result<()> {
         let conn = self.conn.lock();
         let now = std::time::SystemTime::now()
@@ -622,7 +623,11 @@ impl FloattyDb {
                 state_json = excluded.state_json,
                 updated_at = excluded.updated_at,
                 save_seq = excluded.save_seq
-            WHERE excluded.save_seq >= workspace_state.save_seq
+            WHERE excluded.save_seq > workspace_state.save_seq
+               OR (
+                    excluded.save_seq = workspace_state.save_seq
+                    AND excluded.state_json = workspace_state.state_json
+               )
             "#,
             params![key, state_json, now, save_seq],
         )?;
@@ -671,6 +676,23 @@ mod tests {
             .expect("initial save");
         db.set_workspace_state("default", r#"{"v":2}"#, 2)
             .expect("idempotent retry");
+
+        let stored = db
+            .get_workspace_state("default")
+            .expect("read workspace state")
+            .expect("workspace state exists");
+        assert_eq!(stored.state_json, r#"{"v":2}"#);
+        assert_eq!(stored.save_seq, 2);
+    }
+
+    #[test]
+    fn workspace_state_rejects_conflicting_same_seq_write() {
+        let db = FloattyDb::open_in_memory().expect("open in-memory db");
+
+        db.set_workspace_state("default", r#"{"v":2}"#, 2)
+            .expect("initial save");
+        db.set_workspace_state("default", r#"{"v":"conflict"}"#, 2)
+            .expect("conflicting same-seq save should be ignored");
 
         let stored = db
             .get_workspace_state("default")

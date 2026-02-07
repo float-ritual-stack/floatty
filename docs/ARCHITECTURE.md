@@ -541,8 +541,8 @@ src-tauri/
 #[tauri::command] fn execute_ai_command(...)    // Run ai:: blocks
 #[tauri::command] fn get_ctx_markers(...)       // Sidebar data
 #[tauri::command] fn get_ctx_config(...)        // Aggregator settings
-#[tauri::command] fn get_workspace_state(...)   // Layout restore (+ save_seq)
-#[tauri::command] fn save_workspace_state(...)  // Layout persistence
+#[tauri::command] fn get_workspace_state(...)   // Returns { stateJson, saveSeq } for layout restore + sequence tracking
+#[tauri::command] fn save_workspace_state(...)  // Layout persistence with monotonic saveSeq guard
 ```
 
 Y.Doc sync transport is handled by `floatty-server` HTTP/WebSocket APIs (not direct Tauri commands):
@@ -560,7 +560,7 @@ Y.Doc sync transport is handled by `floatty-server` HTTP/WebSocket APIs (not dir
   - `ctx_markers`: Parsed ctx:: lines
   - `file_positions`: JSONL watcher state
   - `ydoc_updates`: Append-only block state
-  - `workspace_state`: Layout JSON blobs
+  - `workspace_state`: Layout JSON blobs + monotonic `save_seq` (stale writes are rejected)
   - `system_state`: Legacy full snapshots
 
 ---
