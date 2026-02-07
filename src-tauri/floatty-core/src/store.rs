@@ -23,8 +23,8 @@
 //! });
 //! ```
 //!
-//! Note: The `compute_changes()` function currently hardcodes `Origin::User` for all
-//! change events. See `docs/handoffs/unit-0.3.md` for details on this limitation.
+//! `compute_changes()` receives an explicit `Origin` so callback consumers can
+//! filter accurately (e.g., ignore remote-origin metadata updates).
 
 use crate::events::BlockChange;
 use crate::persistence::{PersistenceError, YDocPersistence};
@@ -302,6 +302,7 @@ impl YDocStore {
         &self,
         before: &HashMap<String, BlockSnapshot>,
         after: &HashMap<String, BlockSnapshot>,
+        origin: Origin,
     ) -> Vec<BlockChange> {
         let mut changes = Vec::new();
 
@@ -314,7 +315,7 @@ impl YDocStore {
                         id: id.clone(),
                         content: after_snap.content.clone(),
                         parent_id: after_snap.parent_id.clone(),
-                        origin: Origin::User, // Updates from frontend are "remote" to server
+                        origin,
                     });
                     trace!(block_id = %id, "Detected block created");
                 }
@@ -325,7 +326,7 @@ impl YDocStore {
                             id: id.clone(),
                             old_content: before_snap.content.clone(),
                             new_content: after_snap.content.clone(),
-                            origin: Origin::User,
+                            origin,
                         });
                         trace!(block_id = %id, "Detected content change");
                     }
@@ -336,7 +337,7 @@ impl YDocStore {
                             id: id.clone(),
                             old_parent_id: before_snap.parent_id.clone(),
                             new_parent_id: after_snap.parent_id.clone(),
-                            origin: Origin::User,
+                            origin,
                         });
                         trace!(block_id = %id, "Detected block moved");
                     }
@@ -346,7 +347,7 @@ impl YDocStore {
                         changes.push(BlockChange::CollapsedChanged {
                             id: id.clone(),
                             collapsed: after_snap.collapsed,
-                            origin: Origin::User,
+                            origin,
                         });
                         trace!(block_id = %id, collapsed = after_snap.collapsed, "Detected collapsed change");
                     }
@@ -360,7 +361,7 @@ impl YDocStore {
                 changes.push(BlockChange::Deleted {
                     id: id.clone(),
                     content: before_snap.content.clone(),
-                    origin: Origin::User,
+                    origin,
                 });
                 trace!(block_id = %id, "Detected block deleted");
             }
@@ -558,7 +559,9 @@ impl YDocStore {
         if let Some(before) = before_snapshot {
             let after = self.snapshot_blocks(&doc);
             trace!(before_count = before.len(), after_count = after.len(), "apply_update: comparing snapshots");
-            let changes = self.compute_changes(&before, &after);
+            // apply_update() consumes updates sent from external clients over sync APIs.
+            // Tag emitted changes as Remote so hook origin filters behave correctly.
+            let changes = self.compute_changes(&before, &after, Origin::Remote);
             if !changes.is_empty() {
                 debug!(change_count = changes.len(), "apply_update: detected changes, emitting to hooks");
             }
@@ -945,7 +948,8 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(matches!(
             &changes[0],
-            BlockChange::Created { id, content, .. } if id == "block-1" && content == "hello"
+            BlockChange::Created { id, content, origin, .. }
+                if id == "block-1" && content == "hello" && *origin == Origin::Remote
         ));
     }
 
@@ -998,7 +1002,7 @@ mod tests {
             },
         );
 
-        let changes = store.compute_changes(&before, &after);
+        let changes = store.compute_changes(&before, &after, Origin::User);
 
         assert_eq!(changes.len(), 1);
         assert!(matches!(
@@ -1033,7 +1037,7 @@ mod tests {
             },
         );
 
-        let changes = store.compute_changes(&before, &after);
+        let changes = store.compute_changes(&before, &after, Origin::User);
 
         assert_eq!(changes.len(), 1);
         assert!(matches!(
@@ -1068,7 +1072,7 @@ mod tests {
             },
         );
 
-        let changes = store.compute_changes(&before, &after);
+        let changes = store.compute_changes(&before, &after, Origin::User);
 
         assert_eq!(changes.len(), 1);
         assert!(matches!(
@@ -1105,7 +1109,7 @@ mod tests {
             },
         );
 
-        let changes = store.compute_changes(&before, &after);
+        let changes = store.compute_changes(&before, &after, Origin::User);
 
         assert_eq!(changes.len(), 1);
         assert!(matches!(
@@ -1132,7 +1136,7 @@ mod tests {
 
         let after: HashMap<String, BlockSnapshot> = HashMap::new();
 
-        let changes = store.compute_changes(&before, &after);
+        let changes = store.compute_changes(&before, &after, Origin::User);
 
         assert_eq!(changes.len(), 1);
         assert!(matches!(
