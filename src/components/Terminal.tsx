@@ -12,7 +12,7 @@ import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { themeStore } from '../hooks/useThemeStore';
 import { getActionForEvent, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
-import type { FocusDirection, PaneLeaf, PaneHandle } from '../lib/layoutTypes';
+import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { terminalManager } from '../lib/terminalManager';
 
@@ -25,6 +25,22 @@ const ZOOM_MAX = 2.0;
 // Status bar with semantic state (FLO-54) + keyboard shortcuts
 import type { SemanticState } from '../lib/terminalManager';
 import { getSyncStatus, getPendingCount, getLastSyncError } from '../hooks/useSyncedYDoc';
+
+interface PaneDropZone {
+  targetPaneId: string;
+  position: PaneDropPosition;
+  rect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+}
+
+interface PaneDropTarget {
+  targetPaneId: string;
+  position: PaneDropPosition;
+}
 
 function StatusBar(props: { semanticState?: SemanticState | null }) {
   // Sync status for Y.Doc
@@ -245,6 +261,205 @@ export function Terminal() {
   // FLO-136: Pin ephemeral pane (make permanent)
   const pinPane = (tabId: string, paneId: string) => {
     return layoutStore.pinPane(tabId, paneId);
+  };
+
+  // Pane drag-and-drop state (rearrange splits by dropping relative to a target pane)
+  const [draggingPaneId, setDraggingPaneId] = createSignal<string | null>(null);
+  const [draggingTabId, setDraggingTabId] = createSignal<string | null>(null);
+  const [paneDropZones, setPaneDropZones] = createSignal<PaneDropZone[]>([]);
+  const [activeDropTarget, setActiveDropTarget] = createSignal<PaneDropTarget | null>(null);
+
+  let lastDragPointer: { x: number; y: number } | null = null;
+  let paneDragMoveListener: ((e: PointerEvent) => void) | null = null;
+  let paneDragEndListener: ((e: PointerEvent) => void) | null = null;
+  let paneDragCancelListener: (() => void) | null = null;
+  let paneDragResizeListener: (() => void) | null = null;
+  let paneDragKeydownListener: ((e: KeyboardEvent) => void) | null = null;
+
+  const detachPaneDragListeners = () => {
+    if (paneDragMoveListener) {
+      window.removeEventListener('pointermove', paneDragMoveListener);
+      paneDragMoveListener = null;
+    }
+    if (paneDragEndListener) {
+      window.removeEventListener('pointerup', paneDragEndListener);
+      paneDragEndListener = null;
+    }
+    if (paneDragCancelListener) {
+      window.removeEventListener('pointercancel', paneDragCancelListener);
+      window.removeEventListener('blur', paneDragCancelListener);
+      paneDragCancelListener = null;
+    }
+    if (paneDragResizeListener) {
+      window.removeEventListener('resize', paneDragResizeListener);
+      paneDragResizeListener = null;
+    }
+    if (paneDragKeydownListener) {
+      window.removeEventListener('keydown', paneDragKeydownListener, true);
+      paneDragKeydownListener = null;
+    }
+  };
+
+  const clearPaneDragState = () => {
+    detachPaneDragListeners();
+    lastDragPointer = null;
+    setDraggingPaneId(null);
+    setDraggingTabId(null);
+    setPaneDropZones([]);
+    setActiveDropTarget(null);
+    document.body.classList.remove('pane-dragging');
+  };
+
+  const computePaneDropZones = (tabId: string, sourcePaneId: string): PaneDropZone[] => {
+    const EDGE_ZONE_SIZE = 44;
+    const MIN_EDGE_ZONE_SIZE = 16;
+
+    return getAllPaneIds(tabId)
+      .filter((paneId) => paneId !== sourcePaneId)
+      .flatMap((paneId) => {
+        const placeholder = document.querySelector(`[data-pane-id="${paneId}"]`) as HTMLElement | null;
+        if (!placeholder) return [];
+
+        const rect = placeholder.getBoundingClientRect();
+        if (rect.width < 8 || rect.height < 8) return [];
+
+        const edge = Math.max(
+          MIN_EDGE_ZONE_SIZE,
+          Math.min(EDGE_ZONE_SIZE, Math.floor(Math.min(rect.width, rect.height) * 0.28))
+        );
+
+        const topBottomWidth = Math.max(0, rect.width - edge * 2);
+        const topBottomLeft = topBottomWidth > 0 ? rect.left + edge : rect.left;
+        const upDownRect = {
+          left: topBottomLeft,
+          width: topBottomWidth > 0 ? topBottomWidth : rect.width,
+        };
+
+        return [
+          {
+            targetPaneId: paneId,
+            position: 'left' as const,
+            rect: { left: rect.left, top: rect.top, width: edge, height: rect.height },
+          },
+          {
+            targetPaneId: paneId,
+            position: 'right' as const,
+            rect: { left: rect.right - edge, top: rect.top, width: edge, height: rect.height },
+          },
+          {
+            targetPaneId: paneId,
+            position: 'up' as const,
+            rect: { left: upDownRect.left, top: rect.top, width: upDownRect.width, height: edge },
+          },
+          {
+            targetPaneId: paneId,
+            position: 'down' as const,
+            rect: { left: upDownRect.left, top: rect.bottom - edge, width: upDownRect.width, height: edge },
+          },
+        ];
+      });
+  };
+
+  const hitTestPaneDropTarget = (clientX: number, clientY: number): PaneDropTarget | null => {
+    const zone = paneDropZones().find((candidate) => {
+      const { left, top, width, height } = candidate.rect;
+      return (
+        clientX >= left
+        && clientX <= left + width
+        && clientY >= top
+        && clientY <= top + height
+      );
+    });
+
+    if (!zone) return null;
+    return {
+      targetPaneId: zone.targetPaneId,
+      position: zone.position,
+    };
+  };
+
+  const dropPositionGlyph = (position: PaneDropPosition): string => {
+    if (position === 'left') return '←';
+    if (position === 'right') return '→';
+    if (position === 'up') return '↑';
+    return '↓';
+  };
+
+  const finishPaneDrag = (commitDrop: boolean) => {
+    const tabId = draggingTabId();
+    const sourcePaneId = draggingPaneId();
+    const target = activeDropTarget();
+    clearPaneDragState();
+
+    if (!commitDrop || !tabId || !sourcePaneId || !target) return;
+
+    const moved = layoutStore.movePane(tabId, sourcePaneId, target.targetPaneId, target.position);
+    if (!moved) return;
+
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const paneIds = getAllPaneIds(tabId);
+        for (const paneId of paneIds) {
+          paneRefs.get(paneId)?.fit();
+        }
+        paneRefs.get(sourcePaneId)?.focus();
+      }, 80);
+    });
+  };
+
+  const handlePaneDragStart = (paneId: string, event: PointerEvent) => {
+    const tabId = tabStore.activeTabId();
+    if (!tabId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const zones = computePaneDropZones(tabId, paneId);
+    if (zones.length === 0) return; // Can't drag when no other pane exists in tab
+
+    clearPaneDragState();
+    setDraggingPaneId(paneId);
+    setDraggingTabId(tabId);
+    setPaneDropZones(zones);
+    setActiveDropTarget(null);
+    lastDragPointer = { x: event.clientX, y: event.clientY };
+    layoutStore.setActivePaneId(tabId, paneId);
+    document.body.classList.add('pane-dragging');
+
+    paneDragMoveListener = (moveEvent: PointerEvent) => {
+      moveEvent.preventDefault();
+      lastDragPointer = { x: moveEvent.clientX, y: moveEvent.clientY };
+      setActiveDropTarget(hitTestPaneDropTarget(moveEvent.clientX, moveEvent.clientY));
+    };
+    paneDragEndListener = (upEvent: PointerEvent) => {
+      setActiveDropTarget(hitTestPaneDropTarget(upEvent.clientX, upEvent.clientY));
+      finishPaneDrag(true);
+    };
+    paneDragCancelListener = () => {
+      finishPaneDrag(false);
+    };
+    paneDragResizeListener = () => {
+      const activeTab = draggingTabId();
+      const source = draggingPaneId();
+      if (!activeTab || !source) return;
+      setPaneDropZones(computePaneDropZones(activeTab, source));
+      if (lastDragPointer) {
+        setActiveDropTarget(hitTestPaneDropTarget(lastDragPointer.x, lastDragPointer.y));
+      }
+    };
+    paneDragKeydownListener = (keydownEvent: KeyboardEvent) => {
+      if (keydownEvent.key !== 'Escape') return;
+      keydownEvent.preventDefault();
+      keydownEvent.stopPropagation();
+      finishPaneDrag(false);
+    };
+
+    window.addEventListener('pointermove', paneDragMoveListener, { passive: false });
+    window.addEventListener('pointerup', paneDragEndListener);
+    window.addEventListener('pointercancel', paneDragCancelListener);
+    window.addEventListener('blur', paneDragCancelListener);
+    window.addEventListener('resize', paneDragResizeListener);
+    window.addEventListener('keydown', paneDragKeydownListener, true);
   };
 
   // Helper to split pane and handle post-split fitting/focusing
@@ -572,6 +787,15 @@ export function Terminal() {
     }
   };
 
+  // Cancel in-flight pane drag if active tab changes
+  createEffect(() => {
+    const dragTab = draggingTabId();
+    const activeTab = tabStore.activeTabId();
+    if (dragTab && activeTab && dragTab !== activeTab) {
+      finishPaneDrag(false);
+    }
+  });
+
   // Collect all pane info across all tabs for terminal layer (memoized for performance)
   const allPaneInfo = createMemo(() => {
     const activeId = tabStore.activeTabId();
@@ -633,6 +857,7 @@ export function Terminal() {
 
   // Cleanup all timers on unmount
   onCleanup(() => {
+    clearPaneDragState();
     for (const timer of ephemeralTimers.values()) {
       clearTimeout(timer);
     }
@@ -691,6 +916,8 @@ export function Terminal() {
                     initialCollapseDepth={info().initialCollapseDepth}
                     ref={(handle) => setPaneRef(info().paneId, handle)}
                     onPaneClick={() => handlePaneClick(info().paneId)}
+                    onDragHandlePointerDown={(e) => handlePaneDragStart(info().paneId, e)}
+                    isBeingDragged={draggingTabId() === info().tabId && draggingPaneId() === info().paneId}
                   />
                 }
               >
@@ -702,6 +929,8 @@ export function Terminal() {
                   isVisible={info().isActiveTab}
                   ref={(handle) => setPaneRef(info().paneId, handle)}
                   onPaneClick={() => handlePaneClick(info().paneId)}
+                  onDragHandlePointerDown={(e) => handlePaneDragStart(info().paneId, e)}
+                  isBeingDragged={draggingTabId() === info().tabId && draggingPaneId() === info().paneId}
                   onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
                   onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
                     console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
@@ -720,6 +949,32 @@ export function Terminal() {
               </Show>
             )}
           </Key>
+
+          <Show when={draggingTabId() === tabStore.activeTabId() && paneDropZones().length > 0}>
+            <div class="pane-drop-overlay">
+              <For each={paneDropZones()}>
+                {(zone) => (
+                  <div
+                    class="pane-drop-zone"
+                    classList={{
+                      active: activeDropTarget()?.targetPaneId === zone.targetPaneId
+                        && activeDropTarget()?.position === zone.position,
+                    }}
+                    data-drop-position={zone.position}
+                    style={{
+                      position: 'fixed',
+                      left: `${zone.rect.left}px`,
+                      top: `${zone.rect.top}px`,
+                      width: `${zone.rect.width}px`,
+                      height: `${zone.rect.height}px`,
+                    }}
+                  >
+                    <span class="pane-drop-zone-glyph">{dropPositionGlyph(zone.position)}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
 
           {/* Resize overlay - rendered AFTER terminals so it's on top */}
           <For each={tabStore.tabs}>

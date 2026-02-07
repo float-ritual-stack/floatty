@@ -18,6 +18,7 @@ const HANDLE_CENTER_OFFSET = 2;      // Offset to center cursor on handle during
 const MIN_SPLIT_RATIO = 0.1;         // Minimum pane size (10%)
 const MAX_SPLIT_RATIO = 0.9;         // Maximum pane size (90%)
 const RESIZE_THROTTLE_MS = 50;       // Throttle resize events during drag
+const RESIZE_DRAG_TICK_EVENT = 'floatty:resize-drag-tick';
 // Note: Hit area expansion (4px padding) is handled via CSS ::before pseudo-element
 
 interface ResizeOverlayProps {
@@ -51,6 +52,7 @@ function ResizeHitArea(props: {
   let lastResizeDispatch = 0;  // Throttle resize events during drag
   const [isDraggingVisual, setIsDraggingVisual] = createSignal(false);
   const [rect, setRect] = createSignal<DOMRect | null>(null);
+  let splitContainerCache: HTMLElement | null = null;
 
   // Track active window listeners for cleanup on unmount
   let activePointerMoveListener: ((e: PointerEvent) => void) | null = null;
@@ -61,6 +63,17 @@ function ResizeHitArea(props: {
     return document.querySelector(
       `.pane-layout-split[data-split-id="${props.splitId}"] > .resize-spacer`
     );
+  };
+
+  // Cache split container during drag to avoid repeated selector scans
+  const getSplitContainer = (): HTMLElement | null => {
+    if (splitContainerCache && splitContainerCache.isConnected) {
+      return splitContainerCache;
+    }
+    splitContainerCache = document.querySelector(
+      `.pane-layout-split[data-split-id="${props.splitId}"]`
+    ) as HTMLElement | null;
+    return splitContainerCache;
   };
 
   // Sync overlay position to match the spacer
@@ -86,9 +99,7 @@ function ResizeHitArea(props: {
 
     // Try to find and observe the split container, with retries for timing issues
     const trySetupObserver = () => {
-      const splitContainer = document.querySelector(
-        `.pane-layout-split[data-split-id="${props.splitId}"]`
-      );
+      const splitContainer = getSplitContainer();
 
       if (splitContainer) {
         observer.observe(splitContainer);
@@ -144,17 +155,16 @@ function ResizeHitArea(props: {
       // Dragging ended - final sync
       requestAnimationFrame(syncPosition);
     } else if (dragging !== props.splitId) {
-      // ANOTHER handle is being dragged - poll position while drag is active
-      const pollInterval = setInterval(() => {
-        if (layoutStore.draggingSplitId === null) {
-          clearInterval(pollInterval);
-          return;
-        }
+      // Another handle is being dragged - follow its resize ticks.
+      const handleDragTick = () => {
         syncPosition();
-      }, RESIZE_THROTTLE_MS);
+      };
+      window.addEventListener(RESIZE_DRAG_TICK_EVENT, handleDragTick);
 
       // Cleanup when effect reruns or component unmounts
-      onCleanup(() => clearInterval(pollInterval));
+      onCleanup(() => {
+        window.removeEventListener(RESIZE_DRAG_TICK_EVENT, handleDragTick);
+      });
     }
   });
 
@@ -163,9 +173,7 @@ function ResizeHitArea(props: {
     if (!isDragging) return;
 
     // Find the parent split container to calculate ratio
-    const splitContainer = document.querySelector(
-      `.pane-layout-split[data-split-id="${props.splitId}"]`
-    ) as HTMLElement | null;
+    const splitContainer = getSplitContainer();
 
     if (!splitContainer) return;
 
@@ -188,6 +196,7 @@ function ResizeHitArea(props: {
     if (now - lastResizeDispatch > RESIZE_THROTTLE_MS) {
       lastResizeDispatch = now;
       window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event(RESIZE_DRAG_TICK_EVENT));
     }
   };
 

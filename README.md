@@ -60,6 +60,21 @@ Uses platform-aware keybinds: **Cmd** on macOS, **Ctrl** on Windows/Linux.
 |----------|--------|
 | `Cmd+B` | Toggle context sidebar |
 
+### Pane Management
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+D` | Split pane horizontally |
+| `Cmd+Shift+D` | Split pane vertically |
+| `Cmd+O` | Split outliner pane horizontally |
+| `Cmd+Shift+O` | Split outliner pane vertically |
+| `Cmd+Shift+W` | Close active pane |
+| `Cmd+Option+←/→/↑/↓` | Focus adjacent pane |
+
+### Mouse Controls
+- Drag a pane using the small `⋮⋮` handle in the pane's top-right corner.
+- Drop on a pane edge drop-zone (`←`, `→`, `↑`, `↓`) to place the dragged pane on that side.
+- Press `Esc` during a pane drag to cancel without moving.
+
 ### Terminal Reserved (always pass through)
 These keys are never intercepted - they reach the PTY for shell signals:
 - `Ctrl+C` (SIGINT), `Ctrl+Z` (SIGTSTP), `Ctrl+D` (EOF)

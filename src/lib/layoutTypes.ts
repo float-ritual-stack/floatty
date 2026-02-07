@@ -48,6 +48,9 @@ export interface TabLayout {
 // Direction for focus navigation
 export type FocusDirection = 'left' | 'right' | 'up' | 'down';
 
+// Direction for dropping one pane relative to another
+export type PaneDropPosition = FocusDirection;
+
 /**
  * Imperative handle for any pane type (terminal, outliner, etc.)
  */
@@ -285,4 +288,50 @@ export function findAdjacentPane(
  */
 export function clampRatio(ratio: number): number {
   return Math.max(0.1, Math.min(0.9, ratio));
+}
+
+/**
+ * Move an existing leaf pane relative to another leaf pane.
+ *
+ * Used by drag-and-drop pane rearrangement:
+ * - `left/right` create a horizontal split around the target
+ * - `up/down` create a vertical split around the target
+ *
+ * Returns a new tree root or null for invalid moves.
+ */
+export function moveLeafToTarget(
+  root: LayoutNode,
+  sourceLeafId: string,
+  targetLeafId: string,
+  position: PaneDropPosition
+): LayoutNode | null {
+  if (sourceLeafId === targetLeafId) return null;
+
+  const sourceNode = findNode(root, sourceLeafId);
+  const targetNode = findNode(root, targetLeafId);
+  if (!sourceNode || sourceNode.type !== 'leaf') return null;
+  if (!targetNode || targetNode.type !== 'leaf') return null;
+
+  // Remove source first (collapses parent split), then re-insert around target.
+  const withoutSource = removeNode(root, sourceLeafId);
+  if (!withoutSource) return null;
+
+  const targetInNextTree = findNode(withoutSource, targetLeafId);
+  if (!targetInNextTree || targetInNextTree.type !== 'leaf') return null;
+
+  const splitDirection = position === 'left' || position === 'right'
+    ? 'horizontal'
+    : 'vertical';
+
+  const newSplit: PaneSplit = {
+    type: 'split',
+    id: generateSplitId(),
+    direction: splitDirection,
+    ratio: 0.5,
+    children: position === 'left' || position === 'up'
+      ? [sourceNode, targetInNextTree]
+      : [targetInNextTree, sourceNode],
+  };
+
+  return replaceNode(withoutSource, targetLeafId, newSplit);
 }

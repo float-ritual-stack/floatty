@@ -505,6 +505,55 @@ html, body, #root {
   box-shadow: inset 0 0 0 1px var(--color-accent); /* Accent border inside */
 }
 
+.terminal-pane-positioned.pane-drag-source {
+  box-shadow:
+    inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 85%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.terminal-pane-host {
+  width: 100%;
+  height: 100%;
+}
+
+.pane-drag-handle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 30;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  background: color-mix(in srgb, var(--color-bg-dark) 88%, transparent);
+  color: var(--color-fg-muted);
+  font-size: 11px;
+  line-height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  opacity: 0.22;
+  transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  user-select: none;
+}
+
+.terminal-pane-positioned:hover .pane-drag-handle,
+.terminal-pane-positioned.active .pane-drag-handle,
+.terminal-pane-positioned.pane-active .pane-drag-handle {
+  opacity: 0.85;
+}
+
+.pane-drag-handle:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 75%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-dark));
+  color: var(--color-accent);
+}
+
+.pane-drag-handle:active {
+  cursor: grabbing;
+}
+
 /* Adjust wrapper to account for tab bar */
 .terminal-wrapper {
   flex: 1;
@@ -633,6 +682,58 @@ html, body, #root {
 
 /* During resize, disable pointer events on terminals */
 body.resizing .terminal-pane-positioned {
+  pointer-events: none;
+}
+
+.pane-drop-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 220;
+}
+
+.pane-drop-zone {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed color-mix(in srgb, var(--color-accent) 72%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 11%, transparent);
+  border-radius: 6px;
+  opacity: 0.45;
+  transition: opacity 0.1s ease, background 0.1s ease, border-color 0.1s ease;
+}
+
+.pane-drop-zone-glyph {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  color: color-mix(in srgb, var(--color-accent) 80%, var(--color-fg));
+  text-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 24%, transparent);
+  opacity: 0.9;
+}
+
+.pane-drop-zone.active {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--color-accent) 90%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 26%, transparent);
+  opacity: 0.95;
+}
+
+.pane-drop-zone.active .pane-drop-zone-glyph {
+  color: var(--color-fg);
+}
+
+body.pane-dragging {
+  user-select: none;
+  cursor: grabbing !important;
+}
+
+body.pane-dragging * {
+  cursor: grabbing !important;
+}
+
+body.pane-dragging .terminal-pane-positioned {
   pointer-events: none;
 }
 
@@ -2282,4 +2383,3 @@ body.resizing {
 body.resizing * {
   cursor: col-resize !important;
 }
-
