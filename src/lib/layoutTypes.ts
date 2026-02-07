@@ -339,3 +339,40 @@ export function moveLeafToTarget(
 
   return replaceNode(withoutSource, targetLeafId, newSplit);
 }
+
+/**
+ * Move an existing leaf pane to the root level, creating a full-height
+ * column alongside the entire remaining layout tree.
+ *
+ * Used when dragging a pane to the absolute left/right edge of the layout:
+ * - `left`: source becomes the left column, remaining tree the right
+ * - `right`: remaining tree the left, source the right column
+ *
+ * Returns a new tree root, or null if the move is invalid (source is root
+ * or source doesn't exist).
+ */
+export function moveLeafToRoot(
+  root: LayoutNode,
+  sourceLeafId: string,
+  position: 'left' | 'right'
+): LayoutNode | null {
+  const sourceNode = findNode(root, sourceLeafId);
+  if (!sourceNode || sourceNode.type !== 'leaf') return null;
+
+  const remaining = removeNode(root, sourceLeafId);
+  if (!remaining) return null; // source was root (single pane)
+
+  const sourceLeaf: PaneLeaf = { ...sourceNode };
+
+  const newRoot: PaneSplit = {
+    type: 'split',
+    id: generateSplitId(),
+    direction: 'horizontal',
+    ratio: 0.5,
+    children: position === 'left'
+      ? [sourceLeaf, remaining]
+      : [remaining, sourceLeaf],
+  };
+
+  return newRoot;
+}

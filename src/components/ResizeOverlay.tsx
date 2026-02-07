@@ -6,7 +6,7 @@
  * This solves the problem of terminals blocking pointer events on the layout layer.
  */
 
-import { createSignal, Show, createMemo, createEffect, onMount, onCleanup } from 'solid-js';
+import { createSignal, Show, createMemo, createEffect, on, onMount, onCleanup } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { terminalManager } from '../lib/terminalManager';
@@ -167,6 +167,18 @@ function ResizeHitArea(props: {
       });
     }
   });
+
+  // Re-sync handle position when layout tree structure changes.
+  // ResizeObserver only fires on size changes, not position changes.
+  // After pane drag-drop rearrangement, a split container may move without resizing.
+  createEffect(on(
+    () => layoutStore.layouts[props.tabId]?.root,
+    () => {
+      splitContainerCache = null;
+      requestAnimationFrame(syncPosition);
+    },
+    { defer: true }
+  ));
 
   // Use window listeners for move/up to avoid pointer capture issues
   const onWindowPointerMove = (e: PointerEvent) => {

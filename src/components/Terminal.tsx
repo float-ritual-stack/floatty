@@ -383,8 +383,9 @@ export function Terminal() {
   const computePaneDropZones = (candidates: PaneDropCandidate[]): PaneDropZone[] => {
     const EDGE_ZONE_SIZE = 44;
     const MIN_EDGE_ZONE_SIZE = 16;
+    const OUTER_ZONE_WIDTH = 20;
 
-    return candidates.flatMap((candidate) => {
+    const perPaneZones = candidates.flatMap((candidate) => {
       if (!candidate.element.isConnected) return [];
 
       const rect = candidate.element.getBoundingClientRect();
@@ -425,6 +426,29 @@ export function Terminal() {
         },
       ];
     });
+
+    // Outer edge zones: full-height left/right strips along the layout root.
+    // Only when 2+ panes exist (need at least 2 for the source to have somewhere to go).
+    const outerZones: PaneDropZone[] = [];
+    const layoutRoot = document.querySelector('.pane-layout-root') as HTMLElement | null;
+    if (layoutRoot && candidates.length > 0) {
+      const rootRect = layoutRoot.getBoundingClientRect();
+      outerZones.push(
+        {
+          targetPaneId: '__outer_left',
+          position: 'left' as const,
+          rect: { left: rootRect.left, top: rootRect.top, width: OUTER_ZONE_WIDTH, height: rootRect.height },
+        },
+        {
+          targetPaneId: '__outer_right',
+          position: 'right' as const,
+          rect: { left: rootRect.right - OUTER_ZONE_WIDTH, top: rootRect.top, width: OUTER_ZONE_WIDTH, height: rootRect.height },
+        },
+      );
+    }
+
+    // Outer zones prepended so zones.find() checks them first — outer wins at edge.
+    return [...outerZones, ...perPaneZones];
   };
 
   const schedulePaneDropZoneRecompute = () => {
@@ -468,9 +492,9 @@ export function Terminal() {
     };
   };
 
-  const dropPositionGlyph = (position: PaneDropPosition): string => {
-    if (position === 'left') return '←';
-    if (position === 'right') return '→';
+  const dropPositionGlyph = (position: PaneDropPosition, isOuter: boolean = false): string => {
+    if (position === 'left') return isOuter ? '⇐' : '←';
+    if (position === 'right') return isOuter ? '⇒' : '→';
     if (position === 'up') return '↑';
     return '↓';
   };
@@ -488,7 +512,13 @@ export function Terminal() {
 
     if (!commitDrop || !tabId || !sourcePaneId || !target) return;
 
-    const moved = layoutStore.movePane(tabId, sourcePaneId, target.targetPaneId, target.position);
+    let moved: boolean;
+    if (target.targetPaneId.startsWith('__outer_')) {
+      const rootPosition = target.targetPaneId === '__outer_left' ? 'left' as const : 'right' as const;
+      moved = layoutStore.movePaneToRoot(tabId, sourcePaneId, rootPosition);
+    } else {
+      moved = layoutStore.movePane(tabId, sourcePaneId, target.targetPaneId, target.position);
+    }
     if (!moved) return;
 
     fitAndFocusWhenPaneRefsReady(tabId, sourcePaneId);
@@ -1061,6 +1091,7 @@ export function Terminal() {
                     classList={{
                       active: activeDropTarget()?.targetPaneId === zone.targetPaneId
                         && activeDropTarget()?.position === zone.position,
+                      outer: zone.targetPaneId.startsWith('__outer_'),
                     }}
                     data-drop-position={zone.position}
                     style={{
@@ -1071,7 +1102,7 @@ export function Terminal() {
                       height: `${zone.rect.height}px`,
                     }}
                   >
-                    <span class="pane-drop-zone-glyph">{dropPositionGlyph(zone.position)}</span>
+                    <span class="pane-drop-zone-glyph">{dropPositionGlyph(zone.position, zone.targetPaneId.startsWith('__outer_'))}</span>
                   </div>
                 )}
               </For>
