@@ -6,6 +6,25 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.20] - 2026-02-06
+
+### Features
+
+- **Box-drawing pretty-print** (PR #122): Block tree debug output uses box-drawing characters with ANSI coloring for readable hierarchy visualization
+- **Bidirectional resync** (PR #123): `triggerFullResync()` now pushes local-only diff via state vector before pulling server state — prevents silent data loss when local edits haven't reached server
+- **Post-resync health verification** (PR #123): After full resync, re-checks block counts and shows yellow "drift" indicator instead of false green if counts still diverge
+
+### Bug Fixes
+
+- **Surgical Y.Array mutations** (FLO-280, PR #123): Replaced destructive delete-all-then-push pattern on `childIds` Y.Arrays with surgical helpers (`insertChildId`, `removeChildId`, `appendChildId`, etc.) — prevents CRDT duplication when divergent docs merge during bidirectional resync or crash recovery. 17 call sites migrated, 6 helpers added.
+- **Cross-parent childIds duplication** (PR #123): Startup integrity check detects and fixes blocks appearing in multiple parents' `childIds` arrays — keeps the canonical parent, removes stale references
+- **Orphan block re-homing** (PR #123): Blocks whose `parentId` points to a parent that doesn't list them in `childIds` are now re-homed on startup
+- **Tree integrity check** (PR #123): Comprehensive startup validation covers orphans, cross-parent duplication, and parent↔child consistency
+- **Insert index clamping** (PR #123): `insertChildId` and `insertChildIds` clamp `atIndex` to valid range, preventing Y.Array out-of-bounds errors
+- **Drift status protection** (PR #123): `setSyncStatus('synced')` now guards with `!isDriftStatus()` to prevent health check drift indicator from being clobbered by normal sync paths
+
+---
+
 ## [0.7.19] - 2026-02-05
 
 ### Features
