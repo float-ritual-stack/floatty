@@ -29,7 +29,7 @@ import { SyncSequenceTracker } from '../lib/syncSequenceTracker';
 // SYNC STATUS (singleton signals for UI visibility)
 // ═══════════════════════════════════════════════════════════════
 
-export type SyncStatus = 'synced' | 'pending' | 'error';
+export type SyncStatus = 'synced' | 'pending' | 'error' | 'drift';
 
 // Singleton signals - survive component remount like sharedDoc
 const [syncStatus, setSyncStatus] = createSignal<SyncStatus>('synced');
@@ -44,6 +44,21 @@ export const getPendingCount: Accessor<number> = pendingCount;
 
 /** Get last sync error message (reactive) */
 export const getLastSyncError: Accessor<string | null> = lastSyncError;
+
+/** Set sync status externally (used by useSyncHealth for drift detection) */
+export function setSyncStatusExternal(status: SyncStatus, error?: string | null): void {
+  setSyncStatus(status);
+  if (error !== undefined) setLastSyncError(error);
+}
+
+/**
+ * Check if drift status is currently set.
+ * Used to prevent normal sync paths from clobbering drift indicator —
+ * only the health check should clear drift (after verifying counts match).
+ */
+export function isDriftStatus(): boolean {
+  return syncStatus() === 'drift';
+}
 
 /** Check if there are pending updates (for close gate) */
 export function hasPendingUpdates(): boolean {
@@ -82,8 +97,10 @@ export async function forceSyncNow(): Promise<void> {
       sentCount++;
     }
     sharedRetryCount = 0;
-    setSyncStatus('synced');
-    setLastSyncError(null);
+    if (!isDriftStatus()) {
+      setSyncStatus('synced');
+      setLastSyncError(null);
+    }
     setPendingCount(0);
     clearBackup(); // All synced - clear crash backup
     console.log('[useSyncedYDoc] Force sync completed successfully');
@@ -117,20 +134,259 @@ export function getSharedDoc(): Y.Doc {
 }
 
 /**
- * Trigger a full resync from server.
- * Fetches full Y.Doc state and applies it (idempotent - only new updates have effect).
- * Used by sync health check when hash mismatch detected.
+ * Scan all blocks' childIds and rootIds for duplicate entries, remove them.
+ * Safety net for edge cases where CRDT merge produces duplicated array entries
+ * (e.g., from the old delete-all-then-push childIds mutation pattern).
+ *
+ * Returns the number of duplicates removed. All removals happen in a single
+ * transaction with 'system' origin (excluded from UndoManager).
  */
-export async function triggerFullResync(): Promise<void> {
-  if (!isClientInitialized()) {
-    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot trigger resync');
-    return;
+export function deduplicateChildIds(): number {
+  const doc = sharedDoc;
+  const blocksMap = doc.getMap('blocks');
+  const rootIds = doc.getArray<string>('rootIds');
+
+  let totalRemoved = 0;
+
+  // Collect duplicates before transacting (read phase)
+  const blockDups: Array<{ blockId: string; indicesToRemove: number[] }> = [];
+
+  blocksMap.forEach((value, blockId) => {
+    if (!(value instanceof Y.Map)) return;
+    const arr = value.get('childIds');
+    if (!(arr instanceof Y.Array)) return;
+
+    const items = arr.toArray() as string[];
+    const seen = new Set<string>();
+    const indicesToRemove: number[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      if (seen.has(items[i])) {
+        indicesToRemove.push(i);
+      } else {
+        seen.add(items[i]);
+      }
+    }
+
+    if (indicesToRemove.length > 0) {
+      blockDups.push({ blockId, indicesToRemove });
+    }
+  });
+
+  // Check rootIds
+  const rootItems = rootIds.toArray();
+  const rootSeen = new Set<string>();
+  const rootIndicesToRemove: number[] = [];
+  for (let i = 0; i < rootItems.length; i++) {
+    if (rootSeen.has(rootItems[i])) {
+      rootIndicesToRemove.push(i);
+    } else {
+      rootSeen.add(rootItems[i]);
+    }
   }
 
-  console.log('[useSyncedYDoc] Triggering full resync from server');
+  // Phase 2: Cross-parent dedup + phantom child detection
+  // Builds childId → [parentIds] map and detects childIds pointing to non-existent blocks.
+  const childToParents = new Map<string, string[]>();
+  const phantomChildren: Array<{ parentId: string; childId: string }> = [];
+  blocksMap.forEach((value, parentId) => {
+    if (!(value instanceof Y.Map)) return;
+    const arr = value.get('childIds');
+    if (!(arr instanceof Y.Array)) return;
+    for (const childId of arr.toArray() as string[]) {
+      // Phantom: childIds references a block that doesn't exist
+      if (!blocksMap.has(childId)) {
+        phantomChildren.push({ parentId, childId });
+        continue; // Don't add to cross-parent map
+      }
+      const parents = childToParents.get(childId) || [];
+      parents.push(parentId);
+      childToParents.set(childId, parents);
+    }
+  });
+
+  // For multi-parent blocks: keep one parent, remove from the rest.
+  // Prefer the canonical parent (matches block.parentId), but if it doesn't actually
+  // claim the block in its childIds, adopt the first real parent instead.
+  const crossParentRemovals: Array<{ parentId: string; childId: string }> = [];
+  const parentIdUpdates: Array<{ childId: string; newParentId: string }> = [];
+  for (const [childId, parents] of childToParents) {
+    if (parents.length <= 1) continue;
+    const childBlock = blocksMap.get(childId);
+    const declaredParent = childBlock instanceof Y.Map
+      ? (childBlock.get('parentId') as string | null)
+      : null;
+
+    // Check if declared parent is among the ones that actually have this child
+    const declaredParentClaims = declaredParent !== null && parents.includes(declaredParent);
+    const keepParent = declaredParentClaims ? declaredParent : parents[0];
+
+    // If we're adopting a different parent, update block.parentId
+    if (keepParent !== declaredParent) {
+      parentIdUpdates.push({ childId, newParentId: keepParent });
+    }
+
+    for (const pid of parents) {
+      if (pid !== keepParent) {
+        crossParentRemovals.push({ parentId: pid, childId });
+      }
+    }
+  }
+
+  // Phase 3: Orphan blocks — exist in blocksMap but no parent's childIds references them
+  // and they're not in rootIds. These are unreachable and cause ghost rendering issues.
+  const referenced = new Set<string>(rootIds.toArray());
+  blocksMap.forEach((value) => {
+    if (!(value instanceof Y.Map)) return;
+    const arr = value.get('childIds');
+    if (!(arr instanceof Y.Array)) return;
+    for (const cid of arr.toArray() as string[]) {
+      referenced.add(cid);
+    }
+  });
+  const orphanBlockIds: string[] = [];
+  blocksMap.forEach((_value, blockId) => {
+    if (!referenced.has(blockId)) {
+      orphanBlockIds.push(blockId);
+    }
+  });
+
+  const hasWork = blockDups.length > 0 || rootIndicesToRemove.length > 0
+    || crossParentRemovals.length > 0 || phantomChildren.length > 0
+    || orphanBlockIds.length > 0;
+  if (!hasWork) {
+    return 0;
+  }
+
+  // Write phase — single transaction
+  doc.transact(() => {
+    for (const { blockId, indicesToRemove } of blockDups) {
+      const blockMap = blocksMap.get(blockId);
+      if (!(blockMap instanceof Y.Map)) continue;
+      const arr = blockMap.get('childIds');
+      if (!(arr instanceof Y.Array)) continue;
+
+      // Delete in reverse order so indices stay valid
+      for (let i = indicesToRemove.length - 1; i >= 0; i--) {
+        arr.delete(indicesToRemove[i], 1);
+        totalRemoved++;
+      }
+    }
+
+    // Dedup rootIds
+    for (let i = rootIndicesToRemove.length - 1; i >= 0; i--) {
+      rootIds.delete(rootIndicesToRemove[i], 1);
+      totalRemoved++;
+    }
+
+    // Fix cross-parent duplication: remove from non-canonical parents
+    for (const { parentId, childId } of crossParentRemovals) {
+      const parentMap = blocksMap.get(parentId);
+      if (!(parentMap instanceof Y.Map)) continue;
+      const arr = parentMap.get('childIds');
+      if (!(arr instanceof Y.Array)) continue;
+      const items = arr.toArray() as string[];
+      const idx = items.indexOf(childId);
+      if (idx >= 0) {
+        arr.delete(idx, 1);
+        totalRemoved++;
+      }
+    }
+
+    // Update parentId for blocks adopted by a different parent
+    for (const { childId, newParentId } of parentIdUpdates) {
+      const childBlock = blocksMap.get(childId);
+      if (childBlock instanceof Y.Map) {
+        childBlock.set('parentId', newParentId);
+      }
+    }
+
+    // Remove phantom children (childIds referencing non-existent blocks)
+    for (const { parentId, childId } of phantomChildren) {
+      const parentMap = blocksMap.get(parentId);
+      if (!(parentMap instanceof Y.Map)) continue;
+      const arr = parentMap.get('childIds');
+      if (!(arr instanceof Y.Array)) continue;
+      const items = arr.toArray() as string[];
+      const idx = items.indexOf(childId);
+      if (idx >= 0) {
+        arr.delete(idx, 1);
+        totalRemoved++;
+      }
+    }
+
+    // Delete orphan blocks (unreachable from any parent or rootIds)
+    for (const orphanId of orphanBlockIds) {
+      blocksMap.delete(orphanId);
+      totalRemoved++;
+    }
+  }, 'system');
+
+  if (totalRemoved > 0 || parentIdUpdates.length > 0) {
+    const parts = [];
+    if (blockDups.length > 0 || rootIndicesToRemove.length > 0) {
+      parts.push('within-array duplicates');
+    }
+    if (crossParentRemovals.length > 0) {
+      parts.push(`${crossParentRemovals.length} cross-parent`);
+    }
+    if (parentIdUpdates.length > 0) {
+      parts.push(`${parentIdUpdates.length} re-homed`);
+    }
+    if (phantomChildren.length > 0) {
+      parts.push(`${phantomChildren.length} phantom children`);
+    }
+    if (orphanBlockIds.length > 0) {
+      parts.push(`${orphanBlockIds.length} orphan blocks deleted`);
+    }
+    console.warn(`[useSyncedYDoc] Tree integrity: fixed ${totalRemoved} issues (${parts.join(', ')})`);
+  }
+
+  return totalRemoved;
+}
+
+/**
+ * Trigger a full bidirectional resync.
+ *
+ * Flow:
+ * 1. GET /state-vector → compute what local has that server doesn't
+ * 2. If non-trivial diff: POST /update → push local-only changes to server
+ * 3. GET /state → pull server state to local (existing behavior)
+ *
+ * Push MUST happen before pull. If we pull first, CRDT merge makes local match
+ * server (from server's perspective), so the subsequent diff would be empty.
+ *
+ * Returns { pushedBytes } for logging by health check.
+ */
+export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
+  if (!isClientInitialized()) {
+    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot trigger resync');
+    return { pushedBytes: 0 };
+  }
+
+  console.log('[useSyncedYDoc] Triggering bidirectional resync');
   const httpClient = getHttpClient();
+  let pushedBytes = 0;
 
   try {
+    // Step 1: Push local-only changes to server (if any)
+    try {
+      const serverStateVector = await httpClient.getStateVector();
+      const localDiff = Y.encodeStateAsUpdate(sharedDoc, serverStateVector);
+
+      // Empty diff is ~2 bytes (just header)
+      if (localDiff.length > 2) {
+        console.log(`[useSyncedYDoc] Pushing local-only diff to server: ${localDiff.length} bytes`);
+        const txId = generateTxId();
+        await httpClient.applyUpdate(localDiff, txId);
+        pushedBytes = localDiff.length;
+      }
+    } catch (pushErr) {
+      // Push failure is non-fatal — we still pull server state
+      console.error('[useSyncedYDoc] Failed to push local diff (continuing with pull):', pushErr);
+    }
+
+    // Step 2: Pull server state to local (existing behavior)
     const { state: serverState, latestSeq } = await httpClient.getState();
     if (serverState && serverState.length > 2) {
       try {
@@ -143,14 +399,13 @@ export async function triggerFullResync(): Promise<void> {
       // Full state means all seqs up to latestSeq are covered + clears gap queue
       if (latestSeq !== null) {
         seqTracker.seedFromFullSync(latestSeq);
-        console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied, seq:', latestSeq);
-      } else {
-        console.log('[useSyncedYDoc] Full resync complete:', serverState.length, 'bytes applied (no seq)');
       }
+      console.log(`[useSyncedYDoc] Bidirectional resync complete: pushed ${pushedBytes} bytes, pulled ${serverState.length} bytes, seq: ${latestSeq}`);
     } else {
-      console.log('[useSyncedYDoc] Server state empty, nothing to apply');
+      console.log('[useSyncedYDoc] Server state empty, nothing to pull');
     }
     setLastSyncError(null);
+    return { pushedBytes };
   } catch (err) {
     console.error('[useSyncedYDoc] Full resync failed:', err);
     setLastSyncError(`Resync failed: ${String(err)}`);
@@ -230,8 +485,10 @@ async function flushUpdatesModule() {
     sharedRetryCount = 0;
 
     if (sharedPendingUpdates.length === 0) {
-      setSyncStatus('synced');
-      setLastSyncError(null);
+      if (!isDriftStatus()) {
+        setSyncStatus('synced');
+        setLastSyncError(null);
+      }
       clearBackup();
     }
     setPendingCount(sharedPendingUpdates.length);
@@ -771,7 +1028,7 @@ function connectWebSocket() {
       const thisConnectionId = ++wsConnectionId;
 
       // Clear any previous connection error now that we're connected
-      if (sharedPendingUpdates.length === 0) {
+      if (sharedPendingUpdates.length === 0 && !isDriftStatus()) {
         setSyncStatus('synced');
         setLastSyncError(null);
       }
@@ -1202,6 +1459,12 @@ export function useSyncedYDoc(
 
           // FLO-247: Startup sanity check - detect suspicious state
           validateSyncedState(doc);
+
+          // FLO-280: Dedup childIds on startup (catches pre-existing duplicates)
+          const startupDeduped = deduplicateChildIds();
+          if (startupDeduped > 0) {
+            console.warn(`[useSyncedYDoc] Startup dedup removed ${startupDeduped} duplicate childIds`);
+          }
         } catch (err) {
           console.error('Failed to load initial state from server:', err);
           sharedDocError = String(err);

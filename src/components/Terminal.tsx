@@ -70,10 +70,13 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
           synced: syncStatus() === 'synced',
           pending: syncStatus() === 'pending',
           error: syncStatus() === 'error',
+          drift: syncStatus() === 'drift',
         }}
         title={
           syncStatus() === 'error'
             ? getLastSyncError() || 'Sync error'
+            : syncStatus() === 'drift'
+            ? getLastSyncError() || 'Sync drift detected'
             : syncStatus() === 'pending'
             ? `${pendingCount()} update(s) pending`
             : 'All changes synced'
@@ -83,6 +86,9 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
         <span class="status-dot" />
         <Show when={syncStatus() === 'pending'}>
           <span class="status-sync-count">{pendingCount()}</span>
+        </Show>
+        <Show when={syncStatus() === 'drift'}>
+          <span class="status-sync-label">drift</span>
         </Show>
         <Show when={syncStatus() === 'error'}>
           <span class="status-sync-label">sync</span>

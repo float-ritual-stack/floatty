@@ -54,6 +54,8 @@ Critical anti-patterns that will break floatty.
 - Use sync hooks for Tantivy indexing (blocks user input - use async with queue)
 - Return search results directly from Tantivy (hydrate from Y.Doc for full data)
 - Add debouncing without understanding the layer it belongs to
+- Mutate Y.Array childIds via delete-all-then-push (creates divergent CRDT ops that duplicate on merge — use surgical helpers: `insertChildId`, `removeChildId`, etc. See ydoc-patterns.md #10)
+- Call `setSyncStatus('synced')` without guarding with `!isDriftStatus()` (clobbers drift indicator — health check may still show green when counts diverge)
 
 ## Inline Parsing
 

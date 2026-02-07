@@ -20,7 +20,7 @@
 
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
-import { getSharedDoc, triggerFullResync } from './useSyncedYDoc';
+import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds } from './useSyncedYDoc';
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -116,13 +116,50 @@ async function performHealthCheck(): Promise<void> {
       );
 
       if (newCount >= MISMATCH_THRESHOLD) {
-        console.warn('[SyncHealth] Persistent drift detected, triggering full resync');
+        console.warn('[SyncHealth] Persistent drift detected, triggering bidirectional resync');
         setIsResyncing(true);
 
         try {
-          await triggerFullResync();
-          setConsecutiveMismatches(0);
-          console.log('[SyncHealth] Resync complete, drift resolved');
+          const { pushedBytes } = await triggerFullResync();
+          if (pushedBytes > 0) {
+            console.log(`[SyncHealth] Pushed ${pushedBytes} bytes of local-only data to server`);
+          }
+
+          // Post-resync dedup: clean up any duplicate childIds from CRDT merge
+          const deduped = deduplicateChildIds();
+          if (deduped > 0) {
+            console.warn(`[SyncHealth] Post-resync dedup removed ${deduped} duplicates`);
+          }
+
+          // Post-resync verification: re-check block counts
+          const postServerHealth = await httpClient.getStateHash();
+          const postLocalCount = getLocalBlockCount();
+
+          if (postServerHealth.blockCount === postLocalCount) {
+            setConsecutiveMismatches(0);
+            if (!hasPendingUpdates()) {
+              setSyncStatusExternal('synced', null);
+            }
+            console.log('[SyncHealth] Resync complete, drift resolved');
+          } else {
+            // Still mismatched after resync — show drift state, don't fake green
+            const delta = postLocalCount - postServerHealth.blockCount;
+            const absDelta = Math.abs(delta);
+            const direction = delta > 0
+              ? `local has ${absDelta} extra block${absDelta !== 1 ? 's' : ''}`
+              : `server has ${absDelta} extra block${absDelta !== 1 ? 's' : ''}`;
+            console.warn(
+              `[SyncHealth] Drift persists after resync!`,
+              `\n  Server: ${postServerHealth.blockCount} blocks`,
+              `\n  Local:  ${postLocalCount} blocks`,
+              `\n  Delta:  ${delta}`
+            );
+            setSyncStatusExternal(
+              'drift',
+              `Sync drift: ${direction}`
+            );
+            // Don't reset counter — will retry next check
+          }
         } catch (err) {
           console.error('[SyncHealth] Resync failed:', err);
           // Don't reset counter - will retry on next check

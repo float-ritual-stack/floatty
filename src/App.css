@@ -39,6 +39,10 @@
   background: var(--color-ansi-red);
 }
 
+.status-sync.drift .status-dot {
+  background: var(--color-ansi-yellow);
+}
+
 .status-sync-count {
   font-size: 10px;
   color: var(--color-ansi-yellow);
@@ -46,6 +50,10 @@
 
 .status-sync-label {
   color: var(--color-ansi-red);
+}
+
+.status-sync.drift .status-sync-label {
+  color: var(--color-ansi-yellow);
 }
 
 @keyframes sync-pulse {
