@@ -31,6 +31,11 @@ function createTabStore() {
   }]);
 
   const [activeTabId, setActiveTabId] = createSignal<string | null>(initialTabId);
+  const [persistenceVersion, setPersistenceVersion] = createSignal(0);
+
+  const bumpPersistenceVersion = () => {
+    setPersistenceVersion((v) => v + 1);
+  };
 
   const createTab = (cwd?: string): string => {
     const newId = generateTabId();
@@ -44,6 +49,7 @@ function createTabStore() {
       });
     }));
     setActiveTabId(newId);
+    bumpPersistenceVersion();
     return newId;
   };
 
@@ -52,6 +58,7 @@ function createTabStore() {
     if (tabs.length <= 1) {
       return;
     }
+    if (!tabs.some((t) => t.id === id)) return;
 
     const closingIndex = tabs.findIndex((t) => t.id === id);
     const currentActiveId = activeTabId();
@@ -71,20 +78,26 @@ function createTabStore() {
         tabs.splice(idx, 1);
       }
     }));
+    bumpPersistenceVersion();
   };
 
   const setActiveTab = (id: string) => {
-    if (tabs.some((t) => t.id === id)) {
+    if (tabs.some((t) => t.id === id) && activeTabId() !== id) {
       setActiveTabId(id);
+      bumpPersistenceVersion();
     }
   };
 
   const setTabTitle = (id: string, title: string) => {
+    const tab = tabs.find((t) => t.id === id);
+    if (!tab || tab.title === title) return;
+
     setTabs(
       (t) => t.id === id,
       'title',
       title
     );
+    bumpPersistenceVersion();
   };
 
   const setTabPtyPid = (id: string, ptyPid: number) => {
@@ -107,29 +120,44 @@ function createTabStore() {
 
   const prevTab = () => {
     const currentIndex = tabs.findIndex((t) => t.id === activeTabId());
+    let nextId: string | null = null;
+
     if (currentIndex > 0) {
-      setActiveTabId(tabs[currentIndex - 1].id);
+      nextId = tabs[currentIndex - 1].id;
     } else if (tabs.length > 0) {
       // Wrap to last tab
-      setActiveTabId(tabs[tabs.length - 1].id);
+      nextId = tabs[tabs.length - 1].id;
+    }
+
+    if (nextId && nextId !== activeTabId()) {
+      setActiveTabId(nextId);
+      bumpPersistenceVersion();
     }
   };
 
   const nextTab = () => {
     const currentIndex = tabs.findIndex((t) => t.id === activeTabId());
+    let nextId: string | null = null;
+
     if (currentIndex < tabs.length - 1) {
-      setActiveTabId(tabs[currentIndex + 1].id);
+      nextId = tabs[currentIndex + 1].id;
     } else if (tabs.length > 0) {
       // Wrap to first tab
-      setActiveTabId(tabs[0].id);
+      nextId = tabs[0].id;
+    }
+
+    if (nextId && nextId !== activeTabId()) {
+      setActiveTabId(nextId);
+      bumpPersistenceVersion();
     }
   };
 
   const goToTab = (n: number) => {
     // 1-indexed to 0-indexed
     const index = n - 1;
-    if (index >= 0 && index < tabs.length) {
+    if (index >= 0 && index < tabs.length && tabs[index].id !== activeTabId()) {
       setActiveTabId(tabs[index].id);
+      bumpPersistenceVersion();
     }
   };
 
@@ -167,6 +195,7 @@ function createTabStore() {
     // State (reactive)
     tabs,
     activeTabId,
+    persistenceVersion,
     // Actions
     createTab,
     closeTab,

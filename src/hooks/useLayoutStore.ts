@@ -9,7 +9,7 @@
  * - Resize ratio updates
  */
 
-import { batch, createRoot } from 'solid-js';
+import { batch, createRoot, createSignal } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import {
   type LayoutNode,
@@ -42,10 +42,16 @@ function createLayoutStore() {
     layouts: {},
     draggingSplitId: null,
   });
+  const [persistenceVersion, setPersistenceVersion] = createSignal(0);
+
+  const bumpPersistenceVersion = () => {
+    setPersistenceVersion((v) => v + 1);
+  };
 
   const initLayout = (tabId: string): string => {
     const layout = createInitialLayout(tabId);
     setState('layouts', tabId, layout);
+    bumpPersistenceVersion();
     return layout.activePaneId;
   };
 
@@ -61,6 +67,7 @@ function createLayoutStore() {
 
     // Clean up all pane view state (prevents memory leak)
     paneStore.removePanes(paneIds);
+    bumpPersistenceVersion();
 
     return paneIds;
   };
@@ -151,6 +158,7 @@ function createLayoutStore() {
         }));
       }
     });
+    bumpPersistenceVersion();
 
     return newPaneId;
   };
@@ -167,6 +175,7 @@ function createLayoutStore() {
     
     const newRoot = replaceNode(layout.root, paneId, newNode);
     setState('layouts', tabId, 'root', newRoot);
+    bumpPersistenceVersion();
   };
 
   const closePane = (tabId: string, paneId: string): string | null => {
@@ -230,6 +239,7 @@ function createLayoutStore() {
         }));
       }
     });
+    bumpPersistenceVersion();
 
     // Clean up pane view state (prevents memory leak)
     paneStore.removePane(paneId);
@@ -243,8 +253,10 @@ function createLayoutStore() {
 
     // Verify pane exists
     if (!findNode(layout.root, paneId)) return;
+    if (layout.activePaneId === paneId) return;
 
     setState('layouts', tabId, 'activePaneId', paneId);
+    bumpPersistenceVersion();
   };
 
   const setRatio = (tabId: string, splitId: string, ratio: number) => {
@@ -263,7 +275,10 @@ function createLayoutStore() {
 
     const newRoot = replaceNode(layout.root, splitId, newSplit);
 
+    if (split.ratio === clampedRatio) return;
+
     setState('layouts', tabId, 'root', newRoot);
+    bumpPersistenceVersion();
   };
 
   const focusDirection = (tabId: string, direction: FocusDirection): string | null => {
@@ -278,6 +293,7 @@ function createLayoutStore() {
 
     if (adjacentPaneId) {
       setState('layouts', tabId, 'activePaneId', adjacentPaneId);
+      bumpPersistenceVersion();
       return adjacentPaneId;
     }
     return null;
@@ -347,6 +363,7 @@ function createLayoutStore() {
         }));
       }
     });
+    bumpPersistenceVersion();
 
     console.debug(`[LayoutStore] pinPane: pinned ${paneId} (was ${direction} ephemeral)`);
     return true;
@@ -388,6 +405,7 @@ function createLayoutStore() {
     // State (reactive getters preserve store reactivity)
     get layouts() { return state.layouts; },
     get draggingSplitId() { return state.draggingSplitId; },
+    persistenceVersion,
     // Actions
     initLayout,
     removeLayout,

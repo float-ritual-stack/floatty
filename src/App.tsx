@@ -120,19 +120,19 @@ function App() {
   });
 
   // Save workspace on state changes (debounced)
-  // Track changes to tabs, layouts, and pane state
+  // Track persisted-state changes via explicit version signals
   let isFirstEffectRun = true;
   createEffect(() => {
     // Skip until workspace is loaded
     if (!workspaceLoaded()) return;
 
-    // Access reactive state to trigger effect on changes
+    // Access version signals to trigger effect on persisted-state changes.
+    // This avoids deep JSON.stringify reads on large layout/pane trees.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const _ = [
-      tabStore.tabs.length,
-      tabStore.activeTabId(),
-      JSON.stringify(layoutStore.layouts),  // Deep track layout changes
-      JSON.stringify(paneStore.getPaneStateForPersistence()),  // Track pane state changes
+      tabStore.persistenceVersion(),
+      layoutStore.persistenceVersion(),
+      paneStore.persistenceVersion(),
     ];
 
     // Skip the first run (immediately after hydration) - nothing changed yet
