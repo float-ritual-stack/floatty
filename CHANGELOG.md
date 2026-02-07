@@ -6,6 +6,19 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.21] - 2026-02-07
+
+### Features
+
+- **Pane drag-and-drop rearrangement** (FLO-120, PR #124): Drag handles on terminal and outliner panes for rearranging split layouts via drop zones (left/right/up/down). Pure immutable tree operations, event-driven resize sync, Esc to cancel, visual glyph hints.
+
+### Improvements
+
+- **Accessibility**: `prefers-reduced-motion` media query disables drag handle and drop zone transitions
+- **Debuggability**: `fitAndFocusWhenPaneRefsReady` logs warning on retry exhaustion instead of silent fallthrough
+
+---
+
 ## [0.7.20] - 2026-02-06
 
 ### Features

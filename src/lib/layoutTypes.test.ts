@@ -18,6 +18,7 @@ import {
   clampRatio,
   matchesDirection,
   getTargetChildIndex,
+  moveLeafToTarget,
   generatePaneId,
   generateSplitId,
   createInitialLayout,
@@ -422,6 +423,104 @@ describe('clampRatio', () => {
     expect(clampRatio(0.1)).toBe(0.1);
     expect(clampRatio(0.5)).toBe(0.5);
     expect(clampRatio(0.9)).toBe(0.9);
+  });
+});
+
+describe('moveLeafToTarget', () => {
+  it('moves a pane to the left of target (horizontal split)', () => {
+    const tree = createSplit(
+      'root',
+      'horizontal',
+      createLeaf('left'),
+      createLeaf('right')
+    );
+
+    const result = moveLeafToTarget(tree, 'right', 'left', 'left');
+    expect(result).not.toBeNull();
+
+    const moved = result as PaneSplit;
+    expect(moved.type).toBe('split');
+    expect(moved.direction).toBe('horizontal');
+    expect(collectPaneIds(moved)).toEqual(['right', 'left']);
+  });
+
+  it('moves a pane to the right of target (horizontal split)', () => {
+    const tree = createSplit(
+      'root',
+      'horizontal',
+      createLeaf('left'),
+      createLeaf('right')
+    );
+
+    const result = moveLeafToTarget(tree, 'left', 'right', 'right');
+    expect(result).not.toBeNull();
+
+    const moved = result as PaneSplit;
+    expect(moved.type).toBe('split');
+    expect(moved.direction).toBe('horizontal');
+    expect(collectPaneIds(moved)).toEqual(['right', 'left']);
+  });
+
+  it('moves a pane below target (vertical split)', () => {
+    const tree = createTestTree();
+    const result = moveLeafToTarget(tree, 'pane-a', 'pane-c', 'down');
+    expect(result).not.toBeNull();
+
+    const moved = result as PaneSplit;
+    expect(findNode(moved, 'pane-a')).not.toBeNull();
+    expect(findNode(moved, 'pane-c')).not.toBeNull();
+
+    const parentOfTarget = findParent(moved, 'pane-a');
+    expect(parentOfTarget?.direction).toBe('vertical');
+  });
+
+  it('moves a pane above target (vertical split)', () => {
+    const tree = createSplit(
+      'root',
+      'vertical',
+      createLeaf('top'),
+      createLeaf('bottom')
+    );
+
+    const result = moveLeafToTarget(tree, 'bottom', 'top', 'up');
+    expect(result).not.toBeNull();
+
+    const moved = result as PaneSplit;
+    expect(moved.type).toBe('split');
+    expect(moved.direction).toBe('vertical');
+    expect(collectPaneIds(moved)).toEqual(['bottom', 'top']);
+  });
+
+  it('returns null when source and target are the same', () => {
+    const tree = createTestTree();
+    expect(moveLeafToTarget(tree, 'pane-a', 'pane-a', 'right')).toBeNull();
+  });
+
+  it('returns null when source does not exist', () => {
+    const tree = createTestTree();
+    expect(moveLeafToTarget(tree, 'ghost', 'pane-a', 'right')).toBeNull();
+  });
+
+  it('returns null when target does not exist', () => {
+    const tree = createTestTree();
+    expect(moveLeafToTarget(tree, 'pane-a', 'ghost', 'right')).toBeNull();
+  });
+
+  it('clones source and target leaves instead of reusing object identity', () => {
+    const source = createLeaf('source');
+    const target = createLeaf('target');
+    const tree = createSplit('root', 'horizontal', source, target);
+
+    const result = moveLeafToTarget(tree, 'source', 'target', 'right');
+    expect(result).not.toBeNull();
+
+    const moved = result as LayoutNode;
+    const movedSource = findNode(moved, 'source');
+    const movedTarget = findNode(moved, 'target');
+    expect(movedSource).not.toBeNull();
+    expect(movedTarget).not.toBeNull();
+    expect(movedSource).not.toBe(source);
+    expect(movedTarget).not.toBe(target);
   });
 });
 
