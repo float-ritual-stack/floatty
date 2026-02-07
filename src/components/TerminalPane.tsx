@@ -27,13 +27,16 @@ export interface TerminalPaneProps {
   onSemanticStateChange?: (state: unknown) => void;  // OSC 133/1337 state updates
   onStickyChange?: (sticky: boolean) => void;  // FLO-220: Scroll state changes
   onPaneClick?: () => void;  // Called when pane is clicked (for focus tracking)
+  onDragHandlePointerDown?: (e: PointerEvent) => void;
   isActive?: boolean;
+  isBeingDragged?: boolean;
   isVisible?: boolean;  // Whether the tab containing this pane is visible
   ref?: (handle: TerminalPaneHandle | null) => void;
 }
 
 export function TerminalPane(props: TerminalPaneProps) {
   let containerRef: HTMLDivElement | undefined;
+  let terminalHostRef: HTMLDivElement | undefined;
   let attached = false;
 
   // Minimum dimension threshold - xterm.js misbehaves (scroll jumps, 0 rows) below this
@@ -111,14 +114,16 @@ export function TerminalPane(props: TerminalPaneProps) {
 
   // Initial attachment and position tracking
   onMount(async () => {
-    if (!containerRef) return;
+    if (!containerRef || !terminalHostRef) return;
 
     // Expose the handle via ref callback
     props.ref?.(handle);
 
     // Attach terminal once (await config load)
     if (!attached) {
-      await terminalManager.attach(props.id, containerRef, props.cwd);
+      // Keep terminal attached to inner host while geometry is applied on outer container.
+      // The host is kept 100% x 100% via CSS so fit() measures the positioned pane area.
+      await terminalManager.attach(props.id, terminalHostRef, props.cwd);
       attached = true;
 
     }
@@ -190,6 +195,9 @@ export function TerminalPane(props: TerminalPaneProps) {
     <div
       ref={containerRef}
       class={`terminal-pane-positioned ${props.isActive ? 'active' : ''}`}
+      classList={{
+        'pane-drag-source': props.isBeingDragged === true,
+      }}
       data-terminal-id={props.id}
       onMouseDown={() => props.onPaneClick?.()}
       style={{
@@ -197,6 +205,23 @@ export function TerminalPane(props: TerminalPaneProps) {
         overflow: 'hidden',
         display: (props.isVisible ?? true) ? 'block' : 'none',
       }}
-    />
+    >
+      <div
+        class="pane-drag-handle"
+        title="Drag to move pane"
+        aria-label="Drag to move pane"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          props.onDragHandlePointerDown?.(e);
+        }}
+      >
+        ⋮⋮
+      </div>
+      <div
+        ref={terminalHostRef}
+        class="terminal-pane-host"
+      />
+    </div>
   );
 }

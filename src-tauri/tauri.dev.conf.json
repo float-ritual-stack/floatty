@@ -1,6 +1,9 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "identifier": "dev.float.floatty.dev",
+  "bundle": {
+    "externalBin": []
+  },
   "app": {
     "windows": [
       {

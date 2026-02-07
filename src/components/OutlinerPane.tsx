@@ -15,6 +15,8 @@ interface OutlinerPaneProps {
   // FLO-197: Initial collapse depth for split panes (0 = clone exact state)
   initialCollapseDepth?: number;
   onPaneClick?: () => void;  // Called when pane is clicked (for focus tracking)
+  onDragHandlePointerDown?: (e: PointerEvent) => void;
+  isBeingDragged?: boolean;
   ref?: (handle: OutlinerPaneHandle) => void;
 }
 
@@ -130,6 +132,7 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       class="terminal-pane-positioned"
       classList={{
         'pane-active': props.isActive,
+        'pane-drag-source': props.isBeingDragged === true,
       }}
       onMouseDown={() => props.onPaneClick?.()}
       style={{
@@ -142,6 +145,18 @@ export function OutlinerPane(props: OutlinerPaneProps) {
         "z-index": props.isActive ? 10 : 1,
       }}
     >
+      <div
+        class="pane-drag-handle"
+        title="Drag to move pane"
+        aria-label="Drag to move pane"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          props.onDragHandlePointerDown?.(e);
+        }}
+      >
+        ⋮⋮
+      </div>
       <Outliner paneId={props.id} initialCollapseDepth={props.initialCollapseDepth} />
     </div>
   );

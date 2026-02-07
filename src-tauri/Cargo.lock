@@ -1525,7 +1525,7 @@ dependencies = [
 
 [[package]]
 name = "float-pty"
-version = "0.7.19"
+version = "0.7.20"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -1589,7 +1589,7 @@ dependencies = [
 
 [[package]]
 name = "floatty-server"
-version = "0.7.19"
+version = "0.7.20"
 dependencies = [
  "axum",
  "base64 0.22.1",

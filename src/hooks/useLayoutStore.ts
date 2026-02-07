@@ -17,6 +17,7 @@ import {
   type PaneSplit,
   type PaneLeaf,
   type FocusDirection,
+  type PaneDropPosition,
   createInitialLayout,
   generatePaneId,
   generateSplitId,
@@ -27,6 +28,7 @@ import {
   replaceNode,
   collectPaneIds,
   clampRatio,
+  moveLeafToTarget,
 } from '../lib/layoutTypes';
 import { paneStore } from './usePaneStore';
 
@@ -312,6 +314,34 @@ function createLayoutStore() {
     setState('draggingSplitId', splitId);
   };
 
+  const movePane = (
+    tabId: string,
+    sourcePaneId: string,
+    targetPaneId: string,
+    position: PaneDropPosition
+  ): boolean => {
+    const layout = state.layouts[tabId];
+    if (!layout) return false;
+    if (sourcePaneId === targetPaneId) return false;
+
+    const sourceNode = findNode(layout.root, sourcePaneId);
+    const targetNode = findNode(layout.root, targetPaneId);
+    if (!sourceNode || sourceNode.type !== 'leaf') return false;
+    if (!targetNode || targetNode.type !== 'leaf') return false;
+
+    // Clone store data first; layout.root is a Solid proxy.
+    const rootClone = JSON.parse(JSON.stringify(layout.root)) as LayoutNode;
+    const newRoot = moveLeafToTarget(rootClone, sourcePaneId, targetPaneId, position);
+    if (!newRoot) return false;
+
+    batch(() => {
+      setState('layouts', tabId, 'root', newRoot);
+      setState('layouts', tabId, 'activePaneId', sourcePaneId);
+    });
+
+    return true;
+  };
+
   /**
    * FLO-136: Pin an ephemeral pane (make it permanent)
    * Called when user interacts in a way that indicates they want to keep the pane.
@@ -396,6 +426,7 @@ function createLayoutStore() {
     togglePaneType,
     setActivePaneId,
     setRatio,
+    movePane,
     setDraggingSplitId,
     focusDirection,
     // Getters
