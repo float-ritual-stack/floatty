@@ -57,6 +57,13 @@ Critical anti-patterns that will break floatty.
 - Mutate Y.Array childIds via delete-all-then-push (creates divergent CRDT ops that duplicate on merge — use surgical helpers: `insertChildId`, `removeChildId`, etc. See ydoc-patterns.md #10)
 - Call `setSyncStatus('synced')` without guarding with `!isDriftStatus()` (clobbers drift indicator — health check may still show green when counts diverge)
 
+## Pane Drag-Drop / Resize (see @.claude/rules/pane-drag-drop-patterns.md)
+
+- Assume `ResizeObserver` catches position-only changes (it doesn't — only fires on size changes. After pane rearrangement, split containers can move without resizing. Watch layout tree root reference for structural changes.)
+- Append outer drop zones after per-pane zones (prepend — `zones.find()` uses first match, outer must win at edge)
+- Use real pane IDs for synthetic drop targets (use `__outer_` prefix convention — handler routes by prefix)
+- Recompute drop zones continuously during drag (computed once at drag start — acceptable tradeoff, layout root doesn't move mid-drag)
+
 ## Inline Parsing
 
 - Add new token types to `inlineParser.ts` without updating `hasInlineFormatting()` in the same file (BlockDisplay early-exits if this gatekeeper returns false → tokens never render)

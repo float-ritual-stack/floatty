@@ -6,6 +6,18 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.22] - 2026-02-07
+
+### Features
+
+- **Layout**: Outer edge drop zones for full-height column snapping (PR #126). Dragging a pane to the absolute left or right edge of the layout creates a full-height column alongside the entire existing layout tree.
+
+### Bug Fixes
+
+- **Layout**: Fixed ghost resize dividers lingering after pane drag-drop rearrangement. ResizeOverlay now re-syncs handle positions when the layout tree structure changes.
+
+---
+
 ## [0.7.21] - 2026-02-07
 
 ### Features
