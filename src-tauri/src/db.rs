@@ -224,7 +224,21 @@ impl FloattyDb {
 
     /// Add a column to a table, ignoring "duplicate column" errors
     fn migrate_add_column(conn: &Connection, table: &str, column_def: &str) -> Result<()> {
-        let sql = format!("ALTER TABLE {} ADD COLUMN {}", table, column_def);
+        // Restrict migration targets to known table identifiers.
+        // This keeps SQL construction safe even if future callers change.
+        let table_ident = match table {
+            "ctx_markers" => "\"ctx_markers\"",
+            "workspace_state" => "\"workspace_state\"",
+            _ => {
+                log::error!("Migration rejected for unknown table '{}'", table);
+                return Err(rusqlite::Error::InvalidParameterName(format!(
+                    "unsupported migration table: {}",
+                    table
+                )));
+            }
+        };
+
+        let sql = format!("ALTER TABLE {} ADD COLUMN {}", table_ident, column_def);
         match conn.execute(&sql, []) {
             Ok(_) => {
                 log::info!("Migration: added column {}.{}", table, column_def);
@@ -628,6 +642,7 @@ impl FloattyDb {
 #[cfg(test)]
 mod tests {
     use super::FloattyDb;
+    use rusqlite::Connection;
 
     #[test]
     fn workspace_state_rejects_stale_save_seq() {
@@ -663,5 +678,19 @@ mod tests {
             .expect("workspace state exists");
         assert_eq!(stored.state_json, r#"{"v":2}"#);
         assert_eq!(stored.save_seq, 2);
+    }
+
+    #[test]
+    fn migrate_add_column_rejects_unknown_table() {
+        let conn = Connection::open_in_memory().expect("open in-memory connection");
+        let err = FloattyDb::migrate_add_column(&conn, "user_input_table", "new_col TEXT")
+            .expect_err("unknown table should be rejected");
+
+        match err {
+            rusqlite::Error::InvalidParameterName(name) => {
+                assert!(name.contains("unsupported migration table"));
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
     }
 }
