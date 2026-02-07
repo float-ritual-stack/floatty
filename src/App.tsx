@@ -1,4 +1,4 @@
-import { onMount, onCleanup, createSignal, Show, createEffect } from 'solid-js';
+import { onMount, onCleanup, createSignal, Show, createEffect, on } from 'solid-js';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -31,6 +31,8 @@ function App() {
   const [workspaceLoaded, setWorkspaceLoaded] = createSignal(false);
   const [workspaceError, setWorkspaceError] = createSignal<string | null>(null);
   const persistence = getWorkspacePersistence();
+  let workspaceLoadStarted = false;
+  let workspaceLoadInFlight = false;
 
   // Phase 3: Initialize HTTP client before loading workspace
   // The HTTP client connects to floatty-server (spawned by Tauri)
@@ -60,22 +62,35 @@ function App() {
   });
 
   // Load workspace once server is connected
-  createEffect(async () => {
-    if (!serverConnected()) return;
-    if (workspaceLoaded()) return; // Already loaded
+  createEffect(
+    on(
+      serverConnected,
+      (connected) => {
+        if (!connected) return;
+        if (workspaceLoadStarted || workspaceLoadInFlight) return;
 
-    // Load workspace layout state (FLO-81)
-    // This must happen before Terminal component renders to avoid flickering
-    try {
-      await persistence.loadWorkspace();
-      setWorkspaceLoaded(true);
-    } catch (err) {
-      console.error('[App] Failed to load workspace:', err);
-      setWorkspaceError(String(err));
-      // Still mark loaded so app isn't permanently stuck, but error is visible
-      setWorkspaceLoaded(true);
-    }
-  });
+        workspaceLoadStarted = true;
+        workspaceLoadInFlight = true;
+
+        // Load workspace layout state (FLO-81)
+        // This must happen before Terminal component renders to avoid flickering.
+        void (async () => {
+          try {
+            await persistence.loadWorkspace();
+            setWorkspaceLoaded(true);
+          } catch (err) {
+            console.error('[App] Failed to load workspace:', err);
+            setWorkspaceError(String(err));
+            // Still mark loaded so app isn't permanently stuck, but error is visible
+            setWorkspaceLoaded(true);
+          } finally {
+            workspaceLoadInFlight = false;
+          }
+        })();
+      },
+      { defer: true }
+    )
+  );
 
   // Listen for file drag-drop from Finder
   onMount(async () => {
