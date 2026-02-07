@@ -172,7 +172,7 @@ interface TauriCommands {
     returns: string | null;
   };
   save_workspace_state: {
-    args: { key: string; stateJson: string };
+    args: { key: string; stateJson: string; saveSeq: number };
     returns: void;
   };
   clear_workspace: {

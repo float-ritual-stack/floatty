@@ -66,6 +66,7 @@ export function createWorkspacePersistence() {
   const [loadError, setLoadError] = createSignal<string | null>(null);
 
   let saveTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let nextSaveSeq = 0;
 
   /**
    * Load workspace state from SQLite
@@ -151,6 +152,7 @@ export function createWorkspacePersistence() {
    */
   async function saveWorkspace(): Promise<void> {
     try {
+      const saveSeq = ++nextSaveSeq;
       const tabData = tabStore.getTabsForPersistence();
       const layoutData = layoutStore.getLayoutsForPersistence();
       const paneData = paneStore.getPaneStateForPersistence();
@@ -175,7 +177,7 @@ export function createWorkspacePersistence() {
       };
 
       const stateJson = JSON.stringify(state);
-      await invoke('save_workspace_state', { key: WORKSPACE_KEY, stateJson });
+      await invoke('save_workspace_state', { key: WORKSPACE_KEY, stateJson, saveSeq });
 
       console.debug('[WorkspacePersistence] Saved workspace state');
 

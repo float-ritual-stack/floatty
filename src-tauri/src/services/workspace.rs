@@ -13,8 +13,8 @@ pub fn get_state(db: &Arc<FloattyDb>, key: &str) -> Result<Option<String>, Strin
 }
 
 /// Save workspace layout state (JSON blob)
-pub fn set_state(db: &Arc<FloattyDb>, key: &str, state_json: &str) -> Result<(), String> {
-    db.set_workspace_state(key, state_json)
+pub fn set_state(db: &Arc<FloattyDb>, key: &str, state_json: &str, save_seq: i64) -> Result<(), String> {
+    db.set_workspace_state(key, state_json, save_seq)
         .map_err(|e| e.to_string())
 }
 

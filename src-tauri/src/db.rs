@@ -193,17 +193,19 @@ impl FloattyDb {
             CREATE TABLE IF NOT EXISTS workspace_state (
                 key TEXT PRIMARY KEY,
                 state_json TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                save_seq INTEGER NOT NULL DEFAULT 0
             );
         "#)?;
 
         // Migrations: add columns if they don't exist (for existing DBs)
         // Expected error: "duplicate column name" when column already exists
-        Self::migrate_add_column(&conn, "sort_key TEXT")?;
-        Self::migrate_add_column(&conn, "cwd TEXT")?;
-        Self::migrate_add_column(&conn, "git_branch TEXT")?;
-        Self::migrate_add_column(&conn, "session_id TEXT")?;
-        Self::migrate_add_column(&conn, "msg_type TEXT")?;
+        Self::migrate_add_column(&conn, "ctx_markers", "sort_key TEXT")?;
+        Self::migrate_add_column(&conn, "ctx_markers", "cwd TEXT")?;
+        Self::migrate_add_column(&conn, "ctx_markers", "git_branch TEXT")?;
+        Self::migrate_add_column(&conn, "ctx_markers", "session_id TEXT")?;
+        Self::migrate_add_column(&conn, "ctx_markers", "msg_type TEXT")?;
+        Self::migrate_add_column(&conn, "workspace_state", "save_seq INTEGER NOT NULL DEFAULT 0")?;
 
         // Create indexes (after columns definitely exist)
         Self::migrate_create_index(&conn, "idx_sort_key", "ctx_markers(sort_key DESC)")?;
@@ -212,12 +214,12 @@ impl FloattyDb {
         Ok(())
     }
 
-    /// Add a column to ctx_markers, ignoring "duplicate column" errors
-    fn migrate_add_column(conn: &Connection, column_def: &str) -> Result<()> {
-        let sql = format!("ALTER TABLE ctx_markers ADD COLUMN {}", column_def);
+    /// Add a column to a table, ignoring "duplicate column" errors
+    fn migrate_add_column(conn: &Connection, table: &str, column_def: &str) -> Result<()> {
+        let sql = format!("ALTER TABLE {} ADD COLUMN {}", table, column_def);
         match conn.execute(&sql, []) {
             Ok(_) => {
-                log::info!("Migration: added column {}", column_def);
+                log::info!("Migration: added column {}.{}", table, column_def);
                 Ok(())
             }
             Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
@@ -226,7 +228,7 @@ impl FloattyDb {
                 Ok(())
             }
             Err(e) => {
-                log::error!("Migration failed for column {}: {}", column_def, e);
+                log::error!("Migration failed for column {}.{}: {}", table, column_def, e);
                 Err(e)
             }
         }
@@ -574,17 +576,77 @@ impl FloattyDb {
         }
     }
 
-    /// Save workspace state JSON
-    pub fn set_workspace_state(&self, key: &str, state_json: &str) -> Result<()> {
+    /// Save workspace state JSON with monotonic sequence guard.
+    ///
+    /// Writes are accepted only if `save_seq` is >= the currently stored sequence.
+    /// This prevents older async saves from overwriting newer state.
+    pub fn set_workspace_state(&self, key: &str, state_json: &str, save_seq: i64) -> Result<()> {
         let conn = self.conn.lock();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        conn.execute(
-            "INSERT OR REPLACE INTO workspace_state (key, state_json, updated_at) VALUES (?, ?, ?)",
-            params![key, state_json, now],
+
+        let changed_rows = conn.execute(
+            r#"
+            INSERT INTO workspace_state (key, state_json, updated_at, save_seq)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                state_json = excluded.state_json,
+                updated_at = excluded.updated_at,
+                save_seq = excluded.save_seq
+            WHERE excluded.save_seq >= workspace_state.save_seq
+            "#,
+            params![key, state_json, now, save_seq],
         )?;
+
+        if changed_rows == 0 {
+            log::warn!(
+                "Ignoring stale workspace save for key '{}' (save_seq={})",
+                key,
+                save_seq
+            );
+        }
+
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FloattyDb;
+
+    #[test]
+    fn workspace_state_rejects_stale_save_seq() {
+        let db = FloattyDb::open_in_memory().expect("open in-memory db");
+
+        db.set_workspace_state("default", r#"{"v":1}"#, 1)
+            .expect("initial save");
+        db.set_workspace_state("default", r#"{"v":2}"#, 2)
+            .expect("newer save");
+        db.set_workspace_state("default", r#"{"v":1.5}"#, 1)
+            .expect("stale save should be ignored");
+
+        let stored = db
+            .get_workspace_state("default")
+            .expect("read workspace state")
+            .expect("workspace state exists");
+        assert_eq!(stored, r#"{"v":2}"#);
+    }
+
+    #[test]
+    fn workspace_state_allows_idempotent_same_seq_retry() {
+        let db = FloattyDb::open_in_memory().expect("open in-memory db");
+
+        db.set_workspace_state("default", r#"{"v":2}"#, 2)
+            .expect("initial save");
+        db.set_workspace_state("default", r#"{"v":2}"#, 2)
+            .expect("idempotent retry");
+
+        let stored = db
+            .get_workspace_state("default")
+            .expect("read workspace state")
+            .expect("workspace state exists");
+        assert_eq!(stored, r#"{"v":2}"#);
     }
 }

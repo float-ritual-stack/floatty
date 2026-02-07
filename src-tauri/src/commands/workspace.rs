@@ -26,13 +26,14 @@ pub fn save_workspace_state(
     state: State<AppState>,
     key: String,
     state_json: String,
+    save_seq: i64,
 ) -> Result<(), String> {
     let inner = state
         .inner
         .as_ref()
         .ok_or_else(|| "Workspace system unavailable: database not initialized".to_string())?;
 
-    workspace::set_state(&inner.db, &key, &state_json)
+    workspace::set_state(&inner.db, &key, &state_json, save_seq)
 }
 
 /// Clear the entire workspace (blocks and rootIds) efficiently
