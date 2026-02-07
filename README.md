@@ -61,6 +61,7 @@ Uses platform-aware keybinds: **Cmd** on macOS, **Ctrl** on Windows/Linux.
 | `Cmd+B` | Toggle context sidebar |
 
 ### Pane Management
+
 | Shortcut | Action |
 |----------|--------|
 | `Cmd+D` | Split pane horizontally |

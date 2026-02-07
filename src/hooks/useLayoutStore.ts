@@ -329,7 +329,9 @@ function createLayoutStore() {
     if (!sourceNode || sourceNode.type !== 'leaf') return false;
     if (!targetNode || targetNode.type !== 'leaf') return false;
 
-    const newRoot = moveLeafToTarget(layout.root, sourcePaneId, targetPaneId, position);
+    // Clone store data first; layout.root is a Solid proxy.
+    const rootClone = JSON.parse(JSON.stringify(layout.root)) as LayoutNode;
+    const newRoot = moveLeafToTarget(rootClone, sourcePaneId, targetPaneId, position);
     if (!newRoot) return false;
 
     batch(() => {

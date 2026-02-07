@@ -319,6 +319,10 @@ export function moveLeafToTarget(
   const targetInNextTree = findNode(withoutSource, targetLeafId);
   if (!targetInNextTree || targetInNextTree.type !== 'leaf') return null;
 
+  // Clone leaves before re-inserting so callers never retain old object identity.
+  const sourceLeaf: PaneLeaf = { ...sourceNode };
+  const targetLeaf: PaneLeaf = { ...targetInNextTree };
+
   const splitDirection = position === 'left' || position === 'right'
     ? 'horizontal'
     : 'vertical';
@@ -329,8 +333,8 @@ export function moveLeafToTarget(
     direction: splitDirection,
     ratio: 0.5,
     children: position === 'left' || position === 'up'
-      ? [sourceNode, targetInNextTree]
-      : [targetInNextTree, sourceNode],
+      ? [sourceLeaf, targetLeaf]
+      : [targetLeaf, sourceLeaf],
   };
 
   return replaceNode(withoutSource, targetLeafId, newSplit);

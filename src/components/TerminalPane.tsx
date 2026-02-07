@@ -121,6 +121,8 @@ export function TerminalPane(props: TerminalPaneProps) {
 
     // Attach terminal once (await config load)
     if (!attached) {
+      // Keep terminal attached to inner host while geometry is applied on outer container.
+      // The host is kept 100% x 100% via CSS so fit() measures the positioned pane area.
       await terminalManager.attach(props.id, terminalHostRef, props.cwd);
       attached = true;
 
@@ -219,7 +221,6 @@ export function TerminalPane(props: TerminalPaneProps) {
       <div
         ref={terminalHostRef}
         class="terminal-pane-host"
-        style={{ width: '100%', height: '100%' }}
       />
     </div>
   );
