@@ -433,28 +433,20 @@ export function parseInlineTokens(content: string): InlineToken[] {
 
 ## 5. Current Linking
 
-### Status: **NOT IMPLEMENTED**
+### Status: **IMPLEMENTED (wikilinks + backlinks), PARTIAL (advanced references)**
 
-The codebase has **no** linking or reference features:
+Current code supports page-style wikilinks and backlink navigation:
 
-- ❌ No `[[wiki-link]]` syntax
-- ❌ No `((block-id))` block references
-- ❌ No backlink tracking
-- ❌ No alias/title system
-- ❌ No block titles (just content)
+- ✅ `[[wikilink]]` parsing (including alias `[[Target|Alias]]`) via `src/lib/inlineParser.ts` + `src/lib/wikilinkUtils.ts`
+- ✅ Page navigation and auto-create under `pages::` via `src/hooks/useBacklinkNavigation.ts`
+- ✅ Backlink UI via `src/components/LinkedReferences.tsx`
+- ✅ Outlink extraction into `block.metadata.outlinks` via `src/lib/handlers/hooks/outlinksHook.ts`
 
-### Available Extension Points
+Not implemented yet:
 
-1. **`metadata` field**: Every block has optional `metadata?: Record<string, any>` - currently unused
-2. **Inline parser**: `inlineParser.ts` could be extended for `[[link]]` patterns
-3. **Block creation hooks**: Could add ID references during paste/import
-
-### What Would Backlinking Require
-
-1. **Link syntax**: Parser for `[[target]]` or `@blockid` patterns
-2. **Index**: Map of `blockId → Set<referringBlockIds>` (could live in metadata or separate Y.Map)
-3. **Resolution**: Title/alias lookup for fuzzy matching
-4. **UI**: Backlinks panel, hover preview, navigation
+- ❌ `((block-id))` style block references
+- ❌ Dedicated server-side backlink index (current backlink lookup is frontend-side scan)
+- ❌ Separate block title/alias identity model beyond inline wikilink aliases
 
 ---
 
@@ -544,15 +536,21 @@ src-tauri/
 
 ```rust
 // src-tauri/src/lib.rs
-#[tauri::command] fn get_initial_state(...)     // Load Y.Doc state
-#[tauri::command] fn apply_update(...)          // Persist Y.Doc delta
+#[tauri::command] fn get_server_info(...)       // Bootstrap floatty-server URL/API key
 #[tauri::command] fn execute_shell_command(...) // Run sh:: blocks
 #[tauri::command] fn execute_ai_command(...)    // Run ai:: blocks
 #[tauri::command] fn get_ctx_markers(...)       // Sidebar data
 #[tauri::command] fn get_ctx_config(...)        // Aggregator settings
+#[tauri::command] fn get_workspace_state(...)   // Layout restore (+ save_seq)
 #[tauri::command] fn save_workspace_state(...)  // Layout persistence
-#[tauri::command] fn load_workspace_state(...)  // Layout restore
 ```
+
+Y.Doc sync transport is handled by `floatty-server` HTTP/WebSocket APIs (not direct Tauri commands):
+
+- `GET /api/v1/state`
+- `POST /api/v1/update`
+- `GET /api/v1/updates?since=...`
+- `GET /ws`
 
 ### Database Location
 
