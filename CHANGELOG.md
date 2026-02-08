@@ -6,6 +6,25 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.23] - 2026-02-08
+
+### Features
+
+- **Cross-pane block drag-and-drop** (FLO-115, PR #127): Drag blocks between outliner panes using drag handles. Pointer-based drop resolution with above/below/inside zones, cycle prevention, undo isolation via `stopUndoCaptureBoundary()`, and `block:move` event emission. Auto-expands collapsed targets on drop, scrolls dropped block into view, and flashes subtree highlight for 1.2s.
+
+### Bug Fixes
+
+- **Block text vanishing while typing `::`** (PR #128): Fixed display overlay rendering empty when `hasInlineFormatting()` hint fired but parser produced no tokens. BlockDisplay now falls back to raw content instead of empty overlay. Tightened prefix marker detection to line-leading or bracketed `[word::` only.
+- **UTF-8 panic in log previews** (45ece30): Fixed byte-slice panic on multi-byte characters (box-drawing, arrows) in metadata extraction and ctx parser — use `.chars().take(N)` instead of `&content[..N]`.
+
+### Improvements
+
+- **Event system**: `block:move` event type with `BlockMoveDetails` payload (source/target pane, drop position, old/new parent and index). Block updates now populate `changedFields` in event envelopes.
+- **Sync reliability**: Force full recovery on reconnect buffer overflow. Seed workspace save sequence from persisted state. Drain projection scheduler queue during active flush. Prevent stale async saves from overwriting newer state.
+- **Architecture**: Event-driven ctx sidebar refresh (replaces polling). Scoped terminal keybind capture to global actions. Explicit dependency control for workspace bootstrap. Version-signal persistence tracking replaces deep object diffing.
+
+---
+
 ## [0.7.22] - 2026-02-07
 
 ### Features
