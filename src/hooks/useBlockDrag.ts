@@ -149,12 +149,20 @@ const runtime = createRoot(() => {
     return parentWithPane?.getAttribute('data-pane-id') ?? null;
   };
 
+  const isContainerInteractive = (container: HTMLElement): boolean => {
+    const style = getComputedStyle(container);
+    if (style.pointerEvents === 'none') return false;
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    return true;
+  };
+
   const findContainerPane = (x: number, y: number): { paneId: string | null; zoomRoot: string | null } => {
     const containers = Array.from(document.querySelectorAll('.outliner-container')) as HTMLElement[];
     for (const container of containers) {
       const rect = container.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) continue;
       if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
+      if (!isContainerInteractive(container)) continue;
 
       const paneId = getPaneIdForContainer(container);
       const zoomRoot = paneId && activePaneStore ? activePaneStore.getZoomedRootId(paneId) : null;
