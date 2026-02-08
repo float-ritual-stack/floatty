@@ -761,21 +761,23 @@ function InlineTokenSpan(props: TokenSpanProps) {
 }
 
 export function BlockDisplay(props: BlockDisplayProps) {
-  // Early exit optimization - if no formatting, just render plain text
-  const hasFormatting = createMemo(() => hasInlineFormatting(props.content));
+  // Early-exit hint for parser work.
+  // Rendering gate uses parsed token count (not this hint) to avoid empty overlays.
+  const hasFormattingHint = createMemo(() => hasInlineFormatting(props.content));
 
   // Parse tokens reactively - only recomputes when content changes
   const tokens = createMemo(() => {
-    if (!hasFormatting()) return [];
+    if (!hasFormattingHint()) return [];
     return parseAllInlineTokens(props.content);
   });
+  const hasRenderableTokens = createMemo(() => tokens().length > 0);
 
   // NOTE: Table rendering is handled directly in BlockItem (picker pattern)
   // BlockDisplay only handles inline formatting tokens
 
   return (
     <div class="block-display" aria-hidden="true">
-      <Show when={hasFormatting()}>
+      <Show when={hasRenderableTokens()}>
         <For each={tokens()}>
           {(token) => (
             <InlineTokenSpan
@@ -785,7 +787,7 @@ export function BlockDisplay(props: BlockDisplayProps) {
           )}
         </For>
       </Show>
-      <Show when={!hasFormatting()}>
+      <Show when={!hasRenderableTokens()}>
         {/* No formatting - render plain text directly */}
         {props.content}
       </Show>

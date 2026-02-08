@@ -225,10 +225,35 @@ describe('hasInlineFormatting', () => {
     expect(hasInlineFormatting('- ctx::2026-01-03 [project::floatty]')).toBe(true);
   });
 
-  it('returns true for ctx:: without timestamp (matches prefix-marker pattern)', () => {
-    // hasPrefixMarker detects ctx:: as a word:: pattern (broader gatekeeper)
-    // Parser won't find match at token start, returns empty — slight over-parse is fine
-    expect(hasInlineFormatting('talking about ctx:: in general')).toBe(true);
+  it('returns false for mid-line ctx:: without bracket exception', () => {
+    expect(hasInlineFormatting('talking about ctx:: in general')).toBe(false);
+  });
+
+  it('returns true for bracketed word:: prefix anywhere', () => {
+    expect(hasInlineFormatting('notes [ctx::topic] more')).toBe(true);
+  });
+});
+
+describe('prefix-marker semantics', () => {
+  it('parses bracketed prefix marker at line start', () => {
+    const tokens = parseAllInlineTokens('[sc::');
+    expect(tokens.some(t => t.type === 'prefix-marker' && t.raw === 'sc::')).toBe(true);
+  });
+
+  it('parses bracketed prefix marker mid-line', () => {
+    const tokens = parseAllInlineTokens('foo [sc::bar]');
+    expect(tokens.some(t => t.type === 'prefix-marker' && t.raw === 'sc::')).toBe(true);
+  });
+
+  it('does not parse unbracketed mid-line word:: marker', () => {
+    const tokens = parseAllInlineTokens('foo sc::bar');
+    expect(tokens.some(t => t.type === 'prefix-marker')).toBe(false);
+  });
+
+  it('keeps heading + bracketed prefix visible and tokenized', () => {
+    const tokens = parseAllInlineTokens('## [sc::');
+    expect(tokens.some(t => t.type === 'heading-marker')).toBe(true);
+    expect(tokens.some(t => t.type === 'prefix-marker' && t.raw === 'sc::')).toBe(true);
   });
 });
 
@@ -892,8 +917,8 @@ describe('markdown table parsing', () => {
         expect(heading?.raw).toMatch(/##/);
       });
 
-      it('finds prefix-marker after box-drawing chars (code fence content)', () => {
-        const tokens = parseAllInlineTokens('│ scratch::        │');
+      it('finds bracketed prefix-marker after box-drawing chars (code fence content)', () => {
+        const tokens = parseAllInlineTokens('│ [scratch::        │');
         const types = tokens.map(t => t.type);
         expect(types).toContain('box-tree');
         expect(types).toContain('prefix-marker');
