@@ -340,7 +340,13 @@ const runtime = createRoot(() => {
           targetPaneId: resolved.targetPaneId ?? undefined,
           origin: 'user-drag',
         });
-        if (moved) movedBlockId = sourceId;
+        if (moved) {
+          movedBlockId = sourceId;
+          // Expand collapsed target so the dropped block is visible
+          if (resolved.position === 'inside' && resolved.targetPaneId && resolved.targetParentId && activePaneStore) {
+            activePaneStore.setCollapsed(resolved.targetPaneId, resolved.targetParentId, false);
+          }
+        }
       }
     }
 
