@@ -1144,6 +1144,21 @@ body.block-dragging * {
   cursor: grabbing !important;
 }
 
+@keyframes block-drop-flash {
+  0% { background: color-mix(in srgb, var(--color-accent) 28%, transparent); }
+  100% { background: transparent; }
+}
+
+.block-just-dropped > .block-content-wrapper {
+  animation: block-drop-flash 600ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block-just-dropped > .block-content-wrapper {
+    animation: none;
+  }
+}
+
 /* ================================================
    Status Bar
    ================================================ */

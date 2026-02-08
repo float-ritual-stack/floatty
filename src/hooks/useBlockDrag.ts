@@ -328,20 +328,33 @@ const runtime = createRoot(() => {
     const sourceId = state.activeDragId;
     const sourcePaneId = state.sourcePaneId;
 
+    let movedBlockId: string | null = null;
+
     if (commit && sourceId && activeStore) {
       const resolved = finalResolution ?? resolveDrop(lastX, lastY);
       if (resolved && isValidDrop(sourceId, resolved)) {
-        activeStore.moveBlock(sourceId, resolved.targetParentId, resolved.targetIndex, {
+        const moved = activeStore.moveBlock(sourceId, resolved.targetParentId, resolved.targetIndex, {
           position: resolved.position,
           targetId: resolved.targetId,
           sourcePaneId: sourcePaneId ?? undefined,
           targetPaneId: resolved.targetPaneId ?? undefined,
           origin: 'user-drag',
         });
+        if (moved) movedBlockId = sourceId;
       }
     }
 
     resetDragState();
+
+    if (movedBlockId) {
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`[data-block-id="${movedBlockId}"]`);
+        if (!el) return;
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        el.classList.add('block-just-dropped');
+        setTimeout(() => el.classList.remove('block-just-dropped'), 600);
+      });
+    }
   };
 
   const startDrag = (
