@@ -222,7 +222,10 @@ impl FloattyDb {
         Ok(())
     }
 
-    /// Add a column to a table, ignoring "duplicate column" errors
+    /// Add a column to a table, ignoring "duplicate column" errors.
+    ///
+    /// SAFETY: `column_def` must be a compile-time string literal.
+    /// Never construct from user/external input — it is interpolated directly into SQL.
     fn migrate_add_column(conn: &Connection, table: &str, column_def: &str) -> Result<()> {
         // Restrict migration targets to known table identifiers.
         // This keeps SQL construction safe even if future callers change.
@@ -608,7 +611,7 @@ impl FloattyDb {
     /// Writes are accepted only if `save_seq` is newer than the stored sequence,
     /// or if it is an idempotent retry with the same payload.
     /// This prevents older async saves (or conflicting same-seq writes) from overwriting newer state.
-    pub fn set_workspace_state(&self, key: &str, state_json: &str, save_seq: i64) -> Result<()> {
+    pub fn set_workspace_state(&self, key: &str, state_json: &str, save_seq: i64) -> Result<bool> {
         let conn = self.conn.lock();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -633,14 +636,15 @@ impl FloattyDb {
         )?;
 
         if changed_rows == 0 {
-            log::warn!(
-                "Ignoring stale workspace save for key '{}' (save_seq={})",
+            log::error!(
+                "Rejected stale workspace save for key '{}' (save_seq={})",
                 key,
                 save_seq
             );
+            Ok(false)
+        } else {
+            Ok(true)
         }
-
-        Ok(())
     }
 }
 
@@ -653,12 +657,12 @@ mod tests {
     fn workspace_state_rejects_stale_save_seq() {
         let db = FloattyDb::open_in_memory().expect("open in-memory db");
 
-        db.set_workspace_state("default", r#"{"v":1}"#, 1)
-            .expect("initial save");
-        db.set_workspace_state("default", r#"{"v":2}"#, 2)
-            .expect("newer save");
-        db.set_workspace_state("default", r#"{"v":1.5}"#, 1)
-            .expect("stale save should be ignored");
+        assert!(db.set_workspace_state("default", r#"{"v":1}"#, 1)
+            .expect("initial save"));
+        assert!(db.set_workspace_state("default", r#"{"v":2}"#, 2)
+            .expect("newer save"));
+        assert!(!db.set_workspace_state("default", r#"{"v":1.5}"#, 1)
+            .expect("stale save should return false"));
 
         let stored = db
             .get_workspace_state("default")
@@ -672,10 +676,10 @@ mod tests {
     fn workspace_state_allows_idempotent_same_seq_retry() {
         let db = FloattyDb::open_in_memory().expect("open in-memory db");
 
-        db.set_workspace_state("default", r#"{"v":2}"#, 2)
-            .expect("initial save");
-        db.set_workspace_state("default", r#"{"v":2}"#, 2)
-            .expect("idempotent retry");
+        assert!(db.set_workspace_state("default", r#"{"v":2}"#, 2)
+            .expect("initial save"));
+        assert!(db.set_workspace_state("default", r#"{"v":2}"#, 2)
+            .expect("idempotent retry"));
 
         let stored = db
             .get_workspace_state("default")
@@ -689,10 +693,10 @@ mod tests {
     fn workspace_state_rejects_conflicting_same_seq_write() {
         let db = FloattyDb::open_in_memory().expect("open in-memory db");
 
-        db.set_workspace_state("default", r#"{"v":2}"#, 2)
-            .expect("initial save");
-        db.set_workspace_state("default", r#"{"v":"conflict"}"#, 2)
-            .expect("conflicting same-seq save should be ignored");
+        assert!(db.set_workspace_state("default", r#"{"v":2}"#, 2)
+            .expect("initial save"));
+        assert!(!db.set_workspace_state("default", r#"{"v":"conflict"}"#, 2)
+            .expect("conflicting same-seq save should return false"));
 
         let stored = db
             .get_workspace_state("default")

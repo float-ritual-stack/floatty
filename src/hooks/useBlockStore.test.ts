@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Block } from '../lib/blockTypes';
-import { computeChangedFields } from './useBlockStore';
+import { computeChangedFields, deepEqualJsonLike } from './useBlockStore';
 
 function createBlock(overrides: Partial<Block> = {}): Block {
   return {
@@ -16,6 +16,52 @@ function createBlock(overrides: Partial<Block> = {}): Block {
     ...overrides,
   };
 }
+
+describe('deepEqualJsonLike', () => {
+  it('null vs undefined are not equal', () => {
+    expect(deepEqualJsonLike(null, undefined)).toBe(false);
+  });
+
+  it('empty objects are equal', () => {
+    expect(deepEqualJsonLike({}, {})).toBe(true);
+  });
+
+  it('array order matters', () => {
+    expect(deepEqualJsonLike([1, 2], [2, 1])).toBe(false);
+  });
+
+  it('identical arrays are equal', () => {
+    expect(deepEqualJsonLike([1, 2, 3], [1, 2, 3])).toBe(true);
+  });
+
+  it('nested objects are deeply compared', () => {
+    expect(deepEqualJsonLike(
+      { a: { b: [1, 2] } },
+      { a: { b: [1, 2] } },
+    )).toBe(true);
+
+    expect(deepEqualJsonLike(
+      { a: { b: [1, 2] } },
+      { a: { b: [1, 3] } },
+    )).toBe(false);
+  });
+
+  it('mixed types are not equal (0 vs false)', () => {
+    expect(deepEqualJsonLike(0, false)).toBe(false);
+  });
+
+  it('undefined metadata normalized via ?? null are equal', () => {
+    // Simulates: block.metadata ?? null (where metadata is undefined)
+    const undef: unknown = undefined;
+    const a = undef ?? null;
+    const b = undef ?? null;
+    expect(deepEqualJsonLike(a, b)).toBe(true);
+  });
+
+  it('undefined vs undefined are equal via Object.is', () => {
+    expect(deepEqualJsonLike(undefined, undefined)).toBe(true);
+  });
+});
 
 describe('computeChangedFields', () => {
   it('returns empty array when only timestamp changes', () => {

@@ -69,7 +69,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function deepEqualJsonLike(a: unknown, b: unknown): boolean {
+export function deepEqualJsonLike(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
 
   if (a === null || b === null) return false;

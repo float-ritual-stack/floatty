@@ -298,6 +298,28 @@ describe('ProjectionScheduler', () => {
     });
   });
 
+  describe('drain loop bound', () => {
+    it('terminates when handler always re-enqueues', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      scheduler.register('infinite', async () => {
+        // Always re-enqueue — would loop forever without bound
+        scheduler.enqueue(createTestEnvelope([{ blockId: 'loop' }]));
+      });
+
+      scheduler.enqueue(createTestEnvelope([{ blockId: 'seed' }]));
+
+      await scheduler.flush();
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Drain loop exceeded'),
+        // no second arg — it's a single string message
+      );
+
+      consoleSpy.mockRestore();
+    });
+  });
+
   describe('getProjectionInfo', () => {
     it('returns projection metadata', () => {
       scheduler.register('proj-a', async () => {});

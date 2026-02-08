@@ -67,6 +67,7 @@ export interface ProjectionSchedulerOptions {
 
 const DEFAULT_FLUSH_INTERVAL_MS = 2000;
 const DEFAULT_MAX_QUEUE_SIZE = 1000;
+const MAX_DRAIN_PASSES = 10;
 
 // ═══════════════════════════════════════════════════════════════
 // PROJECTION TYPES
@@ -195,7 +196,15 @@ export class ProjectionScheduler {
     try {
       // Drain until stable so events enqueued during handler execution
       // are processed in the same flush cycle.
+      let pass = 0;
       while (this.queue.length > 0) {
+        if (++pass > MAX_DRAIN_PASSES) {
+          console.error(
+            `[ProjectionScheduler] Drain loop exceeded ${MAX_DRAIN_PASSES} passes, ` +
+            `${this.queue.length} events still queued. Breaking to prevent infinite loop.`
+          );
+          break;
+        }
         const batch = this.queue;
         this.queue = [];
 

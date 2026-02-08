@@ -21,14 +21,15 @@ pub fn get_workspace_state(
     workspace::get_state(&inner.db, &key)
 }
 
-/// Save workspace layout state (JSON blob)
+/// Save workspace layout state (JSON blob).
+/// Returns `true` if the write was accepted, `false` if rejected as stale.
 #[tauri::command]
 pub fn save_workspace_state(
     state: State<AppState>,
     key: String,
     state_json: String,
     save_seq: i64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let inner = state
         .inner
         .as_ref()

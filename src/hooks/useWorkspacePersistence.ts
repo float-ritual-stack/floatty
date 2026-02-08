@@ -86,6 +86,12 @@ export function createWorkspacePersistence() {
         return false;
       }
 
+      // Seed save_seq IMMEDIATELY from DB column — before JSON parse which may throw.
+      // This ensures nextSaveSeq is never reset to 0 by a corrupt JSON blob.
+      if (stored.saveSeq != null && stored.saveSeq > nextSaveSeq) {
+        nextSaveSeq = stored.saveSeq;
+      }
+
       const state = JSON.parse(stored.stateJson) as PersistedWorkspace;
 
       // Version check (future: migration logic)
@@ -140,7 +146,7 @@ export function createWorkspacePersistence() {
       // FLO-180: Pass navigationHistory to hydration
       paneStore.hydratePaneState(zoomedRootIds, state.collapsedState, state.focusedBlockId, state.navigationHistory);
 
-      // Seed local save sequence from persisted value to prevent stale replays after app restart.
+      // Reinforcement: also check saveSeq from inside the JSON blob (belt + suspenders).
       const hydratedSaveSeq = Math.max(state.saveSeq ?? 0, stored.saveSeq ?? 0);
       if (hydratedSaveSeq > nextSaveSeq) {
         nextSaveSeq = hydratedSaveSeq;
@@ -189,9 +195,13 @@ export function createWorkspacePersistence() {
       };
 
       const stateJson = JSON.stringify(state);
-      await invoke('save_workspace_state', { key: WORKSPACE_KEY, stateJson, saveSeq });
+      const accepted = await invoke<boolean>('save_workspace_state', { key: WORKSPACE_KEY, stateJson, saveSeq });
 
-      console.debug('[WorkspacePersistence] Saved workspace state');
+      if (!accepted) {
+        console.error(`[WorkspacePersistence] Save rejected: stale seq ${saveSeq}`);
+      } else {
+        console.debug('[WorkspacePersistence] Saved workspace state');
+      }
 
     } catch (err) {
       console.error('[WorkspacePersistence] Failed to save workspace:', err);

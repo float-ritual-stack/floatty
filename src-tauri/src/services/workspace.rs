@@ -15,13 +15,14 @@ pub fn get_state(
     db.get_workspace_state(key).map_err(|e| e.to_string())
 }
 
-/// Save workspace layout state (JSON blob)
+/// Save workspace layout state (JSON blob).
+/// Returns `true` if the write was accepted, `false` if rejected as stale.
 pub fn set_state(
     db: &Arc<FloattyDb>,
     key: &str,
     state_json: &str,
     save_seq: i64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     db.set_workspace_state(key, state_json, save_seq)
         .map_err(|e| e.to_string())
 }
