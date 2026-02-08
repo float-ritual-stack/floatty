@@ -206,14 +206,22 @@ interface BlockEvent {
   type: BlockEventType;
   blockId: string;
   block: Block;
-  changes?: BlockChange[];  // For updates
-  parentId?: string;        // For creates/moves
+  previousBlock?: Block;          // Snapshot before change
+  changedFields?: BlockChangeField[];  // Which fields changed
+  move?: BlockMoveDetails;        // Present when type === 'block:move'
 }
 
-interface BlockChange {
-  field: BlockChangeField;
-  before?: unknown;
-  after?: unknown;
+// block:move events carry full move context.
+// A block:update event is ALSO emitted for the same block (backward compat).
+interface BlockMoveDetails {
+  oldParentId: string | null;
+  newParentId: string | null;
+  oldIndex: number;
+  newIndex: number;
+  position: 'above' | 'below' | 'inside';  // Drop position hint
+  targetId?: string | null;       // Block dropped onto (may differ from parent)
+  sourcePaneId?: string;          // Pane the drag started in
+  targetPaneId?: string;          // Pane the drop landed in
 }
 
 type BlockChangeField =
@@ -222,6 +230,7 @@ type BlockChangeField =
   | 'collapsed'
   | 'childIds'
   | 'parentId'
+  | 'order'
   | 'metadata'
   | 'output'
   | 'outputType'
