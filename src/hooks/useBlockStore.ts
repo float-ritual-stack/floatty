@@ -11,6 +11,7 @@ import {
   blockEventBus,
   blockProjectionScheduler,
   Origin,
+  type BlockChangeField,
   type BlockEvent,
   type EventEnvelope,
   type OriginType,
@@ -65,6 +66,58 @@ function mapTransactionOrigin(txOrigin: unknown): OriginType {
   }
   // Remote changes from other clients
   return Origin.Remote;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function deepEqualJsonLike(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+
+  if (a === null || b === null) return false;
+  if (typeof a !== typeof b) return false;
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqualJsonLike(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+      if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+      if (!deepEqualJsonLike(a[key], b[key])) return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Compute canonical changedFields for block:update events.
+ * Excludes timestamp-only changes (e.g., updatedAt) to keep filters meaningful.
+ */
+export function computeChangedFields(block: Block, previousBlock: Block): BlockChangeField[] {
+  const changedFields: BlockChangeField[] = [];
+
+  if (block.content !== previousBlock.content) changedFields.push('content');
+  if (block.type !== previousBlock.type) changedFields.push('type');
+  if (block.collapsed !== previousBlock.collapsed) changedFields.push('collapsed');
+  if (block.parentId !== previousBlock.parentId) changedFields.push('parentId');
+  if (!deepEqualJsonLike(block.childIds, previousBlock.childIds)) changedFields.push('childIds');
+  if (!deepEqualJsonLike(block.metadata ?? null, previousBlock.metadata ?? null)) changedFields.push('metadata');
+  if (!deepEqualJsonLike(block.output, previousBlock.output)) changedFields.push('output');
+  if (block.outputType !== previousBlock.outputType) changedFields.push('outputType');
+  if (block.outputStatus !== previousBlock.outputStatus) changedFields.push('outputStatus');
+
+  return changedFields;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -423,7 +476,7 @@ function createBlockStore() {
                 blockId: key,
                 block,
                 previousBlock: prevBlock,
-                // TODO: Could compute changedFields by comparing block vs prevBlock
+                changedFields: computeChangedFields(block, prevBlock),
               });
             }
           }

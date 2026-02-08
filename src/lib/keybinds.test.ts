@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   matchesKeybind,
   getActionForEvent,
+  isGlobalKeyAction,
   isTerminalReserved,
   formatKeybind,
   getKeybindDisplay,
@@ -192,6 +193,25 @@ describe('isTerminalReserved', () => {
 
   it('returns false for Ctrl+Meta combos', () => {
     expect(isTerminalReserved(createEvent('c', { ctrl: true, meta: true }))).toBe(false);
+  });
+});
+
+describe('isGlobalKeyAction', () => {
+  it('returns true for terminal-global actions', () => {
+    expect(isGlobalKeyAction('newTab')).toBe(true);
+    expect(isGlobalKeyAction('splitHorizontalOutliner')).toBe(true);
+    expect(isGlobalKeyAction('nextTheme')).toBe(true);
+  });
+
+  it('returns false for outliner-local actions', () => {
+    expect(isGlobalKeyAction('zoomInBlock')).toBe(false);
+    expect(isGlobalKeyAction('zoomOutBlock')).toBe(false);
+    expect(isGlobalKeyAction('collapseBlock')).toBe(false);
+    expect(isGlobalKeyAction('deleteBlock')).toBe(false);
+    expect(isGlobalKeyAction('moveBlockUp')).toBe(false);
+    expect(isGlobalKeyAction('moveBlockDown')).toBe(false);
+    expect(isGlobalKeyAction('undo')).toBe(false);
+    expect(isGlobalKeyAction('redo')).toBe(false);
   });
 });
 

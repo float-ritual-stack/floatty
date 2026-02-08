@@ -119,9 +119,13 @@ function detachHandler() {
 
 | Layer | Location | Purpose |
 |-------|----------|---------|
-| **localStorage** | Browser | Crash recovery backup (1s debounce) |
+| **IndexedDB** | Browser (`idbBackup.ts`) | Crash recovery backup (1s debounce) |
 | **SQLite** | `~/.floatty/ctx_markers.db` | Append-only update log (server-side) |
 | **HTTP/WebSocket** | floatty-server:8765 | Real-time sync + reconciliation |
+
+> Note: localStorage backup was replaced on 2026-01-23 due to size limits; legacy localStorage is migration fallback only.
+>
+> Post-snapshot update (2026-02-07): `workspace_state` now includes monotonic `save_seq`. Frontend seeds `nextSaveSeq` from persisted state, and DB writes reject stale sequences to prevent out-of-order workspace persistence.
 
 **HTTP Client** (`src/lib/httpClient.ts:53-108`):
 - `getState()` - Full Y.Doc snapshot
@@ -398,7 +402,7 @@ const DEFAULT_SYNC_DEBOUNCE = 50;
 function queueUpdateModule(update: Uint8Array) {
   sharedPendingUpdates.push(update);
   scheduleFlushModule();  // Debounced 50ms
-  scheduleBackup();       // Debounced 1000ms (localStorage)
+  scheduleBackup();       // Debounced 1000ms (IndexedDB backup)
 }
 ```
 
@@ -541,7 +545,7 @@ for (const [id, savedY] of this.savedScrollPositions) {
 
 ```typescript
 const state = Y.encodeStateAsUpdate(sharedDoc);  // CPU-intensive
-localStorage.setItem(YDOC_BACKUP_KEY, bytesToBase64(state));
+saveBackupIDB(state);
 ```
 
 **Impact**: Serializes entire doc (5.6MB at 10K blocks) every keystroke (debounced 1s).

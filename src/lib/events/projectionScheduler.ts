@@ -67,6 +67,7 @@ export interface ProjectionSchedulerOptions {
 
 const DEFAULT_FLUSH_INTERVAL_MS = 2000;
 const DEFAULT_MAX_QUEUE_SIZE = 1000;
+const MAX_DRAIN_PASSES = 10;
 
 // ═══════════════════════════════════════════════════════════════
 // PROJECTION TYPES
@@ -192,34 +193,44 @@ export class ProjectionScheduler {
     if (this.queue.length === 0) return;
 
     this.isFlushing = true;
-
-    // Grab current queue and reset
-    const batch = this.queue;
-    this.queue = [];
-
     try {
-      // Run all projections in parallel
-      const promises = Array.from(this.projections.values()).map(
-        async (projection) => {
-          try {
-            // Filter events for this projection
-            const filteredBatch = this.filterBatch(batch, projection);
-            if (filteredBatch.length === 0) return;
-
-            // Merge filtered envelopes into single envelope for handler
-            const merged = this.mergeBatch(filteredBatch);
-            await projection.handler(merged);
-          } catch (error) {
-            // Log but don't propagate - one projection failing shouldn't break others
-            console.error(
-              `[ProjectionScheduler] Projection "${projection.name}" failed:`,
-              error
-            );
-          }
+      // Drain until stable so events enqueued during handler execution
+      // are processed in the same flush cycle.
+      let pass = 0;
+      while (this.queue.length > 0) {
+        if (++pass > MAX_DRAIN_PASSES) {
+          console.error(
+            `[ProjectionScheduler] Drain loop exceeded ${MAX_DRAIN_PASSES} passes, ` +
+            `${this.queue.length} events still queued. Breaking to prevent infinite loop.`
+          );
+          break;
         }
-      );
+        const batch = this.queue;
+        this.queue = [];
 
-      await Promise.all(promises);
+        // Run all projections in parallel
+        const promises = Array.from(this.projections.values()).map(
+          async (projection) => {
+            try {
+              // Filter events for this projection
+              const filteredBatch = this.filterBatch(batch, projection);
+              if (filteredBatch.length === 0) return;
+
+              // Merge filtered envelopes into single envelope for handler
+              const merged = this.mergeBatch(filteredBatch);
+              await projection.handler(merged);
+            } catch (error) {
+              // Log but don't propagate - one projection failing shouldn't break others
+              console.error(
+                `[ProjectionScheduler] Projection "${projection.name}" failed:`,
+                error
+              );
+            }
+          }
+        );
+
+        await Promise.all(promises);
+      }
     } finally {
       this.isFlushing = false;
     }
