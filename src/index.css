@@ -1149,12 +1149,12 @@ body.block-dragging * {
   100% { background: transparent; }
 }
 
-.block-just-dropped > .block-content-wrapper {
+.block-just-dropped .block-content-wrapper {
   animation: block-drop-flash 1200ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .block-just-dropped > .block-content-wrapper {
+  .block-just-dropped .block-content-wrapper {
     animation: none;
   }
 }
