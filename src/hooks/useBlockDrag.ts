@@ -352,7 +352,7 @@ const runtime = createRoot(() => {
         if (!el) return;
         el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         el.classList.add('block-just-dropped');
-        setTimeout(() => el.classList.remove('block-just-dropped'), 600);
+        setTimeout(() => el.classList.remove('block-just-dropped'), 1200);
       });
     }
   };

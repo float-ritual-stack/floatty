@@ -1150,7 +1150,7 @@ body.block-dragging * {
 }
 
 .block-just-dropped > .block-content-wrapper {
-  animation: block-drop-flash 600ms ease-out;
+  animation: block-drop-flash 1200ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
