@@ -74,7 +74,8 @@ impl MetadataExtractionHook {
     /// Extract metadata from content and store it on the block.
     #[instrument(skip(self, store), fields(block_id = %id))]
     fn extract_and_store(&self, id: &str, content: &str, store: &YDocStore) {
-        debug!("MetadataExtractionHook: processing block {} with content: {}", id, &content[..content.len().min(50)]);
+        let preview: String = content.chars().take(50).collect();
+        debug!("MetadataExtractionHook: processing block {} with content: {}", id, preview);
 
         // Extract markers
         let markers = parsing::extract_all_markers(content);

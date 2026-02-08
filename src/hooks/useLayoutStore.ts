@@ -379,6 +379,7 @@ function createLayoutStore() {
       setState('layouts', tabId, 'root', newRoot);
       setState('layouts', tabId, 'activePaneId', sourcePaneId);
     });
+    bumpPersistenceVersion();
 
     return true;
   };

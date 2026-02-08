@@ -315,11 +315,17 @@ async fn parse_marker(
 
     // Try to parse as OllamaResponse
     let ollama_resp: OllamaResponse = serde_json::from_str(&resp_text)
-        .map_err(|e| format!("Failed to parse Ollama response: {}. Raw: {}", e, &resp_text[..resp_text.len().min(500)]))?;
+        .map_err(|e| {
+            let preview: String = resp_text.chars().take(500).collect();
+            format!("Failed to parse Ollama response: {}. Raw: {}", e, preview)
+        })?;
 
     // Parse the JSON response from Ollama
     let raw: RawParsedCtx = serde_json::from_str(&ollama_resp.response)
-        .map_err(|e| format!("Failed to parse ctx JSON: {}. Raw: {}", e, &ollama_resp.response[..ollama_resp.response.len().min(500)]))?;
+        .map_err(|e| {
+            let preview: String = ollama_resp.response.chars().take(500).collect();
+            format!("Failed to parse ctx JSON: {}. Raw: {}", e, preview)
+        })?;
 
     // Convert to our ParsedCtx type (simple 1:1 mapping now)
     let parsed = ParsedCtx {
