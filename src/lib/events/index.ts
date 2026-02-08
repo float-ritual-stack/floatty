@@ -11,6 +11,8 @@ export {
   type OriginType,
   type BlockEventType,
   type BlockChangeField,
+  type BlockMovePosition,
+  type BlockMoveDetails,
   type BlockEvent,
   type EventEnvelope,
   type SyncEventHandler,

@@ -209,6 +209,20 @@ interface BlockEvent {
   block?: Block;                  // undefined for delete
   previousBlock?: Block;          // set for update/delete
   changedFields?: BlockChangeField[]; // set for update
+  move?: BlockMoveDetails;        // Present when type === 'block:move'
+}
+
+// block:move events carry full move context.
+// A block:update event is ALSO emitted for the same block (backward compat).
+interface BlockMoveDetails {
+  oldParentId: string | null;
+  newParentId: string | null;
+  oldIndex: number;
+  newIndex: number;
+  position: 'above' | 'below' | 'inside';  // Drop position hint
+  targetId?: string | null;       // Block dropped onto (may differ from parent)
+  sourcePaneId?: string;          // Pane the drag started in
+  targetPaneId?: string;          // Pane the drop landed in
 }
 
 type BlockChangeField =
@@ -217,6 +231,7 @@ type BlockChangeField =
   | 'collapsed'
   | 'childIds'
   | 'parentId'
+  | 'order'
   | 'metadata'
   | 'output'
   | 'outputType'

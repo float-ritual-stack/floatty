@@ -510,6 +510,7 @@ export function Outliner(props: OutlinerProps) {
     <div
       ref={containerRef}
       class="outliner-container"
+      data-pane-id={props.paneId}
       role="listbox"
       aria-multiselectable="true"
       aria-label="Block outliner"

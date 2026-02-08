@@ -4,6 +4,7 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
 import { useBlockInput } from '../hooks/useBlockInput';
+import { useBlockDrag } from '../hooks/useBlockDrag';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { navigateToBlock } from '../lib/navigation';
@@ -84,6 +85,7 @@ export function BlockItem(props: BlockItemProps) {
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
+  const drag = useBlockDrag();
 
   // Capture ID once at component creation - prevents reactive tracking issues
   // when used in DOM attributes (SolidJS quirk with data-* attributes)
@@ -648,9 +650,16 @@ export function BlockItem(props: BlockItemProps) {
       <div
         class="block-item"
         data-block-id={blockId}
+        data-pane-id={props.paneId}
         role="option"
         aria-selected={props.isBlockSelected?.(props.id) || false}
-        classList={{ 'block-focused': isFocused(), 'block-selected': props.isBlockSelected?.(props.id) }}
+        classList={{
+          'block-focused': isFocused(),
+          'block-selected': props.isBlockSelected?.(props.id),
+          'block-drag-source': drag.activeDragId() === props.id,
+          'block-drop-target': drag.dropTargetId() === props.id,
+          'block-drop-invalid': drag.dropTargetId() === props.id && !drag.isValidDrop(),
+        }}
         // FLO-278: Removed onMouseDown scroll preservation - was causing race condition
         // with focus routing's scroll lock. CSS class-based scroll lock now handles this.
         onClick={(e: MouseEvent) => {
@@ -667,6 +676,19 @@ export function BlockItem(props: BlockItemProps) {
           props.onFocus(props.id);
         }}
       >
+        <div
+          class="block-drag-handle"
+          title="Drag block"
+          aria-label="Drag block"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            drag.onHandlePointerDown(e, props.id, props.paneId);
+          }}
+        >
+          ⋮⋮
+        </div>
+
         <div
           class={`block-bullet ${bulletClass()}`}
           onPointerDown={(e) => {
@@ -842,6 +864,14 @@ export function BlockItem(props: BlockItemProps) {
           </Show>
         </div>
       </div>
+
+      <Show when={drag.showOverlayFor(props.id)}>
+        <div
+          class="block-drop-overlay-line"
+          classList={{ invalid: !drag.isValidDrop() }}
+          style={drag.overlayStyle()}
+        />
+      </Show>
 
       <Show when={!isCollapsed() && block()?.childIds.length}>
         <div class="block-children">

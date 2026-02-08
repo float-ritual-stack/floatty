@@ -71,10 +71,24 @@ export type BlockChangeField =
   | 'collapsed'
   | 'childIds'
   | 'parentId'
+  | 'order'
   | 'metadata'
   | 'output'
   | 'outputType'
   | 'outputStatus';
+
+export type BlockMovePosition = 'above' | 'below' | 'inside';
+
+export interface BlockMoveDetails {
+  oldParentId: string | null;
+  newParentId: string | null;
+  oldIndex: number;
+  newIndex: number;
+  position: BlockMovePosition;
+  targetId?: string | null;
+  sourcePaneId?: string;
+  targetPaneId?: string;
+}
 
 /**
  * A block change event from Y.Doc observer.
@@ -99,6 +113,9 @@ export interface BlockEvent {
 
   /** Which fields changed (for update events) */
   changedFields?: BlockChangeField[];
+
+  /** Move metadata when event.type === 'block:move' */
+  move?: BlockMoveDetails;
 }
 
 // ═══════════════════════════════════════════════════════════════

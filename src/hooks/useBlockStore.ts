@@ -15,7 +15,9 @@ import {
   type BlockEvent,
   type EventEnvelope,
   type OriginType,
+  type BlockMovePosition,
 } from '../lib/events';
+import { stopUndoCaptureBoundary } from './useSyncedYDoc';
 
 // ═══════════════════════════════════════════════════════════════
 // AUTO-EXECUTE CALLBACK (for external block creation via API)
@@ -51,6 +53,7 @@ function isAutoExecutable(content: string): boolean {
  */
 function mapTransactionOrigin(txOrigin: unknown): OriginType {
   if (txOrigin === 'user') return Origin.User;
+  if (txOrigin === 'user-drag') return Origin.User;
   if (txOrigin === 'executor') return Origin.Executor;
   if (txOrigin === 'hook') return Origin.Hook;
   if (txOrigin === 'api') return Origin.Api;
@@ -127,6 +130,14 @@ export interface BlockState {
   isInitialized: boolean;
   /** Origin of last Y.Doc transaction - used by BlockItem sync gate */
   lastUpdateOrigin: unknown;
+}
+
+interface MoveBlockOptions {
+  position?: BlockMovePosition;
+  targetId?: string | null;
+  sourcePaneId?: string;
+  targetPaneId?: string;
+  origin?: 'user-drag' | 'user';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -334,6 +345,7 @@ function createBlockStore() {
   let _isInitializing = false; // Sync guard against race conditions
   let _blocksObserver: ((events: Y.YEvent<unknown>[]) => void) | null = null;
   let _rootIdsObserver: ((event: Y.YArrayEvent<string>) => void) | null = null;
+  let _pendingMoveEvent: (BlockEvent & { move: NonNullable<BlockEvent['move']> }) | null = null;
 
   /**
    * Initialize the store from a Y.Doc.
@@ -475,6 +487,19 @@ function createBlockStore() {
           setState('blocks', key, undefined!);
         }
       });
+
+      // Attach explicit move event metadata for drag/drop transactions.
+      // We keep block:update events for compatibility and add block:move details.
+      if (txOrigin === 'user-drag' && _pendingMoveEvent) {
+        const moved = toBlock(blocksMap.get(_pendingMoveEvent.blockId));
+        if (moved) {
+          blockEvents.push({
+            ..._pendingMoveEvent,
+            block: moved,
+          });
+        }
+        _pendingMoveEvent = null;
+      }
 
       // Emit to EventBus (sync lane) and ProjectionScheduler (async lane)
       // Only emit if there are actual events
@@ -907,6 +932,112 @@ function createBlockStore() {
     console.log('[BlockStore] Workspace cleared with fresh block.');
   };
 
+  const isDescendant = (sourceId: string, targetId: string): boolean => {
+    const source = state.blocks[sourceId];
+    if (!source) return false;
+
+    const stack = [...source.childIds];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (id === targetId) return true;
+      const block = state.blocks[id];
+      if (block?.childIds.length) {
+        stack.push(...block.childIds);
+      }
+    }
+
+    return false;
+  };
+
+  const moveBlock = (
+    blockId: string,
+    targetParentId: string | null,
+    targetIndex: number,
+    opts: MoveBlockOptions = {}
+  ): boolean => {
+    if (!_doc) { warnDocNotReady('moveBlock'); return false; }
+
+    const block = state.blocks[blockId];
+    if (!block) return false;
+    if (targetParentId === blockId) return false;
+    if (targetParentId && !state.blocks[targetParentId]) return false;
+    if (targetParentId && isDescendant(blockId, targetParentId)) return false;
+
+    const oldParentId = block.parentId;
+    const oldSiblings = oldParentId
+      ? (state.blocks[oldParentId]?.childIds ?? [])
+      : state.rootIds;
+    const oldIndex = oldSiblings.indexOf(blockId);
+    if (oldIndex < 0) return false;
+
+    const targetSiblings = targetParentId
+      ? (state.blocks[targetParentId]?.childIds ?? [])
+      : state.rootIds;
+    const clampedTarget = Math.max(0, Math.min(targetIndex, targetSiblings.length));
+    const adjustedTarget =
+      oldParentId === targetParentId && oldIndex < clampedTarget
+        ? clampedTarget - 1
+        : clampedTarget;
+
+    if (oldParentId === targetParentId && oldIndex === adjustedTarget) return false;
+
+    const previousBlock = { ...block };
+    _pendingMoveEvent = {
+      type: 'block:move',
+      blockId,
+      previousBlock,
+      changedFields:
+        oldParentId === targetParentId
+          ? ['order', 'childIds']
+          : ['parentId', 'order', 'childIds'],
+      move: {
+        oldParentId,
+        newParentId: targetParentId,
+        oldIndex,
+        newIndex: adjustedTarget,
+        position: opts.position ?? 'inside',
+        targetId: opts.targetId ?? null,
+        sourcePaneId: opts.sourcePaneId,
+        targetPaneId: opts.targetPaneId,
+      },
+    };
+
+    stopUndoCaptureBoundary();
+    try {
+      _doc.transact(() => {
+        const blocksMap = _doc.getMap('blocks');
+        const rootIds = _doc.getArray<string>('rootIds');
+
+        // Delete from source container first.
+        if (oldParentId) {
+          removeChildId(blocksMap, oldParentId, blockId);
+        } else {
+          const idx = rootIds.toArray().indexOf(blockId);
+          if (idx >= 0) rootIds.delete(idx, 1);
+        }
+
+        // Then insert into target container.
+        if (targetParentId) {
+          insertChildId(blocksMap, targetParentId, blockId, adjustedTarget);
+          setValueOnYMap(blocksMap, targetParentId, 'collapsed', false);
+        } else {
+          rootIds.insert(adjustedTarget, [blockId]);
+        }
+
+        setValueOnYMap(blocksMap, blockId, 'parentId', targetParentId);
+        setValueOnYMap(blocksMap, blockId, 'updatedAt', Date.now());
+      }, opts.origin ?? 'user-drag');
+    } catch (error) {
+      console.error('[BlockStore] moveBlock failed:', error);
+      _pendingMoveEvent = null;
+      return false;
+    } finally {
+      stopUndoCaptureBoundary();
+    }
+
+    return true;
+  };
+
   const indentBlock = (id: string) => {
     if (!_doc) { warnDocNotReady('indentBlock'); return; }
 
@@ -1235,6 +1366,7 @@ function createBlockStore() {
     indentBlock,
     outdentBlock,
     liftChildrenToSiblings,
+    moveBlock,
     // FLO-75: Block movement
     moveBlockUp,
     moveBlockDown,

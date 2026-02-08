@@ -327,7 +327,7 @@ Critical rules:
 | `cursorUtils.ts` | Cursor position utilities for keybind logic |
 | `executor.ts` | Command execution for `sh::` blocks (child_process via Tauri) |
 | `tvResolver.ts` | `$tv()` pattern resolution - spawns TV picker, receives selection from Rust |
-| `events/blockEventBus.ts` | Typed event bus for block lifecycle events (`block:create`, `block:update`, `block:delete`) |
+| `events/blockEventBus.ts` | Typed event bus for block lifecycle events (`block:create`, `block:update`, `block:delete`, `block:move`) |
 
 **Block Lifecycle Hooks** (`src/lib/handlers/hooks/`):
 
