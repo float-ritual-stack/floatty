@@ -46,6 +46,20 @@ export interface BlockStoreInterface {
   createBlockInsideAtTop: (parentId: string) => string;
   splitBlock: (id: string, offset: number) => string | null;
   splitBlockToFirstChild: (id: string, offset: number) => string | null;
+  moveBlock: (
+    blockId: string,
+    targetParentId: string | null,
+    targetIndex: number,
+    opts?: {
+      position?: 'above' | 'below' | 'inside';
+      targetId?: string | null;
+      sourcePaneId?: string;
+      targetPaneId?: string;
+      origin?: 'user-drag' | 'user';
+    }
+  ) => boolean;
+  moveBlockUp: (id: string) => boolean;
+  moveBlockDown: (id: string) => boolean;
   deleteBlock: (id: string) => boolean;
   indentBlock: (id: string) => void;
   outdentBlock: (id: string) => void;
@@ -188,6 +202,7 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     blocks: {},
     rootIds: [],
     isInitialized: true,
+    lastUpdateOrigin: null,
     getBlock: () => undefined,
     updateBlockContent: () => {},
     updateBlockContentFromExecutor: () => {},
@@ -199,6 +214,9 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     createBlockInsideAtTop: () => '',
     splitBlock: () => null,
     splitBlockToFirstChild: () => null,
+    moveBlock: () => false,
+    moveBlockUp: () => false,
+    moveBlockDown: () => false,
     deleteBlock: () => false,
     indentBlock: () => {},
     outdentBlock: () => {},

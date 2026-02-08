@@ -60,6 +60,14 @@ export function isDriftStatus(): boolean {
   return syncStatus() === 'drift';
 }
 
+/**
+ * Force a new undo capture boundary.
+ * Useful for atomic operations that should always be one undo step.
+ */
+export function stopUndoCaptureBoundary(): void {
+  sharedUndoManager?.stopCapturing();
+}
+
 /** Check if there are pending updates (for close gate) */
 export function hasPendingUpdates(): boolean {
   return sharedPendingUpdates.length > 0 || sharedIsFlushing;
@@ -1447,7 +1455,7 @@ export function useSyncedYDoc(
             sharedUndoManager = new Y.UndoManager([blocksMap, rootIds], {
               // Track user-originated changes (from useBlockStore transactions)
               // Excludes 'remote' (server sync) and 'hook' (automated processing)
-              trackedOrigins: new Set([null, undefined, 'user']),
+              trackedOrigins: new Set([null, undefined, 'user', 'user-drag']),
             });
             // Clear stack so user can't undo past loaded state
             // (prevents undoing the initial block creation)
