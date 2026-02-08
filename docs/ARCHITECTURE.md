@@ -375,6 +375,7 @@ Outliner (tree root, manages focus/selection)
 
 - **Display layer**: Renders `parseInlineTokens()` output with styling
 - **Edit layer**: Transparent text, visible cursor, handles input
+- **Invariant**: When `.block-edit` text is transparent, `.block-display` must always render either parsed tokens **or** raw content fallback (never an empty overlay).
 
 ```typescript
 // src/components/BlockItem.tsx:374-434
@@ -402,6 +403,11 @@ export function parseInlineTokens(content: string): InlineToken[] {
 
 // InlineToken types: 'text' | 'bold' | 'italic' | 'code'
 ```
+
+Prefix marker semantics (`prefix-marker`):
+- Highlight line-leading `word::` prefixes (optional leading whitespace).
+- Highlight bracketed prefixes anywhere: `[word::...` (token highlights `word::`, not `[`).
+- Do **not** highlight unbracketed mid-line `word::` patterns.
 
 ### Block Type Styling
 

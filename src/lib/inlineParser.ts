@@ -90,12 +90,79 @@ export function hasTimePattern(content: string): boolean {
 
 /**
  * Check if content starts with a word:: prefix (scratch::, pages::, sh::, ctx::, etc.).
- * Allows leading whitespace.
+ * Supports:
+ * - line-leading prefixes: `word::` (with optional leading whitespace)
+ * - bracketed prefixes anywhere: `[word::...`
  */
 export function hasPrefixMarker(content: string): boolean {
-  // No ^ anchor — inside code fences, line may start with box-drawing chars like │
-  // The prefix pass itself uses ^ on individual tokens for precision
-  return /\w+::/.test(content);
+  return /(^|\n)\s*\w+::|\[\w+::/.test(content);
+}
+
+/**
+ * Split text into `text` and `prefix-marker` tokens.
+ * Prefix rules:
+ * - line-leading `word::` (optionally indented)
+ * - bracketed `[word::` anywhere (prefix token excludes '[')
+ */
+function splitPrefixMarkerTokens(raw: string, baseStart: number): InlineToken[] {
+  const tokens: InlineToken[] = [];
+  const PREFIX_RE = /(^|\n)(\s*\w+::)|\[(\w+::)/g;
+  let lastIndex = 0;
+
+  for (const match of raw.matchAll(PREFIX_RE)) {
+    const matchIndex = match.index ?? 0;
+    const boundary = match[1] ?? '';
+    const lineLeading = match[2];
+    const bracketed = match[3];
+
+    let prefixStart = matchIndex;
+    let prefixRaw = '';
+
+    if (lineLeading) {
+      prefixStart = matchIndex + boundary.length;
+      prefixRaw = lineLeading;
+    } else if (bracketed) {
+      // Skip the opening '[' so only `word::` is highlighted
+      prefixStart = matchIndex + 1;
+      prefixRaw = bracketed;
+    } else {
+      continue;
+    }
+
+    if (prefixStart > lastIndex) {
+      const plain = raw.slice(lastIndex, prefixStart);
+      tokens.push({
+        type: 'text',
+        content: plain,
+        raw: plain,
+        start: baseStart + lastIndex,
+        end: baseStart + prefixStart,
+      });
+    }
+
+    const prefixEnd = prefixStart + prefixRaw.length;
+    tokens.push({
+      type: 'prefix-marker',
+      content: prefixRaw,
+      raw: prefixRaw,
+      start: baseStart + prefixStart,
+      end: baseStart + prefixEnd,
+    });
+    lastIndex = prefixEnd;
+  }
+
+  if (lastIndex < raw.length) {
+    const trailing = raw.slice(lastIndex);
+    tokens.push({
+      type: 'text',
+      content: trailing,
+      raw: trailing,
+      start: baseStart + lastIndex,
+      end: baseStart + raw.length,
+    });
+  }
+
+  return tokens;
 }
 
 // Box-drawing character classes for colored structural rendering
@@ -843,22 +910,14 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
     tokens = headingMerged;
   }
 
-  // Prefix-marker pass: color word:: patterns (scratch::, pages::, sh::, ctx::, etc.)
+  // Prefix-marker pass:
+  // - line-leading word:: patterns (with optional indent)
+  // - bracketed [word:: patterns anywhere in text
   if (hasPrefix) {
     const prefixMerged: InlineToken[] = [];
     for (const token of tokens) {
       if (token.type === 'text' && hasPrefixMarker(token.raw)) {
-        const match = token.raw.match(/^(\s*\w+::)/);
-        if (match) {
-          const pfx = match[0];
-          prefixMerged.push({ type: 'prefix-marker', content: pfx, raw: pfx, start: token.start, end: token.start + pfx.length });
-          if (pfx.length < token.raw.length) {
-            const rest = token.raw.slice(pfx.length);
-            prefixMerged.push({ type: 'text', content: rest, raw: rest, start: token.start + pfx.length, end: token.end });
-          }
-        } else {
-          prefixMerged.push(token);
-        }
+        prefixMerged.push(...splitPrefixMarkerTokens(token.raw, token.start));
       } else {
         prefixMerged.push(token);
       }
