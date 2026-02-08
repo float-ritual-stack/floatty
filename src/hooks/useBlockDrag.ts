@@ -348,11 +348,14 @@ const runtime = createRoot(() => {
 
     if (movedBlockId) {
       requestAnimationFrame(() => {
-        const el = document.querySelector(`[data-block-id="${movedBlockId}"]`);
-        if (!el) return;
-        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        el.classList.add('block-just-dropped');
-        setTimeout(() => el.classList.remove('block-just-dropped'), 1200);
+        const blockItem = document.querySelector(`[data-block-id="${movedBlockId}"]`);
+        if (!blockItem) return;
+        blockItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        // Add class to .block-wrapper (parent) so .block-children descendants also flash
+        const wrapper = blockItem.closest('.block-wrapper');
+        if (!wrapper) return;
+        wrapper.classList.add('block-just-dropped');
+        setTimeout(() => wrapper.classList.remove('block-just-dropped'), 1200);
       });
     }
   };
