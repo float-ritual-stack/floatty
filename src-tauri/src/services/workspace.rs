@@ -2,19 +2,28 @@
 ///
 /// Business logic for workspace state management and Y.Doc clearing.
 
-use crate::db::FloattyDb;
+use crate::db::{FloattyDb, WorkspaceStateRecord};
 use floatty_core::YDocStore;
 use std::sync::Arc;
 use yrs::{Array, Map, ReadTxn, Transact};
 
-/// Get persisted workspace layout state (JSON blob)
-pub fn get_state(db: &Arc<FloattyDb>, key: &str) -> Result<Option<String>, String> {
+/// Get persisted workspace layout state (JSON + save sequence)
+pub fn get_state(
+    db: &Arc<FloattyDb>,
+    key: &str,
+) -> Result<Option<WorkspaceStateRecord>, String> {
     db.get_workspace_state(key).map_err(|e| e.to_string())
 }
 
-/// Save workspace layout state (JSON blob)
-pub fn set_state(db: &Arc<FloattyDb>, key: &str, state_json: &str) -> Result<(), String> {
-    db.set_workspace_state(key, state_json)
+/// Save workspace layout state (JSON blob).
+/// Returns `true` if the write was accepted, `false` if rejected as stale.
+pub fn set_state(
+    db: &Arc<FloattyDb>,
+    key: &str,
+    state_json: &str,
+    save_seq: i64,
+) -> Result<bool, String> {
+    db.set_workspace_state(key, state_json, save_seq)
         .map_err(|e| e.to_string())
 }
 

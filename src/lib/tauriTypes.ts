@@ -169,10 +169,10 @@ interface TauriCommands {
   // ─────────────────────────────────────────────────────────────
   get_workspace_state: {
     args: { key: string };
-    returns: string | null;
+    returns: { stateJson: string; saveSeq: number } | null;
   };
   save_workspace_state: {
-    args: { key: string; stateJson: string };
+    args: { key: string; stateJson: string; saveSeq: number };
     returns: void;
   };
   clear_workspace: {

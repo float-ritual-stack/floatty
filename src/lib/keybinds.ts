@@ -167,6 +167,46 @@ export function getActionForEvent(event: KeyboardEvent, binds: Keybind[] = defau
   return null;
 }
 
+/**
+ * Actions owned by Terminal's global capture listener.
+ * Outliner-local actions are intentionally excluded and handled in Outliner.tsx.
+ */
+export const GLOBAL_KEY_ACTIONS: ReadonlySet<KeyAction> = new Set<KeyAction>([
+  'newTab',
+  'closeTab',
+  'nextTab',
+  'prevTab',
+  'goToTab1',
+  'goToTab2',
+  'goToTab3',
+  'goToTab4',
+  'goToTab5',
+  'goToTab6',
+  'goToTab7',
+  'goToTab8',
+  'goToTab9',
+  'toggleSidebar',
+  'togglePanel',
+  'splitHorizontal',
+  'splitVertical',
+  'splitHorizontalOutliner',
+  'splitVerticalOutliner',
+  'closeSplit',
+  'focusLeft',
+  'focusRight',
+  'focusUp',
+  'focusDown',
+  'zoomIn',
+  'zoomOut',
+  'zoomReset',
+  'nextTheme',
+]);
+
+/** True if the action should be handled by Terminal's global capture listener. */
+export function isGlobalKeyAction(action: KeyAction): boolean {
+  return GLOBAL_KEY_ACTIONS.has(action);
+}
+
 // Format keybind for display (e.g., "⌘T" or "Ctrl+T")
 export function formatKeybind(bind: Keybind): string {
   const parts: string[] = [];

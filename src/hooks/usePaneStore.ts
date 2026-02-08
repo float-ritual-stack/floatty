@@ -6,7 +6,7 @@
  * FLO-180: Added navigation history (back/forward) per pane.
  */
 
-import { createRoot } from 'solid-js';
+import { createRoot, createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import {
   createNavigationState,
@@ -47,6 +47,11 @@ function createPaneStore() {
     focusedBlockId: {},
     navigationHistory: {},
   });
+  const [persistenceVersion, setPersistenceVersion] = createSignal(0);
+
+  const bumpPersistenceVersion = () => {
+    setPersistenceVersion((v) => v + 1);
+  };
 
   const toggleCollapsed = (paneId: string, blockId: string, blockDefaultCollapsed: boolean = false) => {
     // Get current value first to ensure proper toggle
@@ -61,6 +66,7 @@ function createPaneStore() {
     } else {
       setState('collapsed', paneId, blockId, newValue);
     }
+    bumpPersistenceVersion();
   };
 
   const isCollapsed = (paneId: string, blockId: string, defaultCollapsed: boolean): boolean => {
@@ -80,6 +86,7 @@ function createPaneStore() {
     } else {
       setState('collapsed', paneId, blockId, collapsed);
     }
+    bumpPersistenceVersion();
   };
 
   const getZoomedRootId = (paneId: string): string | null => {
@@ -87,7 +94,9 @@ function createPaneStore() {
   };
 
   const setZoomedRoot = (paneId: string, blockId: string | null) => {
+    if (state.zoomedRootId[paneId] === blockId) return;
     setState('zoomedRootId', paneId, blockId);
+    bumpPersistenceVersion();
   };
 
   // FLO-77: Focused block tracking for clone-on-split
@@ -96,7 +105,9 @@ function createPaneStore() {
   };
 
   const setFocusedBlockId = (paneId: string, blockId: string | null) => {
+    if (state.focusedBlockId[paneId] === blockId) return;
     setState('focusedBlockId', paneId, blockId);
+    bumpPersistenceVersion();
   };
 
   // ═══════════════════════════════════════════════════════════════
@@ -134,6 +145,7 @@ function createPaneStore() {
 
     const newState = pushNavigationPure(currentState, entry, DEFAULT_MAX_HISTORY_SIZE);
     setState('navigationHistory', paneId, newState);
+    bumpPersistenceVersion();
   };
 
   /**
@@ -169,6 +181,7 @@ function createPaneStore() {
           setFocusedBlockId(paneId, result.entry.focusedBlockId);
         }
 
+        bumpPersistenceVersion();
         return result.entry;
       }
 
@@ -179,6 +192,7 @@ function createPaneStore() {
 
     // Exhausted history without finding valid entry
     setState('navigationHistory', paneId, result.state);
+    bumpPersistenceVersion();
     return null;
   };
 
@@ -215,6 +229,7 @@ function createPaneStore() {
           setFocusedBlockId(paneId, result.entry.focusedBlockId);
         }
 
+        bumpPersistenceVersion();
         return result.entry;
       }
 
@@ -225,6 +240,7 @@ function createPaneStore() {
 
     // Exhausted history without finding valid entry
     setState('navigationHistory', paneId, result.state);
+    bumpPersistenceVersion();
     return null;
   };
 
@@ -336,6 +352,7 @@ function createPaneStore() {
 
     // FLO-180: Initialize EMPTY history for new pane (not cloned)
     setState('navigationHistory', targetPaneId, createNavigationState());
+    bumpPersistenceVersion();
   };
 
   /**
@@ -343,24 +360,34 @@ function createPaneStore() {
    * Should be called when a pane is closed to remove orphaned view state
    */
   const removePane = (paneId: string) => {
+    let changed = false;
+
     // FLO-211: Clean up pending history navigation flag (module-level Set)
     historyNavigationPending.delete(paneId);
 
     // Clean up collapsed state
     if (state.collapsed[paneId]) {
       setState('collapsed', paneId, undefined!);
+      changed = true;
     }
     // Clean up zoomed state
     if (state.zoomedRootId[paneId] !== undefined) {
       setState('zoomedRootId', paneId, undefined!);
+      changed = true;
     }
     // FLO-77: Clean up focused block state
     if (state.focusedBlockId[paneId] !== undefined) {
       setState('focusedBlockId', paneId, undefined!);
+      changed = true;
     }
     // FLO-180: Clean up navigation history
     if (state.navigationHistory[paneId]) {
       setState('navigationHistory', paneId, undefined!);
+      changed = true;
+    }
+
+    if (changed) {
+      bumpPersistenceVersion();
     }
   };
 
@@ -452,6 +479,7 @@ function createPaneStore() {
   };
 
   return {
+    persistenceVersion,
     toggleCollapsed,
     isCollapsed,
     setCollapsed,

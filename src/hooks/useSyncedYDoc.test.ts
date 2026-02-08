@@ -6,7 +6,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { base64ToBytes, bytesToBase64, getSharedDoc } from './useSyncedYDoc';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  getSharedDoc,
+  resolveReconnectBufferAction,
+  shouldStartOverflowRecovery,
+} from './useSyncedYDoc';
 
 describe('base64 utilities', () => {
   it('round-trips binary data', () => {
@@ -58,5 +64,26 @@ describe('Y.Doc singleton', () => {
     const map2 = doc2.getMap('test-singleton-persist');
 
     expect(map2.get('key')).toBe('value');
+  });
+});
+
+describe('reconnect buffer overflow guards', () => {
+  it('buffers while under capacity', () => {
+    expect(resolveReconnectBufferAction(10, 100, false)).toBe('buffer');
+  });
+
+  it('latches overflow on first capacity breach', () => {
+    expect(resolveReconnectBufferAction(100, 100, false)).toBe('overflow-first');
+  });
+
+  it('continues dropping while overflow is latched', () => {
+    expect(resolveReconnectBufferAction(0, 100, true)).toBe('overflow-repeat');
+    expect(resolveReconnectBufferAction(100, 100, true)).toBe('overflow-repeat');
+  });
+
+  it('starts overflow recovery only when latched and not already running', () => {
+    expect(shouldStartOverflowRecovery(true, false)).toBe(true);
+    expect(shouldStartOverflowRecovery(true, true)).toBe(false);
+    expect(shouldStartOverflowRecovery(false, false)).toBe(false);
   });
 });

@@ -116,6 +116,27 @@ describe('ProjectionScheduler', () => {
       expect(scheduler.queueSize).toBe(0);
     });
 
+    it('drains events enqueued during flush in the same cycle', async () => {
+      const seenBlockIds: string[] = [];
+      let enqueuedTail = false;
+
+      scheduler.register('test', async (envelope) => {
+        seenBlockIds.push(...envelope.events.map((event) => event.blockId));
+
+        if (!enqueuedTail) {
+          enqueuedTail = true;
+          scheduler.enqueue(createTestEnvelope([{ blockId: 'tail' }]));
+        }
+      });
+
+      scheduler.enqueue(createTestEnvelope([{ blockId: 'initial' }]));
+
+      await scheduler.flush();
+
+      expect(seenBlockIds).toEqual(['initial', 'tail']);
+      expect(scheduler.queueSize).toBe(0);
+    });
+
     it('does nothing when queue is empty', async () => {
       const handler = vi.fn().mockResolvedValue(undefined);
       scheduler.register('test', handler);
@@ -274,6 +295,28 @@ describe('ProjectionScheduler', () => {
       await vi.runAllTimersAsync();
 
       expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  describe('drain loop bound', () => {
+    it('terminates when handler always re-enqueues', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      scheduler.register('infinite', async () => {
+        // Always re-enqueue — would loop forever without bound
+        scheduler.enqueue(createTestEnvelope([{ blockId: 'loop' }]));
+      });
+
+      scheduler.enqueue(createTestEnvelope([{ blockId: 'seed' }]));
+
+      await scheduler.flush();
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Drain loop exceeded'),
+        // no second arg — it's a single string message
+      );
+
+      consoleSpy.mockRestore();
     });
   });
 

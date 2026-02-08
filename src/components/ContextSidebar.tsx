@@ -1,5 +1,6 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { invoke } from '../lib/tauriTypes';
+import { onCtxMarkersChanged } from '../lib/ctxEvents';
 
 // Check if running in Tauri environment (Tauri 2 uses '__TAURI_INTERNALS__')
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -67,34 +68,53 @@ export function ContextSidebar(props: { visible: boolean }) {
   const [counts, setCounts] = createSignal<MarkerCounts>({ pending: 0, parsed: 0, error: 0, total: 0 });
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
+  let fetchInFlight = false;
+  let fetchQueued = false;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const queueFetch = (delayMs = 0) => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+    }
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      fetchMarkers();
+    }, delayMs);
+  };
 
   // Fetch markers from backend
   const fetchMarkers = async () => {
-    if (!isTauri) {
-      // Mock data for browser mode
-      setMarkers([
-        {
-          id: 'mock-1',
-          session_file: '/mock/session.jsonl',
-          raw_line: 'ctx::2024-03-20 @ 10:30 AM [project::floatty] [mode::coding] Initial setup',
-          status: 'parsed',
-          parsed: {
-            timestamp: '2024-03-20',
-            time: '10:30 AM',
-            project: 'floatty',
-            mode: 'coding',
-            message: 'Initial setup completed',
-          },
-          created_at: new Date().toISOString(),
-          retry_count: 0,
-        },
-      ]);
-      setCounts({ pending: 0, parsed: 1, error: 0, total: 1 });
-      setLoading(false);
+    if (fetchInFlight) {
+      fetchQueued = true;
       return;
     }
+    fetchInFlight = true;
 
     try {
+      if (!isTauri) {
+        // Mock data for browser mode
+        setMarkers([
+          {
+            id: 'mock-1',
+            session_file: '/mock/session.jsonl',
+            raw_line: 'ctx::2024-03-20 @ 10:30 AM [project::floatty] [mode::coding] Initial setup',
+            status: 'parsed',
+            parsed: {
+              timestamp: '2024-03-20',
+              time: '10:30 AM',
+              project: 'floatty',
+              mode: 'coding',
+              message: 'Initial setup completed',
+            },
+            created_at: new Date().toISOString(),
+            retry_count: 0,
+          },
+        ]);
+        setCounts({ pending: 0, parsed: 1, error: 0, total: 1 });
+        setLoading(false);
+        return;
+      }
+
       const [newMarkers, newCounts] = await Promise.all([
         invoke<CtxMarker[]>('get_ctx_markers', { limit: 100 }),
         invoke<MarkerCounts>('get_ctx_counts'),
@@ -107,22 +127,40 @@ export function ContextSidebar(props: { visible: boolean }) {
       console.error('Failed to fetch markers:', e);
       setError(String(e));
       setLoading(false);
+    } finally {
+      fetchInFlight = false;
+      if (fetchQueued) {
+        fetchQueued = false;
+        queueFetch(0);
+      }
     }
   };
 
-  // Poll for updates
+  // Event-driven refresh lifecycle (visible only): initial load + ctx events + focus/visibility.
   createEffect(() => {
     if (!props.visible) return;
 
-    // Schedule initial fetch (not called synchronously in effect)
-    const initialTimeout = setTimeout(fetchMarkers, 0);
+    queueFetch(0);
+    const unsubscribeCtx = onCtxMarkersChanged(() => queueFetch(150));
+    const onFocus = () => queueFetch(0);
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        queueFetch(0);
+      }
+    };
 
-    // Poll every 2 seconds
-    const interval = setInterval(fetchMarkers, 2000);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     onCleanup(() => {
-      clearTimeout(initialTimeout);
-      clearInterval(interval);
+      unsubscribeCtx();
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
+      fetchQueued = false;
     });
   });
 
@@ -144,7 +182,7 @@ export function ContextSidebar(props: { visible: boolean }) {
               <div class="ctx-sidebar-header">Context Stream</div>
               <div class="ctx-error-state">
                 <div class="ctx-error-message" role="alert">{error()}</div>
-                <button class="ctx-retry-button" onClick={fetchMarkers}>
+                <button class="ctx-retry-button" onClick={() => queueFetch(0)}>
                   Retry
                 </button>
               </div>

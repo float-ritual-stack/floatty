@@ -245,6 +245,26 @@ describe('EventBus', () => {
       bus.emit(createTestEnvelope([{ type: 'block:delete' }]));
       expect(handler).not.toHaveBeenCalled();
     });
+
+    it('matches fieldChanged filter when changedFields is present', () => {
+      const handler = vi.fn();
+
+      bus.subscribe(handler, {
+        filter: EventFilters.fieldChanged('content'),
+      });
+
+      bus.emit(
+        createTestEnvelope([
+          { type: 'block:update', blockId: 'b1', changedFields: ['content'] },
+          { type: 'block:update', blockId: 'b2', changedFields: ['collapsed'] },
+        ])
+      );
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      const receivedEnvelope = handler.mock.calls[0][0] as EventEnvelope;
+      expect(receivedEnvelope.events).toHaveLength(1);
+      expect(receivedEnvelope.events[0].blockId).toBe('b1');
+    });
   });
 
   describe('error isolation', () => {

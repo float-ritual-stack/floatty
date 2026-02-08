@@ -36,6 +36,8 @@ const SCHEMA_VERSION = 1;
  */
 export interface PersistedWorkspace {
   version: number;
+  // Last accepted workspace save sequence (optional for pre-sequence payloads)
+  saveSeq?: number;
   tabs: Array<{ id: string; title: string }>;
   activeTabId: string | null;
   layouts: Record<string, { root: LayoutNode; activePaneId: string }>;
@@ -66,21 +68,31 @@ export function createWorkspacePersistence() {
   const [loadError, setLoadError] = createSignal<string | null>(null);
 
   let saveTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let nextSaveSeq = 0;
 
   /**
    * Load workspace state from SQLite
    */
   async function loadWorkspace(): Promise<boolean> {
     try {
-      const stateJson = await invoke<string | null>('get_workspace_state', { key: WORKSPACE_KEY });
+      const stored = await invoke<{ stateJson: string; saveSeq: number } | null>(
+        'get_workspace_state',
+        { key: WORKSPACE_KEY },
+      );
 
-      if (!stateJson) {
+      if (!stored) {
         console.log('[WorkspacePersistence] No saved state found, using defaults');
         setIsLoaded(true);
         return false;
       }
 
-      const state = JSON.parse(stateJson) as PersistedWorkspace;
+      // Seed save_seq IMMEDIATELY from DB column — before JSON parse which may throw.
+      // This ensures nextSaveSeq is never reset to 0 by a corrupt JSON blob.
+      if (stored.saveSeq != null && stored.saveSeq > nextSaveSeq) {
+        nextSaveSeq = stored.saveSeq;
+      }
+
+      const state = JSON.parse(stored.stateJson) as PersistedWorkspace;
 
       // Version check (future: migration logic)
       if (state.version !== SCHEMA_VERSION) {
@@ -134,6 +146,12 @@ export function createWorkspacePersistence() {
       // FLO-180: Pass navigationHistory to hydration
       paneStore.hydratePaneState(zoomedRootIds, state.collapsedState, state.focusedBlockId, state.navigationHistory);
 
+      // Reinforcement: also check saveSeq from inside the JSON blob (belt + suspenders).
+      const hydratedSaveSeq = Math.max(state.saveSeq ?? 0, stored.saveSeq ?? 0);
+      if (hydratedSaveSeq > nextSaveSeq) {
+        nextSaveSeq = hydratedSaveSeq;
+      }
+
       console.log(`[WorkspacePersistence] Restored workspace: ${state.tabs.length} tabs`);
       setIsLoaded(true);
       return true;
@@ -151,6 +169,7 @@ export function createWorkspacePersistence() {
    */
   async function saveWorkspace(): Promise<void> {
     try {
+      const saveSeq = ++nextSaveSeq;
       const tabData = tabStore.getTabsForPersistence();
       const layoutData = layoutStore.getLayoutsForPersistence();
       const paneData = paneStore.getPaneStateForPersistence();
@@ -163,6 +182,7 @@ export function createWorkspacePersistence() {
 
       const state: PersistedWorkspace = {
         version: SCHEMA_VERSION,
+        saveSeq,
         tabs: tabData.tabs,
         activeTabId: tabData.activeTabId,
         layouts: layoutData,
@@ -175,9 +195,13 @@ export function createWorkspacePersistence() {
       };
 
       const stateJson = JSON.stringify(state);
-      await invoke('save_workspace_state', { key: WORKSPACE_KEY, stateJson });
+      const accepted = await invoke<boolean>('save_workspace_state', { key: WORKSPACE_KEY, stateJson, saveSeq });
 
-      console.debug('[WorkspacePersistence] Saved workspace state');
+      if (!accepted) {
+        console.error(`[WorkspacePersistence] Save rejected: stale seq ${saveSeq}`);
+      } else {
+        console.debug('[WorkspacePersistence] Saved workspace state');
+      }
 
     } catch (err) {
       console.error('[WorkspacePersistence] Failed to save workspace:', err);
