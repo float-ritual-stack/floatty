@@ -13,12 +13,12 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
-import { ClipboardAddon } from '@xterm/addon-clipboard';
+import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
-import { readText, readImageBase64, readFiles } from 'tauri-plugin-clipboard-api';
+import { readText, readImageBase64, readFiles, writeText as clipboardWriteText } from 'tauri-plugin-clipboard-api';
 
 // Batched clipboard info from Rust (replaces 3 sequential IPC calls)
 interface ClipboardInfo {
@@ -26,6 +26,24 @@ interface ClipboardInfo {
   has_image: boolean;
   has_text: boolean;
 }
+/** Custom clipboard provider using Tauri's clipboard plugin instead of navigator.clipboard */
+const tauriClipboardProvider: IClipboardProvider = {
+  async readText() {
+    try {
+      return await readText() ?? '';
+    } catch {
+      return '';
+    }
+  },
+  async writeText(_selection, text) {
+    try {
+      await clipboardWriteText(text);
+    } catch (e) {
+      console.warn('[ClipboardProvider] Failed to write to clipboard:', e);
+    }
+  },
+};
+
 import { defaultTheme, toXtermTheme } from './themes';
 
 // Terminal font config from ~/.floatty/config.toml
@@ -254,14 +272,18 @@ class TerminalManager {
 
     // OSC 52 clipboard support (tmux copy → system clipboard)
     try {
-      term.loadAddon(new ClipboardAddon());
+      term.loadAddon(new ClipboardAddon(undefined, tauriClipboardProvider));
     } catch (e) {
       console.warn(`[TerminalManager] Clipboard addon failed for ${id}:`, e);
     }
 
-    // Clickable URLs in terminal output
+    // Clickable URLs in terminal output (custom handler for Tauri — window.open() is dead in webview)
     try {
-      term.loadAddon(new WebLinksAddon());
+      term.loadAddon(new WebLinksAddon((_event, uri) => {
+        invoke('open_url', { url: uri }).catch((e) => {
+          console.warn('[WebLinks] Failed to open URL:', e);
+        });
+      }));
     } catch (e) {
       console.warn(`[TerminalManager] WebLinks addon failed for ${id}:`, e);
     }
