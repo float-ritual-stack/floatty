@@ -1095,8 +1095,26 @@ body.pane-dragging .terminal-pane-positioned {
   padding-left: 4px;
 }
 
+.block-children > .block-wrapper {
+  position: relative;
+}
+
+.block-children > .block-wrapper::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 12px;
+  width: 20px;
+  border-top: 1px solid var(--color-indent-guide);
+  pointer-events: none;
+}
+
 .block-children:hover {
   border-left-color: var(--color-indent-guide-active);
+}
+
+.block-children:hover > .block-wrapper::before {
+  border-top-color: var(--color-indent-guide-active);
 }
 
 /* Editing (NOT selected): accent border when cursor is in block */
