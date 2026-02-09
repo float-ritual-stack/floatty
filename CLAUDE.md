@@ -100,6 +100,25 @@ cargo test -p float-pty test_name      # Missing `--` before test filter
 cargo test ...                         # No Cargo.toml in project root
 ```
 
+### Version Bumping
+
+Three files must stay in sync. Use the Edit tool for JSON files — `mv` on this machine is aliased to `mv -i` which blocks on interactive confirmation.
+
+```
+src-tauri/Cargo.toml      # workspace.package.version AND package.version
+package.json              # .version
+src-tauri/tauri.conf.json # .version
+```
+
+**Correct approach** — use Edit tool for all three:
+```
+Edit: src-tauri/Cargo.toml  → "0.7.25" → "0.7.26" (replace_all: true)
+Edit: package.json          → "0.7.25" → "0.7.26"
+Edit: src-tauri/tauri.conf.json → "0.7.25" → "0.7.26"
+```
+
+**WRONG** — `jq ... | mv /tmp/out file` hangs waiting for interactive confirmation.
+
 ### Release Build
 
 floatty uses a headless server architecture - the outliner CRDT state is managed by `floatty-server`, which runs as a sidecar process. For release builds:
