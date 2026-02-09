@@ -72,10 +72,10 @@ pub struct AggregatorConfig {
     #[serde(default = "default_dev_mode_visuals")]
     pub dev_mode_visuals: bool,
     /// Whether this is a dev (debug) build. Populated at load time, not stored in TOML.
-    #[serde(skip_deserializing)]
+    #[serde(skip)]
     pub is_dev_build: bool,
     /// Resolved data directory path. Populated at load time, not stored in TOML.
-    #[serde(skip_deserializing)]
+    #[serde(skip)]
     pub data_dir: String,
 }
 
