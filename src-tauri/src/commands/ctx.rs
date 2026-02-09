@@ -71,3 +71,10 @@ pub fn get_send_model() -> String {
     let config = ctx::get_config();
     config.get_send_model().to_string()
 }
+
+/// Toggle dev mode visuals (orange accent, DEV badge, port display)
+/// Returns the new value after toggle
+#[tauri::command]
+pub fn toggle_dev_visuals() -> Result<bool, String> {
+    ctx::toggle_dev_visuals()
+}

@@ -13,10 +13,12 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
+import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
-import { readText, readImageBase64, readFiles } from 'tauri-plugin-clipboard-api';
+import { readText, readImageBase64, readFiles, writeText as clipboardWriteText } from 'tauri-plugin-clipboard-api';
 
 // Batched clipboard info from Rust (replaces 3 sequential IPC calls)
 interface ClipboardInfo {
@@ -24,6 +26,24 @@ interface ClipboardInfo {
   has_image: boolean;
   has_text: boolean;
 }
+/** Custom clipboard provider using Tauri's clipboard plugin instead of navigator.clipboard */
+const tauriClipboardProvider: IClipboardProvider = {
+  async readText() {
+    try {
+      return await readText() ?? '';
+    } catch {
+      return '';
+    }
+  },
+  async writeText(_selection, text) {
+    try {
+      await clipboardWriteText(text);
+    } catch (e) {
+      console.warn('[ClipboardProvider] Failed to write to clipboard:', e);
+    }
+  },
+};
+
 import { defaultTheme, toXtermTheme } from './themes';
 
 // Terminal font config from ~/.floatty/config.toml
@@ -248,6 +268,24 @@ class TerminalManager {
       term.loadAddon(new LigaturesAddon());
     } catch (e) {
       console.warn(`[TerminalManager] Ligatures addon failed for ${id}:`, e);
+    }
+
+    // OSC 52 clipboard support (tmux copy → system clipboard)
+    try {
+      term.loadAddon(new ClipboardAddon(undefined, tauriClipboardProvider));
+    } catch (e) {
+      console.warn(`[TerminalManager] Clipboard addon failed for ${id}:`, e);
+    }
+
+    // Clickable URLs in terminal output (custom handler for Tauri — window.open() is dead in webview)
+    try {
+      term.loadAddon(new WebLinksAddon((_event, uri) => {
+        invoke('open_url', { url: uri }).catch((e) => {
+          console.warn('[WebLinks] Failed to open URL:', e);
+        });
+      }));
+    } catch (e) {
+      console.warn(`[TerminalManager] WebLinks addon failed for ${id}:`, e);
     }
 
     fitAddon.fit();
@@ -533,10 +571,13 @@ class TerminalManager {
                       term.write('\r\n\x1b[33m[Paste failed: could not read image from clipboard]\x1b[0m');
                     }
                   } else if (info.has_text) {
-                    // Text in clipboard - paste directly
+                    // Text in clipboard - wrap in bracketed paste if terminal app expects it
                     const text = await readText();
                     if (text) {
-                      invoke('plugin:pty|write', { pid, data: text }).catch(console.error);
+                      const data = term.modes.bracketedPasteMode
+                        ? `\x1b[200~${text}\x1b[201~`
+                        : text;
+                      invoke('plugin:pty|write', { pid, data }).catch(console.error);
                     }
                   } else {
                     console.warn('[TerminalManager] Clipboard empty or unsupported format:', info);

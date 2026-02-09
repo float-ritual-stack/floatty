@@ -14,6 +14,7 @@ import { blocksToMarkdown } from '../lib/markdownExport';
 import { invoke, type AggregatorConfig } from '../lib/tauriTypes';
 import { exportOutlineToJSON, downloadJSON, validateExport } from '../lib/jsonExport';
 import { downloadBinary } from '../lib/binaryExport';
+import { themeStore } from '../hooks/useThemeStore';
 
 interface OutlinerProps {
   paneId: string;
@@ -80,6 +81,9 @@ export function Outliner(props: OutlinerProps) {
     // Load config (always needed for homebase keybind Cmd+Shift+0)
     const configPromise = invoke('get_ctx_config', {}).then((config: AggregatorConfig) => {
       setCachedConfig(config);  // Cache for homebase keybind
+      // FLO-259: Apply dev mode visuals from config
+      themeStore.setDevMode(config.dev_mode_visuals);
+      themeStore.setServerPort(config.server_port);
       return config;
     }).catch((err: unknown) => {
       console.warn('[Outliner] Failed to load config:', err);

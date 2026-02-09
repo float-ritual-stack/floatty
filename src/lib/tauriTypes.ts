@@ -109,6 +109,12 @@ export interface AggregatorConfig {
   split_collapse_depth?: number;
   /** Collapse depth on initial app load (0 = disabled) */
   initial_collapse_depth?: number;
+  /** Enable dev mode visual overrides (orange accent, DEV badge, port in status bar) */
+  dev_mode_visuals: boolean;
+  /** Whether this is a dev (debug) build (runtime-only, not persisted) */
+  is_dev_build: boolean;
+  /** Resolved data directory path (runtime-only, not persisted) */
+  data_dir: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -142,6 +148,14 @@ interface TauriCommands {
   clear_ctx_markers: {
     args: Record<string, never>;
     returns: void;
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // DEV MODE
+  // ─────────────────────────────────────────────────────────────
+  toggle_dev_visuals: {
+    args: Record<string, never>;
+    returns: boolean;
   };
 
   // ─────────────────────────────────────────────────────────────

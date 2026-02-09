@@ -2,6 +2,7 @@ import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'so
 import { Key } from '@solid-primitives/keyed';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { invoke } from '@tauri-apps/api/core';
+import { invoke as typedInvoke } from '../lib/tauriTypes';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
@@ -148,6 +149,11 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
           </Show>
         </span>
       </Show>
+
+      {/* Port display (dev mode only, shown via CSS) */}
+      <span class="status-item status-port">
+        :{themeStore.serverPort()}
+      </span>
 
       {/* Spacer */}
       <span style={{ flex: 1 }} />
@@ -816,6 +822,14 @@ export function Terminal() {
         }
         case 'nextTheme': {
           themeStore.nextTheme();
+          break;
+        }
+        case 'toggleDevVisuals': {
+          typedInvoke('toggle_dev_visuals', {}).then((newValue) => {
+            themeStore.setDevMode(newValue);
+          }).catch((err) => {
+            console.error('[Terminal] Failed to toggle dev visuals:', err);
+          });
           break;
         }
       }

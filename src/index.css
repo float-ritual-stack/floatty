@@ -1189,6 +1189,39 @@ body.block-dragging * {
   color: var(--color-fg-muted);
 }
 
+/* ================================================
+   Dev Mode Visual Distinction (FLO-259)
+   ================================================ */
+
+/* DEV badge in status bar (left side, before other items) */
+.dev-mode .status-bar::before {
+  content: 'DEV';
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #1a1a2e;
+  background: #f97316;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+/* Orange accent line on tab bar */
+.dev-mode .tab-bar {
+  border-bottom-color: #f97316;
+}
+
+/* Port display in status bar (shown via JS when dev mode active) */
+.status-port {
+  display: none;
+  color: #f97316;
+  font-size: 11px;
+}
+
+.dev-mode .status-port {
+  display: flex;
+}
+
 /* Block content syntax colors - using ANSI palette */
 .block-content-h1 { color: var(--color-ansi-blue); }
 .block-content-h2 { color: var(--color-ansi-bright-blue); }
@@ -1206,6 +1239,7 @@ body.block-dragging * {
 .block-content-picker { color: var(--color-ansi-bright-cyan); }
 .block-content-ran { color: var(--color-ansi-green); }  /* Muted green - resolved command */
 .block-content-filter { color: var(--color-ansi-cyan); }  /* Filter blocks - cyan like sh:: */
+.block-content-info { color: var(--color-ansi-bright-yellow); }  /* Info dump - bright yellow */
 
 /* ================================================
    Picker Block - Temporary TV/Fuzzy Finder

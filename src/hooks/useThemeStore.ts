@@ -11,6 +11,7 @@ import {
   getTheme,
   themeNames,
   applyThemeToCSS,
+  applyDevModeOverride,
   toXtermTheme,
   type FloattyTheme,
 } from '../lib/themes';
@@ -19,6 +20,8 @@ import { terminalManager } from '../lib/terminalManager';
 function createThemeStore() {
   const [currentThemeName, setCurrentThemeName] = createSignal<string>('default');
   const [isLoaded, setIsLoaded] = createSignal(false);
+  const [devModeVisuals, setDevModeVisuals] = createSignal(false);
+  const [serverPort, setServerPort] = createSignal(0);
 
   /**
    * Get the current theme object
@@ -31,6 +34,9 @@ function createThemeStore() {
   const applyTheme = (theme: FloattyTheme) => {
     // Apply CSS variables
     applyThemeToCSS(theme);
+
+    // Re-apply dev mode override after theme switch (orange accent must win)
+    applyDevModeOverride(devModeVisuals(), theme);
 
     // Update all terminal instances
     const xtermTheme = toXtermTheme(theme);
@@ -85,15 +91,27 @@ function createThemeStore() {
     setIsLoaded(true);
   };
 
+  /**
+   * Set dev mode visuals flag and apply/remove override
+   */
+  const setDevMode = (enabled: boolean) => {
+    setDevModeVisuals(enabled);
+    applyDevModeOverride(enabled, currentTheme());
+  };
+
   return {
     // State (reactive)
     currentThemeName,
     currentTheme,
     isLoaded,
+    devModeVisuals,
+    serverPort,
     // Actions
     setTheme,
     nextTheme,
     loadTheme,
+    setDevMode,
+    setServerPort,
     // Constants
     availableThemes: themeNames,
   };

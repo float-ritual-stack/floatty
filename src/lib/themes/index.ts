@@ -3,7 +3,7 @@
  */
 
 export type { FloattyTheme, AnsiColors } from './types';
-export { toXtermTheme, applyThemeToCSS } from './types';
+export { toXtermTheme, applyThemeToCSS, applyDevModeOverride } from './types';
 
 export { defaultTheme } from './default';
 export { draculaTheme } from './dracula';

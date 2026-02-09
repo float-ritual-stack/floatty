@@ -38,6 +38,24 @@ pub async fn execute_ai_command(prompt: String) -> Result<String, String> {
     ).await
 }
 
+/// Open a URL in the default browser
+///
+/// Validates URL scheme (http/https only) to prevent injection.
+/// Uses macOS `open` command (floatty is macOS-only currently).
+#[tauri::command]
+pub async fn open_url(url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("Only http/https URLs supported, got: {scheme}"));
+    }
+    std::process::Command::new("open")
+        .arg(parsed.as_str())
+        .spawn()
+        .map_err(|e| format!("Failed to open URL: {e}"))?;
+    Ok(())
+}
+
 /// Execute a multi-turn conversation using Ollama chat API
 ///
 /// Tauri command wrapper - delegates to services::execution::execute_ai_conversation

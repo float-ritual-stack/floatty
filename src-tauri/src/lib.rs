@@ -15,8 +15,8 @@ use commands::{
     check_hooks_installed, clear_ctx_markers, clear_workspace, execute_ai_command,
     execute_ai_conversation, execute_shell_command, get_clipboard_info, get_ctx_config,
     get_ctx_counts, get_ctx_markers, get_send_model, get_theme, get_workspace_state,
-    install_shell_hooks, read_help_file, save_clipboard_image, save_workspace_state,
-    set_ctx_config, set_theme, uninstall_shell_hooks,
+    install_shell_hooks, open_url, read_help_file, save_clipboard_image, save_workspace_state,
+    set_ctx_config, set_theme, toggle_dev_visuals, uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
 use paths::DataPaths;
@@ -334,6 +334,8 @@ pub fn run() {
                     get_workspace_state,
                     save_workspace_state,
                     read_help_file,
+                    toggle_dev_visuals,
+                    open_url,
                 ]
             }
             // macOS: include panel commands
@@ -363,6 +365,8 @@ pub fn run() {
                     get_workspace_state,
                     save_workspace_state,
                     read_help_file,
+                    toggle_dev_visuals,
+                    open_url,
                     panel::show_test_panel,
                     panel::hide_test_panel,
                     panel::toggle_test_panel,
