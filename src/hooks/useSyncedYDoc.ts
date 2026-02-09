@@ -726,6 +726,17 @@ function applyWsMessage(msg: WsMessage) {
     return;
   }
 
+  // Heartbeat: seq-only message (no payload).
+  // Use it only for gap detection; do NOT treat it as an applied update.
+  if (msg.seq !== undefined && !msg.data) {
+    const gap = seqTracker.observeHeartbeat(msg.seq);
+    if (gap) {
+      console.warn(`[WS] Gap detected (heartbeat): ${gap.fromSeq} → ${gap.toSeq} (missing up to ${gap.toSeq - gap.fromSeq} updates)`);
+      queueGapFetch(gap.fromSeq, gap.toSeq);
+    }
+    return;
+  }
+
   // Detect restore/full-state broadcasts: has data but no seq
   // These replace the entire Y.Doc state, so pre-restore seq tracking is stale.
   // Reset before applying to avoid false gap detection against old seq values.

@@ -142,6 +142,28 @@ export class SyncSequenceTracker {
   }
 
   /**
+   * Observe a sequence number from a heartbeat message (seq-only, no payload).
+   *
+   * Heartbeats indicate the server's latest persisted sequence, but they do NOT
+   * carry update data. Therefore, they must never advance lastSeen/contiguous.
+   * They are used only to detect whether we are behind and should fetch updates.
+   *
+   * @returns Gap info if heartbeat indicates we're behind, null otherwise
+   */
+  observeHeartbeat(seq: number): GapDetected | null {
+    if (this._lastSeenSeq === null) {
+      // No baseline yet - wait for authoritative state/bootstrap paths.
+      return null;
+    }
+
+    if (seq > this._lastSeenSeq) {
+      return { fromSeq: this._lastSeenSeq, toSeq: seq };
+    }
+
+    return null;
+  }
+
+  /**
    * Update lastSeenSeq monotonically.
    * Only updates if newSeq > current lastSeenSeq (or if lastSeenSeq is null).
    * Does NOT fire persistence callback - that happens when contiguous advances.
