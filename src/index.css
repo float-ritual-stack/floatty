@@ -14,7 +14,7 @@
   --color-border: #2a2a4a;
   --color-indent-guide: color-mix(in srgb, var(--color-fg) 12%, var(--color-bg));
   --color-indent-guide-active: color-mix(in srgb, var(--color-fg) 25%, var(--color-bg));
-  --block-indent-width: 20px;
+  --block-indent-width: 28px;
 
   /* Accent colors */
   --color-accent: #7c3aed;
@@ -1099,6 +1099,7 @@ body.pane-dragging .terminal-pane-positioned {
   position: relative;
 }
 
+/* Horizontal connector from guide to block */
 .block-children > .block-wrapper::before {
   content: '';
   position: absolute;
@@ -1106,6 +1107,18 @@ body.pane-dragging .terminal-pane-positioned {
   top: 12px;
   width: 20px;
   border-top: 1px solid var(--color-indent-guide);
+  pointer-events: none;
+}
+
+/* Last child: mask guide below connector (└─ effect) */
+.block-children > .block-wrapper:last-child::after {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 13px;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-bg);
   pointer-events: none;
 }
 
