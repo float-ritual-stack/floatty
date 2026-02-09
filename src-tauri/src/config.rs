@@ -217,11 +217,7 @@ impl AggregatorConfig {
         std::env::var("FLOATTY_DATA_DIR")
             .ok()
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".floatty")
-            })
+            .unwrap_or_else(crate::paths::DataPaths::default_root)
             .join("config.toml")
     }
 
