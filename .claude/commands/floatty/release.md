@@ -30,7 +30,15 @@ git status --porcelain
 npm run test -- --run
 ```
 
-### 2. Determine New Version
+### 2. Symmetry / Drift Check (FLO-317)
+
+Before releasing, verify no unguarded path fallbacks or pattern drift.
+
+Run ALL grep patterns AND the release assertions checklist from @.claude/commands/floatty/references/symmetry-check-patterns.md
+
+If any issues found, fix before continuing. This is the "FLO-317 never again" gate.
+
+### 3. Determine New Version
 
 Get current version and calculate new:
 
@@ -47,7 +55,7 @@ If `$ARGUMENTS` is `patch`/`minor`/`major`, calculate the bump:
 
 If `$ARGUMENTS` is explicit (like `0.4.0`), use that.
 
-### 3. Generate Changelog Entry
+### 4. Generate Changelog Entry
 
 Get commits since last tag:
 
@@ -62,7 +70,7 @@ Create a changelog entry following the existing format in CHANGELOG.md:
 
 **IMPORTANT**: Show the proposed changelog entry to the user and ask for approval before proceeding.
 
-### 4. Update Version Numbers
+### 5. Update Version Numbers
 
 Update ALL version locations (there are THREE):
 
@@ -83,7 +91,7 @@ echo "Cargo.toml:          $(grep '^version' src-tauri/Cargo.toml | head -1 | cu
 echo "tauri.conf.json:     $(jq -r '.version' src-tauri/tauri.conf.json)"
 ```
 
-### 5. Update CHANGELOG.md
+### 6. Update CHANGELOG.md
 
 Prepend the new entry after the header, using today's date:
 
@@ -93,20 +101,20 @@ date "+%Y-%m-%d"
 
 Format: `## [x.y.z] - YYYY-MM-DD`
 
-### 6. Create Release Commit
+### 7. Create Release Commit
 
 ```bash
 git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json CHANGELOG.md
 git commit -m "chore: release v$NEW_VERSION"
 ```
 
-### 7. Create Git Tag
+### 8. Create Git Tag
 
 ```bash
 git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
 ```
 
-### 8. Summary & Next Steps
+### 9. Summary & Next Steps
 
 Show:
 - Version: old → new

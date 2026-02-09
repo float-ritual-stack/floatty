@@ -143,6 +143,16 @@ pub fn run() {
     // Resolve data paths from FLOATTY_DATA_DIR or default ~/.floatty
     let paths = DataPaths::resolve();
 
+    // Preflight: verify data dir matches build profile (FLO-317 "never again")
+    #[cfg(debug_assertions)]
+    if paths.root.ends_with(".floatty") && std::env::var("FLOATTY_DATA_DIR").is_err() {
+        panic!("BUG: dev build resolved to release data dir (~/.floatty). Check DataPaths.");
+    }
+    #[cfg(not(debug_assertions))]
+    if paths.root.ends_with(".floatty-dev") && std::env::var("FLOATTY_DATA_DIR").is_err() {
+        panic!("BUG: release build resolved to dev data dir (~/.floatty-dev). Check DataPaths.");
+    }
+
     // Ensure directories exist before logging
     if let Err(e) = paths.ensure_dirs() {
         eprintln!("Failed to create data directories: {}", e);

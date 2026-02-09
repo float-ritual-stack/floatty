@@ -31,6 +31,19 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // Preflight: verify data dir matches build profile (FLO-317 "never again")
+    {
+        let data_root = floatty_server::config::data_dir();
+        #[cfg(debug_assertions)]
+        if data_root.ends_with(".floatty") && std::env::var("FLOATTY_DATA_DIR").is_err() {
+            panic!("BUG: dev server resolved to release data dir. Check config::data_dir().");
+        }
+        #[cfg(not(debug_assertions))]
+        if data_root.ends_with(".floatty-dev") && std::env::var("FLOATTY_DATA_DIR").is_err() {
+            panic!("BUG: release server resolved to dev data dir. Check config::data_dir().");
+        }
+    }
+
     // Load config from file
     let config = ServerConfig::load();
 

@@ -74,3 +74,11 @@ Critical anti-patterns that will break floatty.
 - Put business logic in Tauri commands (use `src-tauri/src/services/` for business logic)
 - Skip the services pattern for new features (thin command adapters, pure service logic)
 - Add block operations to API without emitting corresponding `BlockChange::*` event (hooks depend on complete event coverage - FLO-224 missed `Moved` event on reparent, caught by Greptile)
+
+## Paths/Config (Build Profile Isolation)
+
+- Construct paths with hardcoded `.floatty` or `.floatty-dev` outside `paths.rs` (use `DataPaths::default_root()` or pass paths through from `DataPaths::resolve()`)
+- Add new `data_dir()` / `default_*_path()` functions without `#[cfg(debug_assertions)]` gate (FLO-317: env-var fallback missed compile-time isolation switch)
+- Call deprecated `AggregatorConfig::load()` / `save()` in new code (use `load_from(&paths.config)` / `save_to(&paths.config)`)
+- Assume `config.save()` only writes the field you changed (it serializes the ENTIRE in-memory struct — every field gets written, including ports)
+- Add file writes before the preflight assertion in `lib.rs` or `main.rs` (preflight must run before ANY `create_dir_all`, DB open, or server spawn)

@@ -646,7 +646,7 @@ export function BlockItem(props: BlockItemProps) {
   };
 
   return (
-    <div class="block-wrapper">
+    <div class="block-wrapper" data-depth={props.depth}>
       <div
         class="block-item"
         data-block-id={blockId}

@@ -12,6 +12,9 @@
   --color-fg: #eaeaea;
   --color-fg-muted: #8b8b8b;
   --color-border: #2a2a4a;
+  --color-indent-guide: color-mix(in srgb, var(--color-fg) 12%, var(--color-bg));
+  --color-indent-guide-active: color-mix(in srgb, var(--color-fg) 25%, var(--color-bg));
+  --block-indent-width: 28px;
 
   /* Accent colors */
   --color-accent: #7c3aed;
@@ -1087,9 +1090,61 @@ body.pane-dragging .terminal-pane-positioned {
 }
 
 .block-children {
-  border-left: 1px solid var(--color-border);
-  margin-left: 6px;
-  padding-left: 2px;
+  border-left: 1px solid var(--color-indent-guide);
+  margin-left: var(--block-indent-width);
+  padding-left: 4px;
+}
+
+.block-children > .block-wrapper {
+  position: relative;
+}
+
+/* Horizontal connector from guide to block */
+.block-children > .block-wrapper::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 12px;
+  width: 20px;
+  border-top: 1px solid var(--color-indent-guide);
+  pointer-events: none;
+}
+
+/* Last child leaf (no sub-children): mask guide below connector (└─ effect) */
+.block-children > .block-wrapper:last-child:not(:has(> .block-children))::after {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 13px;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-bg);
+  pointer-events: none;
+}
+
+/* Last child with sub-children: mask guide only alongside children area,
+   preserving guide visibility alongside multi-line block-item content */
+.block-children > .block-wrapper:last-child > .block-children {
+  position: relative;
+}
+.block-children > .block-wrapper:last-child > .block-children::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--block-indent-width) - 5px);
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-bg);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.block-children:hover {
+  border-left-color: var(--color-indent-guide-active);
+}
+
+.block-children:hover > .block-wrapper::before {
+  border-top-color: var(--color-indent-guide-active);
 }
 
 /* Editing (NOT selected): accent border when cursor is in block */
