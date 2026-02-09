@@ -13,6 +13,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
@@ -248,6 +250,20 @@ class TerminalManager {
       term.loadAddon(new LigaturesAddon());
     } catch (e) {
       console.warn(`[TerminalManager] Ligatures addon failed for ${id}:`, e);
+    }
+
+    // OSC 52 clipboard support (tmux copy → system clipboard)
+    try {
+      term.loadAddon(new ClipboardAddon());
+    } catch (e) {
+      console.warn(`[TerminalManager] Clipboard addon failed for ${id}:`, e);
+    }
+
+    // Clickable URLs in terminal output
+    try {
+      term.loadAddon(new WebLinksAddon());
+    } catch (e) {
+      console.warn(`[TerminalManager] WebLinks addon failed for ${id}:`, e);
     }
 
     fitAddon.fit();
@@ -533,10 +549,13 @@ class TerminalManager {
                       term.write('\r\n\x1b[33m[Paste failed: could not read image from clipboard]\x1b[0m');
                     }
                   } else if (info.has_text) {
-                    // Text in clipboard - paste directly
+                    // Text in clipboard - wrap in bracketed paste if terminal app expects it
                     const text = await readText();
                     if (text) {
-                      invoke('plugin:pty|write', { pid, data: text }).catch(console.error);
+                      const data = term.modes.bracketedPasteMode
+                        ? `\x1b[200~${text}\x1b[201~`
+                        : text;
+                      invoke('plugin:pty|write', { pid, data }).catch(console.error);
                     }
                   } else {
                     console.warn('[TerminalManager] Clipboard empty or unsupported format:', info);

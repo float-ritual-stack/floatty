@@ -46,7 +46,8 @@ export type KeyAction =
   | 'moveBlockDown'  // FLO-75: Move block after next sibling (Cmd+Down)
   | 'nextTheme'      // Cycle through available themes (Cmd+;)
   | 'undo'           // Undo last block operation (Cmd+Z)
-  | 'redo';          // Redo last undone operation (Cmd+Shift+Z)
+  | 'redo'           // Redo last undone operation (Cmd+Shift+Z)
+  | 'toggleDevVisuals';  // FLO-259: Toggle dev mode visual distinction (Cmd+Shift+D)
 
 // Modifier representation
 export interface Modifiers {
@@ -155,6 +156,9 @@ export const defaultKeybinds: Keybind[] = [
   // Undo/Redo (outliner operations)
   { key: 'z', modifiers: { mod: true }, action: 'undo' },
   { key: 'z', modifiers: { mod: true, shift: true }, action: 'redo' },
+
+  // Dev mode visuals (FLO-259) — Ctrl+Shift+D (not mod+shift to avoid splitVertical conflict)
+  { key: 'd', modifiers: { ctrl: true, shift: true }, action: 'toggleDevVisuals' },
 ];
 
 // Find action for a keyboard event
@@ -200,6 +204,7 @@ export const GLOBAL_KEY_ACTIONS: ReadonlySet<KeyAction> = new Set<KeyAction>([
   'zoomOut',
   'zoomReset',
   'nextTheme',
+  'toggleDevVisuals',
 ]);
 
 /** True if the action should be handled by Terminal's global capture listener. */

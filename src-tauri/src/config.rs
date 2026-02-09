@@ -67,6 +67,16 @@ pub struct AggregatorConfig {
     /// Applies to all panes on first mount. Helps with 1000+ block outlines.
     #[serde(default = "default_initial_collapse_depth")]
     pub initial_collapse_depth: u32,
+    /// Enable dev mode visual overrides (orange accent, DEV badge, port in status bar)
+    /// Defaults to true in debug builds, false in release builds.
+    #[serde(default = "default_dev_mode_visuals")]
+    pub dev_mode_visuals: bool,
+    /// Whether this is a dev (debug) build. Populated at load time, not stored in TOML.
+    #[serde(skip_deserializing)]
+    pub is_dev_build: bool,
+    /// Resolved data directory path. Populated at load time, not stored in TOML.
+    #[serde(skip_deserializing)]
+    pub data_dir: String,
 }
 
 fn default_theme() -> String {
@@ -118,6 +128,10 @@ fn default_initial_collapse_depth() -> u32 {
     0 // Disabled by default (show all expanded)
 }
 
+fn default_dev_mode_visuals() -> bool {
+    cfg!(debug_assertions)
+}
+
 impl Default for AggregatorConfig {
     fn default() -> Self {
         let default_watcher = WatcherConfig::default();
@@ -142,6 +156,9 @@ impl Default for AggregatorConfig {
             server_port: default_server_port(),
             split_collapse_depth: default_split_collapse_depth(),
             initial_collapse_depth: default_initial_collapse_depth(),
+            dev_mode_visuals: default_dev_mode_visuals(),
+            is_dev_build: cfg!(debug_assertions),
+            data_dir: String::new(), // Populated by load_from
         }
     }
 }
@@ -152,28 +169,37 @@ impl AggregatorConfig {
     /// Use `DataPaths::resolve().config` to get the path based on
     /// `FLOATTY_DATA_DIR` environment variable.
     pub fn load_from(path: &PathBuf) -> Self {
-        if path.exists() {
+        let mut config = if path.exists() {
             match std::fs::read_to_string(path) {
                 Ok(contents) => {
                     match toml::from_str::<AggregatorConfig>(&contents) {
                         Ok(config) => {
                             log::info!("Loaded config from {:?}", path);
-                            return config;
+                            config
                         }
                         Err(e) => {
                             log::warn!("Failed to parse config: {}, using defaults", e);
+                            Self::default()
                         }
                     }
                 }
                 Err(e) => {
                     log::warn!("Failed to read config file: {}, using defaults", e);
+                    Self::default()
                 }
             }
         } else {
             log::info!("No config file at {:?}, using defaults", path);
-        }
+            Self::default()
+        };
 
-        Self::default()
+        // Populate runtime-only fields (skipped by serde)
+        config.is_dev_build = cfg!(debug_assertions);
+        config.data_dir = path.parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        config
     }
 
     /// Load config from default path (~/.floatty/config.toml).

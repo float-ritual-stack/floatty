@@ -1019,11 +1019,13 @@ async function forceFlushOnReconnect() {
       await httpClient.applyUpdate(update, txId);
     }
     sharedRetryCount = 0;
+    setPendingCount(sharedPendingUpdates.length);
     console.log('[WS] Successfully flushed pending updates on reconnect');
   } catch (err) {
     console.error('[WS] Failed to flush pending updates on reconnect:', err);
     // Restore updates for retry
     sharedPendingUpdates = [...updates, ...sharedPendingUpdates];
+    setPendingCount(sharedPendingUpdates.length);
   } finally {
     sharedIsFlushing = false;
   }
