@@ -6,6 +6,25 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.24] - 2026-02-08
+
+### Features
+
+- **Dev mode visual distinction** (FLO-259): Orange accent override, DEV badge in status bar, port display, `Ctrl+Shift+D` toggle (persists to config.toml). Runtime-only `is_dev_build` and `data_dir` config fields.
+- **`info::` diagnostic handler**: Dumps build/config/sync diagnostics as child blocks in outliner with topic filtering (`info:: sync`, `info:: config`, `info:: build`). Idempotent re-run via output block pattern.
+
+### Bug Fixes
+
+- **Terminal clipboard mediation** (FLO-310): Bracketed paste mode for nvim/helix, OSC 52 via `@xterm/addon-clipboard` with custom Tauri clipboard provider (tmux copy → system clipboard), clickable URLs via `@xterm/addon-web-links` with Tauri IPC handler.
+- **WebLinksAddon clicks silently failing**: `window.open()` no-ops in Tauri webview. Added `open_url` command with http/https scheme validation, routed through native `open` command.
+- **Serde config fields**: Changed `skip_deserializing` to `skip` on runtime-only config fields to prevent serialization of transient state.
+
+### Improvements
+
+- **Sync gap detection** (FLO-269): Handle heartbeat-only sequence gaps without fetching updates. Prevents unnecessary full resyncs from idle heartbeat increments.
+
+---
+
 ## [0.7.23] - 2026-02-08
 
 ### Features
