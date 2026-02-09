@@ -180,7 +180,7 @@ mod tests {
     /// Scans all .rs files in the workspace for `.join(".floatty")` or `.join(".floatty-dev")`
     /// and verifies each occurrence is either:
     /// - Inside a `#[cfg(...)` block (proper build-profile gate), OR
-    /// - In an allowlisted file (paths.rs, hooks.rs, test files, server config.rs)
+    /// - In an allowlisted file (paths.rs, hooks.rs, test files)
     #[test]
     fn no_unguarded_floatty_paths() {
         use std::fs;
