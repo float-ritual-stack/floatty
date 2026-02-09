@@ -6,6 +6,22 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.25] - 2026-02-08
+
+### Features
+
+- **Diagnostics strip**: Replaced hardcoded "DEV" badge with dynamic diagnostics strip showing server port, build type (`debug`/`release`), and config path. Toggled via `Ctrl+Shift+D`. Removed orange accent override — diagnostics is informational, not an alarm.
+
+### Bug Fixes
+
+- **`info::` showing undefined values**: Fixed `is_dev_build` and `data_dir` returning `undefined` in IPC responses. Changed `#[serde(skip)]` to `#[serde(skip_deserializing, default)]` with explicit filtering in `save_to` to prevent runtime fields leaking into config.toml.
+
+### Improvements
+
+- **Renamed dev-mode → diagnostics concept**: `dev_mode_visuals` → `show_diagnostics` (config field, with `alias` for backward compat), `toggle_dev_visuals` → `toggle_diagnostics` (Tauri command), `applyDevModeOverride` → `setDiagnosticsVisible` (frontend). 14 files updated.
+
+---
+
 ## [0.7.24] - 2026-02-08
 
 ### Features
