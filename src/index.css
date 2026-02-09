@@ -12,6 +12,9 @@
   --color-fg: #eaeaea;
   --color-fg-muted: #8b8b8b;
   --color-border: #2a2a4a;
+  --color-indent-guide: color-mix(in srgb, var(--color-fg) 12%, var(--color-bg));
+  --color-indent-guide-active: color-mix(in srgb, var(--color-fg) 25%, var(--color-bg));
+  --block-indent-width: 20px;
 
   /* Accent colors */
   --color-accent: #7c3aed;
@@ -1087,9 +1090,13 @@ body.pane-dragging .terminal-pane-positioned {
 }
 
 .block-children {
-  border-left: 1px solid var(--color-border);
-  margin-left: 6px;
-  padding-left: 2px;
+  border-left: 1px solid var(--color-indent-guide);
+  margin-left: var(--block-indent-width);
+  padding-left: 4px;
+}
+
+.block-children:hover {
+  border-left-color: var(--color-indent-guide-active);
 }
 
 /* Editing (NOT selected): accent border when cursor is in block */
