@@ -98,10 +98,14 @@ export const infoHandler: BlockHandler = {
       lastError: getLastSyncError(),
     };
 
-    // Find or create heading child
+    // Find or create heading child — set outputType immediately so re-runs
+    // find it even if the handler is interrupted before completion
     let headingId = findOutputChild(blockId, actions, 'info-');
     if (!headingId) {
       headingId = actions.createBlockInside(blockId);
+      if (actions.setBlockOutput) {
+        actions.setBlockOutput(headingId, { topic: topic || 'all' }, `info-${topic || 'all'}`);
+      }
     }
 
     // Show loading
@@ -151,7 +155,9 @@ export const infoHandler: BlockHandler = {
       console.error('[info] Error:', err);
       actions.updateBlockContent(headingId, '## error::info');
 
-      const errorId = actions.createBlockInside(headingId);
+      // Reuse existing child for error message (idempotent on repeated failures)
+      const parent = actions.getBlock?.(headingId) as { childIds?: string[] } | undefined;
+      const errorId = parent?.childIds?.[0] ?? actions.createBlockInside(headingId);
       actions.updateBlockContent(errorId, `> ${String(err)}`);
 
       if (actions.setBlockOutput && actions.setBlockStatus) {
