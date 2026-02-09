@@ -88,6 +88,47 @@ describe('SyncSequenceTracker', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
+  // HEARTBEAT HANDLING
+  // ═══════════════════════════════════════════════════════════════
+
+  describe('heartbeat handling', () => {
+    it('does nothing when heartbeat seq equals lastSeenSeq', () => {
+      tracker.seedFromFullSync(100);
+
+      const gap = tracker.observeHeartbeat(100);
+      expect(gap).toBeNull();
+      expect(tracker.lastSeenSeq).toBe(100);
+      expect(tracker.lastContiguousSeq).toBe(100);
+    });
+
+    it('detects single-miss gap from heartbeat (lastSeen + 1)', () => {
+      tracker.seedFromFullSync(100);
+
+      const gap = tracker.observeHeartbeat(101);
+      expect(gap).toEqual({ fromSeq: 100, toSeq: 101 });
+      // Heartbeat must not advance sequence tracking without payload
+      expect(tracker.lastSeenSeq).toBe(100);
+      expect(tracker.lastContiguousSeq).toBe(100);
+    });
+
+    it('detects larger gap from heartbeat without advancing seq state', () => {
+      tracker.seedFromFullSync(100);
+
+      const gap = tracker.observeHeartbeat(105);
+      expect(gap).toEqual({ fromSeq: 100, toSeq: 105 });
+      expect(tracker.lastSeenSeq).toBe(100);
+      expect(tracker.lastContiguousSeq).toBe(100);
+    });
+
+    it('returns no gap when heartbeat arrives before any seq baseline exists', () => {
+      const gap = tracker.observeHeartbeat(100);
+      expect(gap).toBeNull();
+      expect(tracker.lastSeenSeq).toBeNull();
+      expect(tracker.lastContiguousSeq).toBeNull();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
   // GAP QUEUE MANAGEMENT
   // ═══════════════════════════════════════════════════════════════
 
