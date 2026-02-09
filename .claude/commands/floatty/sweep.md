@@ -1,6 +1,6 @@
 ---
 description: Systematic bug pattern sweep across codebase
-argument-hint: [pattern number 1-6 or "all"]
+argument-hint: [pattern number 1-7 or "all"]
 ---
 
 # Floatty Bug Pattern Sweep: $ARGUMENTS
@@ -17,6 +17,7 @@ Systematic sweep for known bug patterns. Run periodically to catch issues before
 | 4 | Fire-and-Forget Async | Silent failures, zombie tasks | .catch() or await |
 | 5 | Silent Degradation | Works until it doesn't | Visible failure + recovery |
 | 6 | HMR Singletons | State accumulates on reload | dispose() cleanup |
+| 7 | Symmetry / Hotfix Drift | Fix in one place, siblings use old way | Grep siblings, fix all or document why safe |
 
 ## Sweep Instructions
 
@@ -91,6 +92,15 @@ grep -rn "^const.*= new " src/ --include="*.ts" --include="*.tsx"
 For each, verify:
 - Is there `import.meta.hot.dispose()` cleanup?
 - What state persists across HMR?
+
+### Pattern 7: Symmetry / Hotfix Drift (FLO-317)
+
+Search for patterns that may have drifted from their siblings.
+
+Run all patterns from @.claude/commands/floatty/references/symmetry-check-patterns.md
+
+For each finding, verify using the red flags checklist in the reference.
+Report in the standard sweep findings table.
 
 ## Report Format
 

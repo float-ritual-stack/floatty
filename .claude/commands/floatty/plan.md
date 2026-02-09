@@ -69,7 +69,22 @@ For this feature, which patterns might apply?
 | 5. Silent degradation | | Fail visibly or trigger recovery |
 | 6. HMR singletons | | Add dispose cleanup |
 
-## Step 3: Data Flow Diagram
+## Step 3: Symmetry / Drift Audit
+
+**For each pattern this feature touches, grep for siblings.**
+
+This is the "FLO-317 check" — when you change HOW something works in one place, find every other place that does the same thing the old way. Those siblings are now latent bugs.
+
+Run the relevant patterns from @.claude/commands/floatty/references/symmetry-check-patterns.md
+
+| Pattern being changed | Sibling locations found | Included in plan? |
+|-----------------------|------------------------|-------------------|
+| | | |
+| | | |
+
+**Rule**: If siblings exist and aren't in your plan, explain why they're safe to leave alone. "It works today" is not sufficient — FLO-317 "worked today" for 6 days.
+
+## Step 4: Data Flow Diagram
 
 Sketch the data flow (use ASCII or describe):
 ```
@@ -81,14 +96,14 @@ Identify:
 - Where does data cross async boundaries?
 - Where does data cross process boundaries (IPC)?
 
-## Step 4: Test Strategy
+## Step 5: Test Strategy
 
 What's the minimum test coverage?
 - [ ] Unit test for pure logic
 - [ ] Integration test for Y.Doc mutations
 - [ ] Manual test script for UI flows
 
-## Step 5: Risks & Open Questions
+## Step 6: Risks & Open Questions
 
 List anything uncertain:
 1.

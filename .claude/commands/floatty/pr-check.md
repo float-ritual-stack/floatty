@@ -50,6 +50,17 @@ Look for: `catch` blocks that only log, `if (error) return`
 Look for: Module-level `let`/`const` with mutable state
 - Any new module state without HMR cleanup? List them.
 
+### Pattern 7: Symmetry / Hotfix Drift (FLO-317)
+For each changed file, ask: "Did I change a pattern that exists elsewhere?"
+
+**Check**: For any function you modified, grep for sibling implementations using the patterns in @.claude/commands/floatty/references/symmetry-check-patterns.md
+
+Red flags from the reference's checklist apply here — especially:
+- [ ] Modified function has siblings doing the same thing a different way
+- [ ] Added `#[cfg]` gate but similar code nearby is unguarded
+- [ ] Fixed a path/URL in one place but it's hardcoded elsewhere
+- [ ] Changed a serialization format but readers still expect the old one
+
 ## Step 2: Specific Floatty Checks
 
 ### Y.Doc Changes
