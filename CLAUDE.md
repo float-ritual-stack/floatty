@@ -78,6 +78,28 @@ npm run test          # Run vitest (420 tests)
 npm run test:watch    # Watch mode for TDD
 ```
 
+### Rust Tests (IMPORTANT)
+
+Cargo.toml is in `src-tauri/`, not the project root. The package name is `float-pty`, not `floatty`.
+
+```bash
+# Run from src-tauri/ — test filter goes AFTER `--`
+cd src-tauri && cargo test -p float-pty -- test_name_here
+
+# Multiple test filters
+cd src-tauri && cargo test -p float-pty -- test_one test_two
+
+# All Rust tests
+cd src-tauri && cargo test -p float-pty
+```
+
+**Common mistakes** (do NOT do these):
+```bash
+cargo test -p floatty ...              # Wrong package name (it's float-pty)
+cargo test -p float-pty test_name      # Missing `--` before test filter
+cargo test ...                         # No Cargo.toml in project root
+```
+
 ### Release Build
 
 floatty uses a headless server architecture - the outliner CRDT state is managed by `floatty-server`, which runs as a sidecar process. For release builds:
@@ -385,6 +407,12 @@ Path resolution (in `src-tauri/src/paths.rs`):
 ```
 
 **Exception**: `shell-hooks.zsh` always stays at `~/.floatty` (hardcoded in user's `.zshrc`).
+
+**Path Resolution Rule** (FLO-317): Every function that resolves a data directory path MUST either:
+1. Accept an explicit path argument (preferred), OR
+2. Use `#[cfg(debug_assertions)]` in its fallback (like `DataPaths::default_root()`)
+
+Never hardcode `.floatty` as a fallback without a `#[cfg]` gate. Runtime preflight asserts in `lib.rs` and `main.rs` catch violations at startup.
 
 **Config file**: `{data_dir}/config.toml`
 ```toml

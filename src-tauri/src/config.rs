@@ -202,17 +202,20 @@ impl AggregatorConfig {
         config
     }
 
-    /// Load config from default path (~/.floatty/config.toml).
+    /// Load config from default path (build-profile-aware via DataPaths::default_root()).
     ///
-    /// Deprecated: prefer `load_from(paths.config)` for explicit path control.
+    /// Uses `FLOATTY_DATA_DIR` if set, otherwise DataPaths::default_root()
+    /// (e.g., `~/.floatty-dev` in debug builds, `~/.floatty` in release).
+    #[deprecated(note = "use load_from(&paths.config) with DataPaths for profile-aware loading")]
     pub fn load() -> Self {
         let path = Self::default_config_path();
         Self::load_from(&path)
     }
 
-    /// Default config file path.
+    /// Default config file path (build-profile-aware).
     ///
-    /// Uses `FLOATTY_DATA_DIR` if set, otherwise `~/.floatty`.
+    /// Uses `FLOATTY_DATA_DIR` if set, otherwise DataPaths::default_root()
+    /// (e.g., `~/.floatty-dev` in debug, `~/.floatty` in release).
     pub fn default_config_path() -> PathBuf {
         std::env::var("FLOATTY_DATA_DIR")
             .ok()
@@ -263,9 +266,8 @@ impl AggregatorConfig {
         Ok(())
     }
 
-    /// Save current config to default path.
-    ///
-    /// Deprecated: prefer `save_to(paths.config)` for explicit path control.
+    /// Save current config to default path (build-profile-aware via DataPaths::default_root()).
+    #[deprecated(note = "use save_to(&paths.config) with DataPaths for profile-aware saving")]
     pub fn save(&self) -> Result<(), String> {
         self.save_to(&Self::default_config_path())
     }

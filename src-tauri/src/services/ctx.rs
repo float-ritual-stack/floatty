@@ -74,21 +74,30 @@ mod tests {
 
     #[test]
     fn test_get_config_loads_default() {
-        let config = get_config();
-        // Should not panic, returns default if config doesn't exist
+        // Use a non-existent path so load_from returns defaults
+        let fake_path = std::env::temp_dir()
+            .join("floatty-test-default-cfg")
+            .join("config.toml");
+        let config = AggregatorConfig::load_from(&fake_path);
         assert!(!config.ollama_model.is_empty());
     }
 
     #[test]
     fn test_theme_round_trip() {
-        let original = get_theme();
-        
-        // Set a test theme
-        set_theme("test-theme".to_string()).ok();
-        assert_eq!(get_theme(), "test-theme");
-        
-        // Restore original
-        set_theme(original.clone()).ok();
-        assert_eq!(get_theme(), original);
+        let dir = std::env::temp_dir().join("floatty-test-theme");
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("config.toml");
+
+        // Write a config with a known theme
+        let mut config = AggregatorConfig::default();
+        config.theme = "test-theme".to_string();
+        config.save_to(&config_path).unwrap();
+
+        // Read it back
+        let loaded = AggregatorConfig::load_from(&config_path);
+        assert_eq!(loaded.theme, "test-theme");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

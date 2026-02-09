@@ -119,14 +119,6 @@ impl FloattyDb {
         Ok(db)
     }
 
-    /// Open or create database at default path (~/.floatty/ctx_markers.db).
-    ///
-    /// Deprecated: prefer `open_at(paths.database)` for explicit path control.
-    #[allow(dead_code)]
-    pub fn open() -> Result<Self> {
-        Self::open_at(&Self::default_db_path())
-    }
-
     /// Open an in-memory database for testing
     #[allow(dead_code)]
     pub fn open_in_memory() -> Result<Self> {
@@ -134,15 +126,6 @@ impl FloattyDb {
         let db = Self { conn: Mutex::new(conn) };
         db.init_schema()?;
         Ok(db)
-    }
-
-    /// Default database file path: ~/.floatty/ctx_markers.db
-    #[allow(dead_code)]
-    pub fn default_db_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".floatty")
-            .join("ctx_markers.db")
     }
 
     /// Initialize database schema
