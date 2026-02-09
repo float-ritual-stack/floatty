@@ -40,7 +40,7 @@ async function handleBuild(config: AggregatorConfig): Promise<string> {
     `| Build | ${config.is_dev_build ? 'dev (debug)' : 'release'} |`,
     `| Data dir | \`${config.data_dir}\` |`,
     `| Version | ${version} |`,
-    `| Dev visuals | ${config.dev_mode_visuals ? 'on' : 'off'} |`,
+    `| Diagnostics | ${config.show_diagnostics ? 'on' : 'off'} |`,
   ].join('\n');
 }
 

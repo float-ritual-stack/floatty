@@ -11,7 +11,7 @@ import {
   getTheme,
   themeNames,
   applyThemeToCSS,
-  applyDevModeOverride,
+  setDiagnosticsVisible,
   toXtermTheme,
   type FloattyTheme,
 } from '../lib/themes';
@@ -20,8 +20,10 @@ import { terminalManager } from '../lib/terminalManager';
 function createThemeStore() {
   const [currentThemeName, setCurrentThemeName] = createSignal<string>('default');
   const [isLoaded, setIsLoaded] = createSignal(false);
-  const [devModeVisuals, setDevModeVisuals] = createSignal(false);
+  const [diagnosticsVisible, setDiagnosticsVisibleSignal] = createSignal(false);
   const [serverPort, setServerPort] = createSignal(0);
+  const [isDevBuild, setIsDevBuild] = createSignal(false);
+  const [configPath, setConfigPath] = createSignal('');
 
   /**
    * Get the current theme object
@@ -34,9 +36,6 @@ function createThemeStore() {
   const applyTheme = (theme: FloattyTheme) => {
     // Apply CSS variables
     applyThemeToCSS(theme);
-
-    // Re-apply dev mode override after theme switch (orange accent must win)
-    applyDevModeOverride(devModeVisuals(), theme);
 
     // Update all terminal instances
     const xtermTheme = toXtermTheme(theme);
@@ -92,11 +91,11 @@ function createThemeStore() {
   };
 
   /**
-   * Set dev mode visuals flag and apply/remove override
+   * Set diagnostics strip visibility and apply body class
    */
-  const setDevMode = (enabled: boolean) => {
-    setDevModeVisuals(enabled);
-    applyDevModeOverride(enabled, currentTheme());
+  const setDiagnostics = (enabled: boolean) => {
+    setDiagnosticsVisibleSignal(enabled);
+    setDiagnosticsVisible(enabled);
   };
 
   return {
@@ -104,14 +103,18 @@ function createThemeStore() {
     currentThemeName,
     currentTheme,
     isLoaded,
-    devModeVisuals,
+    diagnosticsVisible,
     serverPort,
+    isDevBuild,
+    configPath,
     // Actions
     setTheme,
     nextTheme,
     loadTheme,
-    setDevMode,
+    setDiagnostics,
     setServerPort,
+    setIsDevBuild,
+    setConfigPath,
     // Constants
     availableThemes: themeNames,
   };

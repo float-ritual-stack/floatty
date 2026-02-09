@@ -81,9 +81,11 @@ export function Outliner(props: OutlinerProps) {
     // Load config (always needed for homebase keybind Cmd+Shift+0)
     const configPromise = invoke('get_ctx_config', {}).then((config: AggregatorConfig) => {
       setCachedConfig(config);  // Cache for homebase keybind
-      // FLO-259: Apply dev mode visuals from config
-      themeStore.setDevMode(config.dev_mode_visuals);
+      // Apply diagnostics visibility from config
+      themeStore.setDiagnostics(config.show_diagnostics);
       themeStore.setServerPort(config.server_port);
+      themeStore.setIsDevBuild(config.is_dev_build);
+      themeStore.setConfigPath(`${config.data_dir}/config.toml`);
       return config;
     }).catch((err: unknown) => {
       console.warn('[Outliner] Failed to load config:', err);

@@ -68,24 +68,14 @@ export function toXtermTheme(theme: FloattyTheme) {
 }
 
 /**
- * Apply dev mode visual overrides (orange accent, DEV badge, port in status bar).
- * Call AFTER applyThemeToCSS() so the override wins.
- * When disabling, restores theme's own accent values — pass current theme.
+ * Toggle diagnostics strip visibility.
+ * Adds/removes `.diagnostics-visible` class on body to show/hide diagnostic items.
  */
-export function applyDevModeOverride(enabled: boolean, theme?: FloattyTheme) {
-  const root = document.documentElement;
-
+export function setDiagnosticsVisible(enabled: boolean) {
   if (enabled) {
-    root.style.setProperty('--color-accent', '#f97316');
-    root.style.setProperty('--color-accent-muted', '#a36320');
-    document.body.classList.add('dev-mode');
+    document.body.classList.add('diagnostics-visible');
   } else {
-    document.body.classList.remove('dev-mode');
-    // Restore theme accent values if provided
-    if (theme) {
-      root.style.setProperty('--color-accent', theme.accent);
-      root.style.setProperty('--color-accent-muted', theme.accentMuted);
-    }
+    document.body.classList.remove('diagnostics-visible');
   }
 }
 

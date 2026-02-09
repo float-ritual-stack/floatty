@@ -1190,36 +1190,22 @@ body.block-dragging * {
 }
 
 /* ================================================
-   Dev Mode Visual Distinction (FLO-259)
+   Diagnostics Strip (Ctrl+Shift+D toggle)
    ================================================ */
 
-/* DEV badge in status bar (left side, before other items) */
-.dev-mode .status-bar::before {
-  content: 'DEV';
+/* Diagnostics label */
+.status-diag-label {
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.5px;
-  color: #1a1a2e;
-  background: #f97316;
-  padding: 1px 6px;
-  border-radius: 3px;
-  margin-right: 4px;
+  color: var(--color-fg-muted);
+  text-transform: uppercase;
 }
 
-/* Orange accent line on tab bar */
-.dev-mode .tab-bar {
-  border-bottom-color: #f97316;
-}
-
-/* Port display in status bar (shown via JS when dev mode active) */
-.status-port {
-  display: none;
-  color: #f97316;
+/* Diagnostics data items */
+.status-diag-data {
   font-size: 11px;
-}
-
-.dev-mode .status-port {
-  display: flex;
+  color: var(--color-fg-muted);
 }
 
 /* Block content syntax colors - using ANSI palette */

@@ -17,7 +17,7 @@ pub mod workspace;
 pub use clipboard::{get_clipboard_info, save_clipboard_image};
 pub use ctx::{
     clear_ctx_markers, get_ctx_config, get_ctx_counts, get_ctx_markers,
-    get_send_model, get_theme, set_ctx_config, set_theme, toggle_dev_visuals,
+    get_send_model, get_theme, set_ctx_config, set_theme, toggle_diagnostics,
 };
 pub use execution::{execute_ai_command, execute_ai_conversation, execute_shell_command, open_url};
 pub use help::read_help_file;

@@ -72,9 +72,9 @@ pub fn get_send_model() -> String {
     config.get_send_model().to_string()
 }
 
-/// Toggle dev mode visuals (orange accent, DEV badge, port display)
+/// Toggle diagnostics strip visibility (port, build type, config path)
 /// Returns the new value after toggle
 #[tauri::command]
-pub fn toggle_dev_visuals() -> Result<bool, String> {
-    ctx::toggle_dev_visuals()
+pub fn toggle_diagnostics() -> Result<bool, String> {
+    ctx::toggle_diagnostics()
 }

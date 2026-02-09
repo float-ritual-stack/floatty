@@ -67,15 +67,15 @@ pub struct AggregatorConfig {
     /// Applies to all panes on first mount. Helps with 1000+ block outlines.
     #[serde(default = "default_initial_collapse_depth")]
     pub initial_collapse_depth: u32,
-    /// Enable dev mode visual overrides (orange accent, DEV badge, port in status bar)
+    /// Show diagnostics strip in status bar (port, build type, config path).
     /// Defaults to true in debug builds, false in release builds.
-    #[serde(default = "default_dev_mode_visuals")]
-    pub dev_mode_visuals: bool,
+    #[serde(default = "default_show_diagnostics", alias = "dev_mode_visuals")]
+    pub show_diagnostics: bool,
     /// Whether this is a dev (debug) build. Populated at load time, not stored in TOML.
-    #[serde(skip)]
+    #[serde(skip_deserializing, default)]
     pub is_dev_build: bool,
     /// Resolved data directory path. Populated at load time, not stored in TOML.
-    #[serde(skip)]
+    #[serde(skip_deserializing, default)]
     pub data_dir: String,
 }
 
@@ -128,7 +128,7 @@ fn default_initial_collapse_depth() -> u32 {
     0 // Disabled by default (show all expanded)
 }
 
-fn default_dev_mode_visuals() -> bool {
+fn default_show_diagnostics() -> bool {
     cfg!(debug_assertions)
 }
 
@@ -156,7 +156,7 @@ impl Default for AggregatorConfig {
             server_port: default_server_port(),
             split_collapse_depth: default_split_collapse_depth(),
             initial_collapse_depth: default_initial_collapse_depth(),
-            dev_mode_visuals: default_dev_mode_visuals(),
+            show_diagnostics: default_show_diagnostics(),
             is_dev_build: cfg!(debug_assertions),
             data_dir: String::new(), // Populated by load_from
         }
@@ -250,7 +250,13 @@ impl AggregatorConfig {
             .parse()
             .map_err(|e| format!("Failed to parse serialized config: {}", e))?;
 
+        // Runtime-only fields (skip_deserializing) should not be persisted to TOML
+        const RUNTIME_ONLY_KEYS: &[&str] = &["is_dev_build", "data_dir"];
+
         for (key, value) in self_table {
+            if RUNTIME_ONLY_KEYS.contains(&key.as_str()) {
+                continue;
+            }
             doc.insert(key, value);
         }
 

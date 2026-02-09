@@ -59,11 +59,11 @@ pub fn set_theme(theme: String) -> Result<(), String> {
     config.save()
 }
 
-/// Toggle dev_mode_visuals flag and persist
-pub fn toggle_dev_visuals() -> Result<bool, String> {
+/// Toggle show_diagnostics flag and persist
+pub fn toggle_diagnostics() -> Result<bool, String> {
     let mut config = AggregatorConfig::load();
-    config.dev_mode_visuals = !config.dev_mode_visuals;
-    let new_value = config.dev_mode_visuals;
+    config.show_diagnostics = !config.show_diagnostics;
+    let new_value = config.show_diagnostics;
     config.save()?;
     Ok(new_value)
 }

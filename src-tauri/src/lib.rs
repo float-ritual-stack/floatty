@@ -16,7 +16,7 @@ use commands::{
     execute_ai_conversation, execute_shell_command, get_clipboard_info, get_ctx_config,
     get_ctx_counts, get_ctx_markers, get_send_model, get_theme, get_workspace_state,
     install_shell_hooks, open_url, read_help_file, save_clipboard_image, save_workspace_state,
-    set_ctx_config, set_theme, toggle_dev_visuals, uninstall_shell_hooks,
+    set_ctx_config, set_theme, toggle_diagnostics, uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
 use paths::DataPaths;
@@ -334,7 +334,7 @@ pub fn run() {
                     get_workspace_state,
                     save_workspace_state,
                     read_help_file,
-                    toggle_dev_visuals,
+                    toggle_diagnostics,
                     open_url,
                 ]
             }
@@ -365,7 +365,7 @@ pub fn run() {
                     get_workspace_state,
                     save_workspace_state,
                     read_help_file,
-                    toggle_dev_visuals,
+                    toggle_diagnostics,
                     open_url,
                     panel::show_test_panel,
                     panel::hide_test_panel,

@@ -150,10 +150,15 @@ function StatusBar(props: { semanticState?: SemanticState | null }) {
         </span>
       </Show>
 
-      {/* Port display (dev mode only, shown via CSS) */}
-      <span class="status-item status-port">
-        :{themeStore.serverPort()}
-      </span>
+      {/* Diagnostics strip — toggled via Ctrl+Shift+D */}
+      <Show when={themeStore.diagnosticsVisible()}>
+        <span class="status-item status-diag-label">diagnostics</span>
+        <span class="status-item status-diag-data">:{themeStore.serverPort()}</span>
+        <span class="status-item status-diag-data">{themeStore.isDevBuild() ? 'debug' : 'release'}</span>
+        <span class="status-item status-diag-data" title={themeStore.configPath()}>
+          {truncatePath(themeStore.configPath())}
+        </span>
+      </Show>
 
       {/* Spacer */}
       <span style={{ flex: 1 }} />
@@ -825,10 +830,10 @@ export function Terminal() {
           break;
         }
         case 'toggleDevVisuals': {
-          typedInvoke('toggle_dev_visuals', {}).then((newValue) => {
-            themeStore.setDevMode(newValue);
+          typedInvoke('toggle_diagnostics', {}).then((newValue) => {
+            themeStore.setDiagnostics(newValue);
           }).catch((err) => {
-            console.error('[Terminal] Failed to toggle dev visuals:', err);
+            console.error('[Terminal] Failed to toggle diagnostics:', err);
           });
           break;
         }
