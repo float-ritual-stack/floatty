@@ -1110,8 +1110,8 @@ body.pane-dragging .terminal-pane-positioned {
   pointer-events: none;
 }
 
-/* Last child: mask guide below connector (└─ effect) */
-.block-children > .block-wrapper:last-child::after {
+/* Last child leaf (no sub-children): mask guide below connector (└─ effect) */
+.block-children > .block-wrapper:last-child:not(:has(> .block-children))::after {
   content: '';
   position: absolute;
   left: -5px;
@@ -1120,6 +1120,23 @@ body.pane-dragging .terminal-pane-positioned {
   width: 3px;
   background: var(--color-bg);
   pointer-events: none;
+}
+
+/* Last child with sub-children: mask guide only alongside children area,
+   preserving guide visibility alongside multi-line block-item content */
+.block-children > .block-wrapper:last-child > .block-children {
+  position: relative;
+}
+.block-children > .block-wrapper:last-child > .block-children::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--block-indent-width) - 5px);
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-bg);
+  pointer-events: none;
+  z-index: 1;
 }
 
 .block-children:hover {
