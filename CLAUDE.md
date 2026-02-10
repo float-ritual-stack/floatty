@@ -170,14 +170,14 @@ curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks" |
 | `/api/v1/restore` | POST | **DESTRUCTIVE** - Replace entire Y.Doc state |
 | `/api/v1/export/binary` | GET | Download raw Y.Doc as `.ydoc` file (Content-Disposition) |
 | `/api/v1/export/json` | GET | Download human-readable JSON export (Content-Disposition) |
-| `/health` | GET | Health check with version and git info |
+| `/api/v1/health` | GET | Health check with version and git info |
 
 #### Health Endpoint
 
 Returns server version and build info (no auth required):
 
 ```bash
-curl http://127.0.0.1:$PORT/health
+curl http://127.0.0.1:$PORT/api/v1/health
 # {"status":"ok","version":"0.7.17","gitSha":"b2b0c49","gitDirty":false}
 ```
 

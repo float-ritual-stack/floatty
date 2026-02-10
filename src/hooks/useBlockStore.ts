@@ -502,8 +502,13 @@ function createBlockStore() {
       }
 
       // Emit to EventBus (sync lane) and ProjectionScheduler (async lane)
-      // Only emit if there are actual events
-      if (blockEvents.length > 0) {
+      // Skip for bulk remote loads (initial sync, reconnect) — hooks don't need to
+      // process 13k+ blocks on startup. Metadata was already extracted when blocks
+      // were originally created/edited.
+      if (blockEvents.length > 0 &&
+          origin !== Origin.Remote &&
+          origin !== Origin.ReconnectAuthority &&
+          origin !== Origin.BulkImport) {
         const envelope: EventEnvelope = {
           batchId: crypto.randomUUID(),
           timestamp: Date.now(),
