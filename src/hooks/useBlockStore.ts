@@ -389,7 +389,47 @@ function createBlockStore() {
       // 'user' = local typing, UndoManager instance = undo/redo, other = remote/external
       const txOrigin = events[0]?.transaction.origin;
       const origin = mapTransactionOrigin(txOrigin);
-      // Collect BlockEvents for the EventBus
+
+      // FLO-320: Bulk origins (initial sync, reconnect) — slim path.
+      // Skip event building, previousBlocks capture, auto-execute, drag events.
+      // Just sync state to SolidJS store. Hooks don't need 13k+ events on startup.
+      const isBulk = origin === Origin.Remote
+        || origin === Origin.ReconnectAuthority
+        || origin === Origin.BulkImport;
+
+      if (isBulk) {
+        batch(() => {
+          setState('lastUpdateOrigin', txOrigin);
+          const blocksToRefresh = new Set<string>();
+          const blocksToDelete = new Set<string>();
+
+          for (const event of events) {
+            const path = event.path;
+            if (path.length === 0 && event instanceof Y.YMapEvent) {
+              event.changes.keys.forEach((change, key) => {
+                if (change.action === 'add' || change.action === 'update') {
+                  blocksToRefresh.add(key);
+                } else if (change.action === 'delete') {
+                  blocksToDelete.add(key);
+                }
+              });
+            } else if (path.length >= 1) {
+              blocksToRefresh.add(path[0] as string);
+            }
+          }
+
+          for (const key of blocksToRefresh) {
+            const block = toBlock(blocksMap.get(key));
+            if (block) setState('blocks', key, block);
+          }
+          for (const key of blocksToDelete) {
+            setState('blocks', key, undefined!);
+          }
+        });
+        return;
+      }
+
+      // Normal path: full event building + emission
       const blockEvents: BlockEvent[] = [];
       // Track previous block state for update events (before we modify state)
       const previousBlocks = new Map<string, Block>();

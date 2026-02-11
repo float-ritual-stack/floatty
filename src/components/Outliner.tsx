@@ -45,6 +45,16 @@ export function Outliner(props: OutlinerProps) {
   // Get current zoomed root for this pane (null = show all roots)
   const zoomedRootId = () => paneStore.getZoomedRootId(props.paneId);
 
+  // FLO-320: Initialize store AFTER Y.Doc is populated (prevents 13.8k block observer storm)
+  // Must fire BEFORE the config effect below so store.rootIds is populated for applyCollapseDepth.
+  // In the old code, initFromYDoc ran in onMount on an EMPTY doc, so when the async load completed,
+  // the observer processed all blocks via slow per-key setState. Now the doc is full before init.
+  createEffect(() => {
+    if (!isLoaded()) return;
+    const dispose = store.initFromYDoc(doc);
+    onCleanup(dispose);
+  });
+
   // FLO-197/P5: Apply collapse depth BEFORE first render
   // This effect runs when isLoaded() becomes true, applies collapse, THEN enables rendering
   createEffect(() => {
@@ -222,8 +232,8 @@ export function Outliner(props: OutlinerProps) {
 
   onMount(() => {
     console.log('Outliner mounted for pane:', props.paneId);
-    const dispose = store.initFromYDoc(doc);
-    onCleanup(dispose);
+    // FLO-320: initFromYDoc moved to createEffect gated on isLoaded()
+    // This ensures the Y.Doc is populated before store init, avoiding the observer storm.
 
     // FLO-197/P5: Collapse depth now handled in createEffect BEFORE render
     // (see effect above that gates on configReady)
