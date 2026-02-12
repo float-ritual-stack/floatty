@@ -19,6 +19,14 @@
     "clipboard:read-all",
     "clipboard:write-all",
     "dialog:default",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "$HOME/**/*" }]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$HOME/**/*" }]
+    },
     "mcp-bridge:default"
   ]
 }

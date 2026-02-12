@@ -14,6 +14,8 @@
  */
 
 import type { Block } from '../hooks/useBlockStore';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 
 export interface ExportedBlock {
   content: string;
@@ -116,22 +118,35 @@ export function validateExport(exported: ExportedOutline): { valid: boolean; err
 
 /**
  * Download validated JSON export to user's filesystem.
+ * Uses Tauri save dialog to avoid Downloads folder permission issues.
  */
-export function downloadJSON(data: ExportedOutline, filename?: string): void {
+export async function downloadJSON(data: ExportedOutline, filename?: string): Promise<void> {
   try {
     const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    // Include time (HHmmss) to avoid (1) (2) (3) collisions and match API format
-    // Use UTC consistently (toTimeString returns local time, which mismatches date from ISO)
+
+    // Generate default filename with timestamp
     const iso = new Date().toISOString();
     const date = iso.slice(0, 10);
     const time = iso.slice(11, 19).replace(/:/g, '');
-    a.download = filename || `floatty-${date}-${time}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const defaultFilename = filename || `floatty-${date}-${time}.json`;
+
+    // Use Tauri save dialog
+    const filePath = await save({
+      defaultPath: defaultFilename,
+      filters: [{
+        name: 'JSON',
+        extensions: ['json']
+      }]
+    });
+
+    if (!filePath) {
+      console.log('[jsonExport] User cancelled save dialog');
+      return;
+    }
+
+    // Write file via Tauri fs
+    await writeTextFile(filePath, json);
+    console.log('[jsonExport] Saved to:', filePath);
   } catch (err) {
     console.error('[jsonExport] Failed to export:', err);
     throw err;

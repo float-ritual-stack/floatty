@@ -230,6 +230,55 @@ export function Outliner(props: OutlinerProps) {
     }
   };
 
+  // Export functions (used by both tinykeys and global handlers)
+  const exportToMarkdown = async () => {
+    const allIds = selection.getAllBlockIds();
+    if (allIds.length === 0) return;
+
+    const allIdsSet = new Set(allIds);
+    const markdown = blocksToMarkdown(allIdsSet, store.blocks, allIds);
+
+    try {
+      await navigator.clipboard.writeText(markdown);
+      console.log(`[FLO-102] Exported ${allIds.length} blocks to clipboard`);
+    } catch (err) {
+      console.error('[FLO-102] Failed to write to clipboard:', err);
+    }
+  };
+
+  const exportToJSON = async () => {
+    // Flush any pending contentEditable edits before export
+    (document.activeElement as HTMLElement)?.blur();
+
+    try {
+      const data = exportOutlineToJSON(store.blocks, store.rootIds);
+      const validation = validateExport(data);
+      if (!validation.valid) {
+        console.error('[FLO-247] Export validation failed:', validation.errors);
+        alert(`Export validation failed:\n${validation.errors.slice(0, 10).join('\n')}${validation.errors.length > 10 ? `\n...and ${validation.errors.length - 10} more` : ''}`);
+        return;
+      }
+      await downloadJSON(data);
+      console.log(`[FLO-247] Exported ${data.blockCount} blocks to JSON`);
+    } catch (err) {
+      console.error('[FLO-247] JSON export failed:', err);
+      alert(`JSON export failed: ${err}`);
+    }
+  };
+
+  const exportToBinary = async () => {
+    // Flush any pending contentEditable edits before export
+    (document.activeElement as HTMLElement)?.blur();
+
+    try {
+      await downloadBinary(doc);
+      console.log('[FLO-247] Exported Y.Doc binary');
+    } catch (err) {
+      console.error('[FLO-247] Binary export failed:', err);
+      alert(`Binary export failed: ${err}`);
+    }
+  };
+
   onMount(() => {
     console.log('Outliner mounted for pane:', props.paneId);
     // FLO-320: initFromYDoc moved to createEffect gated on isLoaded()
@@ -264,56 +313,7 @@ export function Outliner(props: OutlinerProps) {
         }
       };
 
-      // FLO-102: Export outline to markdown (copies to clipboard)
-      const exportToMarkdown = async () => {
-        const allIds = selection.getAllBlockIds();
-        if (allIds.length === 0) return;
-
-        const allIdsSet = new Set(allIds);
-        const markdown = blocksToMarkdown(allIdsSet, store.blocks, allIds);
-
-        try {
-          await navigator.clipboard.writeText(markdown);
-          console.log(`[FLO-102] Exported ${allIds.length} blocks to clipboard`);
-        } catch (err) {
-          console.error('[FLO-102] Failed to write to clipboard:', err);
-        }
-      };
-
-      // FLO-247: JSON export with validation (Cmd+Shift+J)
-      const exportToJSON = () => {
-        // Flush any pending contentEditable edits before export
-        (document.activeElement as HTMLElement)?.blur();
-
-        try {
-          const data = exportOutlineToJSON(store.blocks, store.rootIds);
-          const validation = validateExport(data);
-          if (!validation.valid) {
-            console.error('[FLO-247] Export validation failed:', validation.errors);
-            alert(`Export validation failed:\n${validation.errors.slice(0, 10).join('\n')}${validation.errors.length > 10 ? `\n...and ${validation.errors.length - 10} more` : ''}`);
-            return;
-          }
-          downloadJSON(data);
-          console.log(`[FLO-247] Exported ${data.blockCount} blocks to JSON`);
-        } catch (err) {
-          console.error('[FLO-247] JSON export failed:', err);
-          alert(`JSON export failed: ${err}`);
-        }
-      };
-
-      // FLO-247: Binary Y.Doc export for perfect restore (Cmd+Shift+B)
-      const exportToBinary = () => {
-        // Flush any pending contentEditable edits before export
-        (document.activeElement as HTMLElement)?.blur();
-
-        try {
-          downloadBinary(doc);
-          console.log('[FLO-247] Exported Y.Doc binary');
-        } catch (err) {
-          console.error('[FLO-247] Binary export failed:', err);
-          alert(`Binary export failed: ${err}`);
-        }
-      };
+      // Export functions now defined outside onMount (see above)
 
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
         const activeEl = document.activeElement as HTMLElement;
@@ -437,23 +437,7 @@ export function Outliner(props: OutlinerProps) {
           });
         },
 
-        // FLO-102: Export to markdown (copies to clipboard)
-        '$mod+Shift+m': (e) => {
-          e.preventDefault();
-          exportToMarkdown();
-        },
-
-        // FLO-247: JSON export with validation (human-readable, lossy)
-        '$mod+Shift+j': (e) => {
-          e.preventDefault();
-          exportToJSON();
-        },
-
-        // FLO-247: Binary Y.Doc export (perfect restore)
-        '$mod+Shift+b': (e) => {
-          e.preventDefault();
-          exportToBinary();
-        },
+        // Export keybinds moved to global document listener (see below)
 
         // FLO-180/211: Navigation history (back/forward) with focus restoration
         '$mod+[': (e) => {
@@ -495,6 +479,33 @@ export function Outliner(props: OutlinerProps) {
       });
       onCleanup(unsubscribe);
     }
+  });
+
+  // Global export keybinds (work even when editing blocks)
+  createEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey;
+      const isShift = e.shiftKey;
+
+      // Cmd+Shift+M - Export markdown
+      if (isMod && isShift && e.key === 'm') {
+        e.preventDefault();
+        exportToMarkdown();
+      }
+      // Cmd+Shift+J - Export JSON
+      else if (isMod && isShift && e.key === 'j') {
+        e.preventDefault();
+        exportToJSON();
+      }
+      // Cmd+Shift+B - Export binary
+      else if (isMod && isShift && e.key === 'b') {
+        e.preventDefault();
+        exportToBinary();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    onCleanup(() => document.removeEventListener('keydown', handleGlobalKeyDown));
   });
 
   // Auto-create first block when workspace is empty

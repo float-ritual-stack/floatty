@@ -1525,7 +1525,7 @@ dependencies = [
 
 [[package]]
 name = "float-pty"
-version = "0.7.27"
+version = "0.7.28"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -1550,6 +1550,7 @@ dependencies = [
  "tauri-nspanel",
  "tauri-plugin-clipboard",
  "tauri-plugin-dialog",
+ "tauri-plugin-fs",
  "tauri-plugin-mcp-bridge",
  "tauri-plugin-os",
  "tauri-plugin-pty",
@@ -1589,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "floatty-server"
-version = "0.7.27"
+version = "0.7.28"
 dependencies = [
  "axum",
  "base64 0.22.1",

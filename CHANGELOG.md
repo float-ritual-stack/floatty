@@ -6,6 +6,14 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.28] - 2026-02-11
+
+### Bug Fixes
+
+- **Export ACL failure**: Fixed JSON (⌘⇧J) and binary (⌘⇧B) export failing with "Command plugin:fs|write_text_file not allowed by ACL". Root cause: `tauri-plugin-fs` wasn't installed. Added plugin to `Cargo.toml`, registered in `lib.rs`, and configured proper scope permissions in `capabilities/default.json` with `$HOME/**/*` path allowlist for dialog-selected files.
+
+---
+
 ## [0.7.25] - 2026-02-08
 
 ### Features

@@ -8,6 +8,7 @@ Critical anti-patterns that will break floatty.
 - Mark PR review comments as "out of scope" without verifying the infrastructure isn't already there
 - Trust compacted conversation summary over actual codebase state
 - Assume behavior is a regression without checking `git show HEAD:file` (the original may already work that way — e.g., output blocks already hid contentEditable before any changes)
+- Add Tauri permissions without: (1) verifying plugin is installed in `Cargo.toml`, (2) checking plugin docs for permission format (many need scope objects, not strings), (3) checking generated schema for available permissions. `Permission X not found` means plugin isn't installed OR permission name is wrong.
 
 ## PTY/Rust
 

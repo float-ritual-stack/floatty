@@ -13,6 +13,8 @@
  */
 
 import * as Y from 'yjs';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile } from '@tauri-apps/plugin-fs';
 
 /**
  * Export Y.Doc state as Uint8Array for direct restore.
@@ -43,24 +45,36 @@ export function exportBinaryBase64(doc: Y.Doc): string {
 
 /**
  * Download Y.Doc binary state to user's filesystem.
+ * Uses Tauri save dialog to avoid Downloads folder permission issues.
  *
  * File can be restored later via Y.applyUpdate(doc, bytes)
  */
-export function downloadBinary(doc: Y.Doc, filename?: string): void {
+export async function downloadBinary(doc: Y.Doc, filename?: string): Promise<void> {
   const state = Y.encodeStateAsUpdate(doc);
-  const blob = new Blob([state], { type: 'application/octet-stream' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  // Include time (HHmmss) to avoid (1) (2) (3) collisions and match API format
-  // Use UTC consistently (toTimeString returns local time, which mismatches date from ISO)
+
+  // Generate default filename with timestamp
   const iso = new Date().toISOString();
   const date = iso.slice(0, 10);
   const time = iso.slice(11, 19).replace(/:/g, '');
-  a.download = filename || `floatty-${date}-${time}.ydoc`;
-  a.click();
-  URL.revokeObjectURL(url);
-  console.log(`[binaryExport] Downloaded ${state.length} bytes`);
+  const defaultFilename = filename || `floatty-${date}-${time}.ydoc`;
+
+  // Use Tauri save dialog
+  const filePath = await save({
+    defaultPath: defaultFilename,
+    filters: [{
+      name: 'Y.Doc Binary',
+      extensions: ['ydoc']
+    }]
+  });
+
+  if (!filePath) {
+    console.log('[binaryExport] User cancelled save dialog');
+    return;
+  }
+
+  // Write file via Tauri fs
+  await writeFile(filePath, state);
+  console.log(`[binaryExport] Saved ${state.length} bytes to:`, filePath);
 }
 
 /**
