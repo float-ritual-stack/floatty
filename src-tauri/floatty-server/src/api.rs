@@ -288,6 +288,14 @@ pub struct UpdateBlockRequest {
     pub parent_id: Option<Option<String>>,
     /// Metadata to set on the block
     pub metadata: Option<serde_json::Value>,
+
+    /// Insert after this sibling block (mutually exclusive with at_index)
+    /// Used for repositioning within parent or during reparenting
+    pub after_id: Option<String>,
+
+    /// Insert at this index in parent's childIds (0 = prepend)
+    /// Mutually exclusive with after_id
+    pub at_index: Option<usize>,
     // NOTE: Origin field removed - origin is now handled via Y.Doc observation
     // with Origin::User for all frontend mutations. See hooks/system.rs.
 }
@@ -1329,6 +1337,13 @@ async fn update_block(
         existing_metadata
     };
 
+    // Validate positional insertion parameters
+    if req.after_id.is_some() && req.at_index.is_some() {
+        return Err(ApiError::InvalidRequest(
+            "Cannot specify both afterId and atIndex".to_string()
+        ));
+    }
+
     // Determine if reparenting is requested
     // req.parent_id: None = don't change, Some(None) = move to root, Some(Some(id)) = move under parent
     let (final_parent_id, parent_changed) = match &req.parent_id {
@@ -1338,6 +1353,12 @@ async fn update_block(
             (new_parent.clone(), changed)
         }
     };
+
+    // Determine if repositioning is requested (positional params present)
+    let repositioning = req.after_id.is_some() || req.at_index.is_some();
+
+    // If repositioning without reparenting, we're moving within same parent
+    // If reparenting, positional params control insertion position in new parent
 
     // Update fields granularly (only what changed)
     let update = {
@@ -1399,16 +1420,50 @@ async fn update_block(
                 block_map.insert(&mut txn, "metadata", meta_str);
             }
 
-            // Handle reparenting
-            if parent_changed {
-                // Update block's parentId field
-                let parent_id_value: yrs::Any = match &final_parent_id {
-                    Some(p) => yrs::Any::String(p.clone().into()),
-                    None => yrs::Any::Null,
-                };
-                block_map.insert(&mut txn, "parentId", parent_id_value);
+            // Handle reparenting or repositioning
+            if parent_changed || repositioning {
+                // Update block's parentId field (only if parent changed)
+                if parent_changed {
+                    let parent_id_value: yrs::Any = match &final_parent_id {
+                        Some(p) => yrs::Any::String(p.clone().into()),
+                        None => yrs::Any::Null,
+                    };
+                    block_map.insert(&mut txn, "parentId", parent_id_value);
+                }
+
+                // Validate afterId if present
+                if let Some(ref after_id) = req.after_id {
+                    match blocks.get(&txn, after_id) {
+                        Some(yrs::Out::YMap(after_map)) => {
+                            // Check afterId block shares same parent (or will share after reparenting)
+                            let after_parent = after_map.get(&txn, "parentId")
+                                .and_then(|v| match v {
+                                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                    yrs::Out::Any(yrs::Any::Null) => None,
+                                    _ => None,
+                                });
+
+                            let expected_parent = final_parent_id.as_ref().map(|s| s.as_str());
+                            let actual_parent = after_parent.as_ref().map(|s| s.as_str());
+
+                            if actual_parent != expected_parent {
+                                return Err(ApiError::InvalidRequest(format!(
+                                    "Block {} is not a sibling (different parent)",
+                                    after_id
+                                )));
+                            }
+                        }
+                        _ => {
+                            return Err(ApiError::NotFound(format!(
+                                "afterId block not found: {}",
+                                after_id
+                            )));
+                        }
+                    }
+                }
 
                 // Remove from old parent's childIds (or rootIds if was root)
+                // This happens for both reparenting AND repositioning
                 if let Some(ref old_pid) = old_parent_id {
                     if let Some(yrs::Out::YMap(old_parent_map)) = blocks.get(&txn, old_pid) {
                         if let Some(yrs::Out::YArray(child_ids_arr)) = old_parent_map.get(&txn, "childIds") {
@@ -1444,16 +1499,61 @@ async fn update_block(
                 }
 
                 // Add to new parent's childIds (or rootIds if moving to root)
+                // Use positional params if provided
                 if let Some(ref new_pid) = final_parent_id {
                     if let Some(yrs::Out::YMap(new_parent_map)) = blocks.get(&txn, new_pid) {
                         if let Some(yrs::Out::YArray(child_ids_arr)) = new_parent_map.get(&txn, "childIds") {
-                            child_ids_arr.push_back(&mut txn, id.as_str());
+                            // Determine insertion index
+                            let insert_idx = if let Some(ref after_id) = req.after_id {
+                                // Find position of afterId sibling, insert after it
+                                let child_ids_vec: Vec<String> = child_ids_arr
+                                    .iter(&txn)
+                                    .filter_map(|v| match v {
+                                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                        _ => None,
+                                    })
+                                    .collect();
+
+                                child_ids_vec.iter()
+                                    .position(|x| x == after_id)
+                                    .map(|idx| idx + 1)
+                                    .unwrap_or(child_ids_arr.len(&txn) as usize)  // Fallback: append
+                            } else if let Some(at_index) = req.at_index {
+                                // Clamp to valid range (0..=length)
+                                at_index.min(child_ids_arr.len(&txn) as usize)
+                            } else {
+                                // Default: append to end (backward compatible)
+                                child_ids_arr.len(&txn) as usize
+                            };
+
+                            // Use Y.Array insert() - surgical, 1 CRDT op (FLO-280 pattern)
+                            child_ids_arr.insert(&mut txn, insert_idx as u32, id.as_str());
                         }
                     }
                 } else {
                     // Moving to root
                     let root_ids = txn.get_or_insert_array("rootIds");
-                    root_ids.push_back(&mut txn, id.as_str());
+
+                    let insert_idx = if let Some(ref after_id) = req.after_id {
+                        let root_vec: Vec<String> = root_ids
+                            .iter(&txn)
+                            .filter_map(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                _ => None,
+                            })
+                            .collect();
+
+                        root_vec.iter()
+                            .position(|x| x == after_id)
+                            .map(|idx| idx + 1)
+                            .unwrap_or(root_ids.len(&txn) as usize)
+                    } else if let Some(at_index) = req.at_index {
+                        at_index.min(root_ids.len(&txn) as usize)
+                    } else {
+                        root_ids.len(&txn) as usize
+                    };
+
+                    root_ids.insert(&mut txn, insert_idx as u32, id.as_str());
                 }
             }
 
@@ -3410,6 +3510,231 @@ mod tests {
         let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(error.error.contains("not a sibling"));
+    }
+
+    // FLO-283 Phase 2: Block Repositioning Tests
+
+    #[tokio::test]
+    async fn test_update_block_reposition_after_sibling() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent and three children
+        let parent = create_test_block(&mut app, "Parent", None).await;
+        let child1 = create_test_block(&mut app, "Child 1", Some(&parent.id)).await;
+        let child2 = create_test_block(&mut app, "Child 2", Some(&parent.id)).await;
+        let child3 = create_test_block(&mut app, "Child 3", Some(&parent.id)).await;
+
+        // Initial order: [child1, child2, child3]
+        let parent_before = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        assert_eq!(parent_before.child_ids, vec![child1.id.clone(), child2.id.clone(), child3.id.clone()]);
+
+        // Move child3 after child1 (new order: child1, child3, child2)
+        let body = format!(r#"{{"afterId": "{}"}}"#, child1.id);
+        let request = Request::patch(&format!("/api/v1/blocks/{}", child3.id))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify new order
+        let parent_after = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        assert_eq!(parent_after.child_ids, vec![child1.id.clone(), child3.id.clone(), child2.id.clone()]);
+    }
+
+    #[tokio::test]
+    async fn test_update_block_reposition_at_index() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent and three children
+        let parent = create_test_block(&mut app, "Parent", None).await;
+        let child1 = create_test_block(&mut app, "Child 1", Some(&parent.id)).await;
+        let child2 = create_test_block(&mut app, "Child 2", Some(&parent.id)).await;
+        let child3 = create_test_block(&mut app, "Child 3", Some(&parent.id)).await;
+
+        // Move child3 to index 0 (new order: child3, child1, child2)
+        let body = r#"{"atIndex": 0}"#;
+        let request = Request::patch(&format!("/api/v1/blocks/{}", child3.id))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify new order
+        let parent_after = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        assert_eq!(parent_after.child_ids, vec![child3.id.clone(), child1.id.clone(), child2.id.clone()]);
+    }
+
+    #[tokio::test]
+    async fn test_update_block_reparent_with_position() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create two parents
+        let parent1 = create_test_block(&mut app, "Parent 1", None).await;
+        let parent2 = create_test_block(&mut app, "Parent 2", None).await;
+
+        // Create children under parent1
+        let child1 = create_test_block(&mut app, "Child 1", Some(&parent1.id)).await;
+
+        // Create children under parent2
+        let child2a = create_test_block(&mut app, "Child 2a", Some(&parent2.id)).await;
+        let child2b = create_test_block(&mut app, "Child 2b", Some(&parent2.id)).await;
+
+        // Move child1 from parent1 to parent2, insert after child2a
+        let body = format!(r#"{{"parentId": "{}", "afterId": "{}"}}"#, parent2.id, child2a.id);
+        let request = Request::patch(&format!("/api/v1/blocks/{}", child1.id))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify child1 removed from parent1
+        let parent1_after = get_test_block(&mut app, &parent1.id).await.expect("Parent1 should exist");
+        assert_eq!(parent1_after.child_ids, Vec::<String>::new());
+
+        // Verify child1 added to parent2 in correct position
+        let parent2_after = get_test_block(&mut app, &parent2.id).await.expect("Parent2 should exist");
+        assert_eq!(parent2_after.child_ids, vec![child2a.id.clone(), child1.id.clone(), child2b.id.clone()]);
+    }
+
+    #[tokio::test]
+    async fn test_update_block_reposition_both_params_error() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent and children
+        let parent = create_test_block(&mut app, "Parent", None).await;
+        let child1 = create_test_block(&mut app, "Child 1", Some(&parent.id)).await;
+        let child2 = create_test_block(&mut app, "Child 2", Some(&parent.id)).await;
+
+        // Try to specify both afterId AND atIndex
+        let body = format!(r#"{{"afterId": "{}", "atIndex": 0}}"#, child1.id);
+        let request = Request::patch(&format!("/api/v1/blocks/{}", child2.id))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        // Should return 400 Bad Request
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(error.error.contains("Cannot specify both"));
+    }
+
+    #[tokio::test]
+    async fn test_update_block_reposition_after_id_not_found() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent and child
+        let parent = create_test_block(&mut app, "Parent", None).await;
+        let child = create_test_block(&mut app, "Child", Some(&parent.id)).await;
+
+        // Try to reposition after nonexistent block
+        let body = r#"{"afterId": "nonexistent-uuid"}"#;
+        let request = Request::patch(&format!("/api/v1/blocks/{}", child.id))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        // Should return 404 Not Found
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(error.error.contains("afterId block not found"));
+    }
+
+    #[tokio::test]
+    async fn test_update_block_reposition_after_id_wrong_parent() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create two separate parents
+        let parent1 = create_test_block(&mut app, "Parent 1", None).await;
+        let parent2 = create_test_block(&mut app, "Parent 2", None).await;
+
+        // Create children under different parents
+        let child1 = create_test_block(&mut app, "Child 1", Some(&parent1.id)).await;
+        let child2 = create_test_block(&mut app, "Child 2", Some(&parent2.id)).await;
+
+        // Try to reposition child2 after child1 (different parents, without reparenting)
+        let body = format!(r#"{{"afterId": "{}"}}"#, child1.id);
+        let request = Request::patch(&format!("/api/v1/blocks/{}", child2.id))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        // Should return 400 Bad Request
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(error.error.contains("not a sibling"));
+    }
+
+    #[tokio::test]
+    async fn test_update_block_reposition_root_blocks() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create three root blocks
+        let root1 = create_test_block(&mut app, "Root 1", None).await;
+        let root2 = create_test_block(&mut app, "Root 2", None).await;
+        let root3 = create_test_block(&mut app, "Root 3", None).await;
+
+        // Move root3 to beginning (atIndex: 0)
+        let body = r#"{"atIndex": 0}"#;
+        let request = Request::patch(&format!("/api/v1/blocks/{}", root3.id))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify root order via GET /api/v1/blocks
+        let request = Request::get("/api/v1/blocks")
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let list: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(list.root_ids, vec![root3.id.clone(), root1.id.clone(), root2.id.clone()]);
     }
 
     #[tokio::test]
