@@ -263,6 +263,13 @@ pub struct BlockDto {
 pub struct CreateBlockRequest {
     pub content: String,
     pub parent_id: Option<String>,
+
+    /// Insert after this sibling block (mutually exclusive with at_index)
+    pub after_id: Option<String>,
+
+    /// Insert at this index in parent's childIds (0 = prepend)
+    /// Mutually exclusive with after_id
+    pub at_index: Option<usize>,
     // NOTE: Origin field removed - origin is now handled via Y.Doc observation
     // with Origin::User for all frontend mutations. See hooks/system.rs.
 }
@@ -301,7 +308,7 @@ where
 }
 
 /// Standard error response
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
 }
@@ -330,6 +337,9 @@ pub enum ApiError {
     #[error("Invalid parent: {0}")]
     InvalidParent(String),
 
+    #[error("Invalid request: {0}")]
+    InvalidRequest(String),
+
     #[error("Updates compacted: requested since {requested}, compacted through {compacted_through}")]
     UpdatesCompacted {
         requested: i64,
@@ -344,7 +354,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status = match &self {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
-            ApiError::InvalidBase64(_) | ApiError::InvalidParent(_) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidBase64(_) | ApiError::InvalidParent(_) | ApiError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::SearchUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Search(_) => StatusCode::BAD_REQUEST,
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
@@ -1065,6 +1075,44 @@ async fn create_block(
             }
         }
 
+        // Validate positional insertion parameters
+        // 1. Check mutual exclusivity
+        if req.after_id.is_some() && req.at_index.is_some() {
+            return Err(ApiError::InvalidRequest(
+                "Cannot specify both afterId and atIndex".to_string()
+            ));
+        }
+
+        // 2. Validate afterId if present
+        if let Some(ref after_id) = req.after_id {
+            match blocks.get(&txn, after_id) {
+                Some(yrs::Out::YMap(after_map)) => {
+                    // Check afterId block shares same parent
+                    let after_parent = after_map.get(&txn, "parentId")
+                        .and_then(|v| match v {
+                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            _ => None,
+                        });
+
+                    let expected_parent = req.parent_id.as_ref().map(|s| s.as_str());
+                    let actual_parent = after_parent.as_ref().map(|s| s.as_str());
+
+                    if actual_parent != expected_parent {
+                        return Err(ApiError::InvalidRequest(format!(
+                            "Block {} is not a sibling (different parent)",
+                            after_id
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(ApiError::NotFound(format!(
+                        "afterId block not found: {}",
+                        after_id
+                    )));
+                }
+            }
+        }
+
         // Create nested Y.Map for block with Y.Array for childIds
         let parent_id_value: yrs::Any = match &req.parent_id {
             Some(p) => yrs::Any::String(p.clone().into()),
@@ -1091,13 +1139,58 @@ async fn create_block(
             // Add to parent's childIds array (already validated parent exists above)
             if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id) {
                 if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
-                    child_ids.push_back(&mut txn, id.as_str());
+
+                    // Determine insertion index
+                    let insert_idx = if let Some(ref after_id) = req.after_id {
+                        // Find position of afterId sibling, insert after it
+                        let child_ids_vec: Vec<String> = child_ids
+                            .iter(&txn)
+                            .filter_map(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                _ => None,
+                            })
+                            .collect();
+
+                        child_ids_vec.iter()
+                            .position(|x| x == after_id)
+                            .map(|idx| idx + 1)
+                            .unwrap_or(child_ids.len(&txn) as usize)  // Fallback: append
+                    } else if let Some(at_index) = req.at_index {
+                        // Clamp to valid range (0..=length)
+                        at_index.min(child_ids.len(&txn) as usize)
+                    } else {
+                        // Default: append to end (backward compatible)
+                        child_ids.len(&txn) as usize
+                    };
+
+                    // Use Y.Array insert() - surgical, 1 CRDT op (FLO-280 pattern)
+                    child_ids.insert(&mut txn, insert_idx as u32, id.as_str());
                 }
             }
         } else {
             // No parent - add to rootIds
             let root_ids = txn.get_or_insert_array("rootIds");
-            root_ids.push_back(&mut txn, id.as_str());
+
+            let insert_idx = if let Some(ref after_id) = req.after_id {
+                let root_vec: Vec<String> = root_ids
+                    .iter(&txn)
+                    .filter_map(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+
+                root_vec.iter()
+                    .position(|x| x == after_id)
+                    .map(|idx| idx + 1)
+                    .unwrap_or(root_ids.len(&txn) as usize)
+            } else if let Some(at_index) = req.at_index {
+                at_index.min(root_ids.len(&txn) as usize)
+            } else {
+                root_ids.len(&txn) as usize
+            };
+
+            root_ids.insert(&mut txn, insert_idx as u32, id.as_str());
         }
 
         txn.encode_update_v1()
@@ -3089,5 +3182,293 @@ mod tests {
         assert!(!root_after.child_ids.contains(&branch_a.id), "Branch A removed from root childIds");
         assert!(root_after.child_ids.contains(&branch_b.id), "Branch B still in root childIds");
         assert!(get_test_block(&mut app, &branch_b.id).await.is_some(), "Branch B survives");
+    }
+
+    // FLO-283: Positional Block Insertion Tests
+
+    #[tokio::test]
+    async fn test_create_block_after_sibling() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent
+        let parent = create_test_block(&mut app, "Parent", None).await;
+
+        // Create first child
+        let first = create_test_block(&mut app, "First", Some(&parent.id)).await;
+
+        // Create second child with afterId
+        let body = format!(
+            r#"{{"content": "Second", "parentId": "{}", "afterId": "{}"}}"#,
+            parent.id, first.id
+        );
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let second: BlockDto = serde_json::from_slice(&bytes).unwrap();
+
+        // Verify order
+        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        assert_eq!(parent_updated.child_ids, vec![first.id.clone(), second.id]);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_at_index_prepend() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent
+        let parent = create_test_block(&mut app, "Parent", None).await;
+
+        // Create first child
+        let first = create_test_block(&mut app, "First", Some(&parent.id)).await;
+
+        // Prepend another child with atIndex: 0
+        let body = format!(
+            r#"{{"content": "Prepended", "parentId": "{}", "atIndex": 0}}"#,
+            parent.id
+        );
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let prepended: BlockDto = serde_json::from_slice(&bytes).unwrap();
+
+        // Verify order (prepended should be first)
+        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        assert_eq!(parent_updated.child_ids, vec![prepended.id, first.id.clone()]);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_at_index_middle() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent
+        let parent = create_test_block(&mut app, "Parent", None).await;
+
+        // Create A and C
+        let a = create_test_block(&mut app, "A", Some(&parent.id)).await;
+        let c = create_test_block(&mut app, "C", Some(&parent.id)).await;
+
+        // Insert B at index 1 (between A and C)
+        let body = format!(
+            r#"{{"content": "B", "parentId": "{}", "atIndex": 1}}"#,
+            parent.id
+        );
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let b: BlockDto = serde_json::from_slice(&bytes).unwrap();
+
+        // Verify order (A, B, C)
+        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        assert_eq!(parent_updated.child_ids, vec![a.id.clone(), b.id, c.id.clone()]);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_at_index_clamp() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent (empty)
+        let parent = create_test_block(&mut app, "Parent", None).await;
+
+        // Try to insert at index 999 (should clamp to 0)
+        let body = format!(
+            r#"{{"content": "Clamped", "parentId": "{}", "atIndex": 999}}"#,
+            parent.id
+        );
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let clamped: BlockDto = serde_json::from_slice(&bytes).unwrap();
+
+        // Verify it was added (clamped to end = index 0 for empty parent)
+        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        assert_eq!(parent_updated.child_ids, vec![clamped.id]);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_both_params_error() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent and sibling
+        let parent = create_test_block(&mut app, "Parent", None).await;
+        let sibling = create_test_block(&mut app, "Sibling", Some(&parent.id)).await;
+
+        // Try to specify both afterId AND atIndex
+        let body = format!(
+            r#"{{"content": "Invalid", "parentId": "{}", "afterId": "{}", "atIndex": 0}}"#,
+            parent.id, sibling.id
+        );
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        // Should return 400 Bad Request
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(error.error.contains("Cannot specify both"));
+    }
+
+    #[tokio::test]
+    async fn test_create_block_after_id_not_found() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent
+        let parent = create_test_block(&mut app, "Parent", None).await;
+
+        // Try to insert after nonexistent block
+        let body = format!(
+            r#"{{"content": "Invalid", "parentId": "{}", "afterId": "nonexistent-uuid"}}"#,
+            parent.id
+        );
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        // Should return 404 Not Found
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(error.error.contains("afterId block not found"));
+    }
+
+    #[tokio::test]
+    async fn test_create_block_after_id_wrong_parent() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create two separate parents
+        let parent1 = create_test_block(&mut app, "Parent1", None).await;
+        let parent2 = create_test_block(&mut app, "Parent2", None).await;
+
+        // Create child under parent1
+        let child1 = create_test_block(&mut app, "Child1", Some(&parent1.id)).await;
+
+        // Try to insert under parent2 after child1 (wrong parent)
+        let body = format!(
+            r#"{{"content": "Invalid", "parentId": "{}", "afterId": "{}"}}"#,
+            parent2.id, child1.id
+        );
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        // Should return 400 Bad Request
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(error.error.contains("not a sibling"));
+    }
+
+    #[tokio::test]
+    async fn test_create_root_block_after_id() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create first root block
+        let first = create_test_block(&mut app, "First Root", None).await;
+
+        // Insert second root after first (no parent)
+        let body = format!(
+            r#"{{"content": "Second Root", "afterId": "{}"}}"#,
+            first.id
+        );
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let second: BlockDto = serde_json::from_slice(&bytes).unwrap();
+
+        // Verify root order via GET /api/v1/blocks
+        let request = Request::get("/api/v1/blocks")
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let list: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+
+        // Should have both roots in order
+        assert_eq!(list.root_ids, vec![first.id.clone(), second.id]);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_default_append() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent
+        let parent = create_test_block(&mut app, "Parent", None).await;
+
+        // Create first child (no positional params)
+        let first = create_test_block(&mut app, "First", Some(&parent.id)).await;
+
+        // Create second child (no positional params - should append)
+        let second = create_test_block(&mut app, "Second", Some(&parent.id)).await;
+
+        // Verify order (backward compatible append behavior)
+        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        assert_eq!(parent_updated.child_ids, vec![first.id.clone(), second.id]);
     }
 }
