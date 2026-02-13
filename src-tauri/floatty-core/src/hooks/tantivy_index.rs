@@ -107,29 +107,42 @@ impl TantivyIndexHook {
         let block_type = parse_block_type(content).as_str().to_string();
 
         // Get parent_id, has_markers, and formatted markers string from store
+        // Includes inherited markers from ancestors for search coverage
         let (parent_id, has_markers, markers) = store
             .get_block(id)
             .map(|b| {
-                let (markers_count, markers_str) = b
+                let own_markers = b
                     .metadata
                     .as_ref()
-                    .map(|m| {
-                        let formatted = m
-                            .markers
-                            .iter()
-                            .map(|marker| {
-                                if let Some(ref v) = marker.value {
-                                    format!("{}::{}", marker.marker_type, v)
-                                } else {
-                                    marker.marker_type.clone()
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        (m.markers.len(), formatted)
+                    .map(|m| &m.markers[..])
+                    .unwrap_or(&[]);
+
+                // Format own markers
+                let mut formatted_parts: Vec<String> = own_markers
+                    .iter()
+                    .map(|marker| {
+                        if let Some(ref v) = marker.value {
+                            format!("{}::{}", marker.marker_type, v)
+                        } else {
+                            marker.marker_type.clone()
+                        }
                     })
-                    .unwrap_or((0, String::new()));
-                (b.parent_id, markers_count > 0, markers_str)
+                    .collect();
+
+                // If no own tag markers, include inherited ones for search
+                let has_own_tags = own_markers.iter().any(|m| m.value.is_some());
+                if !has_own_tags {
+                    let inherited = store.get_inherited_markers(id);
+                    for marker in &inherited {
+                        if let Some(ref v) = marker.value {
+                            formatted_parts.push(format!("{}::{}", marker.marker_type, v));
+                        }
+                    }
+                }
+
+                let has_markers = !formatted_parts.is_empty();
+                let markers_str = formatted_parts.join(" ");
+                (b.parent_id, has_markers, markers_str)
             })
             .unwrap_or((None, false, String::new()));
 

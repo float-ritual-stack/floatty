@@ -500,6 +500,53 @@ impl YDocStore {
         })
     }
 
+    /// Walk up the parent chain to find the nearest ancestor with tag markers.
+    ///
+    /// Returns the ancestor's tag markers (those with values like project::floatty)
+    /// if the block itself has no tag markers. Returns empty vec if the block has
+    /// its own tag markers or no ancestor has any.
+    ///
+    /// Used by search indexing and API responses to enrich blocks with
+    /// contextual metadata from their position in the tree.
+    pub fn get_inherited_markers(&self, block_id: &str) -> Vec<crate::metadata::Marker> {
+        // First check if block has its own tag markers
+        if let Some(block) = self.get_block(block_id) {
+            if let Some(ref meta) = block.metadata {
+                let has_own_tags = meta.markers.iter().any(|m| m.value.is_some());
+                if has_own_tags {
+                    return Vec::new(); // Has own tags, no inheritance needed
+                }
+            }
+
+            // Walk up parent chain
+            let mut current_parent = block.parent_id;
+            let mut depth = 0;
+            while let Some(ref pid) = current_parent {
+                depth += 1;
+                if depth > 50 {
+                    break;
+                }
+                if let Some(parent) = self.get_block(pid) {
+                    if let Some(ref meta) = parent.metadata {
+                        let tags: Vec<_> = meta
+                            .markers
+                            .iter()
+                            .filter(|m| m.value.is_some())
+                            .cloned()
+                            .collect();
+                        if !tags.is_empty() {
+                            return tags;
+                        }
+                    }
+                    current_parent = parent.parent_id;
+                } else {
+                    break;
+                }
+            }
+        }
+        Vec::new()
+    }
+
     /// Apply an update from a remote client.
     ///
     /// Persists first, then applies to memory. This prevents memory/DB divergence
