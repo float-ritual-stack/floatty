@@ -22,8 +22,8 @@ pub struct BlockInfo {
 }
 
 /// API response shape from GET /api/v1/blocks.
+/// Note: API uses snake_case, so no rename_all needed
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct BlocksApiResponse {
     pub blocks: Vec<BlockInfo>,
     pub root_ids: Vec<String>,
@@ -150,6 +150,32 @@ mod tests {
         assert!(orphan_ids.contains("orphan1"));
         assert!(orphan_ids.contains("orphan2"));
         assert!(orphan_ids.contains("floater"));
+    }
+
+    #[test]
+    fn test_json_parsing_matches_api_format() {
+        // This test ensures our BlocksApiResponse matches the ACTUAL API response format.
+        // API returns: { "blocks": [...], "root_ids": [...] }
+        // BlockDto fields use camelCase, but root_ids field is snake_case!
+        let json = r#"{
+            "blocks": [
+                {"id": "b1", "parentId": "missing", "content": "Orphan block", "childIds": [], "collapsed": false, "blockType": "inert", "createdAt": 0, "updatedAt": 0},
+                {"id": "b2", "parentId": null, "content": "Root block", "childIds": [], "collapsed": false, "blockType": "inert", "createdAt": 0, "updatedAt": 0}
+            ],
+            "root_ids": ["b2"]
+        }"#;
+
+        // This will panic if serde configuration is wrong
+        let response: BlocksApiResponse = serde_json::from_str(json)
+            .expect("Should parse API response - check serde(rename_all) configuration!");
+
+        assert_eq!(response.blocks.len(), 2);
+        assert_eq!(response.root_ids.len(), 1);
+
+        // Verify orphan detection works on parsed data
+        let orphans = find_orphans(&response.blocks, &response.root_ids);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].block_id, "b1");
     }
 
     #[test]
