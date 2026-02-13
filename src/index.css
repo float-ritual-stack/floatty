@@ -2550,3 +2550,124 @@ body.resizing {
 body.resizing * {
   cursor: col-resize !important;
 }
+
+/* Export Validation Panel (FLO-349) */
+.export-validation-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgb(0 0 0 / 50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.export-validation-panel {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 480px;
+  width: 90%;
+  max-height: 70vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 30%);
+}
+
+.export-validation-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-fg);
+}
+
+.export-validation-subtitle {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+
+.export-validation-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.export-validation-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-warning, var(--color-ansi-yellow));
+  margin-bottom: 4px;
+}
+
+.export-validation-count {
+  background: color-mix(in srgb, var(--color-warning, var(--color-ansi-yellow)) 20%, transparent);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+.export-validation-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.export-validation-item {
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  padding: 2px 0;
+  padding-left: 12px;
+  position: relative;
+}
+
+.export-validation-item::before {
+  content: '·';
+  position: absolute;
+  left: 2px;
+  color: var(--color-fg-muted);
+}
+
+.export-validation-more {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.export-validation-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.export-validation-btn {
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  font-family: inherit;
+}
+
+.export-validation-btn-cancel {
+  background: transparent;
+  color: var(--color-fg-muted);
+}
+
+.export-validation-btn-cancel:hover {
+  background: color-mix(in srgb, var(--color-fg) 10%, transparent);
+}
+
+.export-validation-btn-export {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border-color: var(--color-accent);
+}
+
+.export-validation-btn-export:hover {
+  opacity: 0.9;
+}

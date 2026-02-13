@@ -1374,7 +1374,7 @@ function createBlockStore() {
 
   const createInitialBlock = () => {
     if (!_doc) { warnDocNotReady('createInitialBlock'); return ''; }
-    
+
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, '');
 
@@ -1387,6 +1387,60 @@ function createBlockStore() {
     }, 'user');
 
     return newId;
+  };
+
+  /**
+   * FLO-350: Quarantine orphaned blocks detected by the background worker.
+   * Creates an `orphaned-blocks::YYYY-MM-DD-HHMMSS` container at root level
+   * and reparents all orphan blocks into it.
+   */
+  const quarantineOrphans = (orphanIds: string[]) => {
+    if (!_doc) { warnDocNotReady('quarantineOrphans'); return; }
+    if (orphanIds.length === 0) return;
+
+    // Filter to only IDs that actually exist in our store
+    const validIds = orphanIds.filter(id => state.blocks[id]);
+    if (validIds.length === 0) return;
+
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const timestamp =
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-` +
+      `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const containerContent = `orphaned-blocks::${timestamp}`;
+
+    const containerId = crypto.randomUUID();
+    const containerBlock = createBlock(containerId, containerContent, null);
+
+    console.warn(`[BlockStore] Quarantining ${validIds.length} orphaned blocks into "${containerContent}"`);
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      const rootIds = _doc.getArray<string>('rootIds');
+
+      // Create container block with orphans as children
+      containerBlock.childIds = validIds;
+      blocksMap.set(containerId, blockToYMap(containerBlock));
+      rootIds.push([containerId]);
+
+      // Reparent each orphan to the container
+      for (const orphanId of validIds) {
+        // Remove from old parent's childIds if parent still exists
+        const orphan = state.blocks[orphanId];
+        if (orphan?.parentId && state.blocks[orphan.parentId]) {
+          removeChildId(blocksMap, orphan.parentId, orphanId);
+        }
+        // Remove from rootIds if present there
+        const rootArr = rootIds.toArray();
+        const rootIdx = rootArr.indexOf(orphanId);
+        if (rootIdx >= 0) {
+          rootIds.delete(rootIdx, 1);
+        }
+        // Set new parent
+        setValueOnYMap(blocksMap, orphanId, 'parentId', containerId);
+        setValueOnYMap(blocksMap, orphanId, 'updatedAt', Date.now());
+      }
+    }, 'system');
   };
 
   return {
@@ -1420,6 +1474,7 @@ function createBlockStore() {
     updateBlockMetadata,  // For hooks/projections to write metadata
     createInitialBlock,
     clearWorkspace,
+    quarantineOrphans,  // FLO-350: reparent orphans to quarantine container
   };
 }
 

@@ -12,8 +12,10 @@ import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
 import { invoke, type AggregatorConfig } from '../lib/tauriTypes';
-import { exportOutlineToJSON, downloadJSON, validateExport } from '../lib/jsonExport';
+import { exportOutlineToJSON, downloadJSON } from '../lib/jsonExport';
 import { downloadBinary } from '../lib/binaryExport';
+import { validateForExport, type ValidationWarning } from '../lib/validation';
+import { ExportValidation } from './ExportValidation';
 import { themeStore } from '../hooks/useThemeStore';
 
 interface OutlinerProps {
@@ -33,6 +35,10 @@ export function Outliner(props: OutlinerProps) {
   const focusedBlockId = () => paneStore.getFocusedBlockId(props.paneId);
   const setFocusedBlockId = (id: string | null) => paneStore.setFocusedBlockId(props.paneId, id);
   const [confirmClear, setConfirmClear] = createSignal(false);
+
+  // FLO-349: Non-blocking export validation
+  const [exportWarnings, setExportWarnings] = createSignal<ValidationWarning[] | null>(null);
+  const [pendingExportData, setPendingExportData] = createSignal<ReturnType<typeof exportOutlineToJSON> | null>(null);
 
   // FLO-197/P5: Gate render on config loaded (prevents 10K render freeze)
   // For split panes (props.initialCollapseDepth set), ready immediately after applying depth
@@ -252,18 +258,44 @@ export function Outliner(props: OutlinerProps) {
 
     try {
       const data = exportOutlineToJSON(store.blocks, store.rootIds);
-      const validation = validateExport(data);
-      if (!validation.valid) {
-        console.error('[FLO-247] Export validation failed:', validation.errors);
-        alert(`Export validation failed:\n${validation.errors.slice(0, 10).join('\n')}${validation.errors.length > 10 ? `\n...and ${validation.errors.length - 10} more` : ''}`);
+      const validation = validateForExport(data);
+
+      if (validation.warnings.length > 0) {
+        // FLO-349: Show warnings panel, let user decide
+        console.log(`[FLO-349] Export has ${validation.warnings.length} warnings`);
+        setExportWarnings(validation.warnings);
+        setPendingExportData(data);
         return;
       }
+
+      // No warnings — export directly
       await downloadJSON(data);
       console.log(`[FLO-247] Exported ${data.blockCount} blocks to JSON`);
     } catch (err) {
       console.error('[FLO-247] JSON export failed:', err);
       alert(`JSON export failed: ${err}`);
     }
+  };
+
+  const handleExportAnyway = async () => {
+    const data = pendingExportData();
+    setExportWarnings(null);
+    setPendingExportData(null);
+    if (!data) return;
+
+    try {
+      await downloadJSON(data);
+      console.log(`[FLO-349] Exported ${data.blockCount} blocks to JSON (with warnings)`);
+    } catch (err) {
+      console.error('[FLO-349] JSON export failed:', err);
+      alert(`JSON export failed: ${err}`);
+    }
+  };
+
+  const handleExportCancel = () => {
+    setExportWarnings(null);
+    setPendingExportData(null);
+    console.log('[FLO-349] Export cancelled by user');
   };
 
   const exportToBinary = async () => {
@@ -619,6 +651,15 @@ export function Outliner(props: OutlinerProps) {
             </Show>
           </Show>
         </Show>
+      </Show>
+
+      {/* FLO-349: Non-blocking export validation warnings */}
+      <Show when={exportWarnings()}>
+        <ExportValidation
+          warnings={exportWarnings()!}
+          onExport={handleExportAnyway}
+          onCancel={handleExportCancel}
+        />
       </Show>
     </div>
   );
