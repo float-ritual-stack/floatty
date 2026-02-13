@@ -2556,7 +2556,7 @@ body.resizing * {
   position: fixed;
   inset: 0;
   z-index: 300;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgb(0 0 0 / 50%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2571,7 +2571,7 @@ body.resizing * {
   width: 90%;
   max-height: 70vh;
   overflow-y: auto;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 30%);
 }
 
 .export-validation-title {

@@ -1403,7 +1403,10 @@ function createBlockStore() {
     if (validIds.length === 0) return;
 
     const now = new Date();
-    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19).replace('T', '-');
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const timestamp =
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-` +
+      `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     const containerContent = `orphaned-blocks::${timestamp}`;
 
     const containerId = crypto.randomUUID();

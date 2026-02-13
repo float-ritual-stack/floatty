@@ -82,7 +82,10 @@ fn log_js(level: &str, target: &str, message: &str) {
 /// Fetches blocks from server, runs `find_orphans()`, and emits
 /// "orphans-detected" event if any are found.
 async fn run_orphan_check(server_url: &str, api_key: &str, app_handle: &tauri::AppHandle) {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let url = format!("{}/api/v1/blocks", server_url);
 
     let response = match client
