@@ -4,6 +4,7 @@ mod ctx_parser;
 mod ctx_watcher;
 mod daily_view;
 mod db;
+mod orphan_detector;
 #[cfg(target_os = "macos")]
 mod panel;
 mod paths;
@@ -26,7 +27,7 @@ use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::FloattyDb;
 use floatty_core::YDocStore;
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
@@ -74,6 +75,69 @@ fn log_js(level: &str, target: &str, message: &str) {
         "error" => tracing::error!(target: "js", js_target = %target, "{}", message),
         _ => tracing::info!(target: "js", js_target = %target, level = %level, "{}", message),
     }
+}
+
+/// Run orphan detection against floatty-server and emit results to frontend.
+///
+/// Fetches blocks from server, runs `find_orphans()`, and emits
+/// "orphans-detected" event if any are found.
+async fn run_orphan_check(server_url: &str, api_key: &str, app_handle: &tauri::AppHandle) {
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/v1/blocks", server_url);
+
+    let response = match client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "Orphan check: failed to fetch blocks from server");
+            return;
+        }
+    };
+
+    if !response.status().is_success() {
+        tracing::warn!(status = %response.status(), "Orphan check: server returned error");
+        return;
+    }
+
+    let data: orphan_detector::BlocksApiResponse = match response.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(error = %e, "Orphan check: failed to parse blocks response");
+            return;
+        }
+    };
+
+    let orphans = orphan_detector::find_orphans(&data.blocks, &data.root_ids);
+
+    if orphans.is_empty() {
+        tracing::debug!(block_count = data.blocks.len(), "Orphan check: no orphans found");
+        return;
+    }
+
+    tracing::warn!(
+        orphan_count = orphans.len(),
+        block_count = data.blocks.len(),
+        "Orphan check: found orphaned blocks"
+    );
+
+    // Emit to frontend for quarantine handling
+    if let Err(e) = app_handle.emit("orphans-detected", &orphans) {
+        tracing::error!(error = %e, "Failed to emit orphans-detected event");
+    }
+}
+
+/// Manual trigger for orphan detection (for testing/debugging).
+#[tauri::command]
+async fn check_orphans_now(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<String, String> {
+    let server = state.server.as_ref()
+        .ok_or_else(|| "Server not running".to_string())?;
+
+    run_orphan_check(&server.info.url, &server.info.api_key, &app_handle).await;
+    Ok("Orphan check complete".to_string())
 }
 
 /// Initialize structured logging with tracing
@@ -294,6 +358,10 @@ pub fn run() {
         log::warn!("floatty-server failed to start - Y.Doc sync will fail");
     }
 
+    // Capture server info for orphan detector before moving into AppState
+    let server_url_for_orphan = server_state.as_ref().map(|s| s.info.url.clone());
+    let server_api_key_for_orphan = server_state.as_ref().map(|s| s.info.api_key.clone());
+
     let state = AppState { inner, server: server_state };
 
     // Build app with platform-specific plugins and commands
@@ -347,6 +415,7 @@ pub fn run() {
                     read_help_file,
                     toggle_diagnostics,
                     open_url,
+                    check_orphans_now,
                 ]
             }
             // macOS: include panel commands
@@ -378,6 +447,7 @@ pub fn run() {
                     read_help_file,
                     toggle_diagnostics,
                     open_url,
+                    check_orphans_now,
                     panel::show_test_panel,
                     panel::hide_test_panel,
                     panel::toggle_test_panel,
@@ -408,6 +478,9 @@ pub fn run() {
         .setup({
             // Capture workspace_name for title bar
             let workspace_name = config.workspace_name.clone();
+            // Capture server info for orphan detector background worker
+            let orphan_server_url = server_url_for_orphan.clone();
+            let orphan_api_key = server_api_key_for_orphan.clone();
             move |app| {
                 // Set enhanced window title:
                 // floatty (dev) - workspace v0.4.2 (abc1234)
@@ -442,6 +515,27 @@ pub fn run() {
                         "Window title set"
                     );
                 }
+
+                // FLO-350: Start orphan detection background worker
+                if let (Some(url), Some(key)) = (orphan_server_url, orphan_api_key) {
+                    let app_handle = app.handle().clone();
+                    tokio::spawn(async move {
+                        // Initial check after 30s (let server and frontend settle)
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        tracing::info!("Orphan detector: running initial check");
+                        run_orphan_check(&url, &key, &app_handle).await;
+
+                        // Then every hour
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+                        interval.tick().await; // skip immediate tick
+                        loop {
+                            interval.tick().await;
+                            tracing::debug!("Orphan detector: running hourly check");
+                            run_orphan_check(&url, &key, &app_handle).await;
+                        }
+                    });
+                }
+
                 Ok(())
             }
         })

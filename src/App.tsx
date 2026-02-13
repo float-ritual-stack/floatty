@@ -14,6 +14,7 @@ import { initHttpClient } from './lib/httpClient';
 import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
 import { useSyncHealth } from './hooks/useSyncHealth';
 import { registerHandlers } from './lib/handlers';
+import { blockStore } from './hooks/useBlockStore';
 // Initialize logger early - intercepts console.* calls and forwards to Rust log files
 import './lib/logger';
 import './App.css';
@@ -24,8 +25,16 @@ interface DragDropPayload {
   position: { x: number; y: number };
 }
 
+// Orphan info payload from Rust orphan detector (FLO-350)
+interface OrphanInfo {
+  blockId: string;
+  missingParentId: string;
+  contentPreview: string;
+}
+
 function App() {
   let unlistenDragDrop: UnlistenFn | undefined;
+  let unlistenOrphans: UnlistenFn | undefined;
   const [serverConnected, setServerConnected] = createSignal(false);
   const [serverError, setServerError] = createSignal<string | null>(null);
   const [workspaceLoaded, setWorkspaceLoaded] = createSignal(false);
@@ -116,6 +125,18 @@ function App() {
         pid: activeTab.ptyPid,
         data: formattedPaths
       }).catch(console.error);
+    });
+  });
+
+  // FLO-350: Listen for orphan detection events from Rust background worker
+  onMount(async () => {
+    unlistenOrphans = await listen<OrphanInfo[]>('orphans-detected', (event) => {
+      const orphans = event.payload;
+      if (!orphans || orphans.length === 0) return;
+
+      console.warn(`[App] Orphan detector found ${orphans.length} orphaned blocks`);
+      const orphanIds = orphans.map(o => o.blockId);
+      blockStore.quarantineOrphans(orphanIds);
     });
   });
 
@@ -246,6 +267,7 @@ function App() {
 
   onCleanup(() => {
     unlistenDragDrop?.();
+    unlistenOrphans?.();
   });
 
   return (

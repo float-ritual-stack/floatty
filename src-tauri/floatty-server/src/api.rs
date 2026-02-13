@@ -1409,7 +1409,43 @@ async fn update_block(
     }))
 }
 
-/// DELETE /api/v1/blocks/:id - Delete block and subtree
+/// Collect a block and all its descendants via stack-based traversal.
+/// Returns Vec of (id, content) pairs for hook event emission.
+fn collect_descendants(
+    blocks: &yrs::MapRef,
+    txn: &yrs::TransactionMut<'_>,
+    root_id: &str,
+) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    let mut stack = vec![root_id.to_string()];
+
+    while let Some(current_id) = stack.pop() {
+        if let Some(yrs::Out::YMap(block_map)) = blocks.get(txn, &current_id) {
+            let content = block_map
+                .get(txn, "content")
+                .and_then(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            // Push children onto stack for traversal
+            if let Some(yrs::Out::YArray(child_ids)) = block_map.get(txn, "childIds") {
+                for value in child_ids.iter(txn) {
+                    if let yrs::Out::Any(yrs::Any::String(s)) = value {
+                        stack.push(s.to_string());
+                    }
+                }
+            }
+
+            result.push((current_id, content));
+        }
+    }
+
+    result
+}
+
+/// DELETE /api/v1/blocks/:id - Delete block and entire subtree
 async fn delete_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1417,35 +1453,29 @@ async fn delete_block(
     let doc = state.store.doc();
     let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
 
-    let (update, deleted_content) = {
+    let (update, deleted_blocks) = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
 
-        // Get block's parentId and content before deleting
-        let (parent_id, content): (Option<String>, String) = match blocks.get(&txn, &id) {
+        // Get block's parentId before deleting
+        let parent_id: Option<String> = match blocks.get(&txn, &id) {
             Some(yrs::Out::YMap(block_map)) => {
-                let pid = block_map.get(&txn, "parentId").and_then(|v| match v {
+                block_map.get(&txn, "parentId").and_then(|v| match v {
                     yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                     _ => None,
-                });
-                let content = block_map
-                    .get(&txn, "content")
-                    .and_then(|v| match v {
-                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                (pid, content)
+                })
             }
-            Some(_) => return Err(ApiError::NotFound(id)), // Wrong format
+            Some(_) => return Err(ApiError::NotFound(id)),
             None => return Err(ApiError::NotFound(id)),
         };
+
+        // Collect all descendants (block + children + grandchildren...)
+        let to_delete = collect_descendants(&blocks, &txn, &id);
 
         // Remove from parent's childIds if this block has a parent
         if let Some(ref pid) = parent_id {
             if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, pid) {
                 if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
-                    // Find index of this id in parent's childIds
                     let mut remove_idx: Option<u32> = None;
                     for (i, value) in child_ids.iter(&txn).enumerate() {
                         if let yrs::Out::Any(yrs::Any::String(s)) = value {
@@ -1462,8 +1492,10 @@ async fn delete_block(
             }
         }
 
-        // Remove from blocks map
-        blocks.remove(&mut txn, &id);
+        // Delete all collected blocks from the map
+        for (del_id, _) in &to_delete {
+            blocks.remove(&mut txn, del_id);
+        }
 
         // Remove from rootIds if present (only if no parent)
         if parent_id.is_none() {
@@ -1482,7 +1514,7 @@ async fn delete_block(
             }
         }
 
-        (txn.encode_update_v1(), content)
+        (txn.encode_update_v1(), to_delete)
     };
     drop(doc_guard);
 
@@ -1490,12 +1522,14 @@ async fn delete_block(
     let seq = state.store.persist_update(&update)?;
     state.broadcaster.broadcast(update, None, Some(seq));
 
-    // Emit to hook system for cleanup (search index removal, etc.)
-    let _ = state.hook_system.emit_change(BlockChange::Deleted {
-        id: id.clone(),
-        content: deleted_content,
-        origin: Origin::User,
-    });
+    // Emit BlockChange::Deleted for EACH deleted block (hooks depend on complete coverage)
+    for (del_id, del_content) in &deleted_blocks {
+        let _ = state.hook_system.emit_change(BlockChange::Deleted {
+            id: del_id.clone(),
+            content: del_content.clone(),
+            origin: Origin::User,
+        });
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -2901,5 +2935,159 @@ mod tests {
         // Should return at least the post-compaction update
         // Note: may also include the compaction snapshot itself
         assert!(!result.updates.is_empty(), "Should have updates after boundary");
+    }
+
+    // ========================================================================
+    // Recursive DELETE tests (FLO-348)
+    // ========================================================================
+
+    /// Helper: create a block via POST, return its BlockDto
+    async fn create_test_block(app: &mut axum::routing::RouterIntoService<Body>, content: &str, parent_id: Option<&str>) -> BlockDto {
+        let body = match parent_id {
+            Some(pid) => format!(r#"{{"content": "{}", "parentId": "{}"}}"#, content, pid),
+            None => format!(r#"{{"content": "{}"}}"#, content),
+        };
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// Helper: GET a block, return Option<BlockDto> (None if 404)
+    async fn get_test_block(app: &mut axum::routing::RouterIntoService<Body>, id: &str) -> Option<BlockDto> {
+        let request = Request::get(&format!("/api/v1/blocks/{}", id))
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+        if response.status() == StatusCode::NOT_FOUND {
+            return None;
+        }
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        Some(serde_json::from_slice(&bytes).unwrap())
+    }
+
+    /// Helper: DELETE a block
+    async fn delete_test_block(app: &mut axum::routing::RouterIntoService<Body>, id: &str) -> StatusCode {
+        let request = Request::delete(&format!("/api/v1/blocks/{}", id))
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+        response.status()
+    }
+
+    #[tokio::test]
+    async fn test_delete_block_no_children() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block = create_test_block(&mut app, "Leaf block", None).await;
+        let status = delete_test_block(&mut app, &block.id).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        // Block should be gone
+        assert!(get_test_block(&mut app, &block.id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_block_with_children() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create parent + 3 children
+        let parent = create_test_block(&mut app, "Parent", None).await;
+        let child1 = create_test_block(&mut app, "Child 1", Some(&parent.id)).await;
+        let child2 = create_test_block(&mut app, "Child 2", Some(&parent.id)).await;
+        let child3 = create_test_block(&mut app, "Child 3", Some(&parent.id)).await;
+
+        // Delete parent — should take all children with it
+        let status = delete_test_block(&mut app, &parent.id).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        // All blocks should be gone
+        assert!(get_test_block(&mut app, &parent.id).await.is_none(), "Parent should be deleted");
+        assert!(get_test_block(&mut app, &child1.id).await.is_none(), "Child 1 should be deleted");
+        assert!(get_test_block(&mut app, &child2.id).await.is_none(), "Child 2 should be deleted");
+        assert!(get_test_block(&mut app, &child3.id).await.is_none(), "Child 3 should be deleted");
+    }
+
+    #[tokio::test]
+    async fn test_delete_block_nested_grandchildren() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // 3 levels: grandparent → parent → child
+        let grandparent = create_test_block(&mut app, "Grandparent", None).await;
+        let parent = create_test_block(&mut app, "Parent", Some(&grandparent.id)).await;
+        let child = create_test_block(&mut app, "Child", Some(&parent.id)).await;
+        let sibling = create_test_block(&mut app, "Sibling", Some(&grandparent.id)).await;
+
+        // Delete grandparent — entire subtree should be gone
+        let status = delete_test_block(&mut app, &grandparent.id).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        assert!(get_test_block(&mut app, &grandparent.id).await.is_none(), "Grandparent gone");
+        assert!(get_test_block(&mut app, &parent.id).await.is_none(), "Parent gone");
+        assert!(get_test_block(&mut app, &child.id).await.is_none(), "Child gone");
+        assert!(get_test_block(&mut app, &sibling.id).await.is_none(), "Sibling gone");
+    }
+
+    #[tokio::test]
+    async fn test_delete_child_preserves_parent_and_siblings() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let parent = create_test_block(&mut app, "Parent", None).await;
+        let child1 = create_test_block(&mut app, "Child 1", Some(&parent.id)).await;
+        let child2 = create_test_block(&mut app, "Child 2", Some(&parent.id)).await;
+
+        // Delete only child1
+        let status = delete_test_block(&mut app, &child1.id).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        // child1 gone, parent and child2 intact
+        assert!(get_test_block(&mut app, &child1.id).await.is_none(), "Deleted child gone");
+        let parent_after = get_test_block(&mut app, &parent.id).await.expect("Parent should survive");
+        assert!(!parent_after.child_ids.contains(&child1.id), "Removed from parent's childIds");
+        assert!(parent_after.child_ids.contains(&child2.id), "Sibling still in childIds");
+        assert!(get_test_block(&mut app, &child2.id).await.is_some(), "Sibling survives");
+    }
+
+    #[tokio::test]
+    async fn test_delete_middle_subtree_preserves_rest() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Tree:  root → [branch_a → [leaf], branch_b]
+        let root = create_test_block(&mut app, "Root", None).await;
+        let branch_a = create_test_block(&mut app, "Branch A", Some(&root.id)).await;
+        let leaf = create_test_block(&mut app, "Leaf under A", Some(&branch_a.id)).await;
+        let branch_b = create_test_block(&mut app, "Branch B", Some(&root.id)).await;
+
+        // Delete branch_a (and its leaf)
+        let status = delete_test_block(&mut app, &branch_a.id).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        assert!(get_test_block(&mut app, &branch_a.id).await.is_none(), "Branch A gone");
+        assert!(get_test_block(&mut app, &leaf.id).await.is_none(), "Leaf under A gone");
+
+        // Root and branch_b survive
+        let root_after = get_test_block(&mut app, &root.id).await.expect("Root survives");
+        assert!(!root_after.child_ids.contains(&branch_a.id), "Branch A removed from root childIds");
+        assert!(root_after.child_ids.contains(&branch_b.id), "Branch B still in root childIds");
+        assert!(get_test_block(&mut app, &branch_b.id).await.is_some(), "Branch B survives");
     }
 }
