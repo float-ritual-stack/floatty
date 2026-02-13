@@ -519,7 +519,7 @@ pub fn run() {
                 // FLO-350: Start orphan detection background worker
                 if let (Some(url), Some(key)) = (orphan_server_url, orphan_api_key) {
                     let app_handle = app.handle().clone();
-                    tokio::spawn(async move {
+                    tauri::async_runtime::spawn(async move {
                         // Initial check after 30s (let server and frontend settle)
                         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                         tracing::info!("Orphan detector: running initial check");
