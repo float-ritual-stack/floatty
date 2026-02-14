@@ -13,12 +13,14 @@ mod services;
 mod sync_test;
 
 use commands::{
-    check_hooks_installed, clear_ctx_markers, clear_workspace, execute_ai_command,
-    execute_ai_conversation, execute_shell_command, get_clipboard_info, get_ctx_config,
-    get_ctx_counts, get_ctx_markers, get_send_model, get_theme, get_workspace_state,
-    install_shell_hooks, open_url, read_help_file, save_clipboard_image, save_workspace_state,
-    set_ctx_config, set_theme, toggle_diagnostics, uninstall_shell_hooks,
+    acp_cancel_prompt, acp_kill_session, acp_respond_permission, acp_send_prompt,
+    acp_spawn_agent, check_hooks_installed, clear_ctx_markers, clear_workspace,
+    execute_ai_command, execute_ai_conversation, execute_shell_command, get_clipboard_info,
+    get_ctx_config, get_ctx_counts, get_ctx_markers, get_send_model, get_theme,
+    get_workspace_state, install_shell_hooks, open_url, read_help_file, save_clipboard_image,
+    save_workspace_state, set_ctx_config, set_theme, toggle_diagnostics, uninstall_shell_hooks,
 };
+use services::acp::AcpManager;
 use config::{AggregatorConfig, ServerInfo};
 use paths::DataPaths;
 use server::{spawn_server, ServerState};
@@ -386,8 +388,11 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_mcp_bridge::init());
     }
 
+    let acp_manager = AcpManager::new();
+
     builder
         .manage(state)
+        .manage(acp_manager)
         .invoke_handler({
             // Platform-agnostic commands
             #[cfg(not(target_os = "macos"))]
@@ -419,6 +424,11 @@ pub fn run() {
                     toggle_diagnostics,
                     open_url,
                     check_orphans_now,
+                    acp_spawn_agent,
+                    acp_send_prompt,
+                    acp_respond_permission,
+                    acp_cancel_prompt,
+                    acp_kill_session,
                 ]
             }
             // macOS: include panel commands
@@ -451,6 +461,11 @@ pub fn run() {
                     toggle_diagnostics,
                     open_url,
                     check_orphans_now,
+                    acp_spawn_agent,
+                    acp_send_prompt,
+                    acp_respond_permission,
+                    acp_cancel_prompt,
+                    acp_kill_session,
                     panel::show_test_panel,
                     panel::hide_test_panel,
                     panel::toggle_test_panel,

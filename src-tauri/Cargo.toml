@@ -61,6 +61,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-mcp-bridge = "0.8"
 arboard = "3"  # Direct clipboard access for batched IPC
+agent-client-protocol = "0.9"  # ACP client for spawning AI coding agents
 
 # TypeScript bindings generation (for ts-gen binary)
 ts-rs = "10"

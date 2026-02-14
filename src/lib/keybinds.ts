@@ -30,6 +30,8 @@ export type KeyAction =
   | 'splitVertical'
   | 'splitHorizontalOutliner'
   | 'splitVerticalOutliner'
+  | 'splitHorizontalAcp'
+  | 'splitVerticalAcp'
   | 'closeSplit'
   | 'focusLeft'
   | 'focusRight'
@@ -127,6 +129,7 @@ export const defaultKeybinds: Keybind[] = [
   { key: isMac ? 'd' : '\\', modifiers: { mod: true, shift: true }, action: 'splitVertical' },
   { key: 'o', modifiers: { mod: true }, action: 'splitHorizontalOutliner' },
   { key: 'o', modifiers: { mod: true, shift: true }, action: 'splitVerticalOutliner' },
+  { key: 'a', modifiers: { mod: true, shift: true, alt: true }, action: 'splitHorizontalAcp' },
   { key: 'w', modifiers: { mod: true, shift: true }, action: 'closeSplit' },
 
   // Focus navigation (future - using Alt to avoid terminal conflicts)
@@ -195,6 +198,8 @@ export const GLOBAL_KEY_ACTIONS: ReadonlySet<KeyAction> = new Set<KeyAction>([
   'splitVertical',
   'splitHorizontalOutliner',
   'splitVerticalOutliner',
+  'splitHorizontalAcp',
+  'splitVerticalAcp',
   'closeSplit',
   'focusLeft',
   'focusRight',

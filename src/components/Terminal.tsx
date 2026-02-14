@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'solid-js';
+import { createSignal, createEffect, createMemo, onCleanup, For, Show, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { invoke } from '@tauri-apps/api/core';
@@ -6,6 +6,7 @@ import { invoke as typedInvoke } from '../lib/tauriTypes';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
+import { AcpPane } from './AcpPane';
 import { ResizeOverlay } from './ResizeOverlay';
 import { ContextSidebar } from './ContextSidebar';
 import { tabStore } from '../hooks/useTabStore';
@@ -607,7 +608,7 @@ export function Terminal() {
   };
 
   // Helper to split pane and handle post-split fitting/focusing
-  const handleSplit = (direction: 'horizontal' | 'vertical', leafType?: 'terminal' | 'outliner') => {
+  const handleSplit = (direction: 'horizontal' | 'vertical', leafType?: 'terminal' | 'outliner' | 'acp') => {
     const activeId = tabStore.activeTabId();
     if (!activeId) {
       console.warn('[Terminal] Split failed: no active tab');
@@ -780,6 +781,12 @@ export function Terminal() {
           break;
         case 'splitVerticalOutliner':
           handleSplit('vertical', 'outliner');
+          break;
+        case 'splitHorizontalAcp':
+          handleSplit('horizontal', 'acp');
+          break;
+        case 'splitVerticalAcp':
+          handleSplit('vertical', 'acp');
           break;
         case 'closeSplit':
           if (activeId) {
@@ -1057,9 +1064,21 @@ export function Terminal() {
           {/* Using <Key> for stable identity - SolidJS <For> uses object reference, not property */}
           <Key each={allPaneInfo()} by={(info) => info.paneId}>
             {(info) => (
-              <Show
-                when={info().leafType === 'terminal'}
-                fallback={
+              <Switch>
+                <Match when={info().leafType === 'acp'}>
+                  <AcpPane
+                    id={info().paneId}
+                    placeholderId={info().paneId}
+                    cwd={info().cwd}
+                    isActive={info().isActivePane && info().isActiveTab}
+                    isVisible={info().isActiveTab}
+                    ref={(handle) => setPaneRef(info().paneId, handle)}
+                    onPaneClick={() => handlePaneClick(info().paneId)}
+                    onDragHandlePointerDown={(e) => handlePaneDragStart(info().paneId, e)}
+                    isBeingDragged={draggingTabId() === info().tabId && draggingPaneId() === info().paneId}
+                  />
+                </Match>
+                <Match when={info().leafType === 'outliner'}>
                   <OutlinerPane
                     id={info().paneId}
                     placeholderId={info().paneId}
@@ -1072,37 +1091,38 @@ export function Terminal() {
                     onDragHandlePointerDown={(e) => handlePaneDragStart(info().paneId, e)}
                     isBeingDragged={draggingTabId() === info().tabId && draggingPaneId() === info().paneId}
                   />
-                }
-              >
-                <TerminalPane
-                  id={info().paneId}
-                  cwd={info().cwd}
-                  placeholderId={info().paneId}
-                  isActive={info().isActivePane && info().isActiveTab}
-                  isVisible={info().isActiveTab}
-                  ref={(handle) => setPaneRef(info().paneId, handle)}
-                  onPaneClick={() => handlePaneClick(info().paneId)}
-                  onDragHandlePointerDown={(e) => handlePaneDragStart(info().paneId, e)}
-                  isBeingDragged={draggingTabId() === info().tabId && draggingPaneId() === info().paneId}
-                  onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
-                  onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
-                    console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
-                  )}
-                  onTitleChange={(title) => handleTitleChange(info().paneId, title)}
-                  onSemanticStateChange={(state) => {
-                    // Only update status bar for active pane
-                    const i = info();
-                    if (i.isActivePane && i.isActiveTab) {
-                      // Clone to break reference equality - SolidJS signals won't update on same object
-                      setSemanticState({ ...state } as SemanticState);
-                    }
-                  }}
-                  onStickyChange={(sticky) => handleStickyChange(info().paneId, sticky)}
-                  onCtxMarker={() => {
-                    emitCtxMarkersChanged('terminal');
-                  }}
-                />
-              </Show>
+                </Match>
+                <Match when={info().leafType === 'terminal'}>
+                  <TerminalPane
+                    id={info().paneId}
+                    cwd={info().cwd}
+                    placeholderId={info().paneId}
+                    isActive={info().isActivePane && info().isActiveTab}
+                    isVisible={info().isActiveTab}
+                    ref={(handle) => setPaneRef(info().paneId, handle)}
+                    onPaneClick={() => handlePaneClick(info().paneId)}
+                    onDragHandlePointerDown={(e) => handlePaneDragStart(info().paneId, e)}
+                    isBeingDragged={draggingTabId() === info().tabId && draggingPaneId() === info().paneId}
+                    onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
+                    onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
+                      console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
+                    )}
+                    onTitleChange={(title) => handleTitleChange(info().paneId, title)}
+                    onSemanticStateChange={(state) => {
+                      // Only update status bar for active pane
+                      const i = info();
+                      if (i.isActivePane && i.isActiveTab) {
+                        // Clone to break reference equality - SolidJS signals won't update on same object
+                        setSemanticState({ ...state } as SemanticState);
+                      }
+                    }}
+                    onStickyChange={(sticky) => handleStickyChange(info().paneId, sticky)}
+                    onCtxMarker={() => {
+                      emitCtxMarkersChanged('terminal');
+                    }}
+                  />
+                </Match>
+              </Switch>
             )}
           </Key>
 
