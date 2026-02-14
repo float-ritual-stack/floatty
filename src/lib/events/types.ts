@@ -43,6 +43,8 @@ export const Origin = {
   Executor: 'executor',
   /** Authoritative server state on WebSocket reconnect - bypasses hasLocalChanges guard */
   ReconnectAuthority: 'reconnect-authority',
+  /** AI agent actions (background metadata enrichment, etc.) */
+  Agent: 'agent',
 } as const;
 
 export type OriginType = (typeof Origin)[keyof typeof Origin];

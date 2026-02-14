@@ -1,6 +1,8 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
 import { invoke } from '../lib/tauriTypes';
 import { onCtxMarkersChanged } from '../lib/ctxEvents';
+import { agentStatus } from '../lib/agent';
+import type { AgentStatus, AgentActivityEntry } from '../lib/agent';
 
 // Check if running in Tauri environment (Tauri 2 uses '__TAURI_INTERNALS__')
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -215,6 +217,7 @@ export function ContextSidebar(props: { visible: boolean }) {
                   {(marker) => <MarkerCard marker={marker} />}
                 </For>
               </div>
+              <AgentActivitySection />
             </aside>
           </Show>
         </Show>
@@ -349,4 +352,113 @@ function extractMessageFromRaw(line: string): string {
     msg = msg.slice(0, 80) + '...';
   }
   return msg;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AGENT ACTIVITY SECTION
+// ═══════════════════════════════════════════════════════════════
+
+const AGENT_STATUS_COLORS: Record<AgentStatus, string> = {
+  active: 'var(--color-ansi-green)',
+  idle: 'var(--color-ansi-bright-black)',
+  offline: 'var(--color-ansi-yellow)',
+};
+
+function AgentActivitySection() {
+  const [expanded, setExpanded] = createSignal(false);
+  const [entries, setEntries] = createSignal<AgentActivityEntry[]>([]);
+
+  // Poll agent log when expanded
+  createEffect(() => {
+    if (!expanded()) return;
+
+    const fetchLog = async () => {
+      try {
+        if (!isTauri) return;
+        const result = await invoke<AgentActivityEntry[]>('get_agent_log', { limit: 20 });
+        setEntries(result);
+      } catch {
+        // Silently degrade
+      }
+    };
+
+    void fetchLog();
+    const timer = setInterval(() => void fetchLog(), 3000);
+    onCleanup(() => clearInterval(timer));
+  });
+
+  const statusColor = () => AGENT_STATUS_COLORS[agentStatus()];
+
+  return (
+    <div class="agent-activity-section">
+      <button
+        class="agent-activity-header"
+        onClick={() => setExpanded(!expanded())}
+      >
+        <span
+          class="agent-status-dot"
+          style={{ background: statusColor() }}
+          title={`Agent: ${agentStatus()}`}
+        />
+        Agent Activity
+        <span class="agent-toggle">{expanded() ? '\u25B4' : '\u25BE'}</span>
+      </button>
+      <Show when={expanded()}>
+        <div class="agent-activity-list">
+          <Show
+            when={entries().length > 0}
+            fallback={<div class="ctx-empty-state">No agent activity yet</div>}
+          >
+            <For each={entries()}>
+              {(entry) => <AgentActivityCard entry={entry} />}
+            </For>
+          </Show>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+function AgentActivityCard(props: { entry: AgentActivityEntry }) {
+  const timeStr = () => {
+    const d = new Date(props.entry.timestamp);
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const actionClass = () => {
+    switch (props.entry.action) {
+      case 'enrich': return 'agent-action-enrich';
+      case 'error': return 'agent-action-error';
+      default: return 'agent-action-skip';
+    }
+  };
+
+  return (
+    <div class={`agent-activity-card ${actionClass()}`}>
+      <div class="agent-activity-time">{timeStr()}</div>
+      <div class="agent-activity-action">
+        <span class={`agent-action-badge ${actionClass()}`}>{props.entry.action}</span>
+        <span class="agent-activity-block-id" title={props.entry.blockId}>
+          {props.entry.blockId.slice(0, 8)}
+        </span>
+      </div>
+      <Show when={props.entry.reason}>
+        <div class="agent-activity-reason">{props.entry.reason}</div>
+      </Show>
+      <Show when={props.entry.addedMarkers}>
+        <div class="agent-activity-markers">
+          {formatAddedMarkers(props.entry.addedMarkers!)}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+function formatAddedMarkers(json: string): string {
+  try {
+    const markers = JSON.parse(json) as Array<{ markerType: string; value?: string | null }>;
+    return markers.map(m => `${m.markerType}${m.value ? `::${m.value}` : ''}`).join(', ');
+  } catch {
+    return json;
+  }
 }

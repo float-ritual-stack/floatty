@@ -187,6 +187,21 @@ impl FloattyDb {
                 updated_at INTEGER NOT NULL,
                 save_seq INTEGER NOT NULL DEFAULT 0
             );
+
+            -- Agent activity log (metadata enrichment audit trail)
+            -- Auto-pruned: entries older than max_age_hours deleted on insert
+            CREATE TABLE IF NOT EXISTS agent_activity_log (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                block_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                added_markers TEXT,
+                reason TEXT,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_log_timestamp
+                ON agent_activity_log(timestamp DESC);
         "#)?;
 
         // Migrations: add columns if they don't exist (for existing DBs)
@@ -629,6 +644,89 @@ impl FloattyDb {
             Ok(true)
         }
     }
+
+    // =========================================================================
+    // Agent Activity Log
+    // =========================================================================
+
+    /// Insert an agent activity log entry and auto-prune old entries.
+    ///
+    /// Entries older than `max_age_hours` are deleted atomically in the same transaction.
+    pub fn insert_agent_activity(
+        &self,
+        id: &str,
+        timestamp: i64,
+        block_id: &str,
+        action: &str,
+        added_markers: Option<&str>,
+        reason: Option<&str>,
+        max_age_hours: i64,
+    ) -> Result<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        tx.execute(
+            "INSERT OR IGNORE INTO agent_activity_log (id, timestamp, block_id, action, added_markers, reason, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![id, timestamp, block_id, action, added_markers, reason, now_ms],
+        )?;
+
+        // Auto-prune entries older than max_age_hours
+        let cutoff_ms = now_ms - (max_age_hours * 3600 * 1000);
+        tx.execute(
+            "DELETE FROM agent_activity_log WHERE timestamp < ?",
+            [cutoff_ms],
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Get recent agent activity log entries, newest first.
+    pub fn get_agent_activity(&self, limit: i32) -> Result<Vec<AgentActivityEntry>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, block_id, action, added_markers, reason
+             FROM agent_activity_log ORDER BY timestamp DESC LIMIT ?"
+        )?;
+
+        let entries = stmt.query_map([limit], |row| {
+            Ok(AgentActivityEntry {
+                id: row.get(0)?,
+                timestamp: row.get(1)?,
+                block_id: row.get(2)?,
+                action: row.get(3)?,
+                added_markers: row.get(4)?,
+                reason: row.get(5)?,
+            })
+        })?;
+
+        entries.collect()
+    }
+
+    /// Clear all agent activity log entries.
+    pub fn clear_agent_activity(&self) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM agent_activity_log", [])?;
+        Ok(())
+    }
+}
+
+/// Agent activity log entry from database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActivityEntry {
+    pub id: String,
+    pub timestamp: i64,
+    pub block_id: String,
+    pub action: String,
+    pub added_markers: Option<String>,
+    pub reason: Option<String>,
 }
 
 #[cfg(test)]
@@ -701,5 +799,75 @@ mod tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn agent_activity_insert_and_query() {
+        let db = FloattyDb::open_in_memory().expect("open in-memory db");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        db.insert_agent_activity(
+            "act-1", now, "block-1", "enrich",
+            Some(r#"[{"markerType":"issue","value":"123"}]"#),
+            None, 72,
+        ).expect("insert activity");
+
+        db.insert_agent_activity(
+            "act-2", now + 1000, "block-2", "skip",
+            None, Some("no patterns found"), 72,
+        ).expect("insert second activity");
+
+        let entries = db.get_agent_activity(10).expect("query activity");
+        assert_eq!(entries.len(), 2);
+        // Newest first
+        assert_eq!(entries[0].id, "act-2");
+        assert_eq!(entries[0].action, "skip");
+        assert_eq!(entries[1].id, "act-1");
+        assert_eq!(entries[1].action, "enrich");
+    }
+
+    #[test]
+    fn agent_activity_auto_prune() {
+        let db = FloattyDb::open_in_memory().expect("open in-memory db");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Insert an old entry (73 hours ago)
+        let old_ts = now - (73 * 3600 * 1000);
+        db.insert_agent_activity(
+            "old-1", old_ts, "block-old", "enrich", None, None, 72,
+        ).expect("insert old activity");
+
+        // Insert a recent entry (triggers prune of old)
+        db.insert_agent_activity(
+            "new-1", now, "block-new", "enrich", None, None, 72,
+        ).expect("insert new activity");
+
+        let entries = db.get_agent_activity(10).expect("query activity");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "new-1");
+    }
+
+    #[test]
+    fn agent_activity_clear() {
+        let db = FloattyDb::open_in_memory().expect("open in-memory db");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        db.insert_agent_activity(
+            "act-1", now, "block-1", "enrich", None, None, 72,
+        ).expect("insert");
+
+        db.clear_agent_activity().expect("clear");
+
+        let entries = db.get_agent_activity(10).expect("query");
+        assert_eq!(entries.len(), 0);
     }
 }

@@ -334,6 +334,119 @@ html, body, #root {
 }
 
 /* ================================================
+   Agent Activity Section
+   ================================================ */
+
+.agent-activity-section {
+  border-top: 1px solid var(--color-border);
+  margin-top: 8px;
+}
+
+.agent-activity-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--color-fg-muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.agent-activity-header:hover {
+  color: var(--color-fg);
+}
+
+.agent-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.agent-toggle {
+  margin-left: auto;
+  font-size: 8px;
+}
+
+.agent-activity-list {
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-activity-card {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-bg-dark) 50%, transparent);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.agent-activity-time {
+  color: var(--color-fg-muted);
+  font-size: 9px;
+  margin-bottom: 2px;
+}
+
+.agent-activity-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-action-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.agent-action-badge.agent-action-enrich {
+  background: color-mix(in srgb, var(--color-ansi-green) 20%, transparent);
+  color: var(--color-ansi-green);
+}
+
+.agent-action-badge.agent-action-error {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+
+.agent-action-badge.agent-action-skip {
+  background: color-mix(in srgb, var(--color-fg-muted) 15%, transparent);
+  color: var(--color-fg-muted);
+}
+
+.agent-activity-block-id {
+  color: var(--color-fg-muted);
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+.agent-activity-reason {
+  color: var(--color-fg-muted);
+  font-size: 9px;
+  margin-top: 2px;
+}
+
+.agent-activity-markers {
+  color: var(--color-ansi-cyan);
+  font-size: 9px;
+  margin-top: 2px;
+}
+
+/* ================================================
    Tab Bar
    ================================================ */
 
