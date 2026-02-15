@@ -5,6 +5,7 @@
 
 use crate::config::{AggregatorConfig, MarkerCounts};
 use crate::db::{CtxMarker, FloattyDb};
+use std::path::Path;
 use std::sync::Arc;
 
 /// Get ctx:: markers for sidebar display
@@ -38,33 +39,33 @@ pub fn clear_markers(db: &Arc<FloattyDb>) -> Result<(), String> {
 }
 
 /// Get current configuration
-pub fn get_config() -> AggregatorConfig {
-    AggregatorConfig::load()
+pub fn get_config(config_path: &Path) -> AggregatorConfig {
+    AggregatorConfig::load_from(config_path)
 }
 
 /// Update configuration (requires restart to take effect)
-pub fn set_config(config: AggregatorConfig) -> Result<(), String> {
-    config.save()
+pub fn set_config(config: AggregatorConfig, config_path: &Path) -> Result<(), String> {
+    config.save_to(config_path)
 }
 
 /// Get current theme name
-pub fn get_theme() -> String {
-    AggregatorConfig::load().theme
+pub fn get_theme(config_path: &Path) -> String {
+    AggregatorConfig::load_from(config_path).theme
 }
 
 /// Set theme name (persists to config.toml)
-pub fn set_theme(theme: String) -> Result<(), String> {
-    let mut config = AggregatorConfig::load();
+pub fn set_theme(theme: String, config_path: &Path) -> Result<(), String> {
+    let mut config = AggregatorConfig::load_from(config_path);
     config.theme = theme;
-    config.save()
+    config.save_to(config_path)
 }
 
 /// Toggle show_diagnostics flag and persist
-pub fn toggle_diagnostics() -> Result<bool, String> {
-    let mut config = AggregatorConfig::load();
+pub fn toggle_diagnostics(config_path: &Path) -> Result<bool, String> {
+    let mut config = AggregatorConfig::load_from(config_path);
     config.show_diagnostics = !config.show_diagnostics;
     let new_value = config.show_diagnostics;
-    config.save()?;
+    config.save_to(config_path)?;
     Ok(new_value)
 }
 
@@ -74,10 +75,9 @@ mod tests {
 
     #[test]
     fn test_get_config_loads_default() {
-        // Use a non-existent path so load_from returns defaults
         let dir = tempfile::TempDir::new().unwrap();
         let fake_path = dir.path().join("config.toml");
-        let config = AggregatorConfig::load_from(&fake_path);
+        let config = get_config(&fake_path);
         assert!(!config.ollama_model.is_empty());
     }
 
@@ -86,13 +86,11 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let config_path = dir.path().join("config.toml");
 
-        // Write a config with a known theme
         let mut config = AggregatorConfig::default();
         config.theme = "test-theme".to_string();
         config.save_to(&config_path).unwrap();
 
-        // Read it back
-        let loaded = AggregatorConfig::load_from(&config_path);
+        let loaded = get_config(&config_path);
         assert_eq!(loaded.theme, "test-theme");
     }
 }
