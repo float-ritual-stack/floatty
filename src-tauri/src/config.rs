@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 /// Default Ollama model used for ctx:: marker parsing.
 /// Shared between AggregatorConfig (user-facing) and ParserConfig (internal).
 pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:7b";
-use std::path::PathBuf;
 
 /// Server info returned to frontend for HTTP client initialization
 #[derive(Clone, Serialize)]
@@ -168,7 +167,7 @@ impl AggregatorConfig {
     ///
     /// Use `DataPaths::resolve().config` to get the path based on
     /// `FLOATTY_DATA_DIR` environment variable.
-    pub fn load_from(path: &PathBuf) -> Self {
+    pub fn load_from(path: &std::path::Path) -> Self {
         let mut config = if path.exists() {
             match std::fs::read_to_string(path) {
                 Ok(contents) => {
@@ -202,31 +201,9 @@ impl AggregatorConfig {
         config
     }
 
-    /// Load config from default path (build-profile-aware via DataPaths::default_root()).
-    ///
-    /// Uses `FLOATTY_DATA_DIR` if set, otherwise DataPaths::default_root()
-    /// (e.g., `~/.floatty-dev` in debug builds, `~/.floatty` in release).
-    #[deprecated(note = "use load_from(&paths.config) with DataPaths for profile-aware loading")]
-    pub fn load() -> Self {
-        let path = Self::default_config_path();
-        Self::load_from(&path)
-    }
-
-    /// Default config file path (build-profile-aware).
-    ///
-    /// Uses `FLOATTY_DATA_DIR` if set, otherwise DataPaths::default_root()
-    /// (e.g., `~/.floatty-dev` in debug, `~/.floatty` in release).
-    pub fn default_config_path() -> PathBuf {
-        std::env::var("FLOATTY_DATA_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .unwrap_or_else(crate::paths::DataPaths::default_root)
-            .join("config.toml")
-    }
-
     /// Save current config to specified path.
     /// Preserves unknown sections (like [server]) that other processes may have written.
-    pub fn save_to(&self, path: &PathBuf) -> Result<(), String> {
+    pub fn save_to(&self, path: &std::path::Path) -> Result<(), String> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -264,12 +241,6 @@ impl AggregatorConfig {
 
         log::info!("Saved config to {:?}", path);
         Ok(())
-    }
-
-    /// Save current config to default path (build-profile-aware via DataPaths::default_root()).
-    #[deprecated(note = "use save_to(&paths.config) with DataPaths for profile-aware saving")]
-    pub fn save(&self) -> Result<(), String> {
-        self.save_to(&Self::default_config_path())
     }
 
     /// Get the model for ctx:: sidebar parsing.

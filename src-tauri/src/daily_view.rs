@@ -12,7 +12,9 @@ use ollama_rs::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::AppState;
 use crate::config::AggregatorConfig;
+use tauri::State;
 
 /// PR reference with status.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -110,9 +112,7 @@ pub fn resolve_daily_path(date_arg: &str) -> String {
 }
 
 /// Extract structured data from daily note content using Ollama.
-async fn extract_daily_data(content: &str, date: &str) -> Result<DailyNoteData, String> {
-    let config = AggregatorConfig::load();
-
+async fn extract_daily_data(content: &str, date: &str, config: &AggregatorConfig) -> Result<DailyNoteData, String> {
     // Parse endpoint
     let url = url::Url::parse(&config.ollama_endpoint).map_err(|e| e.to_string())?;
     let scheme = url.scheme();
@@ -210,7 +210,7 @@ Return JSON matching the schema. Use {} for day_of_week.",
 /// Takes a date argument (e.g., "2026-01-03", "today", "yesterday")
 /// Returns structured JSON with timelogs and scattered thoughts.
 #[tauri::command]
-pub async fn execute_daily_command(date_arg: String) -> Result<DailyNoteData, String> {
+pub async fn execute_daily_command(state: State<'_, AppState>, date_arg: String) -> Result<DailyNoteData, String> {
     // Resolve date to file path
     let path = resolve_daily_path(&date_arg);
     tracing::info!("daily:: resolved {} -> {}", date_arg, path);
@@ -226,6 +226,6 @@ pub async fn execute_daily_command(date_arg: String) -> Result<DailyNoteData, St
         .unwrap_or(&date_arg)
         .to_string();
 
-    // Extract structured data via Ollama
-    extract_daily_data(&content, &date).await
+    let config = AggregatorConfig::load_from(&state.config_path);
+    extract_daily_data(&content, &date, &config).await
 }

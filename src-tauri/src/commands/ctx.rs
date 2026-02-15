@@ -42,39 +42,39 @@ pub fn clear_ctx_markers(state: State<AppState>) -> Result<(), String> {
 
 /// Get current configuration
 #[tauri::command]
-pub fn get_ctx_config() -> AggregatorConfig {
-    ctx::get_config()
+pub fn get_ctx_config(state: State<AppState>) -> AggregatorConfig {
+    ctx::get_config(&state.config_path)
 }
 
 /// Update configuration (requires restart to take effect)
 #[tauri::command]
-pub fn set_ctx_config(config: AggregatorConfig) -> Result<(), String> {
-    ctx::set_config(config)
+pub fn set_ctx_config(state: State<AppState>, config: AggregatorConfig) -> Result<(), String> {
+    ctx::set_config(config, &state.config_path)
 }
 
 /// Get current theme name
 #[tauri::command]
-pub fn get_theme() -> String {
-    ctx::get_theme()
+pub fn get_theme(state: State<AppState>) -> String {
+    ctx::get_theme(&state.config_path)
 }
 
 /// Set theme name (persists to config.toml)
 #[tauri::command]
-pub fn set_theme(theme: String) -> Result<(), String> {
-    ctx::set_theme(theme)
+pub fn set_theme(state: State<AppState>, theme: String) -> Result<(), String> {
+    ctx::set_theme(theme, &state.config_path)
 }
 
 /// Get the configured model for /send conversations
 /// Returns send_model if set, otherwise ollama_model
 #[tauri::command]
-pub fn get_send_model() -> String {
-    let config = ctx::get_config();
+pub fn get_send_model(state: State<AppState>) -> String {
+    let config = ctx::get_config(&state.config_path);
     config.get_send_model().to_string()
 }
 
 /// Toggle diagnostics strip visibility (port, build type, config path)
 /// Returns the new value after toggle
 #[tauri::command]
-pub fn toggle_diagnostics() -> Result<bool, String> {
-    ctx::toggle_diagnostics()
+pub fn toggle_diagnostics(state: State<AppState>) -> Result<bool, String> {
+    ctx::toggle_diagnostics(&state.config_path)
 }

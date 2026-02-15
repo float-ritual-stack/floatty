@@ -26,6 +26,7 @@ use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::FloattyDb;
 use floatty_core::YDocStore;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -48,6 +49,8 @@ pub struct AppState {
     inner: Option<AppStateInner>,
     /// Server subprocess state - None if server failed to spawn
     server: Option<ServerState>,
+    /// Resolved config path — all config reads/writes go through this
+    pub config_path: PathBuf,
 }
 
 /// Get server info for HTTP client initialization
@@ -365,7 +368,7 @@ pub fn run() {
     let server_url_for_orphan = server_state.as_ref().map(|s| s.info.url.clone());
     let server_api_key_for_orphan = server_state.as_ref().map(|s| s.info.api_key.clone());
 
-    let state = AppState { inner, server: server_state };
+    let state = AppState { inner, server: server_state, config_path: paths.config.clone() };
 
     // Build app with platform-specific plugins and commands
     let mut builder = tauri::Builder::default()
