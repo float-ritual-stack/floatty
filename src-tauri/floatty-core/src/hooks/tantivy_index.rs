@@ -138,13 +138,11 @@ impl TantivyIndexHook {
                     })
                     .collect();
 
-                // If no own tag markers, include inherited ones from pre-computed index
-                let has_own_tags = own_markers.iter().any(|m| m.value.is_some());
-                if !has_own_tags {
-                    if let Ok(index) = self.inheritance_index.read() {
-                        for marker in index.get(id) {
-                            formatted_parts.push(format!("{}::{}", marker.marker_type, marker.value));
-                        }
+                // Include inherited markers (InheritanceIndex already filters per-type —
+                // only includes marker types the block doesn't own)
+                if let Ok(index) = self.inheritance_index.read() {
+                    for marker in index.get(id) {
+                        formatted_parts.push(format!("{}::{}", marker.marker_type, marker.value));
                     }
                 }
 
