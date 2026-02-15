@@ -29,7 +29,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{DateTime, Utc};
-use floatty_core::{events::BlockChange, HookSystem, Origin, PageNameIndex, SearchFilters, SearchService, YDocStore};
+use floatty_core::{events::BlockChange, HookSystem, InheritanceIndex, Origin, PageNameIndex, SearchFilters, SearchService, YDocStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::sync::{Arc, RwLock};
@@ -119,6 +119,7 @@ pub struct AppState {
     pub store: Arc<YDocStore>,
     pub broadcaster: Arc<WsBroadcaster>,
     pub page_name_index: Arc<RwLock<PageNameIndex>>,
+    pub inheritance_index: Arc<RwLock<InheritanceIndex>>,
     pub hook_system: Arc<HookSystem>,
     /// Backup daemon (optional - only present if backups enabled)
     pub backup_daemon: Option<Arc<BackupDaemon>>,
@@ -403,7 +404,8 @@ pub fn create_router(
     backup_daemon: Option<Arc<BackupDaemon>>,
 ) -> Router {
     let page_name_index = hook_system.page_name_index();
-    let state = AppState { store, broadcaster, page_name_index, hook_system, backup_daemon };
+    let inheritance_index = hook_system.inheritance_index();
+    let state = AppState { store, broadcaster, page_name_index, inheritance_index, hook_system, backup_daemon };
 
     Router::new()
         // Core sync endpoints
@@ -882,102 +884,23 @@ async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse,
 // METADATA INHERITANCE
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Extract tag markers (those with values) from a metadata JSON value.
-/// Returns vec of (marker_type, value) pairs. Skips prefix markers (no value).
-fn extract_tag_markers_from_json(metadata: &serde_json::Value) -> Vec<(String, String)> {
-    let markers = match metadata.get("markers") {
-        Some(serde_json::Value::Array(arr)) => arr,
-        _ => return Vec::new(),
-    };
-
-    markers
-        .iter()
-        .filter_map(|m| {
-            let marker_type = m.get("markerType")?.as_str()?;
-            let value = m.get("value")?.as_str()?;
-            Some((marker_type.to_string(), value.to_string()))
-        })
-        .collect()
-}
-
-/// Compute inherited markers for all blocks in a batch.
-///
-/// For each block that has no own tag markers, walks up the parent chain
-/// to find the first ancestor with tag markers and inherits them.
-///
-/// Only tag-style markers (with values like project::floatty) are inherited,
-/// not prefix markers (like sh, ctx which describe block type).
-fn compute_inheritance(blocks: &mut [BlockDto]) {
-    use std::collections::HashMap;
-
-    // Build lookup: owned id → index (avoids borrowing blocks)
-    let id_to_idx: HashMap<String, usize> = blocks
-        .iter()
-        .enumerate()
-        .map(|(i, b)| (b.id.clone(), i))
-        .collect();
-
-    // Pre-compute: parent_id and own tag markers per block (all owned, no borrows)
-    let block_info: Vec<(Option<String>, bool, Vec<(String, String)>)> = blocks
-        .iter()
-        .map(|b| {
-            let tags = b
-                .metadata
-                .as_ref()
-                .map(|m| extract_tag_markers_from_json(m))
-                .unwrap_or_default();
-            let has_tags = !tags.is_empty();
-            (b.parent_id.clone(), has_tags, tags)
-        })
-        .collect();
-
-    // For each block without own tags, walk up parent chain
-    for i in 0..blocks.len() {
-        if block_info[i].1 {
-            continue; // Has own tag markers, skip
-        }
-
-        let mut current_idx = i;
-        let mut depth = 0;
-        const MAX_DEPTH: usize = 50;
-
-        loop {
-            depth += 1;
-            if depth > MAX_DEPTH {
-                break;
-            }
-
-            let parent_id = match &block_info[current_idx].0 {
-                Some(pid) => pid,
-                None => break, // Reached root
-            };
-
-            let parent_idx = match id_to_idx.get(parent_id) {
-                Some(&idx) => idx,
-                None => break, // Parent not found
-            };
-
-            if block_info[parent_idx].1 {
-                // Found ancestor with tags — inherit them
-                let source_id = blocks[parent_idx].id.clone();
-                let ref tag_markers = block_info[parent_idx].2;
-
-                if !tag_markers.is_empty() {
-                    let inherited: Vec<InheritedMarkerDto> = tag_markers
-                        .iter()
-                        .map(|(mt, v)| InheritedMarkerDto {
-                            marker_type: mt.clone(),
-                            value: v.clone(),
-                            source_block_id: source_id.clone(),
-                        })
-                        .collect();
-                    blocks[i].inherited_markers = Some(inherited);
-                }
-                break;
-            }
-
-            current_idx = parent_idx;
-        }
+/// Look up inherited markers from the pre-computed InheritanceIndex.
+/// Returns None if the block has no inherited markers (O(1) lookup).
+fn lookup_inherited(index: &InheritanceIndex, block_id: &str) -> Option<Vec<InheritedMarkerDto>> {
+    let inherited = index.get(block_id);
+    if inherited.is_empty() {
+        None
+    } else {
+        Some(
+            inherited
+                .iter()
+                .map(|m| InheritedMarkerDto {
+                    marker_type: m.marker_type.clone(),
+                    value: m.value.clone(),
+                    source_block_id: m.source_block_id.clone(),
+                })
+                .collect(),
+        )
     }
 }
 
@@ -999,11 +922,16 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
         }
     }
 
+    // Acquire inheritance index once for all blocks
+    let inheritance_guard = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+
     // Get all blocks from the map
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
             // Handle nested Y.Map (new format)
             if let yrs::Out::YMap(block_map) = value {
+                let block_id = key.to_string();
+
                 let content = block_map
                     .get(&txn, "content")
                     .and_then(|v| match v {
@@ -1052,24 +980,24 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
 
                 let block_type = floatty_core::parse_block_type(&content);
 
+                // O(1) lookup from pre-computed inheritance index
+                let inherited_markers = lookup_inherited(&inheritance_guard, &block_id);
+
                 blocks.push(BlockDto {
-                    id: key.to_string(),
+                    id: block_id,
                     content,
                     parent_id,
                     child_ids,
                     collapsed,
                     block_type: format!("{:?}", block_type).to_lowercase(),
                     metadata,
-                    inherited_markers: None, // Computed below
+                    inherited_markers,
                     created_at,
                     updated_at,
                 });
             }
         }
     }
-
-    // Compute metadata inheritance for all blocks
-    compute_inheritance(&mut blocks);
 
     Ok(Json(BlocksResponse { blocks, root_ids }))
 }
@@ -1141,15 +1069,10 @@ async fn get_block(
 
         let block_type = floatty_core::parse_block_type(&content);
 
-        // Compute inherited markers by walking up parent chain
-        let inherited_markers = if metadata
-            .as_ref()
-            .map(|m| extract_tag_markers_from_json(m).is_empty())
-            .unwrap_or(true)
-        {
-            resolve_inherited_single(&parent_id, &blocks_map, &txn)
-        } else {
-            None
+        // O(1) lookup from pre-computed inheritance index
+        let inherited_markers = {
+            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+            lookup_inherited(&index, &id)
         };
 
         Ok(Json(BlockDto {
@@ -1166,58 +1089,6 @@ async fn get_block(
         }))
     } else {
         Err(ApiError::NotFound(id))
-    }
-}
-
-/// Walk up the parent chain via Y.Doc blocks map to find inherited markers.
-/// Used by single-block GET endpoint where we don't have all blocks in memory.
-fn resolve_inherited_single<T: ReadTxn>(
-    parent_id: &Option<String>,
-    blocks_map: &yrs::MapRef,
-    txn: &T,
-) -> Option<Vec<InheritedMarkerDto>> {
-    let mut current_parent = parent_id.clone()?;
-    let mut depth = 0;
-    let mut visited = std::collections::HashSet::new();
-    const MAX_DEPTH: usize = 50;
-
-    loop {
-        depth += 1;
-        if depth > MAX_DEPTH || visited.contains(&current_parent) {
-            return None;
-        }
-        visited.insert(current_parent.clone());
-
-        let parent_value = blocks_map.get(txn, &current_parent)?;
-        let parent_map = match parent_value {
-            yrs::Out::YMap(m) => m,
-            _ => return None,
-        };
-
-        // Check if parent has metadata with tag markers
-        if let Some(meta_json) = parent_map
-            .get(txn, "metadata")
-            .and_then(|v| extract_metadata_from_yrs(v, txn))
-        {
-            let tags = extract_tag_markers_from_json(&meta_json);
-            if !tags.is_empty() {
-                return Some(
-                    tags.into_iter()
-                        .map(|(mt, v)| InheritedMarkerDto {
-                            marker_type: mt,
-                            value: v,
-                            source_block_id: current_parent.clone(),
-                        })
-                        .collect(),
-                );
-            }
-        }
-
-        // Move up to grandparent
-        current_parent = match parent_map.get(txn, "parentId") {
-            Some(yrs::Out::Any(yrs::Any::String(s))) => s.to_string(),
-            _ => return None,
-        };
     }
 }
 

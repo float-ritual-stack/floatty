@@ -19,10 +19,11 @@
 use crate::{
     block::parse_block_type,
     events::BlockChange,
+    hooks::InheritanceIndex,
     search::WriterHandle,
     BlockChangeBatch, Origin, YDocStore,
 };
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tracing::{instrument, trace, warn};
 
 use super::BlockHook;
@@ -37,12 +38,14 @@ use super::BlockHook;
 /// - Moved, CollapsedChanged → no-op
 pub struct TantivyIndexHook {
     writer: WriterHandle,
+    /// Pre-computed inheritance index (populated by InheritanceIndexHook at priority 15).
+    inheritance_index: Arc<RwLock<InheritanceIndex>>,
 }
 
 impl TantivyIndexHook {
-    /// Create a new TantivyIndexHook with the given writer handle.
-    pub fn new(writer: WriterHandle) -> Self {
-        Self { writer }
+    /// Create a new TantivyIndexHook with the given writer handle and inheritance index.
+    pub fn new(writer: WriterHandle, inheritance_index: Arc<RwLock<InheritanceIndex>>) -> Self {
+        Self { writer, inheritance_index }
     }
 }
 
@@ -135,13 +138,12 @@ impl TantivyIndexHook {
                     })
                     .collect();
 
-                // If no own tag markers, include inherited ones for search
+                // If no own tag markers, include inherited ones from pre-computed index
                 let has_own_tags = own_markers.iter().any(|m| m.value.is_some());
                 if !has_own_tags {
-                    let inherited = store.get_inherited_markers(id);
-                    for marker in &inherited {
-                        if let Some(ref v) = marker.value {
-                            formatted_parts.push(format!("{}::{}", marker.marker_type, v));
+                    if let Ok(index) = self.inheritance_index.read() {
+                        for marker in index.get(id) {
+                            formatted_parts.push(format!("{}::{}", marker.marker_type, marker.value));
                         }
                     }
                 }
@@ -198,57 +200,49 @@ mod tests {
 
     #[test]
     fn test_hook_name() {
-        let writer = create_mock_writer_handle();
-        let hook = TantivyIndexHook::new(writer);
+        let hook = create_test_hook();
         assert_eq!(hook.name(), "tantivy_index");
     }
 
     #[test]
     fn test_hook_priority() {
-        let writer = create_mock_writer_handle();
-        let hook = TantivyIndexHook::new(writer);
+        let hook = create_test_hook();
         assert_eq!(hook.priority(), 50);
     }
 
     #[test]
     fn test_hook_is_async() {
-        let writer = create_mock_writer_handle();
-        let hook = TantivyIndexHook::new(writer);
+        let hook = create_test_hook();
         assert!(!hook.is_sync());
     }
 
     #[test]
     fn test_accepts_user_origin() {
-        let writer = create_mock_writer_handle();
-        let hook = TantivyIndexHook::new(writer);
+        let hook = create_test_hook();
         assert!(should_process(&hook, Origin::User));
     }
 
     #[test]
     fn test_accepts_remote_origin() {
-        let writer = create_mock_writer_handle();
-        let hook = TantivyIndexHook::new(writer);
+        let hook = create_test_hook();
         assert!(should_process(&hook, Origin::Remote));
     }
 
     #[test]
     fn test_accepts_agent_origin() {
-        let writer = create_mock_writer_handle();
-        let hook = TantivyIndexHook::new(writer);
+        let hook = create_test_hook();
         assert!(should_process(&hook, Origin::Agent));
     }
 
     #[test]
     fn test_accepts_bulk_import_origin() {
-        let writer = create_mock_writer_handle();
-        let hook = TantivyIndexHook::new(writer);
+        let hook = create_test_hook();
         assert!(should_process(&hook, Origin::BulkImport));
     }
 
     #[test]
     fn test_rejects_hook_origin() {
-        let writer = create_mock_writer_handle();
-        let hook = TantivyIndexHook::new(writer);
+        let hook = create_test_hook();
         assert!(!should_process(&hook, Origin::Hook));
     }
 
@@ -258,5 +252,12 @@ mod tests {
         use tokio::sync::mpsc;
         let (tx, _rx) = mpsc::channel(1);
         WriterHandle::from_sender(tx)
+    }
+
+    /// Create a TantivyIndexHook with a mock writer and empty inheritance index.
+    fn create_test_hook() -> TantivyIndexHook {
+        let writer = create_mock_writer_handle();
+        let index = Arc::new(RwLock::new(InheritanceIndex::new()));
+        TantivyIndexHook::new(writer, index)
     }
 }

@@ -476,6 +476,22 @@ impl YDocStore {
         Ok(sv)
     }
 
+    /// Get all block IDs from the Y.Doc blocks map.
+    ///
+    /// Returns empty vec if the blocks map doesn't exist or lock fails.
+    /// Used by InheritanceIndexHook to do a full rebuild.
+    pub fn get_all_block_ids(&self) -> Vec<String> {
+        let doc = match self.doc.read() {
+            Ok(d) => d,
+            Err(_) => return Vec::new(),
+        };
+        let txn = doc.transact();
+        match txn.get_map("blocks") {
+            Some(blocks_map) => blocks_map.keys(&txn).map(|k| k.to_string()).collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// Get a block by ID from the Y.Doc.
     ///
     /// Returns None if the block doesn't exist.
@@ -566,56 +582,6 @@ impl YDocStore {
             updated_at,
             metadata,
         })
-    }
-
-    /// Walk up the parent chain to find the nearest ancestor with tag markers.
-    ///
-    /// Returns the ancestor's tag markers (those with values like project::floatty)
-    /// if the block itself has no tag markers. Returns empty vec if the block has
-    /// its own tag markers or no ancestor has any.
-    ///
-    /// Used by search indexing and API responses to enrich blocks with
-    /// contextual metadata from their position in the tree.
-    pub fn get_inherited_markers(&self, block_id: &str) -> Vec<crate::metadata::Marker> {
-        // First check if block has its own tag markers
-        if let Some(block) = self.get_block(block_id) {
-            if let Some(ref meta) = block.metadata {
-                let has_own_tags = meta.markers.iter().any(|m| m.value.is_some());
-                if has_own_tags {
-                    return Vec::new(); // Has own tags, no inheritance needed
-                }
-            }
-
-            // Walk up parent chain (cycle-safe)
-            let mut current_parent = block.parent_id;
-            let mut depth = 0;
-            let mut visited = std::collections::HashSet::new();
-            visited.insert(block_id.to_string());
-            while let Some(ref pid) = current_parent {
-                depth += 1;
-                if depth > 50 || visited.contains(pid) {
-                    break;
-                }
-                visited.insert(pid.clone());
-                if let Some(parent) = self.get_block(pid) {
-                    if let Some(ref meta) = parent.metadata {
-                        let tags: Vec<_> = meta
-                            .markers
-                            .iter()
-                            .filter(|m| m.value.is_some())
-                            .cloned()
-                            .collect();
-                        if !tags.is_empty() {
-                            return tags;
-                        }
-                    }
-                    current_parent = parent.parent_id;
-                } else {
-                    break;
-                }
-            }
-        }
-        Vec::new()
     }
 
     /// Apply an update from a remote client.
@@ -1426,189 +1392,33 @@ mod tests {
     }
 
     // =========================================================================
-    // Inheritance Tests
+    // get_all_block_ids Tests
     // =========================================================================
 
     #[test]
-    fn test_inherited_markers_from_parent_json_metadata() {
+    fn test_get_all_block_ids_empty_store() {
         let dir = tempdir().unwrap();
         let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
-
-        // Parent with [project::floatty] tag marker
-        let mut parent_meta = crate::metadata::BlockMetadata::new();
-        parent_meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
-        insert_block_with_json_metadata(&store, "parent", "ctx:: [project::floatty]", None, &parent_meta);
-
-        // Child with no markers, parented to "parent"
-        {
-            let doc = store.doc();
-            let doc_guard = doc.write().unwrap();
-            let mut txn = doc_guard.transact_mut();
-            let blocks = txn.get_or_insert_map("blocks");
-            let block_prelim: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("child block".into())),
-                ("parentId", yrs::Any::String("parent".into())),
-            ]);
-            blocks.insert(&mut txn, "child", block_prelim);
-        }
-
-        let inherited = store.get_inherited_markers("child");
-        assert_eq!(inherited.len(), 1);
-        assert_eq!(inherited[0].marker_type, "project");
-        assert_eq!(inherited[0].value.as_deref(), Some("floatty"));
+        assert!(store.get_all_block_ids().is_empty());
     }
 
     #[test]
-    fn test_inherited_markers_from_parent_map_metadata() {
+    fn test_get_all_block_ids_returns_all() {
         let dir = tempdir().unwrap();
         let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
 
-        // Parent with tag markers stored as Any::Map (hook-written format)
-        let mut parent_meta = crate::metadata::BlockMetadata::new();
-        parent_meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
-        insert_block_with_map_metadata(&store, "parent", "ctx:: [project::floatty]", None, &parent_meta);
-
-        // Child with no markers
         {
             let doc = store.doc();
             let doc_guard = doc.write().unwrap();
             let mut txn = doc_guard.transact_mut();
             let blocks = txn.get_or_insert_map("blocks");
-            let block_prelim: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("child block".into())),
-                ("parentId", yrs::Any::String("parent".into())),
-            ]);
-            blocks.insert(&mut txn, "child", block_prelim);
+            blocks.insert(&mut txn, "b1", MapPrelim::from([("content", yrs::Any::String("one".into()))]));
+            blocks.insert(&mut txn, "b2", MapPrelim::from([("content", yrs::Any::String("two".into()))]));
+            blocks.insert(&mut txn, "b3", MapPrelim::from([("content", yrs::Any::String("three".into()))]));
         }
 
-        let inherited = store.get_inherited_markers("child");
-        assert_eq!(inherited.len(), 1, "should inherit from parent with Any::Map metadata");
-        assert_eq!(inherited[0].marker_type, "project");
-        assert_eq!(inherited[0].value.as_deref(), Some("floatty"));
-    }
-
-    #[test]
-    fn test_inherited_markers_own_tags_block_inheritance() {
-        let dir = tempdir().unwrap();
-        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
-
-        // Parent with [project::floatty]
-        let mut parent_meta = crate::metadata::BlockMetadata::new();
-        parent_meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
-        insert_block_with_json_metadata(&store, "parent", "ctx:: [project::floatty]", None, &parent_meta);
-
-        // Child with its own [project::rangle] — should NOT inherit
-        let mut child_meta = crate::metadata::BlockMetadata::new();
-        child_meta.add_marker(crate::metadata::Marker::with_value("project", "rangle"));
-        insert_block_with_json_metadata(&store, "child", "[project::rangle]", Some("parent"), &child_meta);
-
-        let inherited = store.get_inherited_markers("child");
-        assert!(inherited.is_empty(), "block with own tags should not inherit");
-    }
-
-    #[test]
-    fn test_inherited_markers_grandparent_chain() {
-        let dir = tempdir().unwrap();
-        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
-
-        // Grandparent with tags
-        let mut gp_meta = crate::metadata::BlockMetadata::new();
-        gp_meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
-        insert_block_with_json_metadata(&store, "gp", "[project::floatty]", None, &gp_meta);
-
-        // Parent — no tags
-        {
-            let doc = store.doc();
-            let doc_guard = doc.write().unwrap();
-            let mut txn = doc_guard.transact_mut();
-            let blocks = txn.get_or_insert_map("blocks");
-            let block_prelim: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("parent no tags".into())),
-                ("parentId", yrs::Any::String("gp".into())),
-            ]);
-            blocks.insert(&mut txn, "parent", block_prelim);
-        }
-
-        // Child — no tags, should inherit from grandparent
-        {
-            let doc = store.doc();
-            let doc_guard = doc.write().unwrap();
-            let mut txn = doc_guard.transact_mut();
-            let blocks = txn.get_or_insert_map("blocks");
-            let block_prelim: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("child no tags".into())),
-                ("parentId", yrs::Any::String("parent".into())),
-            ]);
-            blocks.insert(&mut txn, "child", block_prelim);
-        }
-
-        let inherited = store.get_inherited_markers("child");
-        assert_eq!(inherited.len(), 1, "should inherit from grandparent");
-        assert_eq!(inherited[0].marker_type, "project");
-        assert_eq!(inherited[0].value.as_deref(), Some("floatty"));
-    }
-
-    #[test]
-    fn test_inherited_markers_no_ancestors_with_tags() {
-        let dir = tempdir().unwrap();
-        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
-
-        // Parent — no metadata at all
-        {
-            let doc = store.doc();
-            let doc_guard = doc.write().unwrap();
-            let mut txn = doc_guard.transact_mut();
-            let blocks = txn.get_or_insert_map("blocks");
-            let block_prelim: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("parent".into())),
-            ]);
-            blocks.insert(&mut txn, "parent", block_prelim);
-        }
-
-        // Child — no metadata
-        {
-            let doc = store.doc();
-            let doc_guard = doc.write().unwrap();
-            let mut txn = doc_guard.transact_mut();
-            let blocks = txn.get_or_insert_map("blocks");
-            let block_prelim: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("child".into())),
-                ("parentId", yrs::Any::String("parent".into())),
-            ]);
-            blocks.insert(&mut txn, "child", block_prelim);
-        }
-
-        let inherited = store.get_inherited_markers("child");
-        assert!(inherited.is_empty(), "no ancestors with tags → empty vec");
-    }
-
-    #[test]
-    fn test_inherited_markers_cycle_detection() {
-        let dir = tempdir().unwrap();
-        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
-
-        // Create a cycle: A → B → A
-        {
-            let doc = store.doc();
-            let doc_guard = doc.write().unwrap();
-            let mut txn = doc_guard.transact_mut();
-            let blocks = txn.get_or_insert_map("blocks");
-
-            let a: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("block A".into())),
-                ("parentId", yrs::Any::String("block-b".into())),
-            ]);
-            blocks.insert(&mut txn, "block-a", a);
-
-            let b: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("block B".into())),
-                ("parentId", yrs::Any::String("block-a".into())),
-            ]);
-            blocks.insert(&mut txn, "block-b", b);
-        }
-
-        // Should not hang or panic — cycle detection breaks the loop
-        let inherited = store.get_inherited_markers("block-a");
-        assert!(inherited.is_empty());
+        let mut ids = store.get_all_block_ids();
+        ids.sort();
+        assert_eq!(ids, vec!["b1", "b2", "b3"]);
     }
 }

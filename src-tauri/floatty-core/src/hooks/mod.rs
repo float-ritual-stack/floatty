@@ -35,6 +35,7 @@
 //!   Use for expensive operations like search indexing.
 
 // Submodules
+pub mod inheritance_index;
 pub mod metadata_extraction;
 pub mod page_name_index;
 pub mod parsing;
@@ -42,6 +43,7 @@ pub mod system;
 pub mod tantivy_index;
 
 // Re-exports
+pub use inheritance_index::{InheritanceIndex, InheritanceIndexHook, InheritedMarker};
 pub use metadata_extraction::MetadataExtractionHook;
 pub use page_name_index::{PageNameIndex, PageNameIndexHook, PageSuggestion};
 pub use system::HookSystem;
