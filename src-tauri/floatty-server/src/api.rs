@@ -455,6 +455,8 @@ pub fn create_router(
         .route("/api/v1/backup/trigger", post(backup_trigger))
         .route("/api/v1/backup/restore", post(backup_restore))
         .route("/api/v1/backup/config", get(backup_config))
+        // Presence (spike for TUI follower)
+        .route("/api/v1/presence", post(post_presence))
         .with_state(state)
 }
 
@@ -2218,6 +2220,25 @@ async fn backup_config(State(state): State<AppState>) -> Result<Json<BackupConfi
         retain_weekly: config.retain_weekly,
         backup_dir: daemon.backup_dir().display().to_string(),
     }))
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PRESENCE (spike for TUI follower)
+// ═══════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PresenceRequest {
+    block_id: String,
+    pane_id: Option<String>,
+}
+
+async fn post_presence(
+    State(state): State<AppState>,
+    Json(req): Json<PresenceRequest>,
+) -> StatusCode {
+    state.broadcaster.broadcast_presence(req.block_id, req.pane_id);
+    StatusCode::OK
 }
 
 #[cfg(test)]

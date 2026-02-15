@@ -75,6 +75,17 @@ pub struct BroadcastMessage {
     /// None for heartbeat messages (seq-only, triggers gap detection)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// Presence: focused block ID (spike for TUI follower)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence: Option<PresenceInfo>,
+}
+
+/// Lightweight presence payload
+#[derive(Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PresenceInfo {
+    pub block_id: String,
+    pub pane_id: Option<String>,
 }
 
 /// Shared state for WebSocket broadcasting
@@ -107,6 +118,7 @@ impl WsBroadcaster {
             seq,
             tx_id,
             data: Some(BASE64.encode(&update)),
+            presence: None,
         };
         // Mark that we sent an update (heartbeat will skip if true)
         self.update_sent_since_heartbeat.store(true, Ordering::Relaxed);
@@ -132,6 +144,7 @@ impl WsBroadcaster {
             seq: Some(seq),
             tx_id: None,
             data: None,
+            presence: None,
         };
         match self.tx.send(msg) {
             Ok(receiver_count) => {
@@ -141,6 +154,17 @@ impl WsBroadcaster {
                 // No clients connected, heartbeat not needed
             }
         }
+    }
+
+    /// Broadcast cursor presence (spike for TUI follower)
+    pub fn broadcast_presence(&self, block_id: String, pane_id: Option<String>) {
+        let msg = BroadcastMessage {
+            seq: None,
+            tx_id: None,
+            data: None,
+            presence: Some(PresenceInfo { block_id, pane_id }),
+        };
+        let _ = self.tx.send(msg);
     }
 
     /// Check and reset the update-sent flag.
@@ -275,6 +299,7 @@ mod tests {
             seq: Some(525),
             tx_id: None,
             data: None,
+            presence: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
 
@@ -296,6 +321,7 @@ mod tests {
             seq: Some(526),
             tx_id: Some("tx-abc".into()),
             data: Some("AQID".into()), // base64
+            presence: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
 
@@ -311,6 +337,7 @@ mod tests {
             seq: None,
             tx_id: None,
             data: Some("AQID".into()),
+            presence: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
 
