@@ -1344,6 +1344,13 @@ async fn update_block(
         ));
     }
 
+    // Reject self-referential afterId (block removed first → afterId not found → silent append)
+    if req.after_id.as_deref() == Some(id.as_str()) {
+        return Err(ApiError::InvalidRequest(
+            "afterId cannot reference the block being moved".to_string()
+        ));
+    }
+
     // Determine if reparenting is requested
     // req.parent_id: None = don't change, Some(None) = move to root, Some(Some(id)) = move under parent
     let (final_parent_id, parent_changed) = match &req.parent_id {
@@ -3640,6 +3647,31 @@ mod tests {
         let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(error.error.contains("Cannot specify both"));
+    }
+
+    #[tokio::test]
+    async fn test_update_block_reposition_self_referential_after_id() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let parent = create_test_block(&mut app, "Parent", None).await;
+        let child = create_test_block(&mut app, "Child", Some(&parent.id)).await;
+
+        // Try afterId == the block being moved
+        let body = format!(r#"{{"afterId": "{}"}}"#, child.id);
+        let request = Request::patch(&format!("/api/v1/blocks/{}", child.id))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(error.error.contains("afterId cannot reference the block being moved"));
     }
 
     #[tokio::test]
