@@ -447,7 +447,7 @@ fn render_tree(frame: &mut Frame, app: &App) {
 
     let cursor_id = rows
         .get(app.cursor)
-        .map(|(id, _)| &id[..8])
+        .map(|(id, _)| id.get(..8).unwrap_or(id.as_str()))
         .unwrap_or("---");
     let follow_indicator = if app.following { " │ FOLLOW" } else { "" };
     let status = format!(
@@ -526,7 +526,8 @@ async fn main() -> Result<()> {
                 }
                 // Write rolling focus log to /tmp
                 if let Some(block) = app.tree.blocks.get(block_id) {
-                    let entry = format!("[{}] {}\n{}\n---\n", &block_id[..8], block.content, block_id);
+                    let short_id = block_id.get(..8).unwrap_or(block_id.as_str());
+                    let entry = format!("[{}] {}\n{}\n---\n", short_id, block.content, block_id);
                     app.focus_log.push_back(entry);
                     while app.focus_log.len() > 5 {
                         app.focus_log.pop_front();
