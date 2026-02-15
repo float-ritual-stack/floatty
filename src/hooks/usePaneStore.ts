@@ -108,6 +108,15 @@ function createPaneStore() {
     if (state.focusedBlockId[paneId] === blockId) return;
     setState('focusedBlockId', paneId, blockId);
     bumpPersistenceVersion();
+    // Spike: broadcast cursor position for TUI follower
+    if (blockId && window.__FLOATTY_SERVER_URL__) {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (window.__FLOATTY_API_KEY__) headers['Authorization'] = `Bearer ${window.__FLOATTY_API_KEY__}`;
+      fetch(`${window.__FLOATTY_SERVER_URL__}/api/v1/presence`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ blockId, paneId }),
+      }).catch(() => {});
+    }
   };
 
   // ═══════════════════════════════════════════════════════════════

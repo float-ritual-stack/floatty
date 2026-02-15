@@ -263,8 +263,9 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
       const serverInfo = await invoke('get_server_info', {});
       const client = new HttpClient(serverInfo);
 
-      // Store URL globally for WebSocket connection
+      // Store URL and API key globally for lightweight fire-and-forget calls
       window.__FLOATTY_SERVER_URL__ = serverInfo.url;
+      window.__FLOATTY_API_KEY__ = serverInfo.api_key;
 
       // Verify connection before committing to this client
       const healthy = await client.isHealthy();
