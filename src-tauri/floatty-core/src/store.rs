@@ -518,14 +518,17 @@ impl YDocStore {
                 }
             }
 
-            // Walk up parent chain
+            // Walk up parent chain (cycle-safe)
             let mut current_parent = block.parent_id;
             let mut depth = 0;
+            let mut visited = std::collections::HashSet::new();
+            visited.insert(block_id.to_string());
             while let Some(ref pid) = current_parent {
                 depth += 1;
-                if depth > 50 {
+                if depth > 50 || visited.contains(pid) {
                     break;
                 }
+                visited.insert(pid.clone());
                 if let Some(parent) = self.get_block(pid) {
                     if let Some(ref meta) = parent.metadata {
                         let tags: Vec<_> = meta

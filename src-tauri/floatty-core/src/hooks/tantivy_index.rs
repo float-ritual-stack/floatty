@@ -93,8 +93,14 @@ impl BlockHook for TantivyIndexHook {
                 BlockChange::Deleted { id, .. } => {
                     self.delete_block(&writer, id);
                 }
-                // Moved and CollapsedChanged don't affect search index
-                BlockChange::Moved { .. } | BlockChange::CollapsedChanged { .. } => {}
+                BlockChange::Moved { id, .. } => {
+                    // Re-index to update inherited markers (parent chain changed)
+                    if let Some(block) = store.get_block(id) {
+                        self.index_block(&writer, id, &block.content, &store);
+                    }
+                }
+                // CollapsedChanged doesn't affect search index
+                BlockChange::CollapsedChanged { .. } => {}
             }
         }
     }

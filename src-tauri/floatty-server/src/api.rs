@@ -1178,13 +1178,15 @@ fn resolve_inherited_single<T: ReadTxn>(
 ) -> Option<Vec<InheritedMarkerDto>> {
     let mut current_parent = parent_id.clone()?;
     let mut depth = 0;
+    let mut visited = std::collections::HashSet::new();
     const MAX_DEPTH: usize = 50;
 
     loop {
         depth += 1;
-        if depth > MAX_DEPTH {
+        if depth > MAX_DEPTH || visited.contains(&current_parent) {
             return None;
         }
+        visited.insert(current_parent.clone());
 
         let parent_value = blocks_map.get(txn, &current_parent)?;
         let parent_map = match parent_value {
