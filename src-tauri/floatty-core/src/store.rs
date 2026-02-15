@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 use tracing::{debug, trace};
-use yrs::{any, Doc, Map, MapPrelim, Out, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
+use yrs::{any, Array, Doc, Map, MapPrelim, Out, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
 
 use crate::metadata::BlockMetadata;
 
@@ -49,6 +49,79 @@ const SCHEMA_VERSION: i32 = 2;
 
 /// Compact when update count exceeds this threshold.
 const COMPACT_THRESHOLD: i64 = 100;
+
+/// Parse block metadata from a Y.Doc value.
+///
+/// Handles three formats:
+/// - `Out::Any(yrs::Any::String(s))` — legacy JSON string (pre-hook blocks)
+/// - `Out::Any(yrs::Any::Map(map))` — Any::Map (frontend JS object → yrs serialization)
+/// - `Out::YMap(map)` — nested Y.Map (if metadata stored as collaborative type)
+fn parse_metadata_from_out<T: ReadTxn>(value: Out, txn: &T) -> Option<BlockMetadata> {
+    match value {
+        Out::Any(yrs::Any::String(s)) => {
+            serde_json::from_str::<BlockMetadata>(&s).ok()
+        }
+        Out::Any(yrs::Any::Map(map)) => {
+            // Convert Any::Map to JSON, then deserialize
+            let json = yrs_any_map_to_json(&map);
+            serde_json::from_value::<BlockMetadata>(json).ok()
+        }
+        Out::YMap(map) => {
+            // Convert Y.Map to JSON, then deserialize
+            let json = yrs_ymap_to_json(&map, txn);
+            serde_json::from_value::<BlockMetadata>(json).ok()
+        }
+        _ => None,
+    }
+}
+
+/// Convert a yrs::Any::Map (HashMap<String, Any>) to serde_json::Value.
+fn yrs_any_map_to_json(map: &std::sync::Arc<HashMap<String, yrs::Any>>) -> serde_json::Value {
+    let json_map: serde_json::Map<String, serde_json::Value> = map
+        .iter()
+        .map(|(k, v)| (k.clone(), yrs_any_to_json(v)))
+        .collect();
+    serde_json::Value::Object(json_map)
+}
+
+/// Convert a Y.Map to serde_json::Value.
+fn yrs_ymap_to_json<T: ReadTxn>(map: &yrs::MapRef, txn: &T) -> serde_json::Value {
+    let mut json_map = serde_json::Map::new();
+    for (key, val) in map.iter(txn) {
+        json_map.insert(key.to_string(), yrs_out_to_json(val, txn));
+    }
+    serde_json::Value::Object(json_map)
+}
+
+/// Convert yrs::Out to serde_json::Value (recursive).
+fn yrs_out_to_json<T: ReadTxn>(out: Out, txn: &T) -> serde_json::Value {
+    match out {
+        Out::YMap(map) => yrs_ymap_to_json(&map, txn),
+        Out::YArray(arr) => {
+            let items: Vec<serde_json::Value> = arr.iter(txn).map(|v| yrs_out_to_json(v, txn)).collect();
+            serde_json::Value::Array(items)
+        }
+        Out::Any(any) => yrs_any_to_json(&any),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// Convert a yrs::Any to serde_json::Value.
+fn yrs_any_to_json(any: &yrs::Any) -> serde_json::Value {
+    match any {
+        yrs::Any::Null | yrs::Any::Undefined => serde_json::Value::Null,
+        yrs::Any::Bool(b) => serde_json::Value::Bool(*b),
+        yrs::Any::Number(n) => serde_json::json!(*n),
+        yrs::Any::BigInt(n) => serde_json::json!(*n),
+        yrs::Any::String(s) => serde_json::Value::String(s.to_string()),
+        yrs::Any::Array(arr) => {
+            let items: Vec<serde_json::Value> = arr.iter().map(yrs_any_to_json).collect();
+            serde_json::Value::Array(items)
+        }
+        yrs::Any::Map(map) => yrs_any_map_to_json(map),
+        yrs::Any::Buffer(_) => serde_json::Value::Null,
+    }
+}
 
 /// Only check DB for compaction every N updates (avoid SELECT per keystroke).
 const COMPACT_CHECK_INTERVAL: i64 = 10;
@@ -481,12 +554,7 @@ impl YDocStore {
 
         let metadata = block_map
             .get(&txn, "metadata")
-            .and_then(|v| match v {
-                Out::Any(yrs::Any::String(s)) => {
-                    serde_json::from_str::<crate::metadata::BlockMetadata>(&s).ok()
-                }
-                _ => None,
-            });
+            .and_then(|v| parse_metadata_from_out(v, &txn));
 
         Some(crate::block::Block {
             id: block_id.to_string(),
@@ -1231,5 +1299,316 @@ mod tests {
         store.emit_changes(vec![]);
 
         assert_eq!(*call_count.lock().unwrap(), 0);
+    }
+
+    // =========================================================================
+    // Metadata Parsing Tests (Y.Map / JSON string / Any::Map)
+    // =========================================================================
+
+    /// Helper: create a block in the store's Y.Doc with metadata as a JSON string (legacy format).
+    fn insert_block_with_json_metadata(
+        store: &YDocStore,
+        block_id: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        metadata: &crate::metadata::BlockMetadata,
+    ) {
+        let doc = store.doc();
+        let doc_guard = doc.write().unwrap();
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let block_map: yrs::MapRef = blocks.get_or_init(&mut txn, block_id);
+
+        block_map.insert(&mut txn, "content", yrs::Any::String(content.into()));
+        if let Some(pid) = parent_id {
+            block_map.insert(&mut txn, "parentId", yrs::Any::String(pid.into()));
+        }
+        let meta_json = serde_json::to_string(metadata).unwrap();
+        block_map.insert(&mut txn, "metadata", yrs::Any::String(meta_json.into()));
+    }
+
+    /// Helper: create a block with metadata as Any::Map (simulates frontend hook writes).
+    fn insert_block_with_map_metadata(
+        store: &YDocStore,
+        block_id: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        metadata: &crate::metadata::BlockMetadata,
+    ) {
+        let doc = store.doc();
+        let doc_guard = doc.write().unwrap();
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let block_map: yrs::MapRef = blocks.get_or_init(&mut txn, block_id);
+
+        block_map.insert(&mut txn, "content", yrs::Any::String(content.into()));
+        if let Some(pid) = parent_id {
+            block_map.insert(&mut txn, "parentId", yrs::Any::String(pid.into()));
+        }
+
+        // Build metadata as Any::Map (how yjs serializes plain JS objects)
+        let markers_any: Box<[yrs::Any]> = metadata.markers.iter().map(|m| {
+            let mut map = HashMap::new();
+            map.insert("markerType".to_string(), yrs::Any::String(m.marker_type.clone().into()));
+            if let Some(ref v) = m.value {
+                map.insert("value".to_string(), yrs::Any::String(v.clone().into()));
+            }
+            yrs::Any::Map(std::sync::Arc::new(map))
+        }).collect::<Vec<_>>().into_boxed_slice();
+
+        let outlinks_any: Box<[yrs::Any]> = metadata.outlinks.iter().map(|o| {
+            yrs::Any::String(o.clone().into())
+        }).collect::<Vec<_>>().into_boxed_slice();
+
+        let mut meta_map = HashMap::new();
+        meta_map.insert("markers".to_string(), yrs::Any::Array(std::sync::Arc::from(markers_any)));
+        meta_map.insert("outlinks".to_string(), yrs::Any::Array(std::sync::Arc::from(outlinks_any)));
+
+        block_map.insert(&mut txn, "metadata", yrs::Any::Map(std::sync::Arc::new(meta_map)));
+    }
+
+    #[test]
+    fn test_get_block_reads_json_string_metadata() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let mut meta = crate::metadata::BlockMetadata::new();
+        meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
+
+        insert_block_with_json_metadata(&store, "b1", "ctx:: test", None, &meta);
+
+        let block = store.get_block("b1").unwrap();
+        assert!(block.metadata.is_some());
+        let m = block.metadata.unwrap();
+        assert_eq!(m.markers.len(), 1);
+        assert_eq!(m.markers[0].marker_type, "project");
+        assert_eq!(m.markers[0].value.as_deref(), Some("floatty"));
+    }
+
+    #[test]
+    fn test_get_block_reads_any_map_metadata() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let mut meta = crate::metadata::BlockMetadata::new();
+        meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
+        meta.add_marker(crate::metadata::Marker::new("ctx"));
+
+        insert_block_with_map_metadata(&store, "b1", "ctx:: [project::floatty]", None, &meta);
+
+        let block = store.get_block("b1").unwrap();
+        assert!(block.metadata.is_some(), "metadata should be parsed from Any::Map");
+        let m = block.metadata.unwrap();
+        assert_eq!(m.markers.len(), 2);
+        assert!(m.markers.iter().any(|mk| mk.marker_type == "project" && mk.value.as_deref() == Some("floatty")));
+        assert!(m.markers.iter().any(|mk| mk.marker_type == "ctx"));
+    }
+
+    #[test]
+    fn test_get_block_no_metadata_returns_none() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Block with no metadata field at all
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("plain text".into())),
+            ]);
+            blocks.insert(&mut txn, "b1", block_prelim);
+        }
+
+        let block = store.get_block("b1").unwrap();
+        assert!(block.metadata.is_none());
+    }
+
+    // =========================================================================
+    // Inheritance Tests
+    // =========================================================================
+
+    #[test]
+    fn test_inherited_markers_from_parent_json_metadata() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Parent with [project::floatty] tag marker
+        let mut parent_meta = crate::metadata::BlockMetadata::new();
+        parent_meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
+        insert_block_with_json_metadata(&store, "parent", "ctx:: [project::floatty]", None, &parent_meta);
+
+        // Child with no markers, parented to "parent"
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("child block".into())),
+                ("parentId", yrs::Any::String("parent".into())),
+            ]);
+            blocks.insert(&mut txn, "child", block_prelim);
+        }
+
+        let inherited = store.get_inherited_markers("child");
+        assert_eq!(inherited.len(), 1);
+        assert_eq!(inherited[0].marker_type, "project");
+        assert_eq!(inherited[0].value.as_deref(), Some("floatty"));
+    }
+
+    #[test]
+    fn test_inherited_markers_from_parent_map_metadata() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Parent with tag markers stored as Any::Map (hook-written format)
+        let mut parent_meta = crate::metadata::BlockMetadata::new();
+        parent_meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
+        insert_block_with_map_metadata(&store, "parent", "ctx:: [project::floatty]", None, &parent_meta);
+
+        // Child with no markers
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("child block".into())),
+                ("parentId", yrs::Any::String("parent".into())),
+            ]);
+            blocks.insert(&mut txn, "child", block_prelim);
+        }
+
+        let inherited = store.get_inherited_markers("child");
+        assert_eq!(inherited.len(), 1, "should inherit from parent with Any::Map metadata");
+        assert_eq!(inherited[0].marker_type, "project");
+        assert_eq!(inherited[0].value.as_deref(), Some("floatty"));
+    }
+
+    #[test]
+    fn test_inherited_markers_own_tags_block_inheritance() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Parent with [project::floatty]
+        let mut parent_meta = crate::metadata::BlockMetadata::new();
+        parent_meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
+        insert_block_with_json_metadata(&store, "parent", "ctx:: [project::floatty]", None, &parent_meta);
+
+        // Child with its own [project::rangle] — should NOT inherit
+        let mut child_meta = crate::metadata::BlockMetadata::new();
+        child_meta.add_marker(crate::metadata::Marker::with_value("project", "rangle"));
+        insert_block_with_json_metadata(&store, "child", "[project::rangle]", Some("parent"), &child_meta);
+
+        let inherited = store.get_inherited_markers("child");
+        assert!(inherited.is_empty(), "block with own tags should not inherit");
+    }
+
+    #[test]
+    fn test_inherited_markers_grandparent_chain() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Grandparent with tags
+        let mut gp_meta = crate::metadata::BlockMetadata::new();
+        gp_meta.add_marker(crate::metadata::Marker::with_value("project", "floatty"));
+        insert_block_with_json_metadata(&store, "gp", "[project::floatty]", None, &gp_meta);
+
+        // Parent — no tags
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("parent no tags".into())),
+                ("parentId", yrs::Any::String("gp".into())),
+            ]);
+            blocks.insert(&mut txn, "parent", block_prelim);
+        }
+
+        // Child — no tags, should inherit from grandparent
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("child no tags".into())),
+                ("parentId", yrs::Any::String("parent".into())),
+            ]);
+            blocks.insert(&mut txn, "child", block_prelim);
+        }
+
+        let inherited = store.get_inherited_markers("child");
+        assert_eq!(inherited.len(), 1, "should inherit from grandparent");
+        assert_eq!(inherited[0].marker_type, "project");
+        assert_eq!(inherited[0].value.as_deref(), Some("floatty"));
+    }
+
+    #[test]
+    fn test_inherited_markers_no_ancestors_with_tags() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Parent — no metadata at all
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("parent".into())),
+            ]);
+            blocks.insert(&mut txn, "parent", block_prelim);
+        }
+
+        // Child — no metadata
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            let block_prelim: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("child".into())),
+                ("parentId", yrs::Any::String("parent".into())),
+            ]);
+            blocks.insert(&mut txn, "child", block_prelim);
+        }
+
+        let inherited = store.get_inherited_markers("child");
+        assert!(inherited.is_empty(), "no ancestors with tags → empty vec");
+    }
+
+    #[test]
+    fn test_inherited_markers_cycle_detection() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        // Create a cycle: A → B → A
+        {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+
+            let a: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("block A".into())),
+                ("parentId", yrs::Any::String("block-b".into())),
+            ]);
+            blocks.insert(&mut txn, "block-a", a);
+
+            let b: MapPrelim = MapPrelim::from([
+                ("content", yrs::Any::String("block B".into())),
+                ("parentId", yrs::Any::String("block-a".into())),
+            ]);
+            blocks.insert(&mut txn, "block-b", b);
+        }
+
+        // Should not hang or panic — cycle detection breaks the loop
+        let inherited = store.get_inherited_markers("block-a");
+        assert!(inherited.is_empty());
     }
 }
