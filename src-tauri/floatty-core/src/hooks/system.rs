@@ -20,6 +20,7 @@
 
 use crate::emitter::ChangeEmitter;
 use crate::events::{BlockChange, BlockChangeBatch};
+use crate::hooks::inheritance_index::{InheritanceIndex, InheritanceIndexHook};
 use crate::hooks::page_name_index::PageNameIndex;
 use crate::hooks::{HookRegistry, MetadataExtractionHook, PageNameIndexHook, TantivyIndexHook};
 use crate::search::{IndexManager, SearchError, TantivyWriter, WriterHandle};
@@ -48,6 +49,10 @@ pub struct HookSystem {
     /// The page name index for [[ autocomplete.
     /// Exposed for Tauri commands to query.
     page_name_index: Arc<RwLock<PageNameIndex>>,
+
+    /// Pre-computed inheritance index for O(1) marker lookups.
+    /// Exposed for API handlers.
+    inheritance_index: Arc<RwLock<InheritanceIndex>>,
 
     /// Search index manager for Unit 3.4 SearchService queries.
     index_manager: Option<Arc<IndexManager>>,
@@ -82,18 +87,25 @@ impl HookSystem {
 
         // Register metadata hooks
         let page_name_index_hook = Arc::new(PageNameIndexHook::new());
+        let inheritance_index_hook = Arc::new(InheritanceIndexHook::new());
+        let inheritance_index = inheritance_index_hook.index();
+
         registry.register(Arc::new(MetadataExtractionHook));
+        registry.register(inheritance_index_hook);
         registry.register(page_name_index_hook.clone());
 
         // Initialize search infrastructure
-        let (index_manager, writer_handle, commit_handle) = match Self::initialize_search(&registry)
-        {
-            Ok((im, wh, ch)) => (Some(im), Some(wh), Some(ch)),
-            Err(e) => {
-                warn!("Search index initialization failed: {}. Continuing without search.", e);
-                (None, None, None)
-            }
-        };
+        let (index_manager, writer_handle, commit_handle) =
+            match Self::initialize_search(&registry, Arc::clone(&inheritance_index)) {
+                Ok((im, wh, ch)) => (Some(im), Some(wh), Some(ch)),
+                Err(e) => {
+                    warn!(
+                        "Search index initialization failed: {}. Continuing without search.",
+                        e
+                    );
+                    (None, None, None)
+                }
+            };
 
         let hook_count = registry.len();
         info!("Registered {} hooks", hook_count);
@@ -118,6 +130,7 @@ impl HookSystem {
             emitter,
             _dispatch_handle: dispatch_handle,
             page_name_index: page_name_index_hook.index(),
+            inheritance_index,
             index_manager,
             writer_handle,
             _commit_handle: commit_handle,
@@ -127,6 +140,7 @@ impl HookSystem {
     /// Initialize search infrastructure: IndexManager, WriterHandle, and TantivyIndexHook.
     fn initialize_search(
         registry: &Arc<HookRegistry>,
+        inheritance_index: Arc<RwLock<InheritanceIndex>>,
     ) -> Result<(Arc<IndexManager>, WriterHandle, tokio::task::JoinHandle<()>), SearchError> {
         info!("Initializing search infrastructure...");
 
@@ -155,7 +169,7 @@ impl HookSystem {
         }
 
         // Register TantivyIndexHook
-        registry.register(Arc::new(TantivyIndexHook::new(writer_handle.clone())));
+        registry.register(Arc::new(TantivyIndexHook::new(writer_handle.clone(), inheritance_index)));
         info!("TantivyIndexHook registered with priority 50");
 
         // Spawn periodic commit task (every 5 seconds)
@@ -174,6 +188,13 @@ impl HookSystem {
     /// Used by Tauri commands to provide [[ suggestions.
     pub fn page_name_index(&self) -> Arc<RwLock<PageNameIndex>> {
         Arc::clone(&self.page_name_index)
+    }
+
+    /// Get the pre-computed inheritance index for O(1) marker lookups.
+    ///
+    /// Used by API handlers to enrich block responses with inherited markers.
+    pub fn inheritance_index(&self) -> Arc<RwLock<InheritanceIndex>> {
+        Arc::clone(&self.inheritance_index)
     }
 
     /// Get the search index manager for queries.

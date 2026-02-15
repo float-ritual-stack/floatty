@@ -29,7 +29,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{DateTime, Utc};
-use floatty_core::{events::BlockChange, HookSystem, Origin, PageNameIndex, SearchFilters, SearchService, YDocStore};
+use floatty_core::{events::BlockChange, HookSystem, InheritanceIndex, Origin, PageNameIndex, SearchFilters, SearchService, YDocStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::sync::{Arc, RwLock};
@@ -119,6 +119,7 @@ pub struct AppState {
     pub store: Arc<YDocStore>,
     pub broadcaster: Arc<WsBroadcaster>,
     pub page_name_index: Arc<RwLock<PageNameIndex>>,
+    pub inheritance_index: Arc<RwLock<InheritanceIndex>>,
     pub hook_system: Arc<HookSystem>,
     /// Backup daemon (optional - only present if backups enabled)
     pub backup_daemon: Option<Arc<BackupDaemon>>,
@@ -251,10 +252,25 @@ pub struct BlockDto {
     /// Block metadata (markers, wikilinks, etc). Null if not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Markers inherited from ancestor blocks. Only present when the block
+    /// has no own tag markers but an ancestor does. Contains only tag-style
+    /// markers (those with values like project::floatty), not prefix markers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherited_markers: Option<Vec<InheritedMarkerDto>>,
     /// Timestamp when block was created (ms since epoch)
     pub created_at: i64,
     /// Timestamp when block was last updated (ms since epoch)
     pub updated_at: i64,
+}
+
+/// A marker inherited from an ancestor block.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct InheritedMarkerDto {
+    pub marker_type: String,
+    pub value: String,
+    /// Block ID of the ancestor this marker was inherited from.
+    pub source_block_id: String,
 }
 
 /// Create block request
@@ -388,7 +404,8 @@ pub fn create_router(
     backup_daemon: Option<Arc<BackupDaemon>>,
 ) -> Router {
     let page_name_index = hook_system.page_name_index();
-    let state = AppState { store, broadcaster, page_name_index, hook_system, backup_daemon };
+    let inheritance_index = hook_system.inheritance_index();
+    let state = AppState { store, broadcaster, page_name_index, inheritance_index, hook_system, backup_daemon };
 
     Router::new()
         // Core sync endpoints
@@ -863,6 +880,30 @@ async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse,
     ))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// METADATA INHERITANCE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Look up inherited markers from the pre-computed InheritanceIndex.
+/// Returns None if the block has no inherited markers (O(1) lookup).
+fn lookup_inherited(index: &InheritanceIndex, block_id: &str) -> Option<Vec<InheritedMarkerDto>> {
+    let inherited = index.get(block_id);
+    if inherited.is_empty() {
+        None
+    } else {
+        Some(
+            inherited
+                .iter()
+                .map(|m| InheritedMarkerDto {
+                    marker_type: m.marker_type.clone(),
+                    value: m.value.clone(),
+                    source_block_id: m.source_block_id.clone(),
+                })
+                .collect(),
+        )
+    }
+}
+
 /// GET /api/v1/blocks - All blocks as JSON
 async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse>, ApiError> {
     let doc = state.store.doc();
@@ -881,11 +922,16 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
         }
     }
 
+    // Acquire inheritance index once for all blocks
+    let inheritance_guard = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+
     // Get all blocks from the map
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
             // Handle nested Y.Map (new format)
             if let yrs::Out::YMap(block_map) = value {
+                let block_id = key.to_string();
+
                 let content = block_map
                     .get(&txn, "content")
                     .and_then(|v| match v {
@@ -934,14 +980,18 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
 
                 let block_type = floatty_core::parse_block_type(&content);
 
+                // O(1) lookup from pre-computed inheritance index
+                let inherited_markers = lookup_inherited(&inheritance_guard, &block_id);
+
                 blocks.push(BlockDto {
-                    id: key.to_string(),
+                    id: block_id,
                     content,
                     parent_id,
                     child_ids,
                     collapsed,
                     block_type: format!("{:?}", block_type).to_lowercase(),
                     metadata,
+                    inherited_markers,
                     created_at,
                     updated_at,
                 });
@@ -1019,6 +1069,12 @@ async fn get_block(
 
         let block_type = floatty_core::parse_block_type(&content);
 
+        // O(1) lookup from pre-computed inheritance index
+        let inherited_markers = {
+            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+            lookup_inherited(&index, &id)
+        };
+
         Ok(Json(BlockDto {
             id: id.clone(),
             content,
@@ -1027,6 +1083,7 @@ async fn get_block(
             collapsed,
             block_type: format!("{:?}", block_type).to_lowercase(),
             metadata,
+            inherited_markers,
             created_at,
             updated_at,
         }))
@@ -1128,6 +1185,7 @@ async fn create_block(
             collapsed: false,
             block_type: format!("{:?}", block_type).to_lowercase(),
             metadata: None, // Hooks will populate async
+            inherited_markers: None, // Computed on read
             created_at: now as i64,
             updated_at: now as i64,
         }),
@@ -1404,6 +1462,7 @@ async fn update_block(
         collapsed,
         block_type: format!("{:?}", block_type).to_lowercase(),
         metadata: final_metadata,
+        inherited_markers: None, // Computed on read
         created_at,
         updated_at: now as i64,
     }))
