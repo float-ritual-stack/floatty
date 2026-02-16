@@ -37,8 +37,8 @@ pub async fn execute_shell(command: String, max_bytes: usize) -> Result<(String,
         tracing::debug!(shell = %shell, "Executing shell command");
 
         let output = std::process::Command::new(&shell)
-            .arg("-l")  // Login shell to source profile
-            .arg("-c")  // Execute command string
+            .arg("-li")  // Login + interactive: sources .zshrc (aliases, zoxide, etc.)
+            .arg("-c")   // Execute command string
             .arg(&command)
             .output()
             .map_err(|e| {
