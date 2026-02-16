@@ -78,7 +78,7 @@ function createLayoutStore() {
   const splitPane = (
     tabId: string,
     direction: 'horizontal' | 'vertical',
-    leafType: 'terminal' | 'outliner' = 'terminal',
+    leafType: 'terminal' | 'outliner' | 'acp' = 'terminal',
     ephemeral: boolean = false,
     collapseDepth?: number  // FLO-197: Initial collapse depth for new outliner pane
   ): string | null => {

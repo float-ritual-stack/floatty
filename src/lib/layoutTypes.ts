@@ -11,7 +11,7 @@
 export interface PaneLeaf {
   type: 'leaf';
   id: string;  // Used as terminal ID or outliner ID
-  leafType?: 'terminal' | 'outliner';
+  leafType?: 'terminal' | 'outliner' | 'acp';
   cwd?: string;  // Working directory for the terminal (if terminal)
   // FLO-77: Initial scroll position for cloned outliner panes
   initialScrollTop?: number;
