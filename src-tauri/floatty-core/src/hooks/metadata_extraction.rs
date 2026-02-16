@@ -30,6 +30,9 @@ use super::BlockHook;
 /// - Wikilinks: `[[Page Name]]`, `[[Target|Alias]]`, nested `[[outer [[inner]]]]`
 ///
 /// Writes extracted data to `block.metadata` with `Origin::Hook`.
+///
+/// Uses `batch_update_metadata()` to write all metadata in a single Y.Doc
+/// transaction, reducing lock acquisitions from N to 1 (FLO-361).
 pub struct MetadataExtractionHook;
 
 impl BlockHook for MetadataExtractionHook {
@@ -55,6 +58,9 @@ impl BlockHook for MetadataExtractionHook {
 
     #[instrument(skip(self, batch, store), fields(batch_size = batch.changes.len()))]
     fn process(&self, batch: &BlockChangeBatch, store: Arc<YDocStore>) {
+        // Phase 1: Extract metadata for all blocks (pure computation, no locks)
+        let mut extractions: Vec<(String, BlockMetadata)> = Vec::new();
+
         for change in &batch.changes {
             match change {
                 BlockChange::Created { id, content, .. }
@@ -63,44 +69,63 @@ impl BlockHook for MetadataExtractionHook {
                     new_content: content,
                     ..
                 } => {
-                    self.extract_and_store(id, content, &store);
+                    if let Some(metadata) = Self::extract_metadata(id, content) {
+                        extractions.push((id.clone(), metadata));
+                    }
                 }
-                // Ignore other change types - they don't affect content
                 _ => {}
             }
+        }
+
+        if extractions.is_empty() {
+            return;
+        }
+
+        debug!(
+            "MetadataExtractionHook: writing {} metadata entries in single transaction",
+            extractions.len()
+        );
+
+        // Phase 2: Batch write all metadata in one Y.Doc transaction (FLO-361)
+        let updates: Vec<(&str, BlockMetadata)> = extractions
+            .iter()
+            .map(|(id, meta)| (id.as_str(), meta.clone()))
+            .collect();
+
+        if let Err(e) = store.batch_update_metadata(&updates, Origin::Hook) {
+            warn!(
+                batch_size = updates.len(),
+                "Failed to batch update metadata (all {} blocks in batch lost metadata): {}",
+                updates.len(), e
+            );
         }
     }
 }
 
 impl MetadataExtractionHook {
-    /// Extract metadata from content and store it on the block.
-    #[instrument(skip(self, store), fields(block_id = %id))]
-    fn extract_and_store(&self, id: &str, content: &str, store: &YDocStore) {
+    /// Extract metadata from content (pure computation, no store access).
+    fn extract_metadata(id: &str, content: &str) -> Option<BlockMetadata> {
         let preview: String = content.chars().take(50).collect();
         debug!("MetadataExtractionHook: processing block {} with content: {}", id, preview);
 
-        // Extract markers
         let markers = parsing::extract_all_markers(content);
 
-        // Extract wikilink targets
         let outlinks = if parsing::has_wikilink_patterns(content) {
             parsing::extract_wikilink_targets(content)
         } else {
             Vec::new()
         };
 
-        // Build metadata
         let metadata = BlockMetadata {
             markers,
             outlinks,
-            is_stub: false, // Determined by PageNameIndex, not here
+            is_stub: false,
             extracted_at: Some(chrono::Utc::now().timestamp()),
         };
 
-        // Skip if nothing to store
         if metadata.is_empty() {
             debug!("No metadata to extract for block {}", id);
-            return;
+            return None;
         }
 
         debug!(
@@ -110,16 +135,7 @@ impl MetadataExtractionHook {
             id
         );
 
-        // Write metadata to store with Origin::Hook to prevent infinite loops
-        match store.update_block_metadata(id, metadata.clone(), Origin::Hook) {
-            Ok(_) => {
-                debug!("MetadataExtractionHook: wrote metadata for block {} - {} markers, {} outlinks",
-                    id, metadata.markers.len(), metadata.outlinks.len());
-            }
-            Err(e) => {
-                warn!("Failed to update metadata for block {}: {}", id, e);
-            }
-        }
+        Some(metadata)
     }
 }
 

@@ -159,32 +159,11 @@ impl IndexManager {
     }
 }
 
-/// Get the data directory root.
-///
-/// Checks `FLOATTY_DATA_DIR` first, falls back based on build profile:
-/// - Debug: `~/.floatty-dev`
-/// - Release: `~/.floatty`
-fn data_dir() -> Result<PathBuf, SearchError> {
-    std::env::var("FLOATTY_DATA_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| {
-            dirs::home_dir().map(|h| {
-                #[cfg(debug_assertions)]
-                { h.join(".floatty-dev") }
-
-                #[cfg(not(debug_assertions))]
-                { h.join(".floatty") }
-            })
-        })
-        .ok_or(SearchError::NoIndexDir)
-}
-
 /// Get the default index path ({data_dir}/search_index/).
 ///
 /// Uses `FLOATTY_DATA_DIR` if set, otherwise build-profile-aware default.
 fn get_index_path() -> Result<PathBuf, SearchError> {
-    Ok(data_dir()?.join(INDEX_DIR_NAME))
+    Ok(crate::data_dir().join(INDEX_DIR_NAME))
 }
 
 

@@ -35,6 +35,35 @@ pub mod persistence;
 pub mod search;
 pub mod store;
 
+use std::path::PathBuf;
+
+/// Resolve the floatty data directory.
+///
+/// Checks `FLOATTY_DATA_DIR` env first, then falls back to build-profile default:
+/// - Debug: `~/.floatty-dev`
+/// - Release: `~/.floatty`
+///
+/// This is the single canonical implementation. All crates should use this
+/// instead of duplicating the logic (FLO-317 hardening).
+pub fn data_dir() -> PathBuf {
+    std::env::var("FLOATTY_DATA_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+
+            #[cfg(debug_assertions)]
+            {
+                home.join(".floatty-dev")
+            }
+
+            #[cfg(not(debug_assertions))]
+            {
+                home.join(".floatty")
+            }
+        })
+}
+
 // Re-exports for convenience
 pub use batcher::BatchedChangeCollector;
 pub use block::{Block, BlockType, parse_block_type};

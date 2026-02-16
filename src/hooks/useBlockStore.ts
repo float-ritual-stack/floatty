@@ -458,7 +458,13 @@ function createBlockStore() {
                   const content = getValue(blockData, 'content') as string;
                   if (content && isAutoExecutable(content)) {
                     // Queue for next tick to let state settle
-                    setTimeout(() => _autoExecuteHandler!(key, content), 0);
+                    setTimeout(() => {
+                      try {
+                        _autoExecuteHandler!(key, content);
+                      } catch (err) {
+                        console.error(`[useBlockStore] Auto-execute handler error for block ${key}:`, err);
+                      }
+                    }, 0);
                   }
                 }
 

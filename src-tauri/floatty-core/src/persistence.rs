@@ -22,33 +22,12 @@ pub enum PersistenceError {
     LockPoisoned,
 }
 
-/// Get the data directory root.
-///
-/// Checks `FLOATTY_DATA_DIR` first, falls back based on build profile:
-/// - Debug: `~/.floatty-dev`
-/// - Release: `~/.floatty`
-pub fn data_dir() -> PathBuf {
-    std::env::var("FLOATTY_DATA_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."));
-
-            #[cfg(debug_assertions)]
-            { home.join(".floatty-dev") }
-
-            #[cfg(not(debug_assertions))]
-            { home.join(".floatty") }
-        })
-}
-
 /// Default database path: {data_dir}/ctx_markers.db
 /// (shares database with ctx:: system for now)
 ///
 /// Uses `FLOATTY_DATA_DIR` if set, otherwise build-profile-aware default.
 pub fn default_db_path() -> PathBuf {
-    data_dir().join("ctx_markers.db")
+    crate::data_dir().join("ctx_markers.db")
 }
 
 /// SQLite persistence layer for Y.Doc updates.

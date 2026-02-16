@@ -841,6 +841,102 @@ impl YDocStore {
             })
     }
 
+    /// Update metadata for multiple blocks in a single Y.Doc transaction.
+    ///
+    /// Same semantics as `update_block_metadata()` but batches all writes into
+    /// one `transact_mut_with()` → one persist → one emit. This reduces write lock
+    /// acquisitions from N to 1 (reads still needed per-block for old metadata),
+    /// preventing thread starvation when processing
+    /// large batches (FLO-361).
+    ///
+    /// Missing blocks are skipped and logged at debug level (concurrent deletes are expected).
+    pub fn batch_update_metadata(
+        &self,
+        updates: &[(&str, BlockMetadata)],
+        origin: Origin,
+    ) -> Result<(), StoreError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        // Capture old metadata for change events (single read lock for all blocks)
+        let old_metadata: Vec<(String, Option<serde_json::Value>)> = {
+            let doc = self.doc.read().map_err(|_| StoreError::LockPoisoned)?;
+            let txn = doc.transact();
+            let blocks_map = txn.get_map("blocks");
+            updates
+                .iter()
+                .map(|(id, _)| {
+                    let old = blocks_map
+                        .as_ref()
+                        .and_then(|bm| bm.get(&txn, *id))
+                        .and_then(|v| match v {
+                            Out::YMap(block_map) => block_map.get(&txn, "metadata"),
+                            _ => None,
+                        })
+                        .and_then(|v| parse_metadata_from_out(v, &txn))
+                        .and_then(|m| serde_json::to_value(m).ok());
+                    (id.to_string(), old)
+                })
+                .collect()
+        };
+
+        let doc = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
+        let origin_str = origin.to_string();
+        let mut written_ids: Vec<(String, BlockMetadata)> = Vec::new();
+
+        let update = {
+            let mut txn = doc.transact_mut_with(origin_str.as_str());
+            let blocks = txn.get_or_insert_map("blocks");
+
+            for (block_id, metadata) in updates {
+                match blocks.get(&txn, *block_id) {
+                    Some(Out::YMap(block_map)) => {
+                        let metadata_map = metadata_to_ymap(metadata);
+                        block_map.insert(&mut txn, "metadata", metadata_map);
+                        written_ids.push((block_id.to_string(), metadata.clone()));
+                    }
+                    _ => {
+                        debug!("batch_update_metadata: block {} not found, skipping", block_id);
+                    }
+                }
+            }
+
+            txn.encode_update_v1()
+        };
+        drop(doc);
+
+        if written_ids.is_empty() {
+            return Ok(());
+        }
+
+        // Persist the single combined update
+        self.persist_update(&update)?;
+
+        // Emit MetadataChanged events for all written blocks
+        let old_map: std::collections::HashMap<&str, Option<serde_json::Value>> = old_metadata
+            .iter()
+            .map(|(id, m)| (id.as_str(), m.clone()))
+            .collect();
+
+        let changes: Vec<BlockChange> = written_ids
+            .iter()
+            .map(|(id, metadata)| {
+                let old = old_map.get(id.as_str()).and_then(|m| m.clone());
+                BlockChange::MetadataChanged {
+                    id: id.clone(),
+                    old_metadata: old,
+                    new_metadata: serde_json::to_value(metadata).ok(),
+                    origin,
+                }
+            })
+            .collect();
+
+        self.emit_changes(changes);
+
+        Ok(())
+    }
+
     /// Update metadata for a block.
     ///
     /// Writes metadata as native Y.Doc structure (nested Y.Map with Y.Array).

@@ -2227,7 +2227,7 @@ async fn backup_config(State(state): State<AppState>) -> Result<Json<BackupConfi
 // ═══════════════════════════════════════════════════════════════
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PresenceRequest {
     block_id: String,
     pane_id: Option<String>,
