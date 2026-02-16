@@ -13,29 +13,8 @@ pub const DEFAULT_PORT: u16 = 8765;
 /// Default port for dev builds (visually distinct for log scanning)
 pub const DEV_PORT: u16 = 33333;
 
-/// Get the data directory root.
-///
-/// Checks `FLOATTY_DATA_DIR` first, falls back based on build profile:
-/// - Debug: `~/.floatty-dev`
-/// - Release: `~/.floatty`
-pub fn data_dir() -> PathBuf {
-    std::env::var("FLOATTY_DATA_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-
-            #[cfg(debug_assertions)]
-            {
-                home.join(".floatty-dev")
-            }
-
-            #[cfg(not(debug_assertions))]
-            {
-                home.join(".floatty")
-            }
-        })
-}
+/// Re-export canonical data_dir from floatty-core (FLO-317 consolidation).
+pub use floatty_core::data_dir;
 
 /// Server configuration section from config.toml
 #[derive(Debug, Clone, Serialize, Deserialize)]
