@@ -10,8 +10,8 @@
 //!
 //! # Origin Filtering
 //!
-//! Accepts: User, Agent, BulkImport
-//! Ignores: Hook (prevents infinite loops), Remote (already extracted at source)
+//! Accepts: User, Agent, BulkImport, Remote
+//! Ignores: Hook (prevents infinite loops)
 
 use crate::{
     events::BlockChange, hooks::parsing, metadata::BlockMetadata, BlockChangeBatch, Origin,
@@ -46,9 +46,11 @@ impl BlockHook for MetadataExtractionHook {
     }
 
     fn accepts_origins(&self) -> Option<Vec<Origin>> {
-        // Accept user actions, agent writes, and bulk imports
-        // Exclude Hook (prevents infinite loops) and Remote (already extracted)
-        Some(vec![Origin::User, Origin::Agent, Origin::BulkImport])
+        // Accept user actions, agent writes, bulk imports, and remote (GUI edits via WS).
+        // Exclude Hook only (prevents infinite loops).
+        // Remote is included because the server is the sole metadata extractor —
+        // the frontend does NOT extract markers before syncing.
+        Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])
     }
 
     #[instrument(skip(self, batch, store), fields(batch_size = batch.changes.len()))]
@@ -169,8 +171,8 @@ mod tests {
     }
 
     #[test]
-    fn test_rejects_remote_origin() {
+    fn test_accepts_remote_origin() {
         let hook = MetadataExtractionHook;
-        assert!(!should_process(&hook, Origin::Remote));
+        assert!(should_process(&hook, Origin::Remote));
     }
 }

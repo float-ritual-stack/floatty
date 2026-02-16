@@ -103,8 +103,8 @@ impl BlockChange {
 
     /// Check if this change should trigger metadata extraction hooks.
     ///
-    /// Returns false for Hook and Remote origins to prevent loops and
-    /// redundant processing.
+    /// Returns false only for Hook origin (prevents infinite loops).
+    /// Remote is included — the server is the sole metadata extractor.
     pub fn triggers_metadata_hooks(&self) -> bool {
         self.origin().triggers_metadata_hooks()
     }
@@ -235,9 +235,9 @@ mod tests {
             origin: Origin::Remote,
         };
 
-        // Remote changes should NOT trigger metadata hooks (already extracted at source)
-        // but SHOULD trigger index hooks (need local search indexing)
-        assert!(!change.triggers_metadata_hooks());
+        // Remote changes SHOULD trigger metadata hooks (server is sole extractor)
+        // and SHOULD trigger index hooks (need local search indexing)
+        assert!(change.triggers_metadata_hooks());
         assert!(change.triggers_index_hooks());
     }
 

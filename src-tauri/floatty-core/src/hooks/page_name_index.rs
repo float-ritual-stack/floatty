@@ -13,8 +13,8 @@
 //!
 //! # Origin Filtering
 //!
-//! Accepts: User, Agent, BulkImport
-//! Ignores: Hook (metadata writes), Remote (already indexed at source)
+//! Accepts: User, Agent, BulkImport, Remote
+//! Ignores: Hook (metadata writes)
 
 use crate::{
     events::BlockChange, hooks::BlockHook, BlockChangeBatch, Origin, YDocStore,
@@ -419,8 +419,8 @@ impl BlockHook for PageNameIndexHook {
     }
 
     fn accepts_origins(&self) -> Option<Vec<Origin>> {
-        // Same as MetadataExtractionHook - exclude Hook and Remote
-        Some(vec![Origin::User, Origin::Agent, Origin::BulkImport])
+        // Same as MetadataExtractionHook - exclude Hook only
+        Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])
     }
 
     #[instrument(skip(self, batch, store), fields(batch_size = batch.changes.len()))]
@@ -612,9 +612,9 @@ mod tests {
     }
 
     #[test]
-    fn test_rejects_remote_origin() {
+    fn test_accepts_remote_origin() {
         use crate::hooks::should_process;
         let hook = PageNameIndexHook::new();
-        assert!(!should_process(&hook, Origin::Remote));
+        assert!(should_process(&hook, Origin::Remote));
     }
 }
