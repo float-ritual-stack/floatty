@@ -903,13 +903,15 @@ impl YDocStore {
         self.persist_update(&update)?;
 
         // Emit MetadataChanged events for all written blocks
+        let old_map: std::collections::HashMap<&str, Option<serde_json::Value>> = old_metadata
+            .iter()
+            .map(|(id, m)| (id.as_str(), m.clone()))
+            .collect();
+
         let changes: Vec<BlockChange> = written_ids
             .iter()
             .map(|(id, metadata)| {
-                let old = old_metadata
-                    .iter()
-                    .find(|(oid, _)| oid == id)
-                    .and_then(|(_, m)| m.clone());
+                let old = old_map.get(id.as_str()).and_then(|m| m.clone());
                 BlockChange::MetadataChanged {
                     id: id.clone(),
                     old_metadata: old,
