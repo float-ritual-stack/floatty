@@ -1491,8 +1491,11 @@ export function useSyncedYDoc(
 
               // Apply server state to our doc - this already contains our pushed diff
               setApplyingRemote(true);
-              Y.applyUpdate(doc, serverState, 'remote');
-              setApplyingRemote(false);
+              try {
+                Y.applyUpdate(doc, serverState, 'remote');
+              } finally {
+                setApplyingRemote(false);
+              }
 
               // Seed seq tracking from server via tracker (full state = all seqs covered)
               if (latestSeq !== null) {
@@ -1509,8 +1512,11 @@ export function useSyncedYDoc(
                 const { state: stateBytes, latestSeq } = await httpClient.getState();
                 if (stateBytes && stateBytes.length > 0) {
                   setApplyingRemote(true);
-                  Y.applyUpdate(doc, stateBytes, 'remote');
-                  setApplyingRemote(false);
+                  try {
+                    Y.applyUpdate(doc, stateBytes, 'remote');
+                  } finally {
+                    setApplyingRemote(false);
+                  }
                   // Seed seq tracking via tracker (full state = all seqs covered)
                   if (latestSeq !== null) {
                     seqTracker.seedFromFullSync(latestSeq);
@@ -1537,8 +1543,11 @@ export function useSyncedYDoc(
 
             if (stateBytes && stateBytes.length > 0) {
               setApplyingRemote(true);
-              Y.applyUpdate(doc, stateBytes, 'remote');
-              setApplyingRemote(false);
+              try {
+                Y.applyUpdate(doc, stateBytes, 'remote');
+              } finally {
+                setApplyingRemote(false);
+              }
               // Seed seq tracking via tracker (full state = all seqs covered)
               if (latestSeq !== null) {
                 seqTracker.seedFromFullSync(latestSeq);
@@ -1569,7 +1578,9 @@ export function useSyncedYDoc(
           connectWebSocket();
 
           // FLO-247: Startup sanity check - detect suspicious state
-          validateSyncedState(doc);
+          validateSyncedState(doc).catch(err => {
+            console.warn('[FLO-247] Startup sanity check error:', err);
+          });
 
           // FLO-280: Dedup childIds on startup (catches pre-existing duplicates)
           const startupDeduped = deduplicateChildIds();
@@ -1589,7 +1600,10 @@ export function useSyncedYDoc(
 
     // Attach singleton handler (ref-counted - only first caller actually attaches)
     attachHandler();
-    loadInitialState();
+    loadInitialState().catch(err => {
+      console.error('[useSyncedYDoc] loadInitialState failed:', err);
+      setSyncStatus('error');
+    });
 
     onCleanup(() => {
       // Detach singleton handler (ref-counted - only last caller actually detaches)
