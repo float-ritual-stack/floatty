@@ -36,10 +36,20 @@ pub async fn execute_shell(command: String, max_bytes: usize) -> Result<(String,
 
         tracing::debug!(shell = %shell, "Executing shell command");
 
+        // Login shell (-l) sources .zshenv + .zprofile but NOT .zshrc (that's interactive-only).
+        // Instead of -li (which requires a TTY and can hang on starship/p10k init),
+        // explicitly source .zshrc in the command string for aliases/PATH additions.
+        let rc_source = if shell.contains("zsh") {
+            "[ -f ~/.zshrc ] && source ~/.zshrc 2>/dev/null; "
+        } else if shell.contains("bash") {
+            "[ -f ~/.bashrc ] && source ~/.bashrc 2>/dev/null; "
+        } else {
+            ""
+        };
+
         let output = std::process::Command::new(&shell)
-            .arg("-li")  // Login + interactive: sources .zshrc (aliases, zoxide, etc.)
-            .arg("-c")   // Execute command string
-            .arg(&command)
+            .arg("-lc")  // Login shell + command (non-interactive, no TTY needed)
+            .arg(format!("{}{}", rc_source, &command))
             .output()
             .map_err(|e| {
                 tracing::error!(error = %e, "Failed to spawn shell");
