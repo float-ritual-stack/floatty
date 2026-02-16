@@ -859,12 +859,23 @@ impl YDocStore {
             return Ok(());
         }
 
-        // Capture old metadata for change events (read lock, then release)
+        // Capture old metadata for change events (single read lock for all blocks)
         let old_metadata: Vec<(String, Option<serde_json::Value>)> = {
+            let doc = self.doc.read().map_err(|_| StoreError::LockPoisoned)?;
+            let txn = doc.transact();
+            let blocks_map = txn.get_map("blocks");
             updates
                 .iter()
                 .map(|(id, _)| {
-                    let old = self.get_block_metadata_json(id);
+                    let old = blocks_map
+                        .as_ref()
+                        .and_then(|bm| bm.get(&txn, *id))
+                        .and_then(|v| match v {
+                            Out::YMap(block_map) => block_map.get(&txn, "metadata"),
+                            _ => None,
+                        })
+                        .and_then(|v| parse_metadata_from_out(v, &txn))
+                        .and_then(|m| serde_json::to_value(m).ok());
                     (id.to_string(), old)
                 })
                 .collect()
