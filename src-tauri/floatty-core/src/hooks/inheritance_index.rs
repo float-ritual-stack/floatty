@@ -157,6 +157,140 @@ impl InheritanceIndex {
         );
     }
 
+    /// Incrementally update the index for a set of affected block IDs.
+    ///
+    /// Instead of rebuilding the entire tree, this:
+    /// 1. Expands the affected set to include descendants (marker changes propagate down)
+    ///    and ancestors (parent marker changes affect children's inheritance)
+    /// 2. Recomputes inheritance only for blocks in the expanded set
+    /// 3. Removes entries for deleted blocks
+    ///
+    /// Falls back to full `rebuild()` if the expanded set exceeds 500 blocks
+    /// (at that point incremental is slower than full rebuild).
+    pub fn update_affected(
+        &mut self,
+        affected_ids: &HashSet<String>,
+        deleted_ids: &HashSet<String>,
+        store: &YDocStore,
+    ) {
+        // Remove deleted blocks from index
+        for id in deleted_ids {
+            self.inherited.remove(id);
+        }
+
+        if affected_ids.is_empty() {
+            return;
+        }
+
+        // Expand affected set: for each affected block, include its descendants
+        // (they may inherit new/changed markers) and ancestors (their changes
+        // propagate down through the tree).
+        let mut expanded = HashSet::new();
+        for id in affected_ids {
+            // Add the block itself
+            expanded.insert(id.clone());
+
+            // Add descendants (BFS walk via child_ids)
+            let mut queue = vec![id.clone()];
+            while let Some(current) = queue.pop() {
+                if let Some(block) = store.get_block(&current) {
+                    for child_id in &block.child_ids {
+                        if expanded.insert(child_id.clone()) {
+                            queue.push(child_id.clone());
+                        }
+                    }
+                }
+            }
+
+            // Add ancestors (walk up via parent_id)
+            if let Some(block) = store.get_block(id) {
+                let mut parent = block.parent_id;
+                let mut depth = 0;
+                while let Some(ref pid) = parent {
+                    depth += 1;
+                    if depth > 50 || !expanded.insert(pid.clone()) {
+                        break;
+                    }
+                    parent = store.get_block(pid).and_then(|b| b.parent_id);
+                }
+            }
+        }
+
+        // If expanded set is too large, full rebuild is more efficient
+        if expanded.len() > 500 {
+            debug!(
+                "InheritanceIndex: expanded set {} blocks exceeds threshold, falling back to full rebuild",
+                expanded.len()
+            );
+            self.rebuild(store);
+            return;
+        }
+
+        debug!(
+            "InheritanceIndex: incremental update for {} blocks (from {} affected)",
+            expanded.len(),
+            affected_ids.len()
+        );
+
+        // Recompute inheritance for each block in the expanded set
+        for block_id in &expanded {
+            if let Some(block) = store.get_block(block_id) {
+                let own_types: HashSet<String> = block
+                    .metadata
+                    .as_ref()
+                    .map(|m| {
+                        m.markers
+                            .iter()
+                            .filter_map(|marker| {
+                                marker.value.as_ref().map(|_| marker.marker_type.clone())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let mut seen_types = own_types;
+                let mut inherited_markers = Vec::new();
+                let mut current_parent = block.parent_id;
+                let mut depth = 0;
+
+                while let Some(ref pid) = current_parent {
+                    depth += 1;
+                    if depth > 50 {
+                        break;
+                    }
+                    if let Some(parent) = store.get_block(pid) {
+                        if let Some(ref meta) = parent.metadata {
+                            for marker in &meta.markers {
+                                if let Some(ref v) = marker.value {
+                                    if !seen_types.contains(&marker.marker_type) {
+                                        inherited_markers.push(InheritedMarker {
+                                            marker_type: marker.marker_type.clone(),
+                                            value: v.clone(),
+                                            source_block_id: pid.clone(),
+                                        });
+                                        seen_types.insert(marker.marker_type.clone());
+                                    }
+                                }
+                            }
+                        }
+                        current_parent = parent.parent_id;
+                    } else {
+                        break;
+                    }
+                }
+
+                if inherited_markers.is_empty() {
+                    self.inherited.remove(block_id);
+                } else {
+                    self.inherited.insert(block_id.clone(), inherited_markers);
+                }
+            } else {
+                // Block no longer exists
+                self.inherited.remove(block_id);
+            }
+        }
+    }
+
     /// Clear the entire index.
     pub fn clear(&mut self) {
         self.inherited.clear();
@@ -228,7 +362,37 @@ impl BlockHook for InheritanceIndexHook {
         }
 
         let mut index = self.index.write().expect("lock poisoned");
-        index.rebuild(&store);
+
+        // Cold start rehydration or very large batches: full rebuild
+        let is_cold_start = batch
+            .transaction_id
+            .as_deref()
+            == Some("cold_start_rehydration");
+
+        if is_cold_start {
+            index.rebuild(&store);
+            return;
+        }
+
+        // Extract affected IDs and deleted IDs from the batch
+        let mut affected_ids = HashSet::new();
+        let mut deleted_ids = HashSet::new();
+
+        for change in &batch.changes {
+            match change {
+                BlockChange::Deleted { id, .. } => {
+                    deleted_ids.insert(id.clone());
+                }
+                BlockChange::CollapsedChanged { .. } => {
+                    // Already filtered above, but be explicit
+                }
+                _ => {
+                    affected_ids.insert(change.block_id().to_string());
+                }
+            }
+        }
+
+        index.update_affected(&affected_ids, &deleted_ids, &store);
     }
 }
 

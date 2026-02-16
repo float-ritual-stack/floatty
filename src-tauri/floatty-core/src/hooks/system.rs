@@ -270,6 +270,11 @@ fn spawn_commit_task(writer: WriterHandle) -> tokio::task::JoinHandle<()> {
 }
 
 /// Spawn the dispatch task that listens to emitter and dispatches to hooks.
+///
+/// Hook dispatch runs inside `spawn_blocking` to avoid parking tokio worker
+/// threads when hooks acquire `std::sync::RwLock` on the Y.Doc. Without this,
+/// concurrent `POST /api/v1/update` handlers contending for the same lock can
+/// starve all tokio workers → runtime deadlock (FLO-361).
 fn spawn_dispatch_task(
     mut rx: broadcast::Receiver<Arc<BlockChangeBatch>>,
     registry: Arc<HookRegistry>,
@@ -286,8 +291,15 @@ fn spawn_dispatch_task(
                         batch.len(),
                         registry.len()
                     );
-                    // Dispatch to all hooks (sync hooks block, async hooks spawn)
-                    registry.dispatch(&batch, Arc::clone(&store));
+                    // Move hook dispatch onto a blocking thread so RwLock contention
+                    // doesn't park tokio worker threads (FLO-361).
+                    let registry = Arc::clone(&registry);
+                    let store_clone = Arc::clone(&store);
+                    if let Err(e) = tokio::task::spawn_blocking(move || {
+                        registry.dispatch(&batch, store_clone);
+                    }).await {
+                        warn!("Hook dispatch task panicked: {}", e);
+                    }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     warn!("Hook dispatch lagged by {} messages - some changes may have been skipped", n);
