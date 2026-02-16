@@ -849,7 +849,7 @@ impl YDocStore {
     /// preventing thread starvation when processing
     /// large batches (FLO-361).
     ///
-    /// Missing blocks are skipped with a warning (concurrent deletes are expected).
+    /// Missing blocks are skipped and logged at debug level (concurrent deletes are expected).
     pub fn batch_update_metadata(
         &self,
         updates: &[(&str, BlockMetadata)],
