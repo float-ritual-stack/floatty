@@ -108,12 +108,11 @@ pub trait BlockHook: Send + Sync {
 
     /// Origins this hook responds to. `None` means accept all origins.
     ///
-    /// Most hooks should return `Some(vec![Origin::User, Origin::Agent, Origin::BulkImport])`
-    /// to exclude `Origin::Hook` (prevents infinite loops) and `Origin::Remote`
-    /// (metadata already extracted at source).
+    /// Most hooks should return `Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])`
+    /// to exclude only `Origin::Hook` (prevents infinite loops).
     ///
-    /// Exception: TantivyIndexHook includes `Origin::Remote` because local
-    /// search index needs all content regardless of source.
+    /// Remote is included because the server is the sole metadata extractor —
+    /// GUI edits arrive via WebSocket as Origin::Remote and need full hook processing.
     fn accepts_origins(&self) -> Option<Vec<Origin>>;
 
     /// Process a batch of changes.
@@ -434,7 +433,7 @@ mod tests {
 
     #[test]
     fn test_metadata_hook_pattern() {
-        // MetadataHook should accept User, Agent, BulkImport but NOT Hook or Remote
+        // MetadataHook should accept User, Agent, BulkImport, Remote but NOT Hook
         struct MetadataHookPattern;
 
         impl BlockHook for MetadataHookPattern {
@@ -448,7 +447,7 @@ mod tests {
                 true
             }
             fn accepts_origins(&self) -> Option<Vec<Origin>> {
-                Some(vec![Origin::User, Origin::Agent, Origin::BulkImport])
+                Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])
             }
             fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {}
         }
@@ -458,8 +457,8 @@ mod tests {
         assert!(should_process(&hook, Origin::User));
         assert!(should_process(&hook, Origin::Agent));
         assert!(should_process(&hook, Origin::BulkImport));
+        assert!(should_process(&hook, Origin::Remote)); // Server is sole extractor
         assert!(!should_process(&hook, Origin::Hook)); // Prevents loops
-        assert!(!should_process(&hook, Origin::Remote)); // Already extracted
     }
 
     #[test]

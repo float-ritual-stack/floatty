@@ -12,9 +12,9 @@
 //! Accepts: User, Remote, Agent, BulkImport
 //! Ignores: Hook (prevents redundant re-indexing)
 //!
-//! Unlike MetadataExtractionHook, we DO accept Remote origin because:
-//! - The local Tantivy index needs remote content for search to work
-//! - Metadata comes with CRDT sync, so we can read `block.metadata`
+//! All hooks accept Remote — the server is the sole metadata extractor.
+//! Remote content needs indexing for search, and metadata is populated
+//! by MetadataExtractionHook (priority 10) before this hook runs.
 
 use crate::{
     block::parse_block_type,

@@ -18,7 +18,7 @@
 //!
 //! // In accepts_origins to filter:
 //! fn accepts_origins(&self) -> Option<Vec<Origin>> {
-//!     Some(vec![Origin::User, Origin::Remote, Origin::Agent])
+//!     Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])
 //!     // Does NOT include Origin::Hook, preventing loops
 //! }
 //! ```
@@ -39,8 +39,8 @@ pub enum Origin {
     /// Hooks that write with Origin::Hook do NOT trigger other hooks.
     Hook,
 
-    /// CRDT sync from server or peer.
-    /// Remote updates already have metadata extracted at source.
+    /// CRDT sync from server or peer (includes GUI edits via WebSocket).
+    /// The server is the sole metadata extractor — Remote needs full hook processing.
     Remote,
 
     /// AI agent action (Claude, other LLMs).
@@ -62,18 +62,17 @@ impl Origin {
 
     /// Returns true if this origin should trigger metadata extraction hooks.
     ///
-    /// Remote and Hook origins are excluded:
-    /// - Remote: metadata was already extracted at the source peer
-    /// - Hook: prevents infinite loops
+    /// Only Hook is excluded (prevents infinite loops).
+    /// Remote is included because the server is the sole metadata extractor —
+    /// GUI edits arrive via WS as Remote and need extraction here.
     pub fn triggers_metadata_hooks(&self) -> bool {
-        matches!(self, Origin::User | Origin::Agent | Origin::BulkImport)
+        matches!(self, Origin::User | Origin::Agent | Origin::BulkImport | Origin::Remote)
     }
 
     /// Returns true if this origin should trigger search index updates.
     ///
     /// All origins except Hook should update the local search index.
-    /// Remote changes need to be indexed locally even though metadata
-    /// was extracted at the source.
+    /// Remote changes are indexed locally for search coverage.
     pub fn triggers_index_hooks(&self) -> bool {
         matches!(self, Origin::User | Origin::Remote | Origin::Agent | Origin::BulkImport)
     }
@@ -151,7 +150,7 @@ mod tests {
         assert!(Origin::Agent.triggers_metadata_hooks());
         assert!(Origin::BulkImport.triggers_metadata_hooks());
         assert!(!Origin::Hook.triggers_metadata_hooks());
-        assert!(!Origin::Remote.triggers_metadata_hooks());
+        assert!(Origin::Remote.triggers_metadata_hooks());
     }
 
     #[test]
