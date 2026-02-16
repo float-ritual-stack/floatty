@@ -6,6 +6,25 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.31] - 2026-02-16
+
+### Bug Fixes
+
+- **Hook thread starvation** (FLO-361, PR #141): Metadata extraction and inheritance index hooks ran synchronously on the Yrs observe callback thread, blocking all Y.Doc writes during processing. Moved to `spawn_blocking`, batched metadata updates (N write locks → 1), and added incremental `update_affected()` to InheritanceIndex (only recomputes changed blocks + descendants instead of full rebuild).
+- **Shell command PATH** (PR #140): `sh::` blocks using `-li` (interactive login shell) hung on machines with starship/p10k prompt init. Switched to `-lc` with explicit `.zshrc` source to get PATH without requiring a TTY.
+- **Batch metadata read lock consolidation**: Replaced N individual `get_block_metadata_json()` calls with single read lock using `parse_metadata_from_out()`, which correctly handles all 3 metadata formats (legacy JSON string, Any::Map, native Y.Map).
+
+### Improvements
+
+- **Sweep hardening** (P1-P5): `setApplyingRemote` guarded with try/finally (3 call sites), `deny_unknown_fields` on `PresenceRequest`, `.catch()` on fire-and-forget async (`validateSyncedState`, `loadInitialState`, `autoExecute`).
+- **`data_dir()` consolidation** (FLO-317): Four identical implementations collapsed into single `floatty_core::data_dir()`. Prevents sibling drift.
+
+### Testing
+
+- 12 store-backed unit tests for `InheritanceIndex::rebuild()` and `update_affected()` covering root blocks, deleted blocks with descendants, depth >50, and stale inheritance removal (229 Rust tests, 731 JS tests).
+
+---
+
 ## [0.7.30] - 2026-02-15
 
 ### Bug Fixes
