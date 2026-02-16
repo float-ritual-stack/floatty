@@ -8,8 +8,9 @@
 //! its own `issue::FLO-351`. Effective markers: both.
 //!
 //! This index pre-computes inheritance so lookups are O(1) instead of
-//! O(depth) per block. Rebuilt on every mutation batch (full rebuild is
-//! single-digit ms at 25K blocks in Rust).
+//! O(depth) per block. Incrementally updated per mutation batch (only
+//! affected blocks + descendants). Falls back to full rebuild for cold
+//! start (single-digit ms at 25K blocks in Rust).
 //!
 //! # Priority
 //!
@@ -305,9 +306,8 @@ impl Default for InheritanceIndex {
 
 /// Hook that maintains the InheritanceIndex.
 ///
-/// On any batch of changes, does a full rebuild of the index.
-/// This is the simplest correct approach and is fast enough
-/// (proven by the reader app at 25K blocks).
+/// On any batch of changes, incrementally updates affected blocks.
+/// Falls back to full rebuild for cold start rehydration or batches >500 blocks.
 pub struct InheritanceIndexHook {
     index: Arc<RwLock<InheritanceIndex>>,
 }

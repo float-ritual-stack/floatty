@@ -844,8 +844,9 @@ impl YDocStore {
     /// Update metadata for multiple blocks in a single Y.Doc transaction.
     ///
     /// Same semantics as `update_block_metadata()` but batches all writes into
-    /// one `transact_mut_with()` → one persist → one emit. This reduces lock
-    /// acquisitions from N to 1, preventing thread starvation when processing
+    /// one `transact_mut_with()` → one persist → one emit. This reduces write lock
+    /// acquisitions from N to 1 (reads still needed per-block for old metadata),
+    /// preventing thread starvation when processing
     /// large batches (FLO-361).
     ///
     /// Missing blocks are skipped with a warning (concurrent deletes are expected).

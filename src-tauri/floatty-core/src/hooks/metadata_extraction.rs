@@ -93,7 +93,11 @@ impl BlockHook for MetadataExtractionHook {
             .collect();
 
         if let Err(e) = store.batch_update_metadata(&updates, Origin::Hook) {
-            warn!("Failed to batch update metadata: {}", e);
+            warn!(
+                batch_size = updates.len(),
+                "Failed to batch update metadata (all {} blocks in batch lost metadata): {}",
+                updates.len(), e
+            );
         }
     }
 }
