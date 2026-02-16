@@ -6,6 +6,31 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.30] - 2026-02-15
+
+### Bug Fixes
+
+- **GUI edits missing metadata** (FLO-358, PR #139): `MetadataExtractionHook`, `InheritanceIndexHook`, and `PageNameIndexHook` all rejected `Origin::Remote` — meaning ~90% of blocks (created/edited via GUI) had `metadata: null`. Added `Origin::Remote` to all three hooks and updated `triggers_metadata_hooks()`. Server is sole metadata extractor; the "already extracted at source" assumption was wrong.
+
+---
+
+## [0.7.29] - 2026-02-15
+
+### Features
+
+- **Metadata inheritance** (FLO-351, PR #134): Blocks inherit `ctx::`, `project::`, `mode::` markers from ancestors. O(1) `InheritanceIndex` rebuilt on block changes replaces compute-on-get traversal. Inherited markers included in Tantivy search index and API responses.
+- **Block repositioning API** (FLO-283, PR #135): `PATCH /api/v1/blocks/:id` now accepts `afterId` (place after sibling) and `atIndex` (place at position) for precise block ordering. Self-referential `afterId` rejected.
+- **Ratatui TUI spike** (PR #136): Read-only terminal UI for floatty outliner with presence broadcast for cursor following.
+
+### Bug Fixes
+
+- **Data integrity hardening** (FLO-348/349/350, PR #133): Recursive delete for blocks with children, export validation guards, orphan block detection and re-homing on startup.
+- **Config save deprecation** (PR #137): Removed deprecated `load()`/`save()`/`default_config_path()` from `config.rs`, threaded explicit `config_path` through `AppState`. Prevents config clobber from feature branches.
+- **Short block ID panic** (4e50c7b): TUI status bar and focus log no longer panic on block IDs shorter than expected.
+- **Y.Map metadata parsing** (3d2d7d6): `store.get_block()` now correctly parses metadata stored as Y.Map (not just plain JSON).
+
+---
+
 ## [0.7.28] - 2026-02-11
 
 ### Bug Fixes
