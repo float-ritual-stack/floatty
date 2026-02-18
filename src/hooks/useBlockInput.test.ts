@@ -139,24 +139,26 @@ describe('determineKeyAction', () => {
         expect(action.nextId).toBe('next-block');
       });
 
-      it('Shift+ArrowUp NOT at start returns none (browser handles text selection)', () => {
-        // FLO-145: Browser should handle mid-block text selection
+      it('Shift+ArrowUp mid-block still triggers block selection', () => {
+        // Block selection always wins over text selection for Shift+Arrow
         const result = determineKeyAction('ArrowUp', true, null, createDeps({
-          cursorAtStart: false,  // NOT at start
+          cursorAtStart: false,
           cursorOffset: 5,
         }));
 
-        expect(result.type).toBe('none');
+        const action = expectAction(result, 'navigate_up_with_selection');
+        expect(action.prevId).toBe('prev-block');
       });
 
-      it('Shift+ArrowDown NOT at end returns none (browser handles text selection)', () => {
-        // FLO-145: Browser should handle mid-block text selection
+      it('Shift+ArrowDown mid-block still triggers block selection', () => {
+        // Block selection always wins over text selection for Shift+Arrow
         const result = determineKeyAction('ArrowDown', true, null, createDeps({
-          cursorAtEnd: false,    // NOT at end
+          cursorAtEnd: false,
           cursorOffset: 5,
         }));
 
-        expect(result.type).toBe('none');
+        const action = expectAction(result, 'navigate_down_with_selection');
+        expect(action.nextId).toBe('next-block');
       });
 
       it('Shift+ArrowDown at end with no next block returns none (FLO-92 trailing block is plain nav only)', () => {
@@ -483,32 +485,28 @@ describe('determineKeyAction', () => {
     });
   });
 
-  // FLO-145: Text selection should NOT bleed across block boundaries
-  describe('text selection boundary bugs (FLO-145)', () => {
-    it('Shift+ArrowDown should NOT navigate when cursor is NOT at block end', () => {
-      // User is mid-block, using Shift+Down to extend text selection
-      // Should allow browser to handle text selection, NOT navigate to next block
+  // Shift+Arrow always triggers block selection (outliner semantics)
+  describe('Shift+Arrow block selection (always active)', () => {
+    it('Shift+ArrowDown mid-block triggers block selection', () => {
       const result = determineKeyAction('ArrowDown', true, null, createDeps({
-        cursorAtEnd: false,    // NOT at end - extending text selection within block
+        cursorAtEnd: false,
         cursorAtStart: false,
-        cursorOffset: 5,       // mid-block
+        cursorOffset: 5,
       }));
 
-      // Should return 'none' to let browser handle text selection
-      expect(result.type).toBe('none');
+      const action = expectAction(result, 'navigate_down_with_selection');
+      expect(action.nextId).toBe('next-block');
     });
 
-    it('Shift+ArrowUp should NOT navigate when cursor is NOT at block start', () => {
-      // User is mid-block, using Shift+Up to extend text selection
-      // Should allow browser to handle text selection, NOT navigate to prev block
+    it('Shift+ArrowUp mid-block triggers block selection', () => {
       const result = determineKeyAction('ArrowUp', true, null, createDeps({
-        cursorAtStart: false,  // NOT at start - extending text selection within block
+        cursorAtStart: false,
         cursorAtEnd: false,
-        cursorOffset: 5,       // mid-block
+        cursorOffset: 5,
       }));
 
-      // Should return 'none' to let browser handle text selection
-      expect(result.type).toBe('none');
+      const action = expectAction(result, 'navigate_up_with_selection');
+      expect(action.prevId).toBe('prev-block');
     });
 
     it('Shift+ArrowDown at block end SHOULD navigate with selection', () => {

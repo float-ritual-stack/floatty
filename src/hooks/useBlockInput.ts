@@ -153,34 +153,38 @@ export function determineKeyAction(
 
   // Non-action keybinds
   if (key === 'ArrowUp') {
-    // isCursorAtContentStart now uses structural check — correctly handles
-    // blank lines (<div><br></div>) as navigable positions
+    // Shift+Arrow: always do block selection regardless of cursor position.
+    // Outliner block selection takes priority over in-block text selection.
+    if (shiftKey) {
+      const prevId = deps.findPrevId();
+      return { type: 'navigate_up_with_selection', prevId };
+    }
+    // Plain ArrowUp: only navigate at content boundary
     if (cursorAtStart) {
       const prevId = deps.findPrevId();
-      if (shiftKey) {
-        return { type: 'navigate_up_with_selection', prevId };
-      }
       return { type: 'navigate_up', prevId };
     }
     return { type: 'none' };
   }
 
   if (key === 'ArrowDown') {
-    // isCursorAtContentEnd now uses structural check — correctly handles
-    // blank lines as navigable positions (won't report "at end" until
-    // cursor is actually past the last root-level element)
+    // Shift+Arrow: always do block selection regardless of cursor position.
+    if (shiftKey) {
+      const nextId = deps.findNextId();
+      if (nextId) {
+        return { type: 'navigate_down_with_selection', nextId };
+      }
+      return { type: 'none' };
+    }
+    // Plain ArrowDown: only navigate at content boundary
     if (cursorAtEnd) {
       const nextId = deps.findNextId();
       if (nextId) {
-        if (shiftKey) {
-          return { type: 'navigate_down_with_selection', nextId };
-        }
         return { type: 'navigate_down', nextId };
       }
       // FLO-92: No next block exists - create trailing sibling for typeable target
-      // Only for plain navigation, not Shift+Arrow selection
       // BUT don't create if current block is already empty (avoid empty spam)
-      if (!shiftKey && deps.content !== '') {
+      if (deps.content !== '') {
         const targetParent = zoomedRootId ?? block.parentId;
         return { type: 'create_trailing_block', parentId: targetParent };
       }
