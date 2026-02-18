@@ -12,7 +12,7 @@ import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { themeStore } from '../hooks/useThemeStore';
-import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
+import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay, isMac } from '../lib/keybinds';
 import { CommandBar } from './CommandBar';
 import { navigateToPage } from '../lib/navigation';
 import { emitCtxMarkersChanged } from '../lib/ctxEvents';
@@ -1184,7 +1184,8 @@ export function Terminal() {
             if (key) {
               document.dispatchEvent(new KeyboardEvent('keydown', {
                 key,
-                metaKey: true,
+                metaKey: isMac,
+                ctrlKey: !isMac,
                 shiftKey: true,
                 bubbles: true,
                 cancelable: true,
