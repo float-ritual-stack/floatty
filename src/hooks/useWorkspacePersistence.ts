@@ -38,7 +38,7 @@ export interface PersistedWorkspace {
   version: number;
   // Last accepted workspace save sequence (optional for pre-sequence payloads)
   saveSeq?: number;
-  tabs: Array<{ id: string; title: string }>;
+  tabs: Array<{ id: string; title: string; tmuxSession?: string }>;
   activeTabId: string | null;
   layouts: Record<string, { root: LayoutNode; activePaneId: string }>;
   paneStates: Record<string, {
@@ -114,6 +114,7 @@ export function createWorkspacePersistence() {
         title: t.title,
         ptyPid: null,
         isAlive: true,
+        ...(t.tmuxSession ? { tmuxSession: t.tmuxSession } : {}),
       }));
 
       // Validate activeTabId exists in restored tabs

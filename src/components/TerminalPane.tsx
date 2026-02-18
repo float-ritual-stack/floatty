@@ -19,6 +19,7 @@ export type TerminalPaneHandle = PaneHandle;
 export interface TerminalPaneProps {
   id: string;
   cwd?: string;
+  tmuxSession?: string;  // tmux session name for auto-reattach on restart
   placeholderId: string;  // ID of placeholder div to position over
   onPtySpawn?: (pid: number) => void;
   onPtyExit?: (exitCode: number) => void;
@@ -123,7 +124,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     if (!attached) {
       // Keep terminal attached to inner host while geometry is applied on outer container.
       // The host is kept 100% x 100% via CSS so fit() measures the positioned pane area.
-      await terminalManager.attach(props.id, terminalHostRef, props.cwd);
+      await terminalManager.attach(props.id, terminalHostRef, props.cwd, props.tmuxSession);
       attached = true;
 
     }

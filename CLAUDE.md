@@ -383,7 +383,7 @@ Hooks subscribe to `blockEventBus`, use Origin filtering to prevent infinite loo
 
 | File | Purpose |
 |------|---------|
-| `useTabStore.ts` | SolidJS store for tab state |
+| `useTabStore.ts` | SolidJS store for tab state (id, title, tmuxSession, ptyPid) |
 | `useLayoutStore.ts` | SolidJS store for per-tab split pane layouts |
 | `usePaneStore.ts` | Per-pane view state (collapsed, zoom, focus, navigation history). Use `zoomTo()` API for navigation. |
 | `useBlockStore.ts` | Block tree CRUD operations (Y.Doc backed) |
@@ -404,6 +404,12 @@ Hooks subscribe to `blockEventBus`, use Origin filtering to prevent infinite loo
 - `get_ctx_markers` / `get_ctx_counts` - sidebar data
 - `get_ctx_config` / `set_ctx_config` - aggregator settings
 - `clear_ctx_markers` - reset database
+
+**Shell hooks & semantic state** (`~/.floatty/shell-hooks.zsh` → `terminalManager.ts`):
+
+Shell hooks emit OSC 133 (prompt lifecycle) and OSC 1337 (CurrentDir, Command) sequences. The terminal manager parses these into `SemanticState` per terminal instance: `cwd`, `lastCommand`, `lastExitCode`, `lastDuration`, `hooksActive`, `tmuxSession`.
+
+**tmux auto-reattach**: Detected via command parsing, NOT shell-hook OSC (OSC sequences from inside tmux don't pass through to the outer terminal). When `Command=tmux new -s NAME` or `Command=tmux attach -t NAME` is seen, `tmuxSession` is set on the tab. Persisted in workspace SQLite. On restart, tabs with tmuxSession spawn `zsh -c "tmux attach-session -t NAME 2>/dev/null || exec zsh -l"` — falls back to fresh shell if session is gone.
 
 ### Configuration
 

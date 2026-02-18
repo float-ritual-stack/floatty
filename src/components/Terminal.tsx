@@ -968,6 +968,8 @@ export function Terminal() {
           initialCollapseDepth: leaf?.initialCollapseDepth,
           // FLO-136: Ephemeral pane flag for preview mode
           ephemeral: leaf?.ephemeral ?? false,
+          // tmux session for auto-reattach on restart
+          tmuxSession: tab.tmuxSession,
           isActivePane: paneId === activePaneId,
           isActiveTab: tab.id === activeId,
         };
@@ -1077,6 +1079,7 @@ export function Terminal() {
                 <TerminalPane
                   id={info().paneId}
                   cwd={info().cwd}
+                  tmuxSession={info().tmuxSession}
                   placeholderId={info().paneId}
                   isActive={info().isActivePane && info().isActiveTab}
                   isVisible={info().isActiveTab}
@@ -1090,11 +1093,19 @@ export function Terminal() {
                   )}
                   onTitleChange={(title) => handleTitleChange(info().paneId, title)}
                   onSemanticStateChange={(state) => {
-                    // Only update status bar for active pane
                     const i = info();
+                    // Bubble tmux session to tab store for persistence
+                    const s = state as SemanticState;
+                    if (s.tmuxSession !== undefined) {
+                      const tab = tabStore.tabs.find(t => getAllPaneIds(t.id).includes(i.paneId));
+                      if (tab && tab.tmuxSession !== s.tmuxSession) {
+                        tabStore.setTabTmuxSession(tab.id, s.tmuxSession);
+                      }
+                    }
+                    // Only update status bar for active pane
                     if (i.isActivePane && i.isActiveTab) {
                       // Clone to break reference equality - SolidJS signals won't update on same object
-                      setSemanticState({ ...state } as SemanticState);
+                      setSemanticState({ ...s });
                     }
                   }}
                   onStickyChange={(sticky) => handleStickyChange(info().paneId, sticky)}
