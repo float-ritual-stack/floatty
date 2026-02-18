@@ -131,10 +131,11 @@ function createLayoutStore() {
       direction,
       ratio: 0.5,
       children: [
-        // CLONE the leaf - don't use proxy directly (causes infinite recursion)
-        { type: 'leaf', id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal' },
+        // CLONE the leaf - spread to preserve all properties (tmuxSession, etc.)
+        // Must clone from proxy to plain object to avoid infinite recursion
+        { type: 'leaf' as const, id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal', ...(activePane.tmuxSession ? { tmuxSession: activePane.tmuxSession } : {}) },
         // FLO-136/FLO-197: Mark ephemeral if requested, set collapse depth for outliners
-        { type: 'leaf', id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop, ephemeral, initialCollapseDepth: collapseDepth },
+        { type: 'leaf' as const, id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop, ephemeral, initialCollapseDepth: collapseDepth },
       ],
     };
 
