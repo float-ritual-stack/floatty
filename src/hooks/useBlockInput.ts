@@ -153,20 +153,9 @@ export function determineKeyAction(
 
   // Non-action keybinds
   if (key === 'ArrowUp') {
-    // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
-    // This allows browser to handle text selection within block
-    let shouldNavigate = cursorAtStart;
-
-    // FIX: Browser can't navigate up from content preceded by blank lines
-    // If only newlines exist before cursor, treat as "at start" for navigation
-    if (!shouldNavigate && cursorOffset > 0) {
-      const beforeCursor = deps.content.slice(0, cursorOffset);
-      if (/^\n+$/.test(beforeCursor)) {
-        shouldNavigate = true;
-      }
-    }
-
-    if (shouldNavigate) {
+    // isCursorAtContentStart now uses structural check — correctly handles
+    // blank lines (<div><br></div>) as navigable positions
+    if (cursorAtStart) {
       const prevId = deps.findPrevId();
       if (shiftKey) {
         return { type: 'navigate_up_with_selection', prevId };
@@ -177,20 +166,10 @@ export function determineKeyAction(
   }
 
   if (key === 'ArrowDown') {
-    // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
-    // This allows browser to handle text selection within block
-    let shouldNavigate = cursorAtEnd;
-
-    // FIX: Browser can't navigate down from blank/trailing newline lines
-    // If only newlines remain after cursor, treat as "at end" for navigation
-    if (!shouldNavigate) {
-      const remaining = deps.content.slice(cursorOffset);
-      if (remaining.length > 0 && /^\n+$/.test(remaining)) {
-        shouldNavigate = true;
-      }
-    }
-
-    if (shouldNavigate) {
+    // isCursorAtContentEnd now uses structural check — correctly handles
+    // blank lines as navigable positions (won't report "at end" until
+    // cursor is actually past the last root-level element)
+    if (cursorAtEnd) {
       const nextId = deps.findNextId();
       if (nextId) {
         if (shiftKey) {
@@ -311,6 +290,44 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
     // Execute the determined action
     switch (keyAction.type) {
       case 'none':
+        // ArrowDown/Up in trailing/leading newline regions: browser can't navigate
+        // past the last bare <br> to (root, childCount). Let browser try first,
+        // then exit block if cursor didn't actually move.
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && block.content) {
+          const cursorOffset = deps.cursor.getOffset();
+          const isTrailingNewlines = e.key === 'ArrowDown'
+            && cursorOffset < block.content.length
+            && /^\n+$/.test(block.content.slice(cursorOffset));
+          const isLeadingNewlines = e.key === 'ArrowUp'
+            && cursorOffset > 0
+            && /^\n+$/.test(block.content.slice(0, cursorOffset));
+
+          if (isTrailingNewlines || isLeadingNewlines) {
+            const offsetBefore = cursorOffset;
+            // Don't preventDefault — let browser try to navigate
+            requestAnimationFrame(() => {
+              const offsetAfter = deps.cursor.getOffset();
+              if (offsetAfter === offsetBefore) {
+                // Browser couldn't move — exit block
+                if (e.key === 'ArrowDown') {
+                  const nextId = deps.findNextVisibleBlock(deps.getBlockId(), deps.paneId);
+                  if (nextId) {
+                    if (deps.onSelect) deps.onSelect(nextId, 'set');
+                    paneStore.setFocusCursorHint(deps.paneId, 'start');
+                    deps.onFocus(nextId);
+                  }
+                } else {
+                  const prevId = deps.findPrevVisibleBlock(deps.getBlockId(), deps.paneId);
+                  if (prevId) {
+                    if (deps.onSelect) deps.onSelect(prevId, 'set');
+                    paneStore.setFocusCursorHint(deps.paneId, 'end');
+                    deps.onFocus(prevId);
+                  }
+                }
+              }
+            });
+          }
+        }
         return;
 
       case 'zoom_out': {
@@ -405,6 +422,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         if (keyAction.prevId) {
           // Plain navigation clears selection
           if (deps.onSelect) deps.onSelect(keyAction.prevId, 'set');
+          // Coming from below → place cursor at end of target block
+          deps.paneStore.setFocusCursorHint(deps.paneId, 'end');
           deps.onFocus(keyAction.prevId);
         }
         return;
@@ -414,6 +433,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         if (keyAction.nextId) {
           // Plain navigation clears selection
           if (deps.onSelect) deps.onSelect(keyAction.nextId, 'set');
+          // Coming from above → place cursor at start of target block
+          deps.paneStore.setFocusCursorHint(deps.paneId, 'start');
           deps.onFocus(keyAction.nextId);
         }
         return;

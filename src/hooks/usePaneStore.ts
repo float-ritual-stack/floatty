@@ -487,6 +487,20 @@ function createPaneStore() {
     };
   };
 
+  // Ephemeral cursor position hints (not persisted, not reactive).
+  // Set by navigate_up/down handlers, consumed by BlockItem focus effect.
+  const focusCursorHints: Record<string, 'start' | 'end'> = {};
+
+  const setFocusCursorHint = (paneId: string, hint: 'start' | 'end') => {
+    focusCursorHints[paneId] = hint;
+  };
+
+  const consumeFocusCursorHint = (paneId: string): 'start' | 'end' | null => {
+    const hint = focusCursorHints[paneId] ?? null;
+    delete focusCursorHints[paneId];
+    return hint;
+  };
+
   return {
     persistenceVersion,
     toggleCollapsed,
@@ -497,6 +511,9 @@ function createPaneStore() {
     // FLO-77: Focused block tracking
     getFocusedBlockId,
     setFocusedBlockId,
+    // Ephemeral cursor hints for navigation
+    setFocusCursorHint,
+    consumeFocusCursorHint,
     // FLO-180: Navigation history
     pushNavigation,
     goBack,

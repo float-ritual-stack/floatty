@@ -457,6 +457,9 @@ export function BlockItem(props: BlockItemProps) {
     if (prevFrameId) cancelAnimationFrame(prevFrameId);
 
     if (isFocused() && contentRef && !isOutputBlock()) {
+      // Consume cursor hint synchronously (before RAF) so it's not stale
+      const cursorHint = paneStore.consumeFocusCursorHint(props.paneId);
+
       const frameId = requestAnimationFrame(() => {
         // If outliner container has focus (block selection mode), don't steal it
         const activeEl = document.activeElement;
@@ -470,6 +473,18 @@ export function BlockItem(props: BlockItemProps) {
 
             contentRef?.focus({ preventScroll: true });
 
+            // Place cursor based on navigation direction
+            if (cursorHint === 'end' && contentRef) {
+              const sel = window.getSelection();
+              if (sel) {
+                const range = document.createRange();
+                range.selectNodeContents(contentRef);
+                range.collapse(false); // false = collapse to end
+                sel.removeAllRanges();
+                sel.addRange(range);
+              }
+            }
+
             // Re-enable scroll after browser's focus handling completes
             // setTimeout(0) pushes past any queued scroll tasks
             setTimeout(() => {
@@ -481,6 +496,18 @@ export function BlockItem(props: BlockItemProps) {
             }, 0);
           } else {
             contentRef?.focus({ preventScroll: true });
+
+            // Place cursor based on navigation direction (no-container fallback)
+            if (cursorHint === 'end' && contentRef) {
+              const sel = window.getSelection();
+              if (sel) {
+                const range = document.createRange();
+                range.selectNodeContents(contentRef);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+              }
+            }
           }
         }
       });
@@ -937,7 +964,10 @@ export function BlockItem(props: BlockItemProps) {
                   onInput={handleInput}
                   onKeyDown={handleKeyDownWithAutocomplete}
                   onPaste={handlePaste}
-                  onFocus={() => props.onFocus(props.id)}
+                  onFocus={() => {
+                    if (props.onSelect) props.onSelect(props.id, 'set');
+                    props.onFocus(props.id);
+                  }}
                   onBlur={handleBlur}
                   onCompositionStart={() => setIsComposing(true)}
                   onCompositionEnd={(e) => {
@@ -961,7 +991,12 @@ export function BlockItem(props: BlockItemProps) {
                 onInput={handleInput}
                 onKeyDown={handleKeyDownWithAutocomplete}
                 onPaste={handlePaste}
-                onFocus={() => props.onFocus(props.id)}
+                onFocus={() => {
+                  // Clear block selection when entering text editing mode
+                  // Prevents ghost cyan borders from persisting while editing
+                  if (props.onSelect) props.onSelect(props.id, 'set');
+                  props.onFocus(props.id);
+                }}
                 onBlur={handleBlur}
                 onCompositionStart={() => setIsComposing(true)}
                 onCompositionEnd={(e) => {

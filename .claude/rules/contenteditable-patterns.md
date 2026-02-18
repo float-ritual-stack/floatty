@@ -189,41 +189,21 @@ cursor.getOffset() === 0;  // FALSE - we're not at absolute start
 
 **Symptom**: Backspace at start of "world" in `\n\nworld` incorrectly triggers block merge because `isAtStart()` returns true.
 
-## 8. Blank Line Navigation (Browser Limitation)
+## 8. Blank Line Navigation (Offset-Based Boundary Detection)
 
-**The trap**: Browser cannot visually navigate up/down through content that is only newlines.
+**DOM reality**: floatty sets content via `innerText`, which creates bare `<br>` at root level. NO `<div><br></div>` wrapping occurs. Each `<br>` = 1 newline in content.
 
+**The fix**: `isCursorAtContentStart/End()` use offset comparison:
 ```typescript
-// Content: "\n\na" - cursor at "a"
-// User presses ArrowUp
-// Browser can't move up (no visual line above "a" within this block)
-// But cursorAtStart is FALSE (there's \n\n before cursor)
-
-// Content: "a\n\n" - cursor after "a"
-// User presses ArrowDown
-// Browser can't move down (no visual content below)
-// But cursorAtEnd is FALSE (there's \n\n after cursor)
+isCursorAtContentEnd = getAbsoluteCursorOffset(element) >= element.innerText.length
+isCursorAtContentStart = getAbsoluteCursorOffset(element) === 0
 ```
 
-**Fix**: Check if content before/after cursor is only newlines:
+**Critical edge case**: Cursor at `(root, childCount)` — after all children. `getAbsoluteCursorOffset` has an early return for this: `return element.innerText.length`. Without this, the code resolves to the last `<br>` child and misses counting it (returns N-1 instead of N).
 
-```typescript
-// ArrowUp with leading blank lines
-if (!cursorAtStart && cursorOffset > 0) {
-  const beforeCursor = content.slice(0, cursorOffset);
-  if (/^\n+$/.test(beforeCursor)) {
-    shouldNavigate = true;  // Browser can't, we should
-  }
-}
+**Browser navigation**: The browser CAN navigate through `(root, N)` → `(root, N+1)` positions via ArrowDown/Up. Each `<br>` creates a visual blank line. No manual cursor stepping needed.
 
-// ArrowDown with trailing blank lines
-if (!cursorAtEnd) {
-  const afterCursor = content.slice(cursorOffset);
-  if (/^\n+$/.test(afterCursor)) {
-    shouldNavigate = true;  // Browser can't, we should
-  }
-}
-```
+**No regex overrides in useBlockInput**: With correct offset-based boundary detection, ArrowDown/Up just check `cursorAtEnd`/`cursorAtStart` directly.
 
 ## 9. IndexSizeError Guards
 

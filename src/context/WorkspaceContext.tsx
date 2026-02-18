@@ -79,6 +79,9 @@ export interface PaneStoreInterface {
   // FLO-77: Focused block tracking
   getFocusedBlockId: (paneId: string) => string | null;
   setFocusedBlockId: (paneId: string, blockId: string | null) => void;
+  // Ephemeral cursor hints for navigation direction
+  setFocusCursorHint: (paneId: string, hint: 'start' | 'end') => void;
+  consumeFocusCursorHint: (paneId: string) => 'start' | 'end' | null;
   // FLO-180: Navigation history
   pushNavigation: (paneId: string, zoomedRootId: string | null, focusedBlockId?: string) => void;
   goBack: (paneId: string, blockExists: (blockId: string) => boolean) => NavigationEntry | null;
@@ -239,6 +242,9 @@ export function createMockPaneStore(overrides: Partial<PaneStoreInterface> = {})
     // FLO-77: Focused block tracking
     getFocusedBlockId: () => null,
     setFocusedBlockId: () => {},
+    // Ephemeral cursor hints
+    setFocusCursorHint: () => {},
+    consumeFocusCursorHint: () => null,
     // FLO-180: Navigation history
     pushNavigation: () => {},
     goBack: () => null,

@@ -227,6 +227,13 @@ export function Outliner(props: OutlinerProps) {
       return;
     }
 
+    // Arrow keys escape block selection mode → return to editing
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && selected.size > 0 && !isEditing) {
+      e.preventDefault();
+      selection.clearSelection();
+      return;
+    }
+
     // Delete/Backspace on selection (only when not editing a block)
     if ((e.key === 'Delete' || e.key === 'Backspace') && selected.size > 0) {
       if (!isEditing) {
@@ -347,6 +354,25 @@ export function Outliner(props: OutlinerProps) {
 
       // Export functions now defined outside onMount (see above)
 
+      // Robust check for "all text in element is selected" using Range boundary comparison.
+      // String length comparison fails for multi-line blocks (textContent strips div boundaries,
+      // sel.toString() includes visual newlines — lengths diverge).
+      const isElementFullySelected = (el: HTMLElement, sel: Selection): boolean => {
+        if (sel.isCollapsed || sel.rangeCount === 0) return false;
+        try {
+          const range = sel.getRangeAt(0);
+          const fullRange = document.createRange();
+          fullRange.selectNodeContents(el);
+          const startsAtOrBefore =
+            range.compareBoundaryPoints(Range.START_TO_START, fullRange) <= 0;
+          const endsAtOrAfter =
+            range.compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
+          return startsAtOrBefore && endsAtOrAfter;
+        } catch {
+          return false;
+        }
+      };
+
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
         const activeEl = document.activeElement as HTMLElement;
         const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
@@ -357,25 +383,29 @@ export function Outliner(props: OutlinerProps) {
         }
 
         if (isEditing) {
-          // Check if all text is already selected
           const sel = window.getSelection();
-          const textContent = activeEl.textContent || '';
-          const allTextSelected = sel && !sel.isCollapsed &&
-            sel.toString().length >= textContent.length;
 
-          if (!allTextSelected) {
-            // First Cmd+A: select all text in the block (native selection)
-            e.preventDefault();
-            const range = document.createRange();
-            range.selectNodeContents(activeEl);
-            sel?.removeAllRanges();
-            sel?.addRange(range);
-            return;
+          // Empty blocks have nothing to select-all — skip straight to block selection
+          if (!activeEl.textContent?.length) {
+            activeEl.blur();
+            containerRef?.focus();
+          } else {
+            const allTextSelected = sel ? isElementFullySelected(activeEl, sel) : false;
+
+            if (!allTextSelected) {
+              // First Cmd+A: select all text in the block (native selection)
+              e.preventDefault();
+              const range = document.createRange();
+              range.selectNodeContents(activeEl);
+              sel?.removeAllRanges();
+              sel?.addRange(range);
+              return;
+            }
+
+            // Text already selected → exit text mode, do block selection
+            activeEl.blur();
+            containerRef?.focus();
           }
-
-          // Text already selected → exit text mode, do block selection
-          activeEl.blur();
-          containerRef?.focus();
         }
 
         e.preventDefault();
