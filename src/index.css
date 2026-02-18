@@ -1160,15 +1160,48 @@ body.pane-dragging .terminal-pane-positioned {
   outline-offset: -1px;
 }
 
-/* Selected for operations (Cmd+A, Shift+Arrow): CYAN - always wins over focus */
+/* Selected for operations (Cmd+A, Shift+Arrow): neon gradient */
+@keyframes neon-shift {
+  0%   { --sel-hue: 180; }  /* cyan */
+  33%  { --sel-hue: 280; }  /* purple */
+  66%  { --sel-hue: 320; }  /* magenta */
+  100% { --sel-hue: 180; }  /* back to cyan */
+}
+
+@property --sel-hue {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 180;
+}
+
 .block-selected {
-  background: color-mix(in srgb, var(--color-ansi-cyan) 15%, transparent);
+  animation: neon-shift 4s ease-in-out infinite;
+  background: hsl(var(--sel-hue) 80% 50% / 0.12);
   border-radius: 3px;
 }
 
 .block-selected .block-content {
-  outline: 2px solid var(--color-ansi-cyan);
+  outline: 2px solid hsl(var(--sel-hue) 80% 60%);
   outline-offset: -1px;
+  box-shadow: 0 0 8px hsl(var(--sel-hue) 80% 50% / 0.4),
+              inset 0 0 4px hsl(var(--sel-hue) 80% 50% / 0.15);
+}
+
+/* Stagger animation per block for wave effect */
+.block-selected:nth-child(2n) { animation-delay: -0.5s; }
+.block-selected:nth-child(3n) { animation-delay: -1s; }
+.block-selected:nth-child(4n) { animation-delay: -1.5s; }
+.block-selected:nth-child(5n) { animation-delay: -2s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .block-selected {
+    animation: none;
+    background: color-mix(in srgb, var(--color-ansi-cyan) 15%, transparent);
+  }
+  .block-selected .block-content {
+    outline: 2px solid var(--color-ansi-cyan);
+    box-shadow: none;
+  }
 }
 
 .block-drop-target:not(.block-drop-invalid) .block-content-wrapper {
