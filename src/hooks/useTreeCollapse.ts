@@ -121,6 +121,8 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
    * Used for zoom navigation to avoid destroying manual expansions.
    */
   const ensureExpandedToDepth = (scopeRootId: string | null, depth: number) => {
+    if (depth <= 0) return;  // depth=0 means "disabled" — don't auto-expand
+
     const roots = scopeRootId ? [scopeRootId] : (zoomedRootId() ? [zoomedRootId()!] : store.rootIds);
 
     const walk = (id: string, currentDepth: number) => {
