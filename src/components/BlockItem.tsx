@@ -601,7 +601,7 @@ export function BlockItem(props: BlockItemProps) {
 
     // Warn on unexpected focused-block syncs (could cause cursor jump)
     if (shouldSync && isFocusedNow && domContent !== storeContent) {
-      console.warn('[BlockItem] Syncing focused block (origin:', origin, ')');
+      console.warn('[BlockItem] Syncing focused block (origin:', typeof origin === 'string' ? origin : typeof origin, ')');
     }
 
     if (shouldSync) {

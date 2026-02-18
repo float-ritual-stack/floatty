@@ -192,9 +192,11 @@ export function Outliner(props: OutlinerProps) {
     }
 
     if (zoomTarget && zoomTarget !== prevTarget) {
-      // Use initial_collapse_depth from config, fallback to 2
+      // FLO-281: Use ensureExpandedToDepth instead of expandToDepth
+      // This only expands blocks up to the depth threshold without
+      // force-collapsing deeper blocks that the user manually expanded.
       const depth = cachedConfig()?.initial_collapse_depth ?? 2;
-      collapse.expandToDepth(zoomTarget, depth);
+      collapse.ensureExpandedToDepth(zoomTarget, depth);
     }
   }));
 

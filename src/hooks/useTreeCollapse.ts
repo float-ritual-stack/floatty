@@ -114,6 +114,36 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
   };
 
   /**
+   * FLO-281: Ensure blocks are expanded TO a depth without force-collapsing deeper blocks.
+   * Unlike expandToDepth which is bidirectional (expand shallow + collapse deep),
+   * this only sets collapsed=false for blocks at depths <= target.
+   * Blocks deeper than target keep their existing collapse state.
+   * Used for zoom navigation to avoid destroying manual expansions.
+   */
+  const ensureExpandedToDepth = (scopeRootId: string | null, depth: number) => {
+    const roots = scopeRootId ? [scopeRootId] : (zoomedRootId() ? [zoomedRootId()!] : store.rootIds);
+
+    const walk = (id: string, currentDepth: number) => {
+      const block = store.blocks[id];
+      if (!block || block.childIds.length === 0) return;
+
+      // Only expand blocks at/above threshold — never collapse deeper blocks
+      paneStore.setCollapsed(paneId, id, false);
+
+      // Only recurse if children could still be within threshold
+      if (currentDepth < depth) {
+        for (const childId of block.childIds) {
+          walk(childId, currentDepth + 1);
+        }
+      }
+    };
+
+    for (const rootId of roots) {
+      walk(rootId, 1);
+    }
+  };
+
+  /**
    * FLO-211: Expand all ancestors of a block to make it visible.
    * Used to restore focus to a previously-visible block after back/forward navigation.
    */
@@ -169,5 +199,6 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
     collapseToDepth,
     ensureVisibleFocus,
     expandAncestors,  // FLO-211: Used for focus restoration after back/forward
+    ensureExpandedToDepth,  // FLO-281: One-directional expand for zoom (no force-collapse)
   };
 }
