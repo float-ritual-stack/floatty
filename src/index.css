@@ -2671,3 +2671,56 @@ body.resizing * {
 .export-validation-btn-export:hover {
   opacity: 0.9;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   WIKILINK AUTOCOMPLETE (FLO-376)
+   ═══════════════════════════════════════════════════════════════ */
+
+.wikilink-autocomplete {
+  z-index: 1000;
+  min-width: 180px;
+  max-width: 320px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+}
+
+.wikilink-autocomplete-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px;
+}
+
+.wikilink-autocomplete-item {
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-fg);
+}
+
+.wikilink-autocomplete-item:hover {
+  background: color-mix(in srgb, var(--color-fg) 8%, transparent);
+}
+
+.wikilink-autocomplete-selected {
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  color: var(--color-fg);
+}
+
+.wikilink-autocomplete-selected:hover {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.wikilink-autocomplete-empty {
+  padding: 6px 8px;
+  color: var(--color-fg-muted);
+  font-style: italic;
+}
