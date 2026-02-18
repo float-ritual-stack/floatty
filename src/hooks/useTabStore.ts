@@ -11,8 +11,6 @@ export interface Tab {
   cwd?: string;
   // True if PTY is still running
   isAlive: boolean;
-  // tmux session name (for auto-reattach on restart)
-  tmuxSession?: string;
 }
 
 // Generate unique tab ID (UUID for persistence compatibility)
@@ -120,18 +118,6 @@ function createTabStore() {
     );
   };
 
-  const setTabTmuxSession = (id: string, tmuxSession: string | undefined) => {
-    const tab = tabs.find((t) => t.id === id);
-    if (!tab || tab.tmuxSession === tmuxSession) return;
-
-    setTabs(
-      (t) => t.id === id,
-      'tmuxSession',
-      tmuxSession
-    );
-    bumpPersistenceVersion();
-  };
-
   const prevTab = () => {
     const currentIndex = tabs.findIndex((t) => t.id === activeTabId());
     let nextId: string | null = null;
@@ -185,7 +171,6 @@ function createTabStore() {
    */
   const hydrateTabs = (restoredTabs: Tab[], restoredActiveTabId: string) => {
     // Reset PTY state - processes are gone, need to respawn
-    // Preserve tmuxSession for auto-reattach
     const tabsWithResetPty = restoredTabs.map((t) => ({
       ...t,
       ptyPid: null,
@@ -199,9 +184,9 @@ function createTabStore() {
   /**
    * Get all tabs for persistence (strips non-essential runtime state)
    */
-  const getTabsForPersistence = (): { tabs: Array<{ id: string; title: string; tmuxSession?: string }>; activeTabId: string | null } => {
+  const getTabsForPersistence = (): { tabs: Array<{ id: string; title: string }>; activeTabId: string | null } => {
     return {
-      tabs: tabs.map((t) => ({ id: t.id, title: t.title, ...(t.tmuxSession ? { tmuxSession: t.tmuxSession } : {}) })),
+      tabs: tabs.map((t) => ({ id: t.id, title: t.title })),
       activeTabId: activeTabId(),
     };
   };
@@ -217,7 +202,6 @@ function createTabStore() {
     setActiveTab,
     setTabTitle,
     setTabPtyPid,
-    setTabTmuxSession,
     markTabDead,
     prevTab,
     nextTab,

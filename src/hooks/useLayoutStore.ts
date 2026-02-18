@@ -426,6 +426,24 @@ function createLayoutStore() {
   };
 
   /**
+   * Set or clear tmux session on a pane leaf (for auto-reattach)
+   */
+  const setPaneTmuxSession = (tabId: string, paneId: string, tmuxSession: string | undefined) => {
+    const layout = state.layouts[tabId];
+    if (!layout) return;
+
+    const pane = findNode(layout.root, paneId);
+    if (!pane || pane.type !== 'leaf') return;
+    if (pane.tmuxSession === tmuxSession) return; // no-op
+
+    const updated: PaneLeaf = { ...pane, tmuxSession };
+    if (!tmuxSession) delete updated.tmuxSession; // clean undefined from serialization
+    const newRoot = replaceNode(layout.root, paneId, updated);
+    setState('layouts', tabId, 'root', newRoot);
+    bumpPersistenceVersion();
+  };
+
+  /**
    * FLO-136: Check if a pane is ephemeral
    */
   const isEphemeral = (tabId: string, paneId: string): boolean => {
@@ -483,6 +501,8 @@ function createLayoutStore() {
     // Ephemeral panes (FLO-136)
     pinPane,
     isEphemeral,
+    // tmux session per pane
+    setPaneTmuxSession,
     // Persistence
     hydrateLayouts,
     getLayoutsForPersistence,

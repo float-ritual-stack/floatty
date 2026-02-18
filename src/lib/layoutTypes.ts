@@ -19,6 +19,8 @@ export interface PaneLeaf {
   ephemeral?: boolean;
   // FLO-197: Initial collapse depth for split panes (0 = clone exact state)
   initialCollapseDepth?: number;
+  // tmux session name for auto-reattach on restart (per-pane, not per-tab)
+  tmuxSession?: string;
 }
 
 // A split containing two children

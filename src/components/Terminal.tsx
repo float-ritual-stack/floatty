@@ -237,9 +237,6 @@ export function Terminal() {
   const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
   // FLO-220: Track sticky scroll state per pane for UI indicator
   const [stickyState, setStickyState] = createSignal<Map<string, boolean>>(new Map());
-  // Track which tabs have consumed their tmuxSession this app session (not persisted).
-  // Prevents new splits from cloning tmux while keeping the value in the store for persistence.
-  const tmuxConsumedTabs = new Set<string>();
 
   // Load config once on mount
   (async () => {
@@ -876,11 +873,6 @@ export function Terminal() {
     if (tab && !tab.ptyPid) {
       tabStore.setTabPtyPid(tab.id, pid);
     }
-    // Mark tab's tmuxSession as consumed — prevents new splits from cloning tmux.
-    // The store value is preserved for persistence (survives app restart).
-    if (tab?.tmuxSession) {
-      tmuxConsumedTabs.add(tab.id);
-    }
   };
 
   const handlePtyExit = async (paneId: string) => {
@@ -976,8 +968,8 @@ export function Terminal() {
           initialCollapseDepth: leaf?.initialCollapseDepth,
           // FLO-136: Ephemeral pane flag for preview mode
           ephemeral: leaf?.ephemeral ?? false,
-          // tmux session for auto-reattach on restart (only before first spawn consumes it)
-          tmuxSession: tmuxConsumedTabs.has(tab.id) ? undefined : tab.tmuxSession,
+          // tmux session for auto-reattach (per-pane, persisted in layout tree)
+          tmuxSession: leaf?.tmuxSession,
           isActivePane: paneId === activePaneId,
           isActiveTab: tab.id === activeId,
         };
@@ -1102,17 +1094,13 @@ export function Terminal() {
                   onTitleChange={(title) => handleTitleChange(info().paneId, title)}
                   onSemanticStateChange={(state) => {
                     const i = info();
-                    // Bubble tmux session to tab store for persistence
                     const s = state as SemanticState;
+                    // Bubble tmux session to pane in layout store (per-pane persistence)
                     if (s.tmuxSession !== undefined) {
-                      const tab = tabStore.tabs.find(t => getAllPaneIds(t.id).includes(i.paneId));
-                      if (tab && tab.tmuxSession !== s.tmuxSession) {
-                        tabStore.setTabTmuxSession(tab.id, s.tmuxSession);
-                      }
+                      layoutStore.setPaneTmuxSession(i.tabId, i.paneId, s.tmuxSession);
                     }
                     // Only update status bar for active pane
                     if (i.isActivePane && i.isActiveTab) {
-                      // Clone to break reference equality - SolidJS signals won't update on same object
                       setSemanticState({ ...s });
                     }
                   }}
