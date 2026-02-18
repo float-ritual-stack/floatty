@@ -1181,10 +1181,10 @@ body.pane-dragging .terminal-pane-positioned {
 }
 
 .block-selected .block-content {
-  outline: 2px solid hsl(var(--sel-hue) 80% 60%);
+  outline: 1px solid hsl(var(--sel-hue) 80% 60% / 0.5);
   outline-offset: -1px;
-  box-shadow: 0 0 8px hsl(var(--sel-hue) 80% 50% / 0.4),
-              inset 0 0 4px hsl(var(--sel-hue) 80% 50% / 0.15);
+  box-shadow: 0 0 8px hsl(var(--sel-hue) 80% 50% / 0.3),
+              inset 0 0 4px hsl(var(--sel-hue) 80% 50% / 0.1);
 }
 
 /* Stagger animation per block for wave effect */
