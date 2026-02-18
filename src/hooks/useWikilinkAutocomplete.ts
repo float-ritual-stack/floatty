@@ -116,11 +116,20 @@ export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
 
     const suggestions = filterSuggestions(pageNames(), trigger.query);
 
+    // Preserve selectedIndex if the previously selected item is still in the filtered list
+    const prev = state();
+    let selectedIndex = 0;
+    if (prev && prev.suggestions.length > 0) {
+      const prevItem = prev.suggestions[prev.selectedIndex];
+      const preserved = suggestions.indexOf(prevItem);
+      if (preserved !== -1) selectedIndex = preserved;
+    }
+
     setState({
       query: trigger.query,
       startOffset: trigger.startOffset,
       suggestions,
-      selectedIndex: 0,
+      selectedIndex,
       anchorRect,
     });
   }

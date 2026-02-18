@@ -366,6 +366,10 @@ export function BlockItem(props: BlockItemProps) {
     const acState = autocomplete.state();
     if (!acState) { autocomplete.dismiss(); return; }
 
+    // Cancel pending debounced update — it would overwrite our replacement
+    // (e.g., revert [[Page Name]] back to [[pa)
+    cancelContentUpdate();
+
     const startOffset = acState.startOffset;
     const replacement = `[[${pageName}]]`;
 
