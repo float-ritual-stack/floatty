@@ -237,6 +237,9 @@ export function Terminal() {
   const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
   // FLO-220: Track sticky scroll state per pane for UI indicator
   const [stickyState, setStickyState] = createSignal<Map<string, boolean>>(new Map());
+  // Track which tabs have consumed their tmuxSession this app session (not persisted).
+  // Prevents new splits from cloning tmux while keeping the value in the store for persistence.
+  const tmuxConsumedTabs = new Set<string>();
 
   // Load config once on mount
   (async () => {
@@ -873,10 +876,10 @@ export function Terminal() {
     if (tab && !tab.ptyPid) {
       tabStore.setTabPtyPid(tab.id, pid);
     }
-    // Clear tmuxSession after first use — it's only for restore on restart,
-    // not for new splits. Without this, every new split in the tab clones the tmux session.
+    // Mark tab's tmuxSession as consumed — prevents new splits from cloning tmux.
+    // The store value is preserved for persistence (survives app restart).
     if (tab?.tmuxSession) {
-      tabStore.setTabTmuxSession(tab.id, undefined);
+      tmuxConsumedTabs.add(tab.id);
     }
   };
 
@@ -973,8 +976,8 @@ export function Terminal() {
           initialCollapseDepth: leaf?.initialCollapseDepth,
           // FLO-136: Ephemeral pane flag for preview mode
           ephemeral: leaf?.ephemeral ?? false,
-          // tmux session for auto-reattach on restart
-          tmuxSession: tab.tmuxSession,
+          // tmux session for auto-reattach on restart (only before first spawn consumes it)
+          tmuxSession: tmuxConsumedTabs.has(tab.id) ? undefined : tab.tmuxSession,
           isActivePane: paneId === activePaneId,
           isActiveTab: tab.id === activeId,
         };
