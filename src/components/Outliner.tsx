@@ -468,6 +468,22 @@ export function Outliner(props: OutlinerProps) {
           collapse.expandToDepth(null, Infinity);  // Explicit "show everything"
           collapse.ensureVisibleFocus();
         },
+        // Cmd+Shift+7/8/9 → Quick expand to depth 1/2/3 (scoped to focused block)
+        '$mod+Shift+7': (e) => {
+          e.preventDefault();
+          collapse.expandToDepth(focusedBlockId(), 1);
+          collapse.ensureVisibleFocus();
+        },
+        '$mod+Shift+8': (e) => {
+          e.preventDefault();
+          collapse.expandToDepth(focusedBlockId(), 2);
+          collapse.ensureVisibleFocus();
+        },
+        '$mod+Shift+9': (e) => {
+          e.preventDefault();
+          collapse.expandToDepth(focusedBlockId(), 3);
+          collapse.ensureVisibleFocus();
+        },
         // Cmd+Shift+0 → Homebase (collapse all to config.initial_collapse_depth)
         // Phase 0.5: Reset after progressive expansion session
         '$mod+Shift+0': (e) => {
