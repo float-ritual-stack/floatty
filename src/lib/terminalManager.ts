@@ -339,6 +339,14 @@ class TerminalManager {
           inst.semanticState.lastExitCode = exitCode;
           inst.semanticState.lastDuration = startTime ? Date.now() - startTime : 0;
           inst.semanticState.commandStartTime = null;
+          // Clear tmux session when user returns to outer shell after tmux exit/detach.
+          // While inside tmux, no OSC 133 D fires (tmux consumes it). When the user
+          // detaches or exits, the outer shell resumes and D fires for the tmux command.
+          // lastCommand still holds the tmux command that started the session.
+          if (inst.semanticState.tmuxSession && /^tmux\s/.test(inst.semanticState.lastCommand)) {
+            console.log(`[TerminalManager] Clearing tmux session (user returned to outer shell)`);
+            inst.semanticState.tmuxSession = undefined;
+          }
           this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
           break;
         }
@@ -371,13 +379,21 @@ class TerminalManager {
 
         // Detect tmux session commands for auto-reattach
         // OSC from inside tmux doesn't pass through, so we parse the command
-        // before the user enters tmux. Handles: tmux new -s NAME, tmux attach -t NAME
+        // before the user enters tmux. Handles: tmux new -s NAME, tmux attach -t NAME,
+        // combined flags like -ds NAME, -As NAME, and shorthand `tmux at`
         const tmuxMatch = cmd.match(
-          /^tmux\s+(?:new(?:-session)?|attach(?:-session)?|a)\s+.*?-[st]\s+(\S+)/
+          /^tmux\s+(?:new(?:-session)?|at(?:tach(?:-session)?)?|a)\s+.*?-[a-zA-Z]*[st]\s+(\S+)/
         );
         if (tmuxMatch) {
-          inst.semanticState.tmuxSession = tmuxMatch[1];
-          console.log(`[TerminalManager] tmux session from command: ${tmuxMatch[1]}`);
+          const sessionName = tmuxMatch[1];
+          // Validate against tmux's allowed session name characters to prevent
+          // shell injection when interpolated into spawn args (persisted in SQLite)
+          if (/^[a-zA-Z0-9_.-]+$/.test(sessionName)) {
+            inst.semanticState.tmuxSession = sessionName;
+            console.log(`[TerminalManager] tmux session from command: ${sessionName}`);
+          } else {
+            console.warn(`[TerminalManager] Rejected tmux session name (invalid chars): ${sessionName}`);
+          }
         }
 
         this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
@@ -416,7 +432,7 @@ class TerminalManager {
         // When restoring a tmux session, use -c to attempt reattach with login shell fallback
         const args = os === 'windows' ? []
           : tmuxSession
-            ? ['-c', `tmux attach-session -t ${tmuxSession} 2>/dev/null || exec zsh -l`]
+            ? ['-c', `tmux attach-session -t ${tmuxSession} 2>/dev/null || exec ${shell} -l`]
             : ['-l'];  // login shell (PTY provides TTY for interactive mode)
 
         // Text buffer for ctx:: detection
