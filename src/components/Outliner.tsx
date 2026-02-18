@@ -470,26 +470,26 @@ export function Outliner(props: OutlinerProps) {
           collapse.ensureVisibleFocus();
         },
         // Cmd+Shift+7/8/9 → Quick expand to depth 1/2/3 (scoped to focused block)
-        // tinykeys strict-checks ALL modifiers AND matches on event.key (shifted value).
-        // Shift+7 → key="&" with shiftKey=true, so binding needs BOTH Shift AND "&".
-        '$mod+Shift+&': (e) => {
+        // macOS with Cmd held: Shift does NOT remap digits (key="7" not "&").
+        // Verified via MCP keydown capture: {key:"8", code:"Digit8", meta:true, shift:true}
+        '$mod+Shift+7': (e) => {
           e.preventDefault();
           collapse.expandToDepth(focusedBlockId(), 1);
           collapse.ensureVisibleFocus();
         },
-        '$mod+Shift+*': (e) => {
+        '$mod+Shift+8': (e) => {
           e.preventDefault();
           collapse.expandToDepth(focusedBlockId(), 2);
           collapse.ensureVisibleFocus();
         },
-        '$mod+Shift+(': (e) => {
+        '$mod+Shift+9': (e) => {
           e.preventDefault();
           collapse.expandToDepth(focusedBlockId(), 3);
           collapse.ensureVisibleFocus();
         },
         // Cmd+Shift+0 → Homebase (collapse all to config.initial_collapse_depth)
         // Phase 0.5: Reset after progressive expansion session
-        '$mod+Shift+)': (e) => {
+        '$mod+Shift+0': (e) => {
           e.preventDefault();
           const depth = cachedConfig()?.initial_collapse_depth ?? 0;
           collapse.collapseToDepth(null, depth);  // null = all roots
