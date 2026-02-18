@@ -69,6 +69,7 @@ export interface SemanticState {
   lastDuration: number;  // ms
   commandStartTime: number | null;
   hooksActive: boolean;
+  tmuxSession?: string;  // tmux session name (for auto-reattach on restart)
 }
 
 export interface TerminalInstance {
@@ -154,7 +155,7 @@ class TerminalManager {
    * Get or create a terminal for the given ID.
    * Ensures config is loaded before creating terminals.
    */
-  async attach(id: string, container: HTMLElement, cwd?: string): Promise<TerminalInstance> {
+  async attach(id: string, container: HTMLElement, cwd?: string, tmuxSession?: string): Promise<TerminalInstance> {
     // Ensure config is loaded before creating any terminal
     await this.loadConfig();
 
@@ -365,8 +366,26 @@ class TerminalManager {
         console.log(`[TerminalManager] cwd updated: ${value}`);
       } else if (key === 'Command') {
         // Unescape semicolons that were escaped in shell hooks
-        inst.semanticState.lastCommand = value.replace(/\\;/g, ';');
+        const cmd = value.replace(/\\;/g, ';');
+        inst.semanticState.lastCommand = cmd;
+
+        // Detect tmux session commands for auto-reattach
+        // OSC from inside tmux doesn't pass through, so we parse the command
+        // before the user enters tmux. Handles: tmux new -s NAME, tmux attach -t NAME
+        const tmuxMatch = cmd.match(
+          /^tmux\s+(?:new(?:-session)?|attach(?:-session)?|a)\s+.*?-[st]\s+(\S+)/
+        );
+        if (tmuxMatch) {
+          inst.semanticState.tmuxSession = tmuxMatch[1];
+          console.log(`[TerminalManager] tmux session from command: ${tmuxMatch[1]}`);
+        }
+
         this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
+      } else if (key === 'TmuxSession') {
+        // Direct emission (e.g. if tmux allow-passthrough is enabled)
+        inst.semanticState.tmuxSession = value || undefined;
+        this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
+        console.log(`[TerminalManager] tmux session (direct): ${value || '(cleared)'}`);
       }
       return true;
     });
@@ -379,12 +398,12 @@ class TerminalManager {
 
     // Spawn PTY and wait for key handler to be attached
     // Critical: spawnPty attaches the custom key handler, must await before returning
-    await this.spawnPty(id, term, cwd);
+    await this.spawnPty(id, term, cwd, tmuxSession);
 
     return instance;
   }
 
-  private async spawnPty(id: string, term: XTerm, cwd?: string) {
+  private async spawnPty(id: string, term: XTerm, cwd?: string, tmuxSession?: string) {
     const instance = this.instances.get(id);
     if (!instance) return;
 
@@ -394,7 +413,11 @@ class TerminalManager {
       if (isTauri) {
         const os = await platform();
         const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
-        const args = os === 'windows' ? [] : ['-l'];  // login shell (PTY provides TTY for interactive mode)
+        // When restoring a tmux session, use -c to attempt reattach with login shell fallback
+        const args = os === 'windows' ? []
+          : tmuxSession
+            ? ['-c', `tmux attach-session -t ${tmuxSession} 2>/dev/null || exec zsh -l`]
+            : ['-l'];  // login shell (PTY provides TTY for interactive mode)
 
         // Text buffer for ctx:: detection
         let textBuffer = '';
@@ -1158,7 +1181,7 @@ class TerminalManager {
   }
 }
 
-// Singleton - lives outside React
+// Singleton - lives outside SolidJS
 export const terminalManager = new TerminalManager();
 
 // ═══════════════════════════════════════════════════════════════
