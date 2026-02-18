@@ -399,9 +399,17 @@ class TerminalManager {
         this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
       } else if (key === 'TmuxSession') {
         // Direct emission (e.g. if tmux allow-passthrough is enabled)
-        inst.semanticState.tmuxSession = value || undefined;
+        if (!value) {
+          inst.semanticState.tmuxSession = undefined;
+          console.log(`[TerminalManager] tmux session (direct): (cleared)`);
+        } else if (/^[a-zA-Z0-9_.-]+$/.test(value)) {
+          inst.semanticState.tmuxSession = value;
+          console.log(`[TerminalManager] tmux session (direct): ${value}`);
+        } else {
+          inst.semanticState.tmuxSession = undefined;
+          console.warn(`[TerminalManager] Rejected TmuxSession OSC value (invalid chars): ${value}`);
+        }
         this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
-        console.log(`[TerminalManager] tmux session (direct): ${value || '(cleared)'}`);
       }
       return true;
     });
