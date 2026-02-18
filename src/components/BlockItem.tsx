@@ -24,6 +24,21 @@ import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 // Keeps typing responsive while reducing sync overhead
 const UPDATE_DEBOUNCE_MS = 150;
 
+/** Place cursor at end of contentEditable element. Used by focus effect for 'end' cursor hint. */
+function placeCursorAtEnd(element: HTMLElement): void {
+  try {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (err) {
+    console.debug('[BlockItem] Failed to place cursor at end:', err);
+  }
+}
+
 /**
  * Creates a debounced function with flush and cancel capabilities.
  * - Immediate DOM updates happen outside this (contentEditable handles it)
@@ -473,16 +488,10 @@ export function BlockItem(props: BlockItemProps) {
 
             contentRef?.focus({ preventScroll: true });
 
-            // Place cursor based on navigation direction
+            // Place cursor at end if navigating up into this block
+            // ('start' hint = default browser behavior, no action needed)
             if (cursorHint === 'end' && contentRef) {
-              const sel = window.getSelection();
-              if (sel) {
-                const range = document.createRange();
-                range.selectNodeContents(contentRef);
-                range.collapse(false); // false = collapse to end
-                sel.removeAllRanges();
-                sel.addRange(range);
-              }
+              placeCursorAtEnd(contentRef);
             }
 
             // Re-enable scroll after browser's focus handling completes
@@ -497,16 +506,8 @@ export function BlockItem(props: BlockItemProps) {
           } else {
             contentRef?.focus({ preventScroll: true });
 
-            // Place cursor based on navigation direction (no-container fallback)
             if (cursorHint === 'end' && contentRef) {
-              const sel = window.getSelection();
-              if (sel) {
-                const range = document.createRange();
-                range.selectNodeContents(contentRef);
-                range.collapse(false);
-                sel.removeAllRanges();
-                sel.addRange(range);
-              }
+              placeCursorAtEnd(contentRef);
             }
           }
         }

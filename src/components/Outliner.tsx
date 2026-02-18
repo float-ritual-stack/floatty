@@ -230,7 +230,12 @@ export function Outliner(props: OutlinerProps) {
     // Arrow keys escape block selection mode → return to editing
     if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && selected.size > 0 && !isEditing) {
       e.preventDefault();
+      const currentFocused = focusedBlockId();
       selection.clearSelection();
+      // Restore editing focus so user isn't in keyboard limbo
+      if (currentFocused) {
+        setFocusedBlockId(currentFocused);
+      }
       return;
     }
 
@@ -368,7 +373,8 @@ export function Outliner(props: OutlinerProps) {
           const endsAtOrAfter =
             range.compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
           return startsAtOrBefore && endsAtOrAfter;
-        } catch {
+        } catch (err) {
+          console.debug('[isElementFullySelected] Range comparison failed:', err);
           return false;
         }
       };

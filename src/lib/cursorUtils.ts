@@ -278,7 +278,9 @@ export function setCursorAtOffset(element: HTMLElement, offset: number): void {
     selection.removeAllRanges();
     selection.addRange(range);
   } else {
-    // Fallback: put cursor at end
+    // Fallback: put cursor at end — offset walk failed to find position
+    console.debug('[setCursorAtOffset] Walk failed for offset', offset,
+      'in element with', element.childNodes.length, 'children. Falling back to end.');
     range.selectNodeContents(element);
     range.collapse(false);
     selection.removeAllRanges();
