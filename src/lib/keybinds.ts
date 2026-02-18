@@ -67,6 +67,26 @@ export interface Keybind {
 export const isMac = typeof navigator !== 'undefined' &&
   (navigator.platform ? /Mac|iPod|iPhone|iPad/.test(navigator.platform) : false);
 
+/**
+ * Track which Meta key is held (left vs right).
+ * Right-Cmd should pass through to system shortcuts (app switching).
+ * Left-Cmd is used for floatty keybinds.
+ */
+let rightMetaDown = false;
+
+export function trackMetaKey(event: KeyboardEvent) {
+  if (event.type === 'keydown' && event.code === 'MetaRight') {
+    rightMetaDown = true;
+  }
+  if (event.type === 'keyup' && (event.code === 'MetaRight' || event.code === 'MetaLeft')) {
+    rightMetaDown = false;
+  }
+}
+
+export function isRightMetaDown(): boolean {
+  return rightMetaDown;
+}
+
 // Check if event matches a keybind
 export function matchesKeybind(event: KeyboardEvent, bind: Keybind): boolean {
   // Check key (case-insensitive for letters)

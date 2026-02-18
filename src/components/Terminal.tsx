@@ -12,7 +12,7 @@ import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { themeStore } from '../hooks/useThemeStore';
-import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
+import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay, trackMetaKey, isRightMetaDown } from '../lib/keybinds';
 import { emitCtxMarkersChanged } from '../lib/ctxEvents';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
@@ -701,8 +701,16 @@ export function Terminal() {
   // Keyboard shortcuts - using keybind system
   createEffect(() => {
     const handleKeydown = (e: KeyboardEvent) => {
+      // Track left vs right Meta key for system shortcut passthrough
+      trackMetaKey(e);
+
       // Never intercept terminal-reserved keys (Ctrl+C, Ctrl+Z, etc.)
       if (isTerminalReserved(e)) {
+        return;
+      }
+
+      // Right-Cmd: let system shortcuts pass through (app switching)
+      if (isRightMetaDown() && e.metaKey) {
         return;
       }
 
@@ -840,8 +848,15 @@ export function Terminal() {
       }
     };
 
+    // Track Meta key release for left/right distinction
+    const handleKeyup = (e: KeyboardEvent) => trackMetaKey(e);
+
     window.addEventListener('keydown', handleKeydown, true);
-    onCleanup(() => window.removeEventListener('keydown', handleKeydown, true));
+    window.addEventListener('keyup', handleKeyup, true);
+    onCleanup(() => {
+      window.removeEventListener('keydown', handleKeydown, true);
+      window.removeEventListener('keyup', handleKeyup, true);
+    });
   });
 
   // Focus active pane when tab changes
