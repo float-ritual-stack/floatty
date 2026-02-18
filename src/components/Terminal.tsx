@@ -873,6 +873,11 @@ export function Terminal() {
     if (tab && !tab.ptyPid) {
       tabStore.setTabPtyPid(tab.id, pid);
     }
+    // Clear tmuxSession after first use — it's only for restore on restart,
+    // not for new splits. Without this, every new split in the tab clones the tmux session.
+    if (tab?.tmuxSession) {
+      tabStore.setTabTmuxSession(tab.id, undefined);
+    }
   };
 
   const handlePtyExit = async (paneId: string) => {
