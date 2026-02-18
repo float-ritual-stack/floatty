@@ -1167,10 +1167,28 @@ export function Terminal() {
           onNavigate={(pageName) => {
             const activeId = tabStore.activeTabId();
             if (!activeId) return;
-            const paneId = getActivePaneId(activeId);
+            // Find an outliner pane — prefer active pane if it's an outliner,
+            // otherwise find first outliner in tab layout
+            let paneId = getActivePaneId(activeId);
+            if (paneId) {
+              const leaf = getPaneLeaf(activeId, paneId);
+              if (leaf?.leafType !== 'outliner') {
+                const allPanes = getAllPaneIds(activeId);
+                paneId = allPanes.find(id => {
+                  const l = getPaneLeaf(activeId, id);
+                  return l?.leafType === 'outliner';
+                }) ?? paneId;
+              }
+            }
             if (!paneId) return;
             navigateToPage(pageName, { paneId });
             setCommandBarOpen(false);
+            // Restore DOM focus to the outliner pane after CommandBar unmounts
+            requestAnimationFrame(() => {
+              const paneEl = document.querySelector(`[data-pane-id="${paneId}"]`);
+              const focusTarget = paneEl?.querySelector('[contenteditable="true"]') as HTMLElement;
+              (focusTarget ?? paneEl as HTMLElement)?.focus();
+            });
           }}
           onCommand={(commandId) => {
             setCommandBarOpen(false);
