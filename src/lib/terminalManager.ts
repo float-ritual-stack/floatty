@@ -440,7 +440,7 @@ class TerminalManager {
         // When restoring a tmux session, use -c to attempt reattach with login shell fallback
         const args = os === 'windows' ? []
           : tmuxSession
-            ? ['-c', `tmux attach-session -t ${tmuxSession} 2>/dev/null || exec ${shell} -l`]
+            ? ['-c', `tmux attach-session -t ${tmuxSession} 2>/dev/null; exec ${shell} -l`]
             : ['-l'];  // login shell (PTY provides TTY for interactive mode)
 
         // Text buffer for ctx:: detection
