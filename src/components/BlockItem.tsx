@@ -143,6 +143,15 @@ export function BlockItem(props: BlockItemProps) {
   // FLO-376: Wikilink autocomplete
   const autocomplete = useWikilinkAutocomplete(store);
 
+  // Dismiss autocomplete on scroll (anchorRect goes stale)
+  createEffect(on(() => autocomplete.isOpen(), (open) => {
+    if (!open) return;
+    const handler = () => autocomplete.dismiss();
+    // Capture phase catches scroll on any ancestor
+    window.addEventListener('scroll', handler, { capture: true, passive: true });
+    onCleanup(() => window.removeEventListener('scroll', handler, { capture: true }));
+  }));
+
   // Debounced Y.Doc updates - DOM stays immediate via contentEditable
   // Flush on blur, cancel on unmount
   // FLO-197: Clear dirty flag after store commit (enables content sync for non-local changes)
@@ -354,16 +363,33 @@ export function BlockItem(props: BlockItemProps) {
   const handleAutocompleteSelect = (pageName: string) => {
     if (!contentRef) return;
 
-    const sel = autocomplete.getSelection();
-    if (!sel) { autocomplete.dismiss(); return; }
+    const acState = autocomplete.state();
+    if (!acState) { autocomplete.dismiss(); return; }
 
-    // Build replacement: [[Page Name]]
+    const startOffset = acState.startOffset;
     const replacement = `[[${pageName}]]`;
-    const content = contentRef.innerText || '';
+
+    // Use store content as source of truth (DOM innerText can diverge under concurrent edits)
+    const storeBlock = store.getBlock(props.id);
+    const content = storeBlock?.content ?? contentRef.innerText ?? '';
     const cursorOffset = getAbsoluteCursorOffset(contentRef);
 
+    // Validate: cursor must be after [[ trigger, and [[ must still exist at expected position
+    if (cursorOffset < startOffset + 2 || cursorOffset > content.length) {
+      console.debug('[BlockItem] Autocomplete aborted: cursor offset out of range', {
+        cursorOffset, startOffset, contentLength: content.length,
+      });
+      autocomplete.dismiss();
+      return;
+    }
+    if (content.slice(startOffset, startOffset + 2) !== '[[') {
+      console.debug('[BlockItem] Autocomplete aborted: [[ trigger moved (concurrent edit?)');
+      autocomplete.dismiss();
+      return;
+    }
+
     // Replace from startOffset to current cursor position
-    const newContent = content.slice(0, sel.startOffset) + replacement + content.slice(cursorOffset);
+    const newContent = content.slice(0, startOffset) + replacement + content.slice(cursorOffset);
 
     // Update DOM and store
     contentRef.innerText = newContent;
@@ -372,7 +398,7 @@ export function BlockItem(props: BlockItemProps) {
     setHasLocalChanges(false);
 
     // Position cursor after ]]
-    const newCursorPos = sel.startOffset + replacement.length;
+    const newCursorPos = startOffset + replacement.length;
     queueMicrotask(() => {
       if (contentRef) {
         setCursorAtOffset(contentRef, newCursorPos);
@@ -950,6 +976,7 @@ export function BlockItem(props: BlockItemProps) {
               <WikilinkAutocomplete
                 state={acState()}
                 onSelect={handleAutocompleteSelect}
+                onHover={autocomplete.setSelectedIndex}
                 onDismiss={autocomplete.dismiss}
               />
             )}

@@ -13,12 +13,29 @@ import type { AutocompleteState } from '../hooks/useWikilinkAutocomplete';
 interface WikilinkAutocompleteProps {
   state: AutocompleteState;
   onSelect: (pageName: string) => void;
+  onHover: (index: number) => void;
   onDismiss: () => void;
 }
 
+const POPUP_MAX_HEIGHT = 200;
+const POPUP_MAX_WIDTH = 320;
+const POPUP_GAP = 4;
+
 export function WikilinkAutocomplete(props: WikilinkAutocompleteProps) {
-  const top = () => props.state.anchorRect.bottom + 4;
-  const left = () => props.state.anchorRect.left;
+  const top = () => {
+    const below = props.state.anchorRect.bottom + POPUP_GAP;
+    // Flip above cursor if popup would overflow viewport bottom
+    if (below + POPUP_MAX_HEIGHT > window.innerHeight) {
+      return props.state.anchorRect.top - POPUP_MAX_HEIGHT - POPUP_GAP;
+    }
+    return below;
+  };
+
+  const left = () => {
+    const l = props.state.anchorRect.left;
+    // Clamp so popup doesn't overflow viewport right edge
+    return Math.min(l, window.innerWidth - POPUP_MAX_WIDTH - 8);
+  };
 
   return (
     <div
@@ -32,15 +49,16 @@ export function WikilinkAutocomplete(props: WikilinkAutocompleteProps) {
       <Show
         when={props.state.suggestions.length > 0}
         fallback={
-          <div class="wikilink-autocomplete-empty">
+          <div class="wikilink-autocomplete-empty" aria-live="polite">
             {props.state.query ? 'No matching pages' : 'No pages'}
           </div>
         }
       >
-        <ul class="wikilink-autocomplete-list" role="listbox">
+        <ul class="wikilink-autocomplete-list" role="listbox" id="wikilink-listbox">
           <For each={props.state.suggestions}>
             {(suggestion, i) => (
               <li
+                id={`wikilink-option-${i()}`}
                 role="option"
                 aria-selected={i() === props.state.selectedIndex}
                 class="wikilink-autocomplete-item"
@@ -51,8 +69,7 @@ export function WikilinkAutocomplete(props: WikilinkAutocompleteProps) {
                   props.onSelect(suggestion);
                 }}
                 onMouseEnter={() => {
-                  // Preview highlight on hover — no setState needed,
-                  // parent will update selectedIndex via checkTrigger re-filter
+                  props.onHover(i());
                 }}
               >
                 {suggestion}

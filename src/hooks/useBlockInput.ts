@@ -275,10 +275,12 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
     const block = deps.getBlock();
     if (!block) return;
 
-    // FLO-376: When autocomplete popup is open, let it handle navigation keys
+    // FLO-376: Defense-in-depth gate — BlockItem's handleKeyDownWithAutocomplete
+    // intercepts these keys before this function is called, but guard here too
+    // in case the call path changes in a future refactor.
     if (deps.isAutocompleteOpen?.()) {
       if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
-        return; // Handled by BlockItem's autocomplete keyboard logic
+        return;
       }
     }
 

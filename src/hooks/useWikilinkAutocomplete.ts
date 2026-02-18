@@ -7,7 +7,7 @@
  * FLO-376: Pure frontend, no Y.Doc schema changes.
  */
 
-import { createSignal } from 'solid-js';
+import { createMemo, createSignal } from 'solid-js';
 import { findPagesContainer } from './useBacklinkNavigation';
 import type { BlockStoreInterface } from '../context/WorkspaceContext';
 
@@ -81,6 +81,9 @@ export function filterSuggestions(pages: string[], query: string): string[] {
 export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
   const [state, setState] = createSignal<AutocompleteState | null>(null);
 
+  // Memoize page names — only recomputes when pages:: childIds change
+  const pageNames = createMemo(() => getPageNames(blockStore));
+
   /**
    * Check for [[ trigger after content/cursor changes.
    * Called from updateContentFromDom in BlockItem.
@@ -96,7 +99,10 @@ export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
     // Get cursor rect for popup positioning
     const selection = window.getSelection();
     if (!selection || !selection.rangeCount) {
-      if (state()) setState(null);
+      if (state()) {
+        console.debug('[useWikilinkAutocomplete] Dismissing: no selection or range');
+        setState(null);
+      }
       return;
     }
 
@@ -108,8 +114,7 @@ export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
       ? contentRef.getBoundingClientRect()
       : rect;
 
-    const pages = getPageNames(blockStore);
-    const suggestions = filterSuggestions(pages, trigger.query);
+    const suggestions = filterSuggestions(pageNames(), trigger.query);
 
     setState({
       query: trigger.query,
@@ -152,6 +157,13 @@ export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
     };
   }
 
+  /** Set selected index directly (for mouse hover) */
+  function setSelectedIndex(idx: number) {
+    const current = state();
+    if (!current) return;
+    setState({ ...current, selectedIndex: idx });
+  }
+
   /** Close popup */
   function dismiss() {
     setState(null);
@@ -166,6 +178,7 @@ export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
     state,
     checkTrigger,
     navigate,
+    setSelectedIndex,
     getSelection,
     dismiss,
     isOpen,
