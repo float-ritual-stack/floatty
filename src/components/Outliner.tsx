@@ -516,6 +516,7 @@ export function Outliner(props: OutlinerProps) {
   // Global export keybinds (work even when editing blocks)
   createEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       const isMod = e.metaKey || e.ctrlKey;
       const isShift = e.shiftKey;
 
