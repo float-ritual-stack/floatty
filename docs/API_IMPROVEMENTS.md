@@ -36,17 +36,9 @@ GET /api/v1/blocks/search?q=ctx::2026-01-07&type=text
 
 ---
 
-### 3. No Atomic Move
+### 3. ~~No Atomic Move~~ SHIPPED (PR #135, FLO-283)
 
-**Pain**: Moving a block requires delete + create, which loses block history/ID.
-
-**Want**:
-```
-PATCH /api/v1/blocks/:id/move
-{ "newParentId": "...", "afterId": "..." }
-```
-
-**Priority**: Medium (preserves identity, cleaner operations)
+`PATCH /api/v1/blocks/:id` now supports reparenting and repositioning in a single call. See [Block Positioning API](#block-positioning-api) below.
 
 ---
 
@@ -79,17 +71,9 @@ GET /api/v1/blocks/:id/tree?depth=2  # Returns block + 2 levels of descendants
 
 ---
 
-### 6. No Ordering Control on Create
+### 6. ~~No Ordering Control on Create~~ SHIPPED (PR #135, FLO-283)
 
-**Pain**: New blocks append to end of childIds. Can't insert at specific position.
-
-**Want**:
-```
-POST /api/v1/blocks
-{ "content": "...", "parentId": "...", "afterId": "..." }
-```
-
-**Priority**: Medium (important for organized insertion)
+`POST /api/v1/blocks` now accepts `afterId` and `atIndex`. See [Block Positioning API](#block-positioning-api) below.
 
 ---
 
@@ -104,6 +88,93 @@ POST /api/v1/blocks
 | `/api/v1/blocks` | POST | Create block |
 | `/api/v1/blocks/:id` | PATCH | Update block |
 | `/api/v1/blocks/:id` | DELETE | Delete block |
+
+---
+
+## Block Positioning API (PR #135, FLO-283)
+
+Positional insertion on create and repositioning on update. Both endpoints use the same two fields.
+
+### Fields
+
+| Field | Type | On | Description |
+|-------|------|-----|-------------|
+| `afterId` | `string` | POST, PATCH | Insert/move after this sibling block UUID |
+| `atIndex` | `number` | POST, PATCH | Insert/move to this index in parent's childIds (0 = prepend) |
+
+**Mutually exclusive** — specifying both returns 422.
+
+### Create with Position
+
+```bash
+# Append to parent (default — no positional params)
+POST /api/v1/blocks
+{ "content": "New block", "parentId": "<parent-uuid>" }
+
+# Insert after a specific sibling
+POST /api/v1/blocks
+{ "content": "After sibling", "parentId": "<parent-uuid>", "afterId": "<sibling-uuid>" }
+
+# Prepend as first child
+POST /api/v1/blocks
+{ "content": "First child", "parentId": "<parent-uuid>", "atIndex": 0 }
+
+# Insert at specific index (clamped to childIds length)
+POST /api/v1/blocks
+{ "content": "At position 3", "parentId": "<parent-uuid>", "atIndex": 3 }
+```
+
+### Reposition Existing Block
+
+```bash
+# Move within same parent (reorder)
+PATCH /api/v1/blocks/<block-uuid>
+{ "afterId": "<sibling-uuid>" }
+
+# Prepend within same parent
+PATCH /api/v1/blocks/<block-uuid>
+{ "atIndex": 0 }
+
+# Reparent + position in one call
+PATCH /api/v1/blocks/<block-uuid>
+{ "parentId": "<new-parent-uuid>", "afterId": "<sibling-uuid>" }
+
+# Move to root
+PATCH /api/v1/blocks/<block-uuid>
+{ "parentId": null }
+```
+
+### parentId Semantics (PATCH only)
+
+The `parentId` field on PATCH has three-state semantics:
+
+| JSON | Meaning |
+|------|---------|
+| field absent | Don't change parent |
+| `"parentId": null` | Move to root |
+| `"parentId": "<uuid>"` | Move under that parent |
+
+### Validation
+
+- `afterId` must be a valid block UUID that shares the target parent
+- `afterId` cannot reference the block being moved (422)
+- `afterId` block in a different parent without `parentId` reparent = 422
+- `atIndex` beyond childIds length is clamped (no error)
+- Both `afterId` and `atIndex` together = 422
+
+### Example: Sort Children Alphabetically
+
+```python
+# Fetch parent, get childIds, fetch titles, sort, reposition
+sorted_ids = sorted(children, key=lambda c: c["title"].lower())
+for i, block_id in enumerate(sorted_ids):
+    if i == 0:
+        patch(block_id, {"parentId": parent_id, "atIndex": 0})
+    else:
+        patch(block_id, {"parentId": parent_id, "afterId": sorted_ids[i-1]})
+```
+
+---
 
 ## Notes
 

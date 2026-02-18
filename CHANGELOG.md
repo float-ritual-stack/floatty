@@ -6,6 +6,25 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.33] - 2026-02-18
+
+### Bug Fixes
+
+- **Blank line navigation** (PR #144): ArrowDown/Up now correctly step through blank lines in multi-line blocks instead of getting trapped or skipping. Rewrote boundary detection as offset-based comparison (`getAbsoluteCursorOffset >= getContentLength`) replacing broken structural DOM checks. Fixed edge case where cursor at `(root, childCount)` returned wrong offset for trailing `<br>`.
+- **Cmd+A tiered selection** (PR #144): First Cmd+A selects all text within block, second escalates to block selection. Uses `Range.compareBoundaryPoints` for robust detection (old string-length comparison broke on multi-line blocks).
+- **Delete focus priority** (PR #144): Deleting a block now focuses the previous sibling instead of jumping to parent. Priority: prev sibling → next sibling → parent.
+- **Ghost selection states** (PR #144): Block selection borders now clear when clicking into a contentEditable block. Arrow keys escape block selection mode and restore editing focus.
+
+### Tests
+
+- Added 29 `cursorUtils` tests covering offset calculation, boundary detection, and `setCursorAtOffset` roundtrips against real DOM structures (bare `<br>` model matching floatty's actual contentEditable behavior).
+
+### Documentation
+
+- Promoted "Inspect real DOM before writing cursor code" to section 0 meta-rule in contenteditable-patterns.md.
+
+---
+
 ## [0.7.32] - 2026-02-18
 
 ### Features
