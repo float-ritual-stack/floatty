@@ -6,6 +6,18 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.32] - 2026-02-18
+
+### Features
+
+- **`[[` Inline Autocomplete** (FLO-376, PR #143): Type `[[` in any block to trigger autocomplete popup showing pages from `pages::` container. Arrow keys navigate, Enter/Tab selects, Escape dismisses. Filters by case-insensitive substring match. Popup viewport-clamped, dismiss-on-scroll, mouse hover support. ARIA listbox pattern for accessibility.
+
+### Bug Fixes
+
+- **Export keybind dedup** (FLO-367, PR #142): Export keybinds (Cmd+Shift+M/J/B) fired once per Outliner pane instead of once. Deduplicated via tinykeys on the active pane only.
+
+---
+
 ## [0.7.31] - 2026-02-16
 
 ### Bug Fixes
