@@ -39,6 +39,22 @@ function placeCursorAtEnd(element: HTMLElement): void {
   }
 }
 
+/** Place cursor at start of contentEditable element. Used by focus effect for 'start' cursor hint.
+ * Explicit placement needed because focus() may restore last-known cursor position, not position 0. */
+function placeCursorAtStart(element: HTMLElement): void {
+  try {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (err) {
+    console.debug('[BlockItem] Failed to place cursor at start:', err);
+  }
+}
+
 /**
  * Creates a debounced function with flush and cancel capabilities.
  * - Immediate DOM updates happen outside this (contentEditable handles it)
@@ -488,10 +504,10 @@ export function BlockItem(props: BlockItemProps) {
 
             contentRef?.focus({ preventScroll: true });
 
-            // Place cursor at end if navigating up into this block
-            // ('start' hint = default browser behavior, no action needed)
-            if (cursorHint === 'end' && contentRef) {
-              placeCursorAtEnd(contentRef);
+            // Place cursor based on navigation direction
+            if (contentRef) {
+              if (cursorHint === 'end') placeCursorAtEnd(contentRef);
+              else if (cursorHint === 'start') placeCursorAtStart(contentRef);
             }
 
             // Re-enable scroll after browser's focus handling completes
@@ -506,8 +522,9 @@ export function BlockItem(props: BlockItemProps) {
           } else {
             contentRef?.focus({ preventScroll: true });
 
-            if (cursorHint === 'end' && contentRef) {
-              placeCursorAtEnd(contentRef);
+            if (contentRef) {
+              if (cursorHint === 'end') placeCursorAtEnd(contentRef);
+              else if (cursorHint === 'start') placeCursorAtStart(contentRef);
             }
           }
         }
