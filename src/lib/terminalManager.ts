@@ -440,7 +440,7 @@ class TerminalManager {
         // When restoring a tmux session, use -c to attempt reattach with login shell fallback
         const args = os === 'windows' ? []
           : tmuxSession
-            ? ['-c', `unset TMUX; tmux attach-session -t ${tmuxSession} 2>/dev/null; exec ${shell} -l`]
+            ? ['-c', `unset TMUX; PATH=/opt/homebrew/bin:/usr/local/bin:$PATH tmux attach-session -t ${tmuxSession} 2>/dev/null; exec ${shell} -l`]
             : ['-l'];  // login shell (PTY provides TTY for interactive mode)
 
         console.log(`[TerminalManager] spawnPty ${id}: tmuxSession=${tmuxSession ?? '(none)'}, args=${JSON.stringify(args)}`);
