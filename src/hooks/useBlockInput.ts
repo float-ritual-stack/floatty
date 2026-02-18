@@ -154,7 +154,8 @@ export function determineKeyAction(
   // Non-action keybinds
   if (key === 'ArrowUp') {
     // Shift+Arrow: always do block selection regardless of cursor position.
-    // Outliner block selection takes priority over in-block text selection.
+    // DESIGN DECISION: Outliner block selection wins over in-block text selection.
+    // Multi-line blocks lose Shift+Arrow text selection — use mouse drag instead.
     if (shiftKey) {
       const prevId = deps.findPrevId();
       if (!prevId) return { type: 'none' };  // At first block — can't extend selection up
