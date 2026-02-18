@@ -1,0 +1,173 @@
+/**
+ * useWikilinkAutocomplete - Inline autocomplete for [[wikilinks]]
+ *
+ * Detects [[ trigger in contentEditable, shows filtered page suggestions,
+ * handles keyboard navigation and selection.
+ *
+ * FLO-376: Pure frontend, no Y.Doc schema changes.
+ */
+
+import { createSignal } from 'solid-js';
+import { findPagesContainer } from './useBacklinkNavigation';
+import type { BlockStoreInterface } from '../context/WorkspaceContext';
+
+// ═══════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════
+
+export interface AutocompleteState {
+  /** Text typed after [[ */
+  query: string;
+  /** Character offset where [[ starts in the block content */
+  startOffset: number;
+  /** Filtered page name suggestions */
+  suggestions: string[];
+  /** Currently highlighted suggestion index */
+  selectedIndex: number;
+  /** Position rect for popup placement */
+  anchorRect: DOMRect;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PURE LOGIC (testable without DOM)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Detect [[ trigger before cursor position.
+ * Returns query text and start offset, or null if no active trigger.
+ */
+export function detectWikilinkTrigger(
+  content: string,
+  offset: number
+): { query: string; startOffset: number } | null {
+  const before = content.slice(0, offset);
+  const lastOpen = before.lastIndexOf('[[');
+  if (lastOpen === -1) return null;
+
+  // Check for ]] between [[ and cursor — means wikilink is already closed
+  const between = before.slice(lastOpen + 2);
+  if (between.includes(']]')) return null;
+
+  return { query: between, startOffset: lastOpen };
+}
+
+/**
+ * Get all page names from the pages:: container.
+ * Strips heading prefix (# ) from page content.
+ */
+export function getPageNames(blockStore: BlockStoreInterface): string[] {
+  const container = findPagesContainer();
+  if (!container) return [];
+
+  return container.childIds
+    .map(id => blockStore.blocks[id])
+    .filter(Boolean)
+    .map(b => b.content.replace(/^#+\s*/, ''));
+}
+
+/**
+ * Filter page names by query (case-insensitive substring match).
+ */
+export function filterSuggestions(pages: string[], query: string): string[] {
+  if (!query) return pages;
+  const lower = query.toLowerCase();
+  return pages.filter(p => p.toLowerCase().includes(lower));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HOOK
+// ═══════════════════════════════════════════════════════════════
+
+export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
+  const [state, setState] = createSignal<AutocompleteState | null>(null);
+
+  /**
+   * Check for [[ trigger after content/cursor changes.
+   * Called from updateContentFromDom in BlockItem.
+   */
+  function checkTrigger(content: string, cursorOffset: number, contentRef: HTMLElement) {
+    const trigger = detectWikilinkTrigger(content, cursorOffset);
+
+    if (!trigger) {
+      if (state()) setState(null);
+      return;
+    }
+
+    // Get cursor rect for popup positioning
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) {
+      if (state()) setState(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+
+    // If rect is zero-sized (collapsed range), fall back to contentRef position
+    const anchorRect = rect.width === 0 && rect.height === 0
+      ? contentRef.getBoundingClientRect()
+      : rect;
+
+    const pages = getPageNames(blockStore);
+    const suggestions = filterSuggestions(pages, trigger.query);
+
+    setState({
+      query: trigger.query,
+      startOffset: trigger.startOffset,
+      suggestions,
+      selectedIndex: 0,
+      anchorRect,
+    });
+  }
+
+  /** Move selection up/down */
+  function navigate(direction: 'up' | 'down') {
+    const current = state();
+    if (!current || current.suggestions.length === 0) return;
+
+    const maxIdx = current.suggestions.length - 1;
+    let newIdx: number;
+
+    if (direction === 'down') {
+      newIdx = current.selectedIndex >= maxIdx ? 0 : current.selectedIndex + 1;
+    } else {
+      newIdx = current.selectedIndex <= 0 ? maxIdx : current.selectedIndex - 1;
+    }
+
+    setState({ ...current, selectedIndex: newIdx });
+  }
+
+  /**
+   * Get selected suggestion info for text replacement.
+   * Returns the page name and offsets needed to replace text.
+   */
+  function getSelection(): { pageName: string; startOffset: number } | null {
+    const current = state();
+    if (!current || current.suggestions.length === 0) return null;
+
+    const idx = Math.min(current.selectedIndex, current.suggestions.length - 1);
+    return {
+      pageName: current.suggestions[idx],
+      startOffset: current.startOffset,
+    };
+  }
+
+  /** Close popup */
+  function dismiss() {
+    setState(null);
+  }
+
+  /** Check if autocomplete is currently open */
+  function isOpen(): boolean {
+    return state() !== null;
+  }
+
+  return {
+    state,
+    checkTrigger,
+    navigate,
+    getSelection,
+    dismiss,
+    isOpen,
+  };
+}

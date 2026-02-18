@@ -55,6 +55,9 @@ export interface BlockInputDependencies {
   getWikilinkAtCursor?: () => string | null;
   navigateToPage?: (target: string, paneId: string) => { success: boolean; focusTargetId?: string };
 
+  // Autocomplete gate (FLO-376)
+  isAutocompleteOpen?: () => boolean;
+
   // DOM access (for line operations - should be minimized)
   getContentRef: () => HTMLElement | undefined;
 }
@@ -271,6 +274,13 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
   const handleKeyDown = (e: KeyboardEvent) => {
     const block = deps.getBlock();
     if (!block) return;
+
+    // FLO-376: When autocomplete popup is open, let it handle navigation keys
+    if (deps.isAutocompleteOpen?.()) {
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
+        return; // Handled by BlockItem's autocomplete keyboard logic
+      }
+    }
 
     const action = getActionForEvent(e);
     const store = deps.blockStore;

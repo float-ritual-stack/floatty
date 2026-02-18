@@ -5,6 +5,7 @@ import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
 import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
+import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { navigateToBlock } from '../lib/navigation';
@@ -12,6 +13,7 @@ import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
 import { BlockDisplay, TableView } from './BlockDisplay';
+import { WikilinkAutocomplete } from './WikilinkAutocomplete';
 import { type DailyNoteData, type SearchResults } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
@@ -137,6 +139,9 @@ export function BlockItem(props: BlockItemProps) {
 
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
+
+  // FLO-376: Wikilink autocomplete
+  const autocomplete = useWikilinkAutocomplete(store);
 
   // Debounced Y.Doc updates - DOM stays immediate via contentEditable
   // Flush on blur, cancel on unmount
@@ -341,8 +346,75 @@ export function BlockItem(props: BlockItemProps) {
     selectionAnchor: props.selectionAnchor,
     getWikilinkAtCursor,
     navigateToPage: navigateToPageForHook,
+    isAutocompleteOpen: autocomplete.isOpen,
     getContentRef: () => contentRef,
   });
+
+  // FLO-376: Autocomplete selection — replaces text from [[ to cursor with [[Page Name]]
+  const handleAutocompleteSelect = (pageName: string) => {
+    if (!contentRef) return;
+
+    const sel = autocomplete.getSelection();
+    if (!sel) { autocomplete.dismiss(); return; }
+
+    // Build replacement: [[Page Name]]
+    const replacement = `[[${pageName}]]`;
+    const content = contentRef.innerText || '';
+    const cursorOffset = getAbsoluteCursorOffset(contentRef);
+
+    // Replace from startOffset to current cursor position
+    const newContent = content.slice(0, sel.startOffset) + replacement + content.slice(cursorOffset);
+
+    // Update DOM and store
+    contentRef.innerText = newContent;
+    store.updateBlockContent(props.id, newContent);
+    setDisplayContent(newContent);
+    setHasLocalChanges(false);
+
+    // Position cursor after ]]
+    const newCursorPos = sel.startOffset + replacement.length;
+    queueMicrotask(() => {
+      if (contentRef) {
+        setCursorAtOffset(contentRef, newCursorPos);
+      }
+    });
+
+    autocomplete.dismiss();
+  };
+
+  // FLO-376: Keyboard handler that intercepts for autocomplete when open
+  const handleKeyDownWithAutocomplete = (e: KeyboardEvent) => {
+    if (autocomplete.isOpen()) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        autocomplete.navigate('down');
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        autocomplete.navigate('up');
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const sel = autocomplete.getSelection();
+        if (sel) {
+          handleAutocompleteSelect(sel.pageName);
+        } else {
+          autocomplete.dismiss();
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        autocomplete.dismiss();
+        return;
+      }
+    }
+
+    // Fall through to normal block keyboard handling
+    handleKeyDown(e);
+  };
 
   // Handle focus changes from props
   // NOTE: Don't steal focus from block selection mode (when outliner container is focused)
@@ -488,6 +560,9 @@ export function BlockItem(props: BlockItemProps) {
 
   // CRITICAL: Sync DOM when focus leaves (catches splits where store updated while focused)
   const handleBlur = () => {
+    // FLO-376: Dismiss autocomplete on blur
+    autocomplete.dismiss();
+
     // Flush any pending debounced content updates to Y.Doc before blur completes
     // This ensures the store has the final content when focus leaves
     flushContentUpdate();
@@ -556,6 +631,12 @@ export function BlockItem(props: BlockItemProps) {
     // Update display content IMMEDIATELY for responsive overlay
     // (overlay reads from displayContent signal, not debounced store)
     setDisplayContent(content);
+
+    // FLO-376: Check for [[ autocomplete trigger
+    if (contentRef) {
+      const offset = getAbsoluteCursorOffset(contentRef);
+      autocomplete.checkTrigger(content, offset, contentRef);
+    }
 
     // Skip Y.Doc update during IME composition (CJK input)
     // Incomplete characters would cause sync issues and cursor jumps
@@ -824,7 +905,7 @@ export function BlockItem(props: BlockItemProps) {
                   autocapitalize="off"
                   autocorrect="off"
                   onInput={handleInput}
-                  onKeyDown={handleKeyDown}
+                  onKeyDown={handleKeyDownWithAutocomplete}
                   onPaste={handlePaste}
                   onFocus={() => props.onFocus(props.id)}
                   onBlur={handleBlur}
@@ -848,7 +929,7 @@ export function BlockItem(props: BlockItemProps) {
                 autocapitalize="off"
                 autocorrect="off"
                 onInput={handleInput}
-                onKeyDown={handleKeyDown}
+                onKeyDown={handleKeyDownWithAutocomplete}
                 onPaste={handlePaste}
                 onFocus={() => props.onFocus(props.id)}
                 onBlur={handleBlur}
@@ -861,6 +942,17 @@ export function BlockItem(props: BlockItemProps) {
                 }}
               />
             </Show>
+          </Show>
+
+          {/* FLO-376: Wikilink autocomplete popup */}
+          <Show when={autocomplete.state()}>
+            {(acState) => (
+              <WikilinkAutocomplete
+                state={acState()}
+                onSelect={handleAutocompleteSelect}
+                onDismiss={autocomplete.dismiss}
+              />
+            )}
           </Show>
         </div>
       </div>
