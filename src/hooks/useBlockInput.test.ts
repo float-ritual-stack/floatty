@@ -82,13 +82,26 @@ describe('determineKeyAction', () => {
       expect(result.type).toBe('none');
     });
 
-    it('navigates up when only blank lines before cursor (browser cannot navigate)', () => {
+    it('does nothing for ArrowUp when blank lines before cursor but not at content start', () => {
       // Content: "\n\na" with cursor at 'a' (offset 2)
-      // Browser can't visually move up from here, so we should navigate
+      // isCursorAtContentStart correctly returns false — cursor is not at root-level start
+      // Browser handles navigation through blank lines within the block
       const result = determineKeyAction('ArrowUp', false, null, createDeps({
-        cursorAtStart: false,  // Not at absolute start (offset != 0)
+        cursorAtStart: false,  // Structural check: not at content start
         cursorOffset: 2,       // After the two newlines
         content: '\n\na',      // Blank lines then content
+      }));
+
+      expect(result.type).toBe('none');
+    });
+
+    it('navigates up when cursor is at the FIRST blank line (structural start)', () => {
+      // Cursor is at (div[0], 0) — the first blank line, which IS content start
+      // isCursorAtContentStart returns true (no previous sibling of root child)
+      const result = determineKeyAction('ArrowUp', false, null, createDeps({
+        cursorAtStart: true,   // Structural check: at content start
+        cursorOffset: 0,
+        content: '\n\na',
       }));
 
       const action = expectAction(result, 'navigate_up');
@@ -215,6 +228,61 @@ describe('determineKeyAction', () => {
       const action = expectAction(result, 'create_trailing_block');
       // Should create inside zoomed root, not at block's immediate parent
       expect(action.parentId).toBe('zoomed-root');
+    });
+
+    // Blank line navigation tests (structural boundary detection)
+    describe('blank line boundary detection', () => {
+      it('does NOT navigate down when blank lines exist BELOW cursor in block', () => {
+        // Cursor at "test" (offset 4) in "test\n\n\n" (length 7)
+        // isCursorAtContentEnd returns false (blank line divs are siblings AFTER text)
+        const result = determineKeyAction('ArrowDown', false, null, createDeps({
+          cursorAtEnd: false,  // Structural check: not at content end
+          cursorOffset: 4,
+          content: 'test\n\n\n',
+        }));
+        expect(result.type).toBe('none');
+      });
+
+      it('navigates out from LAST blank line in block', () => {
+        // Cursor at last blank line — no next sibling of root child
+        // isCursorAtContentEnd returns true
+        const result = determineKeyAction('ArrowDown', false, null, createDeps({
+          cursorAtEnd: true,  // Structural check: at content end
+          cursorOffset: 7,
+          content: 'test\n\n\n',
+        }));
+        expectAction(result, 'navigate_down');
+      });
+
+      it('navigates out from end of content (no trailing newlines)', () => {
+        const result = determineKeyAction('ArrowDown', false, null, createDeps({
+          cursorAtEnd: true,
+          cursorOffset: 12,
+          content: 'test content',
+        }));
+        expectAction(result, 'navigate_down');
+      });
+
+      it('does NOT navigate up when blank lines exist ABOVE cursor in block', () => {
+        // Cursor at "test" in "\n\n\ntest"
+        // isCursorAtContentStart returns false (blank line divs before cursor)
+        const result = determineKeyAction('ArrowUp', false, null, createDeps({
+          cursorAtStart: false,
+          cursorOffset: 3,
+          content: '\n\n\ntest',
+        }));
+        expect(result.type).toBe('none');
+      });
+
+      it('navigates out from FIRST blank line in block', () => {
+        // Cursor at first blank line — no previous sibling
+        const result = determineKeyAction('ArrowUp', false, null, createDeps({
+          cursorAtStart: true,  // Structural check: at content start
+          cursorOffset: 0,
+          content: '\n\n\ntest',
+        }));
+        expectAction(result, 'navigate_up');
+      });
     });
   });
 

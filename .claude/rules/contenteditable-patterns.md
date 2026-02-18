@@ -7,17 +7,39 @@ paths:
 
 These patterns apply to cursor positioning and text manipulation in contentEditable elements.
 
-## 1. Newlines Are Block Elements, Not Characters
+## 0. Inspect Real DOM Before Writing Cursor Code (META-RULE)
 
-**The trap**: Browser contentEditable represents newlines as `<div>` or `<br>` elements, NOT `\n` characters in text nodes.
+**Before theorizing about DOM structure, connect to the running app and look.**
+
+```typescript
+// Via Tauri MCP webview_execute_js:
+const ce = document.querySelector('[data-block-id="..."] [contenteditable]');
+return {
+  innerHTML: ce.innerHTML,
+  childTypes: Array.from(ce.childNodes).map(n => n.nodeName),
+  innerTextLength: ce.innerText.length,
+};
+```
+
+Three rounds of fixes built on textbook `<div><br></div>` assumptions. One MCP DOM dump resolved it in minutes. The real DOM was bare `<br>` at root. Never write a second fix for the same symptom without observing runtime state first.
+
+**Checklist before any cursor/navigation fix:**
+1. Connect to running app (Tauri MCP `driver_session`)
+2. Inspect actual DOM of the block (`webview_execute_js`)
+3. Check cursor position at the problematic state
+4. THEN write the fix
+
+## 1. Newlines Are Bare `<br>`, Not `<div>` (floatty-specific)
+
+**The trap**: Generic contentEditable docs say browsers wrap lines in `<div>`. floatty sets content via `innerText`, which creates **bare `<br>` at root level**. No `<div>` wrapping.
 
 ```html
-<!-- What user types -->
-line 1
-line 2
-line 3
+<!-- Content: "line 1\nline 2\nline 3" set via innerText -->
+<div contenteditable>
+  line 1<br>line 2<br>line 3
+</div>
 
-<!-- What browser creates -->
+<!-- NOT this (generic browser behavior with Enter key): -->
 <div contenteditable>
   line 1
   <div>line 2</div>
@@ -25,7 +47,9 @@ line 3
 </div>
 ```
 
-**Why it matters**: Any character offset calculation must count block element boundaries as 1 character each.
+**Why it matters**: Any code that assumes `<div>` wrapping (structural sibling checks, `isPlaceholderBr`, etc.) will be wrong. Always verify with MCP `webview_execute_js` against the actual running DOM.
+
+**Rule**: When debugging cursor/navigation, inspect the REAL DOM first. Don't trust documentation about "how browsers create contentEditable DOM." It depends on HOW content is set.
 
 ## 2. Range.toString() Lies About Offsets
 
@@ -189,43 +213,42 @@ cursor.getOffset() === 0;  // FALSE - we're not at absolute start
 
 **Symptom**: Backspace at start of "world" in `\n\nworld` incorrectly triggers block merge because `isAtStart()` returns true.
 
-## 8. Blank Line Navigation (Browser Limitation)
+## 8. Blank Line Navigation (Offset-Based Boundary Detection)
 
-**The trap**: Browser cannot visually navigate up/down through content that is only newlines.
+**DOM reality**: floatty sets content via `innerText`, which creates bare `<br>` at root level. NO `<div><br></div>` wrapping occurs. Each `<br>` = 1 newline in content.
 
+**The fix**: `isCursorAtContentStart/End()` use offset comparison:
 ```typescript
-// Content: "\n\na" - cursor at "a"
-// User presses ArrowUp
-// Browser can't move up (no visual line above "a" within this block)
-// But cursorAtStart is FALSE (there's \n\n before cursor)
-
-// Content: "a\n\n" - cursor after "a"
-// User presses ArrowDown
-// Browser can't move down (no visual content below)
-// But cursorAtEnd is FALSE (there's \n\n after cursor)
+isCursorAtContentEnd = getAbsoluteCursorOffset(element) >= getContentLength(element)
+isCursorAtContentStart = getAbsoluteCursorOffset(element) === 0
 ```
 
-**Fix**: Check if content before/after cursor is only newlines:
+`getContentLength()` uses `innerText.length` in real browsers, falls back to DOM walk in jsdom (for testing).
+
+**Browser navigation**: The browser CAN navigate through `(root, N)` → `(root, N+1)` positions via ArrowDown/Up. Each `<br>` creates a visual blank line. No manual cursor stepping needed.
+
+**Browser stuck on last `<br>`**: ArrowDown from `(root, childCount-1)` does NOT advance to `(root, childCount)`. The browser considers the last child position to already be the last visual line. Fix: rAF fallback in `useBlockInput.ts` — let browser try, check if cursor moved, exit block if stuck. Only applies when remaining content is all `\n` (avoids false positives on single-line blocks).
+
+## 9. The (root, childCount) Edge Case
+
+**The trap**: Cursor at `(root, N)` where `N = childNodes.length` is "after all children." `getAbsoluteCursorOffset` resolves this by finding the last child. But if the last child is a `<br>`, the walk's identity check doesn't count it → returns `contentLength - 1` instead of `contentLength`.
 
 ```typescript
-// ArrowUp with leading blank lines
-if (!cursorAtStart && cursorOffset > 0) {
-  const beforeCursor = content.slice(0, cursorOffset);
-  if (/^\n+$/.test(beforeCursor)) {
-    shouldNavigate = true;  // Browser can't, we should
-  }
+// ❌ BROKEN - resolves to last <br>, misses counting it
+if (targetOffset >= childNodes.length) {
+  const lastChild = childNodes[childNodes.length - 1]; // a <br>
+  targetNode = lastChild;  // walk returns N-1
 }
 
-// ArrowDown with trailing blank lines
-if (!cursorAtEnd) {
-  const afterCursor = content.slice(cursorOffset);
-  if (/^\n+$/.test(afterCursor)) {
-    shouldNavigate = true;  // Browser can't, we should
-  }
+// ✅ CORRECT - early return for this specific case
+if (targetNode === element && targetOffset >= element.childNodes.length) {
+  return getContentLength(element);  // total content length
 }
 ```
 
-## 9. IndexSizeError Guards
+**Symptom**: `isCursorAtContentEnd` returns false when cursor IS at the end → cursor trapped.
+
+## 10. IndexSizeError Guards
 
 **The trap**: Selection/Range APIs throw `IndexSizeError` when offsets exceed bounds.
 
@@ -246,7 +269,7 @@ range.setStart(textNode, clampedOffset);
 
 **When this happens**: After undo operations, during fast typing, when DOM mutates between offset calculation and cursor positioning.
 
-## 10. Collapsed Children Protection for Merge
+## 11. Collapsed Children Protection for Merge
 
 **The trap**: Blocking ALL merges when block has children is too restrictive.
 
@@ -267,17 +290,21 @@ if (hasHiddenChildren) return;  // Protect hidden subtree
 - Backspace at start, children collapsed → do nothing (protect hidden subtree)
 - Cmd+Backspace → delete block AND all children (explicit destructive action)
 
-## 11. Reference Implementation
+## 12. Reference Implementation
 
 See `src/lib/cursorUtils.ts`:
-- `getAbsoluteCursorOffset()` - correct DOM-walking offset calculation with element node resolution
-- `setCursorAtOffset()` - matching cursor positioning with offset clamping
-- `findFirstTextNode()` / `findLastTextNode()` - resolve element positions to text nodes
-- `isCursorAtContentStart()` / `isCursorAtContentEnd()` - boundary detection with rangeCount guards
+- `getAbsoluteCursorOffset()` - DOM-walking offset with (root, childCount) early return
+- `setCursorAtOffset()` - matching cursor positioning (places before `<br>`, not after)
+- `getContentLength()` - total content length (innerText with jsdom fallback)
+- `isCursorAtContentStart()` / `isCursorAtContentEnd()` - offset-based boundary detection
+
+See `src/lib/cursorUtils.test.ts`:
+- 29 tests covering offset calculation, boundary detection, and roundtrips against manual DOM
 
 See `src/hooks/useBlockStore.ts`:
 - `splitBlock()` - includes newline consumption logic for natural blank line behavior
 - `liftChildrenToSiblings()` - reparent children when merging expanded blocks
 
 See `src/hooks/useBlockInput.ts`:
-- `determineKeyAction()` - blank line navigation fixes, collapsed children check
+- `determineKeyAction()` - collapsed children check, offset-based navigation
+- `handleKeyDown()` - rAF fallback for browser-stuck positions on trailing `<br>`

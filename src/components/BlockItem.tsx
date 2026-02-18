@@ -24,6 +24,37 @@ import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 // Keeps typing responsive while reducing sync overhead
 const UPDATE_DEBOUNCE_MS = 150;
 
+/** Place cursor at end of contentEditable element. Used by focus effect for 'end' cursor hint. */
+function placeCursorAtEnd(element: HTMLElement): void {
+  try {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (err) {
+    console.debug('[BlockItem] Failed to place cursor at end:', err);
+  }
+}
+
+/** Place cursor at start of contentEditable element. Used by focus effect for 'start' cursor hint.
+ * Explicit placement needed because focus() may restore last-known cursor position, not position 0. */
+function placeCursorAtStart(element: HTMLElement): void {
+  try {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (err) {
+    console.debug('[BlockItem] Failed to place cursor at start:', err);
+  }
+}
+
 /**
  * Creates a debounced function with flush and cancel capabilities.
  * - Immediate DOM updates happen outside this (contentEditable handles it)
@@ -457,6 +488,9 @@ export function BlockItem(props: BlockItemProps) {
     if (prevFrameId) cancelAnimationFrame(prevFrameId);
 
     if (isFocused() && contentRef && !isOutputBlock()) {
+      // Consume cursor hint synchronously (before RAF) so it's not stale
+      const cursorHint = paneStore.consumeFocusCursorHint(props.paneId);
+
       const frameId = requestAnimationFrame(() => {
         // If outliner container has focus (block selection mode), don't steal it
         const activeEl = document.activeElement;
@@ -470,6 +504,12 @@ export function BlockItem(props: BlockItemProps) {
 
             contentRef?.focus({ preventScroll: true });
 
+            // Place cursor based on navigation direction
+            if (contentRef) {
+              if (cursorHint === 'end') placeCursorAtEnd(contentRef);
+              else if (cursorHint === 'start') placeCursorAtStart(contentRef);
+            }
+
             // Re-enable scroll after browser's focus handling completes
             // setTimeout(0) pushes past any queued scroll tasks
             setTimeout(() => {
@@ -481,6 +521,11 @@ export function BlockItem(props: BlockItemProps) {
             }, 0);
           } else {
             contentRef?.focus({ preventScroll: true });
+
+            if (contentRef) {
+              if (cursorHint === 'end') placeCursorAtEnd(contentRef);
+              else if (cursorHint === 'start') placeCursorAtStart(contentRef);
+            }
           }
         }
       });
@@ -937,7 +982,10 @@ export function BlockItem(props: BlockItemProps) {
                   onInput={handleInput}
                   onKeyDown={handleKeyDownWithAutocomplete}
                   onPaste={handlePaste}
-                  onFocus={() => props.onFocus(props.id)}
+                  onFocus={() => {
+                    if (props.onSelect) props.onSelect(props.id, 'set');
+                    props.onFocus(props.id);
+                  }}
                   onBlur={handleBlur}
                   onCompositionStart={() => setIsComposing(true)}
                   onCompositionEnd={(e) => {
@@ -961,7 +1009,12 @@ export function BlockItem(props: BlockItemProps) {
                 onInput={handleInput}
                 onKeyDown={handleKeyDownWithAutocomplete}
                 onPaste={handlePaste}
-                onFocus={() => props.onFocus(props.id)}
+                onFocus={() => {
+                  // Clear block selection when entering text editing mode
+                  // Prevents ghost cyan borders from persisting while editing
+                  if (props.onSelect) props.onSelect(props.id, 'set');
+                  props.onFocus(props.id);
+                }}
                 onBlur={handleBlur}
                 onCompositionStart={() => setIsComposing(true)}
                 onCompositionEnd={(e) => {

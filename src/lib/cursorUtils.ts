@@ -9,7 +9,56 @@
  * and create separate text nodes per line. `selection.anchorOffset` is relative
  * to the CURRENT text node, not the absolute position in the content.
  * Use getAbsoluteCursorOffset() for accurate offset calculation.
+ *
+ * DOM MODEL (floatty): Content set via innerText creates bare <br> at root level.
+ * Each <br> = 1 newline in content. No <div><br></div> wrapping occurs.
+ * Browser navigates through (root, N) positions where N is a child index.
+ *
+ * BOUNDARY DETECTION: Offset-based comparison.
+ * isCursorAtContentEnd: getAbsoluteCursorOffset() >= getContentLength()
+ * isCursorAtContentStart: getAbsoluteCursorOffset() === 0
  */
+
+/**
+ * Detect presentational <br> that browsers insert to prevent empty <div> from collapsing.
+ * These are NOT content characters — the div boundary already counts as 1 newline.
+ */
+function isPlaceholderBr(node: Node, root: HTMLElement): boolean {
+  if (node.nodeName !== 'BR') return false;
+  const parent = node.parentNode;
+  if (!parent || parent.nodeName !== 'DIV') return false;
+  if (parent.parentNode !== root) return false;
+  // Sole child of a direct-child div = presentational placeholder
+  return parent.childNodes.length === 1;
+}
+
+/**
+ * Get total content length by walking DOM — same counting as getTextOffsetInElement.
+ * Uses innerText when available (real browsers), falls back to DOM walk (jsdom).
+ */
+function getContentLength(root: HTMLElement): number {
+  if (typeof root.innerText === 'string') {
+    return root.innerText.length;
+  }
+  // Fallback: walk DOM with same counting logic as offset functions
+  let len = 0;
+  function walk(node: Node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      len += node.textContent?.length ?? 0;
+    } else if (node.nodeName === 'BR') {
+      if (!isPlaceholderBr(node, root)) len += 1;
+    } else if (node.nodeName === 'DIV' && node !== root) {
+      len += 1;
+      for (const child of Array.from(node.childNodes)) walk(child);
+      return;
+    }
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      for (const child of Array.from(node.childNodes)) walk(child);
+    }
+  }
+  walk(root);
+  return len;
+}
 
 /**
  * Get absolute character offset within contentEditable element.
@@ -32,6 +81,13 @@ export function getAbsoluteCursorOffset(element: HTMLElement): number {
   // CRITICAL: When startContainer is an element (not text), startOffset is a CHILD INDEX
   // We need to resolve this to a text node for accurate offset calculation
   if (targetNode.nodeType === Node.ELEMENT_NODE && targetNode.childNodes.length > 0) {
+    // Special case: cursor after ALL children = total content length
+    // This happens at (root, childCount) and can't be resolved to a child node.
+    // The walk would land on the last <br> and miss counting it.
+    if (targetNode === element && targetOffset >= element.childNodes.length) {
+      return getContentLength(element);
+    }
+
     // If offset points to a valid child, find first text descendant of that child
     if (targetOffset < targetNode.childNodes.length) {
       const targetChild = targetNode.childNodes[targetOffset];
@@ -88,6 +144,9 @@ function findLastTextNode(node: Node): Text | null {
  * Walk DOM tree counting text + implicit newlines from block elements.
  * Browser represents newlines as <div> or <br>, not \n characters.
  * Must count these structural elements to match stored content offsets.
+ *
+ * Placeholder <br> inside empty divs are SKIPPED — the div boundary already
+ * counts as 1 character, matching innerText behavior (1 per blank line).
  */
 function getTextOffsetInElement(
   root: HTMLElement,
@@ -104,6 +163,10 @@ function getTextOffsetInElement(
     if (node === targetNode) {
       if (node.nodeType === Node.TEXT_NODE) {
         offset += targetOffset;
+      } else if (node.nodeName === 'DIV' && node !== root) {
+        // Target is a non-root div (e.g., cursor at (div, 0) on blank line)
+        // The div boundary is the position
+        offset += 1;
       }
       found = true;
       return true;
@@ -112,8 +175,10 @@ function getTextOffsetInElement(
     if (node.nodeType === Node.TEXT_NODE) {
       offset += node.textContent?.length ?? 0;
     } else if (node.nodeName === 'BR') {
-      // <br> = 1 character (newline)
-      offset += 1;
+      // Skip placeholder <br> in empty divs — div boundary already counted
+      if (!isPlaceholderBr(node, root)) {
+        offset += 1; // Real <br> (e.g., Shift+Enter) = 1 newline
+      }
     } else if (node.nodeName === 'DIV' && node !== root) {
       // <div> inside contentEditable = line break (except root)
       // Count newline BEFORE this div's content (matches setCursorAtOffset)
@@ -141,6 +206,7 @@ function getTextOffsetInElement(
 /**
  * Set cursor at an absolute character offset within contentEditable element.
  * Handles multi-line content by walking DOM and treating <br> tags as newlines.
+ * Placeholder <br> in empty divs are skipped (div boundary handles positioning).
  */
 export function setCursorAtOffset(element: HTMLElement, offset: number): void {
   const selection = window.getSelection();
@@ -167,13 +233,16 @@ export function setCursorAtOffset(element: HTMLElement, offset: number): void {
       }
       currentOffset += nodeLength;
     } else if (node.nodeName === 'BR') {
-      // <br> = 1 character (newline)
-      if (currentOffset + 1 >= offset) {
-        // Cursor goes right after this <br>
+      // Skip placeholder <br> in empty divs — div boundary handles positioning
+      if (isPlaceholderBr(node, element)) {
+        return false;
+      }
+      // Target is right before this <br> (e.g., offset 0 with leading newlines)
+      if (currentOffset >= offset) {
         const parent = node.parentNode;
         if (parent) {
           const index = Array.from(parent.childNodes).indexOf(node as ChildNode);
-          range.setStart(parent, index + 1);
+          range.setStart(parent, index);
           range.collapse(true);
           found = true;
           return true;
@@ -183,6 +252,13 @@ export function setCursorAtOffset(element: HTMLElement, offset: number): void {
     } else if (node.nodeName === 'DIV' && node !== element) {
       // <div> inside contentEditable = line break
       currentOffset += 1;
+      if (currentOffset >= offset) {
+        // Target is this blank line — place cursor at start of div
+        range.setStart(node, 0);
+        range.collapse(true);
+        found = true;
+        return true;
+      }
       for (let i = 0; i < node.childNodes.length; i++) {
         if (walk(node.childNodes[i])) return true;
       }
@@ -202,7 +278,9 @@ export function setCursorAtOffset(element: HTMLElement, offset: number): void {
     selection.removeAllRanges();
     selection.addRange(range);
   } else {
-    // Fallback: put cursor at end
+    // Fallback: put cursor at end — offset walk failed to find position
+    console.debug('[setCursorAtOffset] Walk failed for offset', offset,
+      'in element with', element.childNodes.length, 'children. Falling back to end.');
     range.selectNodeContents(element);
     range.collapse(false);
     selection.removeAllRanges();
@@ -212,190 +290,30 @@ export function setCursorAtOffset(element: HTMLElement, offset: number): void {
 
 /**
  * Check if cursor is at the very start of the contentEditable element.
- * Returns true if:
- * - Selection is collapsed (no range selected)
- * - Cursor is at offset 0 of the first text node
+ * Offset-based: compares getAbsoluteCursorOffset() against 0.
  */
 export function isCursorAtContentStart(element: HTMLElement): boolean {
   const selection = window.getSelection();
   if (!selection || !selection.isCollapsed) return false;
-
-  // Handle empty element case - cursor is at start (and end)
-  if (!element.textContent || element.textContent.length === 0) {
-    return true;
-  }
-
-  // Must have a range to check position (after undo, rangeCount can be 0)
   if (!selection.rangeCount) return false;
 
-  const range = selection.getRangeAt(0);
+  if (getContentLength(element) === 0) return true;
 
-  // Must be at offset 0
-  if (range.startOffset !== 0) return false;
-
-  // If the container is the element itself (empty or at very start)
-  if (range.startContainer === element) {
-    return true;
-  }
-
-  // Walk through text nodes to find the first one
-  const treeWalker = document.createTreeWalker(
-    element,
-    NodeFilter.SHOW_TEXT,
-    null
-  );
-
-  const firstTextNode = treeWalker.firstChild();
-
-  // If no text nodes, we're at start
-  if (!firstTextNode) return true;
-
-  // If cursor is in first text node at offset 0, we're at start
-  return range.startContainer === firstTextNode;
+  return getAbsoluteCursorOffset(element) === 0;
 }
 
 /**
  * Check if cursor is at the very end of the contentEditable element.
- * Returns true if:
- * - Selection is collapsed (no range selected)
- * - Cursor is after all content (at end of last text node or element)
+ * Offset-based: compares getAbsoluteCursorOffset() against innerText.length.
  */
 export function isCursorAtContentEnd(element: HTMLElement): boolean {
   const selection = window.getSelection();
   if (!selection || !selection.isCollapsed) return false;
-
-  // Handle empty element case - cursor is both at start AND end
-  if (!element.textContent || element.textContent.length === 0) {
-    return true;
-  }
-
-  // Must have a range to check position (after undo, rangeCount can be 0)
   if (!selection.rangeCount) return false;
 
-  const range = selection.getRangeAt(0);
-  const container = range.startContainer;
-  const offset = range.startOffset;
+  const contentLength = getContentLength(element);
+  if (contentLength === 0) return true;
 
-  // If container is a text node, check if we're at its end
-  if (container.nodeType === Node.TEXT_NODE) {
-    const textLength = container.textContent?.length || 0;
-    if (offset < textLength) {
-      // Not at end of this text node - check if there's more content after
-      const treeWalker = document.createTreeWalker(
-        element,
-        NodeFilter.SHOW_TEXT,
-        null
-      );
-
-      // Find the last text node
-      let lastTextNode: Node | null = null;
-      let node = treeWalker.firstChild();
-      while (node) {
-        if (node.textContent && node.textContent.length > 0) {
-          lastTextNode = node;
-        }
-        node = treeWalker.nextNode();
-      }
-
-      // If we're not in the last text node, or not at its end, return false
-      if (lastTextNode && container !== lastTextNode) {
-        return false;
-      }
-      if (offset < textLength) {
-        return false;
-      }
-    }
-
-    // At end of a text node - check if there's more content after
-    const treeWalker = document.createTreeWalker(
-      element,
-      NodeFilter.SHOW_TEXT,
-      null
-    );
-
-    // Navigate to current position
-    treeWalker.currentNode = container;
-
-    // Check if there's any text content after
-    let next = treeWalker.nextNode();
-    while (next) {
-      if (next.textContent && next.textContent.length > 0) {
-        return false; // There's content after cursor
-      }
-      next = treeWalker.nextNode();
-    }
-
-    return true;
-  }
-
-  // Container is element node
-  if (container === element) {
-    const childCount = element.childNodes.length;
-    // If at end of children, we're at end
-    if (offset >= childCount) {
-      // But check if there's actual text content
-      const textContent = element.textContent || '';
-      return textContent.length === 0 || offset >= childCount;
-    }
-  }
-
-  // Container is a non-root element (e.g., cursor in <div><br></div> blank line)
-  // Check if there's any text content AFTER this element in the DOM tree
-  if (container.nodeType === Node.ELEMENT_NODE && container !== element) {
-    // Walk from container to find any text content after it
-    const treeWalker = document.createTreeWalker(
-      element,
-      NodeFilter.SHOW_ALL,
-      null
-    );
-
-    // Navigate to the container element
-    treeWalker.currentNode = container;
-
-    // If offset > 0, we're after some children - check from last child
-    if (offset > 0 && container.childNodes.length > 0) {
-      const lastProcessed = container.childNodes[Math.min(offset, container.childNodes.length) - 1];
-      treeWalker.currentNode = lastProcessed;
-      // Skip to end of this subtree
-      while (treeWalker.lastChild()) { /* descend to deepest node */ }
-    }
-
-    // Now check if there's any text content after current position
-    let next = treeWalker.nextNode();
-    while (next) {
-      if (next.nodeType === Node.TEXT_NODE && next.textContent && next.textContent.length > 0) {
-        return false; // There's text content after cursor
-      }
-      next = treeWalker.nextNode();
-    }
-
-    // No text content found after cursor position
-    return true;
-  }
-
-  // Default: check total length approach (simpler fallback)
-  const totalLength = element.textContent?.length || 0;
-
-  // For simple text-only content, this works
-  if (container.nodeType === Node.TEXT_NODE) {
-    // Count characters before this point
-    const treeWalker = document.createTreeWalker(
-      element,
-      NodeFilter.SHOW_TEXT,
-      null
-    );
-
-    let charCount = 0;
-    let node = treeWalker.firstChild();
-    while (node && node !== container) {
-      charCount += node.textContent?.length || 0;
-      node = treeWalker.nextNode();
-    }
-    charCount += offset;
-
-    return charCount >= totalLength;
-  }
-
-  return false;
+  return getAbsoluteCursorOffset(element) >= contentLength;
 }
 
