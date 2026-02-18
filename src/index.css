@@ -2789,3 +2789,123 @@ body.resizing * {
   color: var(--color-fg-muted);
   font-style: italic;
 }
+
+/* ================================================
+   Command Bar (⌘K) — FLO-276
+   ================================================ */
+
+.command-bar-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  padding-top: 20vh;
+}
+
+.command-bar {
+  width: 100%;
+  max-width: 560px;
+  max-height: 420px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: fit-content;
+}
+
+.command-bar-input {
+  width: 100%;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-fg);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.command-bar-input:focus {
+  border-bottom-color: var(--color-accent);
+}
+
+.command-bar-input::placeholder {
+  color: var(--color-fg-muted);
+}
+
+.command-bar-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.command-bar-item {
+  padding: 8px 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--color-fg);
+  cursor: pointer;
+}
+
+.command-bar-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.command-bar-selected {
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.command-bar-selected:hover {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.command-bar-create {
+  padding: 8px 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  border-top: 1px solid var(--color-border);
+}
+
+.command-bar-create:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-fg);
+}
+
+.command-bar-create strong {
+  color: var(--color-accent);
+}
+
+.command-bar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.command-bar-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-bar-item-shortcut {
+  margin-left: 16px;
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+}
+
+.command-bar-command .command-bar-item-label {
+  color: var(--color-ansi-cyan);
+}

@@ -66,6 +66,22 @@ export function getPageNames(blockStore: BlockStoreInterface): string[] {
 }
 
 /**
+ * Get page names with updatedAt timestamps for recency sorting.
+ */
+export function getPageNamesWithTimestamps(blockStore: BlockStoreInterface): { name: string; updatedAt: number }[] {
+  const container = findPagesContainer();
+  if (!container) return [];
+
+  return container.childIds
+    .map(id => blockStore.blocks[id])
+    .filter(Boolean)
+    .map(b => ({
+      name: b.content.replace(/^#+\s*/, ''),
+      updatedAt: b.updatedAt ?? 0,
+    }));
+}
+
+/**
  * Filter page names by query (case-insensitive substring match).
  */
 export function filterSuggestions(pages: string[], query: string): string[] {
