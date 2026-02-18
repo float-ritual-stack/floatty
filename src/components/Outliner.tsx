@@ -470,26 +470,26 @@ export function Outliner(props: OutlinerProps) {
           collapse.ensureVisibleFocus();
         },
         // Cmd+Shift+7/8/9 → Quick expand to depth 1/2/3 (scoped to focused block)
-        // Shift+digit produces shifted key values on US layout: & * ( )
-        // tinykeys matches on KeyboardEvent.key, so we bind both forms
-        '$mod+&': (e) => {
+        // tinykeys strict-checks ALL modifiers AND matches on event.key (shifted value).
+        // Shift+7 → key="&" with shiftKey=true, so binding needs BOTH Shift AND "&".
+        '$mod+Shift+&': (e) => {
           e.preventDefault();
           collapse.expandToDepth(focusedBlockId(), 1);
           collapse.ensureVisibleFocus();
         },
-        '$mod+*': (e) => {
+        '$mod+Shift+*': (e) => {
           e.preventDefault();
           collapse.expandToDepth(focusedBlockId(), 2);
           collapse.ensureVisibleFocus();
         },
-        '$mod+(': (e) => {
+        '$mod+Shift+(': (e) => {
           e.preventDefault();
           collapse.expandToDepth(focusedBlockId(), 3);
           collapse.ensureVisibleFocus();
         },
         // Cmd+Shift+0 → Homebase (collapse all to config.initial_collapse_depth)
         // Phase 0.5: Reset after progressive expansion session
-        '$mod+)': (e) => {
+        '$mod+Shift+)': (e) => {
           e.preventDefault();
           const depth = cachedConfig()?.initial_collapse_depth ?? 0;
           collapse.collapseToDepth(null, depth);  // null = all roots
