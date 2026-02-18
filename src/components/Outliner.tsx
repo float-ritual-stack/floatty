@@ -229,8 +229,9 @@ export function Outliner(props: OutlinerProps) {
       return;
     }
 
-    // Arrow keys escape block selection mode → return to editing
-    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && selected.size > 0 && !isEditing) {
+    // Arrow keys (without Shift) escape block selection mode → return to editing
+    // Shift+Arrow extends selection — don't clear it
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.shiftKey && selected.size > 0 && !isEditing) {
       e.preventDefault();
       const currentFocused = focusedBlockId();
       selection.clearSelection();

@@ -984,7 +984,6 @@ export function BlockItem(props: BlockItemProps) {
                   onKeyDown={handleKeyDownWithAutocomplete}
                   onPaste={handlePaste}
                   onFocus={() => {
-                    if (props.onSelect) props.onSelect(props.id, 'set');
                     props.onFocus(props.id);
                   }}
                   onBlur={handleBlur}
@@ -1011,9 +1010,6 @@ export function BlockItem(props: BlockItemProps) {
                 onKeyDown={handleKeyDownWithAutocomplete}
                 onPaste={handlePaste}
                 onFocus={() => {
-                  // Clear block selection when entering text editing mode
-                  // Prevents ghost cyan borders from persisting while editing
-                  if (props.onSelect) props.onSelect(props.id, 'set');
                   props.onFocus(props.id);
                 }}
                 onBlur={handleBlur}
