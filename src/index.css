@@ -801,6 +801,12 @@ body.pane-dragging .terminal-pane-positioned {
   padding: 1px 0;
 }
 
+/* Subtle background hint when children are hidden behind collapse */
+.block-item.has-collapsed-children {
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  border-radius: 3px;
+}
+
 .block-drag-handle {
   width: 16px;
   height: 22px;

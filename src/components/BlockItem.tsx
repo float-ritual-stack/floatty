@@ -815,6 +815,7 @@ export function BlockItem(props: BlockItemProps) {
           'block-drag-source': drag.activeDragId() === props.id,
           'block-drop-target': drag.dropTargetId() === props.id,
           'block-drop-invalid': drag.dropTargetId() === props.id && !drag.isValidDrop(),
+          'has-collapsed-children': isCollapsed() && (block()?.childIds?.length ?? 0) > 0,
         }}
         // FLO-278: Removed onMouseDown scroll preservation - was causing race condition
         // with focus routing's scroll lock. CSS class-based scroll lock now handles this.
