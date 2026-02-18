@@ -157,6 +157,7 @@ export function determineKeyAction(
     // Outliner block selection takes priority over in-block text selection.
     if (shiftKey) {
       const prevId = deps.findPrevId();
+      if (!prevId) return { type: 'none' };  // At first block — can't extend selection up
       return { type: 'navigate_up_with_selection', prevId };
     }
     // Plain ArrowUp: only navigate at content boundary
