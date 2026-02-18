@@ -966,6 +966,32 @@ body.pane-dragging .terminal-pane-positioned {
   color: var(--color-ansi-bright-cyan);
 }
 
+/* Issue refs: FLO-123 (Linear issue references) */
+.block-display .md-issue-ref {
+  color: var(--color-ansi-bright-yellow);
+  background: color-mix(in srgb, var(--color-ansi-bright-yellow) 15%, transparent);
+  border-radius: 2px;
+}
+
+/* PR/Issue refs: PR #123, Issue #123 */
+.block-display .md-pr-ref {
+  color: var(--color-ansi-magenta);
+  background: color-mix(in srgb, var(--color-ansi-magenta) 15%, transparent);
+  border-radius: 2px;
+}
+
+/* Standalone number refs: #123 (subtler than PR ref) */
+.block-display .md-number-ref {
+  color: var(--color-ansi-magenta);
+}
+
+/* Keyboard shortcuts: Cmd, Shift, Enter, Cmd+Shift+7 */
+.block-display .md-kbd {
+  color: var(--color-ansi-bright-green);
+  background: color-mix(in srgb, var(--color-fg) 8%, transparent);
+  border-radius: 2px;
+}
+
 /* Line comments: muted for //,%%, --, # prefixed lines */
 .block-display .md-line-comment {
   color: var(--color-fg-muted);

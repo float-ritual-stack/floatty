@@ -10,7 +10,7 @@
 import { findWikilinkEnd, parseWikilinkInner } from './wikilinkUtils';
 
 export interface InlineToken {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'filter-function' | 'filter-prefix' | 'table' | 'box-heavy' | 'box-double' | 'box-tree' | 'box-indicator' | 'heading-marker' | 'time' | 'prefix-marker';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'ctx-prefix' | 'ctx-timestamp' | 'ctx-tag' | 'wikilink' | 'code-fence' | 'line-comment' | 'filter-function' | 'filter-prefix' | 'table' | 'box-heavy' | 'box-double' | 'box-tree' | 'box-indicator' | 'heading-marker' | 'time' | 'prefix-marker' | 'issue-ref' | 'pr-ref' | 'number-ref' | 'kbd';
   content: string;  // inner text without markers (for wikilink: display text)
   raw: string;      // original text with markers (what we display)
   start: number;    // position in source string
@@ -163,6 +163,53 @@ function splitPrefixMarkerTokens(raw: string, baseStart: number): InlineToken[] 
   }
 
   return tokens;
+}
+
+/**
+ * Generic helper: split a text token by a regex, producing typed tokens for matches
+ * and text tokens for gaps. Handles all the offset math.
+ */
+function splitByRegex(token: InlineToken, regex: RegExp, tokenType: InlineToken['type']): InlineToken[] {
+  const results: InlineToken[] = [];
+  let lastIdx = 0;
+  let m;
+  // Reset regex state for global patterns
+  regex.lastIndex = 0;
+  while ((m = regex.exec(token.raw)) !== null) {
+    if (m.index > lastIdx) {
+      const before = token.raw.slice(lastIdx, m.index);
+      results.push({ type: 'text', content: before, raw: before, start: token.start + lastIdx, end: token.start + m.index });
+    }
+    results.push({ type: tokenType, content: m[0], raw: m[0], start: token.start + m.index, end: token.start + m.index + m[0].length });
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < token.raw.length) {
+    const after = token.raw.slice(lastIdx);
+    results.push({ type: 'text', content: after, raw: after, start: token.start + lastIdx, end: token.end });
+  }
+  return results.length > 0 ? results : [token];
+}
+
+/**
+ * Check if content contains issue reference patterns (FLO-123).
+ */
+export function hasIssueRefPattern(content: string): boolean {
+  return /\bFLO-\d+\b/.test(content);
+}
+
+/**
+ * Check if content contains PR/Issue # reference patterns.
+ */
+export function hasPrRefPattern(content: string): boolean {
+  return /\b(?:PR|Issue)\s*#\d+\b/.test(content) || /(?<!\w)#\d+\b/.test(content);
+}
+
+/**
+ * Check if content contains keyboard shortcut patterns.
+ */
+export function hasKbdPattern(content: string): boolean {
+  return /\b(?:Cmd|Shift|Ctrl|Alt|Option|Meta|Enter|Escape|Tab|Backspace|Delete|Select|Arrow(?:Up|Down|Left|Right))\b/.test(content)
+    || /[⌘⇧⌥⌃]/.test(content);
 }
 
 // Box-drawing character classes for colored structural rendering
@@ -754,7 +801,10 @@ export function hasInlineFormatting(content: string): boolean {
     || hasBoxDrawingPattern(content)
     || hasHeadingPrefix(content)
     || hasTimePattern(content)
-    || hasPrefixMarker(content);
+    || hasPrefixMarker(content)
+    || hasIssueRefPattern(content)
+    || hasPrRefPattern(content)
+    || hasKbdPattern(content);
 }
 
 /**
@@ -784,8 +834,11 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
   const hasHeading = hasHeadingPrefix(content);
   const hasTime = hasTimePattern(content);
   const hasPrefix = hasPrefixMarker(content);
+  const hasIssueRef = hasIssueRefPattern(content);
+  const hasPrRef = hasPrRefPattern(content);
+  const hasKbd = hasKbdPattern(content);
 
-  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks && !hasLineComment && !hasFilterFunc && !hasFilterPrefix && !hasBoxDrawing && !hasHeading && !hasTime && !hasPrefix) {
+  if (!hasCodeFence && !hasMarkdown && !hasCtx && !hasWikilinks && !hasLineComment && !hasFilterFunc && !hasFilterPrefix && !hasBoxDrawing && !hasHeading && !hasTime && !hasPrefix && !hasIssueRef && !hasPrRef && !hasKbd) {
     return [];
   }
 
@@ -950,6 +1003,71 @@ export function parseAllInlineTokens(content: string): InlineToken[] {
       }
     }
     tokens = timeMerged;
+  }
+
+  // Issue ref pass: FLO-123 patterns in text tokens
+  if (hasIssueRef) {
+    const issueRefMerged: InlineToken[] = [];
+    for (const token of tokens) {
+      if (token.type === 'text' && hasIssueRefPattern(token.raw)) {
+        issueRefMerged.push(...splitByRegex(token, /\bFLO-\d+\b/g, 'issue-ref'));
+      } else {
+        issueRefMerged.push(token);
+      }
+    }
+    tokens = issueRefMerged;
+  }
+
+  // PR/Issue ref pass: PR #123, Issue #123, standalone #123
+  if (hasPrRef) {
+    const prRefMerged: InlineToken[] = [];
+    for (const token of tokens) {
+      if (token.type === 'text' && /\b(?:PR|Issue)\s*#\d+\b/.test(token.raw)) {
+        prRefMerged.push(...splitByRegex(token, /\b(?:PR|Issue)\s*#\d+\b/g, 'pr-ref'));
+      } else {
+        prRefMerged.push(token);
+      }
+    }
+    tokens = prRefMerged;
+
+    // Standalone #123 (only in remaining text tokens, lower priority than PR #123)
+    const numRefMerged: InlineToken[] = [];
+    for (const token of tokens) {
+      if (token.type === 'text' && /(?<!\w)#\d+\b/.test(token.raw)) {
+        numRefMerged.push(...splitByRegex(token, /(?<!\w)#\d+\b/g, 'number-ref'));
+      } else {
+        numRefMerged.push(token);
+      }
+    }
+    tokens = numRefMerged;
+  }
+
+  // Kbd pass: keyboard shortcuts and modifier keys
+  if (hasKbd) {
+    const kbdMerged: InlineToken[] = [];
+    // Combo patterns first (Cmd+Shift+7), then standalone modifiers
+    const KBD_COMBO_RE = /(?:(?:Cmd|Shift|Ctrl|Alt|Option|Meta|⌘|⇧|⌥|⌃)\+)+(?:\w+)/g;
+    const KBD_SINGLE_RE = /\b(?:Cmd|Shift|Ctrl|Alt|Option|Meta|Enter|Escape|Tab|Backspace|Delete|Select|ArrowUp|ArrowDown|ArrowLeft|ArrowRight)\b|[⌘⇧⌥⌃]/g;
+
+    for (const token of tokens) {
+      if (token.type === 'text' && hasKbdPattern(token.raw)) {
+        // Two-pass: combos first, then standalone in remaining text
+        const comboResult = splitByRegex(token, KBD_COMBO_RE, 'kbd');
+        const finalResult: InlineToken[] = [];
+        for (const sub of comboResult) {
+          if (sub.type === 'text' && KBD_SINGLE_RE.test(sub.raw)) {
+            KBD_SINGLE_RE.lastIndex = 0; // Reset regex state
+            finalResult.push(...splitByRegex(sub, KBD_SINGLE_RE, 'kbd'));
+          } else {
+            finalResult.push(sub);
+          }
+        }
+        kbdMerged.push(...finalResult);
+      } else {
+        kbdMerged.push(token);
+      }
+    }
+    tokens = kbdMerged;
   }
 
   // Filter out pure text tokens if they're the only thing (no formatting)

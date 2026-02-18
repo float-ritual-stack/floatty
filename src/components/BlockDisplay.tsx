@@ -681,6 +681,10 @@ function InlineTokenSpan(props: TokenSpanProps) {
     'heading-marker': 'md-heading-marker',
     'time': 'md-time',
     'prefix-marker': 'md-prefix-marker',
+    'issue-ref': 'md-issue-ref',
+    'pr-ref': 'md-pr-ref',
+    'number-ref': 'md-number-ref',
+    'kbd': 'md-kbd',
     table: '', // Tables are rendered separately via TableView
   };
 

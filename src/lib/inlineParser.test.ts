@@ -4,7 +4,7 @@
  * Tests parseInlineTokens which extracts **bold**, *italic*, `code` spans.
  */
 import { describe, it, expect } from 'vitest';
-import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, hasCodeFencePatterns, hasTablePattern, hasBoxDrawingPattern, type InlineToken } from './inlineParser';
+import { parseInlineTokens, parseAllInlineTokens, hasInlineFormatting, hasCtxPatterns, hasCodeFencePatterns, hasTablePattern, hasBoxDrawingPattern, hasIssueRefPattern, hasPrRefPattern, hasKbdPattern, type InlineToken } from './inlineParser';
 
 // Helper to extract just types and content for easier assertions
 function tokenSummary(tokens: InlineToken[]): Array<{ type: string; content: string }> {
@@ -933,6 +933,155 @@ describe('markdown table parsing', () => {
         expect(types).toContain('time');
         expect(types).toContain('box-tree');
       });
+    });
+  });
+});
+
+describe('inline reference highlighting', () => {
+  describe('issue refs (FLO-123)', () => {
+    it('detects FLO-123 pattern', () => {
+      expect(hasIssueRefPattern('see FLO-123 for details')).toBe(true);
+      expect(hasIssueRefPattern('no issues here')).toBe(false);
+    });
+
+    it('parses FLO-123 mid-sentence', () => {
+      const tokens = parseAllInlineTokens('see FLO-123 for details');
+      const issueRef = tokens.find(t => t.type === 'issue-ref');
+      expect(issueRef).toBeDefined();
+      expect(issueRef?.content).toBe('FLO-123');
+    });
+
+    it('parses multiple issue refs', () => {
+      const tokens = parseAllInlineTokens('FLO-280 and FLO-317 are related');
+      const refs = tokens.filter(t => t.type === 'issue-ref');
+      expect(refs).toHaveLength(2);
+      expect(refs[0].content).toBe('FLO-280');
+      expect(refs[1].content).toBe('FLO-317');
+    });
+
+    it('wikilink wins over issue ref for [[FLO-123]]', () => {
+      const tokens = parseAllInlineTokens('see [[FLO-123]] linked');
+      const wikilink = tokens.find(t => t.type === 'wikilink');
+      const issueRef = tokens.find(t => t.type === 'issue-ref');
+      expect(wikilink).toBeDefined();
+      expect(wikilink?.target).toBe('FLO-123');
+      expect(issueRef).toBeUndefined();
+    });
+
+    it('hasInlineFormatting returns true for issue ref', () => {
+      expect(hasInlineFormatting('check FLO-42')).toBe(true);
+    });
+  });
+
+  describe('PR/Issue refs (PR #123, Issue #123)', () => {
+    it('detects PR ref pattern', () => {
+      expect(hasPrRefPattern('see PR #145')).toBe(true);
+      expect(hasPrRefPattern('Issue #42')).toBe(true);
+      expect(hasPrRefPattern('#99')).toBe(true);
+      expect(hasPrRefPattern('no refs')).toBe(false);
+    });
+
+    it('parses PR #145', () => {
+      const tokens = parseAllInlineTokens('merged PR #145 today');
+      const prRef = tokens.find(t => t.type === 'pr-ref');
+      expect(prRef).toBeDefined();
+      expect(prRef?.content).toBe('PR #145');
+    });
+
+    it('parses Issue #123', () => {
+      const tokens = parseAllInlineTokens('filed Issue #123');
+      const prRef = tokens.find(t => t.type === 'pr-ref');
+      expect(prRef).toBeDefined();
+      expect(prRef?.content).toBe('Issue #123');
+    });
+
+    it('parses standalone #123 as number-ref', () => {
+      const tokens = parseAllInlineTokens('commit fixes #99');
+      const numRef = tokens.find(t => t.type === 'number-ref');
+      expect(numRef).toBeDefined();
+      expect(numRef?.content).toBe('#99');
+    });
+
+    it('PR #123 takes priority over standalone #123', () => {
+      const tokens = parseAllInlineTokens('see PR #145 and #99');
+      const prRef = tokens.find(t => t.type === 'pr-ref');
+      const numRef = tokens.find(t => t.type === 'number-ref');
+      expect(prRef?.content).toBe('PR #145');
+      expect(numRef?.content).toBe('#99');
+    });
+  });
+
+  describe('kbd patterns', () => {
+    it('detects kbd patterns', () => {
+      expect(hasKbdPattern('press Cmd')).toBe(true);
+      expect(hasKbdPattern('use ⌘')).toBe(true);
+      expect(hasKbdPattern('hit Enter')).toBe(true);
+      expect(hasKbdPattern('no keys')).toBe(false);
+    });
+
+    it('parses Cmd+Shift+7 as single kbd token', () => {
+      const tokens = parseAllInlineTokens('press Cmd+Shift+7 to trigger');
+      const kbd = tokens.find(t => t.type === 'kbd');
+      expect(kbd).toBeDefined();
+      expect(kbd?.content).toBe('Cmd+Shift+7');
+    });
+
+    it('parses standalone Cmd as kbd', () => {
+      const tokens = parseAllInlineTokens('hold Cmd down');
+      const kbd = tokens.find(t => t.type === 'kbd');
+      expect(kbd).toBeDefined();
+      expect(kbd?.content).toBe('Cmd');
+    });
+
+    it('parses Enter as kbd', () => {
+      const tokens = parseAllInlineTokens('press Enter to confirm');
+      const kbd = tokens.find(t => t.type === 'kbd');
+      expect(kbd).toBeDefined();
+      expect(kbd?.content).toBe('Enter');
+    });
+
+    it('parses unicode modifier ⌘ as kbd', () => {
+      const tokens = parseAllInlineTokens('use ⌘ for command');
+      const kbd = tokens.find(t => t.type === 'kbd');
+      expect(kbd).toBeDefined();
+      expect(kbd?.content).toBe('⌘');
+    });
+
+    it('parses ⌘+⇧ combo as kbd', () => {
+      const tokens = parseAllInlineTokens('try ⌘+⇧+B');
+      const kbd = tokens.find(t => t.type === 'kbd');
+      expect(kbd).toBeDefined();
+      expect(kbd?.content).toBe('⌘+⇧+B');
+    });
+
+    it('parses multiple kbd tokens in same line', () => {
+      const tokens = parseAllInlineTokens('use Tab or Escape');
+      const kbds = tokens.filter(t => t.type === 'kbd');
+      expect(kbds).toHaveLength(2);
+      expect(kbds[0].content).toBe('Tab');
+      expect(kbds[1].content).toBe('Escape');
+    });
+  });
+
+  describe('mixed patterns', () => {
+    it('handles FLO-123 and PR #145 in same line', () => {
+      const tokens = parseAllInlineTokens('FLO-123 fixed in PR #145');
+      expect(tokens.find(t => t.type === 'issue-ref')?.content).toBe('FLO-123');
+      expect(tokens.find(t => t.type === 'pr-ref')?.content).toBe('PR #145');
+    });
+
+    it('handles kbd and issue ref together', () => {
+      const tokens = parseAllInlineTokens('FLO-281: Cmd+. toggle broken');
+      expect(tokens.find(t => t.type === 'issue-ref')).toBeDefined();
+      expect(tokens.find(t => t.type === 'kbd')).toBeDefined();
+    });
+
+    it('code spans protect content from ref highlighting', () => {
+      const tokens = parseAllInlineTokens('run `FLO-123` test');
+      const code = tokens.find(t => t.type === 'code');
+      const issueRef = tokens.find(t => t.type === 'issue-ref');
+      expect(code).toBeDefined();
+      expect(issueRef).toBeUndefined();
     });
   });
 });
