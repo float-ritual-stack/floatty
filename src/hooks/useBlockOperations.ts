@@ -9,21 +9,53 @@
 
 import { useWorkspace } from '../context/WorkspaceContext';
 
+interface FocusAfterDeleteParams {
+  blockId: string;
+  parentId: string | null;
+  siblings: string[] | null | undefined;
+  zoomedRootId: string | null;
+}
+
+/**
+ * Pure focus-target strategy after delete.
+ *
+ * Linear editing flow favors "previous sibling" first:
+ * - Delete current line -> land on line above
+ * - If no previous sibling, try next sibling
+ * - Then fall back to parent context
+ */
+export function determineFocusAfterDelete(params: FocusAfterDeleteParams): string | null {
+  const { blockId, parentId, siblings, zoomedRootId } = params;
+
+  if (siblings) {
+    const idx = siblings.indexOf(blockId);
+    // 1. Previous sibling (primary linear-editing flow)
+    if (idx > 0) {
+      return siblings[idx - 1];
+    }
+    // 2. Next sibling
+    if (idx !== -1 && idx < siblings.length - 1) {
+      return siblings[idx + 1];
+    }
+  }
+
+  // 3. Parent (context fallback), but not when deleting the zoom root itself
+  if (parentId && blockId !== zoomedRootId) {
+    return parentId;
+  }
+
+  // 4. Zoom root fallback (if still in zoomed mode)
+  if (zoomedRootId && zoomedRootId !== blockId) {
+    return zoomedRootId;
+  }
+
+  // 5. Nothing left to focus
+  return null;
+}
+
 export function useBlockOperations() {
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
-
-  /**
-   * Check if a block is editable (has contentEditable)
-   * Blocks with outputType (like daily-view) render custom views, not contentEditable
-   */
-  const isEditableBlock = (blockId: string): boolean => {
-    const b = store.getBlock(blockId);
-    if (!b) return false;
-    // Output blocks (daily-view, daily-error, etc.) are not editable
-    if (b.outputType) return false;
-    return true;
-  };
 
   /**
    * Check if a block is navigable (can receive focus via arrow keys)
@@ -179,47 +211,23 @@ export function useBlockOperations() {
 
   /**
    * Find best focus target after deleting a block
-   * Priority: parent → next sibling → prev sibling → zoomed root → null
-   *
-   * Rationale: Focusing parent (not sibling) after delete keeps undo context clearer.
-   * When user undoes, the restored block appears under the focused parent.
+   * Priority: previous sibling → next sibling → parent → zoomed root → null
    */
   const findFocusAfterDelete = (blockId: string, paneId: string): string | null => {
     const block = store.getBlock(blockId);
     if (!block) return null;
 
     const zoomedRootId = paneStore.getZoomedRootId(paneId);
-
-    // 1. Try parent first (but not if we're at or deleting the zoomed root itself)
-    if (block.parentId && blockId !== zoomedRootId) {
-      // Safe to focus parent - it's within the zoom view
-      return block.parentId;
-    }
-
-    // 2. Parent unavailable (root block or zoomed root) - fall back to sibling
     const siblings = block.parentId
       ? store.getBlock(block.parentId)?.childIds
       : store.rootIds;
 
-    if (siblings) {
-      const idx = siblings.indexOf(blockId);
-      // Try next sibling first
-      if (idx !== -1 && idx < siblings.length - 1) {
-        return siblings[idx + 1];
-      }
-      // Try previous sibling
-      if (idx > 0) {
-        return siblings[idx - 1];
-      }
-    }
-
-    // 3. If in zoomed view and nothing else, focus zoomed root itself
-    if (zoomedRootId && zoomedRootId !== blockId) {
-      return zoomedRootId;
-    }
-
-    // 4. Nothing to focus (all blocks deleted, or edge case)
-    return null;
+    return determineFocusAfterDelete({
+      blockId,
+      parentId: block.parentId,
+      siblings,
+      zoomedRootId,
+    });
   };
 
   return {

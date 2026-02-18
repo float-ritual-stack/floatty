@@ -86,9 +86,73 @@ function findLastTextNode(node: Node): Text | null {
 
 /**
  * Walk DOM tree counting text + implicit newlines from block elements.
- * Browser represents newlines as <div> or <br>, not \n characters.
- * Must count these structural elements to match stored content offsets.
+ * Browser represents newlines as line containers (<div>) and/or <br>.
+ * We count:
+ * - Root-level line-div boundaries as '\n'
+ * - Non-placeholder <br> as '\n'
+ *
+ * Placeholder <br> inside root-level blank line divs are visual caret anchors,
+ * not extra newline characters.
  */
+function isRootLineDiv(node: Node, root: HTMLElement): boolean {
+  return node.nodeType === Node.ELEMENT_NODE &&
+    node.nodeName === 'DIV' &&
+    node.parentNode === root;
+}
+
+function isPlaceholderBr(node: Node, root: HTMLElement): boolean {
+  if (node.nodeName !== 'BR') return false;
+  const parent = node.parentNode;
+  if (!parent || parent.nodeName !== 'DIV') return false;
+  if (parent.parentNode !== root) return false;
+  return parent.childNodes.length === 1;
+}
+
+/**
+ * Convert contentEditable DOM to normalized plain text using the same
+ * newline model as cursor offset mapping.
+ *
+ * Important for trailing blank lines: browser `innerText` can include
+ * extra terminal newlines that do not have distinct caret positions.
+ */
+export function getNormalizedEditableText(root: HTMLElement): string {
+  const parts: string[] = [];
+
+  const walk = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      parts.push(node.textContent ?? '');
+      return;
+    }
+
+    if (node.nodeName === 'BR') {
+      if (!isPlaceholderBr(node, root)) {
+        parts.push('\n');
+      }
+      return;
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      for (const child of Array.from(node.childNodes)) {
+        walk(child);
+      }
+    }
+  };
+
+  const children = Array.from(root.childNodes);
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+
+    // Root-level line boundaries become '\n' separators.
+    if (isRootLineDiv(child, root) && i > 0) {
+      parts.push('\n');
+    }
+
+    walk(child);
+  }
+
+  return parts.join('');
+}
+
 function getTextOffsetInElement(
   root: HTMLElement,
   targetNode: Node,
@@ -97,13 +161,40 @@ function getTextOffsetInElement(
   let offset = 0;
   let found = false;
 
-  function walk(node: Node): boolean {
+  function walkChildren(parent: Node): boolean {
+    const children = Array.from(parent.childNodes);
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+
+      // Root-level line divs map to newline boundaries between sibling lines.
+      if (parent === root && isRootLineDiv(child, root) && i > 0) {
+        offset += 1;
+      }
+
+      if (walkNode(child)) return true;
+    }
+    return false;
+  }
+
+  function walkNode(node: Node): boolean {
     if (found) return true;
 
-    // Found target node - add the offset within it
+    // Found target node - add offset within this node
     if (node === targetNode) {
       if (node.nodeType === Node.TEXT_NODE) {
         offset += targetOffset;
+      } else if (node.nodeType === Node.ELEMENT_NODE && targetOffset > 0) {
+        // Element container offsets are child indices.
+        const childLimit = Math.min(targetOffset, node.childNodes.length);
+        for (let i = 0; i < childLimit; i++) {
+          const child = node.childNodes[i];
+          if (node === root && isRootLineDiv(child, root) && i > 0) {
+            offset += 1;
+          }
+          if (walkNode(child)) return true;
+        }
+      } else if (node.nodeName === 'BR' && !isPlaceholderBr(node, root)) {
+        offset += Math.min(targetOffset, 1);
       }
       found = true;
       return true;
@@ -111,92 +202,130 @@ function getTextOffsetInElement(
 
     if (node.nodeType === Node.TEXT_NODE) {
       offset += node.textContent?.length ?? 0;
-    } else if (node.nodeName === 'BR') {
-      // <br> = 1 character (newline)
-      offset += 1;
-    } else if (node.nodeName === 'DIV' && node !== root) {
-      // <div> inside contentEditable = line break (except root)
-      // Count newline BEFORE this div's content (matches setCursorAtOffset)
-      offset += 1;
-      for (const child of Array.from(node.childNodes)) {
-        if (walk(child)) return true;
-      }
-      return false; // Already processed children
+      return false;
     }
 
-    // Recurse into children for other element types
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      for (const child of Array.from(node.childNodes)) {
-        if (walk(child)) return true;
+    if (node.nodeName === 'BR') {
+      if (!isPlaceholderBr(node, root)) {
+        offset += 1;
       }
+      return false;
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      return walkChildren(node);
     }
 
     return false;
   }
 
-  walk(root);
+  walkChildren(root);
   return offset;
 }
 
 /**
  * Set cursor at an absolute character offset within contentEditable element.
- * Handles multi-line content by walking DOM and treating <br> tags as newlines.
+ * Handles multi-line content by matching the same newline rules as getAbsoluteCursorOffset.
  */
 export function setCursorAtOffset(element: HTMLElement, offset: number): void {
   const selection = window.getSelection();
   if (!selection) return;
 
   const range = document.createRange();
+  const targetOffset = Math.max(0, offset);
   let currentOffset = 0;
   let found = false;
 
+  function placeAtNodeStart(node: Node): boolean {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      range.setStart(node, 0);
+      range.collapse(true);
+      found = true;
+      return true;
+    }
+
+    const parent = node.parentNode;
+    if (!parent) return false;
+    const index = Array.from(parent.childNodes).indexOf(node as ChildNode);
+    if (index < 0) return false;
+    range.setStart(parent, index);
+    range.collapse(true);
+    found = true;
+    return true;
+  }
+
+  function walkChildren(parent: Node): boolean {
+    const children = Array.from(parent.childNodes);
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+
+      // Root-level line-div boundaries map to newline chars.
+      if (parent === element && isRootLineDiv(child, element) && i > 0) {
+        if (currentOffset + 1 >= targetOffset) {
+          return placeAtNodeStart(child);
+        }
+        currentOffset += 1;
+      }
+
+      if (walkNode(child)) return true;
+    }
+    return false;
+  }
+
   // Walk all nodes in document order
-  function walk(node: Node): boolean {
+  function walkNode(node: Node): boolean {
     if (found) return true;
 
     if (node.nodeType === Node.TEXT_NODE) {
       const nodeLength = node.textContent?.length || 0;
-      if (currentOffset + nodeLength >= offset) {
+      if (currentOffset + nodeLength >= targetOffset) {
         // Cursor belongs in this text node
         // Clamp offset to prevent IndexSizeError if DOM changed since offset calculation
-        const clampedOffset = Math.min(offset - currentOffset, nodeLength);
+        const clampedOffset = Math.min(Math.max(targetOffset - currentOffset, 0), nodeLength);
         range.setStart(node, clampedOffset);
         range.collapse(true);
         found = true;
         return true;
       }
       currentOffset += nodeLength;
-    } else if (node.nodeName === 'BR') {
-      // <br> = 1 character (newline)
-      if (currentOffset + 1 >= offset) {
-        // Cursor goes right after this <br>
+      return false;
+    }
+
+    if (node.nodeName === 'BR') {
+      if (isPlaceholderBr(node, element)) {
+        return false;
+      }
+
+      // Non-placeholder <br> maps to one newline
+      if (currentOffset + 1 >= targetOffset) {
         const parent = node.parentNode;
-        if (parent) {
-          const index = Array.from(parent.childNodes).indexOf(node as ChildNode);
+        if (!parent) return false;
+        const index = Array.from(parent.childNodes).indexOf(node as ChildNode);
+        if (index < 0) return false;
+
+        // At newline boundary, place before BR. After boundary, place after BR.
+        if (targetOffset <= currentOffset) {
+          range.setStart(parent, index);
+        } else {
           range.setStart(parent, index + 1);
-          range.collapse(true);
-          found = true;
-          return true;
         }
+        range.collapse(true);
+        found = true;
+        return true;
       }
+
       currentOffset += 1;
-    } else if (node.nodeName === 'DIV' && node !== element) {
-      // <div> inside contentEditable = line break
-      currentOffset += 1;
-      for (let i = 0; i < node.childNodes.length; i++) {
-        if (walk(node.childNodes[i])) return true;
-      }
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      // Recurse into children
-      for (let i = 0; i < node.childNodes.length; i++) {
-        if (walk(node.childNodes[i])) return true;
-      }
+      return false;
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      return walkChildren(node);
     }
 
     return false;
   }
 
-  walk(element);
+  walkChildren(element);
 
   if (found) {
     selection.removeAllRanges();
@@ -398,4 +527,3 @@ export function isCursorAtContentEnd(element: HTMLElement): boolean {
 
   return false;
 }
-

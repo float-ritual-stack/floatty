@@ -204,6 +204,16 @@ export function Outliner(props: OutlinerProps) {
     const modKey = isMac ? e.metaKey : e.ctrlKey;
     const activeEl = document.activeElement;
     const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+    const hasEditableTextSelection = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+      const range = sel.getRangeAt(0);
+      const container = range.commonAncestorContainer;
+      const el = container.nodeType === Node.ELEMENT_NODE
+        ? container as Element
+        : container.parentElement;
+      return !!el?.closest?.('[contenteditable="true"]');
+    };
 
     // FLO-74: Clear selection when typing starts (prevents accidental delete)
     if (selected.size > 0 && isEditing && e.key.length === 1 && !modKey && !e.ctrlKey && !e.altKey) {
@@ -229,7 +239,9 @@ export function Outliner(props: OutlinerProps) {
 
     // Delete/Backspace on selection (only when not editing a block)
     if ((e.key === 'Delete' || e.key === 'Backspace') && selected.size > 0) {
-      if (!isEditing) {
+      // Guard against ghost block-selection state while a text range is active.
+      // If user has a DOM text selection in any contentEditable, let browser delete text.
+      if (!isEditing && !hasEditableTextSelection()) {
         e.preventDefault();
         selection.deleteSelection();
       }
@@ -346,6 +358,20 @@ export function Outliner(props: OutlinerProps) {
       };
 
       // Export functions now defined outside onMount (see above)
+      const isElementFullySelected = (el: HTMLElement, sel: Selection | null): boolean => {
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+
+        try {
+          const range = sel.getRangeAt(0);
+          const fullRange = document.createRange();
+          fullRange.selectNodeContents(el);
+          const startsAtOrBefore = range.compareBoundaryPoints(Range.START_TO_START, fullRange) <= 0;
+          const endsAtOrAfter = range.compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
+          return startsAtOrBefore && endsAtOrAfter;
+        } catch {
+          return false;
+        }
+      };
 
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
         const activeEl = document.activeElement as HTMLElement;
@@ -359,9 +385,7 @@ export function Outliner(props: OutlinerProps) {
         if (isEditing) {
           // Check if all text is already selected
           const sel = window.getSelection();
-          const textContent = activeEl.textContent || '';
-          const allTextSelected = sel && !sel.isCollapsed &&
-            sel.toString().length >= textContent.length;
+          const allTextSelected = isElementFullySelected(activeEl, sel);
 
           if (!allTextSelected) {
             // First Cmd+A: select all text in the block (native selection)

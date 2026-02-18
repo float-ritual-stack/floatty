@@ -12,7 +12,7 @@
 
 import { getActionForEvent } from '../lib/keybinds';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
-import { setCursorAtOffset } from '../lib/cursorUtils';
+import { getNormalizedEditableText, setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
 import type { Block } from '../lib/blockTypes';
@@ -83,6 +83,7 @@ export type KeyboardAction =
   | { type: 'navigate_down'; nextId: string | null }
   | { type: 'navigate_up_with_selection'; prevId: string | null }  // FLO-74: Shift+ArrowUp
   | { type: 'navigate_down_with_selection'; nextId: string | null }  // FLO-74: Shift+ArrowDown
+  | { type: 'move_cursor_within_block'; offset: number }
   | { type: 'create_trailing_block'; parentId: string | null }  // FLO-92: Create sibling when at tree end
   | { type: 'execute_block' }
   | { type: 'create_block_before'; newId: string }
@@ -98,6 +99,64 @@ export type KeyboardAction =
 // ═══════════════════════════════════════════════════════════════
 // PURE LOGIC (for testing)
 // ═══════════════════════════════════════════════════════════════
+
+interface VerticalMoveInfo {
+  offset: number;
+  currentLineBlank: boolean;
+  targetLineBlank: boolean;
+}
+
+function getLineStarts(content: string): number[] {
+  const starts = [0];
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '\n') {
+      starts.push(i + 1);
+    }
+  }
+  return starts;
+}
+
+function getLineIndex(lineStarts: number[], offset: number): number {
+  for (let i = lineStarts.length - 1; i >= 0; i--) {
+    if (offset >= lineStarts[i]) return i;
+  }
+  return 0;
+}
+
+function getVerticalMoveInfo(content: string, rawOffset: number, direction: -1 | 1): VerticalMoveInfo | null {
+  if (!content.includes('\n')) return null;
+
+  const offset = Math.max(0, Math.min(rawOffset, content.length));
+  const lineStarts = getLineStarts(content);
+  const currentLine = getLineIndex(lineStarts, offset);
+  const targetLine = currentLine + direction;
+
+  if (targetLine < 0 || targetLine >= lineStarts.length) {
+    return null;
+  }
+
+  const currentStart = lineStarts[currentLine];
+  const currentEnd = currentLine + 1 < lineStarts.length
+    ? lineStarts[currentLine + 1] - 1
+    : content.length;
+  const targetStart = lineStarts[targetLine];
+  const targetEnd = targetLine + 1 < lineStarts.length
+    ? lineStarts[targetLine + 1] - 1
+    : content.length;
+
+  const currentColumn = Math.max(0, offset - currentStart);
+  const targetLineLength = Math.max(0, targetEnd - targetStart);
+  const targetColumn = Math.min(currentColumn, targetLineLength);
+
+  const currentLineText = content.slice(currentStart, currentEnd);
+  const targetLineText = content.slice(targetStart, targetEnd);
+
+  return {
+    offset: targetStart + targetColumn,
+    currentLineBlank: currentLineText.trim().length === 0,
+    targetLineBlank: targetLineText.trim().length === 0,
+  };
+}
 
 /**
  * Determine what action to take for a keyboard event
@@ -121,9 +180,16 @@ export function determineKeyAction(
     content: string;
   }
 ): KeyboardAction {
-  const { block, isCollapsed, cursorAtStart, cursorAtEnd, cursorOffset, selectionCollapsed, zoomedRootId } = deps;
+  const { block, isCollapsed, cursorAtStart, cursorOffset, selectionCollapsed, zoomedRootId } = deps;
 
   if (!block) return { type: 'none' };
+
+  // Use absolute offsets for block-boundary decisions.
+  // DOM node-based checks can report "start/end" at internal blank lines.
+  const content = deps.content;
+  const clampedOffset = Math.max(0, Math.min(cursorOffset, content.length));
+  const atBlockStart = clampedOffset === 0;
+  const atBlockEnd = clampedOffset >= content.length;
 
   // Check centralized keybind actions first
   switch (action) {
@@ -153,16 +219,16 @@ export function determineKeyAction(
 
   // Non-action keybinds
   if (key === 'ArrowUp') {
-    // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
-    // This allows browser to handle text selection within block
-    let shouldNavigate = cursorAtStart;
+    // FLO-145: Shift+Arrow only navigates at boundary (not mid-block).
+    // Use absolute offset boundary; DOM "start" can be true inside leading blank lines.
+    const shouldNavigate = atBlockStart;
 
-    // FIX: Browser can't navigate up from content preceded by blank lines
-    // If only newlines exist before cursor, treat as "at start" for navigation
-    if (!shouldNavigate && cursorOffset > 0) {
-      const beforeCursor = deps.content.slice(0, cursorOffset);
-      if (/^\n+$/.test(beforeCursor)) {
-        shouldNavigate = true;
+    // Preserve logical line-by-line movement through blank lines.
+    // Browsers can skip whitespace-only lines in contentEditable, so step manually.
+    if (!shouldNavigate && !shiftKey) {
+      const move = getVerticalMoveInfo(content, clampedOffset, -1);
+      if (move && (move.currentLineBlank || move.targetLineBlank) && move.offset !== clampedOffset) {
+        return { type: 'move_cursor_within_block', offset: move.offset };
       }
     }
 
@@ -177,16 +243,14 @@ export function determineKeyAction(
   }
 
   if (key === 'ArrowDown') {
-    // FLO-145: Shift+Arrow only navigates at boundary (not mid-block)
-    // This allows browser to handle text selection within block
-    let shouldNavigate = cursorAtEnd;
+    // FLO-145: Shift+Arrow only navigates at boundary (not mid-block).
+    const shouldNavigate = atBlockEnd;
 
-    // FIX: Browser can't navigate down from blank/trailing newline lines
-    // If only newlines remain after cursor, treat as "at end" for navigation
-    if (!shouldNavigate) {
-      const remaining = deps.content.slice(cursorOffset);
-      if (remaining.length > 0 && /^\n+$/.test(remaining)) {
-        shouldNavigate = true;
+    // Preserve logical line-by-line movement through blank lines.
+    if (!shouldNavigate && !shiftKey) {
+      const move = getVerticalMoveInfo(content, clampedOffset, 1);
+      if (move && (move.currentLineBlank || move.targetLineBlank) && move.offset !== clampedOffset) {
+        return { type: 'move_cursor_within_block', offset: move.offset };
       }
     }
 
@@ -201,7 +265,7 @@ export function determineKeyAction(
       // FLO-92: No next block exists - create trailing sibling for typeable target
       // Only for plain navigation, not Shift+Arrow selection
       // BUT don't create if current block is already empty (avoid empty spam)
-      if (!shiftKey && deps.content !== '') {
+      if (!shiftKey && content !== '') {
         const targetParent = zoomedRootId ?? block.parentId;
         return { type: 'create_trailing_block', parentId: targetParent };
       }
@@ -210,7 +274,7 @@ export function determineKeyAction(
   }
 
   if (key === 'Enter' && !shiftKey) {
-    const content = block.content;
+    const content = deps.content;
     const handler = registry.findHandler(content);
 
     if (handler) {
@@ -218,8 +282,8 @@ export function determineKeyAction(
     }
 
     const hasChildren = block.childIds && block.childIds.length > 0;
-    const atEnd = cursorOffset >= content.length;
-    const atStart = cursorOffset === 0;
+    const atEnd = clampedOffset >= content.length;
+    const atStart = clampedOffset === 0;
 
     // At START of block with content → create sibling BEFORE
     if (atStart && content.length > 0) {
@@ -235,8 +299,8 @@ export function determineKeyAction(
     const shouldNestSplit = hasChildren && !isCollapsed;
 
     return shouldNestSplit
-      ? { type: 'split_to_child', newId: null, offset: cursorOffset }
-      : { type: 'split_block', newId: null, offset: cursorOffset };
+      ? { type: 'split_to_child', newId: null, offset: clampedOffset }
+      : { type: 'split_block', newId: null, offset: clampedOffset };
   }
 
   if (key === 'Tab') {
@@ -247,7 +311,7 @@ export function determineKeyAction(
   }
 
   if (key === 'Backspace') {
-    const atStartWithSelection = selectionCollapsed && cursorOffset === 0;
+    const atStartWithSelection = selectionCollapsed && clampedOffset === 0;
     // Only protect from merge if children are COLLAPSED (hidden from user)
     // If expanded, user can see children - allow merge and lift them
     const hasHiddenChildren = block.childIds.length > 0 && deps.isCollapsed;
@@ -287,6 +351,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
     const action = getActionForEvent(e);
     const store = deps.blockStore;
     const paneStore = deps.paneStore;
+    const contentEl = deps.getContentRef();
+    const liveContent = contentEl ? getNormalizedEditableText(contentEl) : block.content;
 
     // Use the pure logic function to determine action
     const keyAction = determineKeyAction(
@@ -304,7 +370,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         findPrevId: () => deps.findPrevVisibleBlock(deps.getBlockId(), deps.paneId),
         findNextId: () => deps.findNextVisibleBlock(deps.getBlockId(), deps.paneId),
         findFocusAfterDelete: () => deps.findFocusAfterDelete(deps.getBlockId(), deps.paneId),
-        content: block.content,
+        content: liveContent,
       }
     );
 
@@ -450,6 +516,11 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         }
         return;
 
+      case 'move_cursor_within_block':
+        e.preventDefault();
+        deps.cursor.setOffset(keyAction.offset);
+        return;
+
       case 'create_trailing_block': {
         // FLO-92: Create block when at tree end (respects zoom scope)
         e.preventDefault();
@@ -559,8 +630,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         e.preventDefault();
         const contentRef = deps.getContentRef();
         if (contentRef) {
-          // Use innerText for reading - textContent ignores <div>/<br>, losing line breaks
-          const text = contentRef.innerText || '';
+          const text = getNormalizedEditableText(contentRef);
           const pos = deps.cursor.getOffset();
           const lineStart = text.lastIndexOf('\n', pos - 1) + 1;
 

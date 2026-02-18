@@ -6,7 +6,7 @@ import { useCursor } from '../hooks/useCursor';
 import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
-import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
+import { getAbsoluteCursorOffset, getNormalizedEditableText, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { navigateToBlock } from '../lib/navigation';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -373,9 +373,9 @@ export function BlockItem(props: BlockItemProps) {
     const startOffset = acState.startOffset;
     const replacement = `[[${pageName}]]`;
 
-    // Use store content as source of truth (DOM innerText can diverge under concurrent edits)
+    // Use store content as source of truth (DOM text can diverge under concurrent edits)
     const storeBlock = store.getBlock(props.id);
-    const content = storeBlock?.content ?? contentRef.innerText ?? '';
+    const content = storeBlock?.content ?? getNormalizedEditableText(contentRef);
     const cursorOffset = getAbsoluteCursorOffset(contentRef);
 
     // Validate: cursor must be after [[ trigger, and [[ must still exist at expected position
@@ -509,7 +509,7 @@ export function BlockItem(props: BlockItemProps) {
   //   - Not focused → always sync (split pane, unfocused blocks)
   //   - Focused + user origin → skip (don't echo typing back, causes cursor jump)
   //   - Focused + non-user origin → sync (undo, redo, remote are authoritative)
-  // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
+  // NOTE: Use normalized editable text for comparison (stable with cursor offset model)
   createEffect(() => {
     const currentBlock = block();
     if (!contentRef || !currentBlock) return;
@@ -540,7 +540,7 @@ export function BlockItem(props: BlockItemProps) {
       setHasLocalChanges(false);
     }
 
-    const domContent = contentRef.innerText;
+    const domContent = getNormalizedEditableText(contentRef);
     const storeContent = currentBlock.content;
     const isFocusedNow = document.activeElement === contentRef;
 
@@ -600,7 +600,7 @@ export function BlockItem(props: BlockItemProps) {
     const currentBlock = block();
     if (contentRef && currentBlock) {
       // Sync DOM to store on blur (catches remote updates that arrived while focused)
-      if (contentRef.innerText !== currentBlock.content) {
+      if (getNormalizedEditableText(contentRef) !== currentBlock.content) {
         contentRef.innerText = currentBlock.content;
       }
       // CRITICAL: Also sync displayContent for overlay layer
@@ -649,10 +649,7 @@ export function BlockItem(props: BlockItemProps) {
    * Avoids unsafe type casting between InputEvent and CompositionEvent.
    */
   const updateContentFromDom = (target: HTMLDivElement) => {
-    // CRITICAL: Use innerText, not textContent!
-    // textContent ignores <div> and <br> elements, losing line breaks.
-    // innerText respects visual line breaks and converts them to \n.
-    const content = target.innerText || '';
+    const content = getNormalizedEditableText(target);
 
     // FLO-197: Mark as dirty BEFORE any updates
     // Prevents content sync effect from overwriting pending edits

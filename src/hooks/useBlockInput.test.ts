@@ -68,6 +68,7 @@ describe('determineKeyAction', () => {
     it('navigates up when ArrowUp at cursor start', () => {
       const result = determineKeyAction('ArrowUp', false, null, createDeps({
         cursorAtStart: true,
+        cursorOffset: 0,
       }));
 
       const action = expectAction(result, 'navigate_up');
@@ -82,22 +83,71 @@ describe('determineKeyAction', () => {
       expect(result.type).toBe('none');
     });
 
-    it('navigates up when only blank lines before cursor (browser cannot navigate)', () => {
+    it('steps to previous logical blank line before block navigation', () => {
       // Content: "\n\na" with cursor at 'a' (offset 2)
-      // Browser can't visually move up from here, so we should navigate
+      // ArrowUp should visit the blank line first (offset 1), not jump blocks.
       const result = determineKeyAction('ArrowUp', false, null, createDeps({
-        cursorAtStart: false,  // Not at absolute start (offset != 0)
-        cursorOffset: 2,       // After the two newlines
-        content: '\n\na',      // Blank lines then content
+        cursorOffset: 2,
+        content: '\n\na',
       }));
 
-      const action = expectAction(result, 'navigate_up');
-      expect(action.prevId).toBe('prev-block');
+      const action = expectAction(result, 'move_cursor_within_block');
+      expect(action.offset).toBe(1);
+    });
+
+    it('steps through interleaved whitespace-only lines', () => {
+      // Content:
+      //   alpha
+      //   "   "
+      //   omega
+      // Cursor starts at beginning of "omega" (offset 10).
+      const result = determineKeyAction('ArrowUp', false, null, createDeps({
+        cursorOffset: 10,
+        content: 'alpha\n   \nomega',
+      }));
+
+      const action = expectAction(result, 'move_cursor_within_block');
+      expect(action.offset).toBe(6);
+    });
+
+    it('uses absolute offset boundary, not DOM isAtStart flag, for ArrowUp block exits', () => {
+      // Simulates the contentEditable false-positive where isAtStart=true on a later line.
+      const result = determineKeyAction('ArrowUp', false, null, createDeps({
+        cursorAtStart: true,
+        cursorOffset: 2,
+        content: '\n\na',
+      }));
+
+      const action = expectAction(result, 'move_cursor_within_block');
+      expect(action.offset).toBe(1);
     });
 
     it('navigates down when ArrowDown at cursor end', () => {
       const result = determineKeyAction('ArrowDown', false, null, createDeps({
         cursorAtEnd: true,
+        cursorOffset: 12,
+      }));
+
+      const action = expectAction(result, 'navigate_down');
+      expect(action.nextId).toBe('next-block');
+    });
+
+    it('steps to trailing blank lines before leaving block on ArrowDown', () => {
+      // Content: "a\n\n", cursor after "a" (offset 1)
+      const result = determineKeyAction('ArrowDown', false, null, createDeps({
+        cursorOffset: 1,
+        content: 'a\n\n',
+      }));
+
+      const action = expectAction(result, 'move_cursor_within_block');
+      expect(action.offset).toBe(2);
+    });
+
+    it('navigates to next block from final blank line', () => {
+      // Content: "a\n", cursor already on the final blank line (offset 2)
+      const result = determineKeyAction('ArrowDown', false, null, createDeps({
+        cursorOffset: 2,
+        content: 'a\n',
       }));
 
       const action = expectAction(result, 'navigate_down');
@@ -110,6 +160,7 @@ describe('determineKeyAction', () => {
         // FLO-145: Only navigate when at boundary
         const result = determineKeyAction('ArrowUp', true, null, createDeps({
           cursorAtStart: true,  // AT start - ok to navigate
+          cursorOffset: 0,
         }));
 
         const action = expectAction(result, 'navigate_up_with_selection');
@@ -120,6 +171,7 @@ describe('determineKeyAction', () => {
         // FLO-145: Only navigate when at boundary
         const result = determineKeyAction('ArrowDown', true, null, createDeps({
           cursorAtEnd: true,    // AT end - ok to navigate
+          cursorOffset: 12,
         }));
 
         const action = expectAction(result, 'navigate_down_with_selection');
@@ -149,6 +201,7 @@ describe('determineKeyAction', () => {
       it('Shift+ArrowDown at end with no next block returns none (FLO-92 trailing block is plain nav only)', () => {
         const result = determineKeyAction('ArrowDown', true, null, createDeps({
           cursorAtEnd: true,
+          cursorOffset: 12,
           findNextId: () => null,  // No next block
         }));
 
@@ -160,6 +213,7 @@ describe('determineKeyAction', () => {
     it('creates trailing block when ArrowDown at end with no next block (FLO-92)', () => {
       const result = determineKeyAction('ArrowDown', false, null, createDeps({
         cursorAtEnd: true,
+        cursorOffset: 12,
         findNextId: () => null, // No next block exists
       }));
 
@@ -169,6 +223,7 @@ describe('determineKeyAction', () => {
     it('creates trailing block with correct parent context (FLO-92)', () => {
       const result = determineKeyAction('ArrowDown', false, null, createDeps({
         cursorAtEnd: true,
+        cursorOffset: 12,
         findNextId: () => null,
         block: createBlock({ parentId: 'parent-123' }),
       }));
@@ -180,6 +235,7 @@ describe('determineKeyAction', () => {
     it('creates root-level trailing block when current block is root (FLO-92)', () => {
       const result = determineKeyAction('ArrowDown', false, null, createDeps({
         cursorAtEnd: true,
+        cursorOffset: 12,
         findNextId: () => null,
         block: createBlock({ parentId: null }),
       }));
@@ -193,6 +249,7 @@ describe('determineKeyAction', () => {
       // create a new block inside the zoomed root, NOT at tree level
       const result = determineKeyAction('ArrowDown', false, null, createDeps({
         cursorAtEnd: true,
+        cursorOffset: 12,
         findNextId: () => null, // At last visible block in zoomed subtree
         zoomedRootId: 'zoomed-root',
         block: createBlock({ id: 'last-child', parentId: 'zoomed-root' }),
@@ -207,6 +264,7 @@ describe('determineKeyAction', () => {
       // Block is nested deeper than zoomed root - should still target zoomed root
       const result = determineKeyAction('ArrowDown', false, null, createDeps({
         cursorAtEnd: true,
+        cursorOffset: 12,
         findNextId: () => null,
         zoomedRootId: 'zoomed-root',
         block: createBlock({ id: 'deep-child', parentId: 'middle-parent' }), // Not direct child
@@ -447,6 +505,7 @@ describe('determineKeyAction', () => {
       // User is at block end - Shift+Down should extend selection to next block
       const result = determineKeyAction('ArrowDown', true, null, createDeps({
         cursorAtEnd: true,     // AT end - ok to navigate
+        cursorOffset: 12,
       }));
 
       const action = expectAction(result, 'navigate_down_with_selection');
@@ -457,6 +516,7 @@ describe('determineKeyAction', () => {
       // User is at block start - Shift+Up should extend selection to prev block
       const result = determineKeyAction('ArrowUp', true, null, createDeps({
         cursorAtStart: true,   // AT start - ok to navigate
+        cursorOffset: 0,
       }));
 
       const action = expectAction(result, 'navigate_up_with_selection');
