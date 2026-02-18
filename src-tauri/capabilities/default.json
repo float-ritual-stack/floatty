@@ -27,6 +27,7 @@
       "identifier": "fs:allow-write-file",
       "allow": [{ "path": "$HOME/**/*" }]
     },
-    "mcp-bridge:default"
+    "mcp-bridge:default",
+    "window-state:default"
   ]
 }
