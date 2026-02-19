@@ -12,7 +12,9 @@ import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { themeStore } from '../hooks/useThemeStore';
-import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay } from '../lib/keybinds';
+import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay, isMac } from '../lib/keybinds';
+import { CommandBar } from './CommandBar';
+import { navigateToPage } from '../lib/navigation';
 import { emitCtxMarkersChanged } from '../lib/ctxEvents';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
@@ -232,6 +234,7 @@ function TabBar(props: {
 
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
+  const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
   const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
   // FLO-197: Collapse depth for split panes (loaded from config)
   const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
@@ -837,6 +840,10 @@ export function Terminal() {
           });
           break;
         }
+        case 'commandPalette': {
+          setCommandBarOpen(open => !open);
+          break;
+        }
       }
     };
 
@@ -1154,6 +1161,57 @@ export function Terminal() {
           <ContextSidebar visible={sidebarVisible()} />
         </Show>
       </div>
+      <Show when={isCommandBarOpen()}>
+        <CommandBar
+          onClose={() => setCommandBarOpen(false)}
+          onNavigate={(pageName) => {
+            const activeId = tabStore.activeTabId();
+            if (!activeId) return;
+            // Find an outliner pane — prefer active pane if it's an outliner,
+            // otherwise find first outliner in tab layout
+            let paneId = getActivePaneId(activeId);
+            if (paneId) {
+              const leaf = getPaneLeaf(activeId, paneId);
+              if (leaf?.leafType !== 'outliner') {
+                const allPanes = getAllPaneIds(activeId);
+                paneId = allPanes.find(id => {
+                  const l = getPaneLeaf(activeId, id);
+                  return l?.leafType === 'outliner';
+                }) ?? paneId;
+              }
+            }
+            if (!paneId) return;
+            navigateToPage(pageName, { paneId });
+            setCommandBarOpen(false);
+            // Restore DOM focus to the outliner pane after CommandBar unmounts
+            requestAnimationFrame(() => {
+              const paneEl = document.querySelector(`[data-pane-id="${paneId}"]`);
+              const focusTarget = paneEl?.querySelector('[contenteditable="true"]') as HTMLElement;
+              (focusTarget ?? paneEl as HTMLElement)?.focus();
+            });
+          }}
+          onCommand={(commandId) => {
+            setCommandBarOpen(false);
+            // Dispatch keyboard events that Outliner.tsx already handles
+            const keyMap: Record<string, string> = {
+              'export-json': 'j',
+              'export-binary': 'b',
+              'export-markdown': 'm',
+            };
+            const key = keyMap[commandId];
+            if (key) {
+              document.dispatchEvent(new KeyboardEvent('keydown', {
+                key,
+                metaKey: isMac,
+                ctrlKey: !isMac,
+                shiftKey: true,
+                bubbles: true,
+                cancelable: true,
+              }));
+            }
+          }}
+        />
+      </Show>
       <StatusBar semanticState={semanticState()} />
     </div>
   );

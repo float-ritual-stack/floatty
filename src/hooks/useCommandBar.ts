@@ -1,0 +1,141 @@
+/**
+ * useCommandBar - Pure state hook for command palette (⌘K)
+ *
+ * Unified list: pages (goto) + built-in commands (export, etc.)
+ * Pages sorted by recency (updatedAt desc), then alphabetical.
+ * No Y.Doc mutations — read-only page list + filtering.
+ *
+ * FLO-276
+ */
+
+import { createSignal, createMemo, createEffect, on } from 'solid-js';
+import { blockStore } from './useBlockStore';
+import { getPageNamesWithTimestamps } from './useWikilinkAutocomplete';
+import { isMac } from '../lib/keybinds';
+
+// ═══════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════
+
+export type ResultItemType = 'page' | 'command';
+
+export interface ResultItem {
+  type: ResultItemType;
+  label: string;
+  /** For commands: unique action ID. For pages: same as label. */
+  id: string;
+  /** Optional keyboard shortcut hint for display */
+  shortcut?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BUILT-IN COMMANDS
+// ═══════════════════════════════════════════════════════════════
+
+const mod = isMac ? '⌘' : 'Ctrl+';
+const shift = isMac ? '⇧' : 'Shift+';
+
+export const BUILT_IN_COMMANDS: ResultItem[] = [
+  { type: 'command', id: 'export-json',     label: 'Export JSON',     shortcut: `${mod}${shift}J` },
+  { type: 'command', id: 'export-binary',   label: 'Export Binary',   shortcut: `${mod}${shift}B` },
+  { type: 'command', id: 'export-markdown', label: 'Export Markdown', shortcut: `${mod}${shift}M` },
+];
+
+// ═══════════════════════════════════════════════════════════════
+// SORTING & FILTERING
+// ═══════════════════════════════════════════════════════════════
+
+/** Sort pages: recently updated first, then alphabetical. */
+export function sortPages(
+  pages: { name: string; updatedAt: number }[]
+): { name: string; updatedAt: number }[] {
+  return [...pages].sort((a, b) => {
+    // Primary: updatedAt descending (most recent first)
+    if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
+    // Tiebreak: alphabetical
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function filterPages(
+  pages: { name: string; updatedAt: number }[],
+  query: string
+): { name: string; updatedAt: number }[] {
+  if (!query) return pages;
+  const lower = query.toLowerCase();
+  return pages.filter(p => p.name.toLowerCase().includes(lower));
+}
+
+function filterCommands(commands: ResultItem[], query: string): ResultItem[] {
+  if (!query) return commands;
+  const lower = query.toLowerCase();
+  return commands.filter(c => c.label.toLowerCase().includes(lower));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HOOK
+// ═══════════════════════════════════════════════════════════════
+
+export function useCommandBar() {
+  const [query, setQuery] = createSignal('');
+  const [selectedIndex, setSelectedIndex] = createSignal(0);
+
+  // Pages sorted by recency
+  const sortedPages = createMemo(() =>
+    sortPages(getPageNamesWithTimestamps(blockStore))
+  );
+
+  // Unified results: pages (recency-sorted) first, then commands
+  const filteredResults = createMemo((): ResultItem[] => {
+    const q = query();
+    const pages = filterPages(sortedPages(), q)
+      .map((p): ResultItem => ({ type: 'page', id: p.name, label: p.name }));
+    const commands = filterCommands(BUILT_IN_COMMANDS, q);
+    return [...pages, ...commands];
+  });
+
+  // Reset selection when query changes (on() prevents dependency leak)
+  createEffect(on(query, () => setSelectedIndex(0), { defer: true }));
+
+  // Clamp selectedIndex when filtered list shrinks
+  createEffect(on(filteredResults, (results) => {
+    if (selectedIndex() >= results.length && results.length > 0) {
+      setSelectedIndex(results.length - 1);
+    }
+  }, { defer: true }));
+
+  function navigate(direction: 'up' | 'down') {
+    const results = filteredResults();
+    if (results.length === 0) return;
+
+    const maxIdx = results.length - 1;
+    if (direction === 'down') {
+      setSelectedIndex(i => i >= maxIdx ? 0 : i + 1);
+    } else {
+      setSelectedIndex(i => i <= 0 ? maxIdx : i - 1);
+    }
+  }
+
+  function getSelection(): ResultItem | null {
+    const results = filteredResults();
+    if (results.length === 0) return null;
+    const idx = Math.min(selectedIndex(), results.length - 1);
+    return results[idx];
+  }
+
+  function reset() {
+    setQuery('');
+    setSelectedIndex(0);
+  }
+
+  return {
+    query,
+    setQuery,
+    selectedIndex,
+    setSelectedIndex,
+    filteredResults,
+    navigate,
+    getSelection,
+    reset,
+  };
+}

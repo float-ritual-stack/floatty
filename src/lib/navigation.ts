@@ -140,6 +140,11 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
     return { success: false, targetPaneId: null, error: result.error };
   }
 
+  // Focus first child so keyboard works immediately after navigation
+  if (result.focusTargetId && result.targetPaneId) {
+    paneStore.setFocusedBlockId(result.targetPaneId, result.focusTargetId);
+  }
+
   if (highlight && result.pageId && result.targetPaneId) {
     // Delay for split panes to render
     const delay = splitDirection ? 150 : 50;
