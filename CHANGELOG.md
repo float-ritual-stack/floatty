@@ -6,6 +6,20 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.36] - 2026-02-18
+
+### Features
+
+- **Command bar ⌘K** (FLO-276, PR #147): Modal command palette for page navigation and built-in commands. Type to filter pages (recency-sorted) and commands (Export JSON/Binary/Markdown). Enter navigates to page or creates new one under `pages::`. Keyboard nav with wrap, click support, ARIA combobox pattern. Theme-aware via CSS variables.
+
+### Bug Fixes
+
+- **Focus after ⌘K navigation**: First child block of the target page receives DOM focus so keyboard works immediately — no mouse click needed.
+- **Outliner pane targeting**: When focus is in a terminal pane, ⌘K now finds the first outliner pane in the layout instead of targeting the terminal.
+- **Platform-aware command dispatch**: Export commands triggered via command bar use `Ctrl` on Windows/Linux instead of hardcoded `Meta`.
+
+---
+
 ## [0.7.33] - 2026-02-18
 
 ### Bug Fixes
