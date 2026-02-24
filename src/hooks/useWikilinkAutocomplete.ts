@@ -82,11 +82,12 @@ export function getPageNamesWithTimestamps(blockStore: BlockStoreInterface): { n
     }));
 }
 
+import { PINNED_RECENT_COUNT } from './useCommandBar';
+
 /**
  * Sort page names: pin top N most recent, rest alphabetical.
  * Mirrors sortPages() from useCommandBar but for the string[] interface.
  */
-const PINNED_RECENT_COUNT = 3;
 
 export function sortPageNames(
   pages: { name: string; updatedAt: number }[]
