@@ -10,6 +10,7 @@
 import { createMemo, createSignal } from 'solid-js';
 import { findPagesContainer } from './useBacklinkNavigation';
 import type { BlockStoreInterface } from '../context/WorkspaceContext';
+import { fuzzyFilter } from '../lib/fuzzyFilter';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -82,12 +83,31 @@ export function getPageNamesWithTimestamps(blockStore: BlockStoreInterface): { n
 }
 
 /**
- * Filter page names by query (case-insensitive substring match).
+ * Sort page names: pin top N most recent, rest alphabetical.
+ * Mirrors sortPages() from useCommandBar but for the string[] interface.
+ */
+const PINNED_RECENT_COUNT = 3;
+
+export function sortPageNames(
+  pages: { name: string; updatedAt: number }[]
+): string[] {
+  if (pages.length <= PINNED_RECENT_COUNT) {
+    return [...pages].sort((a, b) => b.updatedAt - a.updatedAt).map(p => p.name);
+  }
+
+  const byRecency = [...pages].sort((a, b) => b.updatedAt - a.updatedAt);
+  const pinned = byRecency.slice(0, PINNED_RECENT_COUNT).map(p => p.name);
+  const rest = byRecency.slice(PINNED_RECENT_COUNT).sort((a, b) => a.name.localeCompare(b.name)).map(p => p.name);
+  return [...pinned, ...rest];
+}
+
+/**
+ * Filter page names by query (fuzzy match via fuse.js).
+ * Empty query returns all pages in pinned-recent order.
+ * Non-empty query returns fuzzy match-score order. FLO-389.
  */
 export function filterSuggestions(pages: string[], query: string): string[] {
-  if (!query) return pages;
-  const lower = query.toLowerCase();
-  return pages.filter(p => p.toLowerCase().includes(lower));
+  return fuzzyFilter(pages, query);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -97,8 +117,10 @@ export function filterSuggestions(pages: string[], query: string): string[] {
 export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
   const [state, setState] = createSignal<AutocompleteState | null>(null);
 
-  // Memoize page names — only recomputes when pages:: childIds change
-  const pageNames = createMemo(() => getPageNames(blockStore));
+  // Memoize page names — pinned recent (3) + alphabetical rest
+  const pageNames = createMemo(() =>
+    sortPageNames(getPageNamesWithTimestamps(blockStore))
+  );
 
   /**
    * Check for [[ trigger after content/cursor changes.

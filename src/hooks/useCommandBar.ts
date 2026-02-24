@@ -12,6 +12,7 @@ import { createSignal, createMemo, createEffect, on } from 'solid-js';
 import { blockStore } from './useBlockStore';
 import { getPageNamesWithTimestamps } from './useWikilinkAutocomplete';
 import { isMac } from '../lib/keybinds';
+import { fuzzyFilter } from '../lib/fuzzyFilter';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -45,31 +46,36 @@ export const BUILT_IN_COMMANDS: ResultItem[] = [
 // SORTING & FILTERING
 // ═══════════════════════════════════════════════════════════════
 
-/** Sort pages: recently updated first, then alphabetical. */
+/**
+ * Sort pages: pin top N most recent, then rest alphabetical.
+ * "2-3 recent at top, then the rest of the list normally."
+ */
+export const PINNED_RECENT_COUNT = 3;
+
 export function sortPages(
-  pages: { name: string; updatedAt: number }[]
+  pages: { name: string; updatedAt: number }[],
+  pinnedCount: number = PINNED_RECENT_COUNT
 ): { name: string; updatedAt: number }[] {
-  return [...pages].sort((a, b) => {
-    // Primary: updatedAt descending (most recent first)
-    if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
-    // Tiebreak: alphabetical
-    return a.name.localeCompare(b.name);
-  });
+  if (pages.length <= pinnedCount) {
+    // Everything fits in "recent" — just sort by recency
+    return [...pages].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  const byRecency = [...pages].sort((a, b) => b.updatedAt - a.updatedAt);
+  const pinned = byRecency.slice(0, pinnedCount);
+  const rest = byRecency.slice(pinnedCount).sort((a, b) => a.name.localeCompare(b.name));
+  return [...pinned, ...rest];
 }
 
 function filterPages(
   pages: { name: string; updatedAt: number }[],
   query: string
 ): { name: string; updatedAt: number }[] {
-  if (!query) return pages;
-  const lower = query.toLowerCase();
-  return pages.filter(p => p.name.toLowerCase().includes(lower));
+  return fuzzyFilter(pages, query, { keys: ['name'] });
 }
 
 function filterCommands(commands: ResultItem[], query: string): ResultItem[] {
-  if (!query) return commands;
-  const lower = query.toLowerCase();
-  return commands.filter(c => c.label.toLowerCase().includes(lower));
+  return fuzzyFilter(commands, query, { keys: ['label'] });
 }
 
 // ═══════════════════════════════════════════════════════════════

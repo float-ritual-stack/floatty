@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { detectWikilinkTrigger, filterSuggestions } from './useWikilinkAutocomplete';
+import { detectWikilinkTrigger, filterSuggestions, sortPageNames } from './useWikilinkAutocomplete';
 
 describe('detectWikilinkTrigger', () => {
   it('detects [[ at start of content', () => {
@@ -67,6 +67,31 @@ describe('detectWikilinkTrigger', () => {
   });
 });
 
+describe('sortPageNames', () => {
+  it('pins top 3 by recency, rest alphabetical', () => {
+    const pages = [
+      { name: 'Zebra', updatedAt: 50 },
+      { name: 'Alpha', updatedAt: 100 },
+      { name: 'Beta', updatedAt: 300 },
+      { name: 'Gamma', updatedAt: 200 },
+      { name: 'Delta', updatedAt: 10 },
+    ];
+    expect(sortPageNames(pages)).toEqual(['Beta', 'Gamma', 'Alpha', 'Delta', 'Zebra']);
+  });
+
+  it('all recency-sorted when fewer than 3 pages', () => {
+    const pages = [
+      { name: 'B', updatedAt: 100 },
+      { name: 'A', updatedAt: 200 },
+    ];
+    expect(sortPageNames(pages)).toEqual(['A', 'B']);
+  });
+
+  it('handles empty list', () => {
+    expect(sortPageNames([])).toEqual([]);
+  });
+});
+
 describe('filterSuggestions', () => {
   const pages = ['My Page', 'Another Page', 'Daily Notes', 'meeting notes'];
 
@@ -74,24 +99,35 @@ describe('filterSuggestions', () => {
     expect(filterSuggestions(pages, '')).toEqual(pages);
   });
 
-  it('filters case-insensitively', () => {
-    expect(filterSuggestions(pages, 'page')).toEqual(['My Page', 'Another Page']);
+  it('finds exact substring matches', () => {
+    const result = filterSuggestions(pages, 'page');
+    expect(result).toContain('My Page');
+    expect(result).toContain('Another Page');
   });
 
-  it('matches substring anywhere in name', () => {
-    // "not" matches: "A-not-her Page", "Daily Notes", "meeting notes"
-    expect(filterSuggestions(pages, 'not')).toEqual(['Another Page', 'Daily Notes', 'meeting notes']);
+  it('finds substring matches anywhere in name', () => {
+    const result = filterSuggestions(pages, 'not');
+    // "not" appears in "Another", "Notes", "notes"
+    expect(result).toContain('Another Page');
+    expect(result).toContain('Daily Notes');
+    expect(result).toContain('meeting notes');
   });
 
   it('returns empty array when nothing matches', () => {
-    expect(filterSuggestions(pages, 'xyz')).toEqual([]);
-  });
-
-  it('handles single character query', () => {
-    expect(filterSuggestions(pages, 'm')).toEqual(['My Page', 'meeting notes']);
+    expect(filterSuggestions(pages, 'zzzzxyzzy')).toEqual([]);
   });
 
   it('handles empty pages list', () => {
     expect(filterSuggestions([], 'test')).toEqual([]);
+  });
+
+  it('finds matches with typos (FLO-389)', () => {
+    const result = filterSuggestions(pages, 'Daly');
+    expect(result).toContain('Daily Notes');
+  });
+
+  it('finds matches with missing letters (FLO-389)', () => {
+    const result = filterSuggestions(pages, 'Metin');
+    expect(result).toContain('meeting notes');
   });
 });
