@@ -130,6 +130,61 @@ class TerminalManager {
   // Font config loaded from ~/.floatty/config.toml
   private config: TerminalConfig = defaultConfig;
   private configLoaded = false;
+  // Stored for HMR cleanup
+  private visibilityHandler: (() => void) | null = null;
+
+  constructor() {
+    this.visibilityHandler = () => {
+      if (document.hidden) return;
+      this.handleVisibilityRestore();
+    };
+    document.addEventListener('visibilitychange', this.visibilityHandler);
+  }
+
+  /**
+   * Recreate WebGL addon for a terminal instance.
+   * Used after re-parenting, visibility restore (sleep/wake), and initial creation.
+   */
+  private recreateWebGL(id: string, instance: TerminalInstance): void {
+    if (instance.webglAddon) {
+      try {
+        instance.webglAddon.dispose();
+      } catch (e) {
+        console.warn(`[TerminalManager] WebGL dispose failed for ${id}:`, e);
+      }
+      instance.webglAddon = null;
+    }
+
+    if (!instance.container) return;
+
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        console.warn(`[TerminalManager] WebGL context lost for ${id}, falling back to canvas`);
+        webglAddon.dispose();
+        const inst = this.instances.get(id);
+        if (inst) inst.webglAddon = null;
+      });
+      instance.term.loadAddon(webglAddon);
+      instance.webglAddon = webglAddon;
+    } catch (e) {
+      console.warn(`[TerminalManager] WebGL recreation failed for ${id}:`, e);
+      instance.webglAddon = null;
+    }
+  }
+
+  /**
+   * Recreate WebGL addons for all terminals after page becomes visible.
+   * Fixes GPU texture atlas corruption after sleep/wake cycles (FLO-390).
+   */
+  private handleVisibilityRestore(): void {
+    console.log('[TerminalManager] Visibility restored, recreating WebGL addons');
+    for (const [id, instance] of this.instances) {
+      if (this.disposing.has(id)) continue;
+      if (!instance.container) continue;
+      this.recreateWebGL(id, instance);
+    }
+  }
 
   /**
    * Load terminal config from Tauri backend
@@ -186,18 +241,7 @@ class TerminalManager {
         instance.container = container;
 
         // Re-add WebGL addon after re-opening
-        try {
-          const webglAddon = new WebglAddon();
-          webglAddon.onContextLoss(() => {
-            console.warn(`[TerminalManager] WebGL context lost for ${id}, falling back to canvas`);
-            webglAddon.dispose();
-            instance.webglAddon = null;
-          });
-          instance.term.loadAddon(webglAddon);
-          instance.webglAddon = webglAddon;
-        } catch (e) {
-          console.warn(`[TerminalManager] WebGL re-add failed for ${id}:`, e);
-        }
+        this.recreateWebGL(id, instance);
 
         instance.fitAddon.fit();
 
@@ -246,24 +290,7 @@ class TerminalManager {
 
     term.open(container);
 
-    // Track webgl addon for proper disposal during re-parenting
-    let webglAddon: WebglAddon | null = null;
-
-    // Optional addons (fail gracefully)
-    try {
-      webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        console.warn(`[TerminalManager] WebGL context lost for ${id}, falling back to canvas`);
-        webglAddon?.dispose();
-        // Fetch instance from map at callback time to avoid stale closure
-        const inst = this.instances.get(id);
-        if (inst) inst.webglAddon = null;
-      });
-      term.loadAddon(webglAddon);
-    } catch (e) {
-      console.warn(`[TerminalManager] WebGL addon failed for ${id}:`, e);
-      webglAddon = null;
-    }
+    // WebGL addon added after instance creation via recreateWebGL()
 
     try {
       term.loadAddon(new LigaturesAddon());
@@ -294,7 +321,7 @@ class TerminalManager {
     instance = {
       term,
       fitAddon,
-      webglAddon,
+      webglAddon: null,
       ptyPid: null,
       title: 'Terminal',
       container,
@@ -311,6 +338,9 @@ class TerminalManager {
     };
     this.instances.set(id, instance);
     this.seenMarkers.set(id, new Set());
+
+    // Add WebGL addon (must be after term.open and instance creation)
+    this.recreateWebGL(id, instance);
 
     // OSC 133 handler - Semantic Prompts (FLO-54)
     // Sequences: A=prompt start, B=command start, C=command exec, D;code=command done
@@ -1217,6 +1247,11 @@ export const terminalManager = new TerminalManager();
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     console.log('[terminalManager] HMR cleanup');
+    // Remove visibilitychange listener
+    if (terminalManager['visibilityHandler']) {
+      document.removeEventListener('visibilitychange', terminalManager['visibilityHandler']);
+      terminalManager['visibilityHandler'] = null;
+    }
     // Clear pending restoration timeout (prevents stale callback after HMR)
     if (terminalManager['restorationTimeout']) {
       clearTimeout(terminalManager['restorationTimeout']);
