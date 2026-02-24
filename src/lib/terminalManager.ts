@@ -163,7 +163,8 @@ class TerminalManager {
         console.warn(`[TerminalManager] WebGL context lost for ${id}, falling back to canvas`);
         webglAddon.dispose();
         const inst = this.instances.get(id);
-        if (inst) inst.webglAddon = null;
+        // Only null if this is still the active addon (a newer one may have replaced it)
+        if (inst && inst.webglAddon === webglAddon) inst.webglAddon = null;
       });
       instance.term.loadAddon(webglAddon);
       instance.webglAddon = webglAddon;
@@ -178,11 +179,16 @@ class TerminalManager {
    * Fixes GPU texture atlas corruption after sleep/wake cycles (FLO-390).
    */
   private handleVisibilityRestore(): void {
-    console.log('[TerminalManager] Visibility restored, recreating WebGL addons');
+    if (this.instances.size === 0) return;
+    let restored = 0;
     for (const [id, instance] of this.instances) {
       if (this.disposing.has(id)) continue;
       if (!instance.container) continue;
       this.recreateWebGL(id, instance);
+      restored++;
+    }
+    if (restored > 0) {
+      console.log(`[TerminalManager] Visibility restored, recreated WebGL for ${restored} terminal(s)`);
     }
   }
 
