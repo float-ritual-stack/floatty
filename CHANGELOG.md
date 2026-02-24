@@ -6,6 +6,14 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.37] - 2026-02-24
+
+### Features
+
+- **Fuzzy autocomplete** (FLO-389, PR #148): Typo-tolerant matching for `[[` wikilinks and `⌘K` command bar via fuse.js. `[[sun` finds "fun in the sun". Pinned recent: top 3 most-recently-edited pages shown first, rest alphabetical.
+
+---
+
 ## [0.7.36] - 2026-02-18
 
 ### Features
