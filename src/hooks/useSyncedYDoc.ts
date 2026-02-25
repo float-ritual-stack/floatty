@@ -701,6 +701,49 @@ function generateTxId(): string {
   return id;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// ECHO GAP DEBOUNCE (FLO-391)
+// ═══════════════════════════════════════════════════════════════
+// Server-side hooks (MetadataExtraction, InheritanceIndex) persist updates
+// that consume seq numbers but — prior to FLO-391 — weren't broadcast.
+// Now they ARE broadcast, but there's a timing race: the hook runs on
+// spawn_blocking, so during fast typing the next client echo can arrive
+// before the hook's broadcast. Debouncing echo gap-fill by 200ms lets
+// hook broadcasts fill the gap naturally.
+
+let echoGapTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingEchoGap: { fromSeq: number; toSeq: number } | null = null;
+
+function scheduleEchoGapFetch(fromSeq: number, toSeq: number): void {
+  // Merge with existing pending gap if present
+  if (pendingEchoGap) {
+    pendingEchoGap.fromSeq = Math.min(pendingEchoGap.fromSeq, fromSeq);
+    pendingEchoGap.toSeq = Math.max(pendingEchoGap.toSeq, toSeq);
+  } else {
+    pendingEchoGap = { fromSeq, toSeq };
+  }
+
+  // Reset timer
+  if (echoGapTimer) clearTimeout(echoGapTimer);
+  echoGapTimer = setTimeout(() => {
+    echoGapTimer = null;
+    if (!pendingEchoGap) return;
+
+    // Check if gap was filled by intervening messages (hook broadcasts)
+    const contiguous = seqTracker.lastContiguousSeq;
+    if (contiguous !== null && contiguous >= pendingEchoGap.toSeq - 1) {
+      console.debug('[WS] Echo gap resolved by hook broadcasts, skipping fetch');
+      pendingEchoGap = null;
+      return;
+    }
+
+    // Gap still open — genuine missed update, fetch it
+    console.warn(`[WS] Echo gap persisted after debounce, fetching: ${pendingEchoGap.fromSeq} → ${pendingEchoGap.toSeq}`);
+    queueGapFetch(pendingEchoGap.fromSeq, pendingEchoGap.toSeq);
+    pendingEchoGap = null;
+  }, 200);
+}
+
 /**
  * Apply a WebSocket message to the Y.Doc.
  * Extracted to support buffering during reconnect (FLO-152).
@@ -716,11 +759,12 @@ function applyWsMessage(msg: WsMessage) {
 
     // Gap detection for echoed messages via tracker
     // Our message's seq may reveal we missed updates from other clients
+    // FLO-391: Debounce echo gap-fill by 200ms — hook broadcasts arrive in that window
     if (msg.seq !== undefined) {
       const gap = seqTracker.observeEcho(msg.seq);
       if (gap) {
-        console.warn(`[WS] Gap detected (echo): ${gap.fromSeq} → ${gap.toSeq} (missing ${gap.toSeq - gap.fromSeq - 1} updates)`);
-        queueGapFetch(gap.fromSeq, gap.toSeq);
+        console.debug(`[WS] Echo gap (${gap.fromSeq} → ${gap.toSeq}), deferring fetch 200ms for hook broadcasts`);
+        scheduleEchoGapFetch(gap.fromSeq, gap.toSeq);
       }
     }
     return;
@@ -1688,6 +1732,11 @@ function cleanupForHMR(): void {
     clearTimeout(contiguousSeqPersistTimer);
     contiguousSeqPersistTimer = null;
   }
+  if (echoGapTimer) {
+    clearTimeout(echoGapTimer);
+    echoGapTimer = null;
+  }
+  pendingEchoGap = null;
 
   // Remove Y.Doc update handler if attached
   if (moduleUpdateHandler) {

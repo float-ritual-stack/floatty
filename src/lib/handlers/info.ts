@@ -23,7 +23,7 @@ import { findOutputChild } from './utils';
 async function handleBuild(config: AggregatorConfig): Promise<string> {
   let version = '(health endpoint unreachable)';
   try {
-    const resp = await fetch(`http://127.0.0.1:${config.server_port}/health`);
+    const resp = await fetch(`http://127.0.0.1:${config.server_port}/api/v1/health`);
     if (resp.ok) {
       const health = await resp.json() as { version?: string; gitSha?: string; gitDirty?: boolean };
       version = `${health.version || 'unknown'}${health.gitSha ? ` (${health.gitSha}${health.gitDirty ? '-dirty' : ''})` : ''}`;

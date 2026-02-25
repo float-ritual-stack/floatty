@@ -97,6 +97,16 @@ async fn main() {
     // FLO-152: Bumped from 64 to 256 to reduce likelihood of Lagged errors
     let broadcaster = Arc::new(WsBroadcaster::new(256));
 
+    // FLO-391: Wire broadcast callback so hook metadata updates (which persist to
+    // SQLite and consume seq numbers) also broadcast via WebSocket. Without this,
+    // hook seqs create invisible gaps that trigger client-side gap-fill storms.
+    {
+        let broadcaster_clone = Arc::clone(&broadcaster);
+        store.set_broadcast_callback(move |update, seq| {
+            broadcaster_clone.broadcast(update, None, Some(seq));
+        });
+    }
+
     // Start heartbeat task - broadcasts latest seq every 30s if no updates sent
     // This closes the non-atomic persist-broadcast window gap
     start_heartbeat(Arc::clone(&broadcaster), Arc::clone(&store));

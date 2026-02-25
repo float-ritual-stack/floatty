@@ -178,6 +178,10 @@ fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
 /// Callback type for change notifications.
 pub type ChangeCallback = Arc<dyn Fn(Vec<BlockChange>) + Send + Sync>;
 
+/// Callback type for broadcasting hook-generated updates via WebSocket.
+/// Parameters: (update_bytes, seq_number)
+pub type BroadcastCallback = Box<dyn Fn(Vec<u8>, i64) + Send + Sync>;
+
 /// Minimal block snapshot for change detection.
 /// Only stores fields needed for BlockChange generation.
 #[derive(Clone, Debug)]
@@ -215,6 +219,11 @@ pub struct YDocStore {
     /// Optional callback for block change notifications.
     /// Set via `set_change_callback()` to enable hook integration.
     change_callback: RwLock<Option<ChangeCallback>>,
+    /// Optional callback to broadcast hook-generated updates via WebSocket.
+    /// Set via `set_broadcast_callback()`. Called by hook metadata methods
+    /// (batch_update_metadata, update_block_metadata) so their seq numbers
+    /// appear in the WS stream instead of creating invisible gaps (FLO-391).
+    broadcast_callback: std::sync::Mutex<Option<BroadcastCallback>>,
 }
 
 impl YDocStore {
@@ -291,6 +300,7 @@ impl YDocStore {
             doc_key: doc_key.to_string(),
             updates_since_compact_check: AtomicI64::new(0),
             change_callback: RwLock::new(None),
+            broadcast_callback: std::sync::Mutex::new(None),
         })
     }
 
@@ -321,6 +331,28 @@ impl YDocStore {
                 Ok(())
             }
             Err(e) => Err(format!("Failed to set change callback (lock poisoned): {}", e)),
+        }
+    }
+
+    /// Set a callback to broadcast hook-generated updates via WebSocket (FLO-391).
+    ///
+    /// Hook methods (`batch_update_metadata`, `update_block_metadata`) call `persist_update()`
+    /// which consumes real seq numbers but doesn't broadcast. Without this callback, those
+    /// seqs become invisible gaps that trigger client-side gap-fill request storms.
+    ///
+    /// The callback receives `(update_bytes, seq)` and should broadcast via WebSocket
+    /// with no txId (so clients treat hook updates as external messages).
+    pub fn set_broadcast_callback(&self, cb: impl Fn(Vec<u8>, i64) + Send + Sync + 'static) {
+        *self.broadcast_callback.lock().unwrap() = Some(Box::new(cb));
+    }
+
+    /// Fire the broadcast callback if set.
+    /// Called after hook metadata methods persist their updates.
+    fn fire_broadcast(&self, update: &[u8], seq: i64) {
+        if let Ok(guard) = self.broadcast_callback.lock() {
+            if let Some(ref cb) = *guard {
+                cb(update.to_vec(), seq);
+            }
         }
     }
 
@@ -910,8 +942,9 @@ impl YDocStore {
             return Ok(());
         }
 
-        // Persist the single combined update
-        self.persist_update(&update)?;
+        // Persist the single combined update and broadcast via WS (FLO-391)
+        let seq = self.persist_update(&update)?;
+        self.fire_broadcast(&update, seq);
 
         // Emit MetadataChanged events for all written blocks
         let old_map: std::collections::HashMap<&str, Option<serde_json::Value>> = old_metadata
@@ -983,8 +1016,9 @@ impl YDocStore {
         };
         drop(doc);
 
-        // Persist the update
-        self.persist_update(&update)?;
+        // Persist the update and broadcast via WS (FLO-391)
+        let seq = self.persist_update(&update)?;
+        self.fire_broadcast(&update, seq);
 
         // Emit MetadataChanged event so downstream hooks (TantivyIndexHook) are notified
         let new_metadata = serde_json::to_value(&metadata).ok();
@@ -1516,5 +1550,101 @@ mod tests {
         let mut ids = store.get_all_block_ids();
         ids.sort();
         assert_eq!(ids, vec!["b1", "b2", "b3"]);
+    }
+
+    // =========================================================================
+    // Broadcast Callback Tests (FLO-391)
+    // =========================================================================
+
+    /// Helper: insert a block into the store for metadata update tests.
+    fn insert_test_block(store: &YDocStore, block_id: &str, content: &str) {
+        let doc = store.doc();
+        let doc_guard = doc.write().unwrap();
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let block_prelim: MapPrelim = MapPrelim::from([
+            ("content", yrs::Any::String(content.into())),
+        ]);
+        blocks.insert(&mut txn, block_id, block_prelim);
+    }
+
+    #[test]
+    fn test_broadcast_callback_fires_on_batch_update_metadata() {
+        use std::sync::Mutex;
+
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let calls: Arc<Mutex<Vec<(usize, i64)>>> = Arc::new(Mutex::new(Vec::new()));
+        let calls_clone = Arc::clone(&calls);
+        store.set_broadcast_callback(move |bytes, seq| {
+            calls_clone.lock().unwrap().push((bytes.len(), seq));
+        });
+
+        insert_test_block(&store, "b1", "hello");
+        insert_test_block(&store, "b2", "world");
+
+        let meta = crate::metadata::BlockMetadata::new();
+        store.batch_update_metadata(
+            &[("b1", meta.clone()), ("b2", meta)],
+            crate::Origin::Hook,
+        ).unwrap();
+
+        let recorded = calls.lock().unwrap();
+        assert_eq!(recorded.len(), 1, "batch_update_metadata should fire broadcast once");
+        assert!(recorded[0].0 > 0, "broadcast bytes should be non-empty");
+        assert!(recorded[0].1 > 0, "broadcast seq should be positive");
+    }
+
+    #[test]
+    fn test_broadcast_callback_fires_on_update_block_metadata() {
+        use std::sync::Mutex;
+
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let calls: Arc<Mutex<Vec<(usize, i64)>>> = Arc::new(Mutex::new(Vec::new()));
+        let calls_clone = Arc::clone(&calls);
+        store.set_broadcast_callback(move |bytes, seq| {
+            calls_clone.lock().unwrap().push((bytes.len(), seq));
+        });
+
+        insert_test_block(&store, "b1", "ctx:: test");
+
+        let meta = crate::metadata::BlockMetadata::new();
+        store.update_block_metadata("b1", meta, crate::Origin::Hook).unwrap();
+
+        let recorded = calls.lock().unwrap();
+        assert_eq!(recorded.len(), 1, "update_block_metadata should fire broadcast once");
+        assert!(recorded[0].0 > 0);
+        assert!(recorded[0].1 > 0);
+    }
+
+    #[test]
+    fn test_persist_update_does_not_fire_broadcast_callback() {
+        use std::sync::Mutex;
+
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("test.db"), "test").unwrap();
+
+        let calls: Arc<Mutex<Vec<(usize, i64)>>> = Arc::new(Mutex::new(Vec::new()));
+        let calls_clone = Arc::clone(&calls);
+        store.set_broadcast_callback(move |bytes, seq| {
+            calls_clone.lock().unwrap().push((bytes.len(), seq));
+        });
+
+        // Create an update via the doc and persist directly (CRUD path)
+        let update = {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            blocks.insert(&mut txn, "b1", "content");
+            txn.encode_update_v1()
+        };
+        store.persist_update(&update).unwrap();
+
+        let recorded = calls.lock().unwrap();
+        assert!(recorded.is_empty(), "persist_update should NOT fire broadcast callback");
     }
 }
