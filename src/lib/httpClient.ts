@@ -206,6 +206,24 @@ class HttpClient implements FloattyHttpClient {
     };
   }
 
+  /**
+   * Fetch the JSON export from the server (FLO-393).
+   * Single source of truth — both ⌘⇧J and API consumers use this path.
+   * Returns the raw JSON string (caller handles save dialog).
+   */
+  async exportJSON(): Promise<string> {
+    const response = await fetch(`${this.url}/api/v1/export/json`, {
+      method: 'GET',
+      headers: this.headers(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to export JSON: ${response.status} ${response.statusText}`);
+    }
+
+    return response.text();
+  }
+
   async getUpdatesSince(since: number, limit: number = 100): Promise<UpdatesSinceResult> {
     const url = new URL(`${this.url}/api/v1/updates`);
     url.searchParams.set('since', String(since));

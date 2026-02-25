@@ -1,7 +1,10 @@
 /**
- * jsonExport.ts - Human-readable JSON export with validation
+ * jsonExport.ts - JSON export types and file save utility
  *
  * FLO-247: Insurance against another 9-hour hell loop.
+ * FLO-393: Single export path — server is the sole producer of export JSON.
+ *          This file provides types (for consumers that parse exports) and
+ *          the save-to-disk utility. No local serialization.
  *
  * IMPORTANT: This is a LOSSY export - CRDT metadata (vector clocks,
  * tombstones, operation ordering) is NOT preserved. For perfect restore,
@@ -13,7 +16,6 @@
  * - Debugging structural issues
  */
 
-import type { Block } from '../hooks/useBlockStore';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 
@@ -29,7 +31,7 @@ export interface ExportedBlock {
 }
 
 export interface ExportedOutline {
-  version: 1;
+  version: number;
   exported: string;
   blockCount: number;
   rootIds: string[];
@@ -37,93 +39,13 @@ export interface ExportedOutline {
 }
 
 /**
- * Convert block store state to exportable JSON structure.
- */
-export function exportOutlineToJSON(
-  blocksRecord: Record<string, Block>,
-  rootIds: string[]
-): ExportedOutline {
-  const blocks: ExportedOutline['blocks'] = {};
-
-  for (const [id, block] of Object.entries(blocksRecord)) {
-    // Clone arrays/objects to detach from SolidJS store proxies
-    blocks[id] = {
-      content: block.content,
-      parentId: block.parentId || null,
-      childIds: block.childIds ? [...block.childIds] : [],
-      type: block.type || 'text',
-      collapsed: block.collapsed || false,
-      createdAt: block.createdAt || 0,
-      updatedAt: block.updatedAt || 0,
-      metadata: block.metadata ? { ...block.metadata } : {},
-    };
-  }
-
-  return {
-    version: 1,
-    exported: new Date().toISOString(),
-    blockCount: Object.keys(blocks).length,
-    rootIds: [...rootIds], // Clone to detach from store
-    blocks,
-  };
-}
-
-/**
- * Validate export integrity before download.
- *
- * CRITICAL: Prevents exporting garbage that can't be restored.
- */
-export function validateExport(exported: ExportedOutline): { valid: boolean; errors: string[] } {
-  const errors: string[] = [];
-
-  // 1. All childIds must exist
-  for (const [id, block] of Object.entries(exported.blocks)) {
-    for (const childId of block.childIds) {
-      if (!exported.blocks[childId]) {
-        errors.push(`Block ${id} has childId ${childId} that doesn't exist`);
-      }
-    }
-  }
-
-  // 2. All parentIds must exist (or be null)
-  for (const [id, block] of Object.entries(exported.blocks)) {
-    if (block.parentId && !exported.blocks[block.parentId]) {
-      errors.push(`Block ${id} has parentId ${block.parentId} that doesn't exist`);
-    }
-  }
-
-  // 3. rootIds must exist
-  for (const rootId of exported.rootIds) {
-    if (!exported.blocks[rootId]) {
-      errors.push(`Root ${rootId} doesn't exist in blocks`);
-    }
-  }
-
-  // 4. Block count must match
-  const actualCount = Object.keys(exported.blocks).length;
-  if (actualCount !== exported.blockCount) {
-    errors.push(`blockCount ${exported.blockCount} doesn't match actual ${actualCount}`);
-  }
-
-  // 5. Root blocks should have null parentId
-  for (const rootId of exported.rootIds) {
-    const block = exported.blocks[rootId];
-    if (block && block.parentId !== null) {
-      errors.push(`Root ${rootId} has non-null parentId: ${block.parentId}`);
-    }
-  }
-
-  return { valid: errors.length === 0, errors };
-}
-
-/**
- * Download validated JSON export to user's filesystem.
+ * Save JSON export string to user's filesystem.
  * Uses Tauri save dialog to avoid Downloads folder permission issues.
+ *
+ * Accepts a pre-serialized JSON string (from server via httpClient.exportJSON()).
  */
-export async function downloadJSON(data: ExportedOutline, filename?: string): Promise<void> {
+export async function downloadJSON(json: string, filename?: string): Promise<void> {
   try {
-    const json = JSON.stringify(data, null, 2);
-
     // Generate default filename with timestamp
     const iso = new Date().toISOString();
     const date = iso.slice(0, 10);

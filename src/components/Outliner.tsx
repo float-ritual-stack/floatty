@@ -12,7 +12,9 @@ import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
 import { invoke, type AggregatorConfig } from '../lib/tauriTypes';
-import { exportOutlineToJSON, downloadJSON } from '../lib/jsonExport';
+import { downloadJSON } from '../lib/jsonExport';
+import type { ExportedOutline } from '../lib/jsonExport';
+import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import { downloadBinary } from '../lib/binaryExport';
 import { validateForExport, type ValidationWarning } from '../lib/validation';
 import { ExportValidation } from './ExportValidation';
@@ -38,7 +40,7 @@ export function Outliner(props: OutlinerProps) {
 
   // FLO-349: Non-blocking export validation
   const [exportWarnings, setExportWarnings] = createSignal<ValidationWarning[] | null>(null);
-  const [pendingExportData, setPendingExportData] = createSignal<ReturnType<typeof exportOutlineToJSON> | null>(null);
+  const [pendingExportData, setPendingExportData] = createSignal<{ json: string; parsed: ExportedOutline } | null>(null);
 
   // FLO-197/P5: Gate render on config loaded (prevents 10K render freeze)
   // For split panes (props.initialCollapseDepth set), ready immediately after applying depth
@@ -272,19 +274,26 @@ export function Outliner(props: OutlinerProps) {
     (document.activeElement as HTMLElement)?.blur();
 
     try {
-      const data = exportOutlineToJSON(store.blocks, store.rootIds);
+      // FLO-393: Single export path — fetch from server (same as /api/v1/export/json)
+      if (!isClientInitialized()) {
+        throw new Error('Server not connected');
+      }
+      const httpClient = getHttpClient();
+      const json = await httpClient.exportJSON();
+      const data = JSON.parse(json) as ExportedOutline;
+
       const validation = validateForExport(data);
 
       if (validation.warnings.length > 0) {
         // FLO-349: Show warnings panel, let user decide
         console.log(`[FLO-349] Export has ${validation.warnings.length} warnings`);
         setExportWarnings(validation.warnings);
-        setPendingExportData(data);
+        setPendingExportData({ json, parsed: data });
         return;
       }
 
       // No warnings — export directly
-      await downloadJSON(data);
+      await downloadJSON(json);
       console.log(`[FLO-247] Exported ${data.blockCount} blocks to JSON`);
     } catch (err) {
       console.error('[FLO-247] JSON export failed:', err);
@@ -293,14 +302,14 @@ export function Outliner(props: OutlinerProps) {
   };
 
   const handleExportAnyway = async () => {
-    const data = pendingExportData();
+    const pending = pendingExportData();
     setExportWarnings(null);
     setPendingExportData(null);
-    if (!data) return;
+    if (!pending) return;
 
     try {
-      await downloadJSON(data);
-      console.log(`[FLO-349] Exported ${data.blockCount} blocks to JSON (with warnings)`);
+      await downloadJSON(pending.json);
+      console.log(`[FLO-349] Exported ${pending.parsed.blockCount} blocks to JSON (with warnings)`);
     } catch (err) {
       console.error('[FLO-349] JSON export failed:', err);
       alert(`JSON export failed: ${err}`);
