@@ -22,16 +22,18 @@ import type { Block } from '../lib/blockTypes';
 const PAGES_PREFIX = 'pages::';
 
 /**
- * Strip heading prefix (# ## ### etc) from a string.
- * Used for case-insensitive page matching.
+ * Extract page title from block content: first line only, heading prefix stripped.
+ * Handles multi-line pages where metadata lives on subsequent lines.
  *
  * Examples:
  *   "# My Page" → "My Page"
+ *   "# Summary\n[board:: recon]" → "Summary"
  *   "### Deep" → "Deep"
  *   "No prefix" → "No prefix"
  */
-function stripHeadingPrefix(content: string): string {
-  return content.replace(/^#+\s*/, '');
+export function getPageTitle(content: string): string {
+  const firstLine = content.split('\n')[0];
+  return firstLine.replace(/^#+\s*/, '').trim();
 }
 
 /**
@@ -81,13 +83,13 @@ export function findPage(pageName: string): Block | null {
   const pagesContainer = findPagesContainer();
   if (!pagesContainer) return null;
 
-  const normalizedName = stripHeadingPrefix(pageName.trim()).toLowerCase();
+  const normalizedName = getPageTitle(pageName.trim()).toLowerCase();
   const { blocks } = blockStore;
 
   for (const childId of pagesContainer.childIds) {
     const child = blocks[childId];
     if (child) {
-      const childName = stripHeadingPrefix(child.content.trim()).toLowerCase();
+      const childName = getPageTitle(child.content.trim()).toLowerCase();
       if (childName === normalizedName) {
         return child;
       }
@@ -110,13 +112,13 @@ export function findPage(pageName: string): Block | null {
 export function findBacklinks(pageName: string): Block[] {
   const { blocks } = blockStore;
   // Strip heading prefix since links use bare names like [[My Page]]
-  const normalizedName = stripHeadingPrefix(pageName.trim()).toLowerCase();
+  const normalizedName = getPageTitle(pageName.trim()).toLowerCase();
 
   const backlinks: Block[] = [];
 
   for (const block of Object.values(blocks)) {
     // Skip the page itself (we don't want self-references)
-    const blockName = stripHeadingPrefix(block.content.trim()).toLowerCase();
+    const blockName = getPageTitle(block.content.trim()).toLowerCase();
     if (blockName === normalizedName) continue;
 
     // Extract all wikilink targets (including nested)
