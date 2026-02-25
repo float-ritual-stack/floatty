@@ -6,6 +6,15 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.39] - 2026-02-24
+
+### Bug Fixes
+
+- **Echo gap storm** (FLO-391, PR #151): Server-side hooks (MetadataExtraction, InheritanceIndex) consumed seq numbers without broadcasting via WebSocket, causing ~20 gap-fill HTTP requests/sec during typing. Fixed with server broadcast callback on hook mutations + client-side 200ms echo gap debounce. Downstream: resolves FLO-392 selection+delete corruption caused by gap-storm-triggered resyncs.
+- **info:: build health endpoint** (sweep find): Fixed wrong URL (`/health` → `/api/v1/health`) — `info:: build` was always showing "(health endpoint unreachable)".
+
+---
+
 ## [0.7.38] - 2026-02-24
 
 ### Bug Fixes
