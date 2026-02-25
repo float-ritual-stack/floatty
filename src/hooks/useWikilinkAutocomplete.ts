@@ -8,7 +8,7 @@
  */
 
 import { createMemo, createSignal } from 'solid-js';
-import { findPagesContainer } from './useBacklinkNavigation';
+import { findPagesContainer, getPageTitle } from './useBacklinkNavigation';
 import type { BlockStoreInterface } from '../context/WorkspaceContext';
 import { fuzzyFilter } from '../lib/fuzzyFilter';
 
@@ -63,7 +63,7 @@ export function getPageNames(blockStore: BlockStoreInterface): string[] {
   return container.childIds
     .map(id => blockStore.blocks[id])
     .filter(Boolean)
-    .map(b => b.content.replace(/^#+\s*/, ''));
+    .map(b => getPageTitle(b.content));
 }
 
 /**
@@ -77,7 +77,7 @@ export function getPageNamesWithTimestamps(blockStore: BlockStoreInterface): { n
     .map(id => blockStore.blocks[id])
     .filter(Boolean)
     .map(b => ({
-      name: b.content.replace(/^#+\s*/, ''),
+      name: getPageTitle(b.content),
       updatedAt: b.updatedAt ?? 0,
     }));
 }
