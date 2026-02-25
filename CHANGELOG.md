@@ -6,6 +6,15 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.38] - 2026-02-24
+
+### Bug Fixes
+
+- **WebGL font corruption on wake** (FLO-390, PR #149): Recreate WebGL addons on `visibilitychange` to prevent garbled terminal glyphs after sleep/display changes. Consolidated 3 inline creation sites into `recreateWebGL()`.
+- **Multi-line page title matching** (PR #150): Pages with metadata on subsequent lines (`[board:: recon]`, `[relates:: ...]`) couldn't be found via `[[Title]]`. New `getPageTitle()` extracts first line only before matching. Autocomplete also shows clean titles.
+
+---
+
 ## [0.7.37] - 2026-02-24
 
 ### Features
