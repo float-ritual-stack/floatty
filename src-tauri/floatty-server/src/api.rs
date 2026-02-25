@@ -440,6 +440,7 @@ pub fn create_router(
         .route("/api/v1/export/json", get(export_json))
         // Topology (lightweight graph projection)
         .route("/api/v1/topology", get(get_topology))
+        .route("/api/v1/topology/content/:pageName", get(get_page_content))
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
         .route("/api/v1/blocks", post(create_block))
@@ -960,13 +961,35 @@ async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse,
     ))
 }
 
+/// Query parameters for GET /api/v1/topology
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopologyQuery {
+    /// Max content lines per page (default: 30, 0 = omit content entirely)
+    #[serde(default = "default_max_lines")]
+    pub max_lines: usize,
+    /// Max chars per content line (default: 90)
+    #[serde(default = "default_max_line_len")]
+    pub max_line_len: usize,
+}
+
+fn default_max_lines() -> usize { 30 }
+fn default_max_line_len() -> usize { 90 }
+
 /// GET /api/v1/topology - Lightweight graph projection for the Passenger Manifest.
 ///
 /// Returns page nodes, edges (outlinks between pages), truncated content, daily rhythm,
 /// and summary metadata. Much smaller than /api/v1/export/json (~50KB vs ~774KB).
 ///
+/// Query params: ?maxLines=30&maxLineLen=90 (defaults shown)
+///
 /// Data sources: PageNameIndex (existing pages, stubs, reference counts) + Y.Doc (blocks).
-async fn get_topology(State(state): State<AppState>) -> Result<Json<TopologyResponse>, ApiError> {
+async fn get_topology(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<TopologyQuery>,
+) -> Result<Json<TopologyResponse>, ApiError> {
+    let max_lines = query.max_lines;
+    let max_line_len = query.max_line_len;
     let page_index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
@@ -1182,7 +1205,7 @@ async fn get_topology(State(state): State<AppState>) -> Result<Json<TopologyResp
                     let snippets = backlink_snippets.entry(link_lower).or_default();
                     if snippets.len() < 20 {
                         let line = info.content.lines().next().unwrap_or("").trim();
-                        let truncated: String = line.chars().take(90).collect();
+                        let truncated: String = line.chars().take(max_line_len).collect();
                         if !truncated.is_empty() {
                             snippets.push((0, truncated));
                         }
@@ -1226,6 +1249,7 @@ async fn get_topology(State(state): State<AppState>) -> Result<Json<TopologyResp
         root_page_id: &str,
         parent_map: &std::collections::HashMap<String, String>,
         max_lines: usize,
+        max_line_len: usize,
     ) {
         let mut stack = vec![start_id.to_string()];
         let mut visited = std::collections::HashSet::new();
@@ -1238,11 +1262,11 @@ async fn get_topology(State(state): State<AppState>) -> Result<Json<TopologyResp
                 for ol in &info.outlinks {
                     outlinks.insert(ol.to_lowercase());
                 }
-                if block_id != root_page_id && content_lines.len() < max_lines {
+                if max_lines > 0 && block_id != root_page_id && content_lines.len() < max_lines {
                     let line = info.content.lines().next().unwrap_or("").trim().to_string();
                     if !line.is_empty() {
                         let depth = depth_from_page(&block_id, root_page_id, parent_map);
-                        let truncated: String = line.chars().take(90).collect();
+                        let truncated: String = line.chars().take(max_line_len).collect();
                         content_lines.push((depth.min(5) as u8, truncated));
                     }
                 }
@@ -1282,7 +1306,7 @@ async fn get_topology(State(state): State<AppState>) -> Result<Json<TopologyResp
         let mut count = 0usize;
         let mut outlinks = std::collections::HashSet::new();
         let mut lines = Vec::new();
-        walk_subtree(page_id, &all_blocks, &mut count, &mut outlinks, &mut lines, page_id, &parent_map, 30);
+        walk_subtree(page_id, &all_blocks, &mut count, &mut outlinks, &mut lines, page_id, &parent_map, max_lines, max_line_len);
         page_subtree_counts.insert(page_name.clone(), count);
         page_outlinks.insert(page_name.clone(), outlinks);
         let truncated_id: String = page_name.chars().take(55).collect();
@@ -1360,6 +1384,136 @@ async fn get_topology(State(state): State<AppState>) -> Result<Json<TopologyResp
         content: content_map,
         daily,
         meta,
+    }))
+}
+
+/// Response for GET /api/v1/topology/content/:pageName
+#[derive(Serialize, Deserialize)]
+pub struct PageContentResponse {
+    pub name: String,
+    pub lines: Vec<(u8, String)>,
+    pub block_count: usize,
+}
+
+/// GET /api/v1/topology/content/:pageName - Full content for a single page.
+///
+/// Returns the complete outline content for a page (no line/char limits).
+/// Use this for on-demand content loading when a user clicks a node in the manifest.
+async fn get_page_content(
+    State(state): State<AppState>,
+    Path(page_name): Path<String>,
+) -> Result<Json<PageContentResponse>, ApiError> {
+    let page_index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let normalized = page_name.to_lowercase();
+
+    // Find the page block ID from pages:: container
+    let pages_container_id = page_index.pages_container_id().map(String::from);
+    let mut page_block_id: Option<String> = None;
+
+    if let (Some(ref container_id), Some(blocks_map)) = (&pages_container_id, txn.get_map("blocks")) {
+        if let Some(yrs::Out::YMap(container)) = blocks_map.get(&txn, container_id.as_str()) {
+            if let Some(yrs::Out::YArray(child_ids_arr)) = container.get(&txn, "childIds") {
+                for val in child_ids_arr.iter(&txn) {
+                    if let yrs::Out::Any(yrs::Any::String(child_id)) = val {
+                        if let Some(yrs::Out::YMap(child_block)) = blocks_map.get(&txn, child_id.as_ref()) {
+                            let content = child_block
+                                .get(&txn, "content")
+                                .and_then(|v| match v {
+                                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            let name = strip_heading_prefix(&content).to_lowercase();
+                            if name == normalized {
+                                page_block_id = Some(child_id.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let page_id = page_block_id.ok_or_else(|| ApiError::NotFound(format!("Page not found: {}", page_name)))?;
+
+    // Collect all blocks for subtree walk
+    let mut all_blocks: std::collections::HashMap<String, (String, Vec<String>)> = std::collections::HashMap::new();
+    let mut parent_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    if let Some(blocks_map) = txn.get_map("blocks") {
+        for (key, value) in blocks_map.iter(&txn) {
+            if let yrs::Out::YMap(block_map) = value {
+                let content = block_map
+                    .get(&txn, "content")
+                    .and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let child_ids: Vec<String> = block_map
+                    .get(&txn, "childIds")
+                    .and_then(|v| match v {
+                        yrs::Out::YArray(arr) => Some(
+                            arr.iter(&txn)
+                                .filter_map(|v| match v {
+                                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                    _ => None,
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                if let Some(yrs::Out::Any(yrs::Any::String(pid))) = block_map.get(&txn, "parentId") {
+                    parent_map.insert(key.to_string(), pid.to_string());
+                }
+                all_blocks.insert(key.to_string(), (content, child_ids));
+            }
+        }
+    }
+
+    // Walk subtree — no limits
+    let mut lines = Vec::new();
+    let mut block_count = 0usize;
+    let mut stack = vec![page_id.clone()];
+    let mut visited = std::collections::HashSet::new();
+
+    while let Some(block_id) = stack.pop() {
+        if !visited.insert(block_id.clone()) {
+            continue;
+        }
+        if let Some((content, child_ids)) = all_blocks.get(&block_id) {
+            block_count += 1;
+            if block_id != page_id {
+                let line = content.lines().next().unwrap_or("").trim().to_string();
+                if !line.is_empty() {
+                    // Depth from page root
+                    let mut d: usize = 0;
+                    let mut cur = block_id.clone();
+                    while cur != page_id && d < 20 {
+                        match parent_map.get(&cur) {
+                            Some(pid) => { cur = pid.clone(); d += 1; }
+                            None => break,
+                        }
+                    }
+                    lines.push((d.saturating_sub(1).min(10) as u8, line));
+                }
+            }
+            for child_id in child_ids.iter().rev() {
+                stack.push(child_id.clone());
+            }
+        }
+    }
+
+    Ok(Json(PageContentResponse {
+        name: normalized,
+        lines,
+        block_count,
     }))
 }
 
@@ -4447,5 +4601,67 @@ mod tests {
         let beta_node = topo.nodes.iter().find(|n| n.id == "beta").expect("Beta node");
         assert_eq!(beta_node.b, 1); // just itself
         assert_eq!(beta_node.orp, 1); // no inlinks → orphan
+    }
+
+    #[tokio::test]
+    async fn test_topology_query_params() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // maxLines=0 should omit content entirely
+        let request = Request::get("/api/v1/topology?maxLines=0")
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let topo: TopologyResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(topo.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_page_content_endpoint() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create pages:: container + page
+        let pages = create_test_block(&mut app, "pages::", None).await;
+        let page = create_test_block(&mut app, "# TestPage", Some(&pages.id)).await;
+        let _child = create_test_block(&mut app, "child line one", Some(&page.id)).await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Fetch content for the page
+        let request = Request::get("/api/v1/topology/content/testpage")
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let content: PageContentResponse = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(content.name, "testpage");
+        assert_eq!(content.block_count, 2); // page + child
+        assert_eq!(content.lines.len(), 1); // child line (page heading skipped)
+        assert_eq!(content.lines[0].1, "child line one");
+    }
+
+    #[tokio::test]
+    async fn test_page_content_not_found() {
+        let (app, _dir, _store) = test_app();
+
+        let response = app
+            .oneshot(Request::get("/api/v1/topology/content/nonexistent").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
