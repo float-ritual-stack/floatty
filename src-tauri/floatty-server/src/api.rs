@@ -734,8 +734,10 @@ pub struct ExportedBlock {
     pub collapsed: bool,
     pub created_at: i64,
     pub updated_at: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
+    /// Always include metadata to match frontend ⌘⇧J export shape (FLO-393).
+    /// Frontend uses `metadata: {}` for blocks without extracted metadata.
+    #[serde(default)]
+    pub metadata: serde_json::Value,
 }
 
 /// JSON export response structure
@@ -842,7 +844,8 @@ async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse,
 
                 let metadata = block_map
                     .get(&txn, "metadata")
-                    .and_then(|v| extract_metadata_from_yrs(v, &txn));
+                    .and_then(|v| extract_metadata_from_yrs(v, &txn))
+                    .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
                 let block_type = floatty_core::parse_block_type(&content);
 
