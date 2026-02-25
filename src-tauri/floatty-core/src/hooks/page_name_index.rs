@@ -142,6 +142,16 @@ impl PageNameIndex {
             .map_or(0, |refs| refs.len())
     }
 
+    /// Get all block IDs that reference a given page name.
+    pub fn referencing_blocks(&self, name: &str) -> Option<&HashSet<String>> {
+        self.referenced.get(&name.to_lowercase())
+    }
+
+    /// Get all referenced page names (keys of the referenced map).
+    pub fn all_referenced_names(&self) -> Vec<String> {
+        self.referenced.keys().cloned().collect()
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // INDEX MUTATION METHODS (called by PageNameIndexHook)
     // ═══════════════════════════════════════════════════════════════

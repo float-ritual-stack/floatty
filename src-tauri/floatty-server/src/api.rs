@@ -12,6 +12,7 @@
 //! Export endpoints:
 //! - GET /api/v1/export/binary - Raw Y.Doc state as .ydoc file
 //! - GET /api/v1/export/json - Human-readable JSON export
+//! - GET /api/v1/topology - Lightweight graph topology (for Passenger Manifest)
 //!
 //! Block CRUD endpoints:
 //! - GET /api/v1/blocks - All blocks as JSON
@@ -437,6 +438,8 @@ pub fn create_router(
         // Export endpoints
         .route("/api/v1/export/binary", get(export_binary))
         .route("/api/v1/export/json", get(export_json))
+        // Topology (lightweight graph projection)
+        .route("/api/v1/topology", get(get_topology))
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
         .route("/api/v1/blocks", post(create_block))
@@ -751,6 +754,60 @@ pub struct ExportedOutline {
     pub blocks: std::collections::HashMap<String, ExportedBlock>,
 }
 
+// ============================================================================
+// Topology Endpoint (FLO-394)
+// ============================================================================
+
+/// Node in the topology graph (page or ref-only entity).
+#[derive(Serialize, Deserialize)]
+pub struct TopologyNode {
+    /// Page name (truncated to 55 chars)
+    pub id: String,
+    /// Block count in subtree (capped 3000)
+    pub b: usize,
+    /// Total inlink count
+    pub i: usize,
+    /// Root-territory count (distinct root territories linking here)
+    pub rc: usize,
+    /// 1 if orphan (in pages:: but no inlinks)
+    pub orp: u8,
+    /// 1 if ref-only (referenced but not in pages::)
+    #[serde(rename = "ref")]
+    pub is_ref: u8,
+}
+
+/// Topology response matching extract-topology.py contract.
+#[derive(Serialize, Deserialize)]
+pub struct TopologyResponse {
+    #[serde(rename = "n")]
+    pub nodes: Vec<TopologyNode>,
+    #[serde(rename = "e")]
+    pub edges: Vec<[String; 2]>,
+    /// Per-page outline content: { "page name": [[depth, "line"], ...] }
+    #[serde(rename = "c")]
+    pub content: std::collections::HashMap<String, Vec<(u8, String)>>,
+    /// Daily block creation rhythm
+    pub daily: Vec<DailyEntry>,
+    pub meta: TopologyMeta,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DailyEntry {
+    pub d: String,
+    pub n: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopologyMeta {
+    pub blocks: usize,
+    pub pages: usize,
+    pub days: usize,
+    pub roots: usize,
+    pub ref_only: usize,
+    pub orphans: usize,
+}
+
 /// Generate timestamp string for filenames: YYYY-MM-DD-HHmmss (UTC)
 fn export_timestamp() -> String {
     Utc::now().format("%Y-%m-%d-%H%M%S").to_string()
@@ -901,6 +958,414 @@ async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse,
         ],
         json,
     ))
+}
+
+/// GET /api/v1/topology - Lightweight graph projection for the Passenger Manifest.
+///
+/// Returns page nodes, edges (outlinks between pages), truncated content, daily rhythm,
+/// and summary metadata. Much smaller than /api/v1/export/json (~50KB vs ~774KB).
+///
+/// Data sources: PageNameIndex (existing pages, stubs, reference counts) + Y.Doc (blocks).
+async fn get_topology(State(state): State<AppState>) -> Result<Json<TopologyResponse>, ApiError> {
+    let page_index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let existing_pages = page_index.existing_pages();
+    // Find pages:: container and its children (page block IDs)
+    let pages_container_id = page_index.pages_container_id().map(String::from);
+
+    // Build page_name → page_block_id map from pages:: container children
+    let mut page_name_to_id: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let (Some(ref container_id), Some(blocks_map)) = (&pages_container_id, txn.get_map("blocks")) {
+        if let Some(yrs::Out::YMap(container)) = blocks_map.get(&txn, container_id.as_str()) {
+            if let Some(yrs::Out::YArray(child_ids_arr)) = container.get(&txn, "childIds") {
+                for val in child_ids_arr.iter(&txn) {
+                    if let yrs::Out::Any(yrs::Any::String(child_id)) = val {
+                        if let Some(yrs::Out::YMap(child_block)) = blocks_map.get(&txn, child_id.as_ref()) {
+                            let content = child_block
+                                .get(&txn, "content")
+                                .and_then(|v| match v {
+                                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            let page_name = strip_heading_prefix(&content).to_lowercase();
+                            if !page_name.is_empty() {
+                                page_name_to_id.insert(page_name, child_id.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Get root IDs and build root territory map
+    let mut root_ids: Vec<String> = Vec::new();
+    let mut root_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Some(root_ids_arr) = txn.get_array("rootIds") {
+        for value in root_ids_arr.iter(&txn) {
+            if let yrs::Out::Any(yrs::Any::String(id)) = value {
+                root_ids.push(id.to_string());
+            }
+        }
+    }
+
+    // Classify root territories by content
+    if let Some(blocks_map) = txn.get_map("blocks") {
+        for rid in &root_ids {
+            if let Some(yrs::Out::YMap(block)) = blocks_map.get(&txn, rid.as_str()) {
+                let content = block
+                    .get(&txn, "content")
+                    .and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let fl = content.chars().take(40).collect::<String>().to_lowercase();
+                let territory = if fl.contains("horror") {
+                    "horror show"
+                } else if fl.contains("pages") {
+                    "pages"
+                } else if fl.contains("work log") {
+                    "work logs"
+                } else {
+                    "other"
+                };
+                root_names.insert(rid.clone(), territory.to_string());
+            }
+        }
+    }
+
+    // Single pass over all blocks to build:
+    // - block_to_root: block_id → root_id
+    // - parent_map: block_id → parent_id (for depth calc)
+    // - daily_counts: "MM-DD" → count
+    // - per-page subtree counts + outlinks + content lines
+    let mut block_to_root: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut parent_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut daily_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut total_blocks: usize = 0;
+
+    // For per-page data, we need to walk subtrees. Collect all blocks first.
+    struct BlockInfo {
+        content: String,
+        child_ids: Vec<String>,
+        outlinks: Vec<String>,
+    }
+    let mut all_blocks: std::collections::HashMap<String, BlockInfo> = std::collections::HashMap::new();
+
+    if let Some(blocks_map) = txn.get_map("blocks") {
+        for (key, value) in blocks_map.iter(&txn) {
+            if let yrs::Out::YMap(block_map) = value {
+                total_blocks += 1;
+                let block_id = key.to_string();
+
+                let content = block_map
+                    .get(&txn, "content")
+                    .and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                });
+
+                let child_ids: Vec<String> = block_map
+                    .get(&txn, "childIds")
+                    .and_then(|v| match v {
+                        yrs::Out::YArray(arr) => Some(
+                            arr.iter(&txn)
+                                .filter_map(|v| match v {
+                                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                    _ => None,
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
+
+                // Extract outlinks from metadata
+                let outlinks = block_map
+                    .get(&txn, "metadata")
+                    .and_then(|v| extract_metadata_from_yrs(v, &txn))
+                    .and_then(|meta| {
+                        meta.get("outlinks").and_then(|ol| {
+                            ol.as_array().map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                    })
+                    .unwrap_or_default();
+
+                // Daily rhythm from createdAt
+                if created_at > 0 {
+                    let dt = DateTime::from_timestamp_millis(created_at);
+                    if let Some(dt) = dt {
+                        let day_key = dt.format("%m-%d").to_string();
+                        *daily_counts.entry(day_key).or_insert(0) += 1;
+                    }
+                }
+
+                if let Some(ref pid) = parent_id {
+                    parent_map.insert(block_id.clone(), pid.clone());
+                }
+
+                all_blocks.insert(block_id, BlockInfo {
+                    content,
+                    child_ids,
+                    outlinks,
+                });
+            }
+        }
+    }
+
+    // Build block_to_root by walking up parent chains (depth-capped for cycle safety)
+    fn find_root(
+        block_id: &str,
+        parent_map: &std::collections::HashMap<String, String>,
+        cache: &mut std::collections::HashMap<String, String>,
+        depth: usize,
+    ) -> String {
+        if let Some(cached) = cache.get(block_id) {
+            return cached.clone();
+        }
+        if depth > 500 {
+            // Cycle or impossibly deep tree — treat as own root
+            cache.insert(block_id.to_string(), block_id.to_string());
+            return block_id.to_string();
+        }
+        match parent_map.get(block_id) {
+            Some(parent_id) => {
+                let root = find_root(parent_id, parent_map, cache, depth + 1);
+                cache.insert(block_id.to_string(), root.clone());
+                root
+            }
+            None => {
+                cache.insert(block_id.to_string(), block_id.to_string());
+                block_id.to_string()
+            }
+        }
+    }
+    let block_ids: Vec<String> = all_blocks.keys().cloned().collect();
+    for bid in &block_ids {
+        let root = find_root(bid, &parent_map, &mut block_to_root, 0);
+        block_to_root.insert(bid.clone(), root);
+    }
+
+    // Build inlinks: page_name → { territory → count }
+    let mut inlinks: std::collections::HashMap<String, std::collections::HashMap<String, usize>> =
+        std::collections::HashMap::new();
+    // Also build backlink snippets for ref-only nodes
+    let mut backlink_snippets: std::collections::HashMap<String, Vec<(u8, String)>> =
+        std::collections::HashMap::new();
+
+    for (bid, info) in &all_blocks {
+        if !info.outlinks.is_empty() {
+            let root_id = block_to_root.get(bid.as_str()).cloned().unwrap_or_default();
+            let territory = root_names.get(&root_id).cloned().unwrap_or_else(|| "other".to_string());
+            for link in &info.outlinks {
+                let link_lower = link.to_lowercase();
+                *inlinks.entry(link_lower.clone()).or_default().entry(territory.clone()).or_insert(0) += 1;
+                // Collect backlink snippets for ref-only nodes
+                if !page_name_to_id.contains_key(&link_lower) {
+                    let snippets = backlink_snippets.entry(link_lower).or_default();
+                    if snippets.len() < 20 {
+                        let line = info.content.lines().next().unwrap_or("").trim();
+                        let truncated: String = line.chars().take(90).collect();
+                        if !truncated.is_empty() {
+                            snippets.push((0, truncated));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Entity set: existing pages + ref-only entities
+    let mut entity_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for name in &existing_pages {
+        entity_set.insert(name.clone());
+    }
+    // ref-only = referenced but not in pages::
+    let existing_set: std::collections::HashSet<String> = existing_pages.iter().cloned().collect();
+    let ref_only_set: std::collections::HashSet<String> = inlinks
+        .keys()
+        .filter(|name| !existing_set.contains(*name))
+        .cloned()
+        .collect();
+    for name in &ref_only_set {
+        entity_set.insert(name.clone());
+    }
+
+    // Orphans: exist in pages:: but no inlinks
+    let orphan_set: std::collections::HashSet<String> = existing_pages
+        .iter()
+        .filter(|name| !inlinks.contains_key(*name))
+        .cloned()
+        .collect();
+
+    // Subtree walk for each page: block count + content lines + outlinks
+    // Iterative with visited set for cycle safety (matches collect_descendants pattern)
+    fn walk_subtree(
+        start_id: &str,
+        all_blocks: &std::collections::HashMap<String, BlockInfo>,
+        count: &mut usize,
+        outlinks: &mut std::collections::HashSet<String>,
+        content_lines: &mut Vec<(u8, String)>,
+        root_page_id: &str,
+        parent_map: &std::collections::HashMap<String, String>,
+        max_lines: usize,
+    ) {
+        let mut stack = vec![start_id.to_string()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(block_id) = stack.pop() {
+            if !visited.insert(block_id.clone()) {
+                continue; // cycle guard
+            }
+            if let Some(info) = all_blocks.get(&block_id) {
+                *count += 1;
+                for ol in &info.outlinks {
+                    outlinks.insert(ol.to_lowercase());
+                }
+                if block_id != root_page_id && content_lines.len() < max_lines {
+                    let line = info.content.lines().next().unwrap_or("").trim().to_string();
+                    if !line.is_empty() {
+                        let depth = depth_from_page(&block_id, root_page_id, parent_map);
+                        let truncated: String = line.chars().take(90).collect();
+                        content_lines.push((depth.min(5) as u8, truncated));
+                    }
+                }
+                // Push children in reverse to preserve order (first child processed first)
+                for child_id in info.child_ids.iter().rev() {
+                    stack.push(child_id.clone());
+                }
+            }
+        }
+    }
+
+    fn depth_from_page(
+        block_id: &str,
+        page_id: &str,
+        parent_map: &std::collections::HashMap<String, String>,
+    ) -> usize {
+        let mut d: usize = 0;
+        let mut cur = block_id.to_string();
+        while cur != page_id && d < 8 {
+            match parent_map.get(&cur) {
+                Some(pid) => {
+                    cur = pid.clone();
+                    d += 1;
+                }
+                None => break,
+            }
+        }
+        d.saturating_sub(1)
+    }
+
+    let mut page_subtree_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut page_outlinks: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    let mut content_map: std::collections::HashMap<String, Vec<(u8, String)>> = std::collections::HashMap::new();
+
+    for (page_name, page_id) in &page_name_to_id {
+        let mut count = 0usize;
+        let mut outlinks = std::collections::HashSet::new();
+        let mut lines = Vec::new();
+        walk_subtree(page_id, &all_blocks, &mut count, &mut outlinks, &mut lines, page_id, &parent_map, 30);
+        page_subtree_counts.insert(page_name.clone(), count);
+        page_outlinks.insert(page_name.clone(), outlinks);
+        let truncated_id: String = page_name.chars().take(55).collect();
+        if !lines.is_empty() {
+            content_map.insert(truncated_id, lines);
+        }
+    }
+
+    // Backlink content for ref-only nodes
+    for name in &ref_only_set {
+        let truncated_id: String = name.chars().take(55).collect();
+        if let Some(snippets) = backlink_snippets.get(name) {
+            if !snippets.is_empty() {
+                content_map.insert(truncated_id, snippets.iter().take(20).cloned().collect());
+            }
+        }
+    }
+
+    // Build edges: page → target (both in entity set)
+    let mut edges_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    for (page_name, ols) in &page_outlinks {
+        for link in ols {
+            if entity_set.contains(link) && link != page_name {
+                let src: String = page_name.chars().take(55).collect();
+                let tgt: String = link.chars().take(55).collect();
+                edges_set.insert((src, tgt));
+            }
+        }
+    }
+
+    // Build nodes
+    let mut nodes: Vec<TopologyNode> = Vec::new();
+    let mut node_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for name in &entity_set {
+        let truncated_id: String = name.chars().take(55).collect();
+        let src = inlinks.get(name).cloned().unwrap_or_default();
+        let total_inlinks: usize = src.values().sum();
+        nodes.push(TopologyNode {
+            id: truncated_id.clone(),
+            b: page_subtree_counts.get(name).copied().unwrap_or(0).min(3000),
+            i: total_inlinks,
+            rc: src.len(),
+            orp: if orphan_set.contains(name) { 1 } else { 0 },
+            is_ref: if ref_only_set.contains(name) { 1 } else { 0 },
+        });
+        node_ids.insert(truncated_id);
+    }
+
+    // Filter edges to only include nodes present
+    let edges: Vec<[String; 2]> = edges_set
+        .into_iter()
+        .filter(|(s, t)| node_ids.contains(s) && node_ids.contains(t))
+        .map(|(s, t)| [s, t])
+        .collect();
+
+    // Daily entries (sorted)
+    let mut daily: Vec<DailyEntry> = daily_counts
+        .into_iter()
+        .map(|(d, n)| DailyEntry { d, n })
+        .collect();
+    daily.sort_by(|a, b| a.d.cmp(&b.d));
+
+    let meta = TopologyMeta {
+        blocks: total_blocks,
+        pages: existing_pages.len(),
+        days: daily.len(),
+        roots: root_ids.len(),
+        ref_only: ref_only_set.len(),
+        orphans: orphan_set.len(),
+    };
+
+    Ok(Json(TopologyResponse {
+        nodes,
+        edges,
+        content: content_map,
+        daily,
+        meta,
+    }))
+}
+
+/// Strip heading prefix (# ## ### etc) from content.
+fn strip_heading_prefix(content: &str) -> &str {
+    content.trim_start_matches('#').trim_start()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3910,5 +4375,77 @@ mod tests {
         // Verify order (backward compatible append behavior)
         let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
         assert_eq!(parent_updated.child_ids, vec![first.id.clone(), second.id]);
+    }
+
+    // ========================================================================
+    // Topology endpoint tests (FLO-394)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_topology_empty_store() {
+        let (app, _dir, _store) = test_app();
+
+        let response = app
+            .oneshot(Request::get("/api/v1/topology").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let topo: TopologyResponse = serde_json::from_slice(&bytes).unwrap();
+
+        assert!(topo.nodes.is_empty());
+        assert!(topo.edges.is_empty());
+        assert!(topo.content.is_empty());
+        assert_eq!(topo.meta.blocks, 0);
+        assert_eq!(topo.meta.pages, 0);
+    }
+
+    #[tokio::test]
+    async fn test_topology_with_pages() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create pages:: container
+        let pages_container = create_test_block(&mut app, "pages::", None).await;
+
+        // Create two pages under it
+        let _page_a = create_test_block(&mut app, "# Alpha", Some(&pages_container.id)).await;
+        let _page_b = create_test_block(&mut app, "# Beta", Some(&pages_container.id)).await;
+
+        // Create a child under page A
+        let _child = create_test_block(&mut app, "child of alpha", Some(&_page_a.id)).await;
+
+        // Hooks run asynchronously via spawn_dispatch_task — give them time to process
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Query topology
+        let request = Request::get("/api/v1/topology")
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let topo: TopologyResponse = serde_json::from_slice(&bytes).unwrap();
+
+        // Should have 2 page nodes (alpha, beta)
+        assert_eq!(topo.nodes.len(), 2, "Should have 2 page nodes");
+        assert_eq!(topo.meta.pages, 2);
+        // 4 blocks total: pages::, Alpha, Beta, child
+        assert_eq!(topo.meta.blocks, 4);
+
+        // Alpha should have subtree count of 2 (itself + child)
+        let alpha_node = topo.nodes.iter().find(|n| n.id == "alpha").expect("Alpha node");
+        assert_eq!(alpha_node.b, 2);
+        assert_eq!(alpha_node.is_ref, 0); // exists in pages::
+        assert_eq!(alpha_node.orp, 1); // no inlinks → orphan
+
+        let beta_node = topo.nodes.iter().find(|n| n.id == "beta").expect("Beta node");
+        assert_eq!(beta_node.b, 1); // just itself
+        assert_eq!(beta_node.orp, 1); // no inlinks → orphan
     }
 }
