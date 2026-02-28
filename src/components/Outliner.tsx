@@ -11,7 +11,6 @@ import { Breadcrumb } from './Breadcrumb';
 import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
-import { getAbsoluteCursorOffset, setCursorAtOffset, getContentLength } from '../lib/cursorUtils';
 import { invoke, type AggregatorConfig } from '../lib/tauriTypes';
 import { downloadJSON } from '../lib/jsonExport';
 import type { ExportedOutline } from '../lib/jsonExport';
@@ -513,57 +512,25 @@ export function Outliner(props: OutlinerProps) {
         // (prevents losing text typed but not yet debounce-committed)
         '$mod+z': (e) => {
           e.preventDefault();
-          // Save cursor offset BEFORE blur (blur loses cursor position)
+          // Flush uncommitted edits by blurring focused contentEditable
           const activeEl = document.activeElement as HTMLElement;
-          let savedOffset = -1;
           if (activeEl?.contentEditable === 'true') {
-            savedOffset = getAbsoluteCursorOffset(activeEl);
             activeEl.blur();  // Triggers handleBlur → flushContentUpdate
           }
           undo();
           requestAnimationFrame(() => {
-            // Try to refocus same block with cursor restored
-            const focusedId = focusedBlockId();
-            if (focusedId && savedOffset >= 0) {
-              const el = containerRef?.querySelector(
-                `[data-block-id="${focusedId}"] [contenteditable]`
-              ) as HTMLElement;
-              if (el) {
-                el.focus({ preventScroll: true });
-                const clamped = Math.min(savedOffset, getContentLength(el));
-                setCursorAtOffset(el, clamped);
-                el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-                return;
-              }
-            }
-            // Fallback: block was deleted/hidden by undo
             collapse.ensureVisibleFocus();
           });
         },
         '$mod+Shift+z': (e) => {
           e.preventDefault();
-          // Save cursor offset BEFORE blur
+          // Flush uncommitted edits by blurring focused contentEditable
           const activeEl = document.activeElement as HTMLElement;
-          let savedOffset = -1;
           if (activeEl?.contentEditable === 'true') {
-            savedOffset = getAbsoluteCursorOffset(activeEl);
             activeEl.blur();  // Triggers handleBlur → flushContentUpdate
           }
           redo();
           requestAnimationFrame(() => {
-            const focusedId = focusedBlockId();
-            if (focusedId && savedOffset >= 0) {
-              const el = containerRef?.querySelector(
-                `[data-block-id="${focusedId}"] [contenteditable]`
-              ) as HTMLElement;
-              if (el) {
-                el.focus({ preventScroll: true });
-                const clamped = Math.min(savedOffset, getContentLength(el));
-                setCursorAtOffset(el, clamped);
-                el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-                return;
-              }
-            }
             collapse.ensureVisibleFocus();
           });
         },
