@@ -146,9 +146,10 @@ describe('buildSuggestionsWithTypedText (FLO-400)', () => {
     expect(result.length).toBeGreaterThan(0);
   });
 
-  it('prepends typed text with exists:true when exact match exists (case-insensitive)', () => {
+  it('resolves to canonical name when exact match exists (case-insensitive)', () => {
     const result = buildSuggestionsWithTypedText(pages, 'my page');
-    expect(result[0]).toEqual({ name: 'my page', exists: true });
+    // Should resolve to canonical "My Page", not the raw "my page"
+    expect(result[0]).toEqual({ name: 'My Page', exists: true });
   });
 
   it('deduplicates exact match from fuzzy results', () => {
@@ -171,7 +172,9 @@ describe('buildSuggestionsWithTypedText (FLO-400)', () => {
   it('fuzzy results all have exists:true', () => {
     const result = buildSuggestionsWithTypedText(pages, 'Note');
     const fuzzy = result.slice(1);
-    fuzzy.forEach(s => expect(s.exists).toBe(true));
+    fuzzy.forEach((s) => {
+      expect(s.exists).toBe(true);
+    });
   });
 
   it('handles query that matches nothing', () => {

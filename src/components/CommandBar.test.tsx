@@ -80,6 +80,18 @@ describe('CommandBar', () => {
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
+  it('Enter without ArrowDown on matching command creates page, not command (FLO-400)', () => {
+    const { getByPlaceholderText } = render(() => (
+      <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
+    ));
+    const input = getByPlaceholderText('Search pages or commands...');
+    fireEvent.input(input, { target: { value: 'export json' } });
+    // Without ArrowDown, typed text at position 0 is selected — fires onNavigate, not onCommand
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalledWith('export json');
+  });
+
   it('Enter with novel query navigates to typed text (create page) (FLO-400)', () => {
     const { getByPlaceholderText } = render(() => (
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />

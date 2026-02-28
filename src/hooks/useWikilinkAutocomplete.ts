@@ -131,13 +131,14 @@ export function buildSuggestionsWithTypedText(
   }
 
   const queryLower = query.toLowerCase();
-  const exactMatch = pages.some(p => p.toLowerCase() === queryLower);
+  const canonicalPage = pages.find(p => p.toLowerCase() === queryLower);
+  const canonicalName = canonicalPage ?? query;
 
   // Fuzzy filter, then remove exact match duplicate
   const fuzzyResults = fuzzyFilter(pages, query)
     .filter(p => p.toLowerCase() !== queryLower);
 
-  const typedTextItem: AutocompleteSuggestion = { name: query, exists: exactMatch };
+  const typedTextItem: AutocompleteSuggestion = { name: canonicalName, exists: !!canonicalPage };
   const fuzzyItems: AutocompleteSuggestion[] = fuzzyResults.map(name => ({ name, exists: true }));
 
   return [typedTextItem, ...fuzzyItems];

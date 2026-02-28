@@ -107,7 +107,8 @@ export function useCommandBar() {
 
     // FLO-400: Prepend typed text at position 0
     const qLower = q.toLowerCase();
-    const exactMatch = sortedPages().some(p => p.name.toLowerCase() === qLower);
+    const exactPage = sortedPages().find(p => p.name.toLowerCase() === qLower);
+    const canonicalName = exactPage ? exactPage.name : q;
 
     // Fuzzy filter pages, remove exact match duplicate
     const fuzzyPages = filterPages(sortedPages(), q)
@@ -116,9 +117,9 @@ export function useCommandBar() {
 
     const typedTextItem: ResultItem = {
       type: 'page',
-      id: q,
-      label: q,
-      isCreate: !exactMatch,
+      id: canonicalName,
+      label: canonicalName,
+      isCreate: !exactPage,
     };
 
     return [typedTextItem, ...fuzzyPages, ...commands];
