@@ -6,6 +6,18 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.41] - 2026-02-28
+
+### Features
+
+- **Typed text first in autocomplete** (FLO-400, PR #153): User's typed text always appears as the first suggestion in `[[` wikilink and `⌘K` command bar autocomplete. Selecting it creates a new page (or navigates if exact match exists). Removes the old "Create" item from the bottom of the list. Case-insensitive exact match resolves to canonical page name.
+
+### Bug Fixes
+
+- **Dead else-if branch** (FLO-400): Removed unreachable branch in CommandBar Enter handler that could never fire after typed-text-first reordering.
+
+---
+
 ## [0.7.39] - 2026-02-24
 
 ### Bug Fixes
