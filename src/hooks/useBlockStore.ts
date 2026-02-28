@@ -408,6 +408,8 @@ function createBlockStore() {
         || origin === Origin.BulkImport;
 
       if (isBulk) {
+        const createdBlockIds: string[] = [];
+
         batch(() => {
           setState('lastUpdateOrigin', txOrigin);
           const blocksToRefresh = new Set<string>();
@@ -419,6 +421,7 @@ function createBlockStore() {
               event.changes.keys.forEach((change, key) => {
                 if (change.action === 'add' || change.action === 'update') {
                   blocksToRefresh.add(key);
+                  if (change.action === 'add') createdBlockIds.push(key);
                 } else if (change.action === 'delete') {
                   blocksToDelete.add(key);
                 }
@@ -436,6 +439,30 @@ function createBlockStore() {
             setState('blocks', key, undefined!);
           }
         });
+
+        // FLO-322: BulkImport creates NEW blocks that need metadata extraction.
+        // Remote/ReconnectAuthority blocks already had hooks run when originally created.
+        // Enqueue to async lane only (ProjectionScheduler) — keeps rendering fast,
+        // metadata (ctx:: markers, [[wikilink]] outlinks) populates in background.
+        if (origin === Origin.BulkImport && createdBlockIds.length > 0) {
+          const createEvents: BlockEvent[] = createdBlockIds
+            .map(id => {
+              const block = state.blocks[id];
+              if (!block) return null;
+              return { type: 'block:create' as const, blockId: id, block };
+            })
+            .filter((e): e is BlockEvent => e !== null);
+
+          if (createEvents.length > 0) {
+            blockProjectionScheduler.enqueue({
+              batchId: crypto.randomUUID(),
+              timestamp: Date.now(),
+              origin,
+              events: createEvents,
+            });
+          }
+        }
+
         return;
       }
 
@@ -557,10 +584,9 @@ function createBlockStore() {
         _pendingMoveEvent = null;
       }
 
-      // Emit to EventBus (sync lane) and ProjectionScheduler (async lane)
-      // Skip for bulk remote loads (initial sync, reconnect) — hooks don't need to
-      // process 13k+ blocks on startup. Metadata was already extracted when blocks
-      // were originally created/edited.
+      // Emit to EventBus (sync lane) and ProjectionScheduler (async lane).
+      // Skip for Remote/ReconnectAuthority (metadata already extracted on original create).
+      // BulkImport is handled above — async lane only, no sync EventBus.
       if (blockEvents.length > 0 &&
           origin !== Origin.Remote &&
           origin !== Origin.ReconnectAuthority &&
