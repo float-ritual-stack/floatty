@@ -55,9 +55,6 @@ export function CommandBar(props: CommandBarProps) {
         const selected = bar.getSelection();
         if (selected) {
           handleSelect(selected);
-        } else if (bar.query()) {
-          // No match — create new page
-          props.onNavigate(bar.query());
         }
         break;
       }
