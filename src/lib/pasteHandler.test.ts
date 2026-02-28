@@ -103,12 +103,11 @@ Some content under heading`;
       const result = handleStructuredPaste('root', markdown, actions);
 
       expect(result.handled).toBe(true);
-      // Nested children are passed as children in the ops tree
-      const ops = (actions.batchCreateBlocksAfter as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
-      if (ops) {
-        expect(ops[0].children).toBeDefined();
-        expect(ops[0].children.length).toBe(2);
-      }
+      // Empty root → first block fills root, nested children inserted inside via batch
+      expect(actions.batchCreateBlocksInside).toHaveBeenCalled();
+      const ops = (actions.batchCreateBlocksInside as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(ops).toBeDefined();
+      expect(ops.length).toBe(2);
     });
 
     it('handles heading with list underneath', () => {

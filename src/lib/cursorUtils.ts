@@ -36,7 +36,7 @@ function isPlaceholderBr(node: Node, root: HTMLElement): boolean {
  * Get total content length by walking DOM — same counting as getTextOffsetInElement.
  * Uses innerText when available (real browsers), falls back to DOM walk (jsdom).
  */
-function getContentLength(root: HTMLElement): number {
+export function getContentLength(root: HTMLElement): number {
   if (typeof root.innerText === 'string') {
     return root.innerText.length;
   }
