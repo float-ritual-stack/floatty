@@ -6,6 +6,7 @@
 
 import type { ExecutorActions } from './types';
 import type { ParsedBlock } from '../markdownParser';
+import type { BatchBlockOp } from '../../hooks/useBlockStore';
 
 /**
  * Find existing output child block by prefix (for idempotent re-run).
@@ -78,7 +79,7 @@ export function extractContent(content: string, prefixes: string[]): string {
  * Convert ParsedBlock tree to BatchBlockOp tree.
  * Pure transformation — no side effects.
  */
-function parsedToOps(blocks: ParsedBlock[]): import('../../hooks/useBlockStore').BatchBlockOp[] {
+function parsedToOps(blocks: ParsedBlock[]): BatchBlockOp[] {
   return blocks.map(block => ({
     content: block.content,
     children: block.children.length > 0 ? parsedToOps(block.children) : undefined,

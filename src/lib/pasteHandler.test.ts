@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { handleStructuredPaste, type PasteActions, type BatchBlockOpInput } from './pasteHandler';
+import { handleStructuredPaste, type PasteActions } from './pasteHandler';
+import type { BatchBlockOp } from '../hooks/useBlockStore';
 
 function createMockActions(): PasteActions & { blocks: Map<string, { content: string; parentId: string | null; childIds: string[] }> } {
   const blocks = new Map<string, { content: string; parentId: string | null; childIds: string[] }>();
@@ -12,7 +13,7 @@ function createMockActions(): PasteActions & { blocks: Map<string, { content: st
   // Initialize with a root block
   blocks.set('root', { content: '', parentId: null, childIds: [] });
 
-  const createBlocksFromOps = (parentId: string | null, ops: BatchBlockOpInput[]): string[] => {
+  const createBlocksFromOps = (parentId: string | null, ops: BatchBlockOp[]): string[] => {
     const ids: string[] = [];
     for (const op of ops) {
       const newId = `block-${++idCounter}`;
@@ -36,12 +37,12 @@ function createMockActions(): PasteActions & { blocks: Map<string, { content: st
       const block = blocks.get(id);
       if (block) block.content = content;
     }),
-    batchCreateBlocksAfter: vi.fn((_afterId: string, ops: BatchBlockOpInput[]) => {
+    batchCreateBlocksAfter: vi.fn((_afterId: string, ops: BatchBlockOp[]) => {
       // Siblings: parentId matches the afterId block's parent
       const afterBlock = blocks.get(_afterId);
       return createBlocksFromOps(afterBlock?.parentId ?? null, ops);
     }),
-    batchCreateBlocksInside: vi.fn((parentId: string, ops: BatchBlockOpInput[]) => {
+    batchCreateBlocksInside: vi.fn((parentId: string, ops: BatchBlockOp[]) => {
       return createBlocksFromOps(parentId, ops);
     }),
   };

@@ -386,7 +386,6 @@ describe('transaction count comparison', () => {
 
     // Simulate old pattern: createBlockAfter + updateBlockContent per block
     const N = 10;
-    let lastId = existingId;
     for (let i = 0; i < N; i++) {
       const newId = `block-${i}`;
       // Transaction 1: create block
@@ -399,7 +398,6 @@ describe('transaction count comparison', () => {
         const blockMap = blocksMap.get(newId) as Y.Map<unknown>;
         blockMap.set('content', `content ${i}`);
       }, 'user');
-      lastId = newId;
     }
 
     // Old pattern: 2 transactions per block = 20 observer fires

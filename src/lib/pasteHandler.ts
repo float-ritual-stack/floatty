@@ -14,6 +14,7 @@
  */
 
 import { parseMarkdownTree, hasMarkdownStructure, type ParsedBlock } from './markdownParser';
+import type { BatchBlockOp } from '../hooks/useBlockStore';
 
 /** Actions needed for structured paste. */
 export interface PasteActions {
@@ -22,22 +23,16 @@ export interface PasteActions {
   /** Update block content */
   updateBlockContent: (id: string, content: string) => void;
   /** Batch create blocks as siblings after a block (single transaction) */
-  batchCreateBlocksAfter: (afterId: string, ops: BatchBlockOpInput[]) => string[];
+  batchCreateBlocksAfter: (afterId: string, ops: BatchBlockOp[]) => string[];
   /** Batch create blocks as children of a block (single transaction) */
-  batchCreateBlocksInside: (parentId: string, ops: BatchBlockOpInput[]) => string[];
-}
-
-/** Block operation for batch creation (mirrors BatchBlockOp from useBlockStore). */
-export interface BatchBlockOpInput {
-  content: string;
-  children?: BatchBlockOpInput[];
+  batchCreateBlocksInside: (parentId: string, ops: BatchBlockOp[]) => string[];
 }
 
 /**
  * Convert ParsedBlock tree to BatchBlockOp tree.
  * Pure transformation — no side effects.
  */
-function parsedToOps(blocks: ParsedBlock[]): BatchBlockOpInput[] {
+function parsedToOps(blocks: ParsedBlock[]): BatchBlockOp[] {
   return blocks.map(block => ({
     content: block.content,
     children: block.children.length > 0 ? parsedToOps(block.children) : undefined,
