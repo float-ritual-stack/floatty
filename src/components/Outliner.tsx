@@ -500,7 +500,7 @@ export function Outliner(props: OutlinerProps) {
         // Phase 0.5: Reset after progressive expansion session
         '$mod+Shift+0': (e) => {
           e.preventDefault();
-          const depth = cachedConfig()?.initial_collapse_depth ?? 0;
+          const depth = cachedConfig()?.initial_collapse_depth ?? 2;
           collapse.collapseToDepth(null, depth);  // null = all roots
           collapse.ensureVisibleFocus();
         },

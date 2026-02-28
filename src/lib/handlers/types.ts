@@ -42,6 +42,8 @@ export interface ExecutorActions {
   /** Focus a block (for post-execution cursor placement) */
   focusBlock?: (id: string) => void;
   // FLO-322: Batch block creation (single Y.Doc transaction)
+  /** Batch create blocks as siblings after afterId (single transaction) */
+  batchCreateBlocksAfter?: (afterId: string, ops: BatchBlockOp[]) => string[];
   /** Batch create blocks as children of parentId (single transaction) */
   batchCreateBlocksInside?: (parentId: string, ops: BatchBlockOp[]) => string[];
   /** Batch create blocks at top of parentId (single transaction, reversed insertion) */

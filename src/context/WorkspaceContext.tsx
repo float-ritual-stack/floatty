@@ -173,6 +173,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           getChildren: (id: string) => store.getBlock(id)?.childIds ?? [],
           rootIds: store.rootIds,
           // FLO-322: Batch block creation for bulk output
+          batchCreateBlocksAfter: store.batchCreateBlocksAfter,
           batchCreateBlocksInside: store.batchCreateBlocksInside,
           batchCreateBlocksInsideAtTop: store.batchCreateBlocksInsideAtTop,
         }, hookStore).catch(err => {
