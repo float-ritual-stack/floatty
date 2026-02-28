@@ -16,13 +16,19 @@ import { fuzzyFilter } from '../lib/fuzzyFilter';
 // TYPES
 // ═══════════════════════════════════════════════════════════════
 
+export interface AutocompleteSuggestion {
+  name: string;
+  /** Whether this matches an existing page (case-insensitive) */
+  exists: boolean;
+}
+
 export interface AutocompleteState {
   /** Text typed after [[ */
   query: string;
   /** Character offset where [[ starts in the block content */
   startOffset: number;
-  /** Filtered page name suggestions */
-  suggestions: string[];
+  /** Filtered page name suggestions (typed text first, then fuzzy matches) */
+  suggestions: AutocompleteSuggestion[];
   /** Currently highlighted suggestion index */
   selectedIndex: number;
   /** Position rect for popup placement */
@@ -111,6 +117,33 @@ export function filterSuggestions(pages: string[], query: string): string[] {
   return fuzzyFilter(pages, query);
 }
 
+/**
+ * Build autocomplete suggestions with typed text prepended at position 0.
+ * Deduplicates: if typed text case-insensitively matches a fuzzy result, it's removed from fuzzy section.
+ * FLO-400
+ */
+export function buildSuggestionsWithTypedText(
+  pages: string[],
+  query: string,
+): AutocompleteSuggestion[] {
+  if (!query) {
+    return pages.map(name => ({ name, exists: true }));
+  }
+
+  const queryLower = query.toLowerCase();
+  const canonicalPage = pages.find(p => p.toLowerCase() === queryLower);
+  const canonicalName = canonicalPage ?? query;
+
+  // Fuzzy filter, then remove exact match duplicate
+  const fuzzyResults = fuzzyFilter(pages, query)
+    .filter(p => p.toLowerCase() !== queryLower);
+
+  const typedTextItem: AutocompleteSuggestion = { name: canonicalName, exists: !!canonicalPage };
+  const fuzzyItems: AutocompleteSuggestion[] = fuzzyResults.map(name => ({ name, exists: true }));
+
+  return [typedTextItem, ...fuzzyItems];
+}
+
 // ═══════════════════════════════════════════════════════════════
 // HOOK
 // ═══════════════════════════════════════════════════════════════
@@ -153,14 +186,14 @@ export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
       ? contentRef.getBoundingClientRect()
       : rect;
 
-    const suggestions = filterSuggestions(pageNames(), trigger.query);
+    const suggestions = buildSuggestionsWithTypedText(pageNames(), trigger.query);
 
     // Preserve selectedIndex if the previously selected item is still in the filtered list
     const prev = state();
     let selectedIndex = 0;
     if (prev && prev.suggestions.length > 0) {
-      const prevItem = prev.suggestions[prev.selectedIndex];
-      const preserved = suggestions.indexOf(prevItem);
+      const prevName = prev.suggestions[prev.selectedIndex]?.name;
+      const preserved = suggestions.findIndex(s => s.name === prevName);
       if (preserved !== -1) selectedIndex = preserved;
     }
 
@@ -200,7 +233,7 @@ export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
 
     const idx = Math.min(current.selectedIndex, current.suggestions.length - 1);
     return {
-      pageName: current.suggestions[idx],
+      pageName: current.suggestions[idx].name,
       startOffset: current.startOffset,
     };
   }

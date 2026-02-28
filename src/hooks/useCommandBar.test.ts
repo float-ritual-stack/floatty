@@ -93,12 +93,14 @@ describe('useCommandBar', () => {
     expect(results.length).toBe(4 + BUILT_IN_COMMANDS.length);
   });
 
-  it('filters pages by query', () => {
+  it('filters pages by query with typed text first (FLO-400)', () => {
     const bar = createBar();
     bar.setQuery('note');
     const pages = bar.filteredResults().filter(r => r.type === 'page');
-    // Fuzzy: both "Meeting Notes" and "Daily Notes" should match
-    expect(pages.length).toBe(2);
+    // Position 0: typed text "note" (isCreate: true — doesn't match existing page exactly)
+    expect(pages[0]).toMatchObject({ label: 'note', isCreate: true });
+    // Fuzzy: both "Meeting Notes" and "Daily Notes" should follow
+    expect(pages.length).toBe(3); // typed text + 2 fuzzy matches
     expect(pages.map(p => p.label)).toContain('Meeting Notes');
     expect(pages.map(p => p.label)).toContain('Daily Notes');
   });
@@ -109,19 +111,26 @@ describe('useCommandBar', () => {
     const commands = bar.filteredResults().filter(r => r.type === 'command');
     expect(commands.length).toBe(1);
     expect(commands[0].id).toBe('export-binary');
+    // Also has typed text item at position 0
+    expect(bar.filteredResults()[0]).toMatchObject({ label: 'binary', isCreate: true });
   });
 
-  it('returns empty when nothing matches', () => {
+  it('returns typed text item even when no fuzzy matches (FLO-400)', () => {
     const bar = createBar();
     bar.setQuery('zzzznonexistent');
-    expect(bar.filteredResults()).toEqual([]);
+    const results = bar.filteredResults();
+    // Should have exactly 1 item: the typed text
+    expect(results.length).toBe(1);
+    expect(results[0]).toMatchObject({ label: 'zzzznonexistent', isCreate: true });
   });
 
   it('finds pages with typos (FLO-389)', () => {
     const bar = createBar();
     bar.setQuery('Projct');
     const pages = bar.filteredResults().filter(r => r.type === 'page');
-    expect(pages.length).toBeGreaterThan(0);
+    // Position 0: typed text "Projct", then fuzzy matches
+    expect(pages[0]).toMatchObject({ label: 'Projct', isCreate: true });
+    expect(pages.length).toBeGreaterThan(1);
     expect(pages.map(p => p.label)).toContain('Project Ideas');
   });
 
@@ -131,6 +140,8 @@ describe('useCommandBar', () => {
     const commands = bar.filteredResults().filter(r => r.type === 'command');
     expect(commands.length).toBeGreaterThan(0);
     expect(commands.map(c => c.id)).toContain('export-binary');
+    // Typed text is first result overall
+    expect(bar.filteredResults()[0]).toMatchObject({ label: 'bianry', isCreate: true });
   });
 
   it('navigate("down") wraps from last to first', () => {
@@ -149,10 +160,11 @@ describe('useCommandBar', () => {
     expect(bar.selectedIndex()).toBe(total - 1);
   });
 
-  it('getSelection() returns null when no results', () => {
+  it('getSelection() returns typed text item when no fuzzy matches (FLO-400)', () => {
     const bar = createBar();
     bar.setQuery('zzzznonexistent');
-    expect(bar.getSelection()).toBeNull();
+    const sel = bar.getSelection();
+    expect(sel).toMatchObject({ label: 'zzzznonexistent', isCreate: true });
   });
 
   it('getSelection() returns correct item at selectedIndex', () => {

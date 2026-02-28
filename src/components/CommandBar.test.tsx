@@ -73,17 +73,32 @@ describe('CommandBar', () => {
     const input = getByPlaceholderText('Search pages or commands...');
     // Type "export" to filter to only commands
     fireEvent.input(input, { target: { value: 'export json' } });
+    // FLO-400: Typed text is position 0, arrow down to reach the command
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onCommand).toHaveBeenCalledWith('export-json');
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
-  it('Enter with no results calls onNavigate with query (create page)', () => {
+  it('Enter without ArrowDown on matching command creates page, not command (FLO-400)', () => {
+    const { getByPlaceholderText } = render(() => (
+      <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
+    ));
+    const input = getByPlaceholderText('Search pages or commands...');
+    fireEvent.input(input, { target: { value: 'export json' } });
+    // Without ArrowDown, typed text at position 0 is selected — fires onNavigate, not onCommand
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalledWith('export json');
+  });
+
+  it('Enter with novel query navigates to typed text (create page) (FLO-400)', () => {
     const { getByPlaceholderText } = render(() => (
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const input = getByPlaceholderText('Search pages or commands...');
     fireEvent.input(input, { target: { value: 'brand new page' } });
+    // Typed text is position 0 (selectedIndex defaults to 0), so Enter selects it
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onNavigate).toHaveBeenCalledWith('brand new page');
   });
@@ -138,14 +153,18 @@ describe('CommandBar', () => {
     expect(onCommand).toHaveBeenCalledWith('export-json');
   });
 
-  it('shows create option when no matches', () => {
+  it('shows Create badge on typed text item for novel query (FLO-400)', () => {
     const { getByPlaceholderText, container } = render(() => (
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     fireEvent.input(getByPlaceholderText('Search pages or commands...'), { target: { value: 'zzz' } });
-    const createEl = container.querySelector('.command-bar-create');
-    expect(createEl).toBeTruthy();
-    expect(createEl!.textContent).toContain('zzz');
+    // Typed text item should have .command-bar-create class and Create badge
+    const createItem = container.querySelector('.command-bar-create');
+    expect(createItem).toBeTruthy();
+    const badge = createItem!.querySelector('.command-bar-item-badge');
+    expect(badge).toBeTruthy();
+    expect(badge!.textContent).toBe('Create');
+    expect(createItem!.textContent).toContain('zzz');
   });
 
   it('commands show shortcut hints', () => {
