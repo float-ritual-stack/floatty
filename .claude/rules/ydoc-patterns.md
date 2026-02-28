@@ -257,3 +257,53 @@ arr.delete(idx, 1);           // ONE delete op
 **Safety net**: `deduplicateChildIds()` in `useSyncedYDoc.ts` runs on startup and after resync to catch any pre-existing or edge-case duplicates.
 
 **Correctness note**: For reads that need an index (e.g., `childIds.indexOf(id)` to calculate insert position), read the array into a plain JS array first. The surgical helpers handle the Y.Array write.
+
+## 11. Batch Transactions for Bulk Operations (FLO-322)
+
+**Problem**: Creating N blocks individually produces 2N Y.Doc transactions (create + updateContent each). Each transaction fires `observeDeep`, EventBus, hook processing, and SolidJS reactivity. 100 blocks = 200 observer fires, 200 undo entries.
+
+```typescript
+// ❌ WRONG - per-block transactions
+for (const parsed of blocks) {
+  const id = store.createBlockAfter(afterId);  // Transaction 1
+  store.updateBlockContent(id, parsed.content); // Transaction 2
+  afterId = id;
+}
+// 100 blocks = 200 transactions, 200 undo entries, 200 observer fires
+
+// ✅ CORRECT - single batch transaction
+const ids = store.batchCreateBlocksAfter(afterId, ops); // 1 transaction
+// 100 blocks = 1 transaction, 1 undo entry, 1 observer fire
+```
+
+**Batch API** (in `useBlockStore.ts`):
+
+| Method | Use case |
+|--------|----------|
+| `batchCreateBlocksAfter(afterId, ops)` | Paste: siblings after cursor |
+| `batchCreateBlocksInside(parentId, ops)` | Handler output: children at end |
+| `batchCreateBlocksInsideAtTop(parentId, ops)` | Handler output: children at top |
+
+All use `'bulk_import'` origin by default → slim observer path (skips sync EventBus, enqueues to async ProjectionScheduler for deferred metadata extraction).
+
+**Undo correctness**: Single transaction = single undo step. `Cmd+Z` removes entire paste at once.
+
+**Two-lane hook processing**: `BulkImport` skips sync EventBus (keeps rendering fast) but enqueues `block:create` events to async ProjectionScheduler. Metadata (ctx:: markers, [[wikilink]] outlinks) populates in background. `Remote`/`ReconnectAuthority` skip both lanes (metadata already extracted when blocks were originally created).
+
+## 12. yjs Observer API (Don't Return-Capture)
+
+**The trap**: yjs `observeDeep()` returns `void`, not an unsubscribe function. This is different from most JS observer/subscribe patterns.
+
+```typescript
+// ❌ WRONG - observeDeep returns void
+const unobserve = blocksMap.observeDeep(handler);
+unobserve(); // TypeError: unobserve is not a function
+
+// ✅ CORRECT - use unobserveDeep with the same handler reference
+const handler = (events: Y.YEvent<any>[]) => { ... };
+blocksMap.observeDeep(handler);
+// Later:
+blocksMap.unobserveDeep(handler);
+```
+
+**Rule**: Keep a reference to the handler function. Pass the same reference to both `observeDeep()` and `unobserveDeep()`.
