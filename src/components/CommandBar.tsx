@@ -69,7 +69,6 @@ export function CommandBar(props: CommandBarProps) {
   };
 
   const hasResults = () => bar.filteredResults().length > 0;
-  const hasNoMatchAndQuery = () => bar.query() && !hasResults();
 
   return (
     <div class="command-bar-scrim" onClick={() => props.onClose()}>
@@ -103,6 +102,7 @@ export function CommandBar(props: CommandBarProps) {
                   classList={{
                     'command-bar-selected': i() === bar.selectedIndex(),
                     'command-bar-command': item.type === 'command',
+                    'command-bar-create': item.isCreate === true,
                   }}
                   role="option"
                   aria-selected={i() === bar.selectedIndex()}
@@ -110,6 +110,9 @@ export function CommandBar(props: CommandBarProps) {
                   onClick={() => handleSelect(item)}
                 >
                   <span class="command-bar-item-label">{item.label}</span>
+                  <Show when={item.isCreate}>
+                    <span class="command-bar-item-badge">Create</span>
+                  </Show>
                   <Show when={item.shortcut}>
                     <span class="command-bar-item-shortcut">{item.shortcut}</span>
                   </Show>
@@ -117,14 +120,6 @@ export function CommandBar(props: CommandBarProps) {
               )}
             </For>
           </ul>
-        </Show>
-        <Show when={hasNoMatchAndQuery()}>
-          <div
-            class="command-bar-create"
-            onClick={() => props.onNavigate(bar.query())}
-          >
-            Create "<strong>{bar.query()}</strong>" under pages::
-          </div>
         </Show>
       </div>
     </div>

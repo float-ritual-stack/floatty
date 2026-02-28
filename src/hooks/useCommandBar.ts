@@ -27,6 +27,8 @@ export interface ResultItem {
   id: string;
   /** Optional keyboard shortcut hint for display */
   shortcut?: string;
+  /** FLO-400: True when this is a typed-text item that doesn't match an existing page */
+  isCreate?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -91,13 +93,35 @@ export function useCommandBar() {
     sortPages(getPageNamesWithTimestamps(blockStore))
   );
 
-  // Unified results: pages (recency-sorted) first, then commands
+  // Unified results: typed text first (FLO-400), then fuzzy pages, then commands
   const filteredResults = createMemo((): ResultItem[] => {
     const q = query();
-    const pages = filterPages(sortedPages(), q)
-      .map((p): ResultItem => ({ type: 'page', id: p.name, label: p.name }));
     const commands = filterCommands(BUILT_IN_COMMANDS, q);
-    return [...pages, ...commands];
+
+    if (!q) {
+      // No query — show all pages sorted, then commands
+      const pages = sortedPages()
+        .map((p): ResultItem => ({ type: 'page', id: p.name, label: p.name }));
+      return [...pages, ...commands];
+    }
+
+    // FLO-400: Prepend typed text at position 0
+    const qLower = q.toLowerCase();
+    const exactMatch = sortedPages().some(p => p.name.toLowerCase() === qLower);
+
+    // Fuzzy filter pages, remove exact match duplicate
+    const fuzzyPages = filterPages(sortedPages(), q)
+      .filter(p => p.name.toLowerCase() !== qLower)
+      .map((p): ResultItem => ({ type: 'page', id: p.name, label: p.name }));
+
+    const typedTextItem: ResultItem = {
+      type: 'page',
+      id: q,
+      label: q,
+      isCreate: !exactMatch,
+    };
+
+    return [typedTextItem, ...fuzzyPages, ...commands];
   });
 
   // Reset selection when query changes (on() prevents dependency leak)

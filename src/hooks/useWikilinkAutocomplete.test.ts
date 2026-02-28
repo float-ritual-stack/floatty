@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { detectWikilinkTrigger, filterSuggestions, sortPageNames } from './useWikilinkAutocomplete';
+import { detectWikilinkTrigger, filterSuggestions, sortPageNames, buildSuggestionsWithTypedText } from './useWikilinkAutocomplete';
 
 describe('detectWikilinkTrigger', () => {
   it('detects [[ at start of content', () => {
@@ -129,5 +129,53 @@ describe('filterSuggestions', () => {
   it('finds matches with missing letters (FLO-389)', () => {
     const result = filterSuggestions(pages, 'Metin');
     expect(result).toContain('meeting notes');
+  });
+});
+
+describe('buildSuggestionsWithTypedText (FLO-400)', () => {
+  const pages = ['My Page', 'Another Page', 'Daily Notes', 'meeting notes'];
+
+  it('returns all pages as exists:true when query is empty', () => {
+    const result = buildSuggestionsWithTypedText(pages, '');
+    expect(result).toEqual(pages.map(name => ({ name, exists: true })));
+  });
+
+  it('prepends typed text at position 0 with exists:false for novel text', () => {
+    const result = buildSuggestionsWithTypedText(pages, 'Brand New');
+    expect(result[0]).toEqual({ name: 'Brand New', exists: false });
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it('prepends typed text with exists:true when exact match exists (case-insensitive)', () => {
+    const result = buildSuggestionsWithTypedText(pages, 'my page');
+    expect(result[0]).toEqual({ name: 'my page', exists: true });
+  });
+
+  it('deduplicates exact match from fuzzy results', () => {
+    const result = buildSuggestionsWithTypedText(pages, 'My Page');
+    // "My Page" should only appear once (at position 0), not also in fuzzy results
+    const myPageCount = result.filter(s => s.name.toLowerCase() === 'my page').length;
+    expect(myPageCount).toBe(1);
+    expect(result[0]).toEqual({ name: 'My Page', exists: true });
+  });
+
+  it('fuzzy results follow typed text at positions 1+', () => {
+    const result = buildSuggestionsWithTypedText(pages, 'page');
+    expect(result[0]).toEqual({ name: 'page', exists: false });
+    // Fuzzy results should include pages containing "page"
+    const fuzzyNames = result.slice(1).map(s => s.name);
+    expect(fuzzyNames).toContain('My Page');
+    expect(fuzzyNames).toContain('Another Page');
+  });
+
+  it('fuzzy results all have exists:true', () => {
+    const result = buildSuggestionsWithTypedText(pages, 'Note');
+    const fuzzy = result.slice(1);
+    fuzzy.forEach(s => expect(s.exists).toBe(true));
+  });
+
+  it('handles query that matches nothing', () => {
+    const result = buildSuggestionsWithTypedText(pages, 'zzzzxyzzy');
+    expect(result).toEqual([{ name: 'zzzzxyzzy', exists: false }]);
   });
 });

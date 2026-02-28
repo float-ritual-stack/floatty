@@ -62,17 +62,23 @@ export function WikilinkAutocomplete(props: WikilinkAutocompleteProps) {
                 role="option"
                 aria-selected={i() === props.state.selectedIndex}
                 class="wikilink-autocomplete-item"
-                classList={{ 'wikilink-autocomplete-selected': i() === props.state.selectedIndex }}
+                classList={{
+                  'wikilink-autocomplete-selected': i() === props.state.selectedIndex,
+                  'wikilink-autocomplete-create': !suggestion.exists,
+                }}
                 onMouseDown={(e) => {
                   // mousedown instead of click to fire before blur
                   e.preventDefault();
-                  props.onSelect(suggestion);
+                  props.onSelect(suggestion.name);
                 }}
                 onMouseEnter={() => {
                   props.onHover(i());
                 }}
               >
-                {suggestion}
+                <span class="wikilink-autocomplete-name">{suggestion.name}</span>
+                <Show when={!suggestion.exists}>
+                  <span class="wikilink-autocomplete-badge">Create</span>
+                </Show>
               </li>
             )}
           </For>
