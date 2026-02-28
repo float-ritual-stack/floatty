@@ -1,9 +1,9 @@
 /**
- * Tests for smart paste handler (FLO-62, FLO-128)
+ * Tests for smart paste handler (FLO-62, FLO-128, FLO-322)
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { handleStructuredPaste, type PasteActions } from './pasteHandler';
+import { handleStructuredPaste, type PasteActions, type BatchBlockOpInput } from './pasteHandler';
 
 function createMockActions(): PasteActions & { blocks: Map<string, { content: string; parentId: string | null; childIds: string[] }> } {
   const blocks = new Map<string, { content: string; parentId: string | null; childIds: string[] }>();
@@ -12,27 +12,37 @@ function createMockActions(): PasteActions & { blocks: Map<string, { content: st
   // Initialize with a root block
   blocks.set('root', { content: '', parentId: null, childIds: [] });
 
+  const createBlocksFromOps = (parentId: string | null, ops: BatchBlockOpInput[]): string[] => {
+    const ids: string[] = [];
+    for (const op of ops) {
+      const newId = `block-${++idCounter}`;
+      blocks.set(newId, { content: op.content, parentId, childIds: [] });
+      ids.push(newId);
+      if (parentId) {
+        const parent = blocks.get(parentId);
+        if (parent) parent.childIds.push(newId);
+      }
+      if (op.children && op.children.length > 0) {
+        createBlocksFromOps(newId, op.children);
+      }
+    }
+    return ids;
+  };
+
   return {
     blocks,
     getBlock: (id) => blocks.get(id),
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    createBlockAfter: vi.fn((_afterId) => {
-      const newId = `block-${++idCounter}`;
-      blocks.set(newId, { content: '', parentId: null, childIds: [] });
-      return newId;
-    }),
-    createBlockInside: vi.fn((parentId) => {
-      const newId = `block-${++idCounter}`;
-      const parent = blocks.get(parentId);
-      if (parent) {
-        parent.childIds.push(newId);
-      }
-      blocks.set(newId, { content: '', parentId, childIds: [] });
-      return newId;
-    }),
     updateBlockContent: vi.fn((id, content) => {
       const block = blocks.get(id);
       if (block) block.content = content;
+    }),
+    batchCreateBlocksAfter: vi.fn((_afterId: string, ops: BatchBlockOpInput[]) => {
+      // Siblings: parentId matches the afterId block's parent
+      const afterBlock = blocks.get(_afterId);
+      return createBlocksFromOps(afterBlock?.parentId ?? null, ops);
+    }),
+    batchCreateBlocksInside: vi.fn((parentId: string, ops: BatchBlockOpInput[]) => {
+      return createBlocksFromOps(parentId, ops);
     }),
   };
 }
@@ -79,8 +89,8 @@ Some content under heading`;
       const result = handleStructuredPaste('root', markdown, actions);
 
       expect(result.handled).toBe(true);
-      // Should create sibling blocks for each item
-      expect(actions.createBlockAfter).toHaveBeenCalled();
+      // Should use batch create for sibling blocks
+      expect(actions.batchCreateBlocksAfter).toHaveBeenCalled();
     });
 
     it('handles nested list', () => {
@@ -92,8 +102,12 @@ Some content under heading`;
       const result = handleStructuredPaste('root', markdown, actions);
 
       expect(result.handled).toBe(true);
-      // Should create child blocks inside parent
-      expect(actions.createBlockInside).toHaveBeenCalled();
+      // Nested children are passed as children in the ops tree
+      const ops = (actions.batchCreateBlocksAfter as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+      if (ops) {
+        expect(ops[0].children).toBeDefined();
+        expect(ops[0].children.length).toBe(2);
+      }
     });
 
     it('handles heading with list underneath', () => {
@@ -122,10 +136,23 @@ Some content under heading`;
       // First call should update root with "# First Heading"
       expect(actions.updateBlockContent).toHaveBeenCalledWith('root', '# First Heading');
     });
+
+    it('inserts first block children inside current block via batch', () => {
+      const actions = createMockActions();
+
+      const markdown = `# Heading
+- Child one
+- Child two`;
+
+      const result = handleStructuredPaste('root', markdown, actions);
+
+      expect(result.handled).toBe(true);
+      expect(actions.batchCreateBlocksInside).toHaveBeenCalledWith('root', expect.any(Array));
+    });
   });
 
   describe('non-empty block behavior', () => {
-    it('creates siblings when current block has content', () => {
+    it('creates siblings via batch when current block has content', () => {
       const actions = createMockActions();
       // Set root to have content
       actions.blocks.get('root')!.content = 'existing content';
@@ -136,8 +163,7 @@ Some content under heading`;
       const result = handleStructuredPaste('root', markdown, actions);
 
       expect(result.handled).toBe(true);
-      // Should create siblings after root, not modify root
-      expect(actions.createBlockAfter).toHaveBeenCalledWith('root');
+      expect(actions.batchCreateBlocksAfter).toHaveBeenCalledWith('root', expect.any(Array));
     });
   });
 
@@ -156,6 +182,47 @@ Some content under heading`;
       expect(result.focusId).toBeDefined();
       // focusId should be the last created block
       expect(result.focusId).toMatch(/^block-\d+$/);
+    });
+  });
+
+  describe('batch operation structure (FLO-322)', () => {
+    it('passes correct ops tree to batchCreateBlocksAfter', () => {
+      const actions = createMockActions();
+      actions.blocks.get('root')!.content = 'existing';
+
+      const markdown = `# Section
+- Point one
+  - Sub point
+- Point two`;
+
+      handleStructuredPaste('root', markdown, actions);
+
+      const calls = (actions.batchCreateBlocksAfter as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.length).toBe(1);
+
+      const [afterId, ops] = calls[0];
+      expect(afterId).toBe('root');
+      expect(ops[0].content).toBe('# Section');
+      // Section should have children (the list items)
+      expect(ops[0].children).toBeDefined();
+    });
+
+    it('uses single batch call for multi-block paste (not per-block calls)', () => {
+      const actions = createMockActions();
+      actions.blocks.get('root')!.content = 'existing';
+
+      const markdown = `- Item 1
+- Item 2
+- Item 3
+- Item 4
+- Item 5`;
+
+      handleStructuredPaste('root', markdown, actions);
+
+      // One batch call, not 5 individual calls
+      expect(actions.batchCreateBlocksAfter).toHaveBeenCalledTimes(1);
+      const ops = (actions.batchCreateBlocksAfter as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(ops.length).toBe(5);
     });
   });
 });

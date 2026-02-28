@@ -14,12 +14,14 @@
  *     </WorkspaceProvider>
  *   ));
  */
-import { createContext, useContext, onMount, onCleanup } from 'solid-js';
-import type { JSX } from 'solid-js';
-import { blockStore as realBlockStore, setAutoExecuteHandler } from '../hooks/useBlockStore';
+import { createContext, useContext, createMemo, onMount, onCleanup } from 'solid-js';
+import type { JSX, Accessor } from 'solid-js';
+import { blockStore as realBlockStore, setAutoExecuteHandler, type BatchBlockOp } from '../hooks/useBlockStore';
+export type { BatchBlockOp } from '../hooks/useBlockStore';
 import { paneStore as realPaneStore, type NavigationEntry } from '../hooks/usePaneStore';
 import type { Block } from '../lib/blockTypes';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
+import { sortPageNames, getPageNamesWithTimestamps } from '../hooks/useWikilinkAutocomplete';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPE INTERFACES
@@ -65,6 +67,10 @@ export interface BlockStoreInterface {
   outdentBlock: (id: string) => void;
   liftChildrenToSiblings: (blockId: string, afterId: string) => void;
   toggleCollapsed: (id: string) => void;
+  // FLO-322: Batch block creation (single Y.Doc transaction)
+  batchCreateBlocksAfter: (afterId: string, ops: BatchBlockOp[], origin?: string) => string[];
+  batchCreateBlocksInside: (parentId: string, ops: BatchBlockOp[], origin?: string) => string[];
+  batchCreateBlocksInsideAtTop: (parentId: string, ops: BatchBlockOp[], origin?: string) => string[];
 }
 
 /**
@@ -97,6 +103,8 @@ export interface PaneStoreInterface {
 export interface WorkspaceContextValue {
   blockStore: BlockStoreInterface;
   paneStore: PaneStoreInterface;
+  /** Singleton pageNames memo — sorted page names from pages:: container (FLO-322). */
+  pageNames: Accessor<string[]>;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue>();
@@ -119,9 +127,18 @@ interface WorkspaceProviderProps {
  */
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const store = props.blockStore ?? realBlockStore;
+
+  // FLO-322: Singleton pageNames memo — one computation instead of N per BlockItem.
+  // Previously each useWikilinkAutocomplete() created its own identical memo,
+  // causing N×M recomputation on every block change (N blocks × M page lookups).
+  const pageNames = createMemo(() =>
+    sortPageNames(getPageNamesWithTimestamps(store))
+  );
+
   const value: WorkspaceContextValue = {
     blockStore: store,
     paneStore: props.paneStore ?? realPaneStore,
+    pageNames,
   };
 
   // Wire up auto-execute handler for externally-created blocks (API/CRDT sync)
@@ -155,6 +172,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           getParentId: (id: string) => store.getBlock(id)?.parentId ?? undefined,
           getChildren: (id: string) => store.getBlock(id)?.childIds ?? [],
           rootIds: store.rootIds,
+          // FLO-322: Batch block creation for bulk output
+          batchCreateBlocksInside: store.batchCreateBlocksInside,
+          batchCreateBlocksInsideAtTop: store.batchCreateBlocksInsideAtTop,
         }, hookStore).catch(err => {
           console.error('[AutoExecute] Handler execution failed:', err);
         });
@@ -225,6 +245,9 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     outdentBlock: () => {},
     liftChildrenToSiblings: () => {},
     toggleCollapsed: () => {},
+    batchCreateBlocksAfter: () => [],
+    batchCreateBlocksInside: () => [],
+    batchCreateBlocksInsideAtTop: () => [],
     ...overrides,
   };
 }

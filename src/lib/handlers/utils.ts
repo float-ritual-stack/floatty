@@ -75,14 +75,33 @@ export function extractContent(content: string, prefixes: string[]): string {
 }
 
 /**
- * Insert parsed blocks recursively as children of parentId
- * Used by sh.ts and ai.ts for markdown structure output
+ * Convert ParsedBlock tree to BatchBlockOp tree.
+ * Pure transformation — no side effects.
+ */
+function parsedToOps(blocks: ParsedBlock[]): import('../../hooks/useBlockStore').BatchBlockOp[] {
+  return blocks.map(block => ({
+    content: block.content,
+    children: block.children.length > 0 ? parsedToOps(block.children) : undefined,
+  }));
+}
+
+/**
+ * Insert parsed blocks recursively as children of parentId.
+ * FLO-322: Uses batch API when available (single Y.Doc transaction).
+ * Falls back to per-block creation for backward compatibility.
  */
 export function insertParsedBlocks(
   parentId: string,
   blocks: ParsedBlock[],
   actions: ExecutorActions
 ): void {
+  // FLO-322: batch path — single transaction
+  if (actions.batchCreateBlocksInside) {
+    actions.batchCreateBlocksInside(parentId, parsedToOps(blocks));
+    return;
+  }
+
+  // Fallback: per-block creation (legacy callers)
   for (const block of blocks) {
     const newId = actions.createBlockInside(parentId);
     actions.updateBlockContent(newId, block.content);
@@ -94,8 +113,9 @@ export function insertParsedBlocks(
 }
 
 /**
- * Insert parsed blocks at TOP (first child position)
- * For handlers like help:: that want most recent output visible without scrolling
+ * Insert parsed blocks at TOP (first child position).
+ * FLO-322: Uses batch API when available (single Y.Doc transaction).
+ * Falls back to per-block creation for backward compatibility.
  *
  * Top-level blocks are reversed so [A,B,C] appears as A,B,C visually
  * (insert C→top, B→top, A→top = [A,B,C])
@@ -106,7 +126,13 @@ export function insertParsedBlocksAtTop(
   blocks: ParsedBlock[],
   actions: ExecutorActions
 ): void {
-  // Reverse: Insert [A,B,C] as C→top, B→top, A→top = [A,B,C] visual order
+  // FLO-322: batch path — single transaction, reverse handled by batch method
+  if (actions.batchCreateBlocksInsideAtTop) {
+    actions.batchCreateBlocksInsideAtTop(parentId, parsedToOps(blocks));
+    return;
+  }
+
+  // Fallback: per-block creation (legacy callers)
   for (const block of [...blocks].reverse()) {
     const newId = actions.createBlockInsideAtTop?.(parentId) ?? actions.createBlockInside(parentId);
     actions.updateBlockContent(newId, block.content);

@@ -1,8 +1,10 @@
 /**
  * Handler Registry Types
- * 
+ *
  * Shared types for the block handler system.
  */
+
+import type { BatchBlockOp } from '../../hooks/useBlockStore';
 
 // ═══════════════════════════════════════════════════════════════
 // EXECUTOR ACTIONS
@@ -39,6 +41,13 @@ export interface ExecutorActions {
   paneId?: string;
   /** Focus a block (for post-execution cursor placement) */
   focusBlock?: (id: string) => void;
+  // FLO-322: Batch block creation (single Y.Doc transaction)
+  /** Batch create blocks as children of parentId (single transaction) */
+  batchCreateBlocksInside?: (parentId: string, ops: BatchBlockOp[]) => string[];
+  /** Batch create blocks at top of parentId (single transaction, reversed insertion) */
+  batchCreateBlocksInsideAtTop?: (parentId: string, ops: BatchBlockOp[]) => string[];
+  /** Root IDs for tree context */
+  rootIds?: readonly string[];
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,68 +1,47 @@
 /**
- * Smart Paste Handler (FLO-62, FLO-128)
+ * Smart Paste Handler (FLO-62, FLO-128, FLO-322)
  *
  * Handles clipboard paste with markdown structure parsing.
  * Pasted markdown becomes structured blocks (like sh:: cat output).
  *
+ * FLO-322: Uses batch block creation (single Y.Doc transaction)
+ * to avoid N×2 transactions for N-block paste.
+ *
  * Fixes:
  * - FLO-62: Rich text causing duplicates → we only read plain text
  * - FLO-128: Markdown should structure like sh:: cat output
+ * - FLO-322: Batch transaction for bulk paste performance
  */
 
 import { parseMarkdownTree, hasMarkdownStructure, type ParsedBlock } from './markdownParser';
 
+/** Actions needed for structured paste. */
 export interface PasteActions {
   /** Get block by ID */
   getBlock: (id: string) => { content: string; parentId: string | null; childIds: string[] } | undefined;
-  /** Create sibling after block */
-  createBlockAfter: (id: string) => string;
-  /** Create child inside block */
-  createBlockInside: (parentId: string) => string;
   /** Update block content */
   updateBlockContent: (id: string, content: string) => void;
+  /** Batch create blocks as siblings after a block (single transaction) */
+  batchCreateBlocksAfter: (afterId: string, ops: BatchBlockOpInput[]) => string[];
+  /** Batch create blocks as children of a block (single transaction) */
+  batchCreateBlocksInside: (parentId: string, ops: BatchBlockOpInput[]) => string[];
+}
+
+/** Block operation for batch creation (mirrors BatchBlockOp from useBlockStore). */
+export interface BatchBlockOpInput {
+  content: string;
+  children?: BatchBlockOpInput[];
 }
 
 /**
- * Insert parsed blocks as siblings after targetId
- * Returns ID of last inserted block (for focus)
+ * Convert ParsedBlock tree to BatchBlockOp tree.
+ * Pure transformation — no side effects.
  */
-function insertParsedBlocksAsSiblings(
-  afterId: string,
-  blocks: ParsedBlock[],
-  actions: PasteActions
-): string {
-  let lastId = afterId;
-
-  for (const block of blocks) {
-    const newId = actions.createBlockAfter(lastId);
-    actions.updateBlockContent(newId, block.content);
-    lastId = newId;
-
-    // Insert children recursively
-    if (block.children.length > 0) {
-      insertChildBlocks(newId, block.children, actions);
-    }
-  }
-
-  return lastId;
-}
-
-/**
- * Insert parsed blocks as children of parentId
- */
-function insertChildBlocks(
-  parentId: string,
-  blocks: ParsedBlock[],
-  actions: PasteActions
-): void {
-  for (const block of blocks) {
-    const newId = actions.createBlockInside(parentId);
-    actions.updateBlockContent(newId, block.content);
-
-    if (block.children.length > 0) {
-      insertChildBlocks(newId, block.children, actions);
-    }
-  }
+function parsedToOps(blocks: ParsedBlock[]): BatchBlockOpInput[] {
+  return blocks.map(block => ({
+    content: block.content,
+    children: block.children.length > 0 ? parsedToOps(block.children) : undefined,
+  }));
 }
 
 /**
@@ -71,6 +50,9 @@ function insertChildBlocks(
  * Behavior:
  * - If current block is empty: first parsed block replaces content, rest are siblings
  * - If current block has content: all parsed blocks become siblings after
+ *
+ * FLO-322: All block creation happens in a single Y.Doc transaction via batch API.
+ * Undo (Cmd+Z) removes entire paste in one step.
  *
  * @returns Object with handled flag and optional focusId for cursor placement
  */
@@ -104,7 +86,7 @@ export function handleStructuredPaste(
     return { handled: false };
   }
 
-  // We have structure! Insert blocks
+  // We have structure! Insert blocks via batch API (single Y.Doc transaction)
   const currentBlock = actions.getBlock(blockId);
   const isCurrentEmpty = !currentBlock?.content.trim();
 
@@ -113,21 +95,25 @@ export function handleStructuredPaste(
     const first = parsed[0];
     actions.updateBlockContent(blockId, first.content);
 
-    // Insert first block's children inside current block
+    // Insert first block's children inside current block (batch)
     if (first.children.length > 0) {
-      insertChildBlocks(blockId, first.children, actions);
+      actions.batchCreateBlocksInside(blockId, parsedToOps(first.children));
     }
 
-    // Remaining blocks become siblings after
+    // Remaining blocks become siblings after (batch)
     if (parsed.length > 1) {
-      const lastId = insertParsedBlocksAsSiblings(blockId, parsed.slice(1), actions);
+      const ops = parsedToOps(parsed.slice(1));
+      const createdIds = actions.batchCreateBlocksAfter(blockId, ops);
+      const lastId = createdIds.length > 0 ? createdIds[createdIds.length - 1] : blockId;
       return { handled: true, focusId: lastId };
     }
 
     return { handled: true, focusId: blockId };
   } else {
-    // Current block has content - all parsed blocks become siblings after
-    const lastId = insertParsedBlocksAsSiblings(blockId, parsed, actions);
+    // Current block has content - all parsed blocks become siblings after (batch)
+    const ops = parsedToOps(parsed);
+    const createdIds = actions.batchCreateBlocksAfter(blockId, ops);
+    const lastId = createdIds.length > 0 ? createdIds[createdIds.length - 1] : blockId;
     return { handled: true, focusId: lastId };
   }
 }
