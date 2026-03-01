@@ -233,11 +233,11 @@ impl App {
 
 // --- Fetch ---
 
-async fn fetch_blocks(port: u16, api_key: &str) -> Result<BlocksResponse> {
-    let client = reqwest::Client::new();
+async fn fetch_blocks(client: &reqwest::Client, port: u16, api_key: &str) -> Result<BlocksResponse> {
     let resp = client
         .get(format!("http://127.0.0.1:{}/api/v1/blocks", port))
         .header("Authorization", format!("Bearer {}", api_key))
+        .timeout(std::time::Duration::from_secs(3))
         .send()
         .await?
         .json::<BlocksResponse>()
@@ -475,8 +475,12 @@ async fn main() -> Result<()> {
     });
     let (port, api_key) = read_config(&config_dir)?;
 
+    let http_client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .build()?;
+
     eprintln!("Fetching blocks from port {}...", port);
-    let resp = fetch_blocks(port, &api_key).await?;
+    let resp = fetch_blocks(&http_client, port, &api_key).await?;
     eprintln!(
         "Got {} blocks, {} roots",
         resp.blocks.len(),
@@ -493,6 +497,10 @@ async fn main() -> Result<()> {
     let (presence_tx, mut presence_rx) = mpsc::unbounded_channel::<String>();
     spawn_ws_listener(port, dirty.clone(), ws_alive.clone(), update_counter.clone(), presence_tx);
 
+    // Non-blocking data refresh channel
+    let (refresh_tx, mut refresh_rx) = mpsc::unbounded_channel::<BlocksResponse>();
+    let fetching = Arc::new(AtomicBool::new(false));
+
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
@@ -505,13 +513,31 @@ async fn main() -> Result<()> {
         app.ws_connected = ws_alive.load(Ordering::Relaxed);
         app.update_count = update_counter.load(Ordering::Relaxed);
 
-        if dirty.load(Ordering::Relaxed) && last_refresh.elapsed() > std::time::Duration::from_millis(500) {
+        // Receive completed fetches (non-blocking)
+        while let Ok(resp) = refresh_rx.try_recv() {
+            app.tree.update_from_response(resp);
+            app.clamp_cursor();
+            fetching.store(false, Ordering::Relaxed);
+        }
+
+        // Spawn background fetch when dirty (non-blocking)
+        if dirty.load(Ordering::Relaxed)
+            && !fetching.load(Ordering::Relaxed)
+            && last_refresh.elapsed() > std::time::Duration::from_millis(500)
+        {
             dirty.store(false, Ordering::Relaxed);
-            if let Ok(resp) = fetch_blocks(port, &api_key).await {
-                app.tree.update_from_response(resp);
-                app.clamp_cursor();
-            }
+            fetching.store(true, Ordering::Relaxed);
             last_refresh = std::time::Instant::now();
+            let client = http_client.clone();
+            let key = api_key.clone();
+            let tx = refresh_tx.clone();
+            let fetch_flag = fetching.clone();
+            tokio::spawn(async move {
+                match fetch_blocks(&client, port, &key).await {
+                    Ok(resp) => { let _ = tx.send(resp); }
+                    Err(_) => { fetch_flag.store(false, Ordering::Relaxed); }
+                }
+            });
         }
 
         // Drain presence messages — navigate to the latest one + write to /tmp
@@ -602,11 +628,20 @@ async fn main() -> Result<()> {
                             (app.cursor + app.viewport_height).min(rows.len().saturating_sub(1));
                         app.ensure_visible();
                     }
-                    // Manual refresh
+                    // Manual refresh (non-blocking)
                     KeyCode::Char('r') => {
-                        if let Ok(resp) = fetch_blocks(port, &api_key).await {
-                            app.tree.update_from_response(resp);
-                            app.clamp_cursor();
+                        if !fetching.load(Ordering::Relaxed) {
+                            fetching.store(true, Ordering::Relaxed);
+                            let client = http_client.clone();
+                            let key = api_key.clone();
+                            let tx = refresh_tx.clone();
+                            let fetch_flag = fetching.clone();
+                            tokio::spawn(async move {
+                                match fetch_blocks(&client, port, &key).await {
+                                    Ok(resp) => { let _ = tx.send(resp); }
+                                    Err(_) => { fetch_flag.store(false, Ordering::Relaxed); }
+                                }
+                            });
                         }
                     }
                     _ => {}
