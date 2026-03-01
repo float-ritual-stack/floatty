@@ -45,6 +45,11 @@ export function doorToBlockHandler(
       actions.setBlockStatus?.(outputId, 'running');
       actions.updateBlockContent(outputId, '');
 
+      // Write initial envelope so UI has `envelope.kind` immediately
+      if (door.kind === 'view') {
+        actions.setBlockOutput?.(outputId, { kind: 'view', doorId: meta.id, schema: 1, data: null }, 'door');
+      }
+
       // Build fresh context per execution
       const ctx = createDoorContext({
         blockId,
@@ -60,9 +65,10 @@ export function doorToBlockHandler(
           const data = result?.data ?? null;
           const error = result?.error;
 
-          // Enforce JSON-serializable output
+          // Enforce JSON-serializable output (JSON roundtrip, not structuredClone)
+          let safeData: DoorViewOutput['data'];
           try {
-            structuredClone(data);
+            safeData = JSON.parse(JSON.stringify(data)) as DoorViewOutput['data'];
           } catch {
             throw new Error(
               `[door:${meta.id}] execute() returned non-serializable data. ` +
@@ -74,7 +80,7 @@ export function doorToBlockHandler(
             kind: 'view',
             doorId: meta.id,
             schema: 1,
-            data: data as DoorViewOutput['data'],
+            data: safeData,
             error,
           };
 

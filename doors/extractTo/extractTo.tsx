@@ -60,14 +60,40 @@ interface DoorMeta {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════
 
+/** Bracket-counting wikilink parser (handles nested [[inner]] correctly) */
+function parseBracketedWikilink(input: string, start: number): { target: string; end: number } | null {
+  if (input.slice(start, start + 2) !== '[[') return null;
+  let i = start + 2;
+  let depth = 1;
+  const begin = i;
+  while (i < input.length) {
+    if (input.slice(i, i + 2) === '[[') { depth++; i += 2; continue; }
+    if (input.slice(i, i + 2) === ']]') {
+      depth--;
+      if (depth === 0) return { target: input.slice(begin, i), end: i + 2 };
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  return null;
+}
+
 /** Parse extract variants:
  *  - `extractTo:: [[PageName]] optional trailing` → pageName + trailing
  *  - `extract:: page name here` → pageName = everything after prefix, no trailing
  */
 function parseTarget(content: string): { pageName: string; trailing: string } | null {
-  // extractTo:: [[PageName]] with optional trailing content
-  const toMatch = content.match(/^extractTo::\s*\[\[(.+?)\]\](.*)/is);
-  if (toMatch) return { pageName: toMatch[1].trim(), trailing: toMatch[2].trim() };
+  // extractTo:: [[PageName]] with bracket-counting (handles nested wikilinks)
+  const prefix = content.match(/^extractTo::\s*/i);
+  if (prefix) {
+    const parsed = parseBracketedWikilink(content, prefix[0].length);
+    if (!parsed) return null;
+    return {
+      pageName: parsed.target.trim(),
+      trailing: content.slice(parsed.end).trim(),
+    };
+  }
 
   // extract:: everything after is the page name (strip heading markers)
   const bareMatch = content.match(/^extract::\s*(.+)/is);
@@ -201,7 +227,7 @@ export const door: BlockDoor = {
       // Children reparented directly under page, block becomes breadcrumb in-place
 
       // 4. Reparent each child to the page (in order)
-      const childIds = actions.getChildren(blockId);
+      const childIds = [...actions.getChildren(blockId)];
       for (let i = 0; i < childIds.length; i++) {
         const moved = actions.moveBlock(childIds[i], pageBlockId, i);
         if (!moved) {

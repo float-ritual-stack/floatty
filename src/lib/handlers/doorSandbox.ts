@@ -141,20 +141,18 @@ function createScopedActions(
 // ═══════════════════════════════════════════════════════════════
 
 const TIER_2_FS: ScopedFS = {
-  readFile: () => { throw new Error('fs access requires capabilities declaration in door meta'); },
-  readBinary: () => { throw new Error('fs access requires capabilities declaration in door meta'); },
-  writeFile: () => { throw new Error('fs access requires capabilities declaration in door meta'); },
-  listDir: () => { throw new Error('fs access requires capabilities declaration in door meta'); },
-  exists: () => { throw new Error('fs access requires capabilities declaration in door meta'); },
+  readFile: () => Promise.reject(new Error('fs access requires capabilities declaration in door meta')),
+  readBinary: () => Promise.reject(new Error('fs access requires capabilities declaration in door meta')),
+  writeFile: () => Promise.reject(new Error('fs access requires capabilities declaration in door meta')),
+  listDir: () => Promise.reject(new Error('fs access requires capabilities declaration in door meta')),
+  exists: () => Promise.reject(new Error('fs access requires capabilities declaration in door meta')),
 };
 
-const TIER_2_FETCH: DoorContext['fetch'] = () => {
-  throw new Error('External fetch requires capabilities declaration in door meta. Use ctx.server.fetch() for floatty-server.');
-};
+const TIER_2_FETCH: DoorContext['fetch'] = () =>
+  Promise.reject(new Error('External fetch requires capabilities declaration in door meta. Use ctx.server.fetch() for floatty-server.'));
 
-const TIER_2_INVOKE: ScopedInvoke = () => {
-  throw new Error('invoke access requires capabilities declaration in door meta');
-};
+const TIER_2_INVOKE: ScopedInvoke = () =>
+  Promise.reject(new Error('invoke access requires capabilities declaration in door meta'));
 
 // ═══════════════════════════════════════════════════════════════
 // CONTEXT BUILDER

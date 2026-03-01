@@ -60,17 +60,22 @@ interface DoorResult<T> {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════
 
+/** Format a Date as YYYY-MM-DD using local time (not UTC) */
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function resolveDate(arg: string): string {
-  if (!arg || arg === 'today') return new Date().toISOString().slice(0, 10);
+  if (!arg || arg === 'today') return localDateStr(new Date());
   if (arg === 'yesterday') {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
   }
   if (arg === 'tomorrow') {
     const d = new Date();
     d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
   }
   return arg; // assume YYYY-MM-DD
 }
@@ -85,8 +90,10 @@ async function fetchDailyData(
   }
   const { blocks } = (await resp.json()) as { blocks: Array<Record<string, any>> };
 
-  const dayStart = new Date(date).getTime();
-  const dayEnd = dayStart + 86400000;
+  // Parse YYYY-MM-DD as local midnight (not UTC)
+  const [y, m, d] = date.split('-').map(Number);
+  const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+  const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0).getTime();
   const dayBlocks = blocks.filter(
     (b: any) => b.createdAt >= dayStart && b.createdAt < dayEnd,
   );
@@ -110,7 +117,7 @@ async function fetchDailyData(
 
   return {
     date,
-    dayOfWeek: new Date(date).toLocaleDateString([], { weekday: 'long' }),
+    dayOfWeek: new Date(y, m - 1, d).toLocaleDateString([], { weekday: 'long' }),
     entries,
     notes: [],
     stats: { sessions: entries.length, hours: '\u2014', prs: 0 },
@@ -190,9 +197,9 @@ function DailyView(props: DoorViewProps<DailyData>) {
   });
 
   const navigateDate = (offset: number) => {
-    const d = new Date(date());
-    d.setDate(d.getDate() + offset);
-    setDate(d.toISOString().slice(0, 10));
+    const [y, m, dy] = date().split('-').map(Number);
+    const d = new Date(y, m - 1, dy + offset);
+    setDate(localDateStr(d));
   };
 
   const current = () => data() ?? props.data;
