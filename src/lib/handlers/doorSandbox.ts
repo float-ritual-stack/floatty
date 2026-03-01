@@ -15,6 +15,7 @@ import type {
   ScopedInvoke,
 } from './doorTypes';
 import type { ExecutorActions } from './types';
+import type { BatchBlockOp } from '../../hooks/useBlockStore';
 
 // ═══════════════════════════════════════════════════════════════
 // SERVER ACCESS (Tier 1)
@@ -24,7 +25,7 @@ import type { ExecutorActions } from './types';
  * Build DoorServerAccess from globals set by httpClient.ts.
  * Pre-injects Bearer token so doors don't need to know the API key.
  */
-function createServerAccess(): DoorServerAccess {
+export function createServerAccess(): DoorServerAccess {
   const url = window.__FLOATTY_SERVER_URL__;
   const apiKey = window.__FLOATTY_API_KEY__;
 
@@ -61,8 +62,15 @@ function createScopedActions(
   createdBlockIds: string[]
 ): ScopedActions {
   return {
+    // ── Block creation ──────────────────────────────────────────
     createBlockInside(parentId: string): string {
       const id = actions.createBlockInside(parentId);
+      createdBlockIds.push(id);
+      return id;
+    },
+    createBlockInsideAtTop(parentId: string): string {
+      const id = actions.createBlockInsideAtTop?.(parentId);
+      if (!id) throw new Error('createBlockInsideAtTop not available');
       createdBlockIds.push(id);
       return id;
     },
@@ -72,17 +80,55 @@ function createScopedActions(
       createdBlockIds.push(id);
       return id;
     },
+    // ── Batch creation ──────────────────────────────────────────
+    batchCreateBlocksAfter(afterId: string, ops: BatchBlockOp[]): string[] {
+      const ids = actions.batchCreateBlocksAfter?.(afterId, ops);
+      if (!ids) throw new Error('batchCreateBlocksAfter not available');
+      createdBlockIds.push(...ids);
+      return ids;
+    },
+    batchCreateBlocksInside(parentId: string, ops: BatchBlockOp[]): string[] {
+      const ids = actions.batchCreateBlocksInside?.(parentId, ops);
+      if (!ids) throw new Error('batchCreateBlocksInside not available');
+      createdBlockIds.push(...ids);
+      return ids;
+    },
+    batchCreateBlocksInsideAtTop(parentId: string, ops: BatchBlockOp[]): string[] {
+      const ids = actions.batchCreateBlocksInsideAtTop?.(parentId, ops);
+      if (!ids) throw new Error('batchCreateBlocksInsideAtTop not available');
+      createdBlockIds.push(...ids);
+      return ids;
+    },
+    // ── Block mutation ──────────────────────────────────────────
     updateBlockContent(id: string, content: string): void {
       actions.updateBlockContent(id, content);
     },
+    deleteBlock(id: string): boolean {
+      return actions.deleteBlock?.(id) ?? false;
+    },
+    // ── Block read ──────────────────────────────────────────────
     getBlock(id: string): unknown | undefined {
       return actions.getBlock?.(id);
     },
+    getParentId(id: string): string | undefined {
+      return actions.getParentId?.(id);
+    },
+    getChildren(id: string): string[] {
+      return actions.getChildren?.(id) ?? [];
+    },
+    rootIds(): readonly string[] {
+      return actions.rootIds ?? [];
+    },
+    // ── Block output/status ─────────────────────────────────────
     setBlockOutput(id: string, output: unknown, outputType: string): void {
       actions.setBlockOutput?.(id, output, outputType);
     },
     setBlockStatus(id: string, status: 'idle' | 'running' | 'complete' | 'error'): void {
       actions.setBlockStatus?.(id, status);
+    },
+    // ── UI interaction ──────────────────────────────────────────
+    focusBlock(id: string): void {
+      actions.focusBlock?.(id);
     },
   };
 }

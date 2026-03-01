@@ -7,6 +7,7 @@
  */
 
 import type { Component } from 'solid-js';
+import type { BatchBlockOp } from '../../hooks/useBlockStore';
 
 // ═══════════════════════════════════════════════════════════════
 // PRIMITIVES
@@ -63,6 +64,8 @@ export interface DoorMeta {
     invoke?: string[];
     fetch?: string[];
   };
+  /** Whether this door can appear as a sidebar tab (Phase 2+) */
+  sidebarEligible?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -78,12 +81,28 @@ export interface DoorServerAccess {
 
 /** Scoped block operations available to doors */
 export interface ScopedActions {
+  // Block creation
   createBlockInside(parentId: string): string;
+  createBlockInsideAtTop(parentId: string): string;
   createBlockAfter(afterId: string): string;
+  // Batch creation (single Y.Doc transaction)
+  batchCreateBlocksAfter(afterId: string, ops: BatchBlockOp[]): string[];
+  batchCreateBlocksInside(parentId: string, ops: BatchBlockOp[]): string[];
+  batchCreateBlocksInsideAtTop(parentId: string, ops: BatchBlockOp[]): string[];
+  // Block mutation
   updateBlockContent(id: string, content: string): void;
+  deleteBlock(id: string): boolean;
+  // Block read
   getBlock(id: string): unknown | undefined;
+  getParentId(id: string): string | undefined;
+  getChildren(id: string): string[];
+  rootIds(): readonly string[];
+  // Block output/status
   setBlockOutput(id: string, output: unknown, outputType: string): void;
   setBlockStatus(id: string, status: 'idle' | 'running' | 'complete' | 'error'): void;
+  // UI interaction
+  focusBlock(id: string): void;
+  // Streaming (optional — not all contexts support it)
   appendBlockContent?(id: string, chunk: string): void;
 }
 
@@ -135,6 +154,7 @@ export interface DoorViewProps<T = unknown> {
   settings: Record<string, unknown>;
   server: DoorServerAccess;
   onNavigateOut?: (direction: 'up' | 'down') => void;
+  onNavigate?: (target: string, opts?: { type?: 'page' | 'block'; splitDirection?: 'horizontal' | 'vertical' }) => void;
 }
 
 /** View door output envelope (stored in block.output) */
