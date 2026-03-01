@@ -1,33 +1,56 @@
 # floatty
 
-A high-performance terminal emulator built with Tauri v2 + xterm.js, featuring a "consciousness siphon" that captures structured context markers in real-time.
+A high-performance terminal emulator with an integrated outliner and consciousness siphon, built with Tauri v2 + SolidJS + Rust.
 
-## What It Does
+## Features
 
-- **Multi-tab terminals** with full PTY support per tab
-- **GPU-accelerated rendering** via WebGL addon
-- **ctx:: Siphon** - Parses terminal output for `ctx::` markers and displays them in a sidebar ToC
-- **Platform-aware keybinds** - Cmd on macOS, Ctrl on Windows/Linux
-- **High-throughput optimized** - Handles Claude Code's 4000+ redraws/sec without stuttering
+- **Multi-tab terminals** with full PTY support, GPU-accelerated rendering via xterm.js WebGL
+- **Block-based outliner** with CRDT sync (Yjs), inline markdown formatting, `[[wikilinks]]`, and zoom navigation
+- **ctx:: aggregation** watches session logs, extracts structured markers, parses via Ollama, displays in sidebar
+- **Split panes** with drag-and-drop rearrangement and resizable dividers
+- **Command bar** (`Cmd+K`) for fuzzy page navigation and actions
+- **5 themes** (Default, Dracula, Nord, Tokyo Night, Matte Black), hot-swap via `Cmd+;`
+- **Platform-aware keybinds** (Cmd on macOS, Ctrl on Windows/Linux)
+- **High-throughput optimized** - handles 4000+ redraws/sec from tools like Claude Code
+- **tmux auto-reattach** - tabs remember tmux sessions across restarts
+- **Shell hooks** - semantic terminal state (cwd, last command, exit code, duration)
+- **Undo/redo** - full CRDT-backed undo history in the outliner
 
-## Architecture Highlights
+## Architecture
 
-### The "Greedy Slurp" Pattern
 ```
-PTY Output → Reader Thread → mpsc channel → Batcher Thread → base64 → IPC Channel → xterm
+┌─────────────────────────────────────────────────────────────────┐
+│  FRONTEND (SolidJS + xterm.js + Yjs)                            │
+│  Reactive UI, local Y.Doc, debounced sync                       │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ invoke() for commands
+                         │ HTTP/WS for Y.Doc sync
+┌────────────────────────▼────────────────────────────────────────┐
+│  TAURI BACKEND (Rust)                                           │
+│  PTY management, ctx:: watcher, shell execution                 │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ FLOATTY_PORT, FLOATTY_API_KEY
+┌────────────────────────▼────────────────────────────────────────┐
+│  HEADLESS SERVER (floatty-server, Axum)                         │
+│  Y.Doc authority, REST/WS API, SQLite persistence               │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-- **Reader Thread**: Blocks on PTY read, pushes to channel
-- **Batcher Thread**: Blocks on first byte (0 CPU idle), then "slurps" all queued data (up to 64KB)
-- **Result**: 4000 IPC calls/sec → 60-144Hz steady updates
+The block store lives in a standalone HTTP server (`floatty-server`) that desktop, CLI, and agents can all connect to. CRDT sync flows through Yjs (frontend) and Yrs (backend) via base64-encoded updates.
 
-### Performance Optimizations
+### PTY Performance
 
-| Optimization | Problem | Solution | Impact |
-|--------------|---------|----------|--------|
-| Greedy Slurp | 4000+ events/sec kills UI | Batch in Rust before IPC | 60Hz smooth |
-| Base64 | Vec<u8> → slow JSON array | Base64 string | 60% faster |
-| Tauri Channels | window.emit broadcasts | Direct IPC pipe | No overhead |
+```
+PTY Output → Reader Thread → mpsc → Batcher Thread → base64 → IPC Channel → xterm
+```
+
+The "greedy slurp" pattern: batcher blocks on first byte (0 CPU idle), then drains all queued data (up to 64KB). Result: 4000 IPC calls/sec collapse to 60-144Hz steady updates.
+
+| Optimization | Problem | Solution |
+|--------------|---------|----------|
+| Greedy Slurp | 4000+ events/sec kills UI | Batch in Rust before IPC |
+| Base64 | `Vec<u8>` → slow JSON array | Base64 string (60% faster) |
+| Tauri Channels | `window.emit()` broadcasts | Direct IPC pipe |
 
 ## Quick Start
 
@@ -35,191 +58,220 @@ PTY Output → Reader Thread → mpsc channel → Batcher Thread → base64 → 
 # Install dependencies
 npm install
 
-# Run development
-npm run tauri dev
+# Run in development mode (hot reload frontend, rebuilds Rust)
+npm run tauri:dev
 
-# Build for production
+# Run tests
+npm run test:run
+
+# Lint
+npm run lint
+```
+
+### Release Build
+
+```bash
+# 1. Build the server sidecar
+./scripts/build-server.sh
+
+# 2. Build the app (includes sidecar in bundle)
 npm run tauri build
+```
+
+### Rust Tests
+
+The Cargo workspace is in `src-tauri/`. The package name is `float-pty`.
+
+```bash
+cd src-tauri && cargo test -p float-pty              # All Rust tests
+cd src-tauri && cargo test -p float-pty -- test_name  # Specific test (note the --)
 ```
 
 ## Keyboard Shortcuts
 
-Uses platform-aware keybinds: **Cmd** on macOS, **Ctrl** on Windows/Linux.
+Platform-aware: **Cmd** on macOS, **Ctrl** on Windows/Linux.
 
-### Tab Management
+### Tabs
+
 | Shortcut | Action |
 |----------|--------|
 | `Cmd+T` | New tab |
 | `Cmd+W` | Close tab |
-| `Cmd+1-9` | Go to tab N |
-| `Cmd+Shift+[` | Previous tab |
-| `Cmd+Shift+]` | Next tab |
+| `Cmd+1-9` | Jump to tab N |
+| `Cmd+Shift+[` / `]` | Previous / next tab |
 
-### UI
-| Shortcut | Action |
-|----------|--------|
-| `Cmd+B` | Toggle context sidebar |
-
-### Pane Management
+### Panes
 
 | Shortcut | Action |
 |----------|--------|
-| `Cmd+D` | Split pane horizontally |
-| `Cmd+Shift+D` | Split pane vertically |
-| `Cmd+O` | Split outliner pane horizontally |
-| `Cmd+Shift+O` | Split outliner pane vertically |
+| `Cmd+D` | Split terminal horizontally |
+| `Cmd+Shift+D` | Split terminal vertically |
+| `Cmd+O` | Split outliner horizontally |
+| `Cmd+Shift+O` | Split outliner vertically |
 | `Cmd+Shift+W` | Close active pane |
-| `Cmd+Option+←/→/↑/↓` | Focus adjacent pane |
+| `Cmd+Option+Arrow` | Focus adjacent pane |
 
-### Mouse Controls
-- Drag a pane using the small `⋮⋮` handle in the pane's top-right corner.
-- Drop on a pane edge drop-zone (`←`, `→`, `↑`, `↓`) to place the dragged pane on that side.
-- Press `Esc` during a pane drag to cancel without moving.
+Panes can also be rearranged by dragging the `:::` handle in the top-right corner and dropping on an edge zone.
 
-### Terminal Reserved (always pass through)
-These keys are never intercepted - they reach the PTY for shell signals:
-- `Ctrl+C` (SIGINT), `Ctrl+Z` (SIGTSTP), `Ctrl+D` (EOF)
-- `Ctrl+L`, `Ctrl+R`, `Ctrl+A`, `Ctrl+E`, `Ctrl+K`, `Ctrl+U`, `Ctrl+W`
+### Outliner
 
-## ctx:: Marker Format
+| Shortcut | Action |
+|----------|--------|
+| `Enter` | Create sibling / split block at cursor |
+| `Cmd+Enter` | Zoom into subtree |
+| `Escape` | Zoom out to full tree |
+| `Tab` / `Shift+Tab` | Indent / outdent |
+| `Cmd+.` | Toggle collapse |
+| `Cmd+Backspace` | Delete block and subtree |
+| `Cmd+Up` / `Down` | Move block up / down |
+| `Cmd+A` | Select all (escalates: text, block, tree) |
+| `Cmd+0-3` | Expand to level N |
+| `Cmd+[` / `]` | Navigation history back / forward |
+| `Cmd+Z` / `Cmd+Shift+Z` | Undo / redo |
+| `Cmd+Shift+M` | Export markdown to clipboard |
+| `Cmd+Shift+J` | Export JSON to clipboard |
+| `Cmd+Shift+B` | Export binary Y.Doc |
 
-The terminal captures markers in this format:
-```
-- ctx::2025-12-16 @ 08:30 AM [project::myproject] [mode::coding] Your message here
-```
+### Global
 
-Parsed into:
-- **timestamp**: 2025-12-16
-- **time**: 08:30 AM
-- **project**: myproject
-- **mode**: coding
-- **message**: Your message here
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+B` | Toggle sidebar |
+| `Cmd+K` | Command bar |
+| `Cmd+;` | Next theme |
+| `Cmd+=` / `Cmd+-` | Zoom in / out |
 
-## OSC 7337 Protocol
+### Terminal Reserved
 
-Send structured context via escape sequence (invisible in terminal):
-```bash
-printf '\e]7337;{"type":"ctx","line":"ctx::2025-12-16 @ 08:30 AM [project::x] message"}\a'
-```
+These keys always pass through to the PTY:
+`Ctrl+C`, `Ctrl+Z`, `Ctrl+D`, `Ctrl+L`, `Ctrl+R`, `Ctrl+A`, `Ctrl+E`, `Ctrl+K`, `Ctrl+U`, `Ctrl+W`
 
-## Headless Architecture (NEW)
+## Outliner
 
-floatty is headless-first: the block store lives in a standalone HTTP server that desktop, CLI, and agents can all connect to.
+The outliner is a block-based editor backed by a Yjs CRDT document. Blocks support:
 
-```
-┌──────────┐  ┌──────────┐  ┌──────────┐
-│ Desktop  │  │   CLI    │  │  Agent   │
-└────┬─────┘  └────┬─────┘  └────┬─────┘
-     └──────┬──────┴───────┬──────┘
-            │  HTTP/WS     │
-      ┌─────▼──────────────▼─────┐
-      │    floatty-server        │
-      │    (127.0.0.1:8765)      │
-      └──────────┬───────────────┘
-           ┌─────▼─────┐
-           │  SQLite   │
-           └───────────┘
-```
+- **Inline formatting**: `**bold**`, `*italic*`, `` `code` `` rendered as overlays on contentEditable
+- **Wikilinks**: `[[Page Name]]` for inter-page navigation (Roam-style)
+- **Prefix types**: `sh::` (executable shell), `ai::` (AI context), `ctx::` (context markers)
+- **Nested zoom**: `Cmd+Enter` zooms into any block's subtree, `Escape` zooms out
+- **Backlinks**: When zoomed into a page, linked references are shown below
 
-### HTTP API
+Pages live under a `pages::` container block. Clicking a `[[wikilink]]` creates the page if it doesn't exist, then zooms to it.
 
-```bash
-# Get all blocks
-curl -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8765/api/v1/blocks
+## Headless Server API
 
-# Create block
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  -d '{"content": "Hello from CLI", "parentId": "..."}' \
-  http://127.0.0.1:8765/api/v1/blocks
-```
+The block store is served by `floatty-server`. All endpoints require `Authorization: Bearer <API_KEY>` (except `/health`).
 
-Blocks created via API appear instantly in UI via WebSocket.
-
-API key is stored in `~/.floatty/config.toml`.
-
-## Multi-Workspace Support (NEW)
-
-All data paths derive from `FLOATTY_DATA_DIR` environment variable:
+Config lives at `~/.floatty-dev/config.toml` (dev) or `~/.floatty/config.toml` (release).
 
 ```bash
-# Default behavior (production)
-~/.floatty/
+# Get API key and port from config
+grep -E 'server_port|api_key' ~/.floatty-dev/config.toml
 
-# Development workspace (isolated from release)
-FLOATTY_DATA_DIR=~/.floatty-dev npm run tauri dev
+# Query blocks
+curl -H "Authorization: Bearer $KEY" http://127.0.0.1:$PORT/api/v1/blocks
+
+# Health check (no auth)
+curl http://127.0.0.1:$PORT/api/v1/health
 ```
 
-**Data directory structure**:
+### Key Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v1/blocks` | GET | All blocks |
+| `/api/v1/state` | GET | Full Y.Doc state (base64) |
+| `/api/v1/update` | POST | Apply CRDT update (merge) |
+| `/api/v1/restore` | POST | Replace entire Y.Doc state (destructive) |
+| `/api/v1/export/binary` | GET | Download `.ydoc` backup |
+| `/api/v1/export/json` | GET | Download human-readable JSON |
+| `/api/v1/health` | GET | Version, git SHA, status |
+
+Changes made via REST propagate to all connected WebSocket clients in real time.
+
+## ctx:: Aggregation
+
+The terminal watches Claude Code session logs (`~/.claude/projects/*.jsonl`) for `ctx::` markers:
+
 ```
-{FLOATTY_DATA_DIR}/
+ctx::2026-01-15 @ 10:30 AM [project::floatty] [mode::debugging] Fixed sync loop
+```
+
+Markers are extracted by a file watcher, stored in SQLite, parsed by Ollama into structured data (project, mode, tags), and displayed in the sidebar. Poll interval, Ollama model, and look-back window are configurable in `config.toml`.
+
+## Configuration
+
+Data paths are isolated by build profile to prevent dev/release collisions:
+
+| Build | Data Directory |
+|-------|---------------|
+| Debug | `~/.floatty-dev/` |
+| Release | `~/.floatty/` |
+| Override | `FLOATTY_DATA_DIR=...` |
+
+```
+{data_dir}/
 ├── config.toml       # workspace_name, server_port, ollama settings
-├── ctx_markers.db    # SQLite database
+├── ctx_markers.db    # SQLite (WAL mode)
 ├── server.pid        # Server process tracking
-├── logs/             # Structured JSON logs
+├── logs/             # Structured JSON logs (daily rotation)
 └── search_index/     # Tantivy full-text index
 ```
 
-**Config options for workspace isolation**:
+### config.toml
+
 ```toml
-workspace_name = "dev"    # Shows in title bar
-server_port = 8766        # Unique port per workspace
+workspace_name = "default"
+server_port = 8765
+watch_path = "~/.claude/projects"
+ollama_endpoint = "http://localhost:11434"
+ollama_model = "qwen2.5:7b"
+poll_interval_ms = 2000
+max_age_hours = 72
 ```
 
-**Title bar**: Shows workspace + version + git commit: `floatty (dev) - workspace v0.4.2 (abc1234)`
+Title bar displays: `floatty (dev) - workspace_name v0.7.41 (abc1234)`
 
-This enables:
-- Running dev and release builds simultaneously (different ports)
-- Test isolation via temporary data directories
-- Future workspace switching for multi-environment setups
+## Logging
 
-## Structured Logging (NEW)
+Structured JSON logs via `tracing`, daily rotation.
 
-Floatty uses structured logging with `tracing` for LLM-parseable observability.
+**Location**: `{data_dir}/logs/floatty.YYYY-MM-DD.jsonl`
 
-**Log location**: `{FLOATTY_DATA_DIR}/logs/floatty-{date}.jsonl` (daily rotation)
+Frontend `console.*` calls are forwarded to Rust and appear with `"target":"js"`.
 
-**JSON format** - every operation logs structured fields:
-```json
-{
-  "timestamp": "2026-01-08T08:00:00.000Z",
-  "level": "INFO",
-  "target": "float_pty_lib",
-  "fields": {
-    "duration_ms": 42,
-    "output_bytes": 1024,
-    "exit_code": 0
-  }
-}
-```
-
-**Query logs with jq**:
 ```bash
-# Find slow operations (use your data dir)
-jq 'select(.fields.duration_ms > 1000)' ~/.floatty/logs/floatty-*.jsonl
+# Find frontend logs
+jq 'select(.target == "js")' ~/.floatty-dev/logs/floatty.*.jsonl
 
-# Trace specific operations
-jq 'select(.span.marker_id == "ctx_abc123")' ~/.floatty/logs/*.jsonl
+# Find slow operations
+jq 'select(.fields.duration_ms > 1000)' ~/.floatty-dev/logs/floatty.*.jsonl
 ```
 
-**Enable verbose logging**: `RUST_LOG=debug`
-
-See `docs/CHANGELOG_STRUCTURED_LOGGING.md` for details.
+Verbose logging: `RUST_LOG=debug` (enabled automatically in dev mode).
 
 ## Tech Stack
 
-- **Frontend**: SolidJS, TypeScript, Vite
-- **Terminal**: xterm.js + WebGL + Unicode11 + Ligatures addons
-- **Outliner**: Block tree with yjs CRDT, inline markdown formatting
-- **Backend**: Tauri v2, Rust
-- **Block Server**: floatty-server (Axum HTTP + WebSocket)
-- **PTY**: Vendored tauri-plugin-pty with custom batching
-- **Theming**: 5 bundled themes, hot-swap via ⌘;
-- **Logging**: Structured tracing with JSON output for LLM observability
+| Layer | Technology |
+|-------|-----------|
+| Frontend | SolidJS, TypeScript, Vite |
+| Terminal | xterm.js + WebGL + Unicode11 addons |
+| Outliner | Yjs CRDT, contentEditable, tinykeys |
+| Backend | Tauri v2, Rust |
+| Server | Axum (HTTP + WebSocket), Yrs, SQLite |
+| Search | Tantivy full-text index |
+| Theming | 5 themes, CSS variables, hot-swap |
+| Logging | tracing (Rust) + structured JSON |
 
-## Known Issues
+### Rust Workspace
 
-- xterm decoration API unstable (removed for now)
-- Auto-fire to evna not wired yet (manual capture works)
+```
+src-tauri/
+├── Cargo.toml          # Workspace root
+├── src/                # float-pty (Tauri app + PTY)
+├── floatty-core/       # Shared CRDT and block store logic
+└── floatty-server/     # Headless server (Axum)
+```
 
 ## Credits
 
