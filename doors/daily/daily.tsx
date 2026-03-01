@@ -89,17 +89,17 @@ async function fetchDailyData(
   );
 
   const entries: TimelogEntry[] = dayBlocks
-    .filter((b: any) => b.metadata?.markers?.some((m: any) => m.type === 'ctx'))
+    .filter((b: any) => b.metadata?.markers?.some((m: any) => m.markerType === 'ctx'))
     .map((b: any) => ({
       time: new Date(b.createdAt).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
       }),
       summary: b.content?.slice(0, 120) || '',
-      project: b.metadata?.markers?.find((m: any) => m.type === 'project')?.value,
-      mode: b.metadata?.markers?.find((m: any) => m.type === 'mode')?.value,
-      issue: b.metadata?.markers?.find((m: any) => m.type === 'issue')?.value,
-      meeting: b.metadata?.markers?.find((m: any) => m.type === 'meeting')?.value,
+      project: b.metadata?.markers?.find((m: any) => m.markerType === 'project')?.value,
+      mode: b.metadata?.markers?.find((m: any) => m.markerType === 'mode')?.value,
+      issue: b.metadata?.markers?.find((m: any) => m.markerType === 'issue')?.value,
+      meeting: b.metadata?.markers?.find((m: any) => m.markerType === 'meeting')?.value,
       details: [],
       phases: [],
       prs: [],
