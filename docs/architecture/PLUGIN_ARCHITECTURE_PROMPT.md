@@ -58,18 +58,33 @@ export interface DoorViewProps<T = unknown> {
 }
 
 export interface DoorContext {
-  /** Block CRUD (sandboxed) */
+  /** Pre-authenticated localhost access to floatty-server REST API (Tier 1) */
+  server: DoorServerAccess;
+  /** Block CRUD convenience layer over REST (Tier 1) */
   actions: ScopedActions;
-  /** Read/write files (scoped to declared directories) */
+  /** Read/write files (scoped to declared directories) (Tier 2) */
   fs: ScopedFS;
-  /** HTTP fetch (rate-limited, logged) */
+  /** External HTTP fetch (scoped to declared domains) (Tier 2) */
   fetch: typeof fetch;
-  /** Call Tauri commands (scoped allowlist) */
+  /** Call Tauri commands (scoped to declared names) (Tier 2) */
   invoke: ScopedInvoke;
-  /** Door-specific settings from config.toml */
+  /** Door-specific settings from config.toml (Tier 1) */
   settings: Record<string, unknown>;
-  /** Prefixed logger */
+  /** Current block ID and content (Tier 1) */
+  blockId: string;
+  content: string;
+  doorId: string;
+  /** Prefixed logger (Tier 1) */
   log: (...args: unknown[]) => void;
+}
+
+export interface DoorServerAccess {
+  /** Server base URL (e.g., http://127.0.0.1:8765) */
+  url: string;
+  /** WebSocket URL (e.g., ws://127.0.0.1:8765/ws) */
+  wsUrl: string;
+  /** Pre-authenticated fetch — Bearer token injected automatically */
+  fetch: (path: string, init?: RequestInit) => Promise<Response>;
 }
 ```
 
@@ -88,6 +103,14 @@ export const meta = {
   },
 };
 ```
+
+### Headless-First Principle
+
+> Doors are headless-first. If a door needs a capability the REST API doesn't have, fix the API — don't add door-specific wrappers.
+
+`ctx.server.fetch()` gives doors pre-authenticated access to the same REST API that CLI agents and Claude Code already use. `ScopedActions` is a convenience layer over REST, not the only data channel. A door that needs something the wrapper doesn't support just hits the API directly.
+
+The door system becomes a forcing function for API completeness. Every gap a door finds is a gap CLI agents also have.
 
 ---
 
@@ -117,6 +140,9 @@ interface TimelogEntry {
   prs: Array<{ num: number; status: string }>;
 }
 
+// NOTE: When the door builds DailyData itself (headless-first via REST),
+// it owns the shape. The old DailyNoteData from Rust used snake_case
+// (day_of_week, timelogs, scattered_thoughts). Doors define their own types.
 interface DailyData {
   date: string;
   dayOfWeek: string;
@@ -247,7 +273,36 @@ export const door: Door<DailyData> = {
     const date = resolveDate(dateArg);
     ctx.log('Executing for date:', date);
     try {
-      const data = await ctx.invoke<DailyData>('execute_daily_command', { dateArg: date });
+      // Headless-first: query the same REST API CLI agents use
+      const resp = await ctx.server.fetch('/api/v1/blocks');
+      const { blocks } = await resp.json() as { blocks: Record<string, any>; rootIds: string[] };
+
+      // Filter blocks by date (client-side — no date query endpoint yet)
+      const dayStart = new Date(date).getTime();
+      const dayEnd = dayStart + 86400000;
+      const dayBlocks = Object.values(blocks).filter((b: any) =>
+        b.createdAt >= dayStart && b.createdAt < dayEnd
+      );
+
+      // Build DailyData from block metadata
+      const entries: TimelogEntry[] = dayBlocks
+        .filter((b: any) => b.metadata?.markers?.some((m: any) => m.type === 'ctx'))
+        .map((b: any) => ({
+          time: new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          summary: b.content?.slice(0, 120) || '',
+          project: b.metadata?.markers?.find((m: any) => m.type === 'project')?.value,
+          mode: b.metadata?.markers?.find((m: any) => m.type === 'mode')?.value,
+          issue: b.metadata?.markers?.find((m: any) => m.type === 'issue')?.value,
+          details: [], phases: [], prs: [],
+        }));
+
+      const data: DailyData = {
+        date,
+        dayOfWeek: new Date(date).toLocaleDateString([], { weekday: 'long' }),
+        entries,
+        notes: [],
+        stats: { sessions: entries.length, hours: '—', prs: 0 },
+      };
       return { data };
     } catch (err) {
       return { data: null as any, error: String(err) };
@@ -260,7 +315,7 @@ export const door: Door<DailyData> = {
 export const meta = {
   name: 'Daily Notes',
   version: '0.1.0',
-  capabilities: { invoke: ['execute_daily_command'] },
+  // No Tier 2 capabilities needed — uses ctx.server.fetch (Tier 1) only
 };
 ```
 
@@ -269,26 +324,36 @@ export const meta = {
 | Capability | How daily:: exercises it |
 |-----------|--------------------------|
 | SolidJS view component | `<For>`, `<Show>`, reactive props — real SolidJS, not vanilla DOM |
-| `ctx.invoke()` | Calls `execute_daily_command` (scoped allowlist) |
+| Headless-first | `ctx.server.fetch('/api/v1/blocks')` — same API CLI agents use, no special commands |
 | Typed data flow | `execute()` returns `DailyData`, view receives via `DoorViewProps<DailyData>` |
 | Component registry | Host mounts via `<Dynamic component={door.view}>`, no hardcoded `<Show>` |
 | Self-contained | Logic + view + types in one `.tsx` file |
+| Zero Tier 2 deps | No `capabilities` needed — REST API is always available |
 
 ---
 
 ## 3. Rendering Architecture (Component Registry + `<Dynamic>`)
 
-Currently `BlockItem.tsx` hardcodes view routing:
+Currently `BlockItem.tsx` hardcodes view routing with nested `<Show>` guards
+checking both `outputType` AND `outputStatus` (2 view types, 6+ branches):
 
 ```tsx
-// CURRENT: one <Show> branch per output type — doesn't scale
-<Show when={block()?.outputType === 'daily-view'}>
-  <DailyView data={...} />
+// CURRENT (actual code): nested <Show> guards per output type — doesn't scale
+<Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
+  <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
+    {/* spinner */}
+  </Show>
+  <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
+    <DailyView data={block()!.output as DailyNoteData} />
+  </Show>
+  <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running'}>
+    <DailyErrorView error={...} />
+  </Show>
 </Show>
-<Show when={block()?.outputType === 'search-results'}>
-  <SearchResultsView data={...} />
+<Show when={block()?.outputType === 'search-results' || block()?.outputType === 'search-error'}>
+  {/* Same triple-nesting pattern for search */}
 </Show>
-// Every new view type = edit BlockItem.tsx. That's wrong.
+// Every new view type = 3+ branches in BlockItem.tsx. That's wrong.
 ```
 
 ### New: Component Registry + `<Dynamic>`
@@ -469,6 +534,7 @@ Research Tauri v2 import map support in Phase 0.
 - **Handler Registry is King** — do NOT modify `registry.ts`. Doors become `BlockHandler` via adapter.
 - **Hook Lifecycle** — doors go through `executeHandler()`. Full pipeline (`execute:before`/`execute:after`).
 - **SolidJS Rules Apply** — don't destructure props, use `on()` for explicit deps.
+- **JSON Serializable Only** — `DoorResult<T>` requires `T extends JsonSerializable`. No `Date`, `Map`, `Set`, class instances, functions, `undefined`, circular references. Strings, numbers, booleans, arrays, plain objects only. Door data flows through `setBlockOutput()` → Y.Map, and Y.Doc only round-trips JSON-safe types. Use ISO strings for dates, arrays for ordered collections, plain objects for maps.
 
 ### Handler Adapter
 
@@ -502,63 +568,140 @@ function doorToBlockHandler(door: Door, ctx: DoorContext): BlockHandler {
 
 ---
 
-## 6. The Sandbox (DoorContext)
+## 6. JavaScript API Surface (Three Tiers)
 
-### ScopedActions
+### Tier 1 — Always Available (No Declaration)
 
-```typescript
-interface ScopedActions {
-  createBlockInside(parentId: string): string;
-  createBlockAfter(afterId: string): string;
-  updateBlockContent(id: string, content: string): void;
-  getBlock(id: string): BlockSnapshot | undefined;
-  setBlockOutput(id: string, output: unknown, outputType: string): void;
-  setBlockStatus(id: string, status: string): void;
-  // NOT exposed: deleteBlock, focusBlock, getChildren, getParentId
-}
-```
-
-### ScopedFS
+These require no `meta.capabilities` — they're the baseline every door gets.
 
 ```typescript
-interface ScopedFS {
-  readFile(path: string): Promise<string>;
-  readBinary(path: string): Promise<Uint8Array>;
-  writeFile(path: string, content: string): Promise<void>;
-  listDir(path: string, glob?: string): Promise<string[]>;
-  exists(path: string): Promise<boolean>;
-}
+// Pre-authenticated REST API (localhost)
+ctx.server.url          // "http://127.0.0.1:8765"
+ctx.server.wsUrl        // "ws://127.0.0.1:8765/ws"
+ctx.server.fetch(path)  // Bearer token pre-injected
+
+// Block CRUD (convenience over REST)
+ctx.actions.createBlockInside(parentId: string): string
+ctx.actions.createBlockAfter(afterId: string): string
+ctx.actions.updateBlockContent(id: string, content: string): void
+ctx.actions.getBlock(id: string): BlockSnapshot | undefined
+ctx.actions.setBlockOutput(id: string, output: unknown, outputType: string): void
+ctx.actions.setBlockStatus(id: string, status: 'idle' | 'running' | 'complete' | 'error'): void
+
+// Identity & config
+ctx.blockId             // Current block ID
+ctx.content             // Current block content
+ctx.doorId              // Door identifier (first prefix)
+ctx.settings            // [plugins.settings.X] from config.toml
+ctx.log(...)            // Prefixed console logger
 ```
 
-All methods go through Tauri commands with `canonicalize()` against declared `capabilities.fs`.
+**Web platform** (it's a browser — always available):
+```
+fetch, URL, URLSearchParams, TextEncoder/Decoder,
+crypto.subtle, structuredClone, AbortController,
+setTimeout/setInterval, JSON, Date, Intl, console
+```
 
-### ScopedInvoke
+**SolidJS** (via import map — always available in `.tsx`):
+```
+createSignal, createEffect, createMemo, createResource,
+onMount, onCleanup, Show, For, Switch, Match, Dynamic
+```
+
+**Key distinction**: `ctx.server.fetch` (localhost, pre-auth) is Tier 1. `ctx.fetch` (external HTTP) is Tier 2. The server enforces its own access control — a door hitting `POST /api/v1/blocks` is no more dangerous than Claude Code doing the same thing every session.
+
+### Tier 2 — Requires `meta.capabilities` Declaration
 
 ```typescript
-type ScopedInvoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+// File I/O (scoped to declared directories)
+ctx.fs.readFile(path: string): Promise<string>
+ctx.fs.readBinary(path: string): Promise<Uint8Array>
+ctx.fs.writeFile(path: string, content: string): Promise<void>
+ctx.fs.listDir(path: string, glob?: string): Promise<string[]>
+ctx.fs.exists(path: string): Promise<boolean>
+// All paths canonicalized against meta.capabilities.fs
+
+// External HTTP (scoped to declared domains)
+ctx.fetch(url: string, init?: RequestInit): Promise<Response>
+// Only domains in meta.capabilities.fetch
+
+// Tauri commands (scoped to declared names)
+ctx.invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>
+// Only commands in meta.capabilities.invoke
 ```
 
-Only commands in `meta.capabilities.invoke`. Others throw.
+Example declaration:
+```typescript
+export const meta = {
+  capabilities: {
+    fs: ['~/Documents/Notes/Daily'],     // Paths door can read/write
+    fetch: ['wttr.in', 'api.github.com'], // Domains door can reach
+    invoke: ['execute_daily_command'],     // Tauri commands door can call
+  },
+};
+```
+
+### Tier 3 — NOT Exposed (v1)
+
+| Capability | Why Not |
+|-----------|---------|
+| `deleteBlock`, `focusBlock` | Too destructive / attention-stealing |
+| `hookRegistry`, `eventBus` | Doors don't register hooks |
+| Y.Doc direct access | CRDT internals stay internal |
+| `window`/`document` globals | Doors render through their view component |
+| `getChildren`, `getParentId` | Tree traversal via REST (`GET /api/v1/blocks`) |
 
 ---
 
 ## 7. Implementation Phases
 
-### Phase 0: Proof of Concept (Do This First)
+### Phase 0: Proof of Concept (GATE — Do This First)
+
+Tauri's CSP is intentionally restrictive. Whether `blob:` module imports work depends on the effective CSP and webview behavior. This must be proven in the target runtime, not assumed.
 
 **A. Blob import in Tauri webview:**
+
+Drop this into the Tauri webview console (or a dev-only UI action):
+
 ```typescript
-const code = `export const door = { prefixes: ['test::'] }`;
-const blob = new Blob([code], { type: 'application/javascript' });
-const url = URL.createObjectURL(blob);
-const mod = await import(url);
-console.log(mod.door.prefixes); // ['test::']
+(async () => {
+  const blob = new Blob(
+    ['export const x = 1; export default () => "ok";'],
+    { type: 'application/javascript' }
+  );
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const mod = await import(url);
+    console.log('BLOB_IMPORT_OK', mod.x, mod.default?.());
+  } catch (e) {
+    console.error('BLOB_IMPORT_FAIL', e);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+})();
 ```
 
-**B. Compiled SolidJS component via Blob + `<Dynamic>`:**
-Pre-compile a trivial component, Blob-import, mount via `<Dynamic>`. Confirm it renders.
+Interpretation:
+- `BLOB_IMPORT_OK` → you can ship compiled door bundles as blob modules. Proceed.
+- `BLOB_IMPORT_FAIL` → **stop**. Do not build infra. Pivot loading strategy (e.g., `asset:` protocol modules, pre-bundled static files, or a host-side module registry).
 
-**If either fails** — stop. Check CSP in `tauri.conf.json`. `blob:` may need allow-listing.
+**B. Compiled SolidJS component via Blob + `<Dynamic>`:**
+
+Pre-compile a trivial component (manually, using Vite's solid transform), Blob-import, mount via `<Dynamic>`. Confirm it renders and reactivity works.
+
+**C. swc-plugin-jsx-dom-expressions reality check:**
+
+The Solid SWC plugin (`milomg/swc-plugin-jsx-dom-expressions`) exists as a GitHub repo but is NOT a polished "grab-from-crates-and-go" crate. SWC's WASM plugin compatibility is a moving target with version coupling issues.
+
+Before writing any architecture around "compile doors with SWC + plugin inside Tauri":
+- Prove plugin loading format (native Rust crate vs WASM)
+- Prove version pinning strategy (SWC core version ↔ plugin version)
+- If WASM-only: does `swc_core` support loading WASM plugins from Rust?
+- **Fallback**: Vite's `@vitejs/plugin-solid` as a build step, invoked via Node.js subprocess
+
+**If Phase 0 fails** — pivot loading mechanism first. Everything else is downstream noise.
 
 ### Phase 1: Rust Layer
 
@@ -660,9 +803,15 @@ export const door: Door<TsData> = {
 ## 9. Open Questions (Phase 0 Research)
 
 1. **Import maps in Tauri v2** — can webview `<script type="importmap">` resolve `solid-js` for Blob modules?
-2. **swc-plugin-jsx-dom-expressions** — Rust crate or WASM-only? Determines where compilation lives.
-3. **CSP for `blob:`** — does Tauri v2 allow `import()` from `blob:` URLs by default?
+2. **swc-plugin-jsx-dom-expressions** — Rust crate or WASM-only? Determines where compilation lives. See Phase 0C.
+3. **CSP for `blob:`** — does Tauri v2 allow `import()` from `blob:` URLs by default? See Phase 0A.
 4. **Theme access** — doors use CSS custom properties (recommended) or receive theme signal via props?
+5. **Server API gaps for doors** — verified gaps that `daily::` would need:
+   - No query-by-date-range endpoint (client-side filter over `GET /api/v1/blocks` works but doesn't scale)
+   - No query-by-marker-type endpoint (`metadata.markers` is per-block, no indexed query)
+   - Search (`GET /api/v1/search`) is content-only, doesn't filter by metadata
+   - Metadata not settable in `POST /api/v1/blocks` body (must PATCH after create, or rely on hooks)
+   - These are forcing-function gaps: fix them in the server API so all clients benefit
 
 ---
 
@@ -693,10 +842,11 @@ HandlerRegistry.findHandler('daily::today')
 executeHandler()  ← hooks: execute:before / execute:after
     │
     ├─ adapter.execute()
-    │   ├─ Build DoorContext (scoped actions, fs, invoke, settings)
+    │   ├─ Build DoorContext { server, actions, settings, blockId, ... }
     │   ├─ door.execute(blockId, content, ctx)
-    │   │     └─ ctx.invoke('execute_daily_command', { dateArg })
-    │   │           └─ Rust → DailyData
+    │   │     └─ ctx.server.fetch('/api/v1/blocks')    ← Tier 1: pre-auth localhost
+    │   │           └─ floatty-server → JSON blocks
+    │   │     └─ Filter by date, build DailyData       ← Door logic (pure JS)
     │   ├─ setBlockOutput(childId, { doorId, data }, 'door-view')
     │   └─ setBlockStatus(childId, 'complete')
     │
@@ -713,7 +863,62 @@ BlockItem: outputType === 'door-view'
 
 ---
 
-## 12. The Pattern
+## 12. Verification: Spec vs Codebase (Required Before Execution)
+
+Run this verification pass before building anything. Record actual type names and exact string literals.
+
+### Handler System
+
+| Assumption | Code Probe | Status | Notes |
+|-----------|------------|--------|-------|
+| `HandlerRegistry` exports `register()`, `findHandler()`, `getRegisteredPrefixes()` | `src/lib/handlers/registry.ts` | ✅ Match | Also has `isExecutableBlock()`, `clear()` (HMR) |
+| `BlockHandler` has `prefixes: string[]` + `execute(blockId, content, actions)` | `src/lib/handlers/types.ts` | ✅ Match | Exact signature confirmed |
+| `ExecutorActions` has block CRUD methods | `src/lib/handlers/types.ts` | ⚠️ Richer | 12 methods including `createBlockInsideAtTop`, `updateBlockContentFromExecutor`, `getParentId`, `getChildren`, `focusBlock`, `paneId`. Spec only showed 6. |
+| `executeHandler()` wraps with `execute:before`/`execute:after` hooks | `src/lib/handlers/executor.ts` | ✅ Match | Also takes `store: HookBlockStore` param. Hooks can abort (returns `blocked::` prefix). |
+| `registerHandlers()` has HMR guard + built-in registration | `src/lib/handlers/index.ts` | ✅ Match | 9 built-in handlers. `loadUserDoors()` slots after line 65, before hook registration. |
+
+### Rendering System
+
+| Assumption | Code Probe | Status | Notes |
+|-----------|------------|--------|-------|
+| Block fields: `output`, `outputType`, `outputStatus` | `src/lib/blockTypes.ts:44-52` | ✅ Match | `outputStatus: 'pending' \| 'running' \| 'complete' \| 'error'`. Documented as client-only state. |
+| `outputType` string: `'daily-view'` | `src/components/BlockItem.tsx:910` | ✅ Match | Also `'daily-error'`, `'search-results'`, `'search-error'` |
+| 2 hardcoded view types in BlockItem.tsx | `BlockItem.tsx:900-950` | ✅ Match | Daily (3 branches) + Search (3 branches). Nested `<Show>` checks both type AND status. |
+| DailyView receives data via props | `src/components/views/DailyView.tsx:11` | ✅ Match | `DailyViewProps { data: DailyNoteData }` |
+| `DailyNoteData` shape | `src/lib/tauriTypes.ts:82-87` | ⚠️ Drift | Real shape uses `snake_case` from Rust: `day_of_week`, `timelogs`, `scattered_thoughts`. Spec used `camelCase`: `dayOfWeek`, `entries`, `notes`. Door would need to match Rust shape OR transform. |
+| Output blocks are keyboard dead zones | `BlockItem.tsx:901` | ✅ Match | Wrapped in `div[tabIndex=0]` with separate `handleOutputBlockKeyDown`. |
+
+### Config & Paths
+
+| Assumption | Code Probe | Status | Notes |
+|-----------|------------|--------|-------|
+| Config is TOML with serde derives | `src-tauri/src/config.rs` | ✅ Match | `AggregatorConfig` with `#[derive(Serialize, Deserialize)]` |
+| `[plugins]` section exists | `config.rs` | ❌ Missing | No plugin config yet. But `save_to()` TOML merge preserves unknown sections — extensible. |
+| `DataPaths::default_root()` handles dev/release | `src-tauri/src/paths.rs` | ✅ Match | `~/.floatty-dev` (debug) / `~/.floatty` (release). `FLOATTY_DATA_DIR` env override. |
+| Pattern for adding subdirs | `paths.rs::from_root()` | ✅ Match | Add `pub doors: PathBuf` field, set in `from_root()`, create in `ensure_dirs()`. |
+| Y.Doc output round-trips JSON | `src/hooks/useBlockStore.ts:621` | ✅ Match | `setBlockOutput()` → `setValueOnYMap()`. Y.Map stores arbitrary JSON-safe values. |
+
+### Server API (Headless-First Readiness)
+
+| Assumption | Code Probe | Status | Notes |
+|-----------|------------|--------|-------|
+| Auth is Bearer token | `src-tauri/floatty-server/src/api.rs` | ✅ Match | `Authorization: Bearer <key>`. Localhost (127.0.0.1, ::1) exempt. |
+| Block CRUD via REST | `api.rs` router | ✅ Match | 27 endpoints. Full CRUD: GET/POST/PATCH/DELETE `/api/v1/blocks`. |
+| Can POST blocks with metadata | `api.rs::create_block` | ⚠️ Partial | `POST /api/v1/blocks` accepts `content`, `parentId`, `afterId`, `atIndex`. No `metadata` in create body — must PATCH after. |
+| Can query blocks by marker | `api.rs` | ❌ Missing | No metadata query endpoint. Must `GET /api/v1/blocks` + filter client-side. |
+| Can query blocks by date | `api.rs` | ❌ Missing | `createdAt`/`updatedAt` available per block, but no date range query. |
+| WebSocket for real-time | `ws.rs` | ✅ Match | Seq-based gap detection, heartbeat every 30s. |
+
+### Compilation Pipeline
+
+| Assumption | Code Probe | Status | Notes |
+|-----------|------------|--------|-------|
+| `swc-plugin-jsx-dom-expressions` is a Rust crate | crates.io / GitHub | ⚠️ Unverified | GitHub repo exists (`milomg/swc-plugin-jsx-dom-expressions`). Not obviously a polished crate. WASM plugin compat is version-coupled. **Must prove in Phase 0C.** |
+| `blob:` import works in Tauri webview | Tauri CSP | ⚠️ Unverified | Known edge cases with blob/object URLs. **Must prove in Phase 0A.** |
+
+---
+
+## 13. The Pattern
 
 ```
 BBS (1985):  User dials in  → DOOR.BAT matches  → Door gets COM port   → Door paints ANSI
@@ -723,3 +928,19 @@ floatty:     User types ::   → Registry matches   → <Dynamic> mounts     →
 ```
 
 Same shape. 40 years deep.
+
+---
+
+## 14. Execution Order
+
+**Status: DO NOT BUILD YET**
+
+```
+1. Run verification pass (Section 12) — patch spec where reality disagrees  ✅ DONE
+2. Run Blob import probe in Tauri webview (Phase 0A gate)
+3. Run SWC + Solid plugin feasibility check (Phase 0C)
+4. Only if (2) passes → proceed with corrected spec
+5. If (2) fails → pivot loading mechanism FIRST; everything else is downstream noise
+```
+
+The spec is a hypothesis. The codebase is the truth. Phase 0 is the gate.
