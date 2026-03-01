@@ -59,6 +59,7 @@ interface DoorHostProps {
   error?: string;
   status?: string;
   onNavigateOut?: (direction: 'up' | 'down') => void;
+  onNavigate?: (target: string, opts?: { type?: 'page' | 'block'; splitDirection?: 'horizontal' | 'vertical' }) => void;
 }
 
 export function DoorHost(props: DoorHostProps) {
@@ -93,6 +94,7 @@ export function DoorHost(props: DoorHostProps) {
             settings={doorRegistry.getSettings(props.doorId)}
             server={getServerAccess()}
             onNavigateOut={props.onNavigateOut}
+            onNavigate={props.onNavigate}
           />
         </Show>
       </Show>
