@@ -14,9 +14,8 @@ import { isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
 import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
-import { type DailyNoteData, type SearchResults, type DoorEnvelope } from '../lib/handlers';
+import { type SearchResults, type DoorEnvelope } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
-import { DailyView, DailyErrorView } from './views/DailyView';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { DoorHost, DoorExecCard } from './views/DoorHost';
@@ -220,7 +219,7 @@ export function BlockItem(props: BlockItemProps) {
   // Detect output blocks that need special keyboard handling
   const isOutputBlock = createMemo(() => {
     const ot = block()?.outputType;
-    return ot?.startsWith('daily-') || ot?.startsWith('search-') || ot === 'door';
+    return ot?.startsWith('search-') || ot === 'door';
   });
 
   // Search results keyboard navigation state
@@ -898,7 +897,7 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* OUTPUT BLOCKS: daily-* and search-* get a focusable wrapper for keyboard nav */}
+          {/* OUTPUT BLOCKS: search-* and door get a focusable wrapper for keyboard nav */}
           <Show when={isOutputBlock()}>
             <div
               ref={outputFocusRef}
@@ -907,24 +906,6 @@ export function BlockItem(props: BlockItemProps) {
               onKeyDown={handleOutputBlockKeyDown}
               onFocus={() => props.onFocus(props.id)}
             >
-              {/* DAILY OUTPUT VIEW */}
-              <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
-                <div class="daily-output">
-                  <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
-                    <div class="daily-running">
-                      <span class="daily-running-spinner">◐</span>
-                      <span class="daily-running-text">Extracting...</span>
-                    </div>
-                  </Show>
-                  <Show when={block()?.outputType === 'daily-view' && block()?.outputStatus === 'complete'}>
-                    <DailyView data={block()!.output as DailyNoteData} />
-                  </Show>
-                  <Show when={block()?.outputType === 'daily-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
-                    <DailyErrorView error={(block()!.output as { error: string }).error} />
-                  </Show>
-                </div>
-              </Show>
-
               {/* SEARCH OUTPUT VIEW */}
               <Show when={block()?.outputType === 'search-results' || block()?.outputType === 'search-error'}>
                 <div class="search-output">

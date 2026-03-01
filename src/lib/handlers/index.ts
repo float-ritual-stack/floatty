@@ -8,7 +8,6 @@
 import { registry } from './registry';
 import { shHandler } from './commandDoor';
 import { conversationHandler } from './conversation';
-import { dailyHandler } from './daily';
 import { searchHandler } from './search';
 import { pickHandler } from './pick';
 import { sendHandler } from './send';
@@ -19,7 +18,7 @@ import { hookRegistry } from '../hooks';
 import { sendContextHook } from './hooks/sendContextHook';
 import { registerCtxRouterHook } from './hooks/ctxRouterHook';
 import { registerOutlinksHook } from './hooks/outlinksHook';
-import { loadDoors } from './doorLoader';
+import { loadDoors, cleanupDoorDeps } from './doorLoader';
 import { doorRegistry } from './doorRegistry';
 
 // Re-export registry and types for convenience
@@ -29,15 +28,6 @@ export type { BlockHandler, ExecutorActions } from './types';
 
 // Re-export executor for hook-aware handler execution
 export { executeHandler, createHookBlockStore } from './executor';
-
-// Re-export daily types for component use
-export type {
-  PrInfo,
-  TimelogEntry,
-  ScatteredThought,
-  DayStats,
-  DailyNoteData
-} from './daily';
 
 // Re-export search types for component use
 export type { SearchResults, SearchHit } from './search';
@@ -70,7 +60,6 @@ export function registerHandlers(): void {
   // Register block handlers
   registry.register(shHandler);
   registry.register(conversationHandler);
-  registry.register(dailyHandler);
   registry.register(searchHandler);
   registry.register(pickHandler);
   registry.register(sendHandler);
@@ -113,5 +102,6 @@ if (import.meta.hot) {
     registry.clear();
     hookRegistry.clear();
     doorRegistry.clear();
+    cleanupDoorDeps();
   });
 }

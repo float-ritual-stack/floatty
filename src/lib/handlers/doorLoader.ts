@@ -6,6 +6,12 @@
  * in both DoorRegistry (views) and HandlerRegistry (handlers).
  *
  * Loading is per-door isolated — one bad door doesn't kill others.
+ *
+ * Import Shim System:
+ * Compiled doors import from 'solid-js' and 'solid-js/web' (bare specifiers).
+ * Blob modules can't resolve bare specifiers (Phase 0.B proved this).
+ * Solution: create Blob shim URLs that re-export the host's SolidJS modules
+ * from window globals. Rewrite door JS before Blob import.
  */
 
 import { invoke } from '../tauriTypes';
@@ -18,6 +24,84 @@ import type {
   DoorInfo,
   DoorLoadResult,
 } from './doorTypes';
+
+// Host SolidJS modules — these are the SAME instances the app uses.
+// Doors must share the same reactive runtime (two copies = signals don't propagate).
+import * as solidJs from 'solid-js';
+import * as solidJsWeb from 'solid-js/web';
+
+// ═══════════════════════════════════════════════════════════════
+// IMPORT SHIM SYSTEM
+// ═══════════════════════════════════════════════════════════════
+
+let shimUrls: { solidJs: string; solidJsWeb: string } | null = null;
+
+/**
+ * Build a shim module that re-exports host SolidJS from window globals.
+ * Each named export reads from the global at import time.
+ */
+function buildShimCode(moduleName: string, mod: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const key of Object.keys(mod)) {
+    if (key === '__esModule') continue;
+    if (key === 'default') {
+      lines.push(`export default window.__DOOR_DEPS__['${moduleName}']['default'];`);
+    } else {
+      lines.push(`export const ${key} = window.__DOOR_DEPS__['${moduleName}']['${key}'];`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Set up window globals and create Blob shim URLs for solid-js and solid-js/web.
+ * Called once, URLs cached for all door loads.
+ */
+function ensureDoorDeps(): { solidJs: string; solidJsWeb: string } {
+  if (shimUrls) return shimUrls;
+
+  // Expose host modules on window for shim access
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as Record<string, any>).__DOOR_DEPS__ = {
+    'solid-js': solidJs,
+    'solid-js/web': solidJsWeb,
+  };
+
+  const solidJsShim = buildShimCode('solid-js', solidJs as Record<string, unknown>);
+  const solidJsWebShim = buildShimCode('solid-js/web', solidJsWeb as Record<string, unknown>);
+
+  shimUrls = {
+    solidJs: URL.createObjectURL(new Blob([solidJsShim], { type: 'application/javascript' })),
+    solidJsWeb: URL.createObjectURL(new Blob([solidJsWebShim], { type: 'application/javascript' })),
+  };
+
+  console.log('[doors] Import shims ready (solid-js, solid-js/web)');
+  return shimUrls;
+}
+
+/**
+ * Rewrite bare specifier imports in door JS to point at shim Blob URLs.
+ * Must rewrite solid-js/web BEFORE solid-js (longer match first).
+ */
+function rewriteDoorImports(js: string, urls: { solidJs: string; solidJsWeb: string }): string {
+  return js
+    .replace(/from\s+['"]solid-js\/web['"]/g, `from '${urls.solidJsWeb}'`)
+    .replace(/from\s+['"]solid-js['"]/g, `from '${urls.solidJs}'`);
+}
+
+/**
+ * Clean up shim resources (called on HMR dispose).
+ */
+export function cleanupDoorDeps(): void {
+  if (shimUrls) {
+    URL.revokeObjectURL(shimUrls.solidJs);
+    URL.revokeObjectURL(shimUrls.solidJsWeb);
+    shimUrls = null;
+  }
+  if ('__DOOR_DEPS__' in window) {
+    delete (window as Record<string, unknown>).__DOOR_DEPS__;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // VALIDATION
@@ -83,6 +167,7 @@ function validateDoorModule(mod: Record<string, unknown>): {
  */
 export async function loadDoors(): Promise<DoorLoadResult[]> {
   const results: DoorLoadResult[] = [];
+  const deps = ensureDoorDeps();
 
   let doorInfos: DoorInfo[];
   try {
@@ -108,7 +193,10 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
 
     try {
       // Read JS source from Rust
-      const js: string = await invoke('read_door_file', { doorId: info.id });
+      const rawJs: string = await invoke('read_door_file', { doorId: info.id });
+
+      // Rewrite bare specifiers to shim URLs (solid-js, solid-js/web)
+      const js = rewriteDoorImports(rawJs, deps);
 
       // Blob import
       const blob = new Blob([js], { type: 'application/javascript' });
