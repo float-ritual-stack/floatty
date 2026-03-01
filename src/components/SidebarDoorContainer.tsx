@@ -36,8 +36,9 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
               <button
                 class="sidebar-door-tab"
                 role="tab"
+                id={`sidebar-tab-${doorId}`}
                 aria-selected={store.activeDoorId() === doorId}
-                aria-controls={`sidebar-panel-${doorId}`}
+                aria-controls={store.activeDoorId() === doorId ? `sidebar-panel-${doorId}` : undefined}
                 onClick={() => store.setActiveDoorId(doorId)}
               >
                 {DOOR_LABELS[doorId] ?? doorId}
@@ -51,7 +52,7 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
           class="sidebar-door-panel"
           role="tabpanel"
           id={`sidebar-panel-${store.activeDoorId()}`}
-          aria-label={`${DOOR_LABELS[store.activeDoorId()] ?? store.activeDoorId()} panel`}
+          aria-labelledby={`sidebar-tab-${store.activeDoorId()}`}
         >
           <Show when={store.activeDoorId() === 'ctx'}>
             <ContextSidebar visible={props.visible} />

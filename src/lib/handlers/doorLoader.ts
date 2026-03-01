@@ -41,12 +41,13 @@ let shimUrls: { solidJs: string; solidJsWeb: string } | null = null;
  * Each named export reads from the global at import time.
  */
 function buildShimCode(moduleName: string, mod: Record<string, unknown>): string {
+  const validId = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
   const lines: string[] = [];
   for (const key of Object.keys(mod)) {
     if (key === '__esModule') continue;
     if (key === 'default') {
       lines.push(`export default window.__DOOR_DEPS__['${moduleName}']['default'];`);
-    } else {
+    } else if (validId.test(key)) {
       lines.push(`export const ${key} = window.__DOOR_DEPS__['${moduleName}']['${key}'];`);
     }
   }
