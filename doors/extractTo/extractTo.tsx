@@ -183,12 +183,14 @@ export const door: BlockDoor = {
       } else if (oldParentId) {
         breadcrumbId = actions.createBlockInsideAtTop(oldParentId);
       } else {
+        // Was first root — create anywhere then move to correct root position
         const currentRoots = actions.rootIds();
         if (currentRoots.length > 0) {
           breadcrumbId = actions.createBlockAfter(currentRoots[0]);
         } else {
           breadcrumbId = actions.createBlockInside(pagesId);
         }
+        actions.moveBlock(breadcrumbId, null, blockIndex);
       }
 
       actions.updateBlockContent(breadcrumbId, breadcrumbContent);
