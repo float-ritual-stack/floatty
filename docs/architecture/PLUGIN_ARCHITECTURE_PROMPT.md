@@ -29,7 +29,7 @@ A door IS a SolidJS component. It writes JSX. The Rust side compiles `.tsx` → 
 import type { Component } from 'solid-js';
 
 export interface Door<T = unknown> {
-  /** Prefixes that trigger this door (e.g., ['daily::']) */
+  /** Prefixes that trigger this door (e.g., ['daily::']). For routing only. */
   prefixes: string[];
 
   /** Execute logic: fetch data, read files, call APIs. Returns structured data for the view. */
@@ -43,12 +43,27 @@ export interface Door<T = unknown> {
   view: Component<DoorViewProps<T>>;
 }
 
+/** Door identity comes from meta.id — stable, independent of prefixes.
+ *  prefixes are for routing only and may be reordered/aliased. */
+
 export interface DoorResult<T = unknown> {
   /** Structured data passed to the view component */
   data: T;
   /** Optional error message */
   error?: string;
 }
+
+/** Canonical output envelope — what gets written to Y.Doc via setBlockOutput().
+ *  Single shape for all doors. DoorHost reads this, not raw output. */
+export type DoorOutput = {
+  kind: 'door';        // Discriminant — distinguishes from legacy output types
+  doorId: string;      // From meta.id (stable identity, not prefix)
+  schema: 1;           // Version for forward compat
+  data: JsonValue | null;
+  error?: string;
+};
+
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export interface DoorViewProps<T = unknown> {
   /** The data returned by execute() */
@@ -88,10 +103,17 @@ export interface DoorServerAccess {
 }
 ```
 
-### Door Metadata (Optional)
+### Door Metadata (Required)
+
+`meta.id` is the stable door identity. It's separate from prefixes (which are for routing
+and may be aliased/reordered). The host uses `meta.id` to key the component registry,
+output envelope, and config settings.
 
 ```typescript
 export const meta = {
+  /** Stable identifier — used as doorId in output, registry key, settings key.
+   *  Convention: lowercase, no colons. Derived from filename if omitted. */
+  id: 'daily',
   name: 'Daily Notes',
   description: 'Extract daily note data, render as timeline',
   version: '0.1.0',
@@ -313,6 +335,7 @@ export const door: Door<DailyData> = {
 };
 
 export const meta = {
+  id: 'daily',
   name: 'Daily Notes',
   version: '0.1.0',
   // No Tier 2 capabilities needed — uses ctx.server.fetch (Tier 1) only
@@ -456,16 +479,23 @@ export function DoorHost(props: DoorHostProps) {
   <DailyView ... />
 </Show>
 
-// AFTER: one branch for all doors
-<Show when={block()?.outputType === 'door-view'}>
-  <DoorHost
-    doorId={(block()?.output as any)?.doorId}
-    data={(block()?.output as any)?.data}
-    error={(block()?.output as any)?.error}
-    status={block()?.outputStatus}
-  />
+// AFTER: one branch for all doors — route via output.kind discriminant
+<Show when={(block()?.output as DoorOutput)?.kind === 'door'}>
+  {(() => {
+    const output = block()!.output as DoorOutput;
+    return (
+      <DoorHost
+        doorId={output.doorId}
+        data={output.data}
+        error={output.error}
+        status={block()?.outputStatus}
+      />
+    );
+  })()}
 </Show>
 ```
+
+**Note**: The `kind: 'door'` discriminant replaces `outputType === 'door-view'`. We can keep `outputType` for backwards compat with legacy views during migration, but new code routes on `output.kind`.
 
 ---
 
@@ -475,7 +505,7 @@ export function DoorHost(props: DoorHostProps) {
 
 Doors write SolidJS JSX. That JSX needs compilation — SolidJS uses `jsx-dom-expressions` to turn `<div>{signal()}</div>` into direct DOM creation calls with fine-grained subscriptions. Without compilation, JSX is syntax errors.
 
-### swc with Solid Plugin (Rust Side)
+### swc with Solid Plugin (Rust Side) — EXPERIMENTAL until Phase 0C passes
 
 ```rust
 // src-tauri/src/commands/plugins.rs
@@ -483,12 +513,30 @@ Doors write SolidJS JSX. That JSX needs compilation — SolidJS uses `jsx-dom-ex
 pub async fn compile_door(source: String) -> Result<String, String> {
     // 1. Strip TypeScript types (swc built-in)
     // 2. Transform JSX via swc-plugin-jsx-dom-expressions
-    //    Config: generate = "dom", hydratable = false, delegateEvents = false
     // 3. Target: ES2022
 }
 ```
 
-**`delegateEvents: false` is critical.** Solid's event delegation attaches to `document`. Doors must NOT participate in host event delegation — prevents interference with outliner keyboard handling.
+**Transform configuration** (the exact settings that matter):
+```json
+{
+  "generate": "dom",
+  "hydratable": false,
+  "delegateEvents": false,
+  "wrapConditionals": true,
+  "contextToCustomElements": false,
+  "builtIns": ["For", "Show", "Switch", "Match", "Index", "Dynamic"],
+  "moduleName": "solid-js/web"
+}
+```
+
+Key settings:
+- **`delegateEvents: false`** — Critical. Solid's event delegation attaches to `document`. Doors must NOT participate in host event delegation — prevents interference with outliner keyboard handling (tinykeys, BlockItem).
+- **`generate: "dom"`** — Not SSR. Direct DOM creation calls.
+- **`builtIns`** — Tells the transform which components are Solid primitives (not user components).
+- **`moduleName: "solid-js/web"`** — Import target for generated runtime calls (`_$template`, `_$insert`, etc.). Must resolve via the import map.
+
+**Sidecar fallback**: If `swc-plugin-jsx-dom-expressions` proves too brittle (WASM version coupling, plugin API breakage), the fallback is a Tauri sidecar running a minimal Vite/esbuild bundler. This adds a Node.js dependency at build time but keeps the compilation pipeline stable. The sidecar would be invoked via `Command::new_sidecar("floatty-door-compiler")` with the `.tsx` source on stdin, compiled JS on stdout.
 
 ### The Full Pipeline
 
@@ -506,24 +554,33 @@ pub async fn compile_door(source: String) -> Result<String, String> {
 10. URL.revokeObjectURL(url)
 ```
 
-### Import Resolution
+### Import Resolution (Import Map Injection)
 
-Door `.tsx` imports `solid-js` and `floatty/doors`. These need to resolve at runtime.
+Door `.tsx` imports `solid-js` and `floatty/doors`. Inside a Blob module, bare specifiers like `import { createSignal } from 'solid-js'` fail unless the browser has an import map telling it where `solid-js` lives.
 
-**Strategy A: Import Map** (recommended):
+**Requirement**: Inject an import map into `index.html` **before** any doors load. The build process must export the specific SolidJS runtime chunks to predictable asset paths.
+
 ```html
+<!-- src-tauri/index.html — injected at build time or by doorLoader on init -->
 <script type="importmap">
-{ "imports": {
-    "solid-js": "/assets/solid-js.js",
-    "solid-js/web": "/assets/solid-js-web.js",
+{
+  "imports": {
+    "solid-js": "/assets/vendor/solid-js/solid.js",
+    "solid-js/web": "/assets/vendor/solid-js/web.js",
+    "solid-js/store": "/assets/vendor/solid-js/store.js",
     "floatty/doors": "/assets/floatty-doors.js"
-} }
+  }
+}
 </script>
 ```
 
-**Strategy B**: swc rewrites imports to globals during compilation.
+**Build integration**: Vite already bundles SolidJS. The import map entries must point to the **same** runtime instance the host app uses — not a second copy. If the door gets a different `createSignal`, reactivity won't cross the host/door boundary. Vite's `build.rollupOptions.output.manualChunks` can force SolidJS into a named chunk with a stable path.
 
-Research Tauri v2 import map support in Phase 0.
+**`floatty/doors` module**: A thin re-export of door type definitions. At runtime it's mostly a no-op (types are erased), but doors may import runtime helpers from it in future.
+
+**Phase 0A must prove**: Does `import(blobUrl)` resolve bare specifiers via the import map? Some engines only apply import maps to static `<script type="module">`, not dynamic `import()`. If this fails, fall back to **Strategy B**: swc rewrites bare specifiers to relative paths during compilation (`'solid-js'` → `'/assets/vendor/solid-js/solid.js'`).
+
+**Critical**: The door and the host MUST share the same SolidJS module instance. Two copies = two reactive runtimes = signals don't propagate across the boundary.
 
 ---
 
@@ -535,11 +592,65 @@ Research Tauri v2 import map support in Phase 0.
 - **Hook Lifecycle** — doors go through `executeHandler()`. Full pipeline (`execute:before`/`execute:after`).
 - **SolidJS Rules Apply** — don't destructure props, use `on()` for explicit deps.
 - **JSON Serializable Only** — `DoorResult<T>` requires `T extends JsonSerializable`. No `Date`, `Map`, `Set`, class instances, functions, `undefined`, circular references. Strings, numbers, booleans, arrays, plain objects only. Door data flows through `setBlockOutput()` → Y.Map, and Y.Doc only round-trips JSON-safe types. Use ISO strings for dates, arrays for ordered collections, plain objects for maps.
+- **CSS Scoping (Convention, Not Shadow DOM)** — Doors are NOT in Shadow DOM (needs reactive integration with host themes). CSS leakage is prevented by convention:
+
+### CSP Requirements (Explicit)
+
+Tauri's Content Security Policy must be configured to allow the door loading pipeline:
+
+```json
+// tauri.conf.json → app.security.csp
+"script-src 'self' blob:"
+```
+
+- `blob:` is required for `import(URL.createObjectURL(...))` — the door module loading mechanism.
+- If import maps don't resolve bare specifiers from Blob modules (Phase 0B), add the Vite asset origin.
+- Do NOT add `'unsafe-eval'` — doors don't need `eval()` and it opens XSS surface.
+
+### Import Allowlist (Compile-Time)
+
+During swc compilation, statically analyze the door's import specifiers. Allow only:
+
+| Specifier | Reason |
+|-----------|--------|
+| `solid-js`, `solid-js/web`, `solid-js/store` | Framework runtime (via import map) |
+| `floatty/doors` | Door type definitions + runtime helpers |
+| Relative imports (`./`, `../`) within the door directory | Multi-file doors (v2, optional) |
+
+Everything else is a compile error. This prevents doors from importing host internals (`../../hooks/useBlockStore`), other doors' code, or arbitrary npm packages. The allowlist is enforced at compile time, not runtime — if it's not in the list, the compiled JS is never produced.
+
+### CSS Scoping Protocol
+
+Doors share the host document's style scope. Without discipline, a door's CSS bleeds into the outliner or other doors.
+
+**Rules:**
+1. Every door wraps its root JSX in a unique class: `<div class="door-{doorName}">`. The daily door uses `door-daily`, timestamp uses `door-timestamp`.
+2. All door CSS selectors MUST be scoped under `.door-{doorName}`. No bare element selectors (`div`, `span`, `h3`) — always `.door-daily h3`.
+3. `DoorHost.tsx` provides CSS custom properties derived from the active Floatty theme:
+
+```css
+.door-output {
+  /* Theme bridge — doors use these, not raw --color-ansi-* */
+  --door-bg: var(--color-bg-secondary);
+  --door-fg: var(--color-fg-primary);
+  --door-accent: var(--color-ansi-cyan);
+  --door-muted: var(--color-fg-muted);
+  --door-border: var(--color-border);
+  --door-tag-bg: var(--color-bg-tertiary);
+  --door-error: var(--color-ansi-red);
+  --door-success: var(--color-ansi-green);
+}
+```
+
+4. Doors style using `--door-*` variables, not theme variables directly. This gives the host a stable contract to remap if the theme system changes.
+5. A `doors.css` base stylesheet provides sensible defaults for common door elements (`.door-tag`, `.door-chip`, `.door-stat`, `.door-empty`, `.door-loading`).
+
+**Why not Shadow DOM**: Shadow DOM isolates reactivity boundaries. SolidJS signals wouldn't propagate from host to door, `<Dynamic>` wouldn't see the door's DOM, and theme CSS variables wouldn't inherit. Convention-based scoping is the pragmatic choice.
 
 ### Handler Adapter
 
 ```typescript
-function doorToBlockHandler(door: Door, ctx: DoorContext): BlockHandler {
+function doorToBlockHandler(door: Door, meta: DoorMeta, ctx: DoorContext): BlockHandler {
   return {
     prefixes: door.prefixes,
     async execute(blockId, content, actions) {
@@ -551,14 +662,23 @@ function doorToBlockHandler(door: Door, ctx: DoorContext): BlockHandler {
 
       try {
         const result = await door.execute(blockId, content, ctx);
-        actions.setBlockOutput?.(outputId, {
-          doorId: door.prefixes[0], data: result.data, error: result.error,
-        }, 'door-view');
+
+        // Enforce JSON-serializable output (hard fail, not silent corruption)
+        try { structuredClone(result.data); }
+        catch { throw new Error('NON_SERIALIZABLE_OUTPUT: door returned data that cannot round-trip through Y.Doc'); }
+
+        const output: DoorOutput = {
+          kind: 'door', doorId: meta.id, schema: 1,
+          data: result.data, error: result.error,
+        };
+        actions.setBlockOutput?.(outputId, output, 'door-view');
         actions.setBlockStatus?.(outputId, result.error ? 'error' : 'complete');
       } catch (err) {
-        actions.setBlockOutput?.(outputId, {
-          doorId: door.prefixes[0], data: null, error: String(err),
-        }, 'door-view');
+        const output: DoorOutput = {
+          kind: 'door', doorId: meta.id, schema: 1,
+          data: null, error: String(err),
+        };
+        actions.setBlockOutput?.(outputId, output, 'door-view');
         actions.setBlockStatus?.(outputId, 'error');
       }
     },
@@ -596,12 +716,21 @@ ctx.settings            // [plugins.settings.X] from config.toml
 ctx.log(...)            // Prefixed console logger
 ```
 
-**Web platform** (it's a browser — always available):
+**Web platform** (always available, with one exception):
 ```
-fetch, URL, URLSearchParams, TextEncoder/Decoder,
+URL, URLSearchParams, TextEncoder/Decoder,
 crypto.subtle, structuredClone, AbortController,
 setTimeout/setInterval, JSON, Date, Intl, console
 ```
+
+**`fetch` is NOT in this list.** Global `fetch()` is overridden in the door sandbox to prevent
+bypassing the Tier 2 domain allowlist. Doors that need external HTTP must declare
+`meta.capabilities.fetch` domains and use `ctx.fetch()`. Without this, the Tier 2 gate is
+unenforceable — any door could `fetch('https://evil.com')` via the global.
+
+The sandbox wrapper replaces `globalThis.fetch` in the door's module scope with a function
+that throws: `"Use ctx.fetch() for external HTTP or ctx.server.fetch() for the local API."`
+Localhost requests via `ctx.server.fetch()` (Tier 1) are unaffected.
 
 **SolidJS** (via import map — always available in `.tsx`):
 ```
@@ -699,9 +828,30 @@ Before writing any architecture around "compile doors with SWC + plugin inside T
 - Prove plugin loading format (native Rust crate vs WASM)
 - Prove version pinning strategy (SWC core version ↔ plugin version)
 - If WASM-only: does `swc_core` support loading WASM plugins from Rust?
-- **Fallback**: Vite's `@vitejs/plugin-solid` as a build step, invoked via Node.js subprocess
+- **Fallback**: Tauri sidecar running minimal Vite/esbuild bundler (adds Node.js build dep, keeps compilation stable)
+- **Performance**: Measure compile cost per door on startup. If >500ms per door, consider caching compiled JS alongside `.tsx` source.
+
+**Phase 0C success criterion**: "Given `swc_core` version X, we can compile Solid TSX with plugin Y, producing modules that load under our CSP and do not break host keyboard handling (`delegateEvents: false` confirmed in output)."
 
 **If Phase 0 fails** — pivot loading mechanism first. Everything else is downstream noise.
+
+### Phase 0.5: Server API Forcing Function
+
+The headless-first principle means the API must serve doors before doors ship. `daily::` needs time-range queries. Fix the API first — every client benefits.
+
+Add to `floatty-server/src/api.rs`:
+
+```
+GET /api/v1/blocks?since={unix_ms}&until={unix_ms}   # Filter by createdAt range
+GET /api/v1/blocks?marker_type={type}                 # Filter by metadata marker type
+GET /api/v1/blocks?marker_type={type}&marker_value={v} # Filter by marker type+value
+```
+
+These are query parameter extensions to the existing `GET /api/v1/blocks` endpoint — server-side filtering instead of shipping all blocks to the client. Without this, `daily::` fetches every block in the workspace and filters client-side, which won't scale past a few thousand blocks.
+
+Implementation is straightforward: the `get_blocks()` handler already reads all blocks from Y.Doc. Add optional query params → filter the response before serialization. Index optimization can come later — the data is already in memory.
+
+**This is the forcing function in action**: daily:: found a gap, so the gap gets fixed at the API level, and Claude Code / CLI agents / TUI followers all get time-travel queries for free.
 
 ### Phase 1: Rust Layer
 
@@ -863,58 +1013,59 @@ BlockItem: outputType === 'door-view'
 
 ---
 
-## 12. Verification: Spec vs Codebase (Required Before Execution)
+## 12. Verification Procedure (Required Before Execution)
 
-Run this verification pass before building anything. Record actual type names and exact string literals.
+**Status**: This is a checklist to EXECUTE, not pre-filled assertions. Run each probe against the real codebase and fill in Status/Notes before proceeding to Phase 0.
 
 ### Handler System
 
 | Assumption | Code Probe | Status | Notes |
 |-----------|------------|--------|-------|
-| `HandlerRegistry` exports `register()`, `findHandler()`, `getRegisteredPrefixes()` | `src/lib/handlers/registry.ts` | ✅ Match | Also has `isExecutableBlock()`, `clear()` (HMR) |
-| `BlockHandler` has `prefixes: string[]` + `execute(blockId, content, actions)` | `src/lib/handlers/types.ts` | ✅ Match | Exact signature confirmed |
-| `ExecutorActions` has block CRUD methods | `src/lib/handlers/types.ts` | ⚠️ Richer | 12 methods including `createBlockInsideAtTop`, `updateBlockContentFromExecutor`, `getParentId`, `getChildren`, `focusBlock`, `paneId`. Spec only showed 6. |
-| `executeHandler()` wraps with `execute:before`/`execute:after` hooks | `src/lib/handlers/executor.ts` | ✅ Match | Also takes `store: HookBlockStore` param. Hooks can abort (returns `blocked::` prefix). |
-| `registerHandlers()` has HMR guard + built-in registration | `src/lib/handlers/index.ts` | ✅ Match | 9 built-in handlers. `loadUserDoors()` slots after line 65, before hook registration. |
+| `HandlerRegistry` exports `register()`, `findHandler()`, `getRegisteredPrefixes()` | `src/lib/handlers/registry.ts` | ___ | Record additional methods found |
+| `BlockHandler` has `prefixes: string[]` + `execute(blockId, content, actions)` | `src/lib/handlers/types.ts` | ___ | Paste exact signature |
+| `ExecutorActions` shape matches spec | `src/lib/handlers/types.ts` | ___ | Count actual methods, list any spec missed |
+| `executeHandler()` wraps with `execute:before`/`execute:after` hooks | `src/lib/handlers/executor.ts` | ___ | Note hook abort behavior |
+| `registerHandlers()` has HMR guard + built-in registration | `src/lib/handlers/index.ts` | ___ | Count built-in handlers, identify insertion point for `loadUserDoors()` |
 
 ### Rendering System
 
 | Assumption | Code Probe | Status | Notes |
 |-----------|------------|--------|-------|
-| Block fields: `output`, `outputType`, `outputStatus` | `src/lib/blockTypes.ts:44-52` | ✅ Match | `outputStatus: 'pending' \| 'running' \| 'complete' \| 'error'`. Documented as client-only state. |
-| `outputType` string: `'daily-view'` | `src/components/BlockItem.tsx:910` | ✅ Match | Also `'daily-error'`, `'search-results'`, `'search-error'` |
-| 2 hardcoded view types in BlockItem.tsx | `BlockItem.tsx:900-950` | ✅ Match | Daily (3 branches) + Search (3 branches). Nested `<Show>` checks both type AND status. |
-| DailyView receives data via props | `src/components/views/DailyView.tsx:11` | ✅ Match | `DailyViewProps { data: DailyNoteData }` |
-| `DailyNoteData` shape | `src/lib/tauriTypes.ts:82-87` | ⚠️ Drift | Real shape uses `snake_case` from Rust: `day_of_week`, `timelogs`, `scattered_thoughts`. Spec used `camelCase`: `dayOfWeek`, `entries`, `notes`. Door would need to match Rust shape OR transform. |
-| Output blocks are keyboard dead zones | `BlockItem.tsx:901` | ✅ Match | Wrapped in `div[tabIndex=0]` with separate `handleOutputBlockKeyDown`. |
+| Block fields: `output`, `outputType`, `outputStatus` | `src/lib/blockTypes.ts` | ___ | Paste exact field names and types |
+| `outputType` strings in use | `src/components/BlockItem.tsx` | ___ | List every string literal |
+| Hardcoded view type count | `BlockItem.tsx` | ___ | Count branches, note nesting pattern |
+| DailyView receives data via props | `src/components/views/DailyView.tsx` | ___ | Paste prop type |
+| `DailyNoteData` shape (actual) | `src/lib/tauriTypes.ts` | ___ | Record exact field names (snake_case vs camelCase) |
+| Output blocks keyboard behavior | `BlockItem.tsx` | ___ | Note tabIndex, event handler pattern |
 
 ### Config & Paths
 
 | Assumption | Code Probe | Status | Notes |
 |-----------|------------|--------|-------|
-| Config is TOML with serde derives | `src-tauri/src/config.rs` | ✅ Match | `AggregatorConfig` with `#[derive(Serialize, Deserialize)]` |
-| `[plugins]` section exists | `config.rs` | ❌ Missing | No plugin config yet. But `save_to()` TOML merge preserves unknown sections — extensible. |
-| `DataPaths::default_root()` handles dev/release | `src-tauri/src/paths.rs` | ✅ Match | `~/.floatty-dev` (debug) / `~/.floatty` (release). `FLOATTY_DATA_DIR` env override. |
-| Pattern for adding subdirs | `paths.rs::from_root()` | ✅ Match | Add `pub doors: PathBuf` field, set in `from_root()`, create in `ensure_dirs()`. |
-| Y.Doc output round-trips JSON | `src/hooks/useBlockStore.ts:621` | ✅ Match | `setBlockOutput()` → `setValueOnYMap()`. Y.Map stores arbitrary JSON-safe values. |
+| Config is TOML with serde derives | `src-tauri/src/config.rs` | ___ | Note struct name and fields |
+| `[plugins]` section exists | `config.rs` | ___ | If missing, note extensibility of `save_to()` |
+| `DataPaths::default_root()` handles dev/release | `src-tauri/src/paths.rs` | ___ | Confirm `FLOATTY_DATA_DIR` override |
+| Pattern for adding subdirs | `paths.rs::from_root()` | ___ | Note where new field + `ensure_dirs` would go |
+| Y.Doc output round-trips JSON | `src/hooks/useBlockStore.ts` | ___ | Find `setBlockOutput()`, trace to Y.Map write |
 
 ### Server API (Headless-First Readiness)
 
 | Assumption | Code Probe | Status | Notes |
 |-----------|------------|--------|-------|
-| Auth is Bearer token | `src-tauri/floatty-server/src/api.rs` | ✅ Match | `Authorization: Bearer <key>`. Localhost (127.0.0.1, ::1) exempt. |
-| Block CRUD via REST | `api.rs` router | ✅ Match | 27 endpoints. Full CRUD: GET/POST/PATCH/DELETE `/api/v1/blocks`. |
-| Can POST blocks with metadata | `api.rs::create_block` | ⚠️ Partial | `POST /api/v1/blocks` accepts `content`, `parentId`, `afterId`, `atIndex`. No `metadata` in create body — must PATCH after. |
-| Can query blocks by marker | `api.rs` | ❌ Missing | No metadata query endpoint. Must `GET /api/v1/blocks` + filter client-side. |
-| Can query blocks by date | `api.rs` | ❌ Missing | `createdAt`/`updatedAt` available per block, but no date range query. |
-| WebSocket for real-time | `ws.rs` | ✅ Match | Seq-based gap detection, heartbeat every 30s. |
+| Auth is Bearer token | `floatty-server/src/api.rs` | ___ | Note any exemptions |
+| Block CRUD via REST | `api.rs` router | ___ | Count endpoints |
+| Can POST blocks with metadata in body | `api.rs::create_block` | ___ | List accepted fields |
+| Can query blocks by marker | `api.rs` | ___ | If missing, note workaround |
+| Can query blocks by date | `api.rs` | ___ | If missing, note whether `createdAt` available |
+| WebSocket real-time sync | `ws.rs` | ___ | Note message format |
 
 ### Compilation Pipeline
 
 | Assumption | Code Probe | Status | Notes |
 |-----------|------------|--------|-------|
-| `swc-plugin-jsx-dom-expressions` is a Rust crate | crates.io / GitHub | ⚠️ Unverified | GitHub repo exists (`milomg/swc-plugin-jsx-dom-expressions`). Not obviously a polished crate. WASM plugin compat is version-coupled. **Must prove in Phase 0C.** |
-| `blob:` import works in Tauri webview | Tauri CSP | ⚠️ Unverified | Known edge cases with blob/object URLs. **Must prove in Phase 0A.** |
+| `swc-plugin-jsx-dom-expressions` is usable from Rust | crates.io + GitHub | ___ | **Must prove in Phase 0C** |
+| `blob:` import works in Tauri webview | Tauri CSP in `tauri.conf.json` | ___ | **Must prove in Phase 0A** |
+| Import map resolves bare specifiers from Blob modules | Webview test | ___ | **Must prove in Phase 0B** |
 
 ---
 
@@ -936,11 +1087,13 @@ Same shape. 40 years deep.
 **Status: DO NOT BUILD YET**
 
 ```
-1. Run verification pass (Section 12) — patch spec where reality disagrees  ✅ DONE
-2. Run Blob import probe in Tauri webview (Phase 0A gate)
-3. Run SWC + Solid plugin feasibility check (Phase 0C)
-4. Only if (2) passes → proceed with corrected spec
-5. If (2) fails → pivot loading mechanism FIRST; everything else is downstream noise
+1. Run verification procedure (Section 12) — fill in every Status/Notes cell
+2. Run Phase 0A: Blob import probe in Tauri webview
+3. Run Phase 0B: Import map resolves bare specifiers from Blob module
+4. Run Phase 0C: SWC + Solid plugin compilation → delegateEvents:false in output
+5. Run Phase 0.5: Add date range + marker query endpoints to server API
+6. Only if (2-4) pass → proceed with corrected spec
+7. If any gate fails → pivot that specific mechanism FIRST
 ```
 
 The spec is a hypothesis. The codebase is the truth. Phase 0 is the gate.
