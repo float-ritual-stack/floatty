@@ -30,31 +30,29 @@ import type { Component } from 'solid-js';
 
 export type DoorKind = 'view' | 'block';
 
-export interface Door<T = unknown> {
-  /** Prefixes that trigger this door (e.g., ['daily::']). For routing only. */
+/** View door: returns structured data, renders via SolidJS component. */
+export type ViewDoor<T> = {
+  kind: 'view';
   prefixes: string[];
+  execute(blockId: string, content: string, ctx: DoorContext): Promise<DoorResult<T>>;
+  view: Component<DoorViewProps<T>>;
+};
 
-  /** Explicit declaration: 'view' doors return data + render component,
-   *  'block' doors mutate blocks directly via ctx.actions. NOT inferred. */
-  kind: DoorKind;
+/** Block door: mutates blocks via ctx.actions, no view component. */
+export type BlockDoor = {
+  kind: 'block';
+  prefixes: string[];
+  execute(blockId: string, content: string, ctx: DoorContext): Promise<void>;
+  view?: never;
+};
 
-  /** Execute logic. View doors return DoorResult<T>, block doors return void.
-   *  Both get full DoorContext. */
-  execute(
-    blockId: string,
-    content: string,
-    ctx: DoorContext
-  ): Promise<DoorResult<T> | void>;
-
-  /** SolidJS component. Required when kind='view', forbidden when kind='block'.
-   *  Load-time validation: kind='view' + no view → error. */
-  view?: Component<DoorViewProps<T>>;
-}
+/** Discriminated union — TS enforces kind/return-type/view consistency at compile time. */
+export type Door<T = unknown> = ViewDoor<T> | BlockDoor;
 
 /** Door identity comes from meta.id — stable, independent of prefixes.
  *  prefixes are for routing only and may be reordered/aliased.
  *
- *  Load-time validation:
+ *  Load-time validation (runtime safety net on top of TS checks):
  *  - kind='view' + no view → error
  *  - kind='block' + view present → error (don't silently ignore)
  *  - kind omitted → default to 'view' if view exists, else error */
@@ -66,21 +64,27 @@ export interface DoorResult<T = unknown> {
   error?: string;
 }
 
-/** Output envelope for VIEW doors — data + view component rendering.
- *  Written to Y.Doc via setBlockOutput(). DoorHost reads this. */
-export type DoorOutput = {
-  kind: 'door-view';   // Discriminant for view doors
+/** Door output envelope — single discriminated union for all door output.
+ *  Written to Y.Doc via setBlockOutput(outputId, envelope, 'door').
+ *  outputType is always 'door'; envelope.kind distinguishes view vs exec. */
+type DoorEnvelope =
+  | DoorViewOutput
+  | DoorExecOutput;
+
+/** View door output — data + error for DoorHost rendering. */
+export type DoorViewOutput = {
+  kind: 'view';       // Discriminant within DoorEnvelope
   doorId: string;      // From meta.id (stable identity, not prefix)
   schema: 1;           // Version for forward compat
   data: JsonValue | null;
   error?: string;
 };
 
-/** Execution record for BLOCK doors — receipt of what happened.
+/** Execution record — receipt of what happened.
  *  Every door execution emits one, regardless of kind. Block doors
- *  write ONLY this (no view). View doors write DoorOutput + this. */
+ *  write ONLY this (no view). View doors write DoorViewOutput + this. */
 export type DoorExecOutput = {
-  kind: 'door-exec';   // Discriminant for execution records
+  kind: 'exec';        // Discriminant within DoorEnvelope
   schema: 1;
   doorId: string;
   startedAt: number;   // Unix ms
@@ -109,8 +113,9 @@ export interface DoorContext {
   actions: ScopedActions;
   /** Read/write files (scoped to declared directories) (Tier 2) */
   fs: ScopedFS;
-  /** External HTTP fetch (scoped to declared domains) (Tier 2) */
-  fetch: typeof fetch;
+  /** External HTTP fetch — host-provided, scoped to declared domains (Tier 2).
+   *  NOT the browser's global fetch (which is removed in door sandbox). */
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
   /** Call Tauri commands (scoped to declared names) (Tier 2) */
   invoke: ScopedInvoke;
   /** Door-specific settings from config.toml (Tier 1) */
@@ -318,6 +323,7 @@ function DailyView(props: DoorViewProps<DailyData>) {
 // ═══════════════════════════════════════════════════════════════
 
 export const door: Door<DailyData> = {
+  kind: 'view',
   prefixes: ['daily::'],
 
   async execute(blockId, content, ctx) {
@@ -416,13 +422,15 @@ SolidJS provides `<Dynamic>` from `solid-js/web` — equivalent of Vue's `<compo
 ```tsx
 import { Dynamic } from 'solid-js/web';
 
-// One branch for ALL doors
-<Show when={block()?.outputType === 'door-view' && block()?.outputStatus === 'complete'}>
-  <Dynamic
-    component={doorRegistry.getView(doorOutput()?.doorId)}
-    data={doorOutput()?.data}
-    settings={doorRegistry.getSettings(doorOutput()?.doorId)}
-  />
+// One branch for ALL doors — outputType is always 'door', envelope.kind routes internally
+<Show when={block()?.outputType === 'door'}>
+  {(() => {
+    const envelope = block()!.output as DoorEnvelope;
+    return envelope.kind === 'view'
+      ? <DoorHost doorId={envelope.doorId} data={envelope.data} error={envelope.error}
+                  status={block()?.outputStatus} />
+      : <DoorExecCard {...envelope} />;
+  })()}
 </Show>
 ```
 
@@ -504,46 +512,28 @@ export function DoorHost(props: DoorHostProps) {
 ### BlockItem.tsx Changes
 
 ```tsx
-// BEFORE: N branches for N view types
+// BEFORE: N branches for N view types (daily 3 branches, search 3 branches)
 <Show when={block()?.outputType === 'daily-view' || block()?.outputType === 'daily-error'}>
   <DailyView ... />
 </Show>
 
-// AFTER: two branches — view doors get <DoorHost>, block doors get exec card
-<Show when={block()?.outputType === 'door-view'}>
+// AFTER: ONE branch for all doors — envelope.kind routes internally
+<Show when={block()?.outputType === 'door'}>
   {(() => {
-    const output = block()!.output as DoorOutput;
-    return (
-      <DoorHost
-        doorId={output.doorId}
-        data={output.data}
-        error={output.error}
-        status={block()?.outputStatus}
-      />
-    );
-  })()}
-</Show>
-<Show when={block()?.outputType === 'door-exec'}>
-  {(() => {
-    const exec = block()!.output as DoorExecOutput;
-    return (
-      <DoorExecCard
-        doorId={exec.doorId}
-        ok={exec.ok}
-        summary={exec.summary}
-        error={exec.error}
-        startedAt={exec.startedAt}
-        finishedAt={exec.finishedAt}
-        createdBlockIds={exec.createdBlockIds}
-      />
-    );
+    const envelope = block()!.output as DoorEnvelope;
+    return envelope.kind === 'view'
+      ? <DoorHost doorId={envelope.doorId} data={envelope.data}
+                  error={envelope.error} status={block()?.outputStatus} />
+      : <DoorExecCard {...envelope} />;
   })()}
 </Show>
 ```
 
 **`DoorExecCard`**: Built-in host component (not per-door). Small, collapsible card showing: door name, status icon, duration, error if any. Block doors are not invisible — they have a receipt.
 
-**Routing**: `outputType` discriminant (`'door-view'` vs `'door-exec'`) keeps it simple. The `output.kind` field inside the envelope is for forward compat (migrate routing to `output.kind` later if needed).
+**Routing**: `outputType` is always `'door'` (single string). `envelope.kind` (`'view'` | `'exec'`) is the real discriminant inside the output object. One source of truth, no drift between `outputType` and `output.kind`.
+
+**`isOutputBlock` memo**: Must add `|| ot === 'door'` to the existing `startsWith('daily-') || startsWith('search-')` check. This ensures door output blocks receive focus routing and keyboard handling.
 
 ---
 
@@ -628,7 +618,11 @@ Door `.tsx` imports `solid-js` and `floatty/doors`. Inside a Blob module, bare s
 
 **Phase 0A must prove**: Does `import(blobUrl)` resolve bare specifiers via the import map? Some engines only apply import maps to static `<script type="module">`, not dynamic `import()`. If this fails, fall back to **Strategy B**: swc rewrites bare specifiers to relative paths during compilation (`'solid-js'` → `'/assets/vendor/solid-js/solid.js'`).
 
-**Critical**: The door and the host MUST share the same SolidJS module instance. Two copies = two reactive runtimes = signals don't propagate across the boundary.
+**INVARIANT — Shared Solid Runtime**: Door modules must import the exact same SolidJS runtime instance as the host app. Two copies = two reactive runtimes = signals don't propagate across the host/door boundary. This is non-negotiable. Enforced by either:
+1. **Import map** pointing bare specifiers (`solid-js`, `solid-js/web`) to the host's bundled SolidJS chunks, OR
+2. **SWC import rewrite** during compilation — swc rewrites `'solid-js'` → `'/assets/vendor/solid-js/solid.js'` pointing to the host's chunk path.
+
+Phase 0B/0C must prove one of these mechanisms works. If neither does, the door system cannot ship.
 
 ---
 
@@ -713,7 +707,7 @@ function doorToBlockHandler(door: Door, meta: DoorMeta, ctx: DoorContext): Block
         const result = await door.execute(blockId, content, ctx);
 
         if (door.kind === 'view') {
-          // ── VIEW DOOR: validate data, write DoorOutput + DoorExecOutput ──
+          // ── VIEW DOOR: validate data, write DoorViewOutput ──
           const data = (result as DoorResult)?.data ?? null;
           const error = (result as DoorResult)?.error;
 
@@ -721,35 +715,33 @@ function doorToBlockHandler(door: Door, meta: DoorMeta, ctx: DoorContext): Block
           try { structuredClone(data); }
           catch { throw new Error('NON_SERIALIZABLE_OUTPUT: data cannot round-trip through Y.Doc'); }
 
-          const viewOutput: DoorOutput = {
-            kind: 'door-view', doorId: meta.id, schema: 1,
+          const envelope: DoorViewOutput = {
+            kind: 'view', doorId: meta.id, schema: 1,
             data, error,
           };
-          actions.setBlockOutput?.(outputId, viewOutput, 'door-view');
+          actions.setBlockOutput?.(outputId, envelope, 'door');
           actions.setBlockStatus?.(outputId, error ? 'error' : 'complete');
 
         } else {
           // ── BLOCK DOOR: door already mutated blocks via ctx.actions ──
           // Write execution record as receipt
-          const execRecord = {
-            kind: 'door-exec', schema: 1, doorId: meta.id,
+          const envelope: DoorExecOutput = {
+            kind: 'exec', schema: 1, doorId: meta.id,
             startedAt, finishedAt: Date.now(), ok: true,
-            summary: (result as DoorResult)?.data?.toString?.(),
             createdBlockIds: ctx._createdBlockIds?.() ?? [],
-          } satisfies DoorExecOutput;
-          actions.setBlockOutput?.(outputId, execRecord, 'door-exec');
+          };
+          actions.setBlockOutput?.(outputId, envelope, 'door');
           actions.setBlockStatus?.(outputId, 'complete');
         }
 
       } catch (err) {
         // Both kinds: error lands in execution record
-        const execRecord = {
-          kind: 'door-exec', schema: 1, doorId: meta.id,
+        const envelope: DoorExecOutput = {
+          kind: 'exec', schema: 1, doorId: meta.id,
           startedAt, finishedAt: Date.now(), ok: false,
           error: String(err),
-        } satisfies DoorExecOutput;
-        actions.setBlockOutput?.(outputId, execRecord,
-          door.kind === 'view' ? 'door-view' : 'door-exec');
+        };
+        actions.setBlockOutput?.(outputId, envelope, 'door');
         actions.setBlockStatus?.(outputId, 'error');
       }
     },
@@ -759,7 +751,9 @@ function doorToBlockHandler(door: Door, meta: DoorMeta, ctx: DoorContext): Block
 
 **`ctx._createdBlockIds`**: Internal tracker. The sandbox wraps `ctx.actions.createBlockInside` / `createBlockAfter` to record IDs created during execution. Block doors don't manually track this — the host does it.
 
-**Error behavior**: Both kinds surface errors the same way — in the exec record's `error` field, with `outputStatus: 'error'`. View doors additionally get `error` in the DoorOutput for DoorHost to display.
+**Output routing**: `outputType` is always `'door'`. Inside the envelope, `kind: 'view'` routes to DoorHost, `kind: 'exec'` routes to DoorExecCard. One discriminant, no drift.
+
+**Error behavior**: Both kinds surface errors the same way — in the exec record (`kind: 'exec'`), with `outputStatus: 'error'`.
 
 ---
 
@@ -951,7 +945,7 @@ GET /api/v1/blocks?marker_type={type}&marker_value={v} # Filter by marker type+v
 
 These are query parameter extensions to the existing `GET /api/v1/blocks` endpoint — server-side filtering instead of shipping all blocks to the client. Without this, `daily::` fetches every block in the workspace and filters client-side, which won't scale past a few thousand blocks.
 
-Implementation is straightforward: the `get_blocks()` handler already reads all blocks from Y.Doc. Add optional query params → filter the response before serialization. Index optimization can come later — the data is already in memory.
+**Status**: Required before `daily::` exits beta, not a hard gate for Phase 0. The daily door should tolerate missing query params by falling back to client-side filter with a console warning (`console.warn('[daily] Falling back to client-side date filter — server query params not yet available')`). This dev fallback keeps the door functional during development while the API catches up.
 
 **This is the forcing function in action**: daily:: found a gap, so the gap gets fixed at the API level, and Claude Code / CLI agents / TUI followers all get time-travel queries for free.
 
@@ -975,7 +969,7 @@ Per-door try/catch. Return `DoorLoadResult`.
 ### Phase 3: Rendering
 
 - `src/components/views/DoorHost.tsx` — `<Dynamic>` wrapper
-- `src/components/BlockItem.tsx` — add `door-view` branch
+- `src/components/BlockItem.tsx` — add `door` outputType branch (routes on `envelope.kind`)
 - `src/styles/doors.css` — base styles + CSS custom properties
 
 ### Phase 4: The Daily Door
@@ -1023,6 +1017,7 @@ function TsView(props: DoorViewProps<TsData>) {
 }
 
 export const door: Door<TsData> = {
+  kind: 'view',
   prefixes: ['ts::', 'timestamp::'],
   async execute(blockId, content, ctx) {
     const fmt = content.replace(/^(ts|timestamp)::\s*/i, '').trim() || 'iso';
@@ -1073,7 +1068,7 @@ export const door: Door<TsData> = {
 - [ ] `.tsx` in doors dir → prefix in `registry.getRegisteredPrefixes()` after restart
 - [ ] `daily::today` renders SolidJS timeline via `<Dynamic>`
 - [ ] Old `DailyView.tsx` and `daily.ts` deleted
-- [ ] `BlockItem.tsx` uses `<DoorHost>` + `<DoorExecCard>` instead of per-type `<Show>` chains
+- [ ] `BlockItem.tsx` uses single `outputType === 'door'` branch with `envelope.kind` routing to `<DoorHost>` / `<DoorExecCard>`
 - [ ] Door errors in DevTools, registry unaffected
 - [ ] `timestamp::` validates generalization (view door, zero Tier 2 deps)
 - [ ] Config settings accessible via `props.settings`
@@ -1101,25 +1096,25 @@ User types "daily::today"
     │
     ▼
 HandlerRegistry.findHandler('daily::today')
-    │  ← doorToBlockHandler adapter
+    │  ← doorToBlockHandler adapter (prefixes route, meta.id identifies)
     ▼
 executeHandler()  ← hooks: execute:before / execute:after
     │
     ├─ adapter.execute()
-    │   ├─ Build DoorContext { server, actions, settings, blockId, ... }
+    │   ├─ Build DoorContext { server, actions, settings, blockId, doorId: meta.id, ... }
     │   ├─ door.execute(blockId, content, ctx)
     │   │     └─ ctx.server.fetch('/api/v1/blocks')    ← Tier 1: pre-auth localhost
     │   │           └─ floatty-server → JSON blocks
     │   │     └─ Filter by date, build DailyData       ← Door logic (pure JS)
-    │   ├─ setBlockOutput(childId, { doorId, data }, 'door-view')
+    │   ├─ setBlockOutput(childId, { kind: 'view', doorId: 'daily', data }, 'door')
     │   └─ setBlockStatus(childId, 'complete')
     │
     ▼
-BlockItem: outputType === 'door-view'
+BlockItem: outputType === 'door', envelope.kind === 'view'
     │
     ▼
-<DoorHost doorId="daily::" data={DailyData} />
-    ├─ doorRegistry.getView('daily::') → DailyView
+<DoorHost doorId="daily" data={DailyData} />
+    ├─ doorRegistry.getView('daily') → DailyView       ← keyed by meta.id, not prefix
     └─ <Dynamic component={DailyView} data={...} settings={...} />
          └─ SolidJS: <For>, <Show>, reactive props
             Timeline, tags, PR chips, details
@@ -1198,50 +1193,118 @@ Same shape. 40 years deep.
 
 ## 14. Architecture Review Findings (Pre-Phase 0)
 
-Reviewed 2026-03-01 against the actual codebase. This is the "what's clean, what needs prep, what blocks Phase 0" assessment.
+Reviewed 2026-03-01 against the actual codebase. Complete 10-item review covering handler registry, block output, BlockItem state, Y.Doc append, daily handler, paths, eval:: spike cross-reference, table keyboard navigation, table raw view, and PTY allocation.
 
-### Handler System: READY (zero friction)
+### CLEAN (No Changes Needed)
 
-| File | Assessment |
-|------|-----------|
-| `registry.ts` | First-match prefix matching via `.find()` + `startsWith()`. Works for door prefixes. No changes needed. All types already exported. |
-| `types.ts` | `ExecutorActions` has 12 methods. `setBlockOutput` and `setBlockStatus` are both optional — door adapter uses `?.` calls, consistent with daily/search handlers. |
-| `executor.ts` | `executeHandler()` wraps all execution with `execute:before`/`execute:after` hooks. Doors inherit hook lifecycle automatically. No changes needed. |
-| `index.ts` | 9 built-in handlers registered in `registerHandlers()`. HMR guard via `handlersRegistered` flag. Door loader calls `registry.register()` after built-ins — no structural changes. |
-
-### Rendering: MINIMAL PREP
+**1. Handler Registry** (`src/lib/handlers/`)
 
 | File | Assessment |
 |------|-----------|
-| `BlockItem.tsx` | Output dispatch is ~50 lines (910-960). Two view types with nested `<Show>` guards (daily 3 branches, search 3 branches). Clean insertion point at line ~950 for `door-view` + `door-exec` branches. Output keyboard handling (`handleOutputBlockKeyDown`) is generic — doors inherit it automatically. |
-| `DailyView.tsx` | Clean, no dead code. Reference implementation for door views. Keep as-is until daily door ships, then delete. |
-| `daily.ts` | Clean handler following standard pattern (find/create output child → set loading → execute → set output). Reference for the adapter. |
+| `registry.ts` | `HandlerRegistry` singleton: `register()`, `findHandler()`, `isExecutableBlock()`, `getRegisteredPrefixes()`, `clear()`. First-match prefix via `.find()` + `startsWith()`. Works for door prefixes. |
+| `types.ts` | `BlockHandler`: `prefixes: string[]` + `execute(blockId, content, actions): Promise<void>`. `ExecutorActions`: 12 methods. `setBlockOutput` and `setBlockStatus` both optional (used with `?.`). |
+| `executor.ts` | `executeHandler()` wraps all execution with `execute:before`/`execute:after` hooks. Abort support, content mutation. Door adapter inherits lifecycle automatically. |
+| `index.ts` | 9 built-in handlers in `registerHandlers()`. HMR guard. Door loader calls `registry.register()` after built-ins — no structural changes. |
 
-**One thing to prep**: `isOutputBlock` memo (line 220) currently checks `startsWith('daily-')` or `startsWith('search-')`. Add `startsWith('door-')` when adding the branches.
-
-### Y.Doc Layer: ONE CAVEAT
+**2. Block Output System** (`src/hooks/useBlockStore.ts`)
 
 | Finding | Detail |
 |---------|--------|
-| `setBlockOutput` nested objects | **Works perfectly.** Plain objects serialize via JSON on wire. Y.Map stores them as-is. DoorExecOutput shape (nested arrays, numbers) round-trips cleanly. Proven by daily.ts and search.ts existing usage. |
-| `appendBlockContent` | **Caveat.** Content is plain string in Y.Map (not Y.Text). Appending = read→concat→write = O(n²). Acceptable for short output. For heavy streaming (sh:: stdout), use child blocks instead. Y.Text migration is future work. |
-| `setValueOnYMap` helper | Clean wrapper. Handles Y.Map and legacy plain objects. No changes needed for door output. |
+| Block fields | `output?: unknown`, `outputType?: string`, `outputStatus?: 'pending' \| 'running' \| 'complete' \| 'error'` — exact match to spec. |
+| `setBlockOutput()` | Line 621: `(id, output, outputType, status = 'complete')`. Three fields set independently via `setValueOnYMap()`. |
+| JSON round-trip | Output flows through Y.Map as JSON-safe values. Proven by daily/search handlers. `DoorEnvelope` shapes round-trip cleanly. |
 
-### Config: EXTENSIBLE
+**4. Y.Doc Append Path** — ONE CAVEAT (already documented in §6)
 
-No `[plugins]` section exists yet, but `save_to()` uses TOML merge that preserves unknown sections. Adding `[plugins.settings.daily]` to config.toml won't break existing config loading.
+Content is plain string in Y.Map (not Y.Text). `appendBlockContent` = read→concat→write = O(n²). Acceptable for short output. For heavy streaming, child blocks are the pattern. No action needed.
 
-### Server API: GAPS NOTED (Phase 0.5)
+**5. Daily Handler / DailyView** (reference implementation)
 
-27 endpoints, full block CRUD, Bearer auth with localhost exemption. Gaps:
-- No date-range query (`since`/`until` params on `GET /api/v1/blocks`)
+| File | Assessment |
+|------|-----------|
+| `daily.ts` | Standard pattern: find/create output child → set loading → `invoke('execute_daily_command')` → set output. Door version shifts to `ctx.server.fetch`. No dead code. |
+| `DailyView.tsx` | Clean component. Props: `{ data: DailyNoteData }`. Keep as reference until daily door ships, then delete both + remove `dailyHandler` from `index.ts`. |
+
+### PREP NEEDED
+
+**3. BlockItem.tsx State**
+
+| Finding | Detail |
+|---------|--------|
+| `isOutputBlock` memo | Line 220: `ot?.startsWith('daily-') \|\| ot?.startsWith('search-')`. Add `\|\| ot === 'door'` for door output blocks to receive focus routing and keyboard handling. |
+| Output rendering | Lines 900-950: Two groups (daily 3 branches, search 3 branches). Clean insertion point for single `door` branch (routes on `envelope.kind`). |
+| Keyboard handling | `handleOutputBlockKeyDown()` is generic — doors inherit block-level operations (move/indent/delete). Doors needing internal keyboard nav route through `onNavigateOut`. |
+
+**6. File System Paths** (`src-tauri/src/paths.rs`)
+
+| Finding | Detail |
+|---------|--------|
+| `DataPaths` struct | `root`, `config`, `database`, `logs`, `search_index`, `pid_file`. No `doors_dir` yet. |
+| Adding `doors_dir` | 3-line change: add field, add `root.join("plugins/doors")` in `from_root()`, add `create_dir_all` in `ensure_dirs()`. |
+| Dev/release isolation | Automatic via `#[cfg(debug_assertions)]` on `default_root()`. |
+
+**Config**: No `[plugins]` section exists yet, but `save_to()` preserves unknown TOML sections. Adding `[plugins.settings.daily]` won't break existing config loading.
+
+### EVAL SPIKE DELTA
+
+**7. eval:: Spike Cross-Reference** (branch `spike/eval-block-dynamic-dispatch`, NOT on this branch)
+
+| Spike Concept | Door Spec Equivalent | Delta |
+|---------------|---------------------|-------|
+| `<Dynamic component={EVAL_VIEWERS[type]}>` | `<Dynamic component={doorRegistry.getView(doorId)}>` | Same pattern. Door spec generalizes to registry keyed by `meta.id`. |
+| `EvalScope` (block CRUD, `$ref`, `$after`, `$inside`) | `ScopedActions` (block CRUD via REST) | Different surface. EvalScope accessed Y.Doc directly; ScopedActions wraps REST. Door version is sandboxed. |
+| `setBlockOutput(blockId, ...)` output-on-self | `setBlockOutput(childId, ...)` output-on-child | **Key delta.** See decision below. |
+| `$ref()` sibling resolution | Not in door spec v1 | Architecturally compatible. Future work. |
+| `func::` meta-handler | Not in door spec v1 | Precursor to door aliasing. Current `prefixes[]` covers this. |
+| `inferType()` viewer selection | Explicit `kind: DoorKind` | Doors don't infer — author declares `kind`. |
+
+**Output-on-self vs output-on-child decision**: Every existing handler (daily, search, sh, ai) uses child-output. eval:: used self-output because eval blocks ARE their output (`eval:: 2+2` → `4` inline). This makes sense for eval but breaks daily/search patterns. **Decision**: output-on-child is the v1 default. No `DoorMeta.outputTarget` option. Revisit when eval:: becomes a door.
+
+### TABLE PATTERNS
+
+**8. Table Keyboard Navigation** (`BlockDisplay.tsx`)
+
+Table's `handleTableKeyDown()` implements the exact pattern §15 describes:
+- Arrow keys navigate cells, at boundaries calls `props.onNavigateOut?.('up'|'down')`
+- `handleInputKeyDown()` uses `e.stopPropagation()` to prevent block/outliner handlers firing during cell edit
+- `onNavigateOut` prop in `TableViewProps` (line 140)
+
+**No "FocusableRegion" abstraction needed.** The pattern is a prop contract: door accepts `onNavigateOut` via `DoorViewProps`, calls it at boundaries, uses `stopPropagation()` internally. DoorHost wraps with `tabIndex={0}`.
+
+**9. Table Raw View Toggle** (`BlockItem.tsx`)
+
+- `tableShowRaw` signal lifted to BlockItem (line 138), UI-only (not persisted)
+- When raw: TableView unmounts, contentEditable shows editable markdown
+- Door raw view: `showRaw` signal inside DoorHost, shows read-only `<pre>` JSON
+- Key difference: table raw = editable markdown, door raw = read-only JSON
+
+### PTY ALLOCATION
+
+**10. PTY Allocation Path** (Tier C — future, NOT a v1 blocker)
+
+| Path | Mechanism | Door-Accessible? |
+|------|-----------|-------------------|
+| `sh::` execution | `invoke('execute_shell_command')` → Rust `Command::output()` | YES (Tier 2), but PTY-less |
+| `picker::` handler | `terminalManager.spawnInteractivePicker()` → xterm + PTY | NO — JS singleton, not a Tauri command |
+| `$tv()` resolver | Same path as picker — `terminalManager.spawnInteractivePicker()` | NO — same limitation |
+| TUI doors (nvim::) | Would need same `terminalManager` path | NO — requires new infrastructure |
+
+There is **no `spawn_pty` Tauri command**. PTY spawning goes through `terminalManager` (frontend JS) which creates xterm instances, spawns PTY via Tauri channels, manages lifecycle. Not exposed as an invocable command because PTY requires a DOM container, lifecycle tied to xterm instance, and block must render a picker-terminal div.
+
+For TUI doors (Tier C): needs a `TuiHost` component providing the xterm container + a door API like `ctx.spawnTui(command, options)`. Correctly scoped as Tier C in §18.
+
+### Server API: GAPS NOTED
+
+27 endpoints, full block CRUD, Bearer auth with localhost exemption. Gaps (forcing function, §7 Phase 0.5):
+- No date-range query (`since`/`until` on `GET /api/v1/blocks`)
 - No marker-type query
-- Metadata not settable in POST body (must PATCH after create)
-These are called out in Phase 0.5 as the forcing function.
+- Metadata not settable in POST body
+
+Daily door tolerates missing params via client-side filter fallback (dev mode).
 
 ### What Blocks Phase 0
 
-**Nothing in the handler/rendering/Y.Doc layer blocks Phase 0.** The only blockers are the webview probes (Blob import, import map, swc) — external runtime behavior, not floatty code.
+**Nothing in the handler/rendering/Y.Doc/paths layer blocks Phase 0.** The only blockers are the webview probes (Blob import, import map, swc) — external runtime behavior, not floatty code.
 
 ---
 
@@ -1384,10 +1447,10 @@ function DoorHost(props: DoorHostProps) {
 ```
 
 **Key decisions:**
-- Raw view shows `DoorOutput.data` as formatted JSON — the same data the view component receives
+- Raw view shows `DoorViewOutput.data` as formatted JSON — the same data the view component receives
 - Toggle state is per-instance, not persisted (like table raw mode)
 - `<DoorExecCard>` (block doors) does NOT get a raw toggle — it's already a simple receipt
-- The raw JSON is read-only — no editing DoorOutput directly (that's the Y.Doc's job)
+- The raw JSON is read-only — no editing the door envelope directly (that's the Y.Doc's job)
 
 ---
 
@@ -1400,21 +1463,43 @@ This spec describes the **Door System epic** — a multi-issue body of work. Not
 | Tier | What | Example Doors | Ship When |
 |------|------|--------------|-----------|
 | **Tier A: View doors** | Data + SolidJS component rendering | `daily::`, `timestamp::` | First deliverable (Phase 1-6) |
-| **Tier B: Block doors** | Block mutation via `ctx.actions` | `sh::` as door, `md-import::` | After view doors prove stable |
-| **Tier C: Advanced doors** | TUI embedding, iframe isolation, aliasing | `nvim::`, `iframe::`, `gh::po` | Research + separate spec per type |
+| **Tier B: Block doors** | Block mutation via `ctx.actions` | `sh::` as door, `picker::` as door | After view doors prove stable |
+| **Tier C: Advanced doors** | TUI embedding, iframe isolation, eval | `nvim::`, `iframe::`, `eval::` | Research + separate spec per type |
 
-### `sh::` as a Door
+### Validation Ladder
 
-The existing `sh::` handler (`src/lib/handlers/sh.ts`) is a prime candidate for block-door conversion. It:
-- Creates child blocks for stdout lines
-- Streams output in real-time
-- Uses `ctx.actions` (not a view component)
+Each door proves progressive capability. If a door doesn't work, all doors below it in the ladder also don't work.
 
-This is explicitly **in scope** for the door system but **not the first deliverable**. Converting `sh::` validates:
-- Block-door execution path
+| # | Door | Kind | Tier | What It Validates |
+|---|------|------|------|-------------------|
+| 1 | `daily::` | view | A | Full pipeline: compile → load → register → execute → render via `<Dynamic>`. Headless-first (REST API). Child-output pattern. |
+| 2 | `timestamp::` | view | A | Generalization: zero Tier 2 deps, pure JS execute, settings from config.toml, multiple prefix aliases. |
+| 3 | `sh::` | block | B | Block-door execution path. Child block creation. `DoorExecOutput` receipt. `createdBlockIds` tracking. Streaming via child-block-per-chunk. |
+| 4 | `picker::` | block | B | TUI-in-block via `terminalManager`. Interactive subprocess. Output capture + block creation from selection. |
+| 5 | `nvim::` | view | C | Embedded xterm for TUI process. `TuiHost` component. PTY lifecycle management inside a door view. |
+| 6 | `eval::` | view | C | Output-on-self pattern. `$ref()` sibling resolution. `inferType()` viewer dispatch. Dynamic viewer selection. |
+| 7 | `iframe::` | view | C | Sandboxed iframe. Config-driven URL aliases. CSP considerations for external content. |
+| 8 | aliases | — | C | `gh::po board` resolves through `ctx.settings.aliases`. Door-level URL/command routing. |
+| 9 | `func::` | block | C | Meta-handler dispatching to registered functions. Runtime block scanning for handlers. |
+| 10 | `template::` | block | C | Block tree generation from templates. Batch creation via `batchCreateBlocksInside`. |
+
+### `sh::` as a Door (Reference Implementation for Block Doors)
+
+The existing `sh::` handler (`src/lib/handlers/commandDoor.ts`) is the reference implementation for block doors. `createCommandDoor()` maps to the `Door` interface:
+
+| Current (commandDoor.ts) | Door Equivalent |
+|--------------------------|-----------------|
+| `handler.prefixes = ['sh::']` | `door.prefixes = ['sh::']` |
+| `handler.execute(blockId, content, actions)` | `door.execute(blockId, content, ctx)` where `ctx.actions` wraps `actions` |
+| `actions.createBlockInside(blockId)` | `ctx.actions.createBlockInside(blockId)` |
+| `actions.updateBlockContent(outputId, ...)` | `ctx.actions.updateBlockContent(outputId, ...)` |
+| `invoke('execute_shell_command', ...)` | `ctx.invoke('execute_shell_command', ...)` (Tier 2) |
+
+Converting `sh::` validates:
+- Block-door execution path (no view component)
 - `appendBlockContent` for streaming (or child-block-per-chunk pattern)
 - `DoorExecOutput` as execution receipt
-- `createdBlockIds` tracking
+- `createdBlockIds` tracking via sandbox wrapper
 
 **Why it waits**: View doors (Tier A) exercise the full pipeline — compile, load, register, render. Block doors skip the rendering half. Prove the full pipeline first, then simplify for block doors.
 
@@ -1441,13 +1526,52 @@ These are NOT in scope for v1 but inform the architecture's extensibility:
 
 A door that spawns a TUI process and renders it in an embedded xterm.js terminal. The door's `view` component would mount a mini-terminal pane (reusing `terminalManager` infrastructure). The door's `execute()` spawns the PTY process.
 
-Open questions: How does the door get a PTY handle? Does `ctx.invoke('spawn_pty')` become Tier 2? Can xterm.js instances nest inside block output without re-parenting trap bugs?
+#### PTY Allocation Path (Architecture Review Finding)
+
+There is **no `spawn_pty` Tauri command**. PTY spawning goes through `terminalManager.spawnInteractivePicker()` — a frontend JS singleton, not an invocable Tauri command. This is deliberate:
+
+1. PTY requires a DOM container (xterm needs an HTMLElement to render into)
+2. PTY lifecycle is tied to the xterm instance (resize, focus, cleanup)
+3. The block needs to render a `picker-terminal` div that the manager attaches to
+
+Current infrastructure for TUI-in-block (`src/lib/handlers/pick.ts`, `src/lib/tvResolver.ts`):
+- Handler creates a picker block with `outputType: 'picker'`
+- BlockItem renders a `picker-terminal` container div
+- Handler calls `terminalManager.spawnInteractivePicker(id, container, command)`
+- On completion, handler receives `{ exitCode, output }` and creates result blocks
+
+For TUI doors to work (Tier C), the door system would need:
+- A `TuiHost` component that provides the xterm container inside the door view
+- A door API like `ctx.spawnTui(command, options)` that coordinates with TuiHost
+- The door's `view` component would include the TuiHost container
+- This is new infrastructure — not a simple wrapper around existing APIs
+
+**Why `ctx.invoke('spawn_pty')` doesn't work**: Doors can't provide a DOM container via `ctx.invoke()`. The PTY needs to be rendered into the door's own view component, which means the door must be a `kind: 'view'` door with a view that includes the terminal container.
 
 **iframe Doors** (`iframe:: url`)
 
 A door that renders external content in a sandboxed iframe. The `view` component is literally `<iframe src={url} sandbox="..." />`. This is the one case where Shadow DOM isolation might make sense — the iframe's content is foreign.
 
 Classic BBS callback: `iframe::aol keyword` — an iframe rendering AOL Keyword content in 2026.
+
+#### iframe Alias System (Config-Driven URL Resolution)
+
+iframe doors can use config-driven URL aliases for common destinations:
+
+```toml
+[plugins.settings.iframe]
+aliases.po-board = "https://github.com/orgs/myorg/projects/1/views/1"
+aliases.grafana = "https://monitoring.internal/d/overview"
+aliases.aol = "https://www.aol.com/search?q="
+```
+
+A door like `gh::po board` would:
+1. Parse the sub-command (`po board`)
+2. Look up `ctx.settings.aliases['po-board']` (kebab-cased)
+3. If found, render `<iframe src={url} />`
+4. If not found, show an error with available aliases
+
+This is a door-level concern, not host infrastructure. The door reads aliases from `props.settings` (Tier 1, always available). No new host APIs needed.
 
 **Door Aliasing** (`gh::po board`, `jira::sprint`)
 
