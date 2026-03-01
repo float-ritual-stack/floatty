@@ -218,3 +218,33 @@ async function handlePermission() {
 ```
 
 **Rule**: If you need stable signal values across an async boundary, snapshot them into local variables before the first `await`.
+
+## 10. Lift Identical Memos to Context (N×M Prevention)
+
+**The trap**: Multiple component instances each create their own `createMemo` that computes the same value from the same store. N components × M store changes = N×M identical recomputations.
+
+```typescript
+// ❌ WRONG - each BlockItem creates identical memo (N copies)
+function BlockItem(props: Props) {
+  const { blockStore } = useWorkspace();
+  const pageNames = createMemo(() =>
+    sortPageNames(getPageNamesWithTimestamps(blockStore))
+  );
+  // 500 BlockItems = 500 identical memos, all recompute on any block change
+}
+
+// ✅ CORRECT - singleton memo in context (1 copy)
+// In WorkspaceProvider:
+const pageNames = createMemo(() =>
+  sortPageNames(getPageNamesWithTimestamps(store))
+);
+// Expose via context value
+
+// In BlockItem:
+const { pageNames } = useWorkspace();
+// 500 BlockItems read from 1 memo
+```
+
+**Symptom**: Keystroke latency increases with block count. Profiler shows the same function running N times per frame.
+
+**Rule**: If a `createMemo` reads from shared store state and produces the same output regardless of which component instance runs it, lift it to a Provider or context.

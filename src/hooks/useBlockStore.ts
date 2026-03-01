@@ -20,6 +20,16 @@ import {
 import { stopUndoCaptureBoundary } from './useSyncedYDoc';
 
 // ═══════════════════════════════════════════════════════════════
+// BATCH BLOCK CREATION TYPES (FLO-322)
+// ═══════════════════════════════════════════════════════════════
+
+/** A block to create in a batch operation (single Y.Doc transaction). */
+export interface BatchBlockOp {
+  content: string;
+  children?: BatchBlockOp[];
+}
+
+// ═══════════════════════════════════════════════════════════════
 // AUTO-EXECUTE CALLBACK (for external block creation via API)
 // ═══════════════════════════════════════════════════════════════
 
@@ -398,6 +408,8 @@ function createBlockStore() {
         || origin === Origin.BulkImport;
 
       if (isBulk) {
+        const createdBlockIds: string[] = [];
+
         batch(() => {
           setState('lastUpdateOrigin', txOrigin);
           const blocksToRefresh = new Set<string>();
@@ -409,6 +421,7 @@ function createBlockStore() {
               event.changes.keys.forEach((change, key) => {
                 if (change.action === 'add' || change.action === 'update') {
                   blocksToRefresh.add(key);
+                  if (change.action === 'add') createdBlockIds.push(key);
                 } else if (change.action === 'delete') {
                   blocksToDelete.add(key);
                 }
@@ -426,6 +439,30 @@ function createBlockStore() {
             setState('blocks', key, undefined!);
           }
         });
+
+        // FLO-322: BulkImport creates NEW blocks that need metadata extraction.
+        // Remote/ReconnectAuthority blocks already had hooks run when originally created.
+        // Enqueue to async lane only (ProjectionScheduler) — keeps rendering fast,
+        // metadata (ctx:: markers, [[wikilink]] outlinks) populates in background.
+        if (origin === Origin.BulkImport && createdBlockIds.length > 0) {
+          const createEvents: BlockEvent[] = createdBlockIds
+            .map(id => {
+              const block = state.blocks[id];
+              if (!block) return null;
+              return { type: 'block:create' as const, blockId: id, block };
+            })
+            .filter((e): e is BlockEvent => e !== null);
+
+          if (createEvents.length > 0) {
+            blockProjectionScheduler.enqueue({
+              batchId: crypto.randomUUID(),
+              timestamp: Date.now(),
+              origin,
+              events: createEvents,
+            });
+          }
+        }
+
         return;
       }
 
@@ -547,10 +584,9 @@ function createBlockStore() {
         _pendingMoveEvent = null;
       }
 
-      // Emit to EventBus (sync lane) and ProjectionScheduler (async lane)
-      // Skip for bulk remote loads (initial sync, reconnect) — hooks don't need to
-      // process 13k+ blocks on startup. Metadata was already extracted when blocks
-      // were originally created/edited.
+      // Emit to EventBus (sync lane) and ProjectionScheduler (async lane).
+      // Skip for Remote/ReconnectAuthority (metadata already extracted on original create).
+      // BulkImport is handled above — async lane only, no sync EventBus.
       if (blockEvents.length > 0 &&
           origin !== Origin.Remote &&
           origin !== Origin.ReconnectAuthority &&
@@ -739,6 +775,196 @@ function createBlockStore() {
     }, 'user');
 
     return newId;
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // BATCH BLOCK CREATION (FLO-322)
+  //
+  // Creates multiple blocks in a single Y.Doc transaction.
+  // Used by paste handler and sh:: output to avoid N×2 transactions.
+  // Single transaction → single observeDeep → single SolidJS batch.
+  // ═══════════════════════════════════════════════════════════════
+
+  // (type exported below for external callers)
+
+  /**
+   * Create blocks as siblings after `afterId`, with nested children.
+   * All blocks created in ONE Y.Doc transaction (uses 'bulk_import' origin).
+   *
+   * Returns array of created top-level block IDs.
+   */
+  const batchCreateBlocksAfter = (
+    afterId: string,
+    ops: BatchBlockOp[],
+    origin: string = 'bulk_import',
+  ): string[] => {
+    if (!_doc) { warnDocNotReady('batchCreateBlocksAfter'); return []; }
+    if (ops.length === 0) return [];
+
+    const afterBlock = state.blocks[afterId];
+    if (!afterBlock) return [];
+
+    const topLevelIds: string[] = [];
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      const parentId = afterBlock.parentId;
+
+      // Determine insertion point
+      let insertIdx: number;
+      if (parentId) {
+        const parentData = blocksMap.get(parentId);
+        const childIds = (getValue(parentData, 'childIds') as string[]) || [];
+        insertIdx = childIds.indexOf(afterId) + 1;
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        const arr = rootIds.toArray();
+        insertIdx = arr.indexOf(afterId) + 1;
+      }
+
+      // Create all blocks recursively
+      const createChildren = (parentBlockId: string, children: BatchBlockOp[]) => {
+        for (const child of children) {
+          const childId = crypto.randomUUID();
+          const childBlock = createBlock(childId, child.content, parentBlockId);
+          blocksMap.set(childId, blockToYMap(childBlock));
+          appendChildId(blocksMap, parentBlockId, childId);
+
+          if (child.children && child.children.length > 0) {
+            createChildren(childId, child.children);
+          }
+        }
+      };
+
+      // Create top-level blocks as siblings
+      for (let i = 0; i < ops.length; i++) {
+        const op = ops[i];
+        const newId = crypto.randomUUID();
+        const newBlock = createBlock(newId, op.content, parentId);
+        blocksMap.set(newId, blockToYMap(newBlock));
+        topLevelIds.push(newId);
+
+        // Wire into parent or rootIds
+        if (parentId) {
+          insertChildId(blocksMap, parentId, newId, insertIdx + i);
+        } else {
+          const rootIds = _doc.getArray<string>('rootIds');
+          rootIds.insert(insertIdx + i, [newId]);
+        }
+
+        // Create nested children
+        if (op.children && op.children.length > 0) {
+          createChildren(newId, op.children);
+        }
+      }
+    }, origin);
+
+    return topLevelIds;
+  };
+
+  /**
+   * Create blocks as children of `parentId`.
+   * All blocks created in ONE Y.Doc transaction (uses 'bulk_import' origin).
+   *
+   * Returns array of created top-level child IDs.
+   */
+  const batchCreateBlocksInside = (
+    parentId: string,
+    ops: BatchBlockOp[],
+    origin: string = 'bulk_import',
+  ): string[] => {
+    if (!_doc) { warnDocNotReady('batchCreateBlocksInside'); return []; }
+    if (ops.length === 0) return [];
+
+    const parentBlock = state.blocks[parentId];
+    if (!parentBlock) return [];
+
+    const topLevelIds: string[] = [];
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      const createChildren = (parentBlockId: string, children: BatchBlockOp[]) => {
+        for (const child of children) {
+          const childId = crypto.randomUUID();
+          const childBlock = createBlock(childId, child.content, parentBlockId);
+          blocksMap.set(childId, blockToYMap(childBlock));
+          appendChildId(blocksMap, parentBlockId, childId);
+
+          if (child.children && child.children.length > 0) {
+            createChildren(childId, child.children);
+          }
+        }
+      };
+
+      for (const op of ops) {
+        const newId = crypto.randomUUID();
+        const newBlock = createBlock(newId, op.content, parentId);
+        blocksMap.set(newId, blockToYMap(newBlock));
+        appendChildId(blocksMap, parentId, newId);
+        topLevelIds.push(newId);
+
+        if (op.children && op.children.length > 0) {
+          createChildren(newId, op.children);
+        }
+      }
+    }, origin);
+
+    return topLevelIds;
+  };
+
+  /**
+   * Create blocks as children of `parentId`, inserted at the TOP (first child position).
+   * All blocks created in ONE Y.Doc transaction (uses 'bulk_import' origin).
+   * Blocks are inserted in reverse order so [A,B,C] appears as A,B,C visually.
+   *
+   * Returns array of created top-level child IDs (in visual order).
+   */
+  const batchCreateBlocksInsideAtTop = (
+    parentId: string,
+    ops: BatchBlockOp[],
+    origin: string = 'bulk_import',
+  ): string[] => {
+    if (!_doc) { warnDocNotReady('batchCreateBlocksInsideAtTop'); return []; }
+    if (ops.length === 0) return [];
+
+    const parentBlock = state.blocks[parentId];
+    if (!parentBlock) return [];
+
+    const topLevelIds: string[] = [];
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      const createChildren = (parentBlockId: string, children: BatchBlockOp[]) => {
+        for (const child of children) {
+          const childId = crypto.randomUUID();
+          const childBlock = createBlock(childId, child.content, parentBlockId);
+          blocksMap.set(childId, blockToYMap(childBlock));
+          appendChildId(blocksMap, parentBlockId, childId);
+
+          if (child.children && child.children.length > 0) {
+            createChildren(childId, child.children);
+          }
+        }
+      };
+
+      // Reverse: Insert [A,B,C] as C→top, B→top, A→top = [A,B,C] visual order
+      for (const op of [...ops].reverse()) {
+        const newId = crypto.randomUUID();
+        const newBlock = createBlock(newId, op.content, parentId);
+        blocksMap.set(newId, blockToYMap(newBlock));
+        insertChildId(blocksMap, parentId, newId, 0);
+        topLevelIds.unshift(newId); // unshift to maintain visual order in return value
+
+        // Children insert normally (bottom) - natural reading order within sections
+        if (op.children && op.children.length > 0) {
+          createChildren(newId, op.children);
+        }
+      }
+    }, origin);
+
+    return topLevelIds;
   };
 
   const splitBlock = (id: string, offset: number) => {
@@ -1481,6 +1707,10 @@ function createBlockStore() {
     createInitialBlock,
     clearWorkspace,
     quarantineOrphans,  // FLO-350: reparent orphans to quarantine container
+    // FLO-322: Batch block creation (single Y.Doc transaction)
+    batchCreateBlocksAfter,
+    batchCreateBlocksInside,
+    batchCreateBlocksInsideAtTop,
   };
 }
 

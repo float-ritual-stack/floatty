@@ -115,7 +115,7 @@ interface BlockItemProps {
 }
 
 export function BlockItem(props: BlockItemProps) {
-  const { blockStore, paneStore } = useWorkspace();
+  const { blockStore, paneStore, pageNames } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
   const drag = useBlockDrag();
@@ -171,8 +171,8 @@ export function BlockItem(props: BlockItemProps) {
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
 
-  // FLO-376: Wikilink autocomplete
-  const autocomplete = useWikilinkAutocomplete(store);
+  // FLO-376: Wikilink autocomplete (FLO-322: pageNames from singleton context)
+  const autocomplete = useWikilinkAutocomplete(pageNames);
 
   // Dismiss autocomplete on scroll (anchorRect goes stale)
   createEffect(on(() => autocomplete.isOpen(), (open) => {
@@ -667,12 +667,12 @@ export function BlockItem(props: BlockItemProps) {
     // and handleStructuredPaste might incorrectly think block is empty
     flushContentUpdate();
 
-    // Try structured paste (FLO-128: structure like sh:: cat output)
+    // Try structured paste (FLO-128, FLO-322: batch transaction)
     const result = handleStructuredPaste(props.id, text, {
       getBlock: (id) => store.blocks[id],
-      createBlockAfter: store.createBlockAfter,
-      createBlockInside: store.createBlockInside,
       updateBlockContent: store.updateBlockContent,
+      batchCreateBlocksAfter: store.batchCreateBlocksAfter,
+      batchCreateBlocksInside: store.batchCreateBlocksInside,
     });
 
     if (result.handled) {

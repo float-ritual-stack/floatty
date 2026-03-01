@@ -520,6 +520,10 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
             rootIds: store.rootIds,
             paneId: deps.paneId,
             focusBlock: deps.onFocus,
+            // FLO-322: Batch block creation for bulk output
+            batchCreateBlocksAfter: store.batchCreateBlocksAfter,
+            batchCreateBlocksInside: store.batchCreateBlocksInside,
+            batchCreateBlocksInsideAtTop: store.batchCreateBlocksInsideAtTop,
           }, hookStore).catch(err => {
             console.error('[useBlockInput] Handler execution failed:', err);
           });

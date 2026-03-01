@@ -7,7 +7,7 @@
  * FLO-376: Pure frontend, no Y.Doc schema changes.
  */
 
-import { createMemo, createSignal } from 'solid-js';
+import { createSignal } from 'solid-js';
 import { findPagesContainer, getPageTitle } from './useBacklinkNavigation';
 import type { BlockStoreInterface } from '../context/WorkspaceContext';
 import { fuzzyFilter } from '../lib/fuzzyFilter';
@@ -148,13 +148,12 @@ export function buildSuggestionsWithTypedText(
 // HOOK
 // ═══════════════════════════════════════════════════════════════
 
-export function useWikilinkAutocomplete(blockStore: BlockStoreInterface) {
+/**
+ * FLO-322: pageNames is now a singleton Accessor from WorkspaceContext.
+ * Previously each BlockItem created its own identical memo (N×M recomputation).
+ */
+export function useWikilinkAutocomplete(pageNames: () => string[]) {
   const [state, setState] = createSignal<AutocompleteState | null>(null);
-
-  // Memoize page names — pinned recent (3) + alphabetical rest
-  const pageNames = createMemo(() =>
-    sortPageNames(getPageNamesWithTimestamps(blockStore))
-  );
 
   /**
    * Check for [[ trigger after content/cursor changes.

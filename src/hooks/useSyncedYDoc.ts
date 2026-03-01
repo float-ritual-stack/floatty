@@ -1396,6 +1396,17 @@ function connectWebSocket() {
     };
   } catch (err) {
     console.error('[WS] Failed to connect:', err);
+    setSyncStatus('error');
+    setLastSyncError(`WebSocket connection failed: ${err}`);
+    // Schedule reconnect — onclose won't fire since the socket never opened
+    if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+    const backoffDelay = Math.min(
+      WS_RECONNECT_DELAY * Math.pow(2, wsRetryCount),
+      WS_MAX_RECONNECT_DELAY
+    );
+    wsRetryCount++;
+    console.log(`[WS] Reconnecting in ${backoffDelay}ms (attempt ${wsRetryCount})`);
+    wsReconnectTimer = window.setTimeout(connectWebSocket, backoffDelay);
   }
 }
 
