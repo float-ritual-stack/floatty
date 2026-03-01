@@ -92,6 +92,7 @@ export interface ScopedActions {
   // Block mutation
   updateBlockContent(id: string, content: string): void;
   deleteBlock(id: string): boolean;
+  moveBlock(blockId: string, targetParentId: string | null, targetIndex: number): boolean;
   // Block read
   getBlock(id: string): unknown | undefined;
   getParentId(id: string): string | undefined;

@@ -106,6 +106,9 @@ function createScopedActions(
     deleteBlock(id: string): boolean {
       return actions.deleteBlock?.(id) ?? false;
     },
+    moveBlock(blockId: string, targetParentId: string | null, targetIndex: number): boolean {
+      return actions.moveBlock?.(blockId, targetParentId, targetIndex) ?? false;
+    },
     // ── Block read ──────────────────────────────────────────────
     getBlock(id: string): unknown | undefined {
       return actions.getBlock?.(id);

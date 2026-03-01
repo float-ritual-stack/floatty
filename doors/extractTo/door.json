@@ -1,0 +1,6 @@
+{
+  "id": "extractTo",
+  "name": "Extract to Page",
+  "prefixes": ["extractto::", "extract::"],
+  "version": "0.1.0"
+}
