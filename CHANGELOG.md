@@ -6,6 +6,25 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.7.42] - 2026-03-01
+
+### Performance
+
+- **Batch Y.Doc transactions for paste/import** (FLO-322, PR #154): Paste and `sh::` output now create all blocks in a single Y.Doc transaction instead of 2N individual transactions. 100 pasted blocks = 1 transaction (was 200). Single `observeDeep` fire, single SolidJS batch, single undo step. Uses `bulk_import` origin to skip synchronous EventBus — metadata (ctx:: markers, [[wikilink]] outlinks) extracted asynchronously via ProjectionScheduler.
+- **Singleton pageNames memo** (FLO-322): Lifted identical `pageNames` computation from per-BlockItem (N copies, all identical) to WorkspaceContext singleton. Eliminates N×M recomputation on every keystroke with 500+ blocks.
+
+### Bug Fixes
+
+- **WebSocket reconnect gap** (sweep find): `new WebSocket()` throwing synchronously left connection permanently dead — no reconnect scheduled, no error status set. Added catch with exponential backoff reconnect timer.
+- **Homebase keybind fallback**: `⌘⇧0` collapse-to-depth used `?? 0` (disabled) when config missing — changed to `?? 2` for sensible default.
+- **ExecutorActions missing batch API**: `batchCreateBlocksAfter` was available on the store but not wired through `ExecutorActions` interface — handlers couldn't batch-create siblings. Wired in both action builders.
+
+### Documentation
+
+- Project rules updated: SolidJS patterns #10 (lift identical memos), Y.Doc patterns #11 (batch transactions), #12 (observer API return type)
+
+---
+
 ## [0.7.41] - 2026-02-28
 
 ### Features
