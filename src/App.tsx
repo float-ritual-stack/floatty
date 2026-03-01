@@ -56,9 +56,9 @@ function App() {
     }
   });
 
-  // Register block handlers (sh::, ai::, daily::)
-  onMount(() => {
-    registerHandlers();
+  // Register block handlers (sh::, ai::, search::, etc.) and load plugins (daily::, etc.)
+  onMount(async () => {
+    await registerHandlers();
   });
 
   // Start sync health checking (polls every 30s, detects WS drift)

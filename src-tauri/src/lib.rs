@@ -51,6 +51,8 @@ pub struct AppState {
     server: Option<ServerState>,
     /// Resolved config path — all config reads/writes go through this
     pub config_path: PathBuf,
+    /// Resolved plugins directory — user plugins loaded from here
+    pub plugins_path: PathBuf,
 }
 
 /// Get server info for HTTP client initialization
@@ -62,6 +64,15 @@ fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
     state.server.as_ref()
         .map(|s| s.info.clone())
         .ok_or_else(|| "Server not running".to_string())
+}
+
+/// Get the user plugins directory path.
+///
+/// Returns the absolute path to `{data_dir}/plugins/` where user-installed
+/// plugins are loaded from. Frontend uses this for dynamic plugin discovery.
+#[tauri::command]
+fn get_plugins_path(state: State<AppState>) -> String {
+    state.plugins_path.to_string_lossy().to_string()
 }
 
 /// Forward JS console messages to Rust tracing (written to log file)
@@ -368,7 +379,12 @@ pub fn run() {
     let server_url_for_orphan = server_state.as_ref().map(|s| s.info.url.clone());
     let server_api_key_for_orphan = server_state.as_ref().map(|s| s.info.api_key.clone());
 
-    let state = AppState { inner, server: server_state, config_path: paths.config.clone() };
+    let state = AppState {
+        inner,
+        server: server_state,
+        config_path: paths.config.clone(),
+        plugins_path: paths.plugins.clone(),
+    };
 
     // Build app with platform-specific plugins and commands
     let mut builder = tauri::Builder::default()
@@ -406,6 +422,7 @@ pub fn run() {
                     set_theme,
                     clear_ctx_markers,
                     get_server_info,
+                    get_plugins_path,
                     log_js,
                     execute_shell_command,
                     execute_ai_command,
@@ -438,6 +455,7 @@ pub fn run() {
                     set_theme,
                     clear_ctx_markers,
                     get_server_info,
+                    get_plugins_path,
                     log_js,
                     execute_shell_command,
                     execute_ai_command,
