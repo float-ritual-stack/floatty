@@ -28,7 +28,7 @@ export class HandlerRegistry {
   findHandler(content: string): BlockHandler | null {
     const trimmed = content.trim().toLowerCase();
     return this.handlers.find(h =>
-      h.prefixes.some(p => trimmed.startsWith(p))
+      h.prefixes.some(p => trimmed.startsWith(p.toLowerCase()))
     ) ?? null;
   }
 
