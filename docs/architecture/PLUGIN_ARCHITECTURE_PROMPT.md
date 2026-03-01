@@ -98,6 +98,8 @@ export interface DoorViewProps<T = unknown> {
   data: T;
   /** Door-specific settings from config.toml */
   settings: Record<string, unknown>;
+  /** Keyboard boundary escape — call when user navigates past door edges (see §15) */
+  onNavigateOut?: (direction: 'up' | 'down') => void;
 }
 
 export interface DoorContext {
@@ -1243,7 +1245,232 @@ These are called out in Phase 0.5 as the forcing function.
 
 ---
 
-## 15. Execution Order
+## 15. Keyboard Navigation & Focus Protocol
+
+Doors render inside output blocks. The host must manage keyboard focus — doors do NOT register their own keyboard handlers. This follows the established pattern from tables and search results.
+
+### The Pattern (From Tables)
+
+Tables in floatty solve this problem already. The pattern is:
+
+1. **Single focus point** on a wrapper element, NOT on the embedded view
+2. **Parent owns keyboard routing** — the view receives visual state via props
+3. **`onNavigateOut(direction)` callback** — view tells parent "I'm at my boundary, hand off focus"
+4. **`e.stopPropagation()`** — when the view does handle an event internally (e.g., cell editing), stop it from bubbling to the block's handler
+
+Reference implementation in `BlockDisplay.tsx` (table):
+
+```typescript
+// Table element has tabIndex for focusability, onKeyDown for internal navigation
+<table ref={tableRef} tabindex={0} onKeyDown={handleTableKeyDown}>
+
+// Arrow keys navigate cells. At boundaries:
+if (direction === 'up' && row === 0) {
+  props.onNavigateOut?.('up');  // Escape to previous block
+  return;
+}
+
+// Cell editing: input handler stops propagation
+const handleInputKeyDown = (e: KeyboardEvent) => {
+  e.stopPropagation();  // CRITICAL: prevent block/outliner handlers from firing
+  if (e.key === 'Enter') { handleCellSave(); }
+  if (e.key === 'Escape') { handleCellCancel(); }
+};
+```
+
+Reference implementation in `BlockItem.tsx` (output blocks):
+
+```typescript
+// Single focus target for ALL output block types
+<div ref={outputFocusRef} tabIndex={0} class="output-block-focus-target"
+     onKeyDown={handleOutputBlockKeyDown}>
+  <SearchResultsView data={...} focusedIdx={searchFocusedIdx} />
+</div>
+// SearchResultsView has NO tabIndex, NO onKeyDown — purely visual
+```
+
+### Door Focus Contract
+
+Doors MUST follow the output block pattern:
+
+| Rule | Rationale |
+|------|-----------|
+| Door view has NO `tabIndex` attribute | Prevents dual-focus event bubbling |
+| Door view has NO `onKeyDown` handler on root | Parent (DoorHost) owns keyboard routing |
+| Interactive sub-elements use `e.stopPropagation()` | Prevents outliner/block handlers from firing |
+| `DoorHost` provides `onNavigateOut` prop | Door tells host when user hits boundary |
+
+```tsx
+// DoorHost wraps the door's view with focus management
+<div ref={doorFocusRef} tabIndex={0} onKeyDown={handleDoorKeyDown}>
+  <Dynamic
+    component={ViewComponent()!}
+    data={props.data}
+    settings={doorRegistry.getSettings(props.doorId)}
+    onNavigateOut={props.onNavigateOut}  // Pass through to door
+  />
+</div>
+```
+
+Doors that need internal keyboard navigation (like a table inside a door) must:
+1. Accept `onNavigateOut` from `DoorViewProps`
+2. Call `props.onNavigateOut('up'|'down')` at their navigation boundaries
+3. Use `stopPropagation()` on any internal keyboard handlers
+4. Never set `tabIndex` on their root element
+
+**Anti-pattern** (from `@.claude/rules/do-not.md`): Giving embedded views their own `tabIndex` or `onKeyDown` creates dual-focus event bubbling — `preventDefault()` does NOT stop propagation, both handlers fire. Keep focus on parent wrapper, pass visual state via props.
+
+### DoorViewProps Extension
+
+```typescript
+export interface DoorViewProps<T = unknown> {
+  /** The data returned by execute() */
+  data: T;
+  /** Door-specific settings from config.toml */
+  settings: Record<string, unknown>;
+  /** Keyboard boundary escape — call when user navigates past door edges */
+  onNavigateOut?: (direction: 'up' | 'down') => void;
+}
+```
+
+---
+
+## 16. Raw View Toggle
+
+View doors render rich output, but users sometimes need to see (or edit) the raw data. This mirrors the table raw-view toggle pattern.
+
+### The Table Pattern (Reference)
+
+Tables store a `tableShowRaw` signal at the BlockItem level (not inside TableView). When raw mode is active:
+- TableView unmounts
+- ContentEditable shows with `.block-edit-raw` class
+- A toggle button (`⊞`) switches back to rendered view
+- The signal is UI-only state — not persisted to Y.Doc
+
+### Door Raw View
+
+`DoorHost` provides a toggle between rendered door view and raw JSON output:
+
+```tsx
+function DoorHost(props: DoorHostProps) {
+  const [showRaw, setShowRaw] = createSignal(false);
+  const ViewComponent = () => doorRegistry.getView(props.doorId);
+
+  return (
+    <div class="door-output">
+      <div class="door-output-toolbar">
+        <button
+          class="door-raw-toggle"
+          onClick={() => setShowRaw(v => !v)}
+          title={showRaw() ? 'Show rendered view' : 'Show raw data'}
+        >
+          {showRaw() ? '⊞' : '{ }'}
+        </button>
+      </div>
+      <Show when={!showRaw()} fallback={
+        <pre class="door-raw-json">
+          {JSON.stringify(props.data, null, 2)}
+        </pre>
+      }>
+        <Dynamic
+          component={ViewComponent()!}
+          data={props.data}
+          settings={doorRegistry.getSettings(props.doorId)}
+        />
+      </Show>
+    </div>
+  );
+}
+```
+
+**Key decisions:**
+- Raw view shows `DoorOutput.data` as formatted JSON — the same data the view component receives
+- Toggle state is per-instance, not persisted (like table raw mode)
+- `<DoorExecCard>` (block doors) does NOT get a raw toggle — it's already a simple receipt
+- The raw JSON is read-only — no editing DoorOutput directly (that's the Y.Doc's job)
+
+---
+
+## 17. Epic Scope & Phasing
+
+This spec describes the **Door System epic** — a multi-issue body of work. Not everything ships at once.
+
+### Deliverable Tiers
+
+| Tier | What | Example Doors | Ship When |
+|------|------|--------------|-----------|
+| **Tier A: View doors** | Data + SolidJS component rendering | `daily::`, `timestamp::` | First deliverable (Phase 1-6) |
+| **Tier B: Block doors** | Block mutation via `ctx.actions` | `sh::` as door, `md-import::` | After view doors prove stable |
+| **Tier C: Advanced doors** | TUI embedding, iframe isolation, aliasing | `nvim::`, `iframe::`, `gh::po` | Research + separate spec per type |
+
+### `sh::` as a Door
+
+The existing `sh::` handler (`src/lib/handlers/sh.ts`) is a prime candidate for block-door conversion. It:
+- Creates child blocks for stdout lines
+- Streams output in real-time
+- Uses `ctx.actions` (not a view component)
+
+This is explicitly **in scope** for the door system but **not the first deliverable**. Converting `sh::` validates:
+- Block-door execution path
+- `appendBlockContent` for streaming (or child-block-per-chunk pattern)
+- `DoorExecOutput` as execution receipt
+- `createdBlockIds` tracking
+
+**Why it waits**: View doors (Tier A) exercise the full pipeline — compile, load, register, render. Block doors skip the rendering half. Prove the full pipeline first, then simplify for block doors.
+
+### What Each Phase Proves
+
+```
+Phase 0:   "Can we compile and load door modules at all?"
+Phase 1-3: "Can a view door render via <Dynamic>?"     → Tier A
+Phase 4:   "Does the daily door work as well as the hardcoded version?"
+Phase 5-6: "Can a second door use settings and zero Tier 2?"
+Phase 7+:  "Can sh:: work as a block door?"             → Tier B
+Phase N:   "Can we embed a TUI/iframe?"                  → Tier C
+```
+
+---
+
+## 18. Future Door Types & Prior Art
+
+### Future Door Implementations
+
+These are NOT in scope for v1 but inform the architecture's extensibility:
+
+**TUI Doors** (`nvim:: file.md`, `btop::`, `lazygit::`)
+
+A door that spawns a TUI process and renders it in an embedded xterm.js terminal. The door's `view` component would mount a mini-terminal pane (reusing `terminalManager` infrastructure). The door's `execute()` spawns the PTY process.
+
+Open questions: How does the door get a PTY handle? Does `ctx.invoke('spawn_pty')` become Tier 2? Can xterm.js instances nest inside block output without re-parenting trap bugs?
+
+**iframe Doors** (`iframe:: url`)
+
+A door that renders external content in a sandboxed iframe. The `view` component is literally `<iframe src={url} sandbox="..." />`. This is the one case where Shadow DOM isolation might make sense — the iframe's content is foreign.
+
+Classic BBS callback: `iframe::aol keyword` — an iframe rendering AOL Keyword content in 2026.
+
+**Door Aliasing** (`gh::po board`, `jira::sprint`)
+
+Aliasing lets a door register multiple prefixes that route to different behaviors. A `github::` door might handle `gh::pr 123`, `gh::issues`, `gh::po board` — the prefix determines the sub-command, the door routes internally.
+
+This already works with the current `prefixes: string[]` design. A door registering `['gh::', 'github::']` gets both routes. Internal routing based on content parsing is the door's responsibility.
+
+### Prior Art: eval:: Spike
+
+The `docs/spikes/2026-02-19-eval-block-dynamic-dispatch.md` spike (if present in your branch) documents earlier work proving:
+
+- **Dynamic viewer dispatch**: `<Dynamic component={EVAL_VIEWERS[type]}>` — same pattern doors use
+- **`$ref()` resolution**: Sibling block references as data sources — relevant for door data pipelines
+- **`func::` meta-handlers**: Handler that dispatches to sub-handlers by content — architectural precursor to door routing
+- **Output-on-self pattern**: Writing output to the triggering block's own output field (vs child blocks)
+
+Key architectural insight from the spike: *"The outline is a dataflow graph. Prefix = handler selector. Blockref = routing address. Dynamic = projection layer."* This directly maps to the door system: prefix triggers handler, DoorContext provides data channel, `<Dynamic>` projects the view.
+
+The spike proves the rendering half (Dynamic dispatch works). The door spec adds the compilation/loading half (user-authored `.tsx` → compiled module → registry).
+
+---
+
+## 19. Execution Order
 
 **Status: DO NOT BUILD YET**
 
