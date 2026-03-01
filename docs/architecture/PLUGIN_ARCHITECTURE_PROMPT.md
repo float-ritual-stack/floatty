@@ -28,23 +28,36 @@ A door IS a SolidJS component. It writes JSX. The Rust side compiles `.tsx` → 
 ```typescript
 import type { Component } from 'solid-js';
 
+export type DoorKind = 'view' | 'block';
+
 export interface Door<T = unknown> {
   /** Prefixes that trigger this door (e.g., ['daily::']). For routing only. */
   prefixes: string[];
 
-  /** Execute logic: fetch data, read files, call APIs. Returns structured data for the view. */
+  /** Explicit declaration: 'view' doors return data + render component,
+   *  'block' doors mutate blocks directly via ctx.actions. NOT inferred. */
+  kind: DoorKind;
+
+  /** Execute logic. View doors return DoorResult<T>, block doors return void.
+   *  Both get full DoorContext. */
   execute(
     blockId: string,
     content: string,
     ctx: DoorContext
-  ): Promise<DoorResult<T>>;
+  ): Promise<DoorResult<T> | void>;
 
-  /** SolidJS component that renders the door's output */
-  view: Component<DoorViewProps<T>>;
+  /** SolidJS component. Required when kind='view', forbidden when kind='block'.
+   *  Load-time validation: kind='view' + no view → error. */
+  view?: Component<DoorViewProps<T>>;
 }
 
 /** Door identity comes from meta.id — stable, independent of prefixes.
- *  prefixes are for routing only and may be reordered/aliased. */
+ *  prefixes are for routing only and may be reordered/aliased.
+ *
+ *  Load-time validation:
+ *  - kind='view' + no view → error
+ *  - kind='block' + view present → error (don't silently ignore)
+ *  - kind omitted → default to 'view' if view exists, else error */
 
 export interface DoorResult<T = unknown> {
   /** Structured data passed to the view component */
@@ -53,14 +66,29 @@ export interface DoorResult<T = unknown> {
   error?: string;
 }
 
-/** Canonical output envelope — what gets written to Y.Doc via setBlockOutput().
- *  Single shape for all doors. DoorHost reads this, not raw output. */
+/** Output envelope for VIEW doors — data + view component rendering.
+ *  Written to Y.Doc via setBlockOutput(). DoorHost reads this. */
 export type DoorOutput = {
-  kind: 'door';        // Discriminant — distinguishes from legacy output types
+  kind: 'door-view';   // Discriminant for view doors
   doorId: string;      // From meta.id (stable identity, not prefix)
   schema: 1;           // Version for forward compat
   data: JsonValue | null;
   error?: string;
+};
+
+/** Execution record for BLOCK doors — receipt of what happened.
+ *  Every door execution emits one, regardless of kind. Block doors
+ *  write ONLY this (no view). View doors write DoorOutput + this. */
+export type DoorExecOutput = {
+  kind: 'door-exec';   // Discriminant for execution records
+  schema: 1;
+  doorId: string;
+  startedAt: number;   // Unix ms
+  finishedAt?: number; // Unix ms (absent if still running)
+  ok: boolean;
+  summary?: string;    // One-line description for collapsed exec card
+  error?: string;
+  createdBlockIds?: string[];  // Blocks created during execution
 };
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -479,8 +507,8 @@ export function DoorHost(props: DoorHostProps) {
   <DailyView ... />
 </Show>
 
-// AFTER: one branch for all doors — route via output.kind discriminant
-<Show when={(block()?.output as DoorOutput)?.kind === 'door'}>
+// AFTER: two branches — view doors get <DoorHost>, block doors get exec card
+<Show when={block()?.outputType === 'door-view'}>
   {(() => {
     const output = block()!.output as DoorOutput;
     return (
@@ -493,9 +521,27 @@ export function DoorHost(props: DoorHostProps) {
     );
   })()}
 </Show>
+<Show when={block()?.outputType === 'door-exec'}>
+  {(() => {
+    const exec = block()!.output as DoorExecOutput;
+    return (
+      <DoorExecCard
+        doorId={exec.doorId}
+        ok={exec.ok}
+        summary={exec.summary}
+        error={exec.error}
+        startedAt={exec.startedAt}
+        finishedAt={exec.finishedAt}
+        createdBlockIds={exec.createdBlockIds}
+      />
+    );
+  })()}
+</Show>
 ```
 
-**Note**: The `kind: 'door'` discriminant replaces `outputType === 'door-view'`. We can keep `outputType` for backwards compat with legacy views during migration, but new code routes on `output.kind`.
+**`DoorExecCard`**: Built-in host component (not per-door). Small, collapsible card showing: door name, status icon, duration, error if any. Block doors are not invisible — they have a receipt.
+
+**Routing**: `outputType` discriminant (`'door-view'` vs `'door-exec'`) keeps it simple. The `output.kind` field inside the envelope is for forward compat (migrate routing to `output.kind` later if needed).
 
 ---
 
@@ -647,7 +693,7 @@ Doors share the host document's style scope. Without discipline, a door's CSS bl
 
 **Why not Shadow DOM**: Shadow DOM isolates reactivity boundaries. SolidJS signals wouldn't propagate from host to door, `<Dynamic>` wouldn't see the door's DOM, and theme CSS variables wouldn't inherit. Convention-based scoping is the pragmatic choice.
 
-### Handler Adapter
+### Handler Adapter (Both Kinds)
 
 ```typescript
 function doorToBlockHandler(door: Door, meta: DoorMeta, ctx: DoorContext): BlockHandler {
@@ -657,34 +703,61 @@ function doorToBlockHandler(door: Door, meta: DoorMeta, ctx: DoorContext): Block
       let outputId = findOutputChild(blockId, actions);
       if (!outputId) outputId = actions.createBlockInside(blockId);
 
+      const startedAt = Date.now();
       actions.setBlockStatus?.(outputId, 'running');
       actions.updateBlockContent(outputId, '');
 
       try {
         const result = await door.execute(blockId, content, ctx);
 
-        // Enforce JSON-serializable output (hard fail, not silent corruption)
-        try { structuredClone(result.data); }
-        catch { throw new Error('NON_SERIALIZABLE_OUTPUT: door returned data that cannot round-trip through Y.Doc'); }
+        if (door.kind === 'view') {
+          // ── VIEW DOOR: validate data, write DoorOutput + DoorExecOutput ──
+          const data = (result as DoorResult)?.data ?? null;
+          const error = (result as DoorResult)?.error;
 
-        const output: DoorOutput = {
-          kind: 'door', doorId: meta.id, schema: 1,
-          data: result.data, error: result.error,
-        };
-        actions.setBlockOutput?.(outputId, output, 'door-view');
-        actions.setBlockStatus?.(outputId, result.error ? 'error' : 'complete');
+          // Enforce JSON-serializable (hard fail, not silent corruption)
+          try { structuredClone(data); }
+          catch { throw new Error('NON_SERIALIZABLE_OUTPUT: data cannot round-trip through Y.Doc'); }
+
+          const viewOutput: DoorOutput = {
+            kind: 'door-view', doorId: meta.id, schema: 1,
+            data, error,
+          };
+          actions.setBlockOutput?.(outputId, viewOutput, 'door-view');
+          actions.setBlockStatus?.(outputId, error ? 'error' : 'complete');
+
+        } else {
+          // ── BLOCK DOOR: door already mutated blocks via ctx.actions ──
+          // Write execution record as receipt
+          const execRecord = {
+            kind: 'door-exec', schema: 1, doorId: meta.id,
+            startedAt, finishedAt: Date.now(), ok: true,
+            summary: (result as DoorResult)?.data?.toString?.(),
+            createdBlockIds: ctx._createdBlockIds?.() ?? [],
+          } satisfies DoorExecOutput;
+          actions.setBlockOutput?.(outputId, execRecord, 'door-exec');
+          actions.setBlockStatus?.(outputId, 'complete');
+        }
+
       } catch (err) {
-        const output: DoorOutput = {
-          kind: 'door', doorId: meta.id, schema: 1,
-          data: null, error: String(err),
-        };
-        actions.setBlockOutput?.(outputId, output, 'door-view');
+        // Both kinds: error lands in execution record
+        const execRecord = {
+          kind: 'door-exec', schema: 1, doorId: meta.id,
+          startedAt, finishedAt: Date.now(), ok: false,
+          error: String(err),
+        } satisfies DoorExecOutput;
+        actions.setBlockOutput?.(outputId, execRecord,
+          door.kind === 'view' ? 'door-view' : 'door-exec');
         actions.setBlockStatus?.(outputId, 'error');
       }
     },
   };
 }
 ```
+
+**`ctx._createdBlockIds`**: Internal tracker. The sandbox wraps `ctx.actions.createBlockInside` / `createBlockAfter` to record IDs created during execution. Block doors don't manually track this — the host does it.
+
+**Error behavior**: Both kinds surface errors the same way — in the exec record's `error` field, with `outputStatus: 'error'`. View doors additionally get `error` in the DoorOutput for DoorHost to display.
 
 ---
 
@@ -707,6 +780,7 @@ ctx.actions.updateBlockContent(id: string, content: string): void
 ctx.actions.getBlock(id: string): BlockSnapshot | undefined
 ctx.actions.setBlockOutput(id: string, output: unknown, outputType: string): void
 ctx.actions.setBlockStatus(id: string, status: 'idle' | 'running' | 'complete' | 'error'): void
+ctx.actions.appendBlockContent?(id: string, chunk: string): void  // For streaming (block doors)
 
 // Identity & config
 ctx.blockId             // Current block ID
@@ -737,6 +811,8 @@ Localhost requests via `ctx.server.fetch()` (Tier 1) are unaffected.
 createSignal, createEffect, createMemo, createResource,
 onMount, onCleanup, Show, For, Switch, Match, Dynamic
 ```
+
+**`appendBlockContent` note**: Block content is stored as a plain string in Y.Map (not Y.Text). Appending currently requires read→concat→write (O(n²) for many chunks). Acceptable for short outputs. For heavy streaming (sh:: stdout), use child blocks instead — each chunk is a separate `createBlockInside` call, one CRDT op per chunk. Future: migrate content to Y.Text for true `ytext.insert(ytext.length, chunk)`.
 
 **Key distinction**: `ctx.server.fetch` (localhost, pre-auth) is Tier 1. `ctx.fetch` (external HTTP) is Tier 2. The server enforces its own access control — a door hitting `POST /api/v1/blocks` is no more dangerous than Claude Code doing the same thing every session.
 
@@ -816,11 +892,35 @@ Interpretation:
 - `BLOB_IMPORT_OK` → you can ship compiled door bundles as blob modules. Proceed.
 - `BLOB_IMPORT_FAIL` → **stop**. Do not build infra. Pivot loading strategy (e.g., `asset:` protocol modules, pre-bundled static files, or a host-side module registry).
 
-**B. Compiled SolidJS component via Blob + `<Dynamic>`:**
+**B. Bare specifier resolution from Blob module:**
 
-Pre-compile a trivial component (manually, using Vite's solid transform), Blob-import, mount via `<Dynamic>`. Confirm it renders and reactivity works.
+This is the import map blocker. Test with the import map already injected:
 
-**C. swc-plugin-jsx-dom-expressions reality check:**
+```typescript
+// After injecting <script type="importmap"> with solid-js mapped
+(async () => {
+  const code = `import { createSignal } from 'solid-js'; export const test = createSignal(42);`;
+  const blob = new Blob([code], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  try {
+    const mod = await import(url);
+    console.log('IMPORT_MAP_OK', mod.test);
+  } catch (e) {
+    console.error('IMPORT_MAP_FAIL', e);
+    // Fallback: swc rewrites 'solid-js' → '/assets/vendor/solid-js/solid.js'
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+})();
+```
+
+If `IMPORT_MAP_FAIL` — bare specifiers don't resolve from Blob modules in this webview. Fallback: swc rewrites imports during compilation.
+
+**C. Compiled SolidJS component via Blob + `<Dynamic>`:**
+
+Pre-compile a trivial component (manually, using Vite's solid transform), Blob-import, mount via `<Dynamic>`. Confirm it renders and reactivity works. This combines A + B — if both pass, this must pass.
+
+**D. swc-plugin-jsx-dom-expressions reality check:**
 
 The Solid SWC plugin (`milomg/swc-plugin-jsx-dom-expressions`) exists as a GitHub repo but is NOT a polished "grab-from-crates-and-go" crate. SWC's WASM plugin compatibility is a moving target with version coupling issues.
 
@@ -831,7 +931,7 @@ Before writing any architecture around "compile doors with SWC + plugin inside T
 - **Fallback**: Tauri sidecar running minimal Vite/esbuild bundler (adds Node.js build dep, keeps compilation stable)
 - **Performance**: Measure compile cost per door on startup. If >500ms per door, consider caching compiled JS alongside `.tsx` source.
 
-**Phase 0C success criterion**: "Given `swc_core` version X, we can compile Solid TSX with plugin Y, producing modules that load under our CSP and do not break host keyboard handling (`delegateEvents: false` confirmed in output)."
+**Phase 0D success criterion**: "Given `swc_core` version X, we can compile Solid TSX with plugin Y, producing modules that load under our CSP and do not break host keyboard handling (`delegateEvents: false` confirmed in output)."
 
 **If Phase 0 fails** — pivot loading mechanism first. Everything else is downstream noise.
 
@@ -967,16 +1067,28 @@ export const door: Door<TsData> = {
 
 ## 10. Definition of Done
 
+**View doors (kind='view'):**
 - [ ] `.tsx` in doors dir → prefix in `registry.getRegisteredPrefixes()` after restart
 - [ ] `daily::today` renders SolidJS timeline via `<Dynamic>`
 - [ ] Old `DailyView.tsx` and `daily.ts` deleted
-- [ ] `BlockItem.tsx` uses `<DoorHost>` instead of per-type `<Show>` chains
+- [ ] `BlockItem.tsx` uses `<DoorHost>` + `<DoorExecCard>` instead of per-type `<Show>` chains
 - [ ] Door errors in DevTools, registry unaffected
-- [ ] `timestamp::` validates generalization
+- [ ] `timestamp::` validates generalization (view door, zero Tier 2 deps)
 - [ ] Config settings accessible via `props.settings`
 - [ ] Path traversal returns errors
 - [ ] Full hook lifecycle for doors
 - [ ] `delegateEvents: false` — no keyboard interference
+
+**Block doors (kind='block'):**
+- [ ] Block-mode door runs, creates child blocks, produces DoorExecOutput record
+- [ ] `<DoorExecCard>` renders execution receipt (doorId, status, duration, error)
+- [ ] `createdBlockIds` tracked automatically by sandbox wrapper
+- [ ] Error during execution surfaces in exec card, not swallowed
+- [ ] `appendBlockContent` works for short append patterns (read→concat→write)
+
+**Both kinds:**
+- [ ] Load-time validation: kind='view' + no view → error, kind='block' + view → error
+- [ ] `meta.id` is registry key, output envelope key, settings key (not `prefixes[0]`)
 
 ---
 
@@ -1082,18 +1194,68 @@ Same shape. 40 years deep.
 
 ---
 
-## 14. Execution Order
+## 14. Architecture Review Findings (Pre-Phase 0)
+
+Reviewed 2026-03-01 against the actual codebase. This is the "what's clean, what needs prep, what blocks Phase 0" assessment.
+
+### Handler System: READY (zero friction)
+
+| File | Assessment |
+|------|-----------|
+| `registry.ts` | First-match prefix matching via `.find()` + `startsWith()`. Works for door prefixes. No changes needed. All types already exported. |
+| `types.ts` | `ExecutorActions` has 12 methods. `setBlockOutput` and `setBlockStatus` are both optional — door adapter uses `?.` calls, consistent with daily/search handlers. |
+| `executor.ts` | `executeHandler()` wraps all execution with `execute:before`/`execute:after` hooks. Doors inherit hook lifecycle automatically. No changes needed. |
+| `index.ts` | 9 built-in handlers registered in `registerHandlers()`. HMR guard via `handlersRegistered` flag. Door loader calls `registry.register()` after built-ins — no structural changes. |
+
+### Rendering: MINIMAL PREP
+
+| File | Assessment |
+|------|-----------|
+| `BlockItem.tsx` | Output dispatch is ~50 lines (910-960). Two view types with nested `<Show>` guards (daily 3 branches, search 3 branches). Clean insertion point at line ~950 for `door-view` + `door-exec` branches. Output keyboard handling (`handleOutputBlockKeyDown`) is generic — doors inherit it automatically. |
+| `DailyView.tsx` | Clean, no dead code. Reference implementation for door views. Keep as-is until daily door ships, then delete. |
+| `daily.ts` | Clean handler following standard pattern (find/create output child → set loading → execute → set output). Reference for the adapter. |
+
+**One thing to prep**: `isOutputBlock` memo (line 220) currently checks `startsWith('daily-')` or `startsWith('search-')`. Add `startsWith('door-')` when adding the branches.
+
+### Y.Doc Layer: ONE CAVEAT
+
+| Finding | Detail |
+|---------|--------|
+| `setBlockOutput` nested objects | **Works perfectly.** Plain objects serialize via JSON on wire. Y.Map stores them as-is. DoorExecOutput shape (nested arrays, numbers) round-trips cleanly. Proven by daily.ts and search.ts existing usage. |
+| `appendBlockContent` | **Caveat.** Content is plain string in Y.Map (not Y.Text). Appending = read→concat→write = O(n²). Acceptable for short output. For heavy streaming (sh:: stdout), use child blocks instead. Y.Text migration is future work. |
+| `setValueOnYMap` helper | Clean wrapper. Handles Y.Map and legacy plain objects. No changes needed for door output. |
+
+### Config: EXTENSIBLE
+
+No `[plugins]` section exists yet, but `save_to()` uses TOML merge that preserves unknown sections. Adding `[plugins.settings.daily]` to config.toml won't break existing config loading.
+
+### Server API: GAPS NOTED (Phase 0.5)
+
+27 endpoints, full block CRUD, Bearer auth with localhost exemption. Gaps:
+- No date-range query (`since`/`until` params on `GET /api/v1/blocks`)
+- No marker-type query
+- Metadata not settable in POST body (must PATCH after create)
+These are called out in Phase 0.5 as the forcing function.
+
+### What Blocks Phase 0
+
+**Nothing in the handler/rendering/Y.Doc layer blocks Phase 0.** The only blockers are the webview probes (Blob import, import map, swc) — external runtime behavior, not floatty code.
+
+---
+
+## 15. Execution Order
 
 **Status: DO NOT BUILD YET**
 
 ```
 1. Run verification procedure (Section 12) — fill in every Status/Notes cell
 2. Run Phase 0A: Blob import probe in Tauri webview
-3. Run Phase 0B: Import map resolves bare specifiers from Blob module
-4. Run Phase 0C: SWC + Solid plugin compilation → delegateEvents:false in output
-5. Run Phase 0.5: Add date range + marker query endpoints to server API
-6. Only if (2-4) pass → proceed with corrected spec
-7. If any gate fails → pivot that specific mechanism FIRST
+3. Run Phase 0B: Bare specifier resolution from Blob module (import map test)
+4. Run Phase 0C: Compiled SolidJS component via Blob + <Dynamic> mount
+5. Run Phase 0D: SWC + Solid plugin compilation → delegateEvents:false in output
+6. Run Phase 0.5: Add date range + marker query endpoints to server API
+7. Only if (2-5) pass → proceed with corrected spec
+8. If any gate fails → pivot that specific mechanism FIRST
 ```
 
 The spec is a hypothesis. The codebase is the truth. Phase 0 is the gate.
