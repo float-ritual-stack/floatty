@@ -35,6 +35,8 @@ pub struct DataPaths {
     pub search_index: PathBuf,
     /// Server PID file: `{root}/server.pid`
     pub pid_file: PathBuf,
+    /// User plugins directory: `{root}/plugins/`
+    pub plugins: PathBuf,
 }
 
 impl DataPaths {
@@ -60,6 +62,7 @@ impl DataPaths {
             logs: root.join("logs"),
             search_index: root.join("search_index"),
             pid_file: root.join("server.pid"),
+            plugins: root.join("plugins"),
             root,
         }
     }
@@ -100,6 +103,7 @@ impl DataPaths {
         std::fs::create_dir_all(&self.root)?;
         std::fs::create_dir_all(&self.logs)?;
         std::fs::create_dir_all(&self.search_index)?;
+        std::fs::create_dir_all(&self.plugins)?;
         Ok(())
     }
 }
@@ -155,6 +159,7 @@ mod tests {
         assert_eq!(paths.logs, root.join("logs"));
         assert_eq!(paths.search_index, root.join("search_index"));
         assert_eq!(paths.pid_file, root.join("server.pid"));
+        assert_eq!(paths.plugins, root.join("plugins"));
     }
 
     #[test]
