@@ -48,6 +48,11 @@
   border-color: var(--door-accent);
 }
 
+.door-raw-toggle:focus-visible {
+  outline: 2px solid var(--door-accent);
+  outline-offset: 1px;
+}
+
 /* ─── States ─── */
 
 .door-loading {
@@ -103,6 +108,7 @@
 .door-exec-card {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 4px 8px;
   border-radius: 3px;

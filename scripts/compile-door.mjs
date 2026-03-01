@@ -41,6 +41,11 @@ const step2 = babelTransform(step1.code, {
   filename: inputPath.replace(/\.tsx$/, '.jsx'),
 });
 
+if (!step2 || step2.code == null) {
+  console.error(`Babel transform failed for ${inputPath}`);
+  process.exit(1);
+}
+
 // Write output
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, step2.code, 'utf-8');

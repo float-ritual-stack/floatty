@@ -80,6 +80,9 @@ async function fetchDailyData(
   serverFetch: (path: string, init?: RequestInit) => Promise<Response>,
 ): Promise<DailyData> {
   const resp = await serverFetch('/api/v1/blocks');
+  if (!resp.ok) {
+    throw new Error(`API error: ${resp.status} ${resp.statusText}`);
+  }
   const { blocks } = (await resp.json()) as { blocks: Array<Record<string, any>> };
 
   const dayStart = new Date(date).getTime();

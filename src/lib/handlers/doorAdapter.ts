@@ -101,15 +101,23 @@ export function doorToBlockHandler(
       } catch (err) {
         console.error(`[door:${meta.id}] Execution error:`, err);
 
-        const envelope: DoorExecOutput = {
-          kind: 'exec',
-          schema: 1,
-          doorId: meta.id,
-          startedAt,
-          finishedAt: Date.now(),
-          ok: false,
-          error: String(err),
-        };
+        const envelope: DoorViewOutput | DoorExecOutput = door.kind === 'view'
+          ? {
+              kind: 'view' as const,
+              doorId: meta.id,
+              schema: 1 as const,
+              data: null,
+              error: String(err),
+            }
+          : {
+              kind: 'exec' as const,
+              schema: 1 as const,
+              doorId: meta.id,
+              startedAt,
+              finishedAt: Date.now(),
+              ok: false,
+              error: String(err),
+            };
 
         actions.setBlockOutput?.(outputId, envelope, 'door');
         actions.setBlockStatus?.(outputId, 'error');
