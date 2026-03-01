@@ -14,11 +14,12 @@ import { isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
 import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
-import { type DailyNoteData, type SearchResults } from '../lib/handlers';
+import { type DailyNoteData, type SearchResults, type DoorEnvelope } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { DailyView, DailyErrorView } from './views/DailyView';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
+import { DoorHost, DoorExecCard } from './views/DoorHost';
 
 // Debounce delay for Y.Doc updates (ms)
 // Keeps typing responsive while reducing sync overhead
@@ -219,7 +220,7 @@ export function BlockItem(props: BlockItemProps) {
   // Detect output blocks that need special keyboard handling
   const isOutputBlock = createMemo(() => {
     const ot = block()?.outputType;
-    return ot?.startsWith('daily-') || ot?.startsWith('search-');
+    return ot?.startsWith('daily-') || ot?.startsWith('search-') || ot === 'door';
   });
 
   // Search results keyboard navigation state
@@ -945,6 +946,30 @@ export function BlockItem(props: BlockItemProps) {
                     <SearchErrorView data={block()!.output as { error: string; query?: string }} />
                   </Show>
                 </div>
+              </Show>
+
+              {/* DOOR OUTPUT VIEW — single branch for all doors */}
+              <Show when={block()?.outputType === 'door'}>
+                {(() => {
+                  const envelope = block()!.output as DoorEnvelope;
+                  if (!envelope || !envelope.kind) return null;
+                  return envelope.kind === 'view'
+                    ? <DoorHost
+                        doorId={envelope.doorId}
+                        data={envelope.data}
+                        error={envelope.error}
+                        status={block()?.outputStatus}
+                      />
+                    : <DoorExecCard
+                        doorId={envelope.doorId}
+                        ok={envelope.ok}
+                        startedAt={envelope.startedAt}
+                        finishedAt={envelope.finishedAt}
+                        summary={envelope.summary}
+                        error={envelope.error}
+                        createdBlockIds={envelope.createdBlockIds}
+                      />;
+                })()}
               </Show>
             </div>
           </Show>

@@ -1,0 +1,211 @@
+/* ═══════════════════════════════════════════════════════════
+ * Door System Base Styles
+ *
+ * CSS custom properties inherit from theme.
+ * Doors use --door-* variables for a stable contract.
+ * ═══════════════════════════════════════════════════════════ */
+
+.door-output {
+  --door-bg: var(--color-bg-secondary, #1a1a2e);
+  --door-fg: var(--color-fg-primary, #e0e0e0);
+  --door-accent: var(--color-ansi-cyan, #56b6c2);
+  --door-muted: var(--color-fg-muted, #888);
+  --door-border: var(--color-border, #333);
+  --door-tag-bg: var(--color-bg-tertiary, #252540);
+  --door-error: var(--color-ansi-red, #e06c75);
+  --door-success: var(--color-ansi-green, #98c379);
+
+  position: relative;
+  padding: 8px 0;
+  color: var(--door-fg);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ─── Toolbar ─── */
+
+.door-output-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px 4px;
+}
+
+.door-raw-toggle {
+  background: none;
+  border: 1px solid var(--door-border);
+  border-radius: 3px;
+  color: var(--door-muted);
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+
+.door-raw-toggle:hover {
+  color: var(--door-accent);
+  border-color: var(--door-accent);
+}
+
+/* ─── States ─── */
+
+.door-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--door-muted);
+}
+
+.door-spinner {
+  display: inline-block;
+  animation: door-spin 1s linear infinite;
+}
+
+@keyframes door-spin {
+  to { transform: rotate(360deg); }
+}
+
+.door-error {
+  padding: 8px 12px;
+  color: var(--door-error);
+  border-left: 2px solid var(--door-error);
+  margin: 4px 0;
+}
+
+.door-unknown {
+  padding: 8px 12px;
+  color: var(--door-muted);
+  font-style: italic;
+}
+
+/* ─── Raw JSON ─── */
+
+.door-raw-json {
+  background: var(--door-tag-bg);
+  border: 1px solid var(--door-border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
+  color: var(--door-fg);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ─── Exec Card (block door receipt) ─── */
+
+.door-exec-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  border-left: 2px solid var(--door-border);
+}
+
+.door-exec-ok {
+  border-left-color: var(--door-success);
+}
+
+.door-exec-error {
+  border-left-color: var(--door-error);
+}
+
+.door-exec-icon {
+  font-weight: bold;
+}
+
+.door-exec-ok .door-exec-icon {
+  color: var(--door-success);
+}
+
+.door-exec-error .door-exec-icon {
+  color: var(--door-error);
+}
+
+.door-exec-name {
+  color: var(--door-accent);
+  font-weight: 500;
+}
+
+.door-exec-duration {
+  color: var(--door-muted);
+  font-size: 11px;
+}
+
+.door-exec-created {
+  color: var(--door-muted);
+  font-size: 11px;
+}
+
+.door-exec-summary {
+  color: var(--door-fg);
+}
+
+.door-exec-error-msg {
+  color: var(--door-error);
+  font-size: 11px;
+  margin-top: 4px;
+  width: 100%;
+}
+
+/* ─── Common door elements (for use by individual doors) ─── */
+
+.door-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--door-tag-bg);
+  color: var(--door-accent);
+  font-size: 11px;
+}
+
+.door-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--door-tag-bg);
+  color: var(--door-fg);
+  font-size: 11px;
+}
+
+.door-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.door-stat-value {
+  color: var(--door-accent);
+  font-weight: 600;
+}
+
+.door-stat-label {
+  color: var(--door-muted);
+  font-size: 11px;
+}
+
+.door-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--door-muted);
+  font-style: italic;
+}
+
+/* ─── Reduced motion ─── */
+
+@media (prefers-reduced-motion: reduce) {
+  .door-spinner {
+    animation: none;
+  }
+}

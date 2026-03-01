@@ -19,9 +19,12 @@ import { hookRegistry } from '../hooks';
 import { sendContextHook } from './hooks/sendContextHook';
 import { registerCtxRouterHook } from './hooks/ctxRouterHook';
 import { registerOutlinksHook } from './hooks/outlinksHook';
+import { loadDoors } from './doorLoader';
+import { doorRegistry } from './doorRegistry';
 
 // Re-export registry and types for convenience
 export { registry } from './registry';
+export { doorRegistry } from './doorRegistry';
 export type { BlockHandler, ExecutorActions } from './types';
 
 // Re-export executor for hook-aware handler execution
@@ -38,6 +41,17 @@ export type {
 
 // Re-export search types for component use
 export type { SearchResults, SearchHit } from './search';
+
+// Re-export door types for component use
+export type {
+  Door,
+  DoorMeta,
+  DoorEnvelope,
+  DoorViewOutput,
+  DoorExecOutput,
+  DoorViewProps,
+  DoorServerAccess,
+} from './doorTypes';
 
 // Guard against duplicate registration (HMR in dev can trigger multiple calls)
 let handlersRegistered = false;
@@ -74,6 +88,10 @@ export function registerHandlers(): void {
 
   console.log('[handlers] Registered handlers:', registry.getRegisteredPrefixes().join(', '));
   console.log('[handlers] Registered hooks:', hookRegistry.getHookIds().join(', '));
+
+  // Load userland doors (async, fire-and-forget)
+  // Built-in handlers are available immediately; doors load in background.
+  loadDoors().catch(err => console.error('[handlers] Door loading failed:', err));
 }
 
 /**
@@ -94,5 +112,6 @@ if (import.meta.hot) {
     handlersRegistered = false;
     registry.clear();
     hookRegistry.clear();
+    doorRegistry.clear();
   });
 }
