@@ -30,11 +30,14 @@ import type {
 import * as solidJs from 'solid-js';
 import * as solidJsWeb from 'solid-js/web';
 
+// Door standard library — shared utilities exposed to all doors
+import * as doorStdlib from '../doorStdlib';
+
 // ═══════════════════════════════════════════════════════════════
 // IMPORT SHIM SYSTEM
 // ═══════════════════════════════════════════════════════════════
 
-let shimUrls: { solidJs: string; solidJsWeb: string } | null = null;
+let shimUrls: { solidJs: string; solidJsWeb: string; stdlib: string } | null = null;
 
 /**
  * Build a shim module that re-exports host SolidJS from window globals.
@@ -55,10 +58,10 @@ function buildShimCode(moduleName: string, mod: Record<string, unknown>): string
 }
 
 /**
- * Set up window globals and create Blob shim URLs for solid-js and solid-js/web.
+ * Set up window globals and create Blob shim URLs for solid-js, solid-js/web, and @floatty/stdlib.
  * Called once, URLs cached for all door loads.
  */
-function ensureDoorDeps(): { solidJs: string; solidJsWeb: string } {
+function ensureDoorDeps(): { solidJs: string; solidJsWeb: string; stdlib: string } {
   if (shimUrls) return shimUrls;
 
   // Expose host modules on window for shim access
@@ -66,26 +69,31 @@ function ensureDoorDeps(): { solidJs: string; solidJsWeb: string } {
   (window as Record<string, any>).__DOOR_DEPS__ = {
     'solid-js': solidJs,
     'solid-js/web': solidJsWeb,
+    '@floatty/stdlib': doorStdlib,
   };
 
   const solidJsShim = buildShimCode('solid-js', solidJs as Record<string, unknown>);
   const solidJsWebShim = buildShimCode('solid-js/web', solidJsWeb as Record<string, unknown>);
+  const stdlibShim = buildShimCode('@floatty/stdlib', doorStdlib as Record<string, unknown>);
 
   shimUrls = {
     solidJs: URL.createObjectURL(new Blob([solidJsShim], { type: 'application/javascript' })),
     solidJsWeb: URL.createObjectURL(new Blob([solidJsWebShim], { type: 'application/javascript' })),
+    stdlib: URL.createObjectURL(new Blob([stdlibShim], { type: 'application/javascript' })),
   };
 
-  console.log('[doors] Import shims ready (solid-js, solid-js/web)');
+  console.log('[doors] Import shims ready (solid-js, solid-js/web, @floatty/stdlib)');
   return shimUrls;
 }
 
 /**
  * Rewrite bare specifier imports in door JS to point at shim Blob URLs.
  * Must rewrite solid-js/web BEFORE solid-js (longer match first).
+ * @floatty/stdlib rewrites door standard library imports.
  */
-function rewriteDoorImports(js: string, urls: { solidJs: string; solidJsWeb: string }): string {
+function rewriteDoorImports(js: string, urls: { solidJs: string; solidJsWeb: string; stdlib: string }): string {
   return js
+    .replace(/from\s+['"]@floatty\/stdlib['"]/g, `from '${urls.stdlib}'`)
     .replace(/from\s+['"]solid-js\/web['"]/g, `from '${urls.solidJsWeb}'`)
     .replace(/from\s+['"]solid-js['"]/g, `from '${urls.solidJs}'`);
 }
@@ -97,6 +105,7 @@ export function cleanupDoorDeps(): void {
   if (shimUrls) {
     URL.revokeObjectURL(shimUrls.solidJs);
     URL.revokeObjectURL(shimUrls.solidJsWeb);
+    URL.revokeObjectURL(shimUrls.stdlib);
     shimUrls = null;
   }
   if ('__DOOR_DEPS__' in window) {

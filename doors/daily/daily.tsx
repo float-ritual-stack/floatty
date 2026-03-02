@@ -10,6 +10,7 @@
 
 import { createSignal, createResource, Show, For } from 'solid-js';
 import type { Component } from 'solid-js';
+import { localDateStr, resolveDate } from '@floatty/stdlib';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -59,26 +60,6 @@ interface DoorResult<T> {
 // ═══════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════
-
-/** Format a Date as YYYY-MM-DD using local time (not UTC) */
-function localDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function resolveDate(arg: string): string {
-  if (!arg || arg === 'today') return localDateStr(new Date());
-  if (arg === 'yesterday') {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return localDateStr(d);
-  }
-  if (arg === 'tomorrow') {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return localDateStr(d);
-  }
-  return arg; // assume YYYY-MM-DD
-}
 
 async function fetchDailyData(
   date: string,

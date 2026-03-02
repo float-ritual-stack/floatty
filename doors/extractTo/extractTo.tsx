@@ -9,6 +9,8 @@
  * Compile: node scripts/compile-door.mjs doors/extractTo/extractTo.tsx
  */
 
+import { parseBracketedWikilink, findPagesContainer, findPageBlock } from '@floatty/stdlib';
+
 // ═══════════════════════════════════════════════════════════════
 // TYPES (inline — doors are self-contained)
 // ═══════════════════════════════════════════════════════════════
@@ -60,25 +62,6 @@ interface DoorMeta {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════
 
-/** Bracket-counting wikilink parser (handles nested [[inner]] correctly) */
-function parseBracketedWikilink(input: string, start: number): { target: string; end: number } | null {
-  if (input.slice(start, start + 2) !== '[[') return null;
-  let i = start + 2;
-  let depth = 1;
-  const begin = i;
-  while (i < input.length) {
-    if (input.slice(i, i + 2) === '[[') { depth++; i += 2; continue; }
-    if (input.slice(i, i + 2) === ']]') {
-      depth--;
-      if (depth === 0) return { target: input.slice(begin, i), end: i + 2 };
-      i += 2;
-      continue;
-    }
-    i++;
-  }
-  return null;
-}
-
 /** Parse extract variants:
  *  - `extractTo:: [[PageName]] optional trailing` → pageName + trailing
  *  - `extract:: page name here` → pageName = everything after prefix, no trailing
@@ -102,30 +85,6 @@ function parseTarget(content: string): { pageName: string; trailing: string } | 
     return { pageName: raw, trailing: '' };
   }
 
-  return null;
-}
-
-/** Find the `pages::` container block among root blocks */
-function findPagesContainer(actions: ScopedActions): string | null {
-  const roots = actions.rootIds();
-  for (const id of roots) {
-    const block = actions.getBlock(id) as { content?: string } | undefined;
-    if (block?.content?.trim() === 'pages::') return id;
-  }
-  return null;
-}
-
-/** Find existing page under pages:: by name (case-insensitive, strips `# ` prefix) */
-function findPageBlock(actions: ScopedActions, pagesId: string, pageName: string): string | null {
-  const children = actions.getChildren(pagesId);
-  const target = pageName.toLowerCase();
-  for (const childId of children) {
-    const block = actions.getBlock(childId) as { content?: string } | undefined;
-    const content = block?.content?.trim() ?? '';
-    // Pages are stored with `# ` prefix
-    const stripped = content.startsWith('# ') ? content.slice(2).trim() : content;
-    if (stripped.toLowerCase() === target) return childId;
-  }
   return null;
 }
 
