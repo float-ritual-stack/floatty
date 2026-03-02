@@ -1,0 +1,6 @@
+{
+  "id": "timestamp",
+  "name": "Timestamp",
+  "prefixes": ["ts::", "timestamp::"],
+  "version": "0.1.0"
+}
