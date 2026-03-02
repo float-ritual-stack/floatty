@@ -40,6 +40,17 @@ export class HandlerRegistry {
   }
 
   /**
+   * Remove handlers whose prefixes overlap with the given set.
+   * Used by hot reload to deregister before re-registering.
+   */
+  unregisterByPrefixes(prefixes: string[]): void {
+    const prefixSet = new Set(prefixes.map(p => p.toLowerCase()));
+    this.handlers = this.handlers.filter(
+      h => !h.prefixes.some(p => prefixSet.has(p.toLowerCase()))
+    );
+  }
+
+  /**
    * Get all registered prefixes (for debugging/documentation)
    */
   getRegisteredPrefixes(): string[] {

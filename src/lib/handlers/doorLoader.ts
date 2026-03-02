@@ -15,6 +15,7 @@
  */
 
 import { invoke, type AggregatorConfig } from '../tauriTypes';
+import { listen } from '@tauri-apps/api/event';
 import { registry } from './registry';
 import { doorRegistry } from './doorRegistry';
 import { doorToBlockHandler } from './doorAdapter';
@@ -264,5 +265,94 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   const loaded = results.filter(r => r.ok);
   console.log(`[doors] Loaded ${loaded.length}/${doorInfos.length} doors: [${loaded.map(r => r.doorId).join(', ')}]`);
 
+  // Start hot-reload listener
+  listenForDoorChanges(pluginSettings);
+
   return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HOT RELOAD
+// ═══════════════════════════════════════════════════════════════
+
+interface DoorChangedEvent {
+  doorId: string;
+  removed: boolean;
+}
+
+/**
+ * Reload a single door from disk.
+ * Deregisters old handlers, re-imports JS, validates, and re-registers.
+ * On error: logs and keeps old version (if any).
+ */
+async function reloadDoor(
+  doorId: string,
+  settings: Record<string, unknown>,
+): Promise<void> {
+  const deps = ensureDoorDeps();
+
+  try {
+    const rawJs: string = await invoke('read_door_file', { doorId });
+    const js = rewriteDoorImports(rawJs, deps);
+    const blob = new Blob([js], { type: 'application/javascript' });
+    // Cache-bust: add timestamp to prevent module cache hit
+    const url = URL.createObjectURL(blob);
+
+    let mod: Record<string, unknown>;
+    try {
+      mod = await import(/* @vite-ignore */ url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+
+    const { door, meta } = validateDoorModule(mod);
+
+    // Deregister old handler for these prefixes
+    registry.unregisterByPrefixes(door.prefixes);
+
+    // Re-register view
+    if (door.kind === 'view' && door.view) {
+      doorRegistry.update(meta.id, door.view, settings);
+    }
+
+    // Re-register handler
+    const handler = doorToBlockHandler(door, meta, settings);
+    registry.register(handler);
+
+    console.log(`[doors] Hot-reloaded: ${meta.id} (prefixes: ${door.prefixes.join(', ')})`);
+  } catch (err) {
+    console.error(`[doors] Hot-reload failed for ${doorId}, keeping old version:`, err);
+  }
+}
+
+/**
+ * Unregister a removed door.
+ */
+function unregisterDoor(doorId: string): void {
+  // We need the prefixes to unregister from HandlerRegistry.
+  // doorRegistry stores by id; look up existing entry for prefixes.
+  // If we can't determine prefixes, at least clean up the view registry.
+  doorRegistry.unregister(doorId);
+  console.log(`[doors] Unregistered removed door: ${doorId}`);
+}
+
+/**
+ * Listen for `door-changed` events from the Rust file watcher.
+ * Called once after initial loadDoors().
+ */
+function listenForDoorChanges(
+  pluginSettings: Record<string, Record<string, unknown>>,
+): void {
+  listen<DoorChangedEvent>('door-changed', async (event) => {
+    const { doorId, removed } = event.payload;
+
+    if (removed) {
+      unregisterDoor(doorId);
+    } else {
+      const settings = pluginSettings[doorId] ?? {};
+      await reloadDoor(doorId, settings);
+    }
+  }).catch((err) => {
+    console.error('[doors] Failed to set up hot-reload listener:', err);
+  });
 }

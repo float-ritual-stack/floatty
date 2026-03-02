@@ -493,6 +493,8 @@ pub fn run() {
             // Capture server info for orphan detector background worker
             let orphan_server_url = server_url_for_orphan.clone();
             let orphan_api_key = server_api_key_for_orphan.clone();
+            // Capture doors path for hot-reload watcher
+            let doors_path = paths.doors.clone();
             move |app| {
                 // Set enhanced window title:
                 // floatty (dev) - workspace v0.4.2 (abc1234)
@@ -547,6 +549,12 @@ pub fn run() {
                         }
                     });
                 }
+
+                // Door hot-reload watcher
+                services::door_watcher::start_door_watcher(
+                    doors_path,
+                    app.handle().clone(),
+                );
 
                 Ok(())
             }
