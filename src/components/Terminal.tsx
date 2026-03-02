@@ -7,7 +7,7 @@ import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
 import { ResizeOverlay } from './ResizeOverlay';
-import { ContextSidebar } from './ContextSidebar';
+import { SidebarDoorContainer } from './SidebarDoorContainer';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -277,6 +277,25 @@ export function Terminal() {
     const node = findNode(layout.root, paneId);
     return node?.type === 'leaf' ? node : null;
   };
+
+  // Resolve first outliner pane in active tab — shared by CommandBar and sidebar
+  const resolvedOutlinerPaneId = createMemo(() => {
+    const activeId = tabStore.activeTabId();
+    if (!activeId) return null;
+    // Prefer active pane if it's an outliner, otherwise find first outliner
+    let paneId = getActivePaneId(activeId);
+    if (paneId) {
+      const leaf = getPaneLeaf(activeId, paneId);
+      if (leaf?.leafType !== 'outliner') {
+        const allPanes = getAllPaneIds(activeId);
+        paneId = allPanes.find(id => {
+          const l = getPaneLeaf(activeId, id);
+          return l?.leafType === 'outliner';
+        }) ?? paneId;
+      }
+    }
+    return paneId;
+  });
 
   // FLO-136: Pin ephemeral pane (make permanent)
   const pinPane = (tabId: string, paneId: string) => {
@@ -1158,28 +1177,17 @@ export function Terminal() {
           </For>
         </main>
         <Show when={sidebarVisible()}>
-          <ContextSidebar visible={sidebarVisible()} />
+          <SidebarDoorContainer
+            visible={sidebarVisible()}
+            getOutlinerPaneId={() => resolvedOutlinerPaneId()}
+          />
         </Show>
       </div>
       <Show when={isCommandBarOpen()}>
         <CommandBar
           onClose={() => setCommandBarOpen(false)}
           onNavigate={(pageName) => {
-            const activeId = tabStore.activeTabId();
-            if (!activeId) return;
-            // Find an outliner pane — prefer active pane if it's an outliner,
-            // otherwise find first outliner in tab layout
-            let paneId = getActivePaneId(activeId);
-            if (paneId) {
-              const leaf = getPaneLeaf(activeId, paneId);
-              if (leaf?.leafType !== 'outliner') {
-                const allPanes = getAllPaneIds(activeId);
-                paneId = allPanes.find(id => {
-                  const l = getPaneLeaf(activeId, id);
-                  return l?.leafType === 'outliner';
-                }) ?? paneId;
-              }
-            }
+            const paneId = resolvedOutlinerPaneId();
             if (!paneId) return;
             navigateToPage(pageName, { paneId });
             setCommandBarOpen(false);

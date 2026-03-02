@@ -524,6 +524,8 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
             batchCreateBlocksAfter: store.batchCreateBlocksAfter,
             batchCreateBlocksInside: store.batchCreateBlocksInside,
             batchCreateBlocksInsideAtTop: store.batchCreateBlocksInsideAtTop,
+            moveBlock: (blockId, targetParentId, targetIndex) =>
+              store.moveBlock(blockId, targetParentId, targetIndex, { origin: 'user' }),
           }, hookStore).catch(err => {
             console.error('[useBlockInput] Handler execution failed:', err);
           });

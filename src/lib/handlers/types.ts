@@ -48,6 +48,8 @@ export interface ExecutorActions {
   batchCreateBlocksInside?: (parentId: string, ops: BatchBlockOp[]) => string[];
   /** Batch create blocks at top of parentId (single transaction, reversed insertion) */
   batchCreateBlocksInsideAtTop?: (parentId: string, ops: BatchBlockOp[]) => string[];
+  /** Move a block (with children) to a new parent at index */
+  moveBlock?: (blockId: string, targetParentId: string | null, targetIndex: number) => boolean;
   /** Root IDs for tree context */
   rootIds?: readonly string[];
 }

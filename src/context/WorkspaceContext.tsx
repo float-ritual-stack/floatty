@@ -176,6 +176,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           batchCreateBlocksAfter: store.batchCreateBlocksAfter,
           batchCreateBlocksInside: store.batchCreateBlocksInside,
           batchCreateBlocksInsideAtTop: store.batchCreateBlocksInsideAtTop,
+          moveBlock: (blockId, targetParentId, targetIndex) =>
+            store.moveBlock(blockId, targetParentId, targetIndex, { origin: 'user' }),
         }, hookStore).catch(err => {
           console.error('[AutoExecute] Handler execution failed:', err);
         });

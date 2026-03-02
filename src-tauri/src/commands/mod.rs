@@ -8,6 +8,7 @@
 
 pub mod clipboard;
 pub mod ctx;
+pub mod doors;
 pub mod execution;
 pub mod help;
 pub mod hooks;
@@ -20,6 +21,7 @@ pub use ctx::{
     get_send_model, get_theme, set_ctx_config, set_theme, toggle_diagnostics,
 };
 pub use execution::{execute_ai_command, execute_ai_conversation, execute_shell_command, open_url};
+pub use doors::{list_door_files, read_door_file};
 pub use help::read_help_file;
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
 pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};

@@ -68,7 +68,7 @@ export function formatRelativeTime(isoString: string | null): string {
 export function extractContent(content: string, prefixes: string[]): string {
   const trimmed = content.trim();
   for (const prefix of prefixes) {
-    if (trimmed.toLowerCase().startsWith(prefix)) {
+    if (trimmed.toLowerCase().startsWith(prefix.toLowerCase())) {
       return trimmed.slice(prefix.length).trim();
     }
   }

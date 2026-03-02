@@ -2,6 +2,7 @@
 
 pub mod clipboard;
 pub mod ctx;
+pub mod doors;
 pub mod execution;
 pub mod hooks;
 pub mod workspace;
