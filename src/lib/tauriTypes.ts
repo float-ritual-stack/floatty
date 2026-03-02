@@ -111,6 +111,8 @@ export interface AggregatorConfig {
   initial_collapse_depth?: number;
   /** Show diagnostics strip in status bar (port, build type, config path) */
   show_diagnostics: boolean;
+  /** Per-door plugin settings from [plugins.*] sections in config.toml */
+  plugins?: Record<string, Record<string, unknown>>;
   /** Whether this is a dev (debug) build (runtime-only, not persisted) */
   is_dev_build: boolean;
   /** Resolved data directory path (runtime-only, not persisted) */

@@ -14,7 +14,7 @@
  * from window globals. Rewrite door JS before Blob import.
  */
 
-import { invoke } from '../tauriTypes';
+import { invoke, type AggregatorConfig } from '../tauriTypes';
 import { registry } from './registry';
 import { doorRegistry } from './doorRegistry';
 import { doorToBlockHandler } from './doorAdapter';
@@ -179,6 +179,15 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   const results: DoorLoadResult[] = [];
   const deps = ensureDoorDeps();
 
+  // Fetch config once for plugin settings
+  let pluginSettings: Record<string, Record<string, unknown>> = {};
+  try {
+    const config = await invoke<AggregatorConfig>('get_ctx_config', {});
+    pluginSettings = (config.plugins ?? {}) as Record<string, Record<string, unknown>>;
+  } catch (err) {
+    console.warn('[doors] Failed to load config for plugin settings:', err);
+  }
+
   let doorInfos: DoorInfo[];
   try {
     doorInfos = await invoke('list_door_files', {});
@@ -227,13 +236,16 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
       );
     }
 
+    // Per-door settings from config.toml [plugins.<id>]
+    const settings = pluginSettings[meta.id] ?? {};
+
     // Register view in DoorRegistry (if view door)
     if (door.kind === 'view' && door.view) {
-      doorRegistry.register(meta.id, door.view, {});
+      doorRegistry.register(meta.id, door.view, settings);
     }
 
     // Register handler in HandlerRegistry via adapter
-    const handler = doorToBlockHandler(door, meta, {});
+    const handler = doorToBlockHandler(door, meta, settings);
     registry.register(handler);
 
     console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')})`);
