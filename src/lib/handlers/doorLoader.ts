@@ -185,56 +185,58 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
 
   console.log(`[doors] Found ${doorInfos.length} door(s): ${doorInfos.map(d => d.id).join(', ')}`);
 
-  for (const info of doorInfos) {
+  const settled = await Promise.allSettled(doorInfos.map(async (info): Promise<DoorLoadResult> => {
     if (!info.hasEntry) {
       console.warn(`[doors] ${info.id}: no index.js found, skipping`);
-      results.push({ doorId: info.id, ok: false, error: 'No index.js' });
-      continue;
+      return { doorId: info.id, ok: false, error: 'No index.js' };
     }
 
+    // Read JS source from Rust
+    const rawJs: string = await invoke('read_door_file', { doorId: info.id });
+
+    // Rewrite bare specifiers to shim URLs (solid-js, solid-js/web)
+    const js = rewriteDoorImports(rawJs, deps);
+
+    // Blob import
+    const blob = new Blob([js], { type: 'application/javascript' });
+    const url = URL.createObjectURL(blob);
+
+    let mod: Record<string, unknown>;
     try {
-      // Read JS source from Rust
-      const rawJs: string = await invoke('read_door_file', { doorId: info.id });
+      mod = await import(/* @vite-ignore */ url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
 
-      // Rewrite bare specifiers to shim URLs (solid-js, solid-js/web)
-      const js = rewriteDoorImports(rawJs, deps);
+    // Validate exports
+    const { door, meta } = validateDoorModule(mod);
 
-      // Blob import
-      const blob = new Blob([js], { type: 'application/javascript' });
-      const url = URL.createObjectURL(blob);
+    // Warn on id mismatch
+    if (meta.id !== info.id) {
+      console.warn(
+        `[doors] ${info.id}: meta.id is '${meta.id}' (differs from directory name '${info.id}'). Using meta.id as registry key.`
+      );
+    }
 
-      let mod: Record<string, unknown>;
-      try {
-        mod = await import(/* @vite-ignore */ url);
-      } finally {
-        URL.revokeObjectURL(url);
-      }
+    // Register view in DoorRegistry (if view door)
+    if (door.kind === 'view' && door.view) {
+      doorRegistry.register(meta.id, door.view, {});
+    }
 
-      // Validate exports
-      const { door, meta } = validateDoorModule(mod);
+    // Register handler in HandlerRegistry via adapter
+    const handler = doorToBlockHandler(door, meta, {});
+    registry.register(handler);
 
-      // Warn on id mismatch
-      if (meta.id !== info.id) {
-        console.warn(
-          `[doors] ${info.id}: meta.id is '${meta.id}' (differs from directory name '${info.id}'). Using meta.id as registry key.`
-        );
-      }
+    console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')})`);
+    return { doorId: meta.id, ok: true };
+  }));
 
-      // Register view in DoorRegistry (if view door)
-      if (door.kind === 'view' && door.view) {
-        doorRegistry.register(meta.id, door.view, {});
-      }
-
-      // Register handler in HandlerRegistry via adapter
-      const handler = doorToBlockHandler(door, meta, {});
-      registry.register(handler);
-
-      console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')})`);
-      results.push({ doorId: meta.id, ok: true });
-
-    } catch (err) {
-      console.error(`[doors] Failed to load ${info.id}:`, err);
-      results.push({ doorId: info.id, ok: false, error: String(err) });
+  for (const outcome of settled) {
+    if (outcome.status === 'fulfilled') {
+      results.push(outcome.value);
+    } else {
+      console.error(`[doors] Failed to load door:`, outcome.reason);
+      results.push({ doorId: 'unknown', ok: false, error: String(outcome.reason) });
     }
   }
 

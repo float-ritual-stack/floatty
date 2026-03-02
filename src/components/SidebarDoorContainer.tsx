@@ -27,38 +27,36 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
   const store = createSidebarDoorStore();
 
   return (
-    <Show when={props.visible}>
-      <aside class="sidebar-door-container" role="complementary" aria-label="Sidebar doors">
-        {/* Tab strip */}
-        <div class="sidebar-door-tabs" role="tablist" aria-label="Sidebar door tabs">
-          <For each={store.pinnedDoors()}>
-            {(doorId) => (
-              <button
-                class="sidebar-door-tab"
-                role="tab"
-                id={`sidebar-tab-${doorId}`}
-                aria-selected={store.activeDoorId() === doorId}
-                aria-controls={store.activeDoorId() === doorId ? `sidebar-panel-${doorId}` : undefined}
-                onClick={() => store.setActiveDoorId(doorId)}
-              >
-                {DOOR_LABELS[doorId] ?? doorId}
-              </button>
-            )}
-          </For>
-        </div>
+    <aside class="sidebar-door-container" role="complementary" aria-label="Sidebar doors">
+      {/* Tab strip */}
+      <div class="sidebar-door-tabs" role="tablist" aria-label="Sidebar door tabs">
+        <For each={store.pinnedDoors()}>
+          {(doorId) => (
+            <button
+              class="sidebar-door-tab"
+              role="tab"
+              id={`sidebar-tab-${doorId}`}
+              aria-selected={store.activeDoorId() === doorId}
+              aria-controls={store.activeDoorId() === doorId ? `sidebar-panel-${doorId}` : undefined}
+              onClick={() => store.setActiveDoorId(doorId)}
+            >
+              {DOOR_LABELS[doorId] ?? doorId}
+            </button>
+          )}
+        </For>
+      </div>
 
-        {/* Panel area */}
-        <div
-          class="sidebar-door-panel"
-          role="tabpanel"
-          id={`sidebar-panel-${store.activeDoorId()}`}
-          aria-labelledby={`sidebar-tab-${store.activeDoorId()}`}
-        >
-          <Show when={store.activeDoorId() === 'ctx'}>
-            <ContextSidebar visible={props.visible} />
-          </Show>
-        </div>
-      </aside>
-    </Show>
+      {/* Panel area */}
+      <div
+        class="sidebar-door-panel"
+        role="tabpanel"
+        id={`sidebar-panel-${store.activeDoorId()}`}
+        aria-labelledby={`sidebar-tab-${store.activeDoorId()}`}
+      >
+        <Show when={store.activeDoorId() === 'ctx'}>
+          <ContextSidebar visible={props.visible} />
+        </Show>
+      </div>
+    </aside>
   );
 }

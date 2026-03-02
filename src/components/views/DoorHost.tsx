@@ -8,45 +8,17 @@
  * in BlockItem handles all keyboard routing. No tabIndex here.
  */
 
-import { Show, createSignal } from 'solid-js';
+import { Show, createSignal, createMemo } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { doorRegistry } from '../../lib/handlers/doorRegistry';
+import { createServerAccess } from '../../lib/handlers/doorSandbox';
 import type { DoorServerAccess } from '../../lib/handlers/doorTypes';
 import './doors.css';
 
-// ═══════════════════════════════════════════════════════════════
-// SERVER ACCESS (lazy singleton — same pattern as doorSandbox.ts)
-// ═══════════════════════════════════════════════════════════════
-
+// Lazy singleton — reuse createServerAccess from doorSandbox
 let cachedServer: DoorServerAccess | null = null;
-
 function getServerAccess(): DoorServerAccess {
-  if (cachedServer) return cachedServer;
-
-  const url = window.__FLOATTY_SERVER_URL__;
-  const apiKey = window.__FLOATTY_API_KEY__;
-
-  if (!url || !apiKey) {
-    throw new Error('[DoorHost] Server info not available');
-  }
-
-  const wsUrl = url.replace(/^http/, 'ws') + '/ws';
-
-  cachedServer = {
-    url,
-    wsUrl,
-    async fetch(path: string, init?: RequestInit): Promise<Response> {
-      const fullUrl = `${url}${path}`;
-      const headers = new Headers(init?.headers);
-      headers.set('Authorization', `Bearer ${apiKey}`);
-      if (!headers.has('Content-Type')) {
-        headers.set('Content-Type', 'application/json');
-      }
-      return globalThis.fetch(fullUrl, { ...init, headers });
-    },
-  };
-
-  return cachedServer;
+  return cachedServer ??= createServerAccess();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -64,7 +36,7 @@ interface DoorHostProps {
 
 export function DoorHost(props: DoorHostProps) {
   const [showRaw, setShowRaw] = createSignal(false);
-  const ViewComponent = () => doorRegistry.getView(props.doorId);
+  const ViewComponent = createMemo(() => doorRegistry.getView(props.doorId));
 
   return (
     <div class="door-output">
@@ -120,11 +92,11 @@ interface DoorExecCardProps {
 }
 
 export function DoorExecCard(props: DoorExecCardProps) {
-  const duration = () => {
+  const duration = createMemo(() => {
     if (!props.finishedAt) return null;
     const ms = props.finishedAt - props.startedAt;
     return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
-  };
+  });
 
   return (
     <div class={`door-exec-card ${props.ok ? 'door-exec-ok' : 'door-exec-error'}`}>

@@ -13,7 +13,8 @@ export function createSidebarDoorStore() {
   const [activeDoorId, setActiveDoorId] = createSignal('ctx');
 
   // Phase 1: hardcoded. Phase 2: read from DoorRegistry where sidebarEligible
-  const pinnedDoors = () => ['ctx'];
+  const PINNED = ['ctx'] as const;
+  const pinnedDoors = () => PINNED;
 
   return {
     activeDoorId,
