@@ -1546,8 +1546,24 @@ fn lookup_inherited(index: &InheritanceIndex, block_id: &str) -> Option<Vec<Inhe
     }
 }
 
-/// GET /api/v1/blocks - All blocks as JSON
-async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse>, ApiError> {
+/// Query parameters for GET /api/v1/blocks
+#[derive(Deserialize, Default)]
+pub struct BlocksQuery {
+    /// Filter: createdAt >= since (unix ms)
+    pub since: Option<i64>,
+    /// Filter: createdAt < until (unix ms)
+    pub until: Option<i64>,
+    /// Filter: block has a marker with this markerType
+    pub marker_type: Option<String>,
+    /// Filter: marker value (requires marker_type)
+    pub marker_value: Option<String>,
+}
+
+/// GET /api/v1/blocks - All blocks as JSON (with optional filters)
+async fn get_blocks(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<BlocksQuery>,
+) -> Result<Json<BlocksResponse>, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
@@ -1621,6 +1637,34 @@ async fn get_blocks(State(state): State<AppState>) -> Result<Json<BlocksResponse
                 let updated_at = extract_timestamp(block_map.get(&txn, "updatedAt"));
 
                 let block_type = floatty_core::parse_block_type(&content);
+
+                // Apply query filters before pushing
+                if let Some(since) = query.since {
+                    if created_at < since {
+                        continue;
+                    }
+                }
+                if let Some(until) = query.until {
+                    if created_at >= until {
+                        continue;
+                    }
+                }
+                if let Some(ref mt) = query.marker_type {
+                    let has_marker = metadata.as_ref().and_then(|m| m.get("markers")).and_then(|arr| arr.as_array()).map(|markers| {
+                        markers.iter().any(|marker| {
+                            let type_match = marker.get("markerType").and_then(|v| v.as_str()) == Some(mt.as_str());
+                            if let Some(ref mv) = query.marker_value {
+                                type_match && marker.get("value").and_then(|v| v.as_str()) == Some(mv.as_str())
+                            } else {
+                                type_match
+                            }
+                        })
+                    }).unwrap_or(false);
+
+                    if !has_marker {
+                        continue;
+                    }
+                }
 
                 // O(1) lookup from pre-computed inheritance index
                 let inherited_markers = lookup_inherited(&inheritance_guard, &block_id);
@@ -4663,5 +4707,158 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ========================================================================
+    // GET /api/v1/blocks query param filtering
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_get_blocks_no_params_returns_all() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        create_test_block(&mut app, "Block A", None).await;
+        create_test_block(&mut app, "Block B", None).await;
+
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(Request::get("/api/v1/blocks").body(Body::empty()).unwrap())
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.blocks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_blocks_since_until_filter() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block_a = create_test_block(&mut app, "Block A", None).await;
+        // Small sleep to separate timestamps
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let midpoint = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let _block_b = create_test_block(&mut app, "Block B", None).await;
+
+        // since=midpoint should only return Block B
+        let url = format!("/api/v1/blocks?since={}", midpoint);
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(Request::get(&url).body(Body::empty()).unwrap())
+            .await.unwrap();
+
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].content, "Block B");
+
+        // until=midpoint should only return Block A
+        let url = format!("/api/v1/blocks?until={}", midpoint);
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(Request::get(&url).body(Body::empty()).unwrap())
+            .await.unwrap();
+
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].content, "Block A");
+
+        // since + until covering everything
+        let url = format!("/api/v1/blocks?since={}&until={}", block_a.created_at, midpoint + 100000);
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(Request::get(&url).body(Body::empty()).unwrap())
+            .await.unwrap();
+
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.blocks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_blocks_marker_type_filter() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block_a = create_test_block(&mut app, "ctx:: block", None).await;
+        let _block_b = create_test_block(&mut app, "plain block", None).await;
+
+        // PATCH block_a to add ctx marker metadata
+        let patch_body = format!(
+            r#"{{"metadata": {{"markers": [{{"markerType": "ctx", "value": "work"}}]}}}}"#
+        );
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(
+                Request::patch(&format!("/api/v1/blocks/{}", block_a.id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(patch_body))
+                    .unwrap(),
+            )
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Filter by marker_type=ctx
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(Request::get("/api/v1/blocks?marker_type=ctx").body(Body::empty()).unwrap())
+            .await.unwrap();
+
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].id, block_a.id);
+    }
+
+    #[tokio::test]
+    async fn test_get_blocks_marker_type_and_value_filter() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block_a = create_test_block(&mut app, "ctx work", None).await;
+        let block_b = create_test_block(&mut app, "ctx play", None).await;
+
+        // PATCH both with ctx markers but different values
+        for (id, val) in [(&block_a.id, "work"), (&block_b.id, "play")] {
+            let patch_body = format!(
+                r#"{{"metadata": {{"markers": [{{"markerType": "ctx", "value": "{}"}}]}}}}"#,
+                val
+            );
+            let response = ServiceExt::<Request<Body>>::ready(&mut app)
+                .await.unwrap()
+                .call(
+                    Request::patch(&format!("/api/v1/blocks/{}", id))
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(patch_body))
+                        .unwrap(),
+                )
+                .await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        // marker_type=ctx returns both
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(Request::get("/api/v1/blocks?marker_type=ctx").body(Body::empty()).unwrap())
+            .await.unwrap();
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.blocks.len(), 2);
+
+        // marker_type=ctx&marker_value=work returns only block_a
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(Request::get("/api/v1/blocks?marker_type=ctx&marker_value=work").body(Body::empty()).unwrap())
+            .await.unwrap();
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].id, block_a.id);
     }
 }
