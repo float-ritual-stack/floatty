@@ -183,7 +183,7 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   // Fetch config once for plugin settings
   let pluginSettings: Record<string, Record<string, unknown>> = {};
   try {
-    const config = await invoke<AggregatorConfig>('get_ctx_config', {});
+    const config = await invoke('get_ctx_config', {}) as AggregatorConfig;
     pluginSettings = (config.plugins ?? {}) as Record<string, Record<string, unknown>>;
   } catch (err) {
     console.warn('[doors] Failed to load config for plugin settings:', err);

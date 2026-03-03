@@ -112,7 +112,7 @@ const UrlViewer: Component<ViewerProps> = (props) => {
           class="eval-output-url-iframe"
           classList={{ loaded: loaded() }}
           title={url()}
-          sandbox="allow-scripts allow-same-origin allow-forms"
+          sandbox="allow-scripts allow-forms"
           onLoad={() => setLoaded(true)}
         />
       </Show>

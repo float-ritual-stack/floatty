@@ -39,8 +39,9 @@ pub fn start_door_watcher(doors_dir: PathBuf, app_handle: tauri::AppHandle) {
         let (tx, rx) = mpsc::channel();
         let mut watcher: RecommendedWatcher = match Watcher::new(
             move |res: Result<Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let _ = tx.send(event);
+                match res {
+                    Ok(event) => { let _ = tx.send(event); }
+                    Err(e) => tracing::warn!(error = %e, "Door watcher error"),
                 }
             },
             notify::Config::default(),

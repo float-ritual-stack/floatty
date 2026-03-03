@@ -13,7 +13,8 @@
  */
 
 import type { BlockHandler, ExecutorActions } from './types';
-import { evaluate, type EvalScope } from '../evalEngine';
+import { evaluate } from '../evalEngine';
+import { buildEvalScope } from './evalScope';
 import { blockEventBus } from '../events';
 import { blockStore } from '../../hooks/useBlockStore';
 import { registry } from './registry';
@@ -105,108 +106,9 @@ export function parseFuncChildren(
  * `issue:: FLO-316, FLO-380` → ["FLO-316", "FLO-380"]
  */
 export function parseFuncArgs(content: string, prefix: string): string[] {
-  const after = content.slice(prefix.length).trim();
+  const after = content.trim().slice(prefix.length).trim();
   if (!after) return [];
   return after.split(',').map(s => s.trim()).filter(Boolean);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// SCOPE BUILDING (reuses eval.ts patterns)
-// ═══════════════════════════════════════════════════════════════
-
-interface BlockWithOutput {
-  id?: string;
-  content?: string;
-  childIds?: string[];
-  parentId?: string | null;
-  output?: { data?: unknown };
-}
-
-function resolveRef(
-  nameOrId: string,
-  blockId: string,
-  actions: ExecutorActions,
-): unknown {
-  if (!actions.getBlock) return null;
-
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-  if (UUID_RE.test(nameOrId)) {
-    const block = actions.getBlock(nameOrId) as BlockWithOutput | null;
-    if (!block) return null;
-    return block.output?.data ?? block.content;
-  }
-
-  const parent = actions.getParentId?.(blockId);
-  const siblingIds = parent ? actions.getChildren?.(parent) : [];
-  if (!siblingIds) return null;
-
-  const prefix = nameOrId.toLowerCase().trim();
-  for (const sibId of siblingIds) {
-    if (sibId === blockId) continue;
-    const sib = actions.getBlock(sibId) as BlockWithOutput | null;
-    if (!sib?.content) continue;
-
-    const lower = sib.content.toLowerCase().trim();
-    if (lower.startsWith(prefix + '::')) {
-      if (sib.output?.data !== undefined) return sib.output.data;
-      const value = sib.content.slice(sib.content.indexOf('::') + 2).trim();
-      try {
-        return new Function(`return (${value})`)();
-      } catch {
-        return value;
-      }
-    }
-  }
-
-  return null;
-}
-
-function getSiblings(blockId: string, actions: ExecutorActions): unknown[] {
-  if (!actions.getParentId || !actions.getChildren || !actions.getBlock) return [];
-  const parentId = actions.getParentId(blockId);
-  if (!parentId) return [];
-  const siblingIds = actions.getChildren(parentId);
-  return siblingIds
-    .filter(id => id !== blockId)
-    .map(id => actions.getBlock!(id))
-    .filter(Boolean);
-}
-
-function buildEvalScope(blockId: string, actions: ExecutorActions): EvalScope {
-  return {
-    $ref: (nameOrId: string) => resolveRef(nameOrId, blockId, actions),
-    $block: (id: string) => actions.getBlock?.(id) ?? null,
-    $siblings: () => getSiblings(blockId, actions),
-    $children: (id: string) => {
-      if (!actions.getChildren || !actions.getBlock) return [];
-      return actions.getChildren(id).map(cid => actions.getBlock!(cid)).filter(Boolean);
-    },
-    $parent: () => {
-      const pid = actions.getParentId?.(blockId);
-      if (!pid || !actions.getBlock) return null;
-      return actions.getBlock(pid);
-    },
-    $after: (afterContent: string) => {
-      if (!actions.createBlockAfter) throw new Error('$after not available');
-      const newId = actions.createBlockAfter(blockId);
-      actions.updateBlockContent(newId, afterContent);
-      return newId;
-    },
-    $inside: (childContent: string, parentId?: string) => {
-      const target = parentId ?? blockId;
-      const newId = actions.createBlockInside(target);
-      actions.updateBlockContent(newId, childContent);
-      return newId;
-    },
-    $update: (id: string, newContent: string) => {
-      actions.updateBlockContent(id, newContent);
-    },
-    $delete: (id: string) => {
-      if (!actions.deleteBlock) throw new Error('$delete not available');
-      return actions.deleteBlock(id);
-    },
-  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -319,13 +221,16 @@ export function registerFuncIndexHook(): void {
 
   funcIndexSubId = blockEventBus.subscribe(
     (envelope) => {
-      // Only rebuild if a func:: block might have changed
+      // Rebuild on any content change if func:: definitions exist,
+      // or if a block matches func::. Handles both new definitions
+      // and editing away from func:: content (stale prefix cleanup).
+      const hasFuncDefs = registry.getFuncPrefixes().size > 0;
       const relevant = envelope.events.some(e => {
         if (e.type === 'block:delete') return true;
         if (e.type === 'block:create' || e.type === 'block:update') {
           const block = blockStore.getBlock(e.blockId);
           const content = block?.content ?? '';
-          return FUNC_PREFIX_RE.test(content);
+          return FUNC_PREFIX_RE.test(content) || (e.type === 'block:update' && hasFuncDefs);
         }
         return false;
       });

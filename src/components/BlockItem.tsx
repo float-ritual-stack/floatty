@@ -750,8 +750,7 @@ export function BlockItem(props: BlockItemProps) {
 
   const hasCollapsibleOutput = createMemo(() => {
     const b = block();
-    return b?.outputType === 'eval-result'
-      && (b?.output as EvalResult | undefined)?.type === 'url';
+    return b?.outputType === 'eval-result' && !!b?.output;
   });
 
   const bulletChar = () => {

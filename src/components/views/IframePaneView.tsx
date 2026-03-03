@@ -48,7 +48,7 @@ export const IframePaneView: Component<IframePaneViewProps> = (props) => {
           class="iframe-pane-iframe"
           classList={{ loaded: loaded() }}
           title={props.url}
-          sandbox="allow-scripts allow-same-origin allow-forms"
+          sandbox="allow-scripts allow-forms"
           onLoad={() => setLoaded(true)}
         />
       </div>

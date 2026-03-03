@@ -77,7 +77,10 @@ export class DoorRegistry {
     if (entry) {
       entry.setView(view);
       entry.setSettings(settings);
-      if (meta) entry.meta = meta;
+      if (meta) {
+        entry.meta = meta;
+        this.bumpVersion();
+      }
     } else {
       this.register(doorId, view, settings, meta);
     }
