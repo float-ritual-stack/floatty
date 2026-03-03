@@ -61,7 +61,9 @@ export class HookRegistry {
    */
   register(hook: Hook): void {
     if (this.hooks.has(hook.id)) {
-      throw new Error(`Hook with id "${hook.id}" already registered`);
+      // Idempotent on HMR — module-level guards reset but singleton registry persists
+      console.debug(`[HookRegistry] Hook "${hook.id}" already registered, skipping`);
+      return;
     }
 
     this.hooks.set(hook.id, hook);

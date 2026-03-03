@@ -106,13 +106,20 @@ const UrlViewer: Component<ViewerProps> = (props) => {
           iframe paused (scrolled out of view)
         </div>
       }>
+        {/* allow-same-origin is REQUIRED here. These iframes load external/localhost
+            URLs (never same-origin as the Tauri webview at tauri://localhost). Without it,
+            the iframe origin is forced to `null` which breaks:
+            - CORS for subresources (CSS, JS, fonts from the iframe's own server)
+            - canvas.toDataURL() (e.g. claude-mem viewer-bundle)
+            The "allow-scripts + allow-same-origin = sandbox escape" concern only applies
+            when iframe content shares origin with the parent. In Tauri, it never does. */}
         <iframe
           src={url()}
           style={{ height: `${height()}px` }}
           class="eval-output-url-iframe"
           classList={{ loaded: loaded() }}
           title={url()}
-          sandbox="allow-scripts allow-forms"
+          sandbox="allow-scripts allow-same-origin allow-forms"
           onLoad={() => setLoaded(true)}
         />
       </Show>

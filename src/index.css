@@ -1179,6 +1179,37 @@ body.pane-dragging .terminal-pane-positioned {
   border-top-color: var(--color-indent-guide-active);
 }
 
+/* Unit 12.0: Full-width block mode
+   Breaks output area out of indentation to use full pane width.
+   Block bullet/content row stays indented (preserves outline context). */
+.block-full-width {
+  /* Structural constants for full-width calc:
+     --block-gutter: bullet (20px) + drag handle (16px) + gap (4px) = 40px
+     --outliner-pad: outliner-container padding (16px)
+     --indent-per-level: indent-width (28px) + padding (4px) + border (1px) = 33px */
+  --block-gutter: 40px;
+  --outliner-pad: 16px;
+  --fw-pull-left: calc(
+    var(--outliner-pad) +
+    var(--block-depth, 0) * (var(--block-indent-width) + 5px) +
+    var(--block-gutter)
+  );
+  --fw-pull-right: var(--outliner-pad);
+  border-left: 2px solid var(--color-accent);
+}
+
+.block-full-width .eval-output,
+.block-full-width .door-host-container,
+.block-full-width .search-results-container {
+  position: relative;
+  z-index: 1;
+  margin-left: calc(-1 * var(--fw-pull-left));
+  margin-right: calc(-1 * var(--fw-pull-right));
+  padding-left: var(--outliner-pad);
+  padding-right: var(--outliner-pad);
+  background: var(--color-bg);
+}
+
 /* Editing (NOT selected): accent border when cursor is in block */
 .block-item:not(.block-selected):focus-within .block-content {
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);

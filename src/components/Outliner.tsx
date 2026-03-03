@@ -612,6 +612,14 @@ export function Outliner(props: OutlinerProps) {
         e.preventDefault();
         exportToBinary();
       }
+      // Unit 12.0: Cmd+Shift+F - Toggle full-width on focused block
+      else if (isMod && isShift && e.key === 'f') {
+        e.preventDefault();
+        const focused = focusedBlockId();
+        if (focused) {
+          paneStore.toggleFullWidth(props.paneId, focused);
+        }
+      }
     };
 
     document.addEventListener('keydown', handleGlobalKeyDown);

@@ -140,6 +140,7 @@ export function BlockItem(props: BlockItemProps) {
   const [tableShowRaw, setTableShowRaw] = createSignal(false);
   let contentRef: HTMLDivElement | undefined;
   let outputFocusRef: HTMLDivElement | undefined;
+  let wrapperRef: HTMLDivElement | undefined;
 
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
   // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
@@ -809,7 +810,13 @@ export function BlockItem(props: BlockItemProps) {
   };
 
   return (
-    <div class="block-wrapper" data-depth={props.depth}>
+    <div
+      ref={wrapperRef}
+      class="block-wrapper"
+      classList={{ 'block-full-width': paneStore.isFullWidth(props.paneId, props.id) }}
+      data-depth={props.depth}
+      style={{ '--block-depth': String(props.depth) }}
+    >
       <div
         class="block-item"
         data-block-id={blockId}

@@ -43,12 +43,14 @@ export const IframePaneView: Component<IframePaneViewProps> = (props) => {
         <span class="iframe-pane-url-label">{props.url}</span>
       </div>
       <div class="iframe-pane-content">
+        {/* See EvalOutput.tsx for sandbox rationale — allow-same-origin is required
+            for external/localhost iframes in Tauri (cross-origin from tauri://). */}
         <iframe
           src={props.url}
           class="iframe-pane-iframe"
           classList={{ loaded: loaded() }}
           title={props.url}
-          sandbox="allow-scripts allow-forms"
+          sandbox="allow-scripts allow-same-origin allow-forms"
           onLoad={() => setLoaded(true)}
         />
       </div>

@@ -38,6 +38,8 @@ interface PaneState {
   focusedBlockId: Record<string, string | null>;
   // FLO-180: Map of paneId -> navigation history (back/forward)
   navigationHistory: Record<string, NavigationState>;
+  // Unit 12.0: Map of paneId -> blocks toggled to full-width mode
+  fullWidth: Record<string, Record<string, boolean>>;
 }
 
 function createPaneStore() {
@@ -46,6 +48,7 @@ function createPaneStore() {
     zoomedRootId: {},
     focusedBlockId: {},
     navigationHistory: {},
+    fullWidth: {},
   });
   const [persistenceVersion, setPersistenceVersion] = createSignal(0);
 
@@ -87,6 +90,20 @@ function createPaneStore() {
       setState('collapsed', paneId, blockId, collapsed);
     }
     bumpPersistenceVersion();
+  };
+
+  // Unit 12.0: Full-width block mode
+  const toggleFullWidth = (paneId: string, blockId: string) => {
+    const current = isFullWidth(paneId, blockId);
+    if (!state.fullWidth[paneId]) {
+      setState('fullWidth', paneId, { [blockId]: !current });
+    } else {
+      setState('fullWidth', paneId, blockId, !current);
+    }
+  };
+
+  const isFullWidth = (paneId: string, blockId: string): boolean => {
+    return state.fullWidth[paneId]?.[blockId] ?? false;
   };
 
   const getZoomedRootId = (paneId: string): string | null => {
@@ -394,6 +411,11 @@ function createPaneStore() {
       setState('navigationHistory', paneId, undefined!);
       changed = true;
     }
+    // Unit 12.0: Clean up full-width state
+    if (state.fullWidth[paneId]) {
+      setState('fullWidth', paneId, undefined!);
+      changed = true;
+    }
 
     if (changed) {
       bumpPersistenceVersion();
@@ -520,6 +542,9 @@ function createPaneStore() {
     goForward,
     canGoBack,
     canGoForward,
+    // Unit 12.0: Full-width block mode
+    toggleFullWidth,
+    isFullWidth,
     // FLO-211: Unified navigation API
     zoomTo,
     consumeHistoryNavigation,
