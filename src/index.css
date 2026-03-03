@@ -1189,18 +1189,14 @@ body.pane-dragging .terminal-pane-positioned {
      --indent-per-level: indent-width (28px) + padding (4px) + border (1px) = 33px */
   --block-gutter: 40px;
   --outliner-pad: 16px;
-  --fw-pull-left: calc(
-    var(--outliner-pad) +
-    var(--block-depth, 0) * (var(--block-indent-width) + 5px) +
-    var(--block-gutter)
-  );
+  --fw-pull-left: calc(var(--outliner-pad) + var(--block-depth, 0) * (var(--block-indent-width) + 5px) + var(--block-gutter));
   --fw-pull-right: var(--outliner-pad);
   border-left: 2px solid var(--color-accent);
 }
 
 .block-full-width .eval-output,
 .block-full-width .door-host-container,
-.block-full-width .search-results-container {
+.block-full-width .search-results-view {
   position: relative;
   z-index: 1;
   margin-left: calc(-1 * var(--fw-pull-left));

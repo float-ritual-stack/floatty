@@ -60,7 +60,7 @@ export class DoorRegistry {
       setView: (v) => setView(() => v),  // Thunk wrap — prevents SolidJS unwrapping
       settings: settingsSig,
       setSettings,
-      meta: meta ?? { id: doorId, name: doorId },
+      meta: meta ? { ...meta } : { id: doorId, name: doorId },
     });
     // Notify sidebar signal of structural change
     this.bumpVersion();
@@ -78,7 +78,7 @@ export class DoorRegistry {
       entry.setView(view);
       entry.setSettings(settings);
       if (meta) {
-        entry.meta = meta;
+        entry.meta = { ...meta };
         this.bumpVersion();
       }
     } else {

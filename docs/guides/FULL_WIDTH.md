@@ -11,7 +11,7 @@ Break a block's output out of indentation to use the full pane width.
 
 ## What It Does
 
-```
+```text
 NORMAL (depth 2):
 │  │  ├─ func:: chart
 │  │  │  ┌──────────────────┐
@@ -47,7 +47,7 @@ The block itself (bullet, prefix, content) stays in the tree — you keep your o
 
 ## Examples
 
-```
+```text
 eval:: 2 + 2
 → Shows "4" inline. ⌘⇧F widens the result display.
 

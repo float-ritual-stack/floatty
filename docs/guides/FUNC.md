@@ -4,14 +4,14 @@ Define new prefixes from blocks — no .js files needed. A `func::` block with `
 
 ## Quick Start
 
-```
+```text
 func:: greet
   input:: name
   body:: return "Hello, " + name + "!"
 ```
 
 Now type anywhere in the outline:
-```
+```text
 greet:: World
 → "Hello, World!"
 ```
@@ -25,7 +25,7 @@ greet:: World
 
 ## Anatomy
 
-```
+```text
 func:: weather                    ← defines "weather::" prefix
   input:: city, units             ← parameters (optional)
   body:: return $ref("api") + "?q=" + city + "&units=" + units
@@ -39,19 +39,19 @@ func:: weather                    ← defines "weather::" prefix
 
 Arguments are comma-separated after the prefix:
 
-```
+```text
 weather:: london, metric
 ```
 
 This binds `city = "london"` and `units = "metric"` in the body expression.
 
 No arguments:
-```
+```text
 weather::
 ```
 
 Single argument:
-```
+```text
 weather:: london
 ```
 
@@ -78,7 +78,7 @@ Same as eval:: — the engine auto-detects what you return:
 ## Examples
 
 ### URL viewer (iframe)
-```
+```text
 func:: site
   body:: return "https://example.com"
 
@@ -87,7 +87,7 @@ site:: anything
 ```
 
 ### Calculator with inputs
-```
+```text
 func:: calc
   input:: a, b, op
   body:: return op === "+" ? a + b : op === "*" ? a * b : "unknown op"
@@ -97,7 +97,7 @@ calc:: 10, 3, +
 ```
 
 ### Template generator
-```
+```text
 func:: todo
   input:: task
   body:: return $after("- [ ] " + task)
@@ -107,7 +107,7 @@ todo:: Buy groceries
 ```
 
 ### Using sibling data
-```
+```text
 api:: https://api.weather.example.com
 func:: wx
   input:: city

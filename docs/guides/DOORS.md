@@ -4,13 +4,13 @@ Doors are SolidJS components loaded from `.js` files at runtime. They extend flo
 
 ## Where Doors Live
 
-```
+```text
 ~/.floatty-dev/doors/     (dev builds)
 ~/.floatty/doors/         (release builds)
 ```
 
 Each door is a directory with at least:
-```
+```text
 my-door/
   door.json     ← metadata (id, prefixes, name, sidebarEligible)
   index.js      ← compiled SolidJS component
