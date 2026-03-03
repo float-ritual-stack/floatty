@@ -3013,20 +3013,76 @@ body.resizing * {
 }
 
 .eval-output-url-resize {
-  height: 6px;
+  height: 12px;
+  margin-top: -4px;
+  position: relative;
+  z-index: 1;
   cursor: ns-resize;
+  border-top: 2px solid var(--color-border);
   background: transparent;
-  margin: 0 24px;
+  margin-left: 24px;
+  margin-right: 24px;
 }
 
 .eval-output-url-resize:hover {
-  background: var(--color-accent);
-  border-radius: 3px;
-  opacity: 0.5;
+  border-top-color: var(--color-accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .eval-output-url-iframe {
+    transition: none;
+  }
+}
+
+/* ═══════════════════════════════════════
+   IframePaneView — full-pane iframe zoom
+   ═══════════════════════════════════════ */
+
+.iframe-pane-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  outline: none;
+}
+
+.iframe-pane-url-bar {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.iframe-pane-url-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iframe-pane-content {
+  flex: 1;
+  min-height: 0;
+}
+
+.iframe-pane-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--color-bg-dark);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.iframe-pane-iframe.loaded {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iframe-pane-iframe {
     transition: none;
   }
 }

@@ -80,10 +80,13 @@ const UrlViewer: Component<ViewerProps> = (props) => {
     e.preventDefault();
     const startY = e.clientY;
     const startH = height();
+    const iframe = containerRef?.querySelector('iframe');
+    if (iframe) iframe.style.pointerEvents = 'none';
     const onMove = (me: PointerEvent) => {
       setHeight(Math.max(100, Math.min(startH + me.clientY - startY, window.innerHeight * 0.8)));
     };
     const onUp = () => {
+      if (iframe) iframe.style.pointerEvents = '';
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
