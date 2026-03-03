@@ -2921,3 +2921,52 @@ body.resizing * {
 .command-bar-command .command-bar-item-label {
   color: var(--color-ansi-cyan);
 }
+
+/* ================================================
+   Eval Output (eval:: block results)
+   ================================================ */
+
+.eval-output {
+  padding: 4px 8px 4px 24px;
+  font-size: 11px;
+  border-top: 1px solid var(--color-border);
+  margin-top: 2px;
+}
+
+.eval-output-value {
+  color: var(--color-ansi-green);
+  font-family: var(--font-mono);
+}
+
+.eval-output-json {
+  color: var(--color-fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.eval-output-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.eval-output-table th {
+  text-align: left;
+  color: var(--color-ansi-cyan);
+  border-bottom: 1px solid var(--color-border);
+  padding: 2px 6px;
+}
+
+.eval-output-table td {
+  padding: 2px 6px;
+  color: var(--color-fg);
+}
+
+.eval-output-error {
+  color: var(--color-ansi-red);
+  font-family: var(--font-mono);
+  font-style: italic;
+}

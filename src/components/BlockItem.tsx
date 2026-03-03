@@ -19,6 +19,8 @@ import { handleStructuredPaste } from '../lib/pasteHandler';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { DoorHost, DoorExecCard } from './views/DoorHost';
+import { EvalOutput } from './EvalOutput';
+import type { EvalResult } from '../lib/evalEngine';
 
 // Debounce delay for Y.Doc updates (ms)
 // Keeps typing responsive while reducing sync overhead
@@ -1028,6 +1030,11 @@ export function BlockItem(props: BlockItemProps) {
                 }}
               />
             </Show>
+          </Show>
+
+          {/* EVAL OUTPUT: inline result below contentEditable for eval:: blocks */}
+          <Show when={block()?.outputType === 'eval-result' && block()?.output}>
+            <EvalOutput output={block()!.output as EvalResult} />
           </Show>
 
           {/* FLO-376: Wikilink autocomplete popup */}
