@@ -2970,3 +2970,63 @@ body.resizing * {
   font-family: var(--font-mono);
   font-style: italic;
 }
+
+.eval-output-url {
+  position: relative;
+  margin-top: 4px;
+}
+
+.eval-output-url-bar {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px 2px 24px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eval-output-url-iframe {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-dark);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.eval-output-url-iframe.loaded {
+  opacity: 1;
+}
+
+.eval-output-url-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  color: var(--color-fg-muted);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.eval-output-url-resize {
+  height: 6px;
+  cursor: ns-resize;
+  background: transparent;
+  margin: 0 24px;
+}
+
+.eval-output-url-resize:hover {
+  background: var(--color-accent);
+  border-radius: 3px;
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eval-output-url-iframe {
+    transition: none;
+  }
+}

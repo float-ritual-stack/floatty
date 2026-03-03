@@ -6,7 +6,7 @@
  */
 
 export interface EvalResult {
-  type: 'value' | 'json' | 'table' | 'error';
+  type: 'value' | 'json' | 'table' | 'error' | 'url';
   data: unknown;
 }
 
@@ -69,6 +69,10 @@ export function evaluate(
  */
 export function inferType(val: unknown): EvalResult['type'] {
   if (val === null || val === undefined) return 'value';
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) return 'url';
+  }
   if (Array.isArray(val)) {
     if (val.length > 0 && val[0] !== null && typeof val[0] === 'object') return 'table';
     return 'json'; // arrays of primitives or empty → JSON viewer (pretty-prints nicely)

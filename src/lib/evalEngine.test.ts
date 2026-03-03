@@ -45,6 +45,34 @@ describe('inferType', () => {
   it('returns json for array of primitives', () => {
     expect(inferType([1, 2, 3])).toBe('json');
   });
+
+  it('returns url for https string', () => {
+    expect(inferType('https://github.com/org/repo/issues/123')).toBe('url');
+  });
+
+  it('returns url for http string', () => {
+    expect(inferType('http://localhost:3000')).toBe('url');
+  });
+
+  it('returns url for string with leading whitespace', () => {
+    expect(inferType('  https://example.com  ')).toBe('url');
+  });
+
+  it('returns value for non-URL string', () => {
+    expect(inferType('hello world')).toBe('value');
+  });
+
+  it('returns value for string containing but not starting with https', () => {
+    expect(inferType('go to https://example.com')).toBe('value');
+  });
+
+  it('returns value for ftp:// (only http/https)', () => {
+    expect(inferType('ftp://files.example.com')).toBe('value');
+  });
+
+  it('returns json for array of URL strings (not single url)', () => {
+    expect(inferType(['https://a.com', 'https://b.com'])).toBe('json');
+  });
 });
 
 describe('evaluate', () => {
