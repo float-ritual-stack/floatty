@@ -21,6 +21,7 @@ import { registerCtxRouterHook } from './hooks/ctxRouterHook';
 import { registerOutlinksHook } from './hooks/outlinksHook';
 import { loadDoors, cleanupDoorDeps } from './doorLoader';
 import { doorRegistry } from './doorRegistry';
+import { registerFuncIndexHook } from './funcRegistry';
 
 // Re-export registry and types for convenience
 export { registry } from './registry';
@@ -76,6 +77,7 @@ export function registerHandlers(): void {
   // Register EventBus subscriptions (block lifecycle hooks)
   registerCtxRouterHook();
   registerOutlinksHook();
+  registerFuncIndexHook();
 
   console.log('[handlers] Registered handlers:', registry.getRegisteredPrefixes().join(', '));
   console.log('[handlers] Registered hooks:', hookRegistry.getHookIds().join(', '));

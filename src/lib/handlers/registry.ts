@@ -6,6 +6,7 @@
  */
 
 import type { BlockHandler } from './types';
+import { funcMetaHandler } from './funcRegistry';
 
 // ═══════════════════════════════════════════════════════════════
 // REGISTRY CLASS
@@ -13,6 +14,7 @@ import type { BlockHandler } from './types';
 
 export class HandlerRegistry {
   private handlers: BlockHandler[] = [];
+  private funcPrefixes: Set<string> = new Set();
 
   /**
    * Register a new handler
@@ -27,9 +29,18 @@ export class HandlerRegistry {
    */
   findHandler(content: string): BlockHandler | null {
     const trimmed = content.trim().toLowerCase();
-    return this.handlers.find(h =>
+    // Registered handlers win (static prefixes)
+    const registered = this.handlers.find(h =>
       h.prefixes.some(p => trimmed.startsWith(p.toLowerCase()))
-    ) ?? null;
+    );
+    if (registered) return registered;
+
+    // Fallback: check func-defined prefixes
+    for (const fp of this.funcPrefixes) {
+      if (trimmed.startsWith(fp)) return funcMetaHandler;
+    }
+
+    return null;
   }
 
   /**
@@ -58,10 +69,25 @@ export class HandlerRegistry {
   }
 
   /**
+   * Update the set of func-defined prefixes (called on block changes).
+   */
+  updateFuncPrefixes(prefixes: Set<string>): void {
+    this.funcPrefixes = prefixes;
+  }
+
+  /**
+   * Get func-defined prefixes (for debugging/testing).
+   */
+  getFuncPrefixes(): Set<string> {
+    return this.funcPrefixes;
+  }
+
+  /**
    * Clear all handlers (for HMR cleanup)
    */
   clear(): void {
     this.handlers = [];
+    this.funcPrefixes = new Set();
   }
 }
 
