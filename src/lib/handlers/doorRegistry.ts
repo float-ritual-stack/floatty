@@ -11,7 +11,7 @@
 
 import { createSignal } from 'solid-js';
 import type { Component, Accessor } from 'solid-js';
-import type { DoorViewProps } from './doorTypes';
+import type { DoorViewProps, DoorMeta } from './doorTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -22,6 +22,7 @@ interface DoorEntry {
   setView: (v: Component<DoorViewProps>) => void;
   settings: Accessor<Record<string, unknown>>;
   setSettings: (s: Record<string, unknown>) => void;
+  meta: DoorMeta;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -30,12 +31,27 @@ interface DoorEntry {
 
 export class DoorRegistry {
   private doors = new Map<string, DoorEntry>();
+  /** Structural version — bumps on register/unregister so sidebar can react */
+  private version: Accessor<number>;
+  private setVersion: (v: number) => void;
+  private versionCounter = 0;
+
+  constructor() {
+    const [version, setVersion] = createSignal(0);
+    this.version = version;
+    this.setVersion = setVersion;
+  }
+
+  private bumpVersion(): void {
+    this.setVersion(++this.versionCounter);
+  }
 
   /** Register a new door view + settings. Creates signal pair. */
   register(
     doorId: string,
     view: Component<DoorViewProps>,
-    settings: Record<string, unknown> = {}
+    settings: Record<string, unknown> = {},
+    meta?: DoorMeta,
   ): void {
     const [viewSig, setView] = createSignal<Component<DoorViewProps>>(view);
     const [settingsSig, setSettings] = createSignal<Record<string, unknown>>(settings);
@@ -44,21 +60,26 @@ export class DoorRegistry {
       setView: (v) => setView(() => v),  // Thunk wrap — prevents SolidJS unwrapping
       settings: settingsSig,
       setSettings,
+      meta: meta ?? { id: doorId, name: doorId },
     });
+    // Notify sidebar signal of structural change
+    this.bumpVersion();
   }
 
   /** Update an existing door (hot reload path). Falls back to register if missing. */
   update(
     doorId: string,
     view: Component<DoorViewProps>,
-    settings: Record<string, unknown> = {}
+    settings: Record<string, unknown> = {},
+    meta?: DoorMeta,
   ): void {
     const entry = this.doors.get(doorId);
     if (entry) {
       entry.setView(view);
       entry.setSettings(settings);
+      if (meta) entry.meta = meta;
     } else {
-      this.register(doorId, view, settings);
+      this.register(doorId, view, settings, meta);
     }
   }
 
@@ -77,14 +98,37 @@ export class DoorRegistry {
     return this.doors.has(doorId);
   }
 
+  /** Get meta for a door */
+  getMeta(doorId: string): DoorMeta | undefined {
+    return this.doors.get(doorId)?.meta;
+  }
+
+  /**
+   * Get sidebar-eligible door IDs with their meta.
+   * Reading this.version inside a createMemo makes it reactive to structural changes.
+   */
+  getSidebarDoors(): { id: string; meta: DoorMeta }[] {
+    // Touch version signal so callers re-run on register/unregister
+    this.version();
+    const result: { id: string; meta: DoorMeta }[] = [];
+    for (const [id, entry] of this.doors) {
+      if (entry.meta.sidebarEligible) {
+        result.push({ id, meta: entry.meta });
+      }
+    }
+    return result;
+  }
+
   /** Remove a door from the registry */
   unregister(doorId: string): void {
     this.doors.delete(doorId);
+    this.bumpVersion();
   }
 
   /** Clear all entries (HMR cleanup) */
   clear(): void {
     this.doors.clear();
+    this.bumpVersion();
   }
 
   /** Get all registered door IDs (debugging) */

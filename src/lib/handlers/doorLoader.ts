@@ -242,14 +242,14 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
 
     // Register view in DoorRegistry (if view door)
     if (door.kind === 'view' && door.view) {
-      doorRegistry.register(meta.id, door.view, settings);
+      doorRegistry.register(meta.id, door.view, settings, meta);
     }
 
     // Register handler in HandlerRegistry via adapter
     const handler = doorToBlockHandler(door, meta, settings);
     registry.register(handler);
 
-    console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')})`);
+    console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')}${meta.sidebarEligible ? ', sidebar' : ''})`);
     return { doorId: meta.id, ok: true };
   }));
 
@@ -312,7 +312,7 @@ async function reloadDoor(
 
     // Re-register view
     if (door.kind === 'view' && door.view) {
-      doorRegistry.update(meta.id, door.view, settings);
+      doorRegistry.update(meta.id, door.view, settings, meta);
     }
 
     // Re-register handler

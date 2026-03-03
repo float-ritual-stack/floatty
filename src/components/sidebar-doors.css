@@ -60,6 +60,8 @@
   flex: 1;
   overflow: auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* When ctx panel is inside the sidebar door container,

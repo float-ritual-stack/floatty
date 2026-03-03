@@ -1,16 +1,18 @@
 /**
  * SidebarDoorContainer — Tabbed container wrapping sidebar panels
  *
- * Phase 1: single "ctx" tab rendering ContextSidebar.
- * Phase 2+: additional tabs from DoorRegistry (sidebarEligible doors).
+ * Phase 2: "ctx" tab (built-in) + sidebarEligible doors from DoorRegistry.
  *
  * Focus contract: no tabIndex or onKeyDown on panels —
  * sidebar is display-only, main app owns focus.
  */
 
-import { Show, For } from 'solid-js';
+import { Show, For, createMemo } from 'solid-js';
+import { Dynamic } from 'solid-js/web';
 import { ContextSidebar } from './ContextSidebar';
 import { createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
+import { doorRegistry } from '../lib/handlers/doorRegistry';
+import { getServerAccess } from './views/DoorHost';
 import './sidebar-doors.css';
 
 interface SidebarDoorContainerProps {
@@ -18,29 +20,37 @@ interface SidebarDoorContainerProps {
   getOutlinerPaneId: () => string | null;
 }
 
-// Phase 1: static label map. Phase 2: read from DoorRegistry meta.
-const DOOR_LABELS: Record<string, string> = {
-  ctx: 'ctx',
-};
-
 export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
   const store = createSidebarDoorStore();
+
+  // Get the view component for the active door (if it's a registry door, not built-in ctx)
+  const activeView = createMemo(() => {
+    const id = store.activeDoorId();
+    if (id === 'ctx') return null; // Built-in, rendered directly
+    return doorRegistry.getView(id) ?? null;
+  });
+
+  const activeSettings = createMemo(() => {
+    const id = store.activeDoorId();
+    if (id === 'ctx') return {};
+    return doorRegistry.getSettings(id);
+  });
 
   return (
     <aside class="sidebar-door-container" role="complementary" aria-label="Sidebar doors">
       {/* Tab strip */}
       <div class="sidebar-door-tabs" role="tablist" aria-label="Sidebar door tabs">
-        <For each={store.pinnedDoors()}>
-          {(doorId) => (
+        <For each={store.allDoors()}>
+          {(door) => (
             <button
               class="sidebar-door-tab"
               role="tab"
-              id={`sidebar-tab-${doorId}`}
-              aria-selected={store.activeDoorId() === doorId}
-              aria-controls={store.activeDoorId() === doorId ? `sidebar-panel-${doorId}` : undefined}
-              onClick={() => store.setActiveDoorId(doorId)}
+              id={`sidebar-tab-${door.id}`}
+              aria-selected={store.activeDoorId() === door.id}
+              aria-controls={store.activeDoorId() === door.id ? `sidebar-panel-${door.id}` : undefined}
+              onClick={() => store.setActiveDoorId(door.id)}
             >
-              {DOOR_LABELS[doorId] ?? doorId}
+              {door.label}
             </button>
           )}
         </For>
@@ -53,8 +63,19 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
         id={`sidebar-panel-${store.activeDoorId()}`}
         aria-labelledby={`sidebar-tab-${store.activeDoorId()}`}
       >
+        {/* Built-in: ctx sidebar */}
         <Show when={store.activeDoorId() === 'ctx'}>
           <ContextSidebar visible={props.visible} />
+        </Show>
+
+        {/* Registry doors: render via Dynamic */}
+        <Show when={store.activeDoorId() !== 'ctx' && activeView()}>
+          <Dynamic
+            component={activeView()!}
+            data={null}
+            settings={activeSettings()}
+            server={getServerAccess()}
+          />
         </Show>
       </div>
     </aside>
