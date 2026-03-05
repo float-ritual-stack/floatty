@@ -26,11 +26,22 @@ const DEFAULT_VERSIONS: Record<string, string> = {
  * Keeps ESM imports intact for the browser import map.
  */
 export function transformJsx(source: string): string {
-  // Strip export default — we'll detect the component by name or __ArtifactDefault__
-  // Handle: export default function Foo, export default Foo, export default () =>
-  const cleaned = source
-    .replace(/export\s+default\s+function\s+(\w+)/g, 'function $1')
+  // Capture the default export name so we can assign __ArtifactDefault__ after transform.
+  // In ES modules, top-level declarations are module-scoped (NOT on globalThis),
+  // so we must explicitly assign the component to a known variable.
+  let defaultExportName: string | null = null;
+
+  let cleaned = source
+    .replace(/export\s+default\s+function\s+(\w+)/g, (_match, name) => {
+      defaultExportName = name;
+      return `function ${name}`;
+    })
     .replace(/export\s+default\s+(?!function)/g, 'const __ArtifactDefault__ = ');
+
+  // If we found `export default function Foo`, append the assignment
+  if (defaultExportName) {
+    cleaned += `\nconst __ArtifactDefault__ = ${defaultExportName};\n`;
+  }
 
   const result = transform(cleaned, {
     transforms: ['jsx'],

@@ -16,10 +16,11 @@ describe('transformJsx', () => {
     expect(result).toContain("import React from 'react'");
   });
 
-  it('strips export default function', () => {
+  it('strips export default function and assigns __ArtifactDefault__', () => {
     const source = `export default function MyComponent() { return <p>hi</p>; }`;
     const result = transformJsx(source);
     expect(result).toContain('function MyComponent');
+    expect(result).toContain('__ArtifactDefault__');
     expect(result).not.toContain('export default');
   });
 
