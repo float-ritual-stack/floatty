@@ -1872,7 +1872,7 @@ fn get_siblings<T: ReadTxn>(
         })
         .collect();
 
-    let after_end = (pos + 1 + radius).min(sibling_ids.len());
+    let after_end = pos.saturating_add(1).saturating_add(radius).min(sibling_ids.len());
     let after: Vec<BlockRef> = sibling_ids[(pos + 1)..after_end]
         .iter()
         .map(|id| BlockRef {
@@ -2087,6 +2087,10 @@ async fn get_block(
         // Parse include directives
         let includes = parse_includes(&ctx_query.include);
 
+        // Cap user-controlled params to prevent abuse
+        let sibling_radius = ctx_query.sibling_radius.min(50);
+        let max_depth = ctx_query.max_depth.min(100);
+
         // Build context fields based on include directives
         let ancestors = if includes.contains("ancestors") {
             Some(get_ancestors(&blocks_map, &txn, &id))
@@ -2095,7 +2099,7 @@ async fn get_block(
         };
 
         let siblings = if includes.contains("siblings") {
-            Some(get_siblings(&blocks_map, &txn, &id, ctx_query.sibling_radius))
+            Some(get_siblings(&blocks_map, &txn, &id, sibling_radius))
         } else {
             None
         };
@@ -2107,13 +2111,13 @@ async fn get_block(
         };
 
         let tree = if includes.contains("tree") {
-            Some(get_subtree(&blocks_map, &txn, &id, ctx_query.max_depth))
+            Some(get_subtree(&blocks_map, &txn, &id, max_depth))
         } else {
             None
         };
 
         let token_estimate = if includes.contains("token_estimate") {
-            Some(compute_token_estimate(&blocks_map, &txn, &id, ctx_query.max_depth))
+            Some(compute_token_estimate(&blocks_map, &txn, &id, max_depth))
         } else {
             None
         };

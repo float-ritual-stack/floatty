@@ -166,11 +166,11 @@ curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks" |
 ```bash
 # Ancestors + siblings (1 API call replaces 3+ roundtrips)
 curl -H "Authorization: Bearer $KEY" \
-  "$URL/api/v1/blocks/$ID?include=ancestors,siblings&sibling_radius=2"
+  "http://127.0.0.1:$PORT/api/v1/blocks/$ID?include=ancestors,siblings&sibling_radius=2"
 
 # Full subtree with size estimate (agent budget planning)
 curl -H "Authorization: Bearer $KEY" \
-  "$URL/api/v1/blocks/$ID?include=tree,token_estimate&max_depth=3"
+  "http://127.0.0.1:$PORT/api/v1/blocks/$ID?include=tree,token_estimate&max_depth=3"
 ```
 
 | Include | What it adds |
