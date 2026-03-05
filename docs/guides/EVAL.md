@@ -12,7 +12,7 @@ eval:: "hello".toUpperCase()
 → "HELLO"
 
 eval:: new Date().toLocaleDateString()
-→ "3/3/2026"
+→ (locale-formatted date)
 ```
 
 Type `eval::` followed by any JS expression, then press Enter to execute.

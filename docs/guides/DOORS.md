@@ -108,7 +108,7 @@ Doors share the host app's SolidJS runtime (signals, reactivity, rendering). The
 | Door | Prefix | What it does |
 |---|---|---|
 | `daily` | `daily::` | Structured daily notes |
-| `timestamp` | `timestamp::` | Validation tool |
+| `timestamp` | `timestamp::` | Render timestamps in multiple formats |
 | `extractTo` | `extractTo::` | Extract block subtree to new location |
 | `claude-mem` | `mem::` | Claude memory viewer (sidebar iframe) |
 
