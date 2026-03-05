@@ -159,6 +159,30 @@ curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks" |
 - Root block count: `.root_ids | length`
 - Single block: `.blocks["<block-id>"]`
 
+### Block Context Retrieval (FLO-338)
+
+`GET /api/v1/blocks/:id` supports optional `include` query param for context:
+
+```bash
+# Ancestors + siblings (1 API call replaces 3+ roundtrips)
+curl -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/blocks/$ID?include=ancestors,siblings&sibling_radius=2"
+
+# Full subtree with size estimate (agent budget planning)
+curl -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/blocks/$ID?include=tree,token_estimate&max_depth=3"
+```
+
+| Include | What it adds |
+|---------|-------------|
+| `ancestors` | Parent chain up to root (max 10) |
+| `siblings` | N blocks before/after within parent |
+| `children` | Direct children (id + content) |
+| `tree` | Full subtree DFS (max 1000 nodes) |
+| `token_estimate` | totalChars, blockCount, maxDepth |
+
+Search also supports `include_breadcrumb=true` and `include_metadata=true`.
+
 ### Sync & Restore Endpoints
 
 | Endpoint | Method | Purpose |

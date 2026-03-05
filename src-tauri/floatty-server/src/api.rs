@@ -16,7 +16,7 @@
 //!
 //! Block CRUD endpoints:
 //! - GET /api/v1/blocks - All blocks as JSON
-//! - GET /api/v1/blocks/:id - Single block
+//! - GET /api/v1/blocks/:id - Single block (supports ?include=ancestors,siblings,children,tree,token_estimate)
 //! - POST /api/v1/blocks - Create block
 //! - PATCH /api/v1/blocks/:id - Update content
 //! - DELETE /api/v1/blocks/:id - Delete block + subtree
@@ -33,6 +33,7 @@ use chrono::{DateTime, Utc};
 use floatty_core::{events::BlockChange, HookSystem, InheritanceIndex, Origin, PageNameIndex, SearchFilters, SearchService, YDocStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -272,6 +273,90 @@ pub struct InheritedMarkerDto {
     pub value: String,
     /// Block ID of the ancestor this marker was inherited from.
     pub source_block_id: String,
+}
+
+// ============================================================================
+// Block Context Retrieval (FLO-338)
+// ============================================================================
+
+/// Query parameters for GET /api/v1/blocks/:id
+#[derive(Deserialize, Debug, Default)]
+pub struct BlockContextQuery {
+    /// Comma-separated include directives: ancestors, siblings, children, tree, token_estimate
+    #[serde(default)]
+    pub include: Option<String>,
+    /// Number of siblings before/after to include (default: 2)
+    #[serde(default = "default_sibling_radius")]
+    pub sibling_radius: usize,
+    /// Max depth for tree traversal (default: 50, prevents runaway on huge subtrees)
+    #[serde(default = "default_max_depth")]
+    pub max_depth: usize,
+}
+
+fn default_sibling_radius() -> usize { 2 }
+fn default_max_depth() -> usize { 50 }
+
+/// Lightweight block reference for context (ancestors, siblings, children)
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockRef {
+    pub id: String,
+    pub content: String,
+}
+
+/// A block in a subtree traversal, with depth info
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeNode {
+    pub id: String,
+    pub content: String,
+    pub depth: usize,
+    pub child_ids: Vec<String>,
+}
+
+/// Sibling context: blocks before and after within parent's childIds
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SiblingContext {
+    pub before: Vec<BlockRef>,
+    pub after: Vec<BlockRef>,
+}
+
+/// Token/size estimate for a subtree
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenEstimate {
+    pub total_chars: usize,
+    pub block_count: usize,
+    pub max_depth: usize,
+}
+
+/// Extended block response with optional context fields
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockWithContextResponse {
+    #[serde(flatten)]
+    pub block: BlockDto,
+
+    /// Parent chain up to root (nearest first), max 10
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ancestors: Option<Vec<BlockRef>>,
+
+    /// Sibling blocks before/after within parent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub siblings: Option<SiblingContext>,
+
+    /// Direct children (id + content)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<BlockRef>>,
+
+    /// Full subtree DFS traversal
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tree: Option<Vec<TreeNode>>,
+
+    /// Rough size estimate for the subtree
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_estimate: Option<TokenEstimate>,
 }
 
 /// Create block request
@@ -1688,11 +1773,236 @@ async fn get_blocks(
     Ok(Json(BlocksResponse { blocks, root_ids }))
 }
 
-/// GET /api/v1/blocks/:id - Single block
+// ============================================================================
+// Block Context Helpers (FLO-338)
+// ============================================================================
+
+/// Read a block's content from a Y.Map within a transaction.
+fn read_block_content<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Option<String> {
+    let block_map = match blocks_map.get(txn, block_id)? {
+        yrs::Out::YMap(map) => map,
+        _ => return None,
+    };
+    block_map
+        .get(txn, "content")
+        .and_then(|v| match v {
+            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+            _ => None,
+        })
+}
+
+/// Read a block's parentId from Y.Doc.
+fn read_block_parent_id<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Option<String> {
+    let block_map = match blocks_map.get(txn, block_id)? {
+        yrs::Out::YMap(map) => map,
+        _ => return None,
+    };
+    block_map.get(txn, "parentId").and_then(|v| match v {
+        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+        _ => None,
+    })
+}
+
+/// Read a block's childIds from Y.Doc.
+fn read_block_child_ids<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<String> {
+    let block_map = match blocks_map.get(txn, block_id) {
+        Some(yrs::Out::YMap(map)) => map,
+        _ => return Vec::new(),
+    };
+    block_map
+        .get(txn, "childIds")
+        .and_then(|v| match v {
+            yrs::Out::YArray(arr) => Some(
+                arr.iter(txn)
+                    .filter_map(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Walk the parent chain up to root, returning ancestor BlockRefs (nearest first).
+/// Max 10 ancestors to prevent runaway.
+fn get_ancestors<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<BlockRef> {
+    let mut ancestors = Vec::new();
+    let mut current_id = block_id.to_string();
+    for _ in 0..10 {
+        match read_block_parent_id(blocks_map, txn, &current_id) {
+            Some(pid) => {
+                let content = read_block_content(blocks_map, txn, &pid).unwrap_or_default();
+                ancestors.push(BlockRef { id: pid.clone(), content });
+                current_id = pid;
+            }
+            None => break,
+        }
+    }
+    ancestors
+}
+
+/// Get siblings before/after a block within its parent's childIds.
+fn get_siblings<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+    radius: usize,
+) -> SiblingContext {
+    let empty = SiblingContext { before: vec![], after: vec![] };
+
+    let parent_id = match read_block_parent_id(blocks_map, txn, block_id) {
+        Some(id) => id,
+        None => return empty,
+    };
+    let sibling_ids = read_block_child_ids(blocks_map, txn, &parent_id);
+
+    let pos = match sibling_ids.iter().position(|id| id == block_id) {
+        Some(p) => p,
+        None => return empty,
+    };
+
+    let before_start = pos.saturating_sub(radius);
+    let before: Vec<BlockRef> = sibling_ids[before_start..pos]
+        .iter()
+        .map(|id| BlockRef {
+            id: id.clone(),
+            content: read_block_content(blocks_map, txn, id).unwrap_or_default(),
+        })
+        .collect();
+
+    let after_end = pos.saturating_add(1).saturating_add(radius).min(sibling_ids.len());
+    let after: Vec<BlockRef> = sibling_ids[(pos + 1)..after_end]
+        .iter()
+        .map(|id| BlockRef {
+            id: id.clone(),
+            content: read_block_content(blocks_map, txn, id).unwrap_or_default(),
+        })
+        .collect();
+
+    SiblingContext { before, after }
+}
+
+/// Get direct children as BlockRefs.
+fn get_children_refs<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<BlockRef> {
+    read_block_child_ids(blocks_map, txn, block_id)
+        .iter()
+        .map(|id| BlockRef {
+            id: id.clone(),
+            content: read_block_content(blocks_map, txn, id).unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// DFS traversal of subtree, returning TreeNodes with depth.
+/// Respects max_depth and caps total nodes at 1000.
+fn get_subtree<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    root_id: &str,
+    max_depth: usize,
+) -> Vec<TreeNode> {
+    let mut result = Vec::new();
+    let mut stack: Vec<(String, usize)> = Vec::new();
+
+    // Start with root's children at depth 1
+    let root_children = read_block_child_ids(blocks_map, txn, root_id);
+    for child_id in root_children.into_iter().rev() {
+        stack.push((child_id, 1));
+    }
+
+    while let Some((id, depth)) = stack.pop() {
+        if result.len() >= 1000 { break; }
+
+        let content = read_block_content(blocks_map, txn, &id).unwrap_or_default();
+        let child_ids = read_block_child_ids(blocks_map, txn, &id);
+
+        // Push children for further traversal if within depth limit
+        if depth < max_depth {
+            for child_id in child_ids.iter().rev() {
+                stack.push((child_id.clone(), depth + 1));
+            }
+        }
+
+        result.push(TreeNode {
+            id: id.clone(),
+            content,
+            depth,
+            child_ids,
+        });
+    }
+
+    result
+}
+
+/// Compute a rough token estimate for a subtree.
+fn compute_token_estimate<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    root_id: &str,
+    max_depth: usize,
+) -> TokenEstimate {
+    let mut total_chars = 0usize;
+    let mut block_count = 0usize;
+    let mut deepest = 0usize;
+    let mut stack: Vec<(String, usize)> = Vec::new();
+
+    // Include root content
+    if let Some(content) = read_block_content(blocks_map, txn, root_id) {
+        total_chars += content.chars().count();
+    }
+    block_count += 1;
+
+    let root_children = read_block_child_ids(blocks_map, txn, root_id);
+    for child_id in root_children.into_iter().rev() {
+        stack.push((child_id, 1));
+    }
+
+    while let Some((id, depth)) = stack.pop() {
+        if block_count >= 5000 { break; } // Safety cap
+
+        if let Some(content) = read_block_content(blocks_map, txn, &id) {
+            total_chars += content.chars().count();
+        }
+        block_count += 1;
+        if depth > deepest { deepest = depth; }
+
+        if depth < max_depth {
+            let child_ids = read_block_child_ids(blocks_map, txn, &id);
+            for child_id in child_ids.into_iter().rev() {
+                stack.push((child_id, depth + 1));
+            }
+        }
+    }
+
+    TokenEstimate {
+        total_chars,
+        block_count,
+        max_depth: deepest,
+    }
+}
+
+/// Parse include directives from comma-separated string.
+fn parse_includes(include: &Option<String>) -> HashSet<String> {
+    include
+        .as_ref()
+        .map(|s| s.split(',').map(|p| p.trim().to_lowercase()).collect())
+        .unwrap_or_default()
+}
+
+/// GET /api/v1/blocks/:id - Single block with optional context
+///
+/// Query parameters:
+/// - `include` (optional): Comma-separated context to include:
+///   ancestors, siblings, children, tree, token_estimate
+/// - `sibling_radius` (optional, default 2): How many siblings before/after
+/// - `max_depth` (optional, default 50): Max depth for tree traversal
 async fn get_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<BlockDto>, ApiError> {
+    axum::extract::Query(ctx_query): axum::extract::Query<BlockContextQuery>,
+) -> Result<Json<BlockWithContextResponse>, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
@@ -1761,7 +2071,7 @@ async fn get_block(
             lookup_inherited(&index, &id)
         };
 
-        Ok(Json(BlockDto {
+        let block_dto = BlockDto {
             id: id.clone(),
             content,
             parent_id,
@@ -1772,7 +2082,56 @@ async fn get_block(
             inherited_markers,
             created_at,
             updated_at,
-        }))
+        };
+
+        // Parse include directives
+        let includes = parse_includes(&ctx_query.include);
+
+        // Cap user-controlled params to prevent abuse
+        let sibling_radius = ctx_query.sibling_radius.min(50);
+        let max_depth = ctx_query.max_depth.min(100);
+
+        // Build context fields based on include directives
+        let ancestors = if includes.contains("ancestors") {
+            Some(get_ancestors(&blocks_map, &txn, &id))
+        } else {
+            None
+        };
+
+        let siblings = if includes.contains("siblings") {
+            Some(get_siblings(&blocks_map, &txn, &id, sibling_radius))
+        } else {
+            None
+        };
+
+        let children = if includes.contains("children") {
+            Some(get_children_refs(&blocks_map, &txn, &id))
+        } else {
+            None
+        };
+
+        let tree = if includes.contains("tree") {
+            Some(get_subtree(&blocks_map, &txn, &id, max_depth))
+        } else {
+            None
+        };
+
+        let token_estimate = if includes.contains("token_estimate") {
+            Some(compute_token_estimate(&blocks_map, &txn, &id, max_depth))
+        } else {
+            None
+        };
+
+        let response = BlockWithContextResponse {
+            block: block_dto,
+            ancestors,
+            siblings,
+            children,
+            tree,
+            token_estimate,
+        };
+
+        Ok(Json(response))
     } else {
         Err(ApiError::NotFound(id))
     }
@@ -2539,6 +2898,12 @@ pub struct BlockSearchQuery {
     /// Filter by parent ID (search within subtree)
     #[serde(default)]
     pub parent_id: Option<String>,
+    /// Include breadcrumb (parent chain) per hit
+    #[serde(default)]
+    pub include_breadcrumb: Option<bool>,
+    /// Include block metadata per hit
+    #[serde(default)]
+    pub include_metadata: Option<bool>,
 }
 
 fn default_search_limit() -> usize {
@@ -2556,6 +2921,12 @@ pub struct BlockSearchHit {
     /// Block content (truncated for display)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// Parent chain as content strings (nearest first), max 5 levels
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub breadcrumb: Option<Vec<String>>,
+    /// Block metadata (markers, wikilinks, etc)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// Full-text search response
@@ -2579,11 +2950,14 @@ pub struct BlockSearchResponse {
 /// - `types` (optional): Comma-separated block types to filter (e.g., "sh,ai")
 /// - `has_markers` (optional): Filter by marker presence (true/false)
 /// - `parent_id` (optional): Search within a specific subtree
+/// - `include_breadcrumb` (optional): Include parent chain per hit (max 5 levels)
+/// - `include_metadata` (optional): Include block metadata per hit
 ///
 /// # Example
 ///
 /// ```text
 /// GET /api/v1/search?q=floatty&limit=10&types=sh,ctx
+/// GET /api/v1/search?q=FLO-414&include_breadcrumb=true&include_metadata=true
 /// ```
 async fn search_blocks(
     State(state): State<AppState>,
@@ -2611,43 +2985,79 @@ async fn search_blocks(
 
     let total = hits.len();
 
+    let want_breadcrumb = query.include_breadcrumb.unwrap_or(false);
+    let want_metadata = query.include_metadata.unwrap_or(false);
+
     // Hydrate content from Y.Doc for each hit
     let hits: Vec<BlockSearchHit> = {
         let doc = state.store.doc();
         let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
         let txn = doc_guard.transact();
 
+        let blocks_map = txn.get_map("blocks");
+
         hits.into_iter()
             .map(|h| {
-                // Look up content from Y.Doc
-                let content = txn
-                    .get_map("blocks")
-                    .and_then(|blocks| blocks.get(&txn, &h.block_id))
-                    .and_then(|v| match v {
-                        yrs::Out::YMap(block_map) => Some(block_map),
-                        _ => None,
-                    })
-                    .and_then(|block_map| {
-                        block_map.get(&txn, "content").and_then(|v| match v {
-                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                let (content, breadcrumb, metadata) = if let Some(ref bmap) = blocks_map {
+                    // Look up content
+                    let content = bmap
+                        .get(&txn, &h.block_id)
+                        .and_then(|v| match v {
+                            yrs::Out::YMap(block_map) => Some(block_map),
                             _ => None,
                         })
-                    })
-                    .map(|c| {
-                        // Truncate for display (first 200 chars - enough for wikilinks)
-                        // Use char boundary to avoid splitting UTF-8 multi-byte characters
-                        if c.chars().count() > 200 {
-                            let truncated: String = c.chars().take(200).collect();
-                            format!("{}...", truncated)
-                        } else {
-                            c
-                        }
-                    });
+                        .and_then(|block_map| {
+                            block_map.get(&txn, "content").and_then(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                _ => None,
+                            })
+                        })
+                        .map(|c| {
+                            if c.chars().count() > 200 {
+                                let truncated: String = c.chars().take(200).collect();
+                                format!("{}...", truncated)
+                            } else {
+                                c
+                            }
+                        });
+
+                    // Breadcrumb: walk parent chain, collect content strings (max 5)
+                    let breadcrumb = if want_breadcrumb {
+                        let ancestors = get_ancestors(bmap, &txn, &h.block_id);
+                        let crumbs: Vec<String> = ancestors
+                            .into_iter()
+                            .take(5)
+                            .map(|a| a.content)
+                            .collect();
+                        if crumbs.is_empty() { None } else { Some(crumbs) }
+                    } else {
+                        None
+                    };
+
+                    // Metadata from Y.Doc
+                    let metadata = if want_metadata {
+                        bmap.get(&txn, &h.block_id)
+                            .and_then(|v| match v {
+                                yrs::Out::YMap(block_map) => block_map
+                                    .get(&txn, "metadata")
+                                    .and_then(|m| extract_metadata_from_yrs(m, &txn)),
+                                _ => None,
+                            })
+                    } else {
+                        None
+                    };
+
+                    (content, breadcrumb, metadata)
+                } else {
+                    (None, None, None)
+                };
 
                 BlockSearchHit {
                     block_id: h.block_id,
                     score: h.score,
                     content,
+                    breadcrumb,
+                    metadata,
                 }
             })
             .collect()
