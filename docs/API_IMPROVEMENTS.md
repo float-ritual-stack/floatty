@@ -23,16 +23,9 @@ POST /api/v1/blocks/batch
 
 ---
 
-### 2. No Search Endpoint
+### 2. ~~No Search Endpoint~~ SHIPPED (Tantivy full-text search)
 
-**Pain**: Must fetch all 6,790 blocks and filter client-side to find blocks by content pattern.
-
-**Want**:
-```
-GET /api/v1/blocks/search?q=ctx::2026-01-07&type=text
-```
-
-**Priority**: High (essential for intelligent gardening)
+`GET /api/v1/search?q=<query>` with optional `include_breadcrumb=true` and `include_metadata=true`.
 
 ---
 
@@ -58,16 +51,9 @@ PATCH /api/v1/blocks/:id
 
 ---
 
-### 5. No Tree Operations
+### 5. ~~No Tree Operations~~ SHIPPED (PR #160, FLO-338)
 
-**Pain**: Getting children requires separate call per block, or parsing the full dump.
-
-**Want**:
-```
-GET /api/v1/blocks/:id/tree?depth=2  # Returns block + 2 levels of descendants
-```
-
-**Priority**: Medium (reduces round-trips for exploration)
+`GET /api/v1/blocks/:id?include=tree,children,ancestors,siblings,token_estimate` — context in a single call. See CLAUDE.md for full docs.
 
 ---
 

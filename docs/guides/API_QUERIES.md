@@ -44,6 +44,34 @@ curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks/{i
 }
 ```
 
+## Context Retrieval (FLO-338)
+
+### Block with ancestors and siblings
+```bash
+curl -s -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/blocks/{id}?include=ancestors,siblings&sibling_radius=3"
+```
+
+### Subtree with token estimate
+```bash
+curl -s -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/blocks/{id}?include=tree,token_estimate&max_depth=3"
+```
+
+| Include | What it adds |
+|---------|-------------|
+| `ancestors` | Parent chain up to root (max 10) |
+| `siblings` | N blocks before/after within parent (default radius: 2) |
+| `children` | Direct children (id + content) |
+| `tree` | Full subtree DFS (max 1000 nodes) |
+| `token_estimate` | totalChars, blockCount, maxDepth |
+
+### Search with breadcrumbs
+```bash
+curl -s -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/search?q=my+query&include_breadcrumb=true&include_metadata=true"
+```
+
 ## Time-Based Queries
 
 Timestamps are milliseconds since epoch.
