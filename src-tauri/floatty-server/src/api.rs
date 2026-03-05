@@ -1950,7 +1950,7 @@ fn compute_token_estimate<T: ReadTxn>(
 
     // Include root content
     if let Some(content) = read_block_content(blocks_map, txn, root_id) {
-        total_chars += content.len();
+        total_chars += content.chars().count();
     }
     block_count += 1;
 
@@ -1963,7 +1963,7 @@ fn compute_token_estimate<T: ReadTxn>(
         if block_count >= 5000 { break; } // Safety cap
 
         if let Some(content) = read_block_content(blocks_map, txn, &id) {
-            total_chars += content.len();
+            total_chars += content.chars().count();
         }
         block_count += 1;
         if depth > deepest { deepest = depth; }
@@ -2002,7 +2002,7 @@ async fn get_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
     axum::extract::Query(ctx_query): axum::extract::Query<BlockContextQuery>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Json<BlockWithContextResponse>, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
@@ -2087,11 +2087,6 @@ async fn get_block(
         // Parse include directives
         let includes = parse_includes(&ctx_query.include);
 
-        // If no includes requested, return plain BlockDto (backward compatible)
-        if includes.is_empty() {
-            return Ok(Json(serde_json::to_value(block_dto).unwrap_or_default()));
-        }
-
         // Build context fields based on include directives
         let ancestors = if includes.contains("ancestors") {
             Some(get_ancestors(&blocks_map, &txn, &id))
@@ -2132,7 +2127,7 @@ async fn get_block(
             token_estimate,
         };
 
-        Ok(Json(serde_json::to_value(response).unwrap_or_default()))
+        Ok(Json(response))
     } else {
         Err(ApiError::NotFound(id))
     }
