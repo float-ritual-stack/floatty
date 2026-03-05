@@ -23,6 +23,8 @@ interface DoorEntry {
   settings: Accessor<Record<string, unknown>>;
   setSettings: (s: Record<string, unknown>) => void;
   meta: DoorMeta;
+  /** Handler prefixes — stored for cleanup on unregister/hot-reload */
+  prefixes: string[];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -52,6 +54,7 @@ export class DoorRegistry {
     view: Component<DoorViewProps>,
     settings: Record<string, unknown> = {},
     meta?: DoorMeta,
+    prefixes: string[] = [],
   ): void {
     const [viewSig, setView] = createSignal<Component<DoorViewProps>>(view);
     const [settingsSig, setSettings] = createSignal<Record<string, unknown>>(settings);
@@ -61,6 +64,7 @@ export class DoorRegistry {
       settings: settingsSig,
       setSettings,
       meta: meta ? { ...meta } : { id: doorId, name: doorId },
+      prefixes: [...prefixes],
     });
     // Notify sidebar signal of structural change
     this.bumpVersion();
@@ -72,17 +76,19 @@ export class DoorRegistry {
     view: Component<DoorViewProps>,
     settings: Record<string, unknown> = {},
     meta?: DoorMeta,
+    prefixes?: string[],
   ): void {
     const entry = this.doors.get(doorId);
     if (entry) {
       entry.setView(view);
       entry.setSettings(settings);
+      if (prefixes) entry.prefixes = [...prefixes];
       if (meta) {
         entry.meta = { ...meta };
         this.bumpVersion();
       }
     } else {
-      this.register(doorId, view, settings, meta);
+      this.register(doorId, view, settings, meta, prefixes ?? []);
     }
   }
 
@@ -106,6 +112,11 @@ export class DoorRegistry {
     return this.doors.get(doorId)?.meta;
   }
 
+  /** Get handler prefixes for a door (used by loader for cleanup on unregister/hot-reload) */
+  getPrefixes(doorId: string): string[] | undefined {
+    return this.doors.get(doorId)?.prefixes;
+  }
+
   /**
    * Get sidebar-eligible door IDs with their meta.
    * Reading this.version inside a createMemo makes it reactive to structural changes.
@@ -124,14 +135,17 @@ export class DoorRegistry {
 
   /** Remove a door from the registry */
   unregister(doorId: string): void {
-    this.doors.delete(doorId);
-    this.bumpVersion();
+    if (this.doors.delete(doorId)) {
+      this.bumpVersion();
+    }
   }
 
   /** Clear all entries (HMR cleanup) */
   clear(): void {
-    this.doors.clear();
-    this.bumpVersion();
+    if (this.doors.size > 0) {
+      this.doors.clear();
+      this.bumpVersion();
+    }
   }
 
   /** Get all registered door IDs (debugging) */

@@ -242,7 +242,7 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
 
     // Register view in DoorRegistry (if view door)
     if (door.kind === 'view' && door.view) {
-      doorRegistry.register(meta.id, door.view, settings, meta);
+      doorRegistry.register(meta.id, door.view, settings, meta, door.prefixes);
     }
 
     // Register handler in HandlerRegistry via adapter
@@ -307,12 +307,13 @@ async function reloadDoor(
 
     const { door, meta } = validateDoorModule(mod);
 
-    // Deregister old handler for these prefixes
-    registry.unregisterByPrefixes(door.prefixes);
+    // Deregister old handler by OLD prefixes (handles prefix changes during dev)
+    const oldPrefixes = doorRegistry.getPrefixes(meta.id);
+    registry.unregisterByPrefixes(oldPrefixes ?? door.prefixes);
 
     // Re-register view
     if (door.kind === 'view' && door.view) {
-      doorRegistry.update(meta.id, door.view, settings, meta);
+      doorRegistry.update(meta.id, door.view, settings, meta, door.prefixes);
     }
 
     // Re-register handler
@@ -329,9 +330,11 @@ async function reloadDoor(
  * Unregister a removed door.
  */
 function unregisterDoor(doorId: string): void {
-  // We need the prefixes to unregister from HandlerRegistry.
-  // doorRegistry stores by id; look up existing entry for prefixes.
-  // If we can't determine prefixes, at least clean up the view registry.
+  // Look up old prefixes before removing from doorRegistry
+  const oldPrefixes = doorRegistry.getPrefixes(doorId);
+  if (oldPrefixes) {
+    registry.unregisterByPrefixes(oldPrefixes);
+  }
   doorRegistry.unregister(doorId);
   console.log(`[doors] Unregistered removed door: ${doorId}`);
 }

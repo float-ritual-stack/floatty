@@ -54,10 +54,9 @@ export class HookRegistry {
   private hooksByEvent: Map<HookEvent, Hook[]> = new Map();
 
   /**
-   * Register a hook.
+   * Register a hook. Idempotent — silently skips if hook ID already exists (HMR safe).
    *
    * @param hook - Hook definition
-   * @throws If hook with same ID already exists
    */
   register(hook: Hook): void {
     if (this.hooks.has(hook.id)) {
