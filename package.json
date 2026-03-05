@@ -30,6 +30,7 @@
     "@xterm/xterm": "^5.5.0",
     "fuse.js": "^7.1.0",
     "solid-js": "^1.9.3",
+    "sucrase": "^3.35.1",
     "tauri-plugin-clipboard-api": "2.1.11",
     "tauri-pty": "^0.1.1",
     "tinykeys": "^3.0.0",
