@@ -1849,11 +1849,19 @@ fn get_siblings<T: ReadTxn>(
     txn: &T,
     block_id: &str,
     radius: usize,
-) -> Option<SiblingContext> {
-    let parent_id = read_block_parent_id(blocks_map, txn, block_id)?;
+) -> SiblingContext {
+    let empty = SiblingContext { before: vec![], after: vec![] };
+
+    let parent_id = match read_block_parent_id(blocks_map, txn, block_id) {
+        Some(id) => id,
+        None => return empty,
+    };
     let sibling_ids = read_block_child_ids(blocks_map, txn, &parent_id);
 
-    let pos = sibling_ids.iter().position(|id| id == block_id)?;
+    let pos = match sibling_ids.iter().position(|id| id == block_id) {
+        Some(p) => p,
+        None => return empty,
+    };
 
     let before_start = pos.saturating_sub(radius);
     let before: Vec<BlockRef> = sibling_ids[before_start..pos]
@@ -1873,7 +1881,7 @@ fn get_siblings<T: ReadTxn>(
         })
         .collect();
 
-    Some(SiblingContext { before, after })
+    SiblingContext { before, after }
 }
 
 /// Get direct children as BlockRefs.
@@ -2092,7 +2100,7 @@ async fn get_block(
         };
 
         let siblings = if includes.contains("siblings") {
-            get_siblings(&blocks_map, &txn, &id, ctx_query.sibling_radius)
+            Some(get_siblings(&blocks_map, &txn, &id, ctx_query.sibling_radius))
         } else {
             None
         };
