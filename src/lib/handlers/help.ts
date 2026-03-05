@@ -1,10 +1,10 @@
 /**
  * Help Handler - cats documentation into the outliner
  *
- * Usage:
- *   help:: filter     → loads docs/guides/FILTER.md
- *   help:: keyboard   → loads docs/KEYBOARD.md
- *   help:: handlers   → loads docs/guides/ADDING_HANDLERS.md
+ * Usage: help:: <topic>
+ *
+ * Topics: filter, keyboard, handlers, hooks, events, send, backup,
+ *         full-width, eval, func, doors
  */
 
 import type { BlockHandler, ExecutorActions } from './types';
@@ -21,6 +21,11 @@ const HELP_TOPICS: Record<string, string> = {
   events: 'docs/guides/EVENT_SYSTEM.md',
   send: 'docs/guides/SEND.md',
   backup: 'docs/guides/BACKUP.md',
+  'full-width': 'docs/guides/FULL_WIDTH.md',
+  fullwidth: 'docs/guides/FULL_WIDTH.md',
+  eval: 'docs/guides/EVAL.md',
+  func: 'docs/guides/FUNC.md',
+  doors: 'docs/guides/DOORS.md',
 };
 
 export const helpHandler: BlockHandler = {

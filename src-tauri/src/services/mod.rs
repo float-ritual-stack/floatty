@@ -2,6 +2,7 @@
 
 pub mod clipboard;
 pub mod ctx;
+pub mod door_watcher;
 pub mod doors;
 pub mod execution;
 pub mod hooks;

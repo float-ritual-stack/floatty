@@ -54,14 +54,15 @@ export class HookRegistry {
   private hooksByEvent: Map<HookEvent, Hook[]> = new Map();
 
   /**
-   * Register a hook.
+   * Register a hook. Idempotent — silently skips if hook ID already exists (HMR safe).
    *
    * @param hook - Hook definition
-   * @throws If hook with same ID already exists
    */
   register(hook: Hook): void {
     if (this.hooks.has(hook.id)) {
-      throw new Error(`Hook with id "${hook.id}" already registered`);
+      // Idempotent on HMR — module-level guards reset but singleton registry persists
+      console.debug(`[HookRegistry] Hook "${hook.id}" already registered, skipping`);
+      return;
     }
 
     this.hooks.set(hook.id, hook);

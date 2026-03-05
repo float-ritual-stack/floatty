@@ -65,22 +65,20 @@ async function fetchDailyData(
   date: string,
   serverFetch: (path: string, init?: RequestInit) => Promise<Response>,
 ): Promise<DailyData> {
-  const resp = await serverFetch('/api/v1/blocks');
+  // Parse YYYY-MM-DD as local midnight (not UTC)
+  const [y, m, d] = date.split('-').map(Number);
+  const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+  const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0).getTime();
+
+  // Server-side filtering: date range + ctx marker type
+  const params = `since=${dayStart}&until=${dayEnd}&marker_type=ctx`;
+  const resp = await serverFetch(`/api/v1/blocks?${params}`);
   if (!resp.ok) {
     throw new Error(`API error: ${resp.status} ${resp.statusText}`);
   }
   const { blocks } = (await resp.json()) as { blocks: Array<Record<string, any>> };
 
-  // Parse YYYY-MM-DD as local midnight (not UTC)
-  const [y, m, d] = date.split('-').map(Number);
-  const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-  const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0).getTime();
-  const dayBlocks = blocks.filter(
-    (b: any) => b.createdAt >= dayStart && b.createdAt < dayEnd,
-  );
-
-  const entries: TimelogEntry[] = dayBlocks
-    .filter((b: any) => b.metadata?.markers?.some((m: any) => m.markerType === 'ctx'))
+  const entries: TimelogEntry[] = blocks
     .map((b: any) => ({
       time: new Date(b.createdAt).toLocaleTimeString([], {
         hour: '2-digit',

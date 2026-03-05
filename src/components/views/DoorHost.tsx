@@ -17,7 +17,8 @@ import './doors.css';
 
 // Lazy singleton — reuse createServerAccess from doorSandbox
 let cachedServer: DoorServerAccess | null = null;
-function getServerAccess(): DoorServerAccess {
+/** Shared server access singleton for door views */
+export function getServerAccess(): DoorServerAccess {
   return cachedServer ??= createServerAccess();
 }
 

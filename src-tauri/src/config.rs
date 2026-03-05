@@ -70,6 +70,9 @@ pub struct AggregatorConfig {
     /// Defaults to true in debug builds, false in release builds.
     #[serde(default = "default_show_diagnostics", alias = "dev_mode_visuals")]
     pub show_diagnostics: bool,
+    /// Per-door plugin settings (e.g., [plugins.daily] notes_dir = "...")
+    #[serde(default)]
+    pub plugins: std::collections::HashMap<String, toml::Value>,
     /// Whether this is a dev (debug) build. Populated at load time, not stored in TOML.
     #[serde(skip_deserializing, default)]
     pub is_dev_build: bool,
@@ -156,6 +159,7 @@ impl Default for AggregatorConfig {
             split_collapse_depth: default_split_collapse_depth(),
             initial_collapse_depth: default_initial_collapse_depth(),
             show_diagnostics: default_show_diagnostics(),
+            plugins: std::collections::HashMap::new(),
             is_dev_build: cfg!(debug_assertions),
             data_dir: String::new(), // Populated by load_from
         }

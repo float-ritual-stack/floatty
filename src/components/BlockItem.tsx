@@ -19,6 +19,8 @@ import { handleStructuredPaste } from '../lib/pasteHandler';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { DoorHost, DoorExecCard } from './views/DoorHost';
+import { EvalOutput } from './EvalOutput';
+import type { EvalResult } from '../lib/evalEngine';
 
 // Debounce delay for Y.Doc updates (ms)
 // Keeps typing responsive while reducing sync overhead
@@ -138,6 +140,7 @@ export function BlockItem(props: BlockItemProps) {
   const [tableShowRaw, setTableShowRaw] = createSignal(false);
   let contentRef: HTMLDivElement | undefined;
   let outputFocusRef: HTMLDivElement | undefined;
+  let wrapperRef: HTMLDivElement | undefined;
 
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
   // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
@@ -746,9 +749,14 @@ export function BlockItem(props: BlockItemProps) {
     return `block-content-${type}`;
   };
 
+  const hasCollapsibleOutput = createMemo(() => {
+    const b = block();
+    return b?.outputType === 'eval-result' && !!b?.output;
+  });
+
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-    if (hasChildren) {
+    if (hasChildren || hasCollapsibleOutput()) {
       return isCollapsed() ? '▸' : '▾';
     }
     return '•';
@@ -802,7 +810,13 @@ export function BlockItem(props: BlockItemProps) {
   };
 
   return (
-    <div class="block-wrapper" data-depth={props.depth}>
+    <div
+      ref={wrapperRef}
+      class="block-wrapper"
+      classList={{ 'block-full-width': paneStore.isFullWidth(props.paneId, props.id) }}
+      data-depth={props.depth}
+      style={{ '--block-depth': String(props.depth) }}
+    >
       <div
         class="block-item"
         data-block-id={blockId}
@@ -815,7 +829,7 @@ export function BlockItem(props: BlockItemProps) {
           'block-drag-source': drag.activeDragId() === props.id,
           'block-drop-target': drag.dropTargetId() === props.id,
           'block-drop-invalid': drag.dropTargetId() === props.id && !drag.isValidDrop(),
-          'has-collapsed-children': isCollapsed() && (block()?.childIds?.length ?? 0) > 0,
+          'has-collapsed-children': isCollapsed() && ((block()?.childIds?.length ?? 0) > 0 || hasCollapsibleOutput()),
         }}
         // FLO-278: Removed onMouseDown scroll preservation - was causing race condition
         // with focus routing's scroll lock. CSS class-based scroll lock now handles this.
@@ -1028,6 +1042,11 @@ export function BlockItem(props: BlockItemProps) {
                 }}
               />
             </Show>
+          </Show>
+
+          {/* EVAL OUTPUT: inline result below contentEditable for eval:: blocks */}
+          <Show when={block()?.outputType === 'eval-result' && block()?.output && !isCollapsed()}>
+            <EvalOutput output={block()!.output as EvalResult} />
           </Show>
 
           {/* FLO-376: Wikilink autocomplete popup */}

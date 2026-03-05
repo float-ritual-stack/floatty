@@ -1,24 +1,38 @@
 /**
  * Sidebar Door Store — ephemeral state for sidebar door tabs
  *
- * Phase 1: hardcoded ['ctx'] tab, activeDoorId signal.
- * Phase 2+: door registry integration for sidebarEligible doors.
+ * Phase 2: hardcoded ['ctx'] tab + sidebarEligible doors from DoorRegistry.
  *
  * No Y.Doc coupling — sidebar tab state is ephemeral (resets on app restart).
  */
 
-import { createSignal } from 'solid-js';
+import { createSignal, createMemo } from 'solid-js';
+import { doorRegistry } from '../lib/handlers/doorRegistry';
+
+export interface SidebarDoorInfo {
+  id: string;
+  label: string;
+}
 
 export function createSidebarDoorStore() {
   const [activeDoorId, setActiveDoorId] = createSignal('ctx');
 
-  // Phase 1: hardcoded. Phase 2: read from DoorRegistry where sidebarEligible
-  const PINNED = ['ctx'] as const;
-  const pinnedDoors = () => PINNED;
+  // Hardcoded built-in tabs (always present)
+  const BUILTIN: SidebarDoorInfo[] = [{ id: 'ctx', label: 'ctx' }];
+
+  // Merge built-in + registry sidebar doors (reactive via registry version signal)
+  const allDoors = createMemo((): SidebarDoorInfo[] => {
+    const registryDoors = doorRegistry.getSidebarDoors().map(d => ({
+      id: d.id,
+      label: d.meta.name,
+    }));
+    return [...BUILTIN, ...registryDoors];
+  });
 
   return {
     activeDoorId,
     setActiveDoorId,
-    pinnedDoors,
+    /** All sidebar tabs — built-in + registry doors */
+    allDoors,
   };
 }

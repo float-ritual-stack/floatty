@@ -64,12 +64,13 @@ describe('HookRegistry', () => {
       expect(registry.getHookIds()).toContain('test-hook');
     });
 
-    it('throws on duplicate ID', () => {
+    it('skips duplicate ID silently (HMR-safe)', () => {
       const hook = createTestHook({ id: 'duplicate' });
 
       registry.register(hook);
+      registry.register(hook); // should not throw
 
-      expect(() => registry.register(hook)).toThrow('already registered');
+      expect(registry.getHookIds()).toEqual(['duplicate']);
     });
 
     it('registers hook for multiple events', () => {

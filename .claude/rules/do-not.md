@@ -10,6 +10,10 @@ Critical anti-patterns that will break floatty.
 - Assume behavior is a regression without checking `git show HEAD:file` (the original may already work that way — e.g., output blocks already hid contentEditable before any changes)
 - Add Tauri permissions without: (1) verifying plugin is installed in `Cargo.toml`, (2) checking plugin docs for permission format (many need scope objects, not strings), (3) checking generated schema for available permissions. `Permission X not found` means plugin isn't installed OR permission name is wrong.
 
+## Iframe Sandbox
+
+- Remove `allow-same-origin` from iframe sandbox attributes. In Tauri, iframe content (external URLs, localhost services) is ALWAYS cross-origin from the parent (`tauri://localhost`). Without `allow-same-origin`, the iframe's origin is forced to `null`, which breaks CORS for its own subresources, `canvas.toDataURL()`, cookies, and localStorage. The textbook "`allow-scripts` + `allow-same-origin` = sandbox escape" only applies when iframe content is same-origin with the parent — which never happens in Tauri. Bot reviewers will flag this; they're wrong. See comments in `EvalOutput.tsx`.
+
 ## PTY/Rust
 
 - Remove batching pattern (breaks performance)

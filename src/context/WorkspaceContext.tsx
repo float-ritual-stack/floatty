@@ -94,6 +94,12 @@ export interface PaneStoreInterface {
   goForward: (paneId: string, blockExists: (blockId: string) => boolean) => NavigationEntry | null;
   canGoBack: (paneId: string) => boolean;
   canGoForward: (paneId: string) => boolean;
+  // FLO-211: Unified navigation API
+  zoomTo: (paneId: string, targetBlockId: string | null, options?: { skipHistory?: boolean; skipAutoExpand?: boolean; originBlockId?: string }) => void;
+  consumeHistoryNavigation: (paneId: string) => boolean;
+  // Unit 12.0: Full-width block mode
+  toggleFullWidth: (paneId: string, blockId: string) => void;
+  isFullWidth: (paneId: string, blockId: string) => boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -277,6 +283,12 @@ export function createMockPaneStore(overrides: Partial<PaneStoreInterface> = {})
     goForward: () => null,
     canGoBack: () => false,
     canGoForward: () => false,
+    // FLO-211: Unified navigation API
+    zoomTo: () => {},
+    consumeHistoryNavigation: () => false,
+    // Unit 12.0: Full-width
+    toggleFullWidth: () => {},
+    isFullWidth: () => false,
     ...overrides,
   };
 }

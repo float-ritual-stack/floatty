@@ -19,6 +19,8 @@ import { downloadBinary } from '../lib/binaryExport';
 import { validateForExport, type ValidationWarning } from '../lib/validation';
 import { ExportValidation } from './ExportValidation';
 import { themeStore } from '../hooks/useThemeStore';
+import { IframePaneView } from './views/IframePaneView';
+import type { EvalResult } from '../lib/evalEngine';
 
 interface OutlinerProps {
   paneId: string;
@@ -52,6 +54,15 @@ export function Outliner(props: OutlinerProps) {
 
   // Get current zoomed root for this pane (null = show all roots)
   const zoomedRootId = () => paneStore.getZoomedRootId(props.paneId);
+
+  // Unit 11.0: Detect zoom into an iframe block (url eval-result)
+  const isIframeZoom = createMemo(() => {
+    const id = zoomedRootId();
+    if (!id) return false;
+    const b = store.blocks[id];
+    return b?.outputType === 'eval-result'
+      && (b?.output as EvalResult | undefined)?.type === 'url';
+  });
 
   // FLO-320: Initialize store AFTER Y.Doc is populated (prevents 13.8k block observer storm)
   // Must fire BEFORE the config effect below so store.rootIds is populated for applyCollapseDepth.
@@ -601,6 +612,14 @@ export function Outliner(props: OutlinerProps) {
         e.preventDefault();
         exportToBinary();
       }
+      // Unit 12.0: Cmd+Shift+F - Toggle full-width on focused block
+      else if (isMod && isShift && e.key === 'f') {
+        e.preventDefault();
+        const focused = focusedBlockId();
+        if (focused) {
+          paneStore.toggleFullWidth(props.paneId, focused);
+        }
+      }
     };
 
     document.addEventListener('keydown', handleGlobalKeyDown);
@@ -693,27 +712,38 @@ export function Outliner(props: OutlinerProps) {
               </Key>
             }
           >
-            {/* Zoomed: breadcrumb + single block subtree */}
-            <Breadcrumb blockId={zoomedRootId()!} paneId={props.paneId} />
-            <BlockItem
-              id={zoomedRootId()!}
-              paneId={props.paneId}
-              depth={0}
-              focusedBlockId={focusedBlockId()}
-              onFocus={handleFocus}
-              onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
-              onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
-              isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
-              onSelect={selection.handleSelect}
-              selectionAnchor={selection.selectionAnchor()}
-              getVisibleBlockIds={getVisibleBlockIds}
-            />
-            {/* LinkedReferences: show when zoomed into a page under pages:: */}
-            <Show when={isPageBlock(zoomedRootId()!)}>
-              <LinkedReferences
-                pageBlockId={zoomedRootId()!}
+            {/* Zoomed: full-pane iframe OR breadcrumb + block subtree */}
+            <Show when={isIframeZoom()} fallback={
+              <>
+                <Breadcrumb blockId={zoomedRootId()!} paneId={props.paneId} />
+                <BlockItem
+                  id={zoomedRootId()!}
+                  paneId={props.paneId}
+                  depth={0}
+                  focusedBlockId={focusedBlockId()}
+                  onFocus={handleFocus}
+                  onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
+                  onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
+                  isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
+                  onSelect={selection.handleSelect}
+                  selectionAnchor={selection.selectionAnchor()}
+                  getVisibleBlockIds={getVisibleBlockIds}
+                />
+                {/* LinkedReferences: show when zoomed into a page under pages:: */}
+                <Show when={isPageBlock(zoomedRootId()!)}>
+                  <LinkedReferences
+                    pageBlockId={zoomedRootId()!}
+                    paneId={props.paneId}
+                    onFocusBlock={handleFocus}
+                  />
+                </Show>
+              </>
+            }>
+              <IframePaneView
+                url={String((store.blocks[zoomedRootId()!]?.output as EvalResult)?.data ?? '')}
+                blockId={zoomedRootId()!}
                 paneId={props.paneId}
-                onFocusBlock={handleFocus}
+                onClose={() => paneStore.zoomTo(props.paneId, null)}
               />
             </Show>
           </Show>

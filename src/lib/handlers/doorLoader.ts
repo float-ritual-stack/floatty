@@ -14,7 +14,8 @@
  * from window globals. Rewrite door JS before Blob import.
  */
 
-import { invoke } from '../tauriTypes';
+import { invoke, type AggregatorConfig } from '../tauriTypes';
+import { listen } from '@tauri-apps/api/event';
 import { registry } from './registry';
 import { doorRegistry } from './doorRegistry';
 import { doorToBlockHandler } from './doorAdapter';
@@ -179,6 +180,15 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   const results: DoorLoadResult[] = [];
   const deps = ensureDoorDeps();
 
+  // Fetch config once for plugin settings
+  let pluginSettings: Record<string, Record<string, unknown>> = {};
+  try {
+    const config = await invoke('get_ctx_config', {}) as AggregatorConfig;
+    pluginSettings = (config.plugins ?? {}) as Record<string, Record<string, unknown>>;
+  } catch (err) {
+    console.warn('[doors] Failed to load config for plugin settings:', err);
+  }
+
   let doorInfos: DoorInfo[];
   try {
     doorInfos = await invoke('list_door_files', {});
@@ -227,16 +237,19 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
       );
     }
 
+    // Per-door settings from config.toml [plugins.<id>]
+    const settings = pluginSettings[meta.id] ?? {};
+
     // Register view in DoorRegistry (if view door)
     if (door.kind === 'view' && door.view) {
-      doorRegistry.register(meta.id, door.view, {});
+      doorRegistry.register(meta.id, door.view, settings, meta, door.prefixes);
     }
 
     // Register handler in HandlerRegistry via adapter
-    const handler = doorToBlockHandler(door, meta, {});
+    const handler = doorToBlockHandler(door, meta, settings);
     registry.register(handler);
 
-    console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')})`);
+    console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')}${meta.sidebarEligible ? ', sidebar' : ''})`);
     return { doorId: meta.id, ok: true };
   }));
 
@@ -252,5 +265,97 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   const loaded = results.filter(r => r.ok);
   console.log(`[doors] Loaded ${loaded.length}/${doorInfos.length} doors: [${loaded.map(r => r.doorId).join(', ')}]`);
 
+  // Start hot-reload listener
+  listenForDoorChanges(pluginSettings);
+
   return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HOT RELOAD
+// ═══════════════════════════════════════════════════════════════
+
+interface DoorChangedEvent {
+  doorId: string;
+  removed: boolean;
+}
+
+/**
+ * Reload a single door from disk.
+ * Deregisters old handlers, re-imports JS, validates, and re-registers.
+ * On error: logs and keeps old version (if any).
+ */
+async function reloadDoor(
+  doorId: string,
+  settings: Record<string, unknown>,
+): Promise<void> {
+  const deps = ensureDoorDeps();
+
+  try {
+    const rawJs: string = await invoke('read_door_file', { doorId });
+    const js = rewriteDoorImports(rawJs, deps);
+    const blob = new Blob([js], { type: 'application/javascript' });
+    // Cache-bust: add timestamp to prevent module cache hit
+    const url = URL.createObjectURL(blob);
+
+    let mod: Record<string, unknown>;
+    try {
+      mod = await import(/* @vite-ignore */ url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+
+    const { door, meta } = validateDoorModule(mod);
+
+    // Deregister old handler by OLD prefixes (handles prefix changes during dev)
+    const oldPrefixes = doorRegistry.getPrefixes(meta.id);
+    registry.unregisterByPrefixes(oldPrefixes ?? door.prefixes);
+
+    // Re-register view
+    if (door.kind === 'view' && door.view) {
+      doorRegistry.update(meta.id, door.view, settings, meta, door.prefixes);
+    }
+
+    // Re-register handler
+    const handler = doorToBlockHandler(door, meta, settings);
+    registry.register(handler);
+
+    console.log(`[doors] Hot-reloaded: ${meta.id} (prefixes: ${door.prefixes.join(', ')})`);
+  } catch (err) {
+    console.error(`[doors] Hot-reload failed for ${doorId}, keeping old version:`, err);
+  }
+}
+
+/**
+ * Unregister a removed door.
+ */
+function unregisterDoor(doorId: string): void {
+  // Look up old prefixes before removing from doorRegistry
+  const oldPrefixes = doorRegistry.getPrefixes(doorId);
+  if (oldPrefixes) {
+    registry.unregisterByPrefixes(oldPrefixes);
+  }
+  doorRegistry.unregister(doorId);
+  console.log(`[doors] Unregistered removed door: ${doorId}`);
+}
+
+/**
+ * Listen for `door-changed` events from the Rust file watcher.
+ * Called once after initial loadDoors().
+ */
+function listenForDoorChanges(
+  pluginSettings: Record<string, Record<string, unknown>>,
+): void {
+  listen<DoorChangedEvent>('door-changed', async (event) => {
+    const { doorId, removed } = event.payload;
+
+    if (removed) {
+      unregisterDoor(doorId);
+    } else {
+      const settings = pluginSettings[doorId] ?? {};
+      await reloadDoor(doorId, settings);
+    }
+  }).catch((err) => {
+    console.error('[doors] Failed to set up hot-reload listener:', err);
+  });
 }

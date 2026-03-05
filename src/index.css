@@ -1179,6 +1179,33 @@ body.pane-dragging .terminal-pane-positioned {
   border-top-color: var(--color-indent-guide-active);
 }
 
+/* Unit 12.0: Full-width block mode
+   Breaks output area out of indentation to use full pane width.
+   Block bullet/content row stays indented (preserves outline context). */
+.block-full-width {
+  /* Structural constants for full-width calc:
+     --block-gutter: bullet (20px) + drag handle (16px) + gap (4px) = 40px
+     --outliner-pad: outliner-container padding (16px)
+     --indent-per-level: indent-width (28px) + padding (4px) + border (1px) = 33px */
+  --block-gutter: 40px;
+  --outliner-pad: 16px;
+  --fw-pull-left: calc(var(--outliner-pad) + var(--block-depth, 0) * (var(--block-indent-width) + 5px) + var(--block-gutter));
+  --fw-pull-right: var(--outliner-pad);
+  border-left: 2px solid var(--color-accent);
+}
+
+.block-full-width .eval-output,
+.block-full-width .door-host-container,
+.block-full-width .search-results-view {
+  position: relative;
+  z-index: 1;
+  margin-left: calc(-1 * var(--fw-pull-left));
+  margin-right: calc(-1 * var(--fw-pull-right));
+  padding-left: var(--outliner-pad);
+  padding-right: var(--outliner-pad);
+  background: var(--color-bg);
+}
+
 /* Editing (NOT selected): accent border when cursor is in block */
 .block-item:not(.block-selected):focus-within .block-content {
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);
@@ -2920,4 +2947,169 @@ body.resizing * {
 
 .command-bar-command .command-bar-item-label {
   color: var(--color-ansi-cyan);
+}
+
+/* ================================================
+   Eval Output (eval:: block results)
+   ================================================ */
+
+.eval-output {
+  padding: 4px 8px 4px 24px;
+  font-size: 11px;
+  border-top: 1px solid var(--color-border);
+  margin-top: 2px;
+}
+
+.eval-output-value {
+  color: var(--color-ansi-green);
+  font-family: var(--font-mono);
+}
+
+.eval-output-json {
+  color: var(--color-fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.eval-output-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.eval-output-table th {
+  text-align: left;
+  color: var(--color-ansi-cyan);
+  border-bottom: 1px solid var(--color-border);
+  padding: 2px 6px;
+}
+
+.eval-output-table td {
+  padding: 2px 6px;
+  color: var(--color-fg);
+}
+
+.eval-output-error {
+  color: var(--color-ansi-red);
+  font-family: var(--font-mono);
+  font-style: italic;
+}
+
+.eval-output-url {
+  position: relative;
+  margin-top: 4px;
+}
+
+.eval-output-url-bar {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px 2px 24px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eval-output-url-iframe {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-dark);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.eval-output-url-iframe.loaded {
+  opacity: 1;
+}
+
+.eval-output-url-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  color: var(--color-fg-muted);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.eval-output-url-resize {
+  height: 12px;
+  margin-top: -4px;
+  position: relative;
+  z-index: 1;
+  cursor: ns-resize;
+  border-top: 2px solid var(--color-border);
+  background: transparent;
+  margin-left: 24px;
+  margin-right: 24px;
+}
+
+.eval-output-url-resize:hover {
+  border-top-color: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eval-output-url-iframe {
+    transition: none;
+  }
+}
+
+/* ═══════════════════════════════════════
+   IframePaneView — full-pane iframe zoom
+   ═══════════════════════════════════════ */
+
+.iframe-pane-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  outline: none;
+}
+
+.iframe-pane-url-bar {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.iframe-pane-url-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iframe-pane-content {
+  flex: 1;
+  min-height: 0;
+}
+
+.iframe-pane-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--color-bg-dark);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.iframe-pane-iframe.loaded {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iframe-pane-iframe {
+    transition: none;
+  }
 }
