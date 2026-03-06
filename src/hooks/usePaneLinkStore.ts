@@ -18,6 +18,15 @@ function createPaneLinkStore() {
   const [linkingBlockId, setLinkingBlockId] = createSignal<string | null>(null);
   const [linkingSourcePaneId, setLinkingSourcePaneId] = createSignal<string | null>(null);
 
+  /** Immutable map update helper */
+  function updateLinks(fn: (map: Map<string, string>) => void): void {
+    setLinks(prev => {
+      const next = new Map(prev);
+      fn(next);
+      return next;
+    });
+  }
+
   function getLinkedPane(blockId: string): string | null {
     const paneId = links().get(blockId);
     if (!paneId) return null;
@@ -25,42 +34,30 @@ function createPaneLinkStore() {
     const tabId = findTabIdByPaneId(paneId);
     if (!tabId) {
       // Pane was closed — clean up stale link
-      setLinks(prev => {
-        const next = new Map(prev);
-        next.delete(blockId);
-        return next;
-      });
+      updateLinks(m => m.delete(blockId));
       return null;
     }
     return paneId;
   }
 
-  function setLink(blockId: string, paneId: string) {
-    setLinks(prev => {
-      const next = new Map(prev);
-      next.set(blockId, paneId);
-      return next;
-    });
+  function setLink(blockId: string, paneId: string): void {
+    updateLinks(m => m.set(blockId, paneId));
   }
 
-  function clearLink(blockId: string) {
-    setLinks(prev => {
-      const next = new Map(prev);
-      next.delete(blockId);
-      return next;
-    });
+  function clearLink(blockId: string): void {
+    updateLinks(m => m.delete(blockId));
   }
 
   function hasLink(blockId: string): boolean {
     return links().has(blockId);
   }
 
-  function startLinking(blockId: string, sourcePaneId: string) {
+  function startLinking(blockId: string, sourcePaneId: string): void {
     setLinkingBlockId(blockId);
     setLinkingSourcePaneId(sourcePaneId);
   }
 
-  function stopLinking() {
+  function stopLinking(): void {
     setLinkingBlockId(null);
     setLinkingSourcePaneId(null);
   }

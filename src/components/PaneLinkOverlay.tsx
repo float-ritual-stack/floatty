@@ -80,6 +80,8 @@ export function PaneLinkOverlay() {
     <Show when={isActive()}>
       <div
         class="pane-link-scrim"
+        role="dialog"
+        aria-label="Link block to outliner pane — press a letter to select, Escape to cancel"
         onClick={() => paneLinkStore.stopLinking()}
       >
         <For each={positioned()}>

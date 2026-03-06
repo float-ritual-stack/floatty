@@ -23,6 +23,9 @@ function resolveTilde(filePath: string): string {
   return filePath;
 }
 
+// Track blob URLs per block for cleanup on re-execute
+const activeBlobUrls = new Map<string, string>();
+
 export const artifactHandler: BlockHandler = {
   prefixes: ['artifact::'],
 
@@ -35,6 +38,10 @@ export const artifactHandler: BlockHandler = {
       return;
     }
 
+    // Revoke previous blob URL to prevent memory leak
+    const prevUrl = activeBlobUrls.get(blockId);
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
+
     actions.setBlockStatus?.(blockId, 'running');
 
     try {
@@ -43,15 +50,18 @@ export const artifactHandler: BlockHandler = {
 
       const result = transformArtifact(source);
       if (result.error) {
+        activeBlobUrls.delete(blockId);
         actions.setBlockOutput?.(blockId, { type: 'error', data: `Transform error: ${result.error}` }, 'eval-result');
         actions.setBlockStatus?.(blockId, 'error');
         return;
       }
 
+      activeBlobUrls.set(blockId, result.blobUrl);
       // Use 'url' type — EvalOutput routes this to UrlViewer (inline iframe)
       actions.setBlockOutput?.(blockId, { type: 'url', data: result.blobUrl }, 'eval-result');
       actions.setBlockStatus?.(blockId, 'complete');
     } catch (err) {
+      activeBlobUrls.delete(blockId);
       const msg = err instanceof Error ? err.message : String(err);
       actions.setBlockOutput?.(blockId, { type: 'error', data: `File read error: ${msg}` }, 'eval-result');
       actions.setBlockStatus?.(blockId, 'error');

@@ -140,7 +140,7 @@ const UrlViewer: Component<ViewerProps> = (props) => {
             if (props.onPokeReady && iframeRef) {
               const iframe = iframeRef;
               props.onPokeReady((message: string, data?: unknown) => {
-                iframe.contentWindow?.postMessage({ type: 'poke', message, data }, '*');
+                iframe.contentWindow?.postMessage({ type: 'poke', message, data }, 'tauri://localhost');
               });
             }
           }}

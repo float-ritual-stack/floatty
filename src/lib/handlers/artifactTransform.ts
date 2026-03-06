@@ -120,7 +120,7 @@ function buildChirpBridge(): string {
 // === Chirp bridge ===
 // Outbound: artifact → outline (creates child blocks)
 window.chirp = function(message, data) {
-  window.parent.postMessage({ type: 'chirp', message: String(message), data: data }, '*');
+  window.parent.postMessage({ type: 'chirp', message: String(message), data: data }, 'tauri://localhost');
 };
 // Inbound: outline → artifact (parent pokes iframe)
 window.addEventListener('message', function(e) {
