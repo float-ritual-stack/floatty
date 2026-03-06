@@ -14,6 +14,7 @@ import { layoutStore } from '../hooks/useLayoutStore';
 import { themeStore } from '../hooks/useThemeStore';
 import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay, isMac } from '../lib/keybinds';
 import { CommandBar } from './CommandBar';
+import { PaneLinkOverlay } from './PaneLinkOverlay';
 import { navigateToPage } from '../lib/navigation';
 import { emitCtxMarkersChanged } from '../lib/ctxEvents';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
@@ -1200,6 +1201,19 @@ export function Terminal() {
           }}
           onCommand={(commandId) => {
             setCommandBarOpen(false);
+
+            // Link Pane — dispatches Cmd+L to active outliner pane
+            if (commandId === 'link-pane') {
+              document.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'l',
+                metaKey: isMac,
+                ctrlKey: !isMac,
+                bubbles: true,
+                cancelable: true,
+              }));
+              return;
+            }
+
             // Dispatch keyboard events that Outliner.tsx already handles
             const keyMap: Record<string, string> = {
               'export-json': 'j',
@@ -1220,6 +1234,7 @@ export function Terminal() {
           }}
         />
       </Show>
+      <PaneLinkOverlay />
       <StatusBar semanticState={semanticState()} />
     </div>
   );

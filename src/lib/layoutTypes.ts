@@ -166,6 +166,18 @@ export function collectPaneIds(node: LayoutNode): string[] {
 }
 
 /**
+ * Collect all leaf nodes in the tree (full PaneLeaf objects, not just IDs).
+ * Useful when you need to check leafType or other leaf properties.
+ */
+export function collectLeaves(node: LayoutNode): PaneLeaf[] {
+  if (node.type === 'leaf') return [node];
+  return [
+    ...collectLeaves(node.children[0]),
+    ...collectLeaves(node.children[1]),
+  ];
+}
+
+/**
  * Replace a node in the tree (immutable)
  */
 export function replaceNode(

@@ -44,8 +44,8 @@ describe('CommandBar', () => {
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const listbox = getByRole('listbox');
-    // 3 pages + 3 commands = 6
-    expect(listbox.children.length).toBe(6);
+    // 3 pages + 4 commands = 7
+    expect(listbox.children.length).toBe(7);
   });
 
   it('Escape calls onClose', () => {
@@ -122,8 +122,8 @@ describe('CommandBar', () => {
     fireEvent.keyDown(input, { key: 'ArrowUp' });
 
     const options = getAllByRole('option');
-    // Last item (index 5) should be selected
-    expect(options[5].getAttribute('aria-selected')).toBe('true');
+    // Last item (index 6) should be selected
+    expect(options[6].getAttribute('aria-selected')).toBe('true');
   });
 
   it('clicking scrim calls onClose', () => {
@@ -172,7 +172,7 @@ describe('CommandBar', () => {
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const shortcuts = container.querySelectorAll('.command-bar-item-shortcut');
-    expect(shortcuts.length).toBe(3); // 3 commands have shortcuts
+    expect(shortcuts.length).toBe(4); // 4 commands have shortcuts
   });
 
   it('command items have command class', () => {
@@ -180,6 +180,6 @@ describe('CommandBar', () => {
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const commandItems = container.querySelectorAll('.command-bar-command');
-    expect(commandItems.length).toBe(3);
+    expect(commandItems.length).toBe(4);
   });
 });

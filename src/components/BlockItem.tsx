@@ -8,7 +8,7 @@ import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
-import { navigateToBlock } from '../lib/navigation';
+import { navigateToBlock, navigateToPage as navigateToPageNav, resolveTargetPane } from '../lib/navigation';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
@@ -954,6 +954,15 @@ export function BlockItem(props: BlockItemProps) {
                         data={envelope.data}
                         error={envelope.error}
                         status={block()?.outputStatus}
+                        onNavigate={(target, opts) => {
+                          const targetPaneId = resolveTargetPane(props.paneId, props.id);
+                          if (!targetPaneId) return;
+                          if (opts?.type === 'page') {
+                            navigateToPageNav(target, { paneId: targetPaneId, highlight: true, splitDirection: opts.splitDirection });
+                          } else {
+                            navigateToBlock(target, { paneId: targetPaneId, highlight: true, splitDirection: opts.splitDirection });
+                          }
+                        }}
                       />
                     : <DoorExecCard
                         doorId={envelope.doorId}
@@ -1052,6 +1061,21 @@ export function BlockItem(props: BlockItemProps) {
                 <EvalOutput
                   output={block()!.output as EvalResult}
                   onChirp={(message: string, data?: unknown) => {
+                    // Route navigate intents to linked outliner pane
+                    if (message === 'navigate' && typeof data === 'object' && data) {
+                      const nav = data as { target: string; type?: 'block' | 'page' };
+                      const targetPaneId = resolveTargetPane(props.paneId, props.id);
+                      if (targetPaneId && nav.target) {
+                        if (nav.type === 'page') {
+                          navigateToPageNav(nav.target, { paneId: targetPaneId, highlight: true });
+                        } else {
+                          navigateToBlock(nav.target, { paneId: targetPaneId, highlight: true });
+                        }
+                        pokeIframe?.('ack: navigate', { success: true, target: nav.target });
+                        return;
+                      }
+                    }
+                    // Default: create child block
                     const childId = store.createBlockInside(props.id);
                     store.updateBlockContent(childId, `chirp:: ${message}`);
                     // Auto-poke back so the iframe knows we received it

@@ -3113,3 +3113,54 @@ body.resizing * {
     transition: none;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   PANE LINK OVERLAY (tmux display-panes style)
+   ═══════════════════════════════════════════════════════════════ */
+
+.pane-link-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.pane-link-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.pane-link-letter {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 4rem;
+  font-weight: 700;
+  color: var(--color-ansi-cyan, #7dd3fc);
+  text-transform: uppercase;
+  text-shadow: 0 2px 20px rgba(125, 211, 252, 0.4);
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid var(--color-ansi-cyan, #7dd3fc);
+  border-radius: 12px;
+  padding: 0.5rem 1.5rem;
+}
+
+/* Linked block indicator */
+.block-link-indicator {
+  display: inline-block;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.65rem;
+  color: var(--color-ansi-cyan, #7dd3fc);
+  border: 1px solid var(--color-ansi-cyan, #7dd3fc);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 6px;
+  opacity: 0.7;
+  vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-link-letter {
+    text-shadow: none;
+  }
+}

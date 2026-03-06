@@ -19,6 +19,7 @@ import { downloadBinary } from '../lib/binaryExport';
 import { validateForExport, type ValidationWarning } from '../lib/validation';
 import { ExportValidation } from './ExportValidation';
 import { themeStore } from '../hooks/useThemeStore';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { IframePaneView } from './views/IframePaneView';
 import type { EvalResult } from '../lib/evalEngine';
 
@@ -547,6 +548,20 @@ export function Outliner(props: OutlinerProps) {
         },
 
         // Export keybinds moved to global document listener (see below)
+
+        // FLO-223 R9: Link focused block to an outliner pane (letter overlay picker)
+        '$mod+l': (e) => {
+          e.preventDefault();
+          const blockId = focusedBlockId();
+          if (!blockId) return;
+          const block = store.getBlock(blockId);
+          if (!block) return;
+          // Only for blocks with iframe output (artifact, door view, eval url)
+          const ot = block.outputType;
+          if (ot === 'eval-result' || ot === 'door') {
+            paneLinkStore.startLinking(blockId, props.paneId);
+          }
+        },
 
         // FLO-180/211: Navigation history (back/forward) with focus restoration
         '$mod+[': (e) => {
