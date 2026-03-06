@@ -70,6 +70,9 @@ pub struct AggregatorConfig {
     /// Defaults to true in debug builds, false in release builds.
     #[serde(default = "default_show_diagnostics", alias = "dev_mode_visuals")]
     pub show_diagnostics: bool,
+    /// Opacity of unfocused panes (0.0–1.0, default 0.7). Set to 1.0 to disable dimming.
+    #[serde(default = "default_unfocused_pane_opacity")]
+    pub unfocused_pane_opacity: f32,
     /// Per-door plugin settings (e.g., [plugins.daily] notes_dir = "...")
     #[serde(default)]
     pub plugins: std::collections::HashMap<String, toml::Value>,
@@ -130,6 +133,10 @@ fn default_initial_collapse_depth() -> u32 {
     0 // Disabled by default (show all expanded)
 }
 
+fn default_unfocused_pane_opacity() -> f32 {
+    0.4
+}
+
 fn default_show_diagnostics() -> bool {
     cfg!(debug_assertions)
 }
@@ -159,6 +166,7 @@ impl Default for AggregatorConfig {
             split_collapse_depth: default_split_collapse_depth(),
             initial_collapse_depth: default_initial_collapse_depth(),
             show_diagnostics: default_show_diagnostics(),
+            unfocused_pane_opacity: default_unfocused_pane_opacity(),
             plugins: std::collections::HashMap::new(),
             is_dev_build: cfg!(debug_assertions),
             data_dir: String::new(), // Populated by load_from

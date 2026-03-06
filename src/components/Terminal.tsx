@@ -244,15 +244,29 @@ export function Terminal() {
   // FLO-220: Track sticky scroll state per pane for UI indicator
   const [stickyState, setStickyState] = createSignal<Map<string, boolean>>(new Map());
 
+  // Pane dimming state — config value cached for toggle
+  let configDimOpacity = 0.4;
+  const [dimEnabled, setDimEnabled] = createSignal(true);
+
   // Load config once on mount
   (async () => {
     try {
-      const config = await invoke<{ split_collapse_depth?: number }>('get_ctx_config');
+      const config = await invoke<{ split_collapse_depth?: number; unfocused_pane_opacity?: number }>('get_ctx_config');
       setSplitCollapseDepth(config.split_collapse_depth ?? 0);
+      configDimOpacity = Math.max(0, Math.min(1, config.unfocused_pane_opacity ?? 0.4));
+      // Disable dimming if config set to 1.0
+      if (configDimOpacity >= 1) setDimEnabled(false);
+      document.documentElement.style.setProperty('--unfocused-pane-opacity', dimEnabled() ? String(configDimOpacity) : '1');
     } catch (e) {
-      console.warn('[Terminal] Failed to load config for split_collapse_depth:', e);
+      console.warn('[Terminal] Failed to load config:', e);
     }
   })();
+
+  function toggleDimming() {
+    const next = !dimEnabled();
+    setDimEnabled(next);
+    document.documentElement.style.setProperty('--unfocused-pane-opacity', next ? String(configDimOpacity) : '1');
+  }
 
   // Pane refs for imperative control
   const paneRefs = new Map<string, PaneHandle>();
@@ -866,6 +880,15 @@ export function Terminal() {
           setCommandBarOpen(open => !open);
           break;
         }
+        case 'focusPane': {
+          if (activeId) {
+            const activePaneId = getActivePaneId(activeId);
+            if (activePaneId) {
+              paneLinkStore.startFocusing(activePaneId);
+            }
+          }
+          break;
+        }
       }
     };
 
@@ -892,6 +915,29 @@ export function Terminal() {
           }, 50);
         });
       }
+    }
+  });
+
+  // Highlight linked pane partner when active pane has a link (bidirectional)
+  createEffect(() => {
+    const activeId = tabStore.activeTabId();
+    if (!activeId) return;
+    const activePaneId = getActivePaneId(activeId);
+    // Forward: active pane links TO this target
+    const forwardTarget = activePaneId ? paneLinkStore.getLinkedPaneForPane(activePaneId) : null;
+    // Reverse: some pane links TO the active pane (active is the target)
+    const reverseSource = activePaneId ? paneLinkStore.getSourcePaneFor(activePaneId) : null;
+
+    // Clear previous tint
+    document.querySelectorAll('.pane-link-target').forEach(el => el.classList.remove('pane-link-target'));
+
+    const partnersToTint = [forwardTarget, reverseSource].filter(Boolean) as string[];
+    for (const paneId of partnersToTint) {
+      if (paneId === activePaneId) continue; // Don't tint self
+      const outlinerEl = document.querySelector(`.outliner-container[data-pane-id="${CSS.escape(paneId)}"]`);
+      const wrapper = outlinerEl?.closest('.terminal-pane-positioned')
+        ?? document.querySelector(`.terminal-pane-positioned[data-terminal-id="${CSS.escape(paneId)}"]`);
+      wrapper?.classList.add('pane-link-target');
     }
   });
 
@@ -1213,6 +1259,18 @@ export function Terminal() {
               return;
             }
 
+            // Focus Pane — show letter overlay to jump to any pane
+            if (commandId === 'focus-pane') {
+              const activeId = tabStore.activeTabId();
+              if (activeId) {
+                const activePaneId = getActivePaneId(activeId);
+                if (activePaneId) {
+                  paneLinkStore.startFocusing(activePaneId);
+                }
+              }
+              return;
+            }
+
             // Unlink active outliner pane
             if (commandId === 'unlink-pane') {
               const outlinerPaneId = resolvedOutlinerPaneId();
@@ -1225,6 +1283,12 @@ export function Terminal() {
             // Unlink all panes
             if (commandId === 'unlink-all') {
               paneLinkStore.clearAllLinks();
+              return;
+            }
+
+            // Toggle pane dimming
+            if (commandId === 'toggle-dim') {
+              toggleDimming();
               return;
             }
 

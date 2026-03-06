@@ -48,7 +48,8 @@ export type KeyAction =
   | 'undo'           // Undo last block operation (Cmd+Z)
   | 'redo'           // Redo last undone operation (Cmd+Shift+Z)
   | 'toggleDevVisuals'   // FLO-259: Toggle dev mode visual distinction (Cmd+Shift+D)
-  | 'commandPalette';   // FLO-276: Command bar (Cmd+K)
+  | 'commandPalette'   // FLO-276: Command bar (Cmd+K)
+  | 'focusPane';       // Letter overlay to jump to any pane (Cmd+J)
 
 // Modifier representation
 export interface Modifiers {
@@ -163,6 +164,9 @@ export const defaultKeybinds: Keybind[] = [
 
   // Command palette (FLO-276) — Cmd+K (intentionally reserved, see line 153 comment)
   { key: 'k', modifiers: { mod: true }, action: 'commandPalette' },
+
+  // Focus pane overlay — Cmd+J (Jump)
+  { key: 'j', modifiers: { mod: true }, action: 'focusPane' },
 ];
 
 // Find action for a keyboard event
@@ -210,6 +214,7 @@ export const GLOBAL_KEY_ACTIONS: ReadonlySet<KeyAction> = new Set<KeyAction>([
   'nextTheme',
   'toggleDevVisuals',
   'commandPalette',
+  'focusPane',
 ]);
 
 /** True if the action should be handled by Terminal's global capture listener. */

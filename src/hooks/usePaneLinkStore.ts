@@ -22,6 +22,7 @@ function createPaneLinkStore() {
   const [paneLinks, setPaneLinks] = createSignal<Map<string, string>>(new Map());
   // Overlay state
   const [linkingSourcePaneId, setLinkingSourcePaneId] = createSignal<string | null>(null);
+  const [overlayMode, setOverlayMode] = createSignal<'link' | 'focus' | null>(null);
 
   /** Immutable map update helper */
   function updateBlockLinks(fn: (map: Map<string, string>) => void): void {
@@ -90,6 +91,14 @@ function createPaneLinkStore() {
     return paneLinks().has(sourcePaneId);
   }
 
+  /** Reverse lookup: find which pane links TO this target */
+  function getSourcePaneFor(targetPaneId: string): string | null {
+    for (const [source, target] of paneLinks()) {
+      if (target === targetPaneId) return source;
+    }
+    return null;
+  }
+
   function clearAllLinks(): void {
     setPaneLinks(new Map());
     setBlockLinks(new Map());
@@ -99,10 +108,17 @@ function createPaneLinkStore() {
 
   function startLinking(sourcePaneId: string): void {
     setLinkingSourcePaneId(sourcePaneId);
+    setOverlayMode('link');
+  }
+
+  function startFocusing(anyPaneId: string): void {
+    setLinkingSourcePaneId(anyPaneId);
+    setOverlayMode('focus');
   }
 
   function stopLinking(): void {
     setLinkingSourcePaneId(null);
+    setOverlayMode(null);
   }
 
   /**
@@ -135,6 +151,23 @@ function createPaneLinkStore() {
       }));
   }
 
+  /**
+   * Get ALL panes for focus overlay (includes all leaf types).
+   */
+  function getAllPanes(anyPaneId: string): { paneId: string; label: string; leafType: string }[] {
+    const tabId = findTabIdByPaneId(anyPaneId);
+    if (!tabId) return [];
+    const layout = layoutStore.layouts[tabId];
+    if (!layout) return [];
+
+    const leaves = collectLeaves(layout.root);
+    return leaves.map((leaf, i) => ({
+      paneId: leaf.id,
+      label: String.fromCharCode(97 + i),
+      leafType: leaf.leafType ?? 'terminal',
+    }));
+  }
+
   return {
     // Block links
     getLinkedPaneForBlock,
@@ -147,12 +180,16 @@ function createPaneLinkStore() {
     clearPaneLink,
     hasPaneLink,
     clearAllLinks,
+    getSourcePaneFor,
     // Resolution
     resolveLink,
     // Overlay
     startLinking,
+    startFocusing,
     stopLinking,
     getCandidatePanes,
+    getAllPanes,
+    get overlayMode() { return overlayMode; },
     get linkingSourcePaneId() { return linkingSourcePaneId; },
     // Legacy compat (old API used linkingBlockId — overlay now pane-based)
     get linkingBlockId() { return linkingSourcePaneId; },

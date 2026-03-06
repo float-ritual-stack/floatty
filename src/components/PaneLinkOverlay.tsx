@@ -1,23 +1,28 @@
 /**
- * PaneLinkOverlay — tmux display-panes style letter picker for pane linking
+ * PaneLinkOverlay — tmux display-panes style letter picker
  *
- * When active, dims the screen and shows a letter label centered on each
- * candidate outliner pane with context (page name or content preview).
- * User presses a letter to link. Escape cancels.
+ * Two modes:
+ * - 'link': Pick a target pane to link navigation to (excludes source)
+ * - 'focus': Pick any pane to jump focus to (includes all panes)
+ *
+ * Dims the screen, shows letter labels centered on each pane.
+ * User presses a letter to act. Escape cancels.
  */
 
 import { Show, For, createMemo, createEffect, on, onCleanup } from 'solid-js';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { layoutStore } from '../hooks/useLayoutStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { blockStore } from '../hooks/useBlockStore';
+import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 
 /** Get a short label describing what's visible in a pane */
-function getPaneLabel(paneId: string): string {
+function getPaneLabel(paneId: string, leafType?: string): string {
+  if (leafType === 'terminal') return 'Terminal';
   const zoomedId = paneStore.getZoomedRootId(paneId);
   if (zoomedId) {
     const block = blockStore.getBlock(zoomedId);
     if (block?.content) {
-      // Strip prefix markers and heading markers, take first 30 chars
       const clean = block.content.replace(/^#+\s*/, '').replace(/^\w+::\s*/, '');
       return clean.length > 30 ? clean.slice(0, 30) + '…' : clean;
     }
@@ -26,11 +31,15 @@ function getPaneLabel(paneId: string): string {
 }
 
 export function PaneLinkOverlay() {
-  const isActive = () => paneLinkStore.linkingBlockId() !== null;
+  const isActive = () => paneLinkStore.overlayMode() !== null;
+  const mode = () => paneLinkStore.overlayMode();
 
-  const candidates = createMemo(() => {
+  const candidates = createMemo((): { paneId: string; label: string; leafType?: string }[] => {
     const sourcePaneId = paneLinkStore.linkingSourcePaneId();
     if (!sourcePaneId) return [];
+    if (mode() === 'focus') {
+      return paneLinkStore.getAllPanes(sourcePaneId);
+    }
     return paneLinkStore.getCandidatePanes(sourcePaneId);
   });
 
@@ -38,14 +47,12 @@ export function PaneLinkOverlay() {
   const positioned = createMemo(() => {
     if (!isActive()) return [];
     return candidates().map(c => {
-      // Use .outliner-container (inside .terminal-pane-positioned) — it has display:none
-      // for inactive tabs, so getBoundingClientRect returns zero dimensions. The
-      // .pane-layout-leaf placeholders are always laid out across all tabs.
-      const el = document.querySelector(`.outliner-container[data-pane-id="${CSS.escape(c.paneId)}"]`);
-      const rect = el?.closest('.terminal-pane-positioned')?.getBoundingClientRect() ?? null;
-      const description = getPaneLabel(c.paneId);
+      // Layout placeholder has data-pane-id directly; use it for all pane types
+      const leafEl = document.querySelector(`.pane-layout-leaf[data-pane-id="${CSS.escape(c.paneId)}"]`);
+      const rect = leafEl?.getBoundingClientRect() ?? null;
+      const description = getPaneLabel(c.paneId, c.leafType);
       return { ...c, rect, description };
-    }).filter(c => c.rect !== null && c.rect.width > 0 && c.rect.height > 0);
+    }).filter(c => c.rect !== null && c.rect!.width > 0 && c.rect!.height > 0);
   });
 
   // Key listener for letter selection / escape
@@ -63,13 +70,30 @@ export function PaneLinkOverlay() {
 
       const key = e.key.toLowerCase();
       const match = candidates().find(c => c.label === key);
-      if (match) {
+      if (!match) return;
+
+      const currentMode = mode();
+
+      if (currentMode === 'focus') {
+        // Focus mode: jump to the selected pane
+        const tabId = findTabIdByPaneId(match.paneId);
+        if (tabId) {
+          layoutStore.setActivePaneId(tabId, match.paneId);
+          requestAnimationFrame(() => {
+            const paneEl = document.querySelector(`[data-pane-id="${CSS.escape(match.paneId)}"]`) as HTMLElement | null;
+            const focusTarget = paneEl?.querySelector('[contenteditable], .xterm-helper-textarea') as HTMLElement | null;
+            (focusTarget ?? paneEl)?.focus();
+          });
+        }
+      } else {
+        // Link mode: create pane link
         const sourcePaneId = paneLinkStore.linkingSourcePaneId();
         if (sourcePaneId) {
           paneLinkStore.setPaneLink(sourcePaneId, match.paneId);
         }
-        paneLinkStore.stopLinking();
       }
+
+      paneLinkStore.stopLinking();
     };
 
     window.addEventListener('keydown', handler, { capture: true });
@@ -79,9 +103,11 @@ export function PaneLinkOverlay() {
   return (
     <Show when={isActive()}>
       <div
-        class="pane-link-scrim"
+        class={`pane-link-scrim ${mode() === 'focus' ? 'pane-focus-mode' : ''}`}
         role="dialog"
-        aria-label="Link block to outliner pane — press a letter to select, Escape to cancel"
+        aria-label={mode() === 'focus'
+          ? 'Focus pane — press a letter to jump, Escape to cancel'
+          : 'Link pane — press a letter to select target, Escape to cancel'}
         onClick={() => paneLinkStore.stopLinking()}
       >
         <For each={positioned()}>
