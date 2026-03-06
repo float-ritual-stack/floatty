@@ -15,6 +15,8 @@ import { themeStore } from '../hooks/useThemeStore';
 import { getActionForEvent, isGlobalKeyAction, isTerminalReserved, getKeybindDisplay, isMac } from '../lib/keybinds';
 import { CommandBar } from './CommandBar';
 import { PaneLinkOverlay } from './PaneLinkOverlay';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { paneStore } from '../hooks/usePaneStore';
 import { navigateToPage } from '../lib/navigation';
 import { emitCtxMarkersChanged } from '../lib/ctxEvents';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
@@ -1202,15 +1204,16 @@ export function Terminal() {
           onCommand={(commandId) => {
             setCommandBarOpen(false);
 
-            // Link Pane — dispatches Cmd+L to active outliner pane
+            // Link Pane — start pane link overlay for focused block in active pane
             if (commandId === 'link-pane') {
-              document.dispatchEvent(new KeyboardEvent('keydown', {
-                key: 'l',
-                metaKey: isMac,
-                ctrlKey: !isMac,
-                bubbles: true,
-                cancelable: true,
-              }));
+              const tabId = activeTabId();
+              const activePaneId = tabId ? getActivePaneId(tabId) : null;
+              if (activePaneId) {
+                const blockId = paneStore.getFocusedBlockId(activePaneId);
+                if (blockId) {
+                  paneLinkStore.startLinking(blockId, activePaneId);
+                }
+              }
               return;
             }
 

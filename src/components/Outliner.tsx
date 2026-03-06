@@ -549,19 +549,7 @@ export function Outliner(props: OutlinerProps) {
 
         // Export keybinds moved to global document listener (see below)
 
-        // FLO-223 R9: Link focused block to an outliner pane (letter overlay picker)
-        '$mod+l': (e) => {
-          e.preventDefault();
-          const blockId = focusedBlockId();
-          if (!blockId) return;
-          const block = store.getBlock(blockId);
-          if (!block) return;
-          // Only for blocks with iframe output (artifact, door view, eval url)
-          const ot = block.outputType;
-          if (ot === 'eval-result' || ot === 'door') {
-            paneLinkStore.startLinking(blockId, props.paneId);
-          }
-        },
+        // FLO-223 R9: Cmd+L handled in global document listener below
 
         // FLO-180/211: Navigation history (back/forward) with focus restoration
         '$mod+[': (e) => {
@@ -633,6 +621,14 @@ export function Outliner(props: OutlinerProps) {
         const focused = focusedBlockId();
         if (focused) {
           paneStore.toggleFullWidth(props.paneId, focused);
+        }
+      }
+      // FLO-223 R9: Cmd+L - Link focused block to an outliner pane
+      else if (isMod && !isShift && e.key === 'l') {
+        e.preventDefault();
+        const blockId = focusedBlockId();
+        if (blockId) {
+          paneLinkStore.startLinking(blockId, props.paneId);
         }
       }
     };
