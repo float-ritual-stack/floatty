@@ -3166,18 +3166,25 @@ body.resizing * {
   white-space: nowrap;
 }
 
-/* Linked block indicator */
+/* Linked block indicator — clickable, clears link on click */
 .block-link-indicator {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: var(--color-ansi-cyan, #7dd3fc);
   border: 1px solid var(--color-ansi-cyan, #7dd3fc);
   border-radius: 3px;
   padding: 0 4px;
-  margin-left: 6px;
-  opacity: 0.7;
-  vertical-align: middle;
+  margin-left: 4px;
+  opacity: 0.6;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.block-link-indicator:hover {
+  opacity: 1;
+  background: rgba(125, 211, 252, 0.1);
 }
 
 @media (prefers-reduced-motion: reduce) {

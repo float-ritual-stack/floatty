@@ -38,11 +38,14 @@ export function PaneLinkOverlay() {
   const positioned = createMemo(() => {
     if (!isActive()) return [];
     return candidates().map(c => {
-      const el = document.querySelector(`[data-pane-id="${CSS.escape(c.paneId)}"].pane-layout-leaf`);
-      const rect = el?.getBoundingClientRect();
+      // Use .outliner-container (inside .terminal-pane-positioned) — it has display:none
+      // for inactive tabs, so getBoundingClientRect returns zero dimensions. The
+      // .pane-layout-leaf placeholders are always laid out across all tabs.
+      const el = document.querySelector(`.outliner-container[data-pane-id="${CSS.escape(c.paneId)}"]`);
+      const rect = el?.closest('.terminal-pane-positioned')?.getBoundingClientRect() ?? null;
       const description = getPaneLabel(c.paneId);
-      return { ...c, rect: rect ?? null, description };
-    }).filter(c => c.rect !== null);
+      return { ...c, rect, description };
+    }).filter(c => c.rect !== null && c.rect.width > 0 && c.rect.height > 0);
   });
 
   // Key listener for letter selection / escape

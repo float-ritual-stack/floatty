@@ -9,6 +9,7 @@ import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { navigateToBlock, navigateToPage as navigateToPageNav, resolveTargetPane } from '../lib/navigation';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
@@ -870,6 +871,18 @@ export function BlockItem(props: BlockItemProps) {
         >
           {bulletChar()}
         </div>
+
+        {/* FLO-223: Pane link indicator — shows which pane this block navigates to */}
+        <Show when={paneLinkStore.hasLink(props.id)}>
+          <span
+            class="block-link-indicator"
+            title="Linked to outliner pane (Cmd+L to unlink)"
+            onClick={(e) => {
+              e.stopPropagation();
+              paneLinkStore.clearLink(props.id);
+            }}
+          >⇥</span>
+        </Show>
 
         <div class={`block-content-wrapper ${contentClass()}`}>
           {/* PICKER BLOCK: special rendering with terminal container */}

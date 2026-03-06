@@ -20,6 +20,8 @@ import { validateForExport, type ValidationWarning } from '../lib/validation';
 import { ExportValidation } from './ExportValidation';
 import { themeStore } from '../hooks/useThemeStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { tabStore } from '../hooks/useTabStore';
 import { IframePaneView } from './views/IframePaneView';
 import type { EvalResult } from '../lib/evalEngine';
 
@@ -623,12 +625,19 @@ export function Outliner(props: OutlinerProps) {
           paneStore.toggleFullWidth(props.paneId, focused);
         }
       }
-      // FLO-223 R9: Cmd+L - Link focused block to an outliner pane
+      // FLO-223 R9: Cmd+L - Toggle pane link on focused block
+      // Guard: only fire for panes on the active tab (each Outliner registers this globally)
       else if (isMod && !isShift && e.key === 'l') {
+        const myTab = findTabIdByPaneId(props.paneId);
+        if (myTab !== tabStore.activeTabId()) return;
         e.preventDefault();
         const blockId = focusedBlockId();
         if (blockId) {
-          paneLinkStore.startLinking(blockId, props.paneId);
+          if (paneLinkStore.hasLink(blockId)) {
+            paneLinkStore.clearLink(blockId);
+          } else {
+            paneLinkStore.startLinking(blockId, props.paneId);
+          }
         }
       }
     };
