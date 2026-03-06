@@ -1088,9 +1088,8 @@ export function BlockItem(props: BlockItemProps) {
                         return;
                       }
                     }
-                    // Default: create child block
-                    const childId = store.createBlockInside(props.id);
-                    store.updateBlockContent(childId, `chirp:: ${message}`);
+                    // Default: create child block (single transaction)
+                    const [childId] = store.batchCreateBlocksInside(props.id, [{ content: `chirp:: ${message}` }]);
                     // Auto-poke back so the iframe knows we received it
                     pokeIframe?.(`ack: ${message}`, data);
                   }}
