@@ -782,6 +782,15 @@ export function BlockItem(props: BlockItemProps) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
+    // FLO-223: Plain click + pane linked → navigate in linked target pane
+    if (splitDirection === 'none') {
+      const linkedPaneId = resolveTargetPane(props.paneId);
+      if (linkedPaneId) {
+        navigateToPageNav(target, { paneId: linkedPaneId, highlight: true, originBlockId: props.id });
+        return;
+      }
+    }
+
     // FLO-211: Pass current block as origin for focus restoration on back navigation
     const result = navigateToPage(target, props.paneId, splitDirection, ephemeral, {
       originBlockId: props.id,
