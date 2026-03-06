@@ -22,6 +22,7 @@ import { themeStore } from '../hooks/useThemeStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { tabStore } from '../hooks/useTabStore';
+import { layoutStore } from '../hooks/useLayoutStore';
 import { IframePaneView } from './views/IframePaneView';
 import type { EvalResult } from '../lib/evalEngine';
 
