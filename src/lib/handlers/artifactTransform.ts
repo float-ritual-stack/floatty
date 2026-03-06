@@ -118,9 +118,16 @@ function ensureReactImports(jsCode: string): string {
 function buildChirpBridge(): string {
   return `
 // === Chirp bridge ===
+// Outbound: artifact → outline (creates child blocks)
 window.chirp = function(message, data) {
   window.parent.postMessage({ type: 'chirp', message: String(message), data: data }, '*');
-};`;
+};
+// Inbound: outline → artifact (parent pokes iframe)
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'poke' && typeof window.onPoke === 'function') {
+    window.onPoke(e.data.message, e.data.data);
+  }
+});`;
 }
 
 /**

@@ -161,10 +161,16 @@ describe('buildArtifactHtml', () => {
     expect(matches).toHaveLength(1);
   });
 
-  it('includes chirp bridge', () => {
+  it('includes chirp bridge (outbound)', () => {
     const html = buildArtifactHtml('function App() {}', {});
     expect(html).toContain('window.chirp');
     expect(html).toContain("postMessage");
     expect(html).toContain("'chirp'");
+  });
+
+  it('includes poke listener (inbound)', () => {
+    const html = buildArtifactHtml('function App() {}', {});
+    expect(html).toContain("'poke'");
+    expect(html).toContain('window.onPoke');
   });
 });

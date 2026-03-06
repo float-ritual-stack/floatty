@@ -1046,13 +1046,21 @@ export function BlockItem(props: BlockItemProps) {
 
           {/* EVAL OUTPUT: inline result below contentEditable for eval:: blocks */}
           <Show when={block()?.outputType === 'eval-result' && block()?.output && !isCollapsed()}>
-            <EvalOutput
-              output={block()!.output as EvalResult}
-              onChirp={(message: string) => {
-                const childId = store.createBlockInside(props.id);
-                store.updateBlockContent(childId, `chirp:: ${message}`);
-              }}
-            />
+            {(() => {
+              let pokeIframe: ((message: string, data?: unknown) => void) | undefined;
+              return (
+                <EvalOutput
+                  output={block()!.output as EvalResult}
+                  onChirp={(message: string, data?: unknown) => {
+                    const childId = store.createBlockInside(props.id);
+                    store.updateBlockContent(childId, `chirp:: ${message}`);
+                    // Auto-poke back so the iframe knows we received it
+                    pokeIframe?.(`ack: ${message}`, data);
+                  }}
+                  onPokeReady={(poke) => { pokeIframe = poke; }}
+                />
+              );
+            })()}
           </Show>
 
           {/* FLO-376: Wikilink autocomplete popup */}

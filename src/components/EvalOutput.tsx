@@ -16,6 +16,7 @@ import type { EvalResult } from '../lib/evalEngine';
 interface ViewerProps {
   data: unknown;
   onChirp?: (message: string, data?: unknown) => void;
+  onPokeReady?: (poke: (message: string, data?: unknown) => void) => void;
 }
 
 const ValueViewer: Component<ViewerProps> = (props) => (
@@ -134,7 +135,15 @@ const UrlViewer: Component<ViewerProps> = (props) => {
           classList={{ loaded: loaded() }}
           title={url()}
           sandbox="allow-scripts allow-same-origin allow-forms"
-          onLoad={() => setLoaded(true)}
+          onLoad={() => {
+            setLoaded(true);
+            if (props.onPokeReady && iframeRef) {
+              const iframe = iframeRef;
+              props.onPokeReady((message: string, data?: unknown) => {
+                iframe.contentWindow?.postMessage({ type: 'poke', message, data }, '*');
+              });
+            }
+          }}
         />
       </Show>
       <div
@@ -166,13 +175,14 @@ const EVAL_VIEWERS: Record<string, Component<ViewerProps>> = {
 interface EvalOutputProps {
   output: EvalResult;
   onChirp?: (message: string, data?: unknown) => void;
+  onPokeReady?: (poke: (message: string, data?: unknown) => void) => void;
 }
 
 export function EvalOutput(props: EvalOutputProps) {
   const viewer = () => EVAL_VIEWERS[props.output.type] ?? EVAL_VIEWERS.value;
   return (
     <div class="eval-output">
-      <Dynamic component={viewer()} data={props.output.data} onChirp={props.onChirp} />
+      <Dynamic component={viewer()} data={props.output.data} onChirp={props.onChirp} onPokeReady={props.onPokeReady} />
     </div>
   );
 }
