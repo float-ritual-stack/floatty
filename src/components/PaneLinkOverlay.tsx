@@ -2,12 +2,28 @@
  * PaneLinkOverlay — tmux display-panes style letter picker for pane linking
  *
  * When active, dims the screen and shows a letter label centered on each
- * candidate outliner pane. User presses a letter to link the source block
- * to that pane. Escape cancels.
+ * candidate outliner pane with context (page name or content preview).
+ * User presses a letter to link. Escape cancels.
  */
 
 import { Show, For, createMemo, createEffect, on, onCleanup } from 'solid-js';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { paneStore } from '../hooks/usePaneStore';
+import { blockStore } from '../hooks/useBlockStore';
+
+/** Get a short label describing what's visible in a pane */
+function getPaneLabel(paneId: string): string {
+  const zoomedId = paneStore.getZoomedRootId(paneId);
+  if (zoomedId) {
+    const block = blockStore.getBlock(zoomedId);
+    if (block?.content) {
+      // Strip prefix markers and heading markers, take first 30 chars
+      const clean = block.content.replace(/^#+\s*/, '').replace(/^\w+::\s*/, '');
+      return clean.length > 30 ? clean.slice(0, 30) + '…' : clean;
+    }
+  }
+  return 'Root';
+}
 
 export function PaneLinkOverlay() {
   const isActive = () => paneLinkStore.linkingBlockId() !== null;
@@ -18,13 +34,14 @@ export function PaneLinkOverlay() {
     return paneLinkStore.getCandidatePanes(sourcePaneId);
   });
 
-  // Compute positions from DOM when overlay becomes active
+  // Compute positions and labels from DOM when overlay becomes active
   const positioned = createMemo(() => {
     if (!isActive()) return [];
     return candidates().map(c => {
-      const el = document.querySelector(`[data-pane-id="${CSS.escape(c.paneId)}"]`);
+      const el = document.querySelector(`[data-pane-id="${CSS.escape(c.paneId)}"].pane-layout-leaf`);
       const rect = el?.getBoundingClientRect();
-      return { ...c, rect: rect ?? null };
+      const description = getPaneLabel(c.paneId);
+      return { ...c, rect: rect ?? null, description };
     }).filter(c => c.rect !== null);
   });
 
@@ -74,7 +91,10 @@ export function PaneLinkOverlay() {
                 height: `${c.rect!.height}px`,
               }}
             >
-              <span class="pane-link-letter">{c.label}</span>
+              <div class="pane-link-badge">
+                <span class="pane-link-letter">{c.label}</span>
+                <span class="pane-link-description">{c.description}</span>
+              </div>
             </div>
           )}
         </For>

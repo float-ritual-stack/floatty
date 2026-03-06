@@ -3122,7 +3122,7 @@ body.resizing * {
   position: fixed;
   inset: 0;
   z-index: 2000;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .pane-link-label {
@@ -3130,19 +3130,40 @@ body.resizing * {
   align-items: center;
   justify-content: center;
   pointer-events: none;
+  border: 2px solid var(--color-ansi-cyan, #7dd3fc);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.pane-link-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(0, 0, 0, 0.75);
+  border: 2px solid var(--color-ansi-cyan, #7dd3fc);
+  border-radius: 12px;
+  padding: 1rem 2rem;
 }
 
 .pane-link-letter {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
-  font-size: 4rem;
+  font-size: 3rem;
   font-weight: 700;
+  line-height: 1;
   color: var(--color-ansi-cyan, #7dd3fc);
   text-transform: uppercase;
   text-shadow: 0 2px 20px rgba(125, 211, 252, 0.4);
-  background: rgba(0, 0, 0, 0.6);
-  border: 2px solid var(--color-ansi-cyan, #7dd3fc);
-  border-radius: 12px;
-  padding: 0.5rem 1.5rem;
+}
+
+.pane-link-description {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+  max-width: 200px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Linked block indicator */
