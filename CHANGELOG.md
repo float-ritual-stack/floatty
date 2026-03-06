@@ -6,6 +6,39 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.8.0] - 2026-03-06
+
+### Features
+
+- **Door plugin system** (Units 1.0–12.0, PR #158, #159): Extensible door architecture — `func::` meta-handlers with iframe rendering, `eval::` JS expression engine with outline access, `timestamp::` validation door, `claude-mem` door, full-width block mode, sidebarEligible phases, hot reload via file watcher, config integration for plugin settings, help docs
+- **Artifact handler & chirp protocol** (PR #162): `artifact::` renders Claude.ai JSX artifacts in sandboxed iframes via Sucrase transform + esm.sh import maps. Bidirectional chirp bridge — artifacts write blocks to outline (`window.chirp()`), outline pokes artifacts (`window.onPoke`). Supports TSX, anonymous default exports, `</script>` escape
+- **Pane linking** (FLO-223, PR #162): tmux-inspired cross-pane navigation — `⌘L` links source pane to target, wikilink clicks and chirp navigates route through linked pane. Chaining supported (A→B→C)
+- **Focus overlay** (PR #162): `⌘J` jumps to any pane (terminals + outliners) via letter overlay picker
+- **Unfocused pane dimming** (PR #162): Configurable opacity for non-active panes, linked panes get cyan tint at midpoint brightness. Toggle via `⌘K` command
+- **Context retrieval API** (FLO-338): `GET /api/v1/blocks/:id` supports `include` query param for ancestors, siblings, children, tree, token estimates. Search endpoints support breadcrumb and metadata includes
+- **Copy Block ID** command: `⌘K` → "Copy Block ID" copies git-sha style 8-char block UUID prefix to clipboard
+
+### Bug Fixes
+
+- **Block ID wikilinks** created pages instead of navigating — added hex-prefix guard at 3 navigation sites (wikilink click, chirp navigate, DoorHost navigate). Hex-looking strings never fall through to page creation
+- **Stale pane link indicators**: `hasBlockLink()`/`hasPaneLink()` validated pane existence instead of raw map membership
+- **Chirp rate limiting**: Per-block 100ms cooldown prevents runaway iframe `setInterval` from creating unbounded child blocks
+- **Anonymous default exports** in artifact transform: `export default function() {}` now handled correctly
+- **Import map subpath URLs**: Fixed `esm.sh` format from `pkg/sub@ver` to `pkg@ver/sub`
+- **`</script>` injection**: Escaped in artifact HTML to prevent document parser breakage
+- **ReactDOM import detection**: Checks for default import binding specifically, not just any react-dom import
+- **Hardcoded CSS**: Replaced last `rgba()` in pane-link styles with theme-aware `color-mix()`
+- **fs read scope**: Narrowed `fs:allow-read-text-file` from `$HOME/**/*` to specific project paths
+- **Unicode-correct token estimates** in API response
+- **API overflow guards**: Parameter caps on sibling_radius and max_depth
+
+### Documentation
+
+- CLAUDE.md updated with pane linking, artifact handler, chirp protocol sections
+- Keybind registry updated with `⌘L`, `⌘J`, `⌘⌥Arrow`
+
+---
+
 ## [0.7.42] - 2026-03-01
 
 ### Performance
