@@ -3204,7 +3204,7 @@ body.resizing * {
 
 .block-link-indicator:hover {
   opacity: 1;
-  background: rgba(125, 211, 252, 0.1);
+  background: color-mix(in srgb, var(--color-ansi-cyan, #7dd3fc) 10%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

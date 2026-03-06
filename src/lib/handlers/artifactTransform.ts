@@ -32,10 +32,14 @@ export function transformJsx(source: string): string {
   let defaultExportName: string | null = null;
 
   let cleaned = source
+    // Named: export default function Foo() { ... }
     .replace(/export\s+default\s+function\s+(\w+)/g, (_match, name) => {
       defaultExportName = name;
       return `function ${name}`;
     })
+    // Anonymous: export default function() { ... } → const __ArtifactDefault__ = function() { ... }
+    .replace(/export\s+default\s+function\s*\(/g, 'const __ArtifactDefault__ = function(')
+    // Expression: export default Foo / export default () => ...
     .replace(/export\s+default\s+(?!function)/g, 'const __ArtifactDefault__ = ');
 
   // If we found `export default function Foo`, append the assignment
@@ -44,11 +48,11 @@ export function transformJsx(source: string): string {
   }
 
   const result = transform(cleaned, {
-    transforms: ['jsx'],
+    transforms: ['jsx', 'typescript'],
     jsxRuntime: 'classic',
     jsxPragma: 'React.createElement',
     jsxFragmentPragma: 'React.Fragment',
-    filePath: 'artifact.jsx',
+    filePath: 'artifact.tsx',
   });
 
   return result.code;
@@ -73,7 +77,13 @@ export function buildImportMap(source: string): Record<string, string> {
       : specifier.split('/')[0];
 
     const version = DEFAULT_VERSIONS[specifier] ?? DEFAULT_VERSIONS[basePkg] ?? 'latest';
-    importMap[specifier] = `https://esm.sh/${specifier}@${version}`;
+    // For subpath imports (e.g. react-dom/client), esm.sh wants pkg@ver/sub not pkg/sub@ver
+    const subpath = specifier.startsWith('@')
+      ? specifier.slice(basePkg.length)  // e.g. @scope/pkg/sub → /sub
+      : specifier.slice(basePkg.length); // e.g. react-dom/client → /client
+    importMap[specifier] = subpath
+      ? `https://esm.sh/${basePkg}@${version}${subpath}`
+      : `https://esm.sh/${specifier}@${version}`;
   }
 
   // Always include react + react-dom (JSX output needs React.createElement)
@@ -101,8 +111,10 @@ function ensureReactImports(jsCode: string): string {
   if (!/import\s+.*\bReact\b.*from\s+['"]react['"]/.test(jsCode)) {
     lines.push("import React from 'react';");
   }
-  if (!/import\s+.*from\s+['"]react-dom\/client['"]/.test(jsCode)
-    && !/import\s+.*from\s+['"]react-dom['"]/.test(jsCode)) {
+  // Always ensure ReactDOM default import exists for mount script.
+  // Named imports like `import { createRoot } from 'react-dom/client'` don't provide
+  // the `ReactDOM` binding that the mount script needs.
+  if (!/import\s+ReactDOM\s+from\s+['"]react-dom/.test(jsCode)) {
     lines.push("import ReactDOM from 'react-dom/client';");
   }
 
@@ -120,7 +132,7 @@ function buildChirpBridge(): string {
 // === Chirp bridge ===
 // Outbound: artifact → outline (creates child blocks)
 window.chirp = function(message, data) {
-  window.parent.postMessage({ type: 'chirp', message: String(message), data: data }, 'tauri://localhost');
+  window.parent.postMessage({ type: 'chirp', message: String(message), data: data }, '*');
 };
 // Inbound: outline → artifact (parent pokes iframe)
 window.addEventListener('message', function(e) {
@@ -159,7 +171,9 @@ function buildMountScript(): string {
  */
 export function buildArtifactHtml(jsCode: string, importMap: Record<string, string>): string {
   const importMapJson = JSON.stringify({ imports: importMap }, null, 2);
-  const moduleCode = ensureReactImports(jsCode) + '\n' + buildChirpBridge() + '\n' + buildMountScript();
+  // Escape </script> in code to prevent premature tag close in the HTML document
+  const safeCode = ensureReactImports(jsCode).replace(/<\/script>/gi, '<\\/script>');
+  const moduleCode = safeCode + '\n' + buildChirpBridge() + '\n' + buildMountScript();
 
   return `<!DOCTYPE html>
 <html>

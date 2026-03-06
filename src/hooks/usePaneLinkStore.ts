@@ -63,7 +63,7 @@ function createPaneLinkStore() {
   }
 
   function hasBlockLink(blockId: string): boolean {
-    return blockLinks().has(blockId);
+    return getLinkedPaneForBlock(blockId) !== null;
   }
 
   // ── Pane-level links ──
@@ -88,7 +88,7 @@ function createPaneLinkStore() {
   }
 
   function hasPaneLink(sourcePaneId: string): boolean {
-    return paneLinks().has(sourcePaneId);
+    return getLinkedPaneForPane(sourcePaneId) !== null;
   }
 
   /** Reverse lookup: find which pane links TO this target */

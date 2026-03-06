@@ -60,6 +60,27 @@ describe('transformJsx', () => {
     expect(result).toContain('React.Fragment');
   });
 
+  it('handles anonymous export default function', () => {
+    const source = `export default function() { return <p>anon</p>; }`;
+    const result = transformJsx(source);
+    expect(result).toContain('__ArtifactDefault__');
+    expect(result).not.toContain('export default');
+  });
+
+  it('handles TypeScript syntax (TSX support)', () => {
+    const source = `
+      import React from 'react';
+      interface Props { name: string; }
+      export default function App(props: Props) {
+        return <div>{props.name}</div>;
+      }
+    `;
+    const result = transformJsx(source);
+    expect(result).toContain('React.createElement');
+    expect(result).not.toContain('interface');
+    expect(result).not.toContain(': Props');
+  });
+
   it('preserves non-JSX code', () => {
     const source = `
       import React, { useState } from 'react';
@@ -113,10 +134,11 @@ describe('buildImportMap', () => {
     expect(map['react-dom']).toBeDefined();
   });
 
-  it('handles subpath imports like react-dom/client', () => {
+  it('handles subpath imports like react-dom/client with correct URL format', () => {
     const source = `import { createRoot } from 'react-dom/client';`;
     const map = buildImportMap(source);
-    expect(map['react-dom/client']).toContain('esm.sh/react-dom');
+    // Must be pkg@ver/sub, NOT pkg/sub@ver
+    expect(map['react-dom/client']).toBe('https://esm.sh/react-dom@18/client');
   });
 
   it('skips relative imports', () => {
@@ -159,6 +181,21 @@ describe('buildArtifactHtml', () => {
     const html = buildArtifactHtml(code, {});
     const matches = html.match(/import React from 'react'/g);
     expect(matches).toHaveLength(1);
+  });
+
+  it('escapes </script> in JSX source to prevent HTML breakage', () => {
+    const code = 'const x = "</script><script>alert(1)</script>";';
+    const html = buildArtifactHtml(code, {});
+    // Raw </script> should not appear inside <script type="module">
+    expect(html).not.toMatch(/<\/script><script>/);
+    expect(html).toContain('<\\/script>');
+  });
+
+  it('adds ReactDOM import even when named react-dom imports exist', () => {
+    const code = "import { createRoot } from 'react-dom/client';\nfunction App() {}";
+    const html = buildArtifactHtml(code, {});
+    // Mount script needs ReactDOM.createRoot, so default import must be added
+    expect(html).toContain("import ReactDOM from 'react-dom/client'");
   });
 
   it('includes chirp bridge (outbound)', () => {

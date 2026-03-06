@@ -106,13 +106,6 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
     }, delay);
   }
 
-  console.log('[navigation] navigateToBlock:', {
-    blockId,
-    zoomTarget,
-    paneId: targetPaneId,
-    split: !!splitDirection
-  });
-
   return { success: true, targetPaneId };
 }
 

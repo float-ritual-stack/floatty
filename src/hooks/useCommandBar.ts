@@ -47,6 +47,7 @@ export const BUILT_IN_COMMANDS: ResultItem[] = [
   { type: 'command', id: 'toggle-dim',      label: 'Toggle Pane Dimming' },
   { type: 'command', id: 'unlink-pane',     label: 'Unlink Pane' },
   { type: 'command', id: 'unlink-all',      label: 'Unlink All Panes' },
+  { type: 'command', id: 'copy-block-id',   label: 'Copy Block ID' },
 ];
 
 // ═══════════════════════════════════════════════════════════════

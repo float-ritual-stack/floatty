@@ -29,7 +29,14 @@
     },
     {
       "identifier": "fs:allow-read-text-file",
-      "allow": [{ "path": "$HOME/**/*" }]
+      "allow": [
+        { "path": "$HOME/.floatty/**/*" },
+        { "path": "$HOME/.floatty-dev/**/*" },
+        { "path": "$HOME/float-hub/**/*" },
+        { "path": "$HOME/float-hub-operations/**/*" },
+        { "path": "$HOME/projects/**/*" },
+        { "path": "/opt/float/**/*" }
+      ]
     },
     "mcp-bridge:default",
     "window-state:default"

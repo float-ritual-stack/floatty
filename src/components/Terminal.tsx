@@ -238,6 +238,8 @@ function TabBar(props: {
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
+  // Snapshot focused block when ⌘K opens (focus moves to command bar input)
+  let commandBarFocusedBlockId: string | null = null;
   const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
   // FLO-197: Collapse depth for split panes (loaded from config)
   const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
@@ -877,6 +879,11 @@ export function Terminal() {
           break;
         }
         case 'commandPalette': {
+          // Snapshot focused block BEFORE command bar steals focus
+          if (!isCommandBarOpen() && activeId) {
+            const ap = getActivePaneId(activeId);
+            commandBarFocusedBlockId = ap ? paneStore.getFocusedBlockId(ap) : null;
+          }
           setCommandBarOpen(open => !open);
           break;
         }
@@ -1283,6 +1290,14 @@ export function Terminal() {
             // Unlink all panes
             if (commandId === 'unlink-all') {
               paneLinkStore.clearAllLinks();
+              return;
+            }
+
+            // Copy focused block's ID (first 8 chars) to clipboard
+            if (commandId === 'copy-block-id') {
+              if (commandBarFocusedBlockId) {
+                navigator.clipboard.writeText(commandBarFocusedBlockId.slice(0, 8));
+              }
               return;
             }
 
