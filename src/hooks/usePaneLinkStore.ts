@@ -90,6 +90,11 @@ function createPaneLinkStore() {
     return paneLinks().has(sourcePaneId);
   }
 
+  function clearAllLinks(): void {
+    setPaneLinks(new Map());
+    setBlockLinks(new Map());
+  }
+
   // ── Overlay mode ──
 
   function startLinking(sourcePaneId: string): void {
@@ -141,6 +146,7 @@ function createPaneLinkStore() {
     setPaneLink,
     clearPaneLink,
     hasPaneLink,
+    clearAllLinks,
     // Resolution
     resolveLink,
     // Overlay

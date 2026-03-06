@@ -43,6 +43,8 @@ export const BUILT_IN_COMMANDS: ResultItem[] = [
   { type: 'command', id: 'export-binary',   label: 'Export Binary',   shortcut: `${mod}${shift}B` },
   { type: 'command', id: 'export-markdown', label: 'Export Markdown', shortcut: `${mod}${shift}M` },
   { type: 'command', id: 'link-pane',       label: 'Link Pane',       shortcut: `${mod}L` },
+  { type: 'command', id: 'unlink-pane',     label: 'Unlink Pane' },
+  { type: 'command', id: 'unlink-all',      label: 'Unlink All Panes' },
 ];
 
 // ═══════════════════════════════════════════════════════════════

@@ -1213,6 +1213,21 @@ export function Terminal() {
               return;
             }
 
+            // Unlink active outliner pane
+            if (commandId === 'unlink-pane') {
+              const outlinerPaneId = resolvedOutlinerPaneId();
+              if (outlinerPaneId) {
+                paneLinkStore.clearPaneLink(outlinerPaneId);
+              }
+              return;
+            }
+
+            // Unlink all panes
+            if (commandId === 'unlink-all') {
+              paneLinkStore.clearAllLinks();
+              return;
+            }
+
             // Dispatch keyboard events that Outliner.tsx already handles
             const keyMap: Record<string, string> = {
               'export-json': 'j',
