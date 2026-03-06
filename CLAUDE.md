@@ -378,6 +378,7 @@ Critical rules:
 | `BlockDisplay.tsx` | Display layer for inline formatting overlay |
 | `Breadcrumb.tsx` | Navigation trail for zoomed block view |
 | `LinkedReferences.tsx` | Backlinks display when zoomed into a page under `pages::` |
+| `PaneLinkOverlay.tsx` | Dual-mode letter overlay for pane linking (⌘L) and focus jumping (⌘J) |
 
 **Frontend modules** (`src/lib/`):
 
@@ -391,6 +392,7 @@ Critical rules:
 | `inlineParser.ts` | Tokenizes inline markdown (`**bold**`, `*italic*`, `` `code` ``, `[[wikilinks]]`) for overlay |
 | `cursorUtils.ts` | Cursor position utilities for keybind logic |
 | `executor.ts` | Command execution for `sh::` blocks (child_process via Tauri) |
+| `handlers/artifact.ts` | `artifact::` handler — React/Babel transpilation for Claude.ai JSX artifacts |
 | `tvResolver.ts` | `$tv()` pattern resolution - spawns TV picker, receives selection from Rust |
 | `events/blockEventBus.ts` | Typed event bus for block lifecycle events (`block:create`, `block:update`, `block:delete`, `block:move`) |
 
@@ -415,6 +417,8 @@ Hooks subscribe to `blockEventBus`, use Origin filtering to prevent infinite loo
 | `useCursor.ts` | DOM cursor abstraction for testability |
 | `useBlockInput.ts` | Pure keyboard logic extraction (`determineKeyAction`) |
 | `useBacklinkNavigation.ts` | Page navigation, `pages::` container lookup, backlinks extraction |
+| `usePaneLinkStore.ts` | Session-scoped pane→pane linking, overlay mode, link resolution |
+| `useCommandBar.ts` | Command palette state (⌘K) — pages + built-in commands |
 
 ### Key Data Flows
 
@@ -539,6 +543,10 @@ See `docs/architecture/LOGGING_STRATEGY.md` for complete guide and LLM integrati
 - `⌘1-9` - Jump to tab N
 - `⌘⇧[` / `⌘⇧]` - Prev/next tab
 - `⌘B` - Toggle sidebar
+- `⌘K` - Command palette
+- `⌘L` - Link pane (overlay picker)
+- `⌘J` - Focus pane (overlay picker — jump to any pane)
+- `⌘⌥Arrow` - Directional pane focus (up/down/left/right)
 
 **Outliner** (in `Outliner.tsx` via tinykeys):
 
@@ -635,6 +643,52 @@ Root blocks
 - `useBacklinkNavigation.ts` - Navigation logic, page creation, backlink extraction
 - `LinkedReferences.tsx` - Displays backlinks when zoomed into page
 - `BlockDisplay.tsx` - Renders nested wikilinks with separate click handlers
+
+### Pane Linking & Focus (FLO-223)
+
+tmux-inspired cross-pane navigation. Pane links are session-scoped (pane IDs are ephemeral UUIDs).
+
+```
+Pane A (source) ──link──▶ Pane B (target)
+  │                          │
+  ├─ [[wikilink]] click  ───▶ navigates in B (not A)
+  ├─ chirp navigate      ───▶ navigates in B
+  └─ Chaining: A→B, B→C     navigates cascade
+```
+
+**Two overlay modes** (in `PaneLinkOverlay.tsx`):
+- **Link** (`⌘L`): Pick target outliner pane. Excludes source. Cyan accent.
+- **Focus** (`⌘J`): Jump to any pane (terminals + outliners). Yellow accent.
+
+**Visual feedback**:
+- Unfocused panes dim to `unfocused_pane_opacity` (config.toml, default 0.4)
+- Linked partner pane: cyan border + midpoint opacity (brighter than unlinked)
+- Toggle dimming via Cmd+K "Toggle Pane Dimming"
+
+**Key files:**
+- `usePaneLinkStore.ts` - Pane link map, overlay mode signal, `resolveLink()` chain
+- `PaneLinkOverlay.tsx` - Letter overlay picker, dual-mode (link/focus)
+- `Terminal.tsx` - Keybind + command handlers, dimming config, link tint effect
+
+### Artifact Handler & Chirp Protocol
+
+`artifact::` renders Claude.ai JSX artifacts in sandboxed iframes. `chirp::` enables bidirectional iframe↔outline communication.
+
+```
+Outliner                           Iframe (artifact)
+  │ artifact:: path/to/file.jsx      │
+  │ ──── render via Babel ──────────▶│
+  │                                   │ chirp('block', {content})
+  │◀──── postMessage ────────────────│
+  │ creates chirp:: child block       │
+  │                                   │ chirp('navigate', {target})
+  │◀──── postMessage ────────────────│
+  │ routes through pane link          │
+```
+
+**Key files:**
+- `src/lib/handlers/artifact.ts` - Transpile JSX + mount in iframe
+- `src/components/views/DoorHost.tsx` - Iframe lifecycle, postMessage bridge
 
 ## The Pattern (40 Years Deep)
 

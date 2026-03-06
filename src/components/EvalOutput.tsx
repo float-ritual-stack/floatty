@@ -15,6 +15,8 @@ import type { EvalResult } from '../lib/evalEngine';
 
 interface ViewerProps {
   data: unknown;
+  onChirp?: (message: string, data?: unknown) => void;
+  onPokeReady?: (poke: (message: string, data?: unknown) => void) => void;
 }
 
 const ValueViewer: Component<ViewerProps> = (props) => (
@@ -60,6 +62,7 @@ const UrlViewer: Component<ViewerProps> = (props) => {
   const [loaded, setLoaded] = createSignal(false);
   const [inView, setInView] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
+  let iframeRef: HTMLIFrameElement | undefined;
 
   onMount(() => {
     if (!containerRef) return;
@@ -69,6 +72,17 @@ const UrlViewer: Component<ViewerProps> = (props) => {
     );
     observer.observe(containerRef);
     onCleanup(() => observer.disconnect());
+
+    // Chirp bridge: listen for postMessage from this iframe
+    const handleMessage = (e: MessageEvent) => {
+      if (!props.onChirp) return;
+      if (!iframeRef || e.source !== iframeRef.contentWindow) return;
+      if (e.data?.type === 'chirp' && typeof e.data.message === 'string') {
+        props.onChirp(e.data.message, e.data.data);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    onCleanup(() => window.removeEventListener('message', handleMessage));
   });
 
   // Reset loaded state when iframe remounts (inView toggles Show)
@@ -114,13 +128,22 @@ const UrlViewer: Component<ViewerProps> = (props) => {
             The "allow-scripts + allow-same-origin = sandbox escape" concern only applies
             when iframe content shares origin with the parent. In Tauri, it never does. */}
         <iframe
+          ref={el => iframeRef = el}
           src={url()}
           style={{ height: `${height()}px` }}
           class="eval-output-url-iframe"
           classList={{ loaded: loaded() }}
           title={url()}
           sandbox="allow-scripts allow-same-origin allow-forms"
-          onLoad={() => setLoaded(true)}
+          onLoad={() => {
+            setLoaded(true);
+            if (props.onPokeReady && iframeRef) {
+              const iframe = iframeRef;
+              props.onPokeReady((message: string, data?: unknown) => {
+                iframe.contentWindow?.postMessage({ type: 'poke', message, data }, '*');
+              });
+            }
+          }}
         />
       </Show>
       <div
@@ -151,13 +174,15 @@ const EVAL_VIEWERS: Record<string, Component<ViewerProps>> = {
 
 interface EvalOutputProps {
   output: EvalResult;
+  onChirp?: (message: string, data?: unknown) => void;
+  onPokeReady?: (poke: (message: string, data?: unknown) => void) => void;
 }
 
 export function EvalOutput(props: EvalOutputProps) {
   const viewer = () => EVAL_VIEWERS[props.output.type] ?? EVAL_VIEWERS.value;
   return (
     <div class="eval-output">
-      <Dynamic component={viewer()} data={props.output.data} />
+      <Dynamic component={viewer()} data={props.output.data} onChirp={props.onChirp} onPokeReady={props.onPokeReady} />
     </div>
   );
 }

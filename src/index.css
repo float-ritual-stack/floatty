@@ -508,6 +508,21 @@ html, body, #root {
   box-shadow: inset 0 0 0 1px var(--color-accent); /* Accent border inside */
 }
 
+/* Unfocused pane dimming — config-driven via unfocused_pane_opacity in config.toml */
+/* TerminalPane uses .active, OutlinerPane uses .pane-active */
+.terminal-pane-positioned:not(.active):not(.pane-active) {
+  opacity: var(--unfocused-pane-opacity, 1);
+  transition: opacity 0.15s ease;
+}
+
+/* Linked pane tint — shown when active pane has a link pointing here or vice versa.
+   Specificity must beat the :not(.active):not(.pane-active) dimming rule above. */
+.terminal-pane-positioned.pane-link-target:not(.active):not(.pane-active) {
+  box-shadow: inset 0 0 0 2px var(--color-ansi-cyan, #06b6d4);
+  /* Midpoint between focused (1.0) and unfocused — linked panes stay brighter */
+  opacity: calc((1 + var(--unfocused-pane-opacity, 1)) / 2);
+}
+
 .terminal-pane-positioned.pane-drag-source {
   box-shadow:
     inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 85%, transparent),
@@ -3111,5 +3126,92 @@ body.resizing * {
 @media (prefers-reduced-motion: reduce) {
   .iframe-pane-iframe {
     transition: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PANE LINK OVERLAY (tmux display-panes style)
+   ═══════════════════════════════════════════════════════════════ */
+
+.pane-link-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: color-mix(in srgb, var(--color-bg-dark, #000) 65%, transparent);
+  --overlay-accent: var(--color-ansi-cyan, #06b6d4);
+}
+
+.pane-link-scrim.pane-focus-mode {
+  --overlay-accent: var(--color-ansi-yellow, #eab308);
+}
+
+.pane-link-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border: 2px solid var(--overlay-accent);
+  background: color-mix(in srgb, var(--color-bg, #000) 20%, transparent);
+}
+
+.pane-link-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  background: color-mix(in srgb, var(--color-bg-dark, #000) 85%, transparent);
+  border: 2px solid var(--overlay-accent);
+  border-radius: 12px;
+  padding: 1rem 2rem;
+}
+
+.pane-link-letter {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--overlay-accent);
+  text-transform: uppercase;
+  text-shadow: 0 2px 20px color-mix(in srgb, var(--overlay-accent) 40%, transparent);
+}
+
+.pane-link-description {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.85rem;
+  color: var(--color-fg-muted, #8b8b8b);
+  max-width: 200px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Linked block indicator — clickable, clears link on click */
+.block-link-indicator {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.7rem;
+  color: var(--color-ansi-cyan, #7dd3fc);
+  border: 1px solid var(--color-ansi-cyan, #7dd3fc);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 4px;
+  opacity: 0.6;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.block-link-indicator:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-ansi-cyan, #7dd3fc) 10%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-pane-positioned:not(.active):not(.pane-active) {
+    transition: none;
+  }
+  .pane-link-letter {
+    text-shadow: none;
   }
 }

@@ -67,6 +67,35 @@ export interface TableConfig {
   columnWidths?: number[];
 }
 
+/** Matches a v4 UUID — used to detect block-ID wikilinks and chirp navigate targets */
+export const BLOCK_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Matches a hex prefix (6+ chars) — git-sha style partial block ID */
+export const BLOCK_ID_PREFIX_RE = /^[0-9a-f]{6,}$/i;
+
+/**
+ * Resolve a partial hex prefix to a full block ID, git-sha style.
+ * Returns the full ID if exactly one match, null if zero or ambiguous.
+ */
+export function resolveBlockIdPrefix(prefix: string, blockIds: string[]): string | null {
+  if (BLOCK_ID_RE.test(prefix)) return prefix; // Already a full UUID
+  if (!BLOCK_ID_PREFIX_RE.test(prefix)) return null;
+
+  const lower = prefix.toLowerCase();
+  // Match against the first segment of the UUID (before first dash) or full ID
+  const matches = blockIds.filter(id => id.toLowerCase().startsWith(lower));
+  if (matches.length === 1) return matches[0];
+  // Also check without dashes (user might paste contiguous hex)
+  if (matches.length === 0) {
+    const noDash = blockIds.filter(id => id.replace(/-/g, '').toLowerCase().startsWith(lower));
+    if (noDash.length === 1) return noDash[0];
+  }
+  if (matches.length !== 1) {
+    console.warn('[resolveBlockIdPrefix]', { prefix, matchCount: matches.length, total: blockIds.length });
+  }
+  return null; // ambiguous or no match
+}
+
 export function parseBlockType(content: string): BlockType {
   const trimmed = content.trim();
   const lower = trimmed.toLowerCase();
@@ -89,6 +118,7 @@ export function parseBlockType(content: string): BlockType {
   if (lower.startsWith('search::')) return 'search';
   if (lower.startsWith('backup::')) return 'backup';
   if (lower.startsWith('info::')) return 'info';
+  if (lower.startsWith('artifact::')) return 'artifact';
 
   // Markdown syntax (case-sensitive prefix matching)
   if (trimmed.startsWith('### ')) return 'h3';

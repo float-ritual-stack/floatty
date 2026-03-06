@@ -59,6 +59,8 @@ pub enum BlockType {
     Backup,
     /// System info dump: prefix `info::`
     Info,
+    /// Artifact viewer: prefix `artifact::` — renders JSX files in iframe
+    Artifact,
 }
 
 impl BlockType {
@@ -88,6 +90,7 @@ impl BlockType {
             BlockType::Search => "search",
             BlockType::Backup => "backup",
             BlockType::Info => "info",
+            BlockType::Artifact => "artifact",
         }
     }
 }
@@ -188,6 +191,9 @@ pub fn parse_block_type(content: &str) -> BlockType {
     }
     if lower.starts_with("info::") {
         return BlockType::Info;
+    }
+    if lower.starts_with("artifact::") {
+        return BlockType::Artifact;
     }
 
     // Markdown syntax (case-sensitive for headings)
@@ -315,6 +321,13 @@ mod tests {
         assert_eq!(parse_block_type("- [ ] Todo unchecked"), BlockType::Todo);
         assert_eq!(parse_block_type("- [x] Todo checked"), BlockType::Todo);
         assert_eq!(parse_block_type("- [X] Todo checked upper"), BlockType::Todo);
+    }
+
+    #[test]
+    fn test_parse_block_type_artifact() {
+        assert_eq!(parse_block_type("artifact:: ~/file.jsx"), BlockType::Artifact);
+        assert_eq!(parse_block_type("Artifact:: ~/file.jsx"), BlockType::Artifact);
+        assert_eq!(parse_block_type("  artifact:: foo.tsx"), BlockType::Artifact);
     }
 
     #[test]

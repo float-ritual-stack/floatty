@@ -19,6 +19,10 @@ import { downloadBinary } from '../lib/binaryExport';
 import { validateForExport, type ValidationWarning } from '../lib/validation';
 import { ExportValidation } from './ExportValidation';
 import { themeStore } from '../hooks/useThemeStore';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { tabStore } from '../hooks/useTabStore';
+import { layoutStore } from '../hooks/useLayoutStore';
 import { IframePaneView } from './views/IframePaneView';
 import type { EvalResult } from '../lib/evalEngine';
 
@@ -548,6 +552,8 @@ export function Outliner(props: OutlinerProps) {
 
         // Export keybinds moved to global document listener (see below)
 
+        // FLO-223 R9: Cmd+L handled in global document listener below
+
         // FLO-180/211: Navigation history (back/forward) with focus restoration
         '$mod+[': (e) => {
           e.preventDefault();
@@ -619,6 +625,16 @@ export function Outliner(props: OutlinerProps) {
         if (focused) {
           paneStore.toggleFullWidth(props.paneId, focused);
         }
+      }
+      // FLO-223 R9: Cmd+L - Open pane link overlay (always, even if already linked — re-link)
+      // Guard: active tab AND active pane (all outliners register on document, only focused one fires)
+      else if (isMod && !isShift && e.key === 'l') {
+        const myTab = findTabIdByPaneId(props.paneId);
+        if (myTab !== tabStore.activeTabId()) return;
+        const layout = layoutStore.layouts[myTab];
+        if (layout?.activePaneId !== props.paneId) return;
+        e.preventDefault();
+        paneLinkStore.startLinking(props.paneId);
       }
     };
 

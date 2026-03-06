@@ -9,6 +9,8 @@ import { paneStore } from '../hooks/usePaneStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { findTabIdByPaneId, navigateToPage as navigateToPageImpl } from '../hooks/useBacklinkNavigation';
 import { blockStore } from '../hooks/useBlockStore';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { collectLeaves, type PaneLeaf } from './layoutTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -103,13 +105,6 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
       highlightBlockInPane(blockId, targetPaneId);
     }, delay);
   }
-
-  console.log('[navigation] navigateToBlock:', {
-    blockId,
-    zoomTarget,
-    paneId: targetPaneId,
-    split: !!splitDirection
-  });
 
   return { success: true, targetPaneId };
 }
@@ -240,6 +235,52 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
   const maxTimeout = setTimeout(cleanup, 30000);
 
   currentHighlightCleanup = cleanup;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PANE TARGETING (FLO-223 R9)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Resolve the target outliner pane for cross-pane navigation.
+ *
+ * Resolution chain:
+ * 1. Block link (block→pane) — specific block override
+ * 2. Pane link (pane→pane) — "anything from this pane goes there"
+ * 3. Last-focused outliner fallback — activePaneId if it's an outliner, else first outliner
+ *
+ * Pane links enable chaining: A→B, B→C means nav from A goes to B, nav from B goes to C.
+ */
+export function resolveTargetPane(sourcePaneId: string, blockId?: string): string | null {
+  // 1-2. Check block link, then pane link
+  const linked = paneLinkStore.resolveLink(sourcePaneId, blockId);
+  if (linked) return linked;
+  // 3. Fallback: find an outliner pane that isn't the source
+  return findFallbackOutlinerPane(sourcePaneId);
+}
+
+/**
+ * Find an outliner pane to navigate, preferring the active pane.
+ */
+function findFallbackOutlinerPane(excludePaneId: string): string | null {
+  const tabId = findTabIdByPaneId(excludePaneId);
+  if (!tabId) return null;
+  const layout = layoutStore.layouts[tabId];
+  if (!layout) return null;
+
+  const leaves = collectLeaves(layout.root);
+  const otherOutliners = leaves.filter(
+    (l: PaneLeaf) => l.leafType === 'outliner' && l.id !== excludePaneId
+  );
+
+  if (otherOutliners.length === 0) return null;
+
+  // Prefer the active pane if it's among the candidates
+  if (otherOutliners.some((l: PaneLeaf) => l.id === layout.activePaneId)) {
+    return layout.activePaneId;
+  }
+
+  return otherOutliners[0].id;
 }
 
 // HMR cleanup: clear highlight state on module reload

@@ -8,9 +8,11 @@ import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
-import { navigateToBlock } from '../lib/navigation';
+import { navigateToBlock, navigateToPage as navigateToPageNav } from '../lib/navigation';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
+import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE } from '../lib/blockTypes';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
 import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
@@ -781,6 +783,55 @@ export function BlockItem(props: BlockItemProps) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
+    // Block-ID links: full UUID or partial hex prefix (git-sha style)
+    const blockIds = Object.keys(store.blocks);
+    const resolvedBlockId = resolveBlockIdPrefix(target, blockIds);
+    if (resolvedBlockId) {
+      let targetPaneId = props.paneId;
+      if (splitDirection === 'none') {
+        const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
+        if (linkedPaneId) {
+          // Verify linked pane is on same tab (don't navigate cross-tab)
+          const sourceTab = findTabIdByPaneId(props.paneId);
+          const linkedTab = findTabIdByPaneId(linkedPaneId);
+          if (sourceTab && sourceTab === linkedTab) {
+            targetPaneId = linkedPaneId;
+          }
+        }
+      }
+      navigateToBlock(resolvedBlockId, {
+        paneId: targetPaneId,
+        highlight: true,
+        splitDirection: splitDirection !== 'none' ? splitDirection : undefined,
+        originBlockId: props.id,
+      });
+      return;
+    }
+
+    // Guard: hex prefix that didn't resolve → never create a page for block ID lookalikes
+    if (BLOCK_ID_PREFIX_RE.test(target)) {
+      console.warn('[BlockItem] Block ID prefix did not resolve, not creating page', {
+        target,
+        blockCount: Object.keys(store.blocks).length,
+      });
+      return;
+    }
+
+    // FLO-223: Plain click + explicit pane link → navigate in linked target pane
+    // Uses resolveLink (no fallback) — wikilinks only redirect when explicitly linked
+    if (splitDirection === 'none') {
+      const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
+      if (linkedPaneId) {
+        // Same-tab check: don't send navigation to another tab
+        const sourceTab = findTabIdByPaneId(props.paneId);
+        const linkedTab = findTabIdByPaneId(linkedPaneId);
+        if (sourceTab && sourceTab === linkedTab) {
+          navigateToPageNav(target, { paneId: linkedPaneId, highlight: true, originBlockId: props.id });
+          return;
+        }
+      }
+    }
+
     // FLO-211: Pass current block as origin for focus restoration on back navigation
     const result = navigateToPage(target, props.paneId, splitDirection, ephemeral, {
       originBlockId: props.id,
@@ -871,6 +922,18 @@ export function BlockItem(props: BlockItemProps) {
           {bulletChar()}
         </div>
 
+        {/* FLO-223: Pane link indicator on iframe-output blocks (artifact/door/eval-url) */}
+        <Show when={paneLinkStore.hasPaneLink(props.paneId) && (block()?.outputType === 'eval-result' || block()?.outputType === 'door')}>
+          <span
+            class="block-link-indicator"
+            title="Pane linked (Cmd+L to unlink)"
+            onClick={(e) => {
+              e.stopPropagation();
+              paneLinkStore.clearPaneLink(props.paneId);
+            }}
+          >⇥</span>
+        </Show>
+
         <div class={`block-content-wrapper ${contentClass()}`}>
           {/* PICKER BLOCK: special rendering with terminal container */}
           <Show when={block()?.type === 'picker'}>
@@ -954,6 +1017,17 @@ export function BlockItem(props: BlockItemProps) {
                         data={envelope.data}
                         error={envelope.error}
                         status={block()?.outputStatus}
+                        onNavigate={(target, opts) => {
+                          const targetPaneId = paneLinkStore.resolveLink(props.paneId, props.id) ?? props.paneId;
+                          const resolvedId = resolveBlockIdPrefix(target, Object.keys(store.blocks));
+                          if (resolvedId || opts?.type === 'block') {
+                            navigateToBlock(resolvedId ?? target, { paneId: targetPaneId, highlight: true, splitDirection: opts?.splitDirection });
+                          } else if (BLOCK_ID_PREFIX_RE.test(target)) {
+                            console.warn('[BlockItem] DoorHost navigate: block ID prefix did not resolve', { target });
+                          } else {
+                            navigateToPageNav(target, { paneId: targetPaneId, highlight: true, splitDirection: opts?.splitDirection });
+                          }
+                        }}
                       />
                     : <DoorExecCard
                         doorId={envelope.doorId}
@@ -1046,7 +1120,50 @@ export function BlockItem(props: BlockItemProps) {
 
           {/* EVAL OUTPUT: inline result below contentEditable for eval:: blocks */}
           <Show when={block()?.outputType === 'eval-result' && block()?.output && !isCollapsed()}>
-            <EvalOutput output={block()!.output as EvalResult} />
+            {(() => {
+              let pokeIframe: ((message: string, data?: unknown) => void) | undefined;
+              return (
+                <EvalOutput
+                  output={block()!.output as EvalResult}
+                  onChirp={(message: string, data?: unknown) => {
+                    // Route navigate intents to linked outliner pane (or own pane if unlinked)
+                    if (message === 'navigate' && typeof data === 'object' && data) {
+                      const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' };
+                      const targetPaneId = paneLinkStore.resolveLink(props.paneId, props.id) ?? props.paneId;
+                      if (!nav.target) {
+                        pokeIframe?.('ack: navigate', { success: false, error: 'empty target' });
+                        return;
+                      }
+                      const resolvedId = resolveBlockIdPrefix(nav.target, Object.keys(store.blocks));
+                      if (resolvedId || nav.type === 'block') {
+                        navigateToBlock(resolvedId ?? nav.target, { paneId: targetPaneId, highlight: true, splitDirection: nav.splitDirection });
+                      } else if (BLOCK_ID_PREFIX_RE.test(nav.target)) {
+                        console.warn('[BlockItem] chirp navigate: block ID prefix did not resolve', { target: nav.target });
+                        pokeIframe?.('ack: navigate', { success: false, error: 'block not found' });
+                        return;
+                      } else {
+                        navigateToPageNav(nav.target, { paneId: targetPaneId, highlight: true, splitDirection: nav.splitDirection });
+                      }
+                      pokeIframe?.('ack: navigate', { success: true, target: nav.target });
+                      return;
+                    }
+                    // Default: create child block (throttled to max 10/sec to prevent runaway iframes)
+                    const now = Date.now();
+                    const key = `chirp_${props.id}`;
+                    const lastTime = (window as Record<string, unknown>)[key] as number | undefined;
+                    if (lastTime && now - lastTime < 100) {
+                      pokeIframe?.(`ack: ${message}`, { throttled: true });
+                      return;
+                    }
+                    (window as Record<string, unknown>)[key] = now;
+                    const [childId] = store.batchCreateBlocksInside(props.id, [{ content: `chirp:: ${message}` }]);
+                    // Auto-poke back so the iframe knows we received it
+                    pokeIframe?.(`ack: ${message}`, data);
+                  }}
+                  onPokeReady={(poke) => { pokeIframe = poke; }}
+                />
+              );
+            })()}
           </Show>
 
           {/* FLO-376: Wikilink autocomplete popup */}

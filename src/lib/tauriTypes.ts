@@ -111,6 +111,8 @@ export interface AggregatorConfig {
   initial_collapse_depth?: number;
   /** Show diagnostics strip in status bar (port, build type, config path) */
   show_diagnostics: boolean;
+  /** Opacity of unfocused panes (0.0–1.0, default 0.7). 1.0 = no dimming. */
+  unfocused_pane_opacity: number;
   /** Per-door plugin settings from [plugins.*] sections in config.toml */
   plugins?: Record<string, Record<string, unknown>>;
   /** Whether this is a dev (debug) build (runtime-only, not persisted) */
