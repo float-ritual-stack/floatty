@@ -782,9 +782,10 @@ export function BlockItem(props: BlockItemProps) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
-    // FLO-223: Plain click + pane linked → navigate in linked target pane
+    // FLO-223: Plain click + explicit pane link → navigate in linked target pane
+    // Uses resolveLink (no fallback) — wikilinks only redirect when explicitly linked
     if (splitDirection === 'none') {
-      const linkedPaneId = resolveTargetPane(props.paneId);
+      const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
       if (linkedPaneId) {
         navigateToPageNav(target, { paneId: linkedPaneId, highlight: true, originBlockId: props.id });
         return;
