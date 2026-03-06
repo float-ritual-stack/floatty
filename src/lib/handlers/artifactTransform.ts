@@ -110,6 +110,20 @@ function ensureReactImports(jsCode: string): string {
 }
 
 /**
+ * Build the chirp bridge — lets artifacts write blocks to the parent outline.
+ *
+ * Usage inside artifact: `window.chirp('hello from iframe')`
+ * or: `window.chirp('data point', { x: 42, y: 99 })`
+ */
+function buildChirpBridge(): string {
+  return `
+// === Chirp bridge ===
+window.chirp = function(message, data) {
+  window.parent.postMessage({ type: 'chirp', message: String(message), data: data }, '*');
+};`;
+}
+
+/**
  * Build the mount script that finds and renders the component.
  */
 function buildMountScript(): string {
@@ -138,7 +152,7 @@ function buildMountScript(): string {
  */
 export function buildArtifactHtml(jsCode: string, importMap: Record<string, string>): string {
   const importMapJson = JSON.stringify({ imports: importMap }, null, 2);
-  const moduleCode = ensureReactImports(jsCode) + '\n' + buildMountScript();
+  const moduleCode = ensureReactImports(jsCode) + '\n' + buildChirpBridge() + '\n' + buildMountScript();
 
   return `<!DOCTYPE html>
 <html>

@@ -160,4 +160,11 @@ describe('buildArtifactHtml', () => {
     const matches = html.match(/import React from 'react'/g);
     expect(matches).toHaveLength(1);
   });
+
+  it('includes chirp bridge', () => {
+    const html = buildArtifactHtml('function App() {}', {});
+    expect(html).toContain('window.chirp');
+    expect(html).toContain("postMessage");
+    expect(html).toContain("'chirp'");
+  });
 });

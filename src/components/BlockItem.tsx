@@ -1046,7 +1046,13 @@ export function BlockItem(props: BlockItemProps) {
 
           {/* EVAL OUTPUT: inline result below contentEditable for eval:: blocks */}
           <Show when={block()?.outputType === 'eval-result' && block()?.output && !isCollapsed()}>
-            <EvalOutput output={block()!.output as EvalResult} />
+            <EvalOutput
+              output={block()!.output as EvalResult}
+              onChirp={(message: string) => {
+                const childId = store.createBlockInside(props.id);
+                store.updateBlockContent(childId, `chirp:: ${message}`);
+              }}
+            />
           </Show>
 
           {/* FLO-376: Wikilink autocomplete popup */}
