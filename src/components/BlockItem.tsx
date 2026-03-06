@@ -8,7 +8,7 @@ import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
-import { navigateToBlock, navigateToPage as navigateToPageNav, resolveTargetPane } from '../lib/navigation';
+import { navigateToBlock, navigateToPage as navigateToPageNav } from '../lib/navigation';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
@@ -978,8 +978,7 @@ export function BlockItem(props: BlockItemProps) {
                         error={envelope.error}
                         status={block()?.outputStatus}
                         onNavigate={(target, opts) => {
-                          const targetPaneId = resolveTargetPane(props.paneId, props.id);
-                          if (!targetPaneId) return;
+                          const targetPaneId = paneLinkStore.resolveLink(props.paneId, props.id) ?? props.paneId;
                           if (opts?.type === 'page') {
                             navigateToPageNav(target, { paneId: targetPaneId, highlight: true, splitDirection: opts.splitDirection });
                           } else {
@@ -1084,11 +1083,11 @@ export function BlockItem(props: BlockItemProps) {
                 <EvalOutput
                   output={block()!.output as EvalResult}
                   onChirp={(message: string, data?: unknown) => {
-                    // Route navigate intents to linked outliner pane
+                    // Route navigate intents to linked outliner pane (or own pane if unlinked)
                     if (message === 'navigate' && typeof data === 'object' && data) {
                       const nav = data as { target: string; type?: 'block' | 'page' };
-                      const targetPaneId = resolveTargetPane(props.paneId, props.id);
-                      if (targetPaneId && nav.target) {
+                      const targetPaneId = paneLinkStore.resolveLink(props.paneId, props.id) ?? props.paneId;
+                      if (nav.target) {
                         if (nav.type === 'page') {
                           navigateToPageNav(nav.target, { paneId: targetPaneId, highlight: true });
                         } else {
