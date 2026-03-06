@@ -625,17 +625,13 @@ export function Outliner(props: OutlinerProps) {
           paneStore.toggleFullWidth(props.paneId, focused);
         }
       }
-      // FLO-223 R9: Cmd+L - Toggle pane link on this pane
+      // FLO-223 R9: Cmd+L - Open pane link overlay (always, even if already linked — re-link)
       // Guard: only fire for panes on the active tab (each Outliner registers this globally)
       else if (isMod && !isShift && e.key === 'l') {
         const myTab = findTabIdByPaneId(props.paneId);
         if (myTab !== tabStore.activeTabId()) return;
         e.preventDefault();
-        if (paneLinkStore.hasPaneLink(props.paneId)) {
-          paneLinkStore.clearPaneLink(props.paneId);
-        } else {
-          paneLinkStore.startLinking(props.paneId);
-        }
+        paneLinkStore.startLinking(props.paneId);
       }
     };
 
