@@ -8,17 +8,14 @@
  */
 
 import { readTextFile } from '@tauri-apps/plugin-fs';
+import { homeDir } from '@tauri-apps/api/path';
 import type { BlockHandler, ExecutorActions } from './types';
 import { transformArtifact } from './artifactTransform';
 
-/**
- * Resolve ~ to the user's home directory.
- * Tauri's fs plugin handles $HOME but not ~.
- */
-function resolveTilde(filePath: string): string {
+async function resolveTilde(filePath: string): Promise<string> {
   if (filePath.startsWith('~/')) {
-    // Use $HOME env or fallback — Tauri resolves $HOME in paths
-    return filePath.replace('~', '$HOME');
+    const home = await homeDir();
+    return filePath.replace('~', home.replace(/\/$/, ''));
   }
   return filePath;
 }
@@ -45,7 +42,7 @@ export const artifactHandler: BlockHandler = {
     actions.setBlockStatus?.(blockId, 'running');
 
     try {
-      const resolvedPath = resolveTilde(filePath);
+      const resolvedPath = await resolveTilde(filePath);
       const source = await readTextFile(resolvedPath);
 
       const result = transformArtifact(source);
