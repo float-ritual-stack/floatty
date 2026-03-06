@@ -626,10 +626,12 @@ export function Outliner(props: OutlinerProps) {
         }
       }
       // FLO-223 R9: Cmd+L - Open pane link overlay (always, even if already linked — re-link)
-      // Guard: only fire for panes on the active tab (each Outliner registers this globally)
+      // Guard: active tab AND active pane (all outliners register on document, only focused one fires)
       else if (isMod && !isShift && e.key === 'l') {
         const myTab = findTabIdByPaneId(props.paneId);
         if (myTab !== tabStore.activeTabId()) return;
+        const layout = layoutStore.layouts[myTab];
+        if (layout?.activePaneId !== props.paneId) return;
         e.preventDefault();
         paneLinkStore.startLinking(props.paneId);
       }
