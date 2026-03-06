@@ -979,10 +979,11 @@ export function BlockItem(props: BlockItemProps) {
                         status={block()?.outputStatus}
                         onNavigate={(target, opts) => {
                           const targetPaneId = paneLinkStore.resolveLink(props.paneId, props.id) ?? props.paneId;
-                          if (opts?.type === 'page') {
-                            navigateToPageNav(target, { paneId: targetPaneId, highlight: true, splitDirection: opts.splitDirection });
-                          } else {
+                          if (opts?.type === 'block') {
                             navigateToBlock(target, { paneId: targetPaneId, highlight: true, splitDirection: opts.splitDirection });
+                          } else {
+                            // 'page', 'wikilink', or unspecified — navigate by page name
+                            navigateToPageNav(target, { paneId: targetPaneId, highlight: true, splitDirection: opts.splitDirection });
                           }
                         }}
                       />
@@ -1085,13 +1086,14 @@ export function BlockItem(props: BlockItemProps) {
                   onChirp={(message: string, data?: unknown) => {
                     // Route navigate intents to linked outliner pane (or own pane if unlinked)
                     if (message === 'navigate' && typeof data === 'object' && data) {
-                      const nav = data as { target: string; type?: 'block' | 'page' };
+                      const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink' };
                       const targetPaneId = paneLinkStore.resolveLink(props.paneId, props.id) ?? props.paneId;
                       if (nav.target) {
-                        if (nav.type === 'page') {
-                          navigateToPageNav(nav.target, { paneId: targetPaneId, highlight: true });
-                        } else {
+                        if (nav.type === 'block') {
                           navigateToBlock(nav.target, { paneId: targetPaneId, highlight: true });
+                        } else {
+                          // 'page', 'wikilink', or unspecified — all navigate by page name
+                          navigateToPageNav(nav.target, { paneId: targetPaneId, highlight: true });
                         }
                         pokeIframe?.('ack: navigate', { success: true, target: nav.target });
                         return;
