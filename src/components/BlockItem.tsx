@@ -872,14 +872,14 @@ export function BlockItem(props: BlockItemProps) {
           {bulletChar()}
         </div>
 
-        {/* FLO-223: Pane link indicator — shows which pane this block navigates to */}
-        <Show when={paneLinkStore.hasLink(props.id)}>
+        {/* FLO-223: Pane link indicator on iframe-output blocks (artifact/door/eval-url) */}
+        <Show when={paneLinkStore.hasPaneLink(props.paneId) && (block()?.outputType === 'eval-result' || block()?.outputType === 'door')}>
           <span
             class="block-link-indicator"
-            title="Linked to outliner pane (Cmd+L to unlink)"
+            title="Pane linked (Cmd+L to unlink)"
             onClick={(e) => {
               e.stopPropagation();
-              paneLinkStore.clearLink(props.id);
+              paneLinkStore.clearPaneLink(props.paneId);
             }}
           >⇥</span>
         </Show>

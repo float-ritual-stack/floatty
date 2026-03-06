@@ -252,16 +252,17 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
  * Resolve the target outliner pane for cross-pane navigation.
  *
  * Resolution chain:
- * 1. Explicit link (paneLinkStore) — user linked this block to a specific pane
- * 2. Last-focused outliner fallback — activePaneId if it's an outliner, else first outliner
+ * 1. Block link (block→pane) — specific block override
+ * 2. Pane link (pane→pane) — "anything from this pane goes there"
+ * 3. Last-focused outliner fallback — activePaneId if it's an outliner, else first outliner
+ *
+ * Pane links enable chaining: A→B, B→C means nav from A goes to B, nav from B goes to C.
  */
 export function resolveTargetPane(sourcePaneId: string, blockId?: string): string | null {
-  // 1. Check explicit link
-  if (blockId) {
-    const linked = paneLinkStore.getLinkedPane(blockId);
-    if (linked) return linked;
-  }
-  // 2. Fallback: find an outliner pane that isn't the source
+  // 1-2. Check block link, then pane link
+  const linked = paneLinkStore.resolveLink(sourcePaneId, blockId);
+  if (linked) return linked;
+  // 3. Fallback: find an outliner pane that isn't the source
   return findFallbackOutlinerPane(sourcePaneId);
 }
 

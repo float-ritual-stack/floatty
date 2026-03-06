@@ -1204,14 +1204,11 @@ export function Terminal() {
           onCommand={(commandId) => {
             setCommandBarOpen(false);
 
-            // Link Pane — start pane link overlay for focused block in active outliner
+            // Link Pane — start pane link overlay for active outliner pane
             if (commandId === 'link-pane') {
               const outlinerPaneId = resolvedOutlinerPaneId();
               if (outlinerPaneId) {
-                const blockId = paneStore.getFocusedBlockId(outlinerPaneId);
-                if (blockId) {
-                  paneLinkStore.startLinking(blockId, outlinerPaneId);
-                }
+                paneLinkStore.startLinking(outlinerPaneId);
               }
               return;
             }

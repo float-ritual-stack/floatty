@@ -64,9 +64,9 @@ export function PaneLinkOverlay() {
       const key = e.key.toLowerCase();
       const match = candidates().find(c => c.label === key);
       if (match) {
-        const blockId = paneLinkStore.linkingBlockId();
-        if (blockId) {
-          paneLinkStore.setLink(blockId, match.paneId);
+        const sourcePaneId = paneLinkStore.linkingSourcePaneId();
+        if (sourcePaneId) {
+          paneLinkStore.setPaneLink(sourcePaneId, match.paneId);
         }
         paneLinkStore.stopLinking();
       }
