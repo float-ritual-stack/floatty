@@ -11,7 +11,7 @@ import { findTabIdByPaneId, navigateToPage as navigateToPageImpl } from '../hook
 import { blockStore } from '../hooks/useBlockStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
-import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE } from './blockTypes';
+import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE, type Block } from './blockTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -39,13 +39,13 @@ export interface NavigateResult {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Navigate to a block by ID with context (zoom to parent to show siblings)
+ * Navigate to a block by ID with context.
  *
- * By default, zooms to the parent block so the target is visible with its siblings.
- * If the block has no parent (root level), zooms to the block itself.
+ * Zooms to an ancestor to show the target with siblings, but never zooms
+ * to a root-level block (pages::, etc.) — that would show the entire outline.
+ * Falls back to the block itself when ancestors are too shallow.
  *
- * @param blockId - Target block ID
- * @param options - Navigation options
+ * After zoom, scrolls the target into view and briefly highlights it.
  */
 export function navigateToBlock(blockId: string, options: NavigateOptions = {}): NavigateResult {
   const { paneId, splitDirection, highlight, originBlockId } = options;
@@ -76,19 +76,9 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   // Get the target block to find its parent for context
   const targetBlock = blockStore.getBlock(blockId);
 
-  // Determine zoom target: parent for context, or block itself if no parent
-  let zoomTarget = blockId;
-  if (targetBlock?.parentId) {
-    // Check if parent also has a parent (give more context for nested blocks)
-    const parentBlock = blockStore.getBlock(targetBlock.parentId);
-    if (parentBlock?.parentId) {
-      // Zoom to grandparent for even more context
-      zoomTarget = parentBlock.parentId;
-    } else {
-      // Zoom to parent
-      zoomTarget = targetBlock.parentId;
-    }
-  }
+  // Determine zoom target: walk up ancestor chain for context, but don't zoom
+  // to root-level blocks (pages::, etc.) — that defeats the purpose of zooming.
+  const zoomTarget = pickZoomTarget(blockId, targetBlock);
 
   // Zoom to context block (zoomTo pushes to nav history so Cmd+[ works)
   // Pass originBlockId so goBack() can restore focus to the search output block
@@ -99,12 +89,9 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
 
   // Scroll to and highlight the actual target block (after DOM settles)
   if (highlight) {
-    // Longer delay for splits to allow new pane to render
+    // Retry until block is in DOM (zoom re-render may take multiple frames)
     const delay = splitDirection ? 150 : 50;
-    setTimeout(() => {
-      scrollToBlockInPane(blockId, targetPaneId);
-      highlightBlockInPane(blockId, targetPaneId);
-    }, delay);
+    scrollAndHighlightWithRetry(blockId, targetPaneId, delay);
   }
 
   return { success: true, targetPaneId };
@@ -242,8 +229,86 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ZOOM TARGET SELECTION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Pick the best zoom target for navigating to a block.
+ *
+ * Walks up the ancestor chain to give context (show target with siblings),
+ * but stops before landing on a root-level block. Zooming to root or to
+ * container blocks like pages:: defeats the purpose — you'd see the entire
+ * outline instead of focused context.
+ *
+ * Heuristic: go up at most 2 levels, but never zoom to a root block.
+ */
+function pickZoomTarget(blockId: string, targetBlock: Block | null): string {
+  if (!targetBlock?.parentId) {
+    // Block is root-level or not found — zoom to itself
+    return blockId;
+  }
+
+  const rootIds = new Set(blockStore.rootIds);
+
+  // Parent exists and is not root → candidate
+  const parentBlock = blockStore.getBlock(targetBlock.parentId);
+  if (!parentBlock) return blockId;
+
+  if (rootIds.has(targetBlock.parentId)) {
+    // Parent IS a root block (e.g., pages::) — zoom to target itself
+    return blockId;
+  }
+
+  // Try grandparent for more context
+  if (parentBlock.parentId) {
+    if (rootIds.has(parentBlock.parentId)) {
+      // Grandparent is root — stop at parent (one level below root)
+      return targetBlock.parentId;
+    }
+    // Grandparent is not root — zoom to grandparent
+    return parentBlock.parentId;
+  }
+
+  // Parent has no parent (shouldn't happen if parent isn't root, but guard)
+  return targetBlock.parentId;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Scroll to and highlight a block after zoom settles.
+ *
+ * Problem: zoomTo() triggers SolidJS re-render. If we find the element too early,
+ * we highlight a stale DOM node that gets replaced by the re-render. Double-rAF
+ * ensures we wait for SolidJS to finish its reactive updates and the browser to
+ * paint, then we find the FRESH element. Retries handle cases where the block
+ * tree takes longer to render (large subtrees, lazy loading).
+ */
+function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDelay: number): void {
+  let attempts = 0;
+  const maxAttempts = 6;
+
+  function tryScrollAndHighlight() {
+    attempts++;
+    const element = findBlockInPane(blockId, paneId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      highlightBlockInPane(blockId, paneId);
+    } else if (attempts < maxAttempts) {
+      // Block not in DOM yet — wait another frame
+      requestAnimationFrame(() => setTimeout(tryScrollAndHighlight, 16));
+    }
+  }
+
+  // Wait for initial delay, then double-rAF to let SolidJS render + browser paint
+  setTimeout(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(tryScrollAndHighlight);
+    });
+  }, initialDelay);
+}
 
 /**
  * Find a block element within a specific pane
@@ -274,8 +339,10 @@ function scrollToBlockInPane(blockId: string, paneId: string): void {
 let currentHighlightCleanup: (() => void) | null = null;
 
 /**
- * Highlight a block in a specific pane until user interaction or max timeout.
- * Only one block can be highlighted at a time.
+ * Highlight a block in a specific pane. Stays visible until the user interacts
+ * within that pane (click or keypress), then fades out over 2s. This handles
+ * the "squirrel" case — cmd-click several links, highlights persist until you
+ * actually engage with each pane. Safety timeout at 60s.
  */
 function highlightBlockInPane(blockId: string, paneId: string): void {
   // Clean up any existing highlight first
@@ -289,26 +356,43 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
 
   element.classList.add('block-highlight');
 
-  // Create cleanup function
+  // Find the pane container to scope interaction detection
+  const paneContainer = document.querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`);
+
+  let fadeTimeout: ReturnType<typeof setTimeout> | null = null;
+
   const cleanup = () => {
     element.classList.remove('block-highlight');
-    document.removeEventListener('click', onInteraction);
-    document.removeEventListener('keydown', onInteraction);
-    clearTimeout(maxTimeout);
+    element.classList.remove('block-highlight-fade');
+    paneContainer?.removeEventListener('click', onPaneInteraction);
+    paneContainer?.removeEventListener('keydown', onPaneInteraction);
+    if (fadeTimeout) clearTimeout(fadeTimeout);
+    clearTimeout(safetyTimeout);
     if (currentHighlightCleanup === cleanup) {
       currentHighlightCleanup = null;
     }
   };
 
-  // Remove highlight on any user interaction
-  const onInteraction = () => cleanup();
+  // When user interacts within this pane, start fade-out
+  const onPaneInteraction = () => {
+    paneContainer?.removeEventListener('click', onPaneInteraction);
+    paneContainer?.removeEventListener('keydown', onPaneInteraction);
+    // Transition to fade-out class, then remove after animation
+    element.classList.add('block-highlight-fade');
+    fadeTimeout = setTimeout(cleanup, 2000);
+  };
 
-  // Add listeners (capture phase to catch early)
-  document.addEventListener('click', onInteraction, { once: true });
-  document.addEventListener('keydown', onInteraction, { once: true });
+  if (paneContainer) {
+    paneContainer.addEventListener('click', onPaneInteraction, { once: true });
+    paneContainer.addEventListener('keydown', onPaneInteraction, { once: true });
+  } else {
+    // Fallback: no pane container found, use global listeners
+    document.addEventListener('click', onPaneInteraction, { once: true });
+    document.addEventListener('keydown', onPaneInteraction, { once: true });
+  }
 
-  // Safety timeout (30s max)
-  const maxTimeout = setTimeout(cleanup, 30000);
+  // Safety timeout (60s — long enough for squirrel moments)
+  const safetyTimeout = setTimeout(cleanup, 60000);
 
   currentHighlightCleanup = cleanup;
 }
