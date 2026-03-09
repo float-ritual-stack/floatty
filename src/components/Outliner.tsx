@@ -24,6 +24,7 @@ import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 import { tabStore } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { IframePaneView } from './views/IframePaneView';
+import { handleChirpNavigate } from '../lib/navigation';
 import type { EvalResult } from '../lib/evalEngine';
 
 interface OutlinerProps {
@@ -760,6 +761,17 @@ export function Outliner(props: OutlinerProps) {
                 blockId={zoomedRootId()!}
                 paneId={props.paneId}
                 onClose={() => paneStore.zoomTo(props.paneId, null)}
+                onChirp={(message: string, data?: unknown) => {
+                  if (message === 'navigate' && typeof data === 'object' && data) {
+                    const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' };
+                    handleChirpNavigate(nav.target, {
+                      type: nav.type,
+                      sourcePaneId: props.paneId,
+                      sourceBlockId: zoomedRootId()!,
+                      splitDirection: nav.splitDirection,
+                    });
+                  }
+                }}
               />
             </Show>
           </Show>

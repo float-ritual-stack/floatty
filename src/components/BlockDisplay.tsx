@@ -26,12 +26,15 @@ interface BlockDisplayProps {
   onUpdateContent?: (newContent: string) => void;
   /** Set of existing page names (lowercase) for stub detection */
   pageNameSet?: Set<string>;
+  /** Set of page names (lowercase) that exist but have no real content */
+  stubPageNameSet?: ReadonlySet<string>;
 }
 
 interface TokenSpanProps {
   token: InlineToken;
   onWikilinkClick?: (target: string, event: MouseEvent) => void;
   pageNameSet?: Set<string>;
+  stubPageNameSet?: ReadonlySet<string>;
 }
 
 /**
@@ -753,12 +756,14 @@ function InlineTokenSpan(props: TokenSpanProps) {
     const inner = props.token.raw.slice(2, -2);
     const { target, alias } = parseWikilinkInner(inner);
 
-    // Stub detection: page doesn't exist yet (skip for block ID prefixes)
+    // Stub detection: page doesn't exist OR exists but has no real content
     const isStub = () => {
       if (!props.pageNameSet) return false;
       const t = props.token.target!;
       if (/^[0-9a-f]{6,}$/i.test(t)) return false; // block ID ref, not a page
-      return !props.pageNameSet.has(t.toLowerCase());
+      const lower = t.toLowerCase();
+      if (!props.pageNameSet.has(lower)) return true; // doesn't exist
+      return props.stubPageNameSet?.has(lower) ?? false; // exists but empty
     };
 
     const content = alias
@@ -818,7 +823,7 @@ function InlineTokenSpan(props: TokenSpanProps) {
                 return (
                   <>
                     <For each={lineTokens}>
-                      {(sub) => <InlineTokenSpan token={sub} onWikilinkClick={props.onWikilinkClick} pageNameSet={props.pageNameSet} />}
+                      {(sub) => <InlineTokenSpan token={sub} onWikilinkClick={props.onWikilinkClick} pageNameSet={props.pageNameSet} stubPageNameSet={props.stubPageNameSet} />}
                     </For>
                     {!isLastLine && '\n'}
                   </>
@@ -866,6 +871,7 @@ export function BlockDisplay(props: BlockDisplayProps) {
               token={token}
               onWikilinkClick={props.onWikilinkClick}
               pageNameSet={props.pageNameSet}
+              stubPageNameSet={props.stubPageNameSet}
             />
           )}
         </For>

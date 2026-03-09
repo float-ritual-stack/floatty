@@ -534,6 +534,15 @@ html, body, #root {
   height: 100%;
 }
 
+/* Transparent overlay on dimmed panes — catches first click to activate pane.
+   Without this, iframe clicks don't bubble to parent for pane activation. */
+.pane-inactive-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  cursor: pointer;
+}
+
 .pane-drag-handle {
   position: absolute;
   top: 6px;

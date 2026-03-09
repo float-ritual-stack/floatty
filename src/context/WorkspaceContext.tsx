@@ -22,6 +22,7 @@ import { paneStore as realPaneStore, type NavigationEntry } from '../hooks/usePa
 import type { Block } from '../lib/blockTypes';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { sortPageNames, getPageNamesWithTimestamps } from '../hooks/useWikilinkAutocomplete';
+import { findPagesContainer, getPageTitle } from '../hooks/useBacklinkNavigation';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPE INTERFACES
@@ -113,6 +114,8 @@ export interface WorkspaceContextValue {
   pageNames: Accessor<string[]>;
   /** Lowercase page name Set for O(1) stub detection in wikilink rendering. */
   pageNameSet: Accessor<ReadonlySet<string>>;
+  /** Pages that exist but have no real content (0 children or single empty child). */
+  stubPageNameSet: Accessor<ReadonlySet<string>>;
   /** Short-hash index: 8-char prefix → full UUID (empty string = ambiguous). */
   shortHashIndex: Accessor<ReadonlyMap<string, string>>;
 }
@@ -149,6 +152,25 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     new Set(pageNames().map(n => n.toLowerCase()))
   );
 
+  // Stub pages: exist under pages:: but have no real content
+  // (0 children, or single child with empty/whitespace content)
+  const stubPageNameSet = createMemo(() => {
+    const stubs = new Set<string>();
+    const container = findPagesContainer();
+    if (!container) return stubs;
+    for (const childId of container.childIds) {
+      const page = store.blocks[childId];
+      if (!page) continue;
+      const kids = page.childIds;
+      const isStub = kids.length === 0 ||
+        (kids.length === 1 && !(store.blocks[kids[0]]?.content?.trim()));
+      if (isStub) {
+        stubs.add(getPageTitle(page.content).toLowerCase());
+      }
+    }
+    return stubs;
+  });
+
   // Short-hash index: 8-char prefix → full UUID. Empty string marks ambiguous prefixes.
   const shortHashIndex = createMemo(() => {
     const ids = Object.keys(store.blocks);
@@ -169,6 +191,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     paneStore: props.paneStore ?? realPaneStore,
     pageNames,
     pageNameSet,
+    stubPageNameSet,
     shortHashIndex,
   };
 

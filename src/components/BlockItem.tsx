@@ -120,7 +120,7 @@ interface BlockItemProps {
 }
 
 export function BlockItem(props: BlockItemProps) {
-  const { blockStore, paneStore, pageNames, pageNameSet, shortHashIndex } = useWorkspace();
+  const { blockStore, paneStore, pageNames, pageNameSet, stubPageNameSet, shortHashIndex } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
   const drag = useBlockDrag();
@@ -1090,6 +1090,7 @@ export function BlockItem(props: BlockItemProps) {
                 blockId={props.id}
                 onUpdateContent={(content) => store.updateBlockContent(props.id, content)}
                 pageNameSet={pageNameSet()}
+                stubPageNameSet={stubPageNameSet()}
               />
             </Show>
 
