@@ -462,13 +462,14 @@ commit(blockId: string, domContent: string): CommitResult {
 | `useCursor.ts` | 96 | No change | 96 |
 | `useBlockStore.ts` | ~700 | No change (commit calls same methods) | ~700 |
 | `useBlockInput.ts` | ~700 | Replace `flushContentUpdate` → `controller.commit` | ~700 |
-| `ctxRouterHook.ts` | 166 | Extract pure function, delete EventBus subscription | ~60 |
-| `outlinksHook.ts` | 141 | Extract pure function, delete EventBus subscription | ~50 |
+| `ctxRouterHook.ts` | 166 | Extract shared pure functions, keep subscriptions (§6.4) | ~120 |
+| `outlinksHook.ts` | 141 | Extract shared pure functions, keep subscriptions (§6.4) | ~100 |
 | `useSyncedYDoc.ts` | ~700 | No change (syncs commits, not keystrokes) | ~700 |
 | **NEW: blockController.ts** | 0 | New file | ~80 |
 | **NEW: commitMiddleware.ts** | 0 | New file (Karen) | ~100 |
+| **NEW: composingRegistry.ts** | 0 | New file (Map-based registry) | ~30 |
 
-**Net delta**: ~-170 lines deleted, ~+180 lines added. Roughly neutral in LOC, but the new code is straightforward orchestration vs. the deleted code which was defensive race-condition handling.
+**Net delta**: ~-170 lines deleted, ~+210 lines added. Roughly neutral in LOC, but the new code is straightforward orchestration vs. the deleted code which was defensive race-condition handling.
 
 ---
 
@@ -720,8 +721,35 @@ Changes:
 
 Also in this PR:
 - `forceCommit()` and `discard()` methods (from §6.3)
-- Undo keybind integration in Outliner.tsx: replace blur-to-flush with `controller.discard()` before `undo()`/`redo()`. Currently Outliner.tsx:528-551 blurs to trigger flush before undo — new model: find composing controller, call `discard()`, then undo.
-- Reconnect integration in useSyncedYDoc.ts: before `Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority')`, call `forceCommit()` on any active controller. This requires a registry or global signal for active composing controllers.
+- **ComposingRegistry** (new module, ~30 lines) — global registry for active composing controllers:
+
+  ```typescript
+  // composingRegistry.ts
+  type ComposingEntry = {
+    blockId: string;
+    paneId: string;
+    forceCommit: () => void;
+    discard: () => void;
+  };
+
+  const registry = new Map<string, ComposingEntry>();  // key: `${blockId}:${paneId}`
+
+  export function registerComposing(blockId: string, paneId: string, entry: Omit<ComposingEntry, 'blockId' | 'paneId'>): void;
+  export function unregisterComposing(blockId: string, paneId: string): void;
+  export function forceCommitAll(): void;   // Reconnect path: commit every active controller
+  export function discardAll(): void;       // Undo path: discard every active controller
+  export function getComposing(blockId: string, paneId: string): ComposingEntry | undefined;
+  export function isAnyComposing(): boolean;
+  ```
+
+  **Lifecycle**: BlockController calls `registerComposing()` in `beginComposing()` and `unregisterComposing()` in `commit()`, `discard()`, `forceCommit()`, and `onCleanup`. The registry is a plain `Map` (not a SolidJS signal) — it's read synchronously by useSyncedYDoc.ts and Outliner.tsx, never bound to reactivity.
+
+  **Why a Map, not a signal**: Reconnect and undo read the registry once, synchronously, then act. No component renders based on "how many controllers are composing." A reactive signal would add overhead for no benefit.
+
+  **Key: `${blockId}:${paneId}`**: Same block in two panes = two entries. Both get force-committed on reconnect. Both get discarded on undo.
+
+- Undo keybind integration in Outliner.tsx: replace blur-to-flush with `discardAll()` before `undo()`/`redo()`. Currently Outliner.tsx:528-551 blurs to trigger flush before undo — new model: `discardAll()` clears all composing state, then undo applies cleanly.
+- Reconnect integration in useSyncedYDoc.ts: before `Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority')`, call `forceCommitAll()`. This writes all in-flight composing content to Y.Doc synchronously, ensuring the CRDT merge sees everything.
 
 **Preconditions**: PR 1 merged.
 
