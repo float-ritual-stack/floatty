@@ -337,8 +337,8 @@ function scrollToBlockInPane(blockId: string, paneId: string): void {
   }
 }
 
-/** Track current highlight cleanup function */
-let currentHighlightCleanup: (() => void) | null = null;
+/** Track highlight cleanup per pane (supports concurrent highlights in multi-pane) */
+const highlightCleanupByPaneId = new Map<string, () => void>();
 
 /**
  * Highlight a block in a specific pane. Stays visible until the user interacts
@@ -347,10 +347,11 @@ let currentHighlightCleanup: (() => void) | null = null;
  * actually engage with each pane. Safety timeout at 60s.
  */
 function highlightBlockInPane(blockId: string, paneId: string): void {
-  // Clean up any existing highlight first
-  if (currentHighlightCleanup) {
-    currentHighlightCleanup();
-    currentHighlightCleanup = null;
+  // Clean up any existing highlight in this pane (other panes keep theirs)
+  const existingCleanup = highlightCleanupByPaneId.get(paneId);
+  if (existingCleanup) {
+    existingCleanup();
+    highlightCleanupByPaneId.delete(paneId);
   }
 
   const element = findBlockInPane(blockId, paneId);
@@ -370,8 +371,8 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
     listenerTarget.removeEventListener('keydown', onPaneInteraction);
     if (fadeTimeout) clearTimeout(fadeTimeout);
     clearTimeout(safetyTimeout);
-    if (currentHighlightCleanup === cleanup) {
-      currentHighlightCleanup = null;
+    if (highlightCleanupByPaneId.get(paneId) === cleanup) {
+      highlightCleanupByPaneId.delete(paneId);
     }
   };
 
@@ -390,7 +391,7 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
   // Safety timeout (60s — long enough for squirrel moments)
   const safetyTimeout = setTimeout(cleanup, 60000);
 
-  currentHighlightCleanup = cleanup;
+  highlightCleanupByPaneId.set(paneId, cleanup);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -442,9 +443,9 @@ function findFallbackOutlinerPane(excludePaneId: string): string | null {
 // HMR cleanup: clear highlight state on module reload
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    if (currentHighlightCleanup) {
-      currentHighlightCleanup();
-      currentHighlightCleanup = null;
+    for (const cleanup of highlightCleanupByPaneId.values()) {
+      cleanup();
     }
+    highlightCleanupByPaneId.clear();
   });
 }
