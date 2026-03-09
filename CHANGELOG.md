@@ -6,6 +6,14 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.8.3] - 2026-03-09
+
+### Features
+
+- **Chirp bridge for IframePaneView**: cmd+click navigate works when zoomed into portless block full-pane (previously only EvalOutput's UrlViewer had the postMessage bridge)
+- **Stub page dimming**: Wikilinks to pages with no real content (0 children or single empty child) render dim instead of full link color. New `stubPageNameSet` singleton memo in WorkspaceContext
+- **Dimmed pane activation overlay**: Clicking inside a dimmed iframe now activates the pane via transparent overlay (iframe clicks don't bubble to parent)
+
 ## [0.8.2] - 2026-03-09
 
 ### Bug Fixes
