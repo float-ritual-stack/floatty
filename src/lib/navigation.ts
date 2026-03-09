@@ -299,6 +299,8 @@ function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDel
     } else if (attempts < maxAttempts) {
       // Block not in DOM yet — wait another frame
       requestAnimationFrame(() => setTimeout(tryScrollAndHighlight, 16));
+    } else {
+      console.warn('[navigation] scrollAndHighlightWithRetry: block not found after max attempts', { blockId, paneId });
     }
   }
 
@@ -356,16 +358,16 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
 
   element.classList.add('block-highlight');
 
-  // Find the pane container to scope interaction detection
-  const paneContainer = document.querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`);
+  // Scope interaction detection to pane container, fall back to document
+  const listenerTarget: EventTarget = document.querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`) ?? document;
 
   let fadeTimeout: ReturnType<typeof setTimeout> | null = null;
 
   const cleanup = () => {
     element.classList.remove('block-highlight');
     element.classList.remove('block-highlight-fade');
-    paneContainer?.removeEventListener('click', onPaneInteraction);
-    paneContainer?.removeEventListener('keydown', onPaneInteraction);
+    listenerTarget.removeEventListener('click', onPaneInteraction);
+    listenerTarget.removeEventListener('keydown', onPaneInteraction);
     if (fadeTimeout) clearTimeout(fadeTimeout);
     clearTimeout(safetyTimeout);
     if (currentHighlightCleanup === cleanup) {
@@ -375,21 +377,15 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
 
   // When user interacts within this pane, start fade-out
   const onPaneInteraction = () => {
-    paneContainer?.removeEventListener('click', onPaneInteraction);
-    paneContainer?.removeEventListener('keydown', onPaneInteraction);
+    listenerTarget.removeEventListener('click', onPaneInteraction);
+    listenerTarget.removeEventListener('keydown', onPaneInteraction);
     // Transition to fade-out class, then remove after animation
     element.classList.add('block-highlight-fade');
     fadeTimeout = setTimeout(cleanup, 2000);
   };
 
-  if (paneContainer) {
-    paneContainer.addEventListener('click', onPaneInteraction, { once: true });
-    paneContainer.addEventListener('keydown', onPaneInteraction, { once: true });
-  } else {
-    // Fallback: no pane container found, use global listeners
-    document.addEventListener('click', onPaneInteraction, { once: true });
-    document.addEventListener('keydown', onPaneInteraction, { once: true });
-  }
+  listenerTarget.addEventListener('click', onPaneInteraction, { once: true });
+  listenerTarget.addEventListener('keydown', onPaneInteraction, { once: true });
 
   // Safety timeout (60s — long enough for squirrel moments)
   const safetyTimeout = setTimeout(cleanup, 60000);
