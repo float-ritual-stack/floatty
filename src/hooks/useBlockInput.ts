@@ -1,21 +1,26 @@
 /**
- * useBlockInput - Extracted keyboard handler logic
+ * useBlockInput - Keyboard handler for blocks
  *
- * This hook contains the pure logic for handling keyboard events in blocks.
- * By separating logic from the component, we can:
- * 1. Test keyboard behavior without rendering
- * 2. Mock dependencies cleanly
- * 3. Reduce BlockItem.tsx complexity
+ * Responsibilities:
+ *   1. `determineKeyAction` — pure function mapping (key, state) → action enum.
+ *      Tested directly in useBlockInput.test.ts without any DOM or store setup.
+ *   2. `useBlockInput` — thin coordinator hook: resolves the action, then
+ *      dispatches to one of four focused sub-hooks.
  *
- * The hook returns a handleKeyDown function configured with its dependencies.
+ * Sub-hooks (see hooks/blockInput/):
+ *   useNavigationActions  — navigate_up/down, selection, create_trailing_block
+ *   useZoomActions        — zoom_in/out, wikilink page navigation
+ *   useEditingActions     — create, split, merge, delete, indent/outdent, text ops
+ *   useExecutionAction    — execute_block (sh::, ai::, daily::, …)
  */
 
 import { getActionForEvent } from '../lib/keybinds';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
-import { setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
 import type { Block } from '../lib/blockTypes';
+// Sub-hook implementations (hooks/blockInput/) are scaffolded for future
+// delegation. Currently useBlockInput still owns the switch — wiring TBD.
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES

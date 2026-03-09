@@ -24,11 +24,62 @@ interface BlockDisplayProps {
   blockId?: string;
   /** Called when table content is updated (optional - tables are read-only without this) */
   onUpdateContent?: (newContent: string) => void;
+  /** Set of existing page names (lowercase) for stub detection */
+  pageNameSet?: Set<string>;
 }
 
 interface TokenSpanProps {
   token: InlineToken;
   onWikilinkClick?: (target: string, event: MouseEvent) => void;
+  pageNameSet?: Set<string>;
+}
+
+/**
+ * Render nested [[wikilinks]] within bare text (no outer brackets).
+ * Used for alias text in [[target|alias with [[nested]] links]].
+ * Bracket-counting via findWikilinkEnd, no regex.
+ */
+function renderNestedLinks(
+  text: string,
+  onWikilinkClick?: (target: string, event: MouseEvent) => void
+): (string | Element)[] {
+  const parts: (string | Element)[] = [];
+  let i = 0;
+  let lastEnd = 0;
+
+  while (i < text.length - 1) {
+    const openIdx = text.indexOf('[[', i);
+    if (openIdx === -1) break;
+
+    const endIdx = findWikilinkEnd(text, openIdx);
+    if (endIdx === -1) { i = openIdx + 2; continue; }
+
+    if (openIdx > lastEnd) parts.push(text.slice(lastEnd, openIdx));
+
+    const nestedRaw = text.slice(openIdx, endIdx);
+    const nestedInner = text.slice(openIdx + 2, endIdx - 2);
+    const { target: nestedTarget } = parseWikilinkInner(nestedInner);
+
+    parts.push(
+      <span
+        class="md-wikilink md-wikilink-nested"
+        data-target={nestedTarget}
+        onClick={(e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onWikilinkClick?.(nestedTarget, e);
+        }}
+      >
+        {nestedRaw}
+      </span> as Element
+    );
+
+    lastEnd = endIdx;
+    i = endIdx;
+  }
+
+  if (lastEnd < text.length) parts.push(text.slice(lastEnd));
+  return parts.length > 0 ? parts : [text];
 }
 
 /**
@@ -699,11 +750,38 @@ function InlineTokenSpan(props: TokenSpanProps) {
 
   // Wikilinks get special rendering with click handler and nested link support
   if (props.token.type === 'wikilink' && props.token.target) {
-    const contentParts = renderWikilinkContent(props.token.raw, props.onWikilinkClick);
+    const inner = props.token.raw.slice(2, -2);
+    const { target, alias } = parseWikilinkInner(inner);
+
+    // Stub detection: page doesn't exist yet (skip for block ID prefixes)
+    const isStub = () => {
+      if (!props.pageNameSet) return false;
+      const t = props.token.target!;
+      if (/^[0-9a-f]{6,}$/i.test(t)) return false; // block ID ref, not a page
+      return !props.pageNameSet.has(t.toLowerCase());
+    };
+
+    const content = alias
+      // Aliased wikilink: dim the [[target| scaffolding, show alias at full weight.
+      // Block refs ([[d3599940|label]]) become readable; page aliases stay clear.
+      ? (
+        <>
+          <span class="md-wikilink-punct">[[</span>
+          <span class="md-wikilink-id">{target}</span>
+          <span class="md-wikilink-punct">|</span>
+          <span class="md-wikilink-label">
+            {alias.includes('[[')
+              ? renderNestedLinks(alias, props.onWikilinkClick)
+              : alias}
+          </span>
+          <span class="md-wikilink-punct">]]</span>
+        </>
+      )
+      : renderWikilinkContent(props.token.raw, props.onWikilinkClick);
 
     return (
       <span
-        class={getClass()}
+        class={`${getClass()}${isStub() ? ' md-wikilink-stub' : ''}`}
         data-target={props.token.target}
         onClick={(e: MouseEvent) => {
           e.preventDefault();
@@ -711,7 +789,7 @@ function InlineTokenSpan(props: TokenSpanProps) {
           props.onWikilinkClick?.(props.token.target!, e);
         }}
       >
-        {contentParts}
+        {content}
       </span>
     );
   }
@@ -740,7 +818,7 @@ function InlineTokenSpan(props: TokenSpanProps) {
                 return (
                   <>
                     <For each={lineTokens}>
-                      {(sub) => <InlineTokenSpan token={sub} onWikilinkClick={props.onWikilinkClick} />}
+                      {(sub) => <InlineTokenSpan token={sub} onWikilinkClick={props.onWikilinkClick} pageNameSet={props.pageNameSet} />}
                     </For>
                     {!isLastLine && '\n'}
                   </>
@@ -787,6 +865,7 @@ export function BlockDisplay(props: BlockDisplayProps) {
             <InlineTokenSpan
               token={token}
               onWikilinkClick={props.onWikilinkClick}
+              pageNameSet={props.pageNameSet}
             />
           )}
         </For>

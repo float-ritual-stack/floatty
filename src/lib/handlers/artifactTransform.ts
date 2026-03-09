@@ -122,6 +122,59 @@ function ensureReactImports(jsCode: string): string {
 }
 
 /**
+ * Detect CSS frameworks used in the source based on class name patterns.
+ * Returns an array of framework identifiers to inject into the HTML.
+ */
+export function detectCssFrameworks(source: string): string[] {
+  const frameworks: string[] = [];
+
+  // Tailwind CSS: detect by presence of utility class patterns
+  const tailwindIndicators = [
+    // Layout/display utilities (flex, grid, hidden, container)
+    /\b(?:flex|inline-flex|grid|inline-grid|block|inline-block|hidden|container)\b/,
+    // Alignment utilities (items-center, justify-between, etc.)
+    /\b(?:items|justify|content|place-items|place-content)-(?:start|end|center|between|around|evenly|stretch)\b/,
+    // Sizing utilities (w-full, h-screen, min-h-screen)
+    /\b(?:w|h|min-w|min-h|max-h)-(?:full|screen|\d+)\b/,
+    // Color utilities with Tailwind palette names (bg-zinc-950, text-slate-100)
+    /(?:bg|text|border|ring|shadow)-(?:zinc|slate|gray|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}/,
+    // Spacing utilities (p-4, mx-auto, gap-2)
+    /\b(?:p|m|px|py|mx|my|pt|pb|pl|pr|mt|mb|ml|mr|gap)-(?:\d+|auto)\b/,
+    // Rounded variants (rounded-xl, rounded-full)
+    /\brounded-(?:sm|md|lg|xl|2xl|3xl|full|none)\b/,
+    // Max-width with Tailwind names (max-w-3xl)
+    /\bmax-w-(?:sm|md|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|screen|prose|none|xs)\b/,
+    // Font utilities (font-mono, font-bold)
+    /\bfont-(?:mono|sans|serif|bold|semibold|medium|light|thin|extrabold|black)\b/,
+    // Responsive prefixes in class strings (sm:, md:, lg:)
+    /\b(?:sm|md|lg|xl|2xl):/,
+  ];
+
+  let hits = 0;
+  for (const pattern of tailwindIndicators) {
+    if (pattern.test(source)) hits++;
+  }
+
+  // 2+ distinct pattern categories = almost certainly Tailwind
+  if (hits >= 2) {
+    frameworks.push('tailwind');
+  }
+
+  return frameworks;
+}
+
+/**
+ * Build CSS framework injection tags for the HTML head.
+ */
+function buildCssHeadTags(frameworks: string[]): string {
+  const tags: string[] = [];
+  if (frameworks.includes('tailwind')) {
+    tags.push('<script src="https://cdn.tailwindcss.com"></script>');
+  }
+  return tags.join('\n  ');
+}
+
+/**
  * Build the chirp bridge — lets artifacts write blocks to the parent outline.
  *
  * Usage inside artifact: `window.chirp('hello from iframe')`
@@ -169,18 +222,19 @@ function buildMountScript(): string {
 /**
  * Build a complete HTML document that renders the artifact component.
  */
-export function buildArtifactHtml(jsCode: string, importMap: Record<string, string>): string {
+export function buildArtifactHtml(jsCode: string, importMap: Record<string, string>, options?: { cssFrameworks?: string[] }): string {
   const importMapJson = JSON.stringify({ imports: importMap }, null, 2);
   // Escape </script> in code to prevent premature tag close in the HTML document
   const safeCode = ensureReactImports(jsCode).replace(/<\/script>/gi, '<\\/script>');
   const moduleCode = safeCode + '\n' + buildChirpBridge() + '\n' + buildMountScript();
+  const cssHeadTags = buildCssHeadTags(options?.cssFrameworks ?? []);
 
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
+  ${cssHeadTags ? cssHeadTags + '\n  ' : ''}<style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: system-ui, -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; }
     #root { width: 100vw; min-height: 100vh; }
@@ -211,8 +265,9 @@ export function createArtifactBlobUrl(html: string): string {
 export function transformArtifact(source: string): { blobUrl: string; error?: undefined } | { blobUrl?: undefined; error: string } {
   try {
     const importMap = buildImportMap(source);
+    const cssFrameworks = detectCssFrameworks(source);
     const jsCode = transformJsx(source);
-    const html = buildArtifactHtml(jsCode, importMap);
+    const html = buildArtifactHtml(jsCode, importMap, { cssFrameworks });
     const blobUrl = createArtifactBlobUrl(html);
     return { blobUrl };
   } catch (err) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transformJsx, buildImportMap, buildArtifactHtml } from './artifactTransform';
+import { transformJsx, buildImportMap, buildArtifactHtml, detectCssFrameworks } from './artifactTransform';
 
 describe('transformJsx', () => {
   it('transforms JSX to createElement calls', () => {
@@ -148,6 +148,50 @@ describe('buildImportMap', () => {
   });
 });
 
+describe('detectCssFrameworks', () => {
+  it('detects Tailwind from color + spacing utilities', () => {
+    const source = `
+      export default function App() {
+        return <div className="bg-zinc-950 text-zinc-100 p-4">Hello</div>;
+      }
+    `;
+    expect(detectCssFrameworks(source)).toContain('tailwind');
+  });
+
+  it('detects Tailwind from rounded + font utilities', () => {
+    const source = `
+      export default function App() {
+        return <div className="rounded-xl font-mono max-w-3xl">Hello</div>;
+      }
+    `;
+    expect(detectCssFrameworks(source)).toContain('tailwind');
+  });
+
+  it('does not detect Tailwind from plain CSS classes', () => {
+    const source = `
+      export default function App() {
+        return <div className="container header main-content">Hello</div>;
+      }
+    `;
+    expect(detectCssFrameworks(source)).not.toContain('tailwind');
+  });
+
+  it('does not detect Tailwind from single utility match', () => {
+    const source = `
+      export default function App() {
+        return <div className="p-4">Hello</div>;
+      }
+    `;
+    // Only 1 pattern matches — threshold is 2
+    expect(detectCssFrameworks(source)).not.toContain('tailwind');
+  });
+
+  it('returns empty array for no-class source', () => {
+    const source = `export default function App() { return <p>hi</p>; }`;
+    expect(detectCssFrameworks(source)).toEqual([]);
+  });
+});
+
 describe('buildArtifactHtml', () => {
   it('produces valid HTML with import map', () => {
     const importMap = { 'react': 'https://esm.sh/react@18' };
@@ -196,6 +240,16 @@ describe('buildArtifactHtml', () => {
     const html = buildArtifactHtml(code, {});
     // Mount script needs ReactDOM.createRoot, so default import must be added
     expect(html).toContain("import ReactDOM from 'react-dom/client'");
+  });
+
+  it('injects Tailwind CDN when cssFrameworks includes tailwind', () => {
+    const html = buildArtifactHtml('function App() {}', {}, { cssFrameworks: ['tailwind'] });
+    expect(html).toContain('cdn.tailwindcss.com');
+  });
+
+  it('does not inject Tailwind CDN when no frameworks specified', () => {
+    const html = buildArtifactHtml('function App() {}', {});
+    expect(html).not.toContain('cdn.tailwindcss.com');
   });
 
   it('includes chirp bridge (outbound)', () => {

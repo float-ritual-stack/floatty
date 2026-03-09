@@ -111,6 +111,10 @@ export interface WorkspaceContextValue {
   paneStore: PaneStoreInterface;
   /** Singleton pageNames memo — sorted page names from pages:: container (FLO-322). */
   pageNames: Accessor<string[]>;
+  /** Lowercase page name Set for O(1) stub detection in wikilink rendering. */
+  pageNameSet: Accessor<ReadonlySet<string>>;
+  /** Short-hash index: 8-char prefix → full UUID (empty string = ambiguous). */
+  shortHashIndex: Accessor<ReadonlyMap<string, string>>;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue>();
@@ -141,10 +145,31 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     sortPageNames(getPageNamesWithTimestamps(store))
   );
 
+  const pageNameSet = createMemo(() =>
+    new Set(pageNames().map(n => n.toLowerCase()))
+  );
+
+  // Short-hash index: 8-char prefix → full UUID. Empty string marks ambiguous prefixes.
+  const shortHashIndex = createMemo(() => {
+    const ids = Object.keys(store.blocks);
+    const index = new Map<string, string>();
+    for (const id of ids) {
+      const prefix = id.slice(0, 8);
+      if (index.has(prefix)) {
+        index.set(prefix, ''); // Ambiguous
+      } else {
+        index.set(prefix, id);
+      }
+    }
+    return index;
+  });
+
   const value: WorkspaceContextValue = {
     blockStore: store,
     paneStore: props.paneStore ?? realPaneStore,
     pageNames,
+    pageNameSet,
+    shortHashIndex,
   };
 
   // Wire up auto-execute handler for externally-created blocks (API/CRDT sync)

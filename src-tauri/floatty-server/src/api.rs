@@ -16,6 +16,7 @@
 //!
 //! Block CRUD endpoints:
 //! - GET /api/v1/blocks - All blocks as JSON
+//! - GET /api/v1/blocks/resolve/:prefix - Resolve short-hash prefix to full block
 //! - GET /api/v1/blocks/:id - Single block (supports ?include=ancestors,siblings,children,tree,token_estimate)
 //! - POST /api/v1/blocks - Create block
 //! - PATCH /api/v1/blocks/:id - Update content
@@ -417,6 +418,14 @@ where
     Ok(Some(value))
 }
 
+/// Response for GET /api/v1/blocks/resolve/:prefix
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveResponse {
+    pub id: String,
+    pub block: BlockDto,
+}
+
 /// Standard error response
 #[derive(Serialize, Deserialize)]
 pub struct ErrorResponse {
@@ -458,6 +467,9 @@ pub enum ApiError {
 
     #[error("Missing confirmation header: X-Floatty-Confirm-Destructive: true")]
     MissingConfirmationHeader,
+
+    #[error("Ambiguous prefix: {0} matches")]
+    Ambiguous(usize),
 }
 
 impl IntoResponse for ApiError {
@@ -470,6 +482,7 @@ impl IntoResponse for ApiError {
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::UpdatesCompacted { .. } => StatusCode::GONE,
             ApiError::MissingConfirmationHeader => StatusCode::BAD_REQUEST,
+            ApiError::Ambiguous(_) => StatusCode::CONFLICT,
         };
 
         // For UpdatesCompacted, return structured JSON with compaction info
@@ -529,6 +542,7 @@ pub fn create_router(
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
         .route("/api/v1/blocks", post(create_block))
+        .route("/api/v1/blocks/resolve/:prefix", get(resolve_block_prefix))
         .route("/api/v1/blocks/:id", get(get_block))
         .route("/api/v1/blocks/:id", patch(update_block))
         .route("/api/v1/blocks/:id", put(put_not_supported))
@@ -1642,6 +1656,176 @@ pub struct BlocksQuery {
     pub marker_type: Option<String>,
     /// Filter: marker value (requires marker_type)
     pub marker_value: Option<String>,
+}
+
+/// GET /api/v1/blocks/resolve/:prefix - Resolve short-hash prefix to full block ID
+///
+/// Accepts 6+ hex character prefixes (git-sha style). Returns the full block if
+/// exactly one match. 400 for invalid prefix, 404 for no match, 409 for ambiguous.
+async fn resolve_block_prefix(
+    State(state): State<AppState>,
+    Path(prefix): Path<String>,
+) -> Result<Json<ResolveResponse>, ApiError> {
+    // Validate: must be 6+ hex chars (or a full UUID which we redirect to exact lookup)
+    let trimmed = prefix.trim();
+    let is_full_uuid = trimmed.len() == 36 && {
+        let b = trimmed.as_bytes();
+        b[8] == b'-' && b[13] == b'-' && b[18] == b'-' && b[23] == b'-'
+            && trimmed.chars().enumerate().all(|(i, c)| {
+                if i == 8 || i == 13 || i == 18 || i == 23 { c == '-' }
+                else { c.is_ascii_hexdigit() }
+            })
+    };
+
+    if !is_full_uuid {
+        // Must be 6+ hex chars
+        if trimmed.len() < 6 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(ApiError::InvalidRequest(
+                "Prefix must be 6+ hex characters".to_string(),
+            ));
+        }
+    }
+
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let blocks_map = txn
+        .get_map("blocks")
+        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+
+    let lower = trimmed.to_lowercase();
+
+    // If full UUID, do exact lookup
+    if is_full_uuid {
+        // Try lowercase first (canonical), then original casing
+        let (canonical_id, value) = if let Some(v) = blocks_map.get(&txn, &lower) {
+            (lower.clone(), v)
+        } else if let Some(v) = blocks_map.get(&txn, trimmed) {
+            (trimmed.to_string(), v)
+        } else {
+            return Err(ApiError::NotFound(trimmed.to_string()));
+        };
+
+        if let yrs::Out::YMap(block_map) = value {
+            let block_dto = read_block_dto(&block_map, &txn, &canonical_id, &state)?;
+            return Ok(Json(ResolveResponse {
+                id: canonical_id,
+                block: block_dto,
+            }));
+        }
+        return Err(ApiError::NotFound(trimmed.to_string()));
+    }
+
+    // Prefix scan: iterate all keys, collect matches
+    let mut matches: Vec<String> = Vec::new();
+
+    for (key, _value) in blocks_map.iter(&txn) {
+        let key_lower = key.to_lowercase();
+        // Match against UUID with dashes
+        if key_lower.starts_with(&lower) {
+            matches.push(key.to_string());
+            continue;
+        }
+        // Also match dash-stripped (contiguous hex)
+        let key_nodash: String = key_lower.chars().filter(|c| *c != '-').collect();
+        if key_nodash.starts_with(&lower) {
+            matches.push(key.to_string());
+        }
+    }
+
+    match matches.len() {
+        0 => Err(ApiError::NotFound(format!("No block matches prefix '{}'", trimmed))),
+        1 => {
+            let full_id = &matches[0];
+            let value = blocks_map
+                .get(&txn, full_id.as_str())
+                .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
+
+            if let yrs::Out::YMap(block_map) = value {
+                let block_dto = read_block_dto(&block_map, &txn, full_id, &state)?;
+                Ok(Json(ResolveResponse {
+                    id: full_id.clone(),
+                    block: block_dto,
+                }))
+            } else {
+                Err(ApiError::NotFound(full_id.clone()))
+            }
+        }
+        n => Err(ApiError::Ambiguous(n)),
+    }
+}
+
+/// Extract a BlockDto from a Y.Map block (shared between get_block and resolve_block_prefix)
+fn read_block_dto<T: ReadTxn>(
+    block_map: &yrs::MapRef,
+    txn: &T,
+    id: &str,
+    state: &AppState,
+) -> Result<BlockDto, ApiError> {
+    let content = block_map
+        .get(txn, "content")
+        .and_then(|v| match v {
+            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    let parent_id = block_map.get(txn, "parentId").and_then(|v| match v {
+        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+        yrs::Out::Any(yrs::Any::Null) => None,
+        _ => None,
+    });
+
+    let child_ids = block_map
+        .get(txn, "childIds")
+        .and_then(|v| match v {
+            yrs::Out::YArray(arr) => Some(
+                arr.iter(txn)
+                    .filter_map(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    let collapsed = block_map
+        .get(txn, "collapsed")
+        .and_then(|v| match v {
+            yrs::Out::Any(yrs::Any::Bool(b)) => Some(b),
+            _ => None,
+        })
+        .unwrap_or(false);
+
+    let metadata = block_map
+        .get(txn, "metadata")
+        .and_then(|v| extract_metadata_from_yrs(v, txn));
+
+    let created_at = extract_timestamp(block_map.get(txn, "createdAt"));
+    let updated_at = extract_timestamp(block_map.get(txn, "updatedAt"));
+
+    let block_type = floatty_core::parse_block_type(&content);
+
+    let inherited_markers = {
+        let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+        lookup_inherited(&index, id)
+    };
+
+    Ok(BlockDto {
+        id: id.to_string(),
+        content,
+        parent_id,
+        child_ids,
+        collapsed,
+        block_type: format!("{:?}", block_type).to_lowercase(),
+        metadata,
+        inherited_markers,
+        created_at,
+        updated_at,
+    })
 }
 
 /// GET /api/v1/blocks - All blocks as JSON (with optional filters)
