@@ -693,8 +693,9 @@ export function BlockItem(props: BlockItemProps) {
         } else {
           document.execCommand('insertText', false, paths);
         }
-      }).catch(() => {
-        // readFiles() throws on non-file clipboard — not an error
+      }).catch((err) => {
+        // readFiles() throws on non-file clipboard (expected for image/screenshot paste)
+        console.debug('[BlockItem] readFiles probe:', err);
       });
       return;
     }
