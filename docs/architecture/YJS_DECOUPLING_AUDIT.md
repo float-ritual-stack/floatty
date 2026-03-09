@@ -672,3 +672,481 @@ Wait — re-examining: the EventBus subscription in outlinksHook survives per 6.
 - The authoritative origin bypass
 
 This is actually good news for migration — the most complex deleted code has zero test coverage. No tests break. But it also means the NEW code (blockController, commitMiddleware, simplified sync effect) needs tests written from scratch to cover what was previously untested.
+
+See `docs/architecture/BLOCK_CONTROLLER_TEST_PLAN.md` for the full test specification covering BlockController, processCommit, the simplified sync effect, flush point migration, and reconnect/undo integration.
+
+---
+
+## 7. Execution Order
+
+The 5 refactoring steps from §4 need sequencing for safe incremental migration. Each step must leave the app functional. Single user, single machine — no feature flags, no gradual rollout.
+
+### PR Sequence
+
+#### PR 1: Introduce BlockController + commitMiddleware (pure additions)
+
+**What**: New files only. No existing code changes.
+- Create `src/lib/blockController.ts` (~80 lines)
+- Create `src/lib/commitMiddleware.ts` (~100 lines) — pure `processCommit()` function
+- Create `src/lib/blockController.test.ts` — tests from BLOCK_CONTROLLER_TEST_PLAN.md §A
+- Create `src/lib/commitMiddleware.test.ts` — tests from BLOCK_CONTROLLER_TEST_PLAN.md §B
+- Export shared pure extraction functions from ctxRouterHook.ts and outlinksHook.ts (non-breaking refactor)
+
+**Preconditions**: None. First PR.
+
+**Verification**:
+- `npm run test` passes (all 420 existing + new tests)
+- `npm run lint` passes
+- App runs normally (new code is not called from anywhere yet)
+
+**Rollback**: Delete new files.
+
+**Why separate**: Pure additions can't break anything. Establishes the new primitives with test coverage before touching hot paths.
+
+#### PR 2: Wire BlockController into BlockItem (the swap)
+
+**What**: This is the core migration. Steps 2, 3, and 4 from §4 combined into one PR because they're tightly interdependent — you can't remove the debounce without adding the commit trigger, and you can't simplify the sync effect without removing the debounce.
+
+Changes:
+- BlockItem.tsx: Replace `createDebouncedUpdater` with `blockController` instance
+- BlockItem.tsx: `updateContentFromDom()` sets `composingContent` instead of debouncing
+- BlockItem.tsx: `handleBlur()` calls `controller.commit()` instead of `flushContentUpdate()`
+- BlockItem.tsx: Gut 80-line sync effect → 15-line replacement
+- BlockItem.tsx: Delete `hasLocalChanges` signal, `cancelContentUpdate`, `flushContentUpdate`
+- useBlockInput.ts: Replace 4 `flushContentUpdate()` calls with `controller.commit()`
+- useBlockInput.ts: Update `BlockInputDependencies` type (replace `flushContentUpdate` with commit function)
+- BlockItem.tsx: `onCleanup` calls `controller.commit()` instead of `flushContentUpdate()`
+- BlockItem.tsx: `handlePaste` calls `controller.commit()` instead of `flushContentUpdate()`
+
+Also in this PR:
+- `forceCommit()` and `discard()` methods (from §6.3)
+- Undo keybind integration in Outliner.tsx: replace blur-to-flush with `controller.discard()` before `undo()`/`redo()`. Currently Outliner.tsx:528-551 blurs to trigger flush before undo — new model: find composing controller, call `discard()`, then undo.
+- Reconnect integration in useSyncedYDoc.ts: before `Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority')`, call `forceCommit()` on any active controller. This requires a registry or global signal for active composing controllers.
+
+**Preconditions**: PR 1 merged.
+
+**Verification**:
+- `npm run test` passes (existing + new tests from BLOCK_CONTROLLER_TEST_PLAN.md §C, §D, §E)
+- Manual testing checklist:
+  - Type in a block → blur → content persisted
+  - Enter to split → both blocks have correct content
+  - Backspace to merge → content concatenated at correct offset
+  - Cmd+Z while typing → composing discarded, undo applied
+  - Paste multi-line markdown → structured paste works
+  - Execute sh:: block → handler sees committed content
+  - Two panes showing same block → edit in A, B updates on commit
+  - Close laptop lid → reconnect → no data loss
+
+**Rollback**: Revert entire PR (single commit preferred for atomic revert).
+
+**Why combined**: Steps 2-4 are not independently functional. Removing the debounce without adding commit = data loss. Adding commit without removing sync effect = dual-write. Simplifying sync effect without removing debounce = the sync effect still has race conditions. These three steps are atomic.
+
+#### PR 3: Move user-origin metadata extraction to commit middleware
+
+**What**: Step 5 from §4. Now that commits go through BlockController, metadata extraction for user-origin writes runs via `processCommit()` instead of EventBus.
+
+Changes:
+- BlockController.commit() calls `processCommit()` and writes metadata in the same Y.Doc transaction
+- ctxRouterHook.ts: Skip processing for `'user'` origin (handled by commit middleware now)
+- outlinksHook.ts: Skip processing for `'user'` origin (same)
+- EventBus subscriptions remain for `'executor'`, `'user-drag'` origins (per §6.4)
+
+**Preconditions**: PR 2 merged.
+
+**Verification**:
+- `npm run test` passes
+- Manual: type `ctx::2026-03-09 [project::floatty]` → commit (blur) → metadata populated
+- Manual: execute `ai:: some prompt` → handler writes back → metadata extracted via EventBus path
+- Confirm hooks still fire for executor-origin writes
+
+**Rollback**: Revert. Metadata extraction falls back to EventBus for all origins (pre-PR3 behavior).
+
+**Why separate**: This is an optimization (single parse pass at commit vs per-keystroke parse), not a correctness change. The app works correctly after PR 2 without it — hooks extract metadata on every user-origin observer fire, same as before. PR 3 reduces redundant work.
+
+### Where Tests Fit
+
+- PR 1: BlockController unit tests + processCommit unit tests (§A, §B of test plan). Written alongside the new code.
+- PR 2: Sync effect tests (§C), flush point migration tests (§D), reconnect/undo tests (§E). Written alongside the swap.
+- PR 3: Adapted hook tests (verify `'user'` origin skip, verify `'executor'` origin still fires). Written alongside the change.
+
+### Step Dependency Graph
+
+```
+PR 1 (pure additions)
+  │
+  ▼
+PR 2 (the swap — atomic, Steps 2+3+4)
+  │
+  ▼
+PR 3 (metadata optimization — Step 5)
+```
+
+No parallelism possible. Each PR depends on the previous.
+
+---
+
+## 8. Documentation Audit
+
+Content that becomes outdated or wrong after migration. Items flagged by category for post-migration rewrite.
+
+### CLAUDE.md (project root)
+
+| Section/Line | Current Content | Category | Action |
+|---|---|---|---|
+| "The Hot Path (every keystroke)" description | "debounced sync, reactive UI" in Three-Layer Architecture | [UPDATE] | Change to "composing → commit boundary, reactive UI". Remove "debounced" from the frontend description. |
+| CRDT Sync Flow (4-step numbered list) | "User types → Y.Doc update → debounced queue (50ms)" | [UPDATE] | Step 1 becomes "User commits (blur/Enter/pause) → Y.Doc update → sync queue (50ms)". Remove "debounced" from step description. |
+| Four Bug Categories: "Sync Loop" | "Infinite updates, frozen UI — Add origin filtering in Y.Doc observers" | [UPDATE] | Sync loops during composing are impossible (no Y.Doc writes). Origin filtering still matters for non-user origins. Rewrite to reflect that the composing model eliminates the user-typing sync loop. |
+| Sync Debugging Infrastructure | "Health Check polls server every 120s comparing block counts" | [CORRECT] | This is unchanged by migration. Keep as-is. But the description of "fast gap detection" via sequence numbers should note that composing content is NOT reflected in sequence numbers until commit. |
+| Testing section | No mention of BlockController or commitMiddleware tests | [UPDATE] | Add BlockController testing pattern example showing commit/composing testing. |
+
+### .claude/rules/ydoc-patterns.md
+
+| Section | Current Content | Category | Action |
+|---|---|---|---|
+| §5 "Debounce at the Right Layer" | Table: "Input (BlockItem) 150ms — Batch keystrokes" | [UPDATE] | Input layer no longer debounces. Replace with "Input (BlockItem) — composing phase, commit on blur/Enter/pause". Keep sync (50ms) and other layers unchanged. |
+| §6 "Blur/Remote-Update Race Condition" | Entire section describes edit-token pattern for debounce-vs-remote race | [DELETE] | This race condition no longer exists. Composing content is local. Commit is synchronous. No blur/remote interleaving possible. Delete the entire pattern and replace with a note: "Eliminated by composing model — see YJS_DECOUPLING_AUDIT.md §4." |
+| §7 "Multi-Pane Echo Prevention" | Describes source-pane tagging and origin filtering for observer echo | [UPDATE] | Echo prevention during composing is automatic (no Y.Doc writes = no observer = no echo). But the pattern still applies to committed updates. Rewrite to clarify: "During composing, echo is impossible. After commit, the content sync effect's `composingContent() !== null` guard handles the source pane (it's still composing locally). Multi-pane committed updates flow through the simplified sync effect." |
+
+### .claude/rules/do-not.md
+
+| Section | Current Content | Category | Action |
+|---|---|---|---|
+| "Y.Doc/Search" bullet: "Call `setSyncStatus('synced')` without guarding with `!isDriftStatus()`" | Specific to sync status signals | [CORRECT] | Unchanged by migration. Keep. |
+| "Y.Doc/Search" bullet: "Add debouncing without understanding the layer it belongs to" | References debounce layers | [UPDATE] | The input-layer debounce no longer exists. Update to note that the input layer uses composing→commit, not debounce. |
+
+### docs/architecture/FLOATTY_HOOK_SYSTEM.md
+
+| Section | Current Content | Category | Action |
+|---|---|---|---|
+| Hook execution lifecycle | Describes EventBus subscription, per-observer-fire execution | [UPDATE] | Add note: "For `'user'` origin writes, metadata extraction runs at commit time via processCommit(), not via EventBus. Hooks still fire for `'executor'`, `'user-drag'`, and other non-user origins." |
+| Origin filtering description | Lists all origins and when hooks run | [UPDATE] | Add `'user'` to the "hooks skip" list for EventBus (handled by commit middleware instead). |
+
+### docs/guides/HOOK_PATTERNS.md
+
+| Section | Current Content | Category | Action |
+|---|---|---|---|
+| Hook registration pattern | Shows `blockEventBus.subscribe(handler, { ... })` | [UPDATE] | Add note about dual extraction paths: commit middleware for user-origin, EventBus for non-user origins. |
+
+### docs/guides/EVENT_SYSTEM.md
+
+| Section | Current Content | Category | Action |
+|---|---|---|---|
+| EventBus lifecycle | "Events emitted on every Y.Doc observer fire for tracked origins" | [UPDATE] | Note that user-origin content changes no longer emit on every keystroke — they emit once at commit time. EventBus still fires for the commit transaction. |
+
+### Code Comments (affected files)
+
+| File:Line | Current Comment | Category | Action |
+|---|---|---|---|
+| `BlockItem.tsx:63-66` | JSDoc for `createDebouncedUpdater` | [DELETE] | Function deleted entirely. |
+| `BlockItem.tsx:191-198` | "Debounced Y.Doc updates - DOM stays immediate via contentEditable" | [DELETE] | Debounce machinery deleted. |
+| `BlockItem.tsx:557-562` | "Origin-aware gate" comment block describing sync effect | [DELETE] | Entire sync effect replaced with 15-line version. |
+| `BlockItem.tsx:580-584` | FLO-197 race condition comment | [DELETE] | Race condition eliminated by composing model. |
+| `BlockItem.tsx:646-648` | "Flush any pending debounced content updates to Y.Doc before blur" | [UPDATE] | Becomes "Commit composing content to Y.Doc". |
+| `BlockItem.tsx:670-672` | "Flush pending content before structured paste check" | [UPDATE] | Becomes "Commit composing content before structured paste check". |
+| `useBlockInput.ts:47-48` | `flushContentUpdate: () => void` type definition | [UPDATE] | Becomes commit function type. |
+| `useBlockInput.ts:495` | "Flush pending content before execute" | [UPDATE] | "Commit composing content before execute". |
+| `useBlockInput.ts:552` | "Flush pending content before split" | [UPDATE] | "Commit composing content before split". |
+| `useBlockInput.ts:618` | "Flush pending content before merge" | [UPDATE] | "Commit composing content before merge". |
+| `Outliner.tsx:526-527` | "FLO-197: Blur first to flush uncommitted edits before undo" | [UPDATE] | "Discard composing content before undo (composing changes are uncommitted)". |
+| `Outliner.tsx:530,533,544,545` | "Triggers handleBlur → flushContentUpdate" | [UPDATE] | "controller.discard() before undo/redo". |
+| `useSyncedYDoc.ts:1622-1626` | UndoManager tracked origins comment | [CORRECT] | Unchanged — commits still use `'user'` origin which is tracked. Keep but add note: "Each commit() is one undo step." |
+
+### docs/archive/ and docs/explorations/
+
+These are archived documents. **No changes needed** — archive represents historical state.
+
+---
+
+## 9. Dead Code Catalog
+
+Code that becomes dead after migration. Each entry verified by grep.
+
+### 9.1 CERTAIN — No Other Callers
+
+#### `createDebouncedUpdater` function (BlockItem.tsx:67-106)
+
+**What**: Generic debounce factory with flush/cancel.
+**Why dead**: Only caller is BlockItem.tsx:194 (`const { debounced, flush, cancel } = createDebouncedUpdater(...)`). Migration deletes this call.
+**Grep**: `createDebouncedUpdater` appears only in BlockItem.tsx (definition + one call site).
+**Confidence**: CERTAIN.
+
+#### `hasLocalChanges` signal (BlockItem.tsx:174)
+
+**What**: `createSignal(false)` — dirty flag tracking uncommitted debounce state.
+**Why dead**: Read by the content sync effect (deleted) and the debounced updater callback (deleted). The only write sites are `updateContentFromDom()` (setting true) and the debounce callback (setting false) — both are replaced by composingContent signal.
+**Grep**: `hasLocalChanges` appears only in BlockItem.tsx.
+**Confidence**: CERTAIN.
+
+#### `cancelContentUpdate` function (BlockItem.tsx:194, from createDebouncedUpdater)
+
+**What**: Cancels pending debounce timer without firing the update.
+**Why dead**: Called only from the authoritative bypass path in the content sync effect (BlockItem.tsx:589) and the autocomplete replacement path (if any). Debounce is deleted entirely.
+**Grep**: `cancelContentUpdate` appears only in BlockItem.tsx.
+**Confidence**: CERTAIN.
+
+#### `isAuthoritative` check (BlockItem.tsx:573-575)
+
+**What**: `origin === 'reconnect-authority' || (origin && typeof origin === 'object' && 'undo' in origin)` — gates authoritative DOM overwrite.
+**Why dead**: The entire content sync effect that contains this check is replaced. Reconnect and undo are handled by forceCommit/discard (§6.3), not by sync effect origin gating.
+**Confidence**: CERTAIN (deleted with the effect).
+
+#### `shouldSync` gate (BlockItem.tsx:605)
+
+**What**: `const shouldSync = !isFocusedNow || !isUserOrigin` — prevents echo during focused user typing.
+**Why dead**: The composing model eliminates this gate. If composingContent !== null, don't touch DOM. No focus/origin check needed.
+**Confidence**: CERTAIN (deleted with the effect).
+
+#### Cursor save/restore in sync (BlockItem.tsx:621, 633-635)
+
+**What**: `getAbsoluteCursorOffset(contentRef)` before DOM nuke, `setCursorAtOffset(contentRef, clampedOffset)` after.
+**Why dead**: DOM is never nuked during composing. The simplified sync effect only updates non-composing blocks (which aren't focused, so no cursor to save).
+**Note**: `getAbsoluteCursorOffset` and `setCursorAtOffset` themselves survive — called from useCursor.ts and useBlockInput.ts for split/merge operations.
+**Confidence**: CERTAIN (these specific call sites in the sync effect are dead, not the functions themselves).
+
+### 9.2 PROBABLE — Other Callers Exist But May Also Change
+
+#### `store.lastUpdateOrigin` signal reads in BlockItem.tsx
+
+**What**: `const origin = store.lastUpdateOrigin` (BlockItem.tsx:567) — reactive read that triggers sync effect on every Y.Doc transaction.
+**Why probably dead in BlockItem**: The simplified sync effect doesn't check origin. It only checks `composingContent() !== null`.
+**But**: `lastUpdateOrigin` is a signal on the block store interface. Other consumers may read it. Need to check if any other component reads `store.lastUpdateOrigin`.
+**Grep result**: `lastUpdateOrigin` is read in BlockItem.tsx (sync effect — deleted) and defined/set in useBlockStore.ts. No other component reads it.
+**Revised confidence**: CERTAIN for BlockItem reads. The signal definition and setter in useBlockStore.ts may become dead too IF no other consumer is added. But it's cheap to keep (one signal set per transaction).
+
+#### `displayContent` blur sync (BlockItem.tsx:658-660)
+
+**What**: `if (displayContent() !== currentBlock.content) { setDisplayContent(currentBlock.content); }` in handleBlur.
+**Why probably dead**: In the new model, blur triggers commit. After commit, store content matches composing content which matches displayContent. The blur sync is redundant.
+**But**: Edge case — if a remote update changed the store content while the block was composing, after commit the CRDT merge result might differ from displayContent. However, the simplified sync effect runs after commit (composingContent is now null, block is no longer gated), so it handles this.
+**Confidence**: PROBABLE — safe to delete, but verify during implementation.
+
+#### `handleBlur` DOM-to-store sync (BlockItem.tsx:653-655)
+
+**What**: `if (contentRef.innerText !== currentBlock.content) { contentRef.innerText = currentBlock.content; }` in handleBlur.
+**Why probably dead**: After commit, store matches DOM (commit wrote DOM content to store). After composingContent cleared, sync effect catches any remaining diff.
+**Confidence**: PROBABLE — same reasoning as above.
+
+### 9.3 NOT Dead (False Candidates)
+
+#### `displayContent` signal itself
+
+**Status**: SURVIVES. `BlockDisplay.tsx` reads `displayContent` for the overlay layer. During composing, `updateContentFromDom()` still sets `displayContent` for immediate overlay updates.
+
+#### EventBus (`blockEventBus`)
+
+**Status**: SURVIVES. Still needed for `'executor'`, `'user-drag'`, and other non-user origins (§6.4).
+
+#### Origin constants (`Origin.User`, `Origin.Hook`, `Origin.Remote`, etc.)
+
+**Status**: SURVIVES. `Origin.User` is still used by the commit transaction. `Origin.Hook` still used by hooks for metadata writes. `Origin.Remote`, `Origin.ReconnectAuthority`, `Origin.BulkImport` still used by observer gating in useBlockStore.ts for EventBus emission decisions.
+
+#### `isApplyingRemoteGlobal` flag (useSyncedYDoc.ts)
+
+**Status**: SURVIVES. Used by the Y.Doc update handler to distinguish local vs remote updates for sync debounce logic. Not related to the content sync effect.
+
+#### `getAbsoluteCursorOffset` / `setCursorAtOffset` functions
+
+**Status**: SURVIVES. Called from useCursor.ts (wrapper), useBlockInput.ts (merge cursor positioning at line 649), and split offset calculation. Only the BlockItem.tsx sync-effect call sites are dead.
+
+---
+
+## 10. Keyboard Navigation Audit
+
+Every keyboard operation in useBlockInput.ts traced through the current → new model, with latency impact.
+
+### Latency Model
+
+**Current path** (per-keystroke): User types → `onInput` → `setDisplayContent` (0μs) → `debouncedUpdateContent` (timer set, 0μs) → 150ms later: Y.Doc transact → observer → EventBus → hooks parse → metadata write → observer again.
+
+**New path** (commit): User types → `onInput` → `setComposingContent` + `setDisplayContent` (0μs) → on commit: Y.Doc transact + `processCommit()` (synchronous) → observer → EventBus (non-user origins only) → sync debounce → server.
+
+**processCommit() cost estimate**: For a typical 1-3 line block:
+- `hasCtxPatterns()`: one regex test (~1μs)
+- `hasWikilinkPatterns()`: indexOf × 2 (~1μs)
+- If no patterns: return early. Total: ~2μs. **Negligible.**
+- If patterns present: `parseAllInlineTokens()`: bracket-counting tokenizer, O(n) on content length. For 100-char block with ctx:: and wikilinks: ~50-100μs. Still well under 1ms.
+- Metadata diff: array comparison, O(m) on marker count. Typical: 2-5 markers. ~5μs.
+- **Total worst case for a typical block**: <200μs. For a 1000-char block with complex nesting: <1ms.
+
+### Per-Operation Trace
+
+#### Enter (split_block) — at cursor mid-content
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Keystroke | `determineKeyAction()` → `split_block` | Same |
+| 2. Pre-work | `flushContentUpdate()` — cancel timer, force Y.Doc write | `controller.commit()` — synchronous Y.Doc write + processCommit() |
+| 3. Operation | `store.splitBlock(id, offset)` reads Y.Doc | Same |
+| 4. Focus | `onFocus(newId)` | Same |
+
+**Latency**: [FASTER] — Today: if debounce timer not yet fired, flush forces a Y.Doc transaction + observer round-trip. New: commit is a direct Y.Doc transaction. Observer fires but the sync effect is gated by composingContent (the NEW block starts in committed state, not composing). No cursor save/restore overhead on the observer fire.
+
+**Frame timing**: Commit is synchronous → splitBlock reads correct content in same microtask → focus in same frame. No added delay.
+
+#### Enter (create_block_before) — at line start of non-empty block
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Keystroke | `determineKeyAction()` → `create_block_before` | Same |
+| 2. Pre-work | None (no flush needed — creates empty block) | None |
+| 3. Operation | `store.createBlockBefore(id)` | Same |
+| 4. Focus | `onFocus(newId)` | Same |
+
+**Latency**: [SAME] — No flush/commit involved. Pure tree operation.
+
+#### Enter (execute_block) — on sh::, ai::, etc.
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Pre-work | `flushContentUpdate()` | `controller.commit()` |
+| 2. Operation | `registry.findHandler(block.content)` → async executeHandler | Same |
+
+**Latency**: [FASTER] — Same reasoning as split_block. Commit is direct vs flush-then-observer.
+
+#### Tab (indent) — at line start
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Keystroke | `determineKeyAction()` → `indent` | Same |
+| 2. Operation | `store.indentBlock(id)` — tree restructure only | Same |
+| 3. Focus | rAF → expand parent in pane | Same |
+
+**Latency**: [SAME] — No flush/commit. Indent is a tree operation (reparent block). Content doesn't change. The block stays composing — indent doesn't commit. Y.Doc writes are for `childIds` arrays, not content.
+
+**Note**: Does indent need the block committed? No. `indentBlock()` reads `childIds` and `parentId` from the store, not content. The block can stay composing. Same for outdent.
+
+#### Shift+Tab (outdent) — at line start
+
+**Latency**: [SAME] — Mirror of indent. No content involved.
+
+#### Tab (insert_spaces) — mid-line
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Operation | `document.execCommand('insertText', '  ')` | Same |
+
+**Latency**: [SAME] — execCommand goes through contentEditable input path → `onInput` fires → debounced (today) or sets composingContent (new). No commit, no Y.Doc write at this point.
+
+#### Shift+Tab (remove_spaces) — mid-line
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Read | `contentRef.innerText` + `cursor.getOffset()` | Same |
+| 2. Write | `contentRef.innerText = newText` + `store.updateBlockContent()` (direct, no debounce) | `contentRef.innerText = newText` + need to update composingContent |
+
+**Latency**: [RISK — but solvable] — Today this bypasses debounce and writes directly to Y.Doc. In the new model, the block is composing. Options:
+1. Call `controller.commit()` with the new text → synchronous Y.Doc write. **Cost**: processCommit() ~50μs. Acceptable.
+2. Just update `composingContent` and let the next commit handle it. **Risk**: if another operation reads store content immediately after, it's stale.
+Option 1 is correct. The `store.updateBlockContent()` call at line 609 becomes `controller.commit()` with the new content.
+
+**Verdict**: [SAME] — commit cost negligible.
+
+#### Backspace at start (merge_with_previous)
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Pre-work | `flushContentUpdate()` | `controller.commit()` for current block |
+| 2. Read | `block.content`, `prevBlock.content`, `prevBlock.content.length` | Same (store is current after commit) |
+| 3. Focus | `onFocus(prevId)` — optimistic, before mutations | Same |
+| 4. Mutate | `liftChildrenToSiblings()`, `updateBlockContent(prevId, merged)`, `deleteBlock(id)` | Same |
+| 5. Cursor | `queueMicrotask × 2` → `setCursorAtOffset(el, prevContentLength)` | Same |
+
+**Latency**: [FASTER] — Same reasoning: commit is direct vs flush-then-observer.
+
+**Edge case (from prompt)**: What if previous block is ALSO composing (rapid editing between blocks)? Answer: previous block's composing state is in a DIFFERENT controller instance (per-block per-pane, §6.2). When `merge_with_previous` fires, only the CURRENT block commits. The previous block's store content is its last committed value. If the user was editing the previous block moments ago:
+- If they blurred it (to focus current) → blur triggered commit → store is current.
+- Focus transitions always go through blur → commit → focus. So `prevBlock.content` is always committed when we read it for merge.
+
+This is already true today (blur → flush → focus next). No new risk.
+
+#### ArrowUp at block boundary (navigate_up)
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Focus leaves | blur fires on current block → `flushContentUpdate()` | blur fires → `controller.commit()` |
+| 2. Navigate | `setFocusCursorHint('end')` → `onFocus(prevId)` | Same |
+| 3. New block | Focus effect fires, consumes cursor hint, places cursor | Same |
+
+**Latency**: [SAME] — The commit happens during blur (same timing as flush). Focus of next block happens after blur completes. The key question: does commit complete before the next block's focus handler runs?
+
+**Answer**: Yes. Blur is synchronous. Commit is synchronous (within blur handler). `onFocus()` sets a signal that triggers a SolidJS effect. SolidJS effects run in a microtask batch after the current synchronous call stack completes. So: blur → commit (sync) → onFocus signal set (sync) → stack returns → microtask: SolidJS effect runs → focus effect fires → cursor placed. The commit is complete before the effect runs.
+
+#### ArrowDown at block boundary (navigate_down)
+
+**Latency**: [SAME] — Mirror of ArrowUp.
+
+#### Cmd+Z (undo) during composing
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Outliner | blur activeElement → `handleBlur` → `flushContentUpdate()` | `controller.discard()` (NOT commit, NOT blur) |
+| 2. Undo | `sharedUndoManager.undo()` | Same |
+| 3. Effect | Observer fires → sync effect with UndoManager origin → authoritative bypass → DOM nuke + cursor restore | Observer fires → sync effect → composingContent is null (discarded) → `contentRef.innerText = storeContent` |
+
+**Latency**: [FASTER] — No cursor save/restore. No authoritative bypass logic. Discard is a signal write (0μs). Undo is a Y.Doc operation. Sync effect is 5 lines, not 80.
+
+**Behavior change**: Today, Cmd+Z flushes composing content to Y.Doc (creating an undo entry), then undoes that entry. Two Cmd+Z presses to get to pre-composing state. New model: discard (no undo entry) + undo. ONE Cmd+Z to get to pre-composing state. **This is better UX.** User pressed undo, they want undo, not "save then undo the save."
+
+#### Cmd+Shift+Z (redo)
+
+**Latency**: [SAME as undo] — discard + redo.
+
+#### Cmd+Up / Cmd+Down (move_block_up/down)
+
+| Step | Today | New Model |
+|------|-------|-----------|
+| 1. Operation | `store.moveBlockUp/Down(id)` — tree reorder | Same |
+| 2. Focus | Double rAF → refocus | Same |
+
+**Latency**: [SAME] — No flush/commit. Move is a tree operation on `childIds`, not content. Block stays composing during move.
+
+**Note**: Should move commit first? No. `moveBlockUp/Down` reorders siblings in the parent's `childIds` array. It doesn't read or write content. The composing content is unaffected by the block's position in the tree.
+
+#### Shift+Arrow (navigate_with_selection)
+
+**Latency**: [SAME] — Selection is block-level (CSS highlight), not content-level. No flush/commit needed. Block stays composing.
+
+#### Cmd+Enter on [[wikilink]] (zoom_in_wikilink)
+
+**Latency**: [SAME] — Navigation triggers zoom, which triggers blur on current block → commit via blur handler. Same as ArrowUp/Down.
+
+#### Rapid Enter-Enter-Enter (5 blocks in 2 seconds)
+
+Trace for creating 5 blocks via Enter at end of each:
+
+```
+Enter 1: commit("b1", content) [~200μs] → splitBlock [~50μs] → onFocus("b2") → SolidJS effect → focus
+Enter 2: commit("b2", "") [~2μs, no-op] → splitBlock → onFocus("b3") → effect → focus
+Enter 3: commit("b3", "") [~2μs, no-op] → splitBlock → onFocus("b4") → effect → focus
+Enter 4: commit("b4", "") [~2μs, no-op] → splitBlock → onFocus("b5") → effect → focus
+Enter 5: commit("b5", "") [~2μs, no-op] → splitBlock → onFocus("b6") → effect → focus
+```
+
+**Key insight**: After the first Enter, each subsequent Enter is committing an EMPTY block (no-op commit). processCommit() for empty content: `hasCtxPatterns("")` returns false, `hasWikilinkPatterns("")` returns false, early return. ~2μs. Effectively free.
+
+**Frame timing**: Each Enter → commit (sync, <1ms) → splitBlock (sync, <1ms) → onFocus sets signal (sync) → stack returns → SolidJS batch → focus effect → cursor in new block. Total sync work per Enter: <2ms. At 60fps (16ms frames), 5 Enters in 2 seconds is one Enter every 400ms. Each Enter completes in <2ms. **Zero perceptible delay.**
+
+**Today's path**: Each Enter → flush (if timer pending, forces Y.Doc write) → splitBlock → focus. Flush triggers observer → sync effect → origin gating → possibly cursor save/restore. More work per Enter, but also <16ms total. So both models complete within a single frame.
+
+**Verdict**: [FASTER] — Less work per frame (no observer round-trip for the sync effect during composing). But difference is sub-millisecond. User won't notice.
+
+### Summary
+
+| Operation | Latency Rating | Notes |
+|-----------|---------------|-------|
+| Enter (split) | FASTER | No observer round-trip during composing |
+| Enter (create before) | SAME | No flush/commit involved |
+| Enter (execute) | FASTER | Direct commit vs flush-then-observer |
+| Tab/Shift+Tab (indent/outdent) | SAME | Tree operation, no content involved |
+| Tab (insert spaces) | SAME | execCommand, composing phase |
+| Shift+Tab (remove spaces) | SAME | commit() cost ~50μs, negligible |
+| Backspace (merge) | FASTER | Direct commit, no prev-block composing risk |
+| ArrowUp/Down (navigate) | SAME | Blur → commit, same timing as blur → flush |
+| Cmd+Z (undo) | FASTER | No cursor save/restore, no authoritative bypass |
+| Cmd+Shift+Z (redo) | SAME | Mirror of undo |
+| Cmd+Up/Down (move) | SAME | Tree operation only |
+| Shift+Arrow (selection) | SAME | No content involved |
+| Rapid Enter×5 | FASTER | Empty blocks = no-op commits |
+| Paste (structured) | FASTER | Direct commit vs flush-then-observer |
+
+**No operation rated [RISK]**. processCommit() adds <200μs worst case to keystroke handlers that need commits (Enter, Backspace, Execute, Paste). All operations complete within a single frame at 60fps. The composing model is strictly equal or faster than the debounce model for every keyboard interaction.
