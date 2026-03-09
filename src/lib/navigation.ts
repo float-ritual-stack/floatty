@@ -287,26 +287,46 @@ function pickZoomTarget(blockId: string, targetBlock: Block | null): string {
  * tree takes longer to render (large subtrees, lazy loading).
  */
 function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDelay: number): void {
+  // Per-pane cancellation: newer navigation in same pane supersedes this retry chain
+  const token = Symbol(blockId);
+  pendingRetryTokenByPaneId.set(paneId, token);
+
   let attempts = 0;
   const maxAttempts = 6;
 
   function tryScrollAndHighlight() {
+    // Cancelled by newer navigation in this pane
+    if (pendingRetryTokenByPaneId.get(paneId) !== token) return;
+
     attempts++;
     const element = findBlockInPane(blockId, paneId);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
       highlightBlockInPane(blockId, paneId);
+      // Clean up token on success
+      if (pendingRetryTokenByPaneId.get(paneId) === token) {
+        pendingRetryTokenByPaneId.delete(paneId);
+      }
     } else if (attempts < maxAttempts) {
       // Block not in DOM yet — wait another frame
-      requestAnimationFrame(() => setTimeout(tryScrollAndHighlight, 16));
+      requestAnimationFrame(() => {
+        if (pendingRetryTokenByPaneId.get(paneId) !== token) return;
+        setTimeout(tryScrollAndHighlight, 16);
+      });
     } else {
       console.warn('[navigation] scrollAndHighlightWithRetry: block not found after max attempts', { blockId, paneId });
+      // Clean up token on exhaustion
+      if (pendingRetryTokenByPaneId.get(paneId) === token) {
+        pendingRetryTokenByPaneId.delete(paneId);
+      }
     }
   }
 
   // Wait for initial delay, then double-rAF to let SolidJS render + browser paint
   setTimeout(() => {
+    if (pendingRetryTokenByPaneId.get(paneId) !== token) return;
     requestAnimationFrame(() => {
+      if (pendingRetryTokenByPaneId.get(paneId) !== token) return;
       requestAnimationFrame(tryScrollAndHighlight);
     });
   }, initialDelay);
@@ -316,13 +336,9 @@ function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDel
  * Find a block element within a specific pane
  */
 function findBlockInPane(blockId: string, paneId: string): Element | null {
-  // First try to find the pane container
   const paneContainer = document.querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`);
-  if (paneContainer) {
-    return paneContainer.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`);
-  }
-  // Fallback to global search if pane not found
-  return document.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`);
+  if (!paneContainer) return null;
+  return paneContainer.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`);
 }
 
 /**
@@ -339,6 +355,9 @@ function scrollToBlockInPane(blockId: string, paneId: string): void {
 
 /** Track highlight cleanup per pane (supports concurrent highlights in multi-pane) */
 const highlightCleanupByPaneId = new Map<string, () => void>();
+
+/** Per-pane cancellation tokens for retry loops — newer navigation supersedes stale retries */
+const pendingRetryTokenByPaneId = new Map<string, symbol>();
 
 /**
  * Highlight a block in a specific pane. Stays visible until the user interacts
@@ -447,5 +466,6 @@ if (import.meta.hot) {
       cleanup();
     }
     highlightCleanupByPaneId.clear();
+    pendingRetryTokenByPaneId.clear();
   });
 }
