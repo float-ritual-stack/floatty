@@ -87,12 +87,9 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   // Set focus on the target block so it receives DOM focus after zoom
   paneStore.setFocusedBlockId(targetPaneId, blockId);
 
-  // Scroll to and highlight the actual target block (after DOM settles)
-  if (highlight) {
-    // Retry until block is in DOM (zoom re-render may take multiple frames)
-    const delay = splitDirection ? 150 : 50;
-    scrollAndHighlightWithRetry(blockId, targetPaneId, delay);
-  }
+  // Scroll to the actual target block (after DOM settles), optionally highlight
+  const delay = splitDirection ? 150 : 50;
+  scrollAndHighlightWithRetry(blockId, targetPaneId, delay, highlight);
 
   return { success: true, targetPaneId };
 }
@@ -286,7 +283,7 @@ function pickZoomTarget(blockId: string, targetBlock: Block | null): string {
  * paint, then we find the FRESH element. Retries handle cases where the block
  * tree takes longer to render (large subtrees, lazy loading).
  */
-function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDelay: number): void {
+function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDelay: number, highlight = true): void {
   // Per-pane cancellation: newer navigation in same pane supersedes this retry chain
   const token = Symbol(blockId);
   pendingRetryTokenByPaneId.set(paneId, token);
@@ -302,7 +299,7 @@ function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDel
     const element = findBlockInPane(blockId, paneId);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      highlightBlockInPane(blockId, paneId);
+      if (highlight) highlightBlockInPane(blockId, paneId);
       // Clean up token on success
       if (pendingRetryTokenByPaneId.get(paneId) === token) {
         pendingRetryTokenByPaneId.delete(paneId);
