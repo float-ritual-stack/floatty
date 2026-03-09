@@ -469,3 +469,206 @@ commit(blockId: string, domContent: string): CommitResult {
 | **NEW: commitMiddleware.ts** | 0 | New file (Karen) | ~100 |
 
 **Net delta**: ~-170 lines deleted, ~+180 lines added. Roughly neutral in LOC, but the new code is straightforward orchestration vs. the deleted code which was defensive race-condition handling.
+
+---
+
+## 6. Follow-Up: Integration Edge Cases
+
+The 5 refactoring steps above describe the straight-line keystroke→commit→sync path. This section enumerates the corners: flush points, multi-pane composing, authoritative overrides, agent writes, and test blast radius.
+
+### 6.1 Flush Point Inventory
+
+Every call to `flushContentUpdate()` in the codebase. In the new model, each becomes either `controller.commit()` or is eliminated.
+
+| # | File | Line | Structural Operation | Why It Flushes First | Migration Note |
+|---|------|------|---------------------|---------------------|----------------|
+| 1 | `useBlockInput.ts` | 496 | `execute_block` — runs handler (sh::, ai::, etc.) | Handler reads `block.content` from store; stale debounce = stale content | `controller.commit()` — handler needs committed content |
+| 2 | `useBlockInput.ts` | 553 | `split_block` — splits at cursor offset | `splitBlock(id, offset)` reads Y.Doc content to slice; offset is relative to stored content | `controller.commit()` — split offset is meaningless against uncommitted content |
+| 3 | `useBlockInput.ts` | 562 | `split_to_child` — splits content, second half becomes first child | Same as split_block; reads content + offset | `controller.commit()` — same reasoning |
+| 4 | `useBlockInput.ts` | 619 | `merge_with_previous` — Backspace at start merges two blocks | Reads `block.content` and `prevBlock.content` to concatenate; reads `prevBlock.content.length` for cursor positioning | `controller.commit()` — merge reads both blocks' committed content |
+| 5 | `BlockItem.tsx` | 648 | `handleBlur` — focus leaves block | Ensures pending keystrokes reach Y.Doc before focus transitions; downstream code may read store immediately | **Eliminated** — composing state auto-commits on blur via `blockController.commit()` in blur handler |
+| 6 | `BlockItem.tsx` | 673 | `handlePaste` — structured paste (FLO-128) | `handleStructuredPaste` reads `store.blocks[id]` to check if block is empty; stale = wrong code path | `controller.commit()` — paste handler needs committed content to decide empty-block vs append behavior |
+| 7 | `BlockItem.tsx` | 202 | `onCleanup` — component unmount | Prevents data loss when block unmounts with pending debounce | **Eliminated** — `blockController.commit()` in cleanup. If composingContent is null, no-op. |
+| 8 | `Outliner.tsx` | 533, 545 | Export keybinds (Cmd+Shift+M/J/B) | Triggers `activeEl.blur()` which cascades to `handleBlur` → flush | **Indirect** — blur handler calls `controller.commit()`. No separate flush needed. |
+
+**Ordering dependencies**:
+- Flush points 1–4 share a pattern: flush → read store → mutate tree. In the new model: commit → read store → mutate tree. The ordering is identical; only the mechanism changes.
+- Flush point 4 (merge) has an additional dependency: `prevBlock.content.length` is captured as cursor offset AFTER flush. In the new model, commit writes composing content to Y.Doc, then the store is current. Same ordering, same result.
+
+**Not a flush point but related**: `remove_spaces` (useBlockInput.ts:609) calls `store.updateBlockContent()` directly (no debounce, no flush). In the new model this is a direct commit — the controller handles it since the block is focused and composing.
+
+### 6.2 Composing Scope: Per-Block Per-Pane
+
+**Question**: Is composing state per-block, per-pane, or global?
+
+**Answer**: Per-block per-pane. Here's why:
+
+1. **Focus is per-pane**: `focusedBlockId` is a `Record<string, string | null>` keyed by paneId (usePaneStore.ts:38). Each pane tracks its own focused block independently.
+
+2. **BlockItem instances are per-pane**: Each pane renders its own `<BlockItem>` tree. If block "abc" is visible in Pane A and Pane B, there are TWO BlockItem instances, each with its own `contentRef`, `isFocused` memo, and `hasLocalChanges` signal.
+
+3. **Composing state lives in BlockItem**: The debounced updater, `hasLocalChanges` signal, and `contentRef` are all instance-scoped (BlockItem.tsx:174, 194). In the new model, `blockController` replaces these — and it's created per-BlockItem instance, so it's automatically per-block per-pane.
+
+**Multi-pane scenario**: Block "abc" open in Pane A (composing) and Pane B (committed view).
+- Pane A user types → `composingContent` holds uncommitted text in Pane A's controller
+- Pane B sees committed content from Y.Doc (no composingContent — its controller is idle)
+- Pane A commits → Y.Doc transaction → observer fires → Pane B's content sync effect runs → Pane B DOM updates
+- This is exactly how it works today with the debounce model. The 15-line replacement effect handles Pane B correctly because Pane B is never focused+user-origin — it always passes the `shouldSync` gate.
+
+**Edge case**: Same block focused in BOTH panes simultaneously (user clicks between panes rapidly).
+- Today: both panes race debounced updates. Last writer wins (Y.Doc field-level last-write-wins).
+- New model: same behavior. Each pane's controller commits independently. Y.Doc's CRDT semantics resolve.
+- **No new risk** — the race already exists. The composing model doesn't make it worse.
+
+### 6.3 Reconnect + Undo During Composing
+
+The current 80-line content sync effect has two "authoritative" paths that bypass normal gating (BlockItem.tsx:573–575):
+
+```typescript
+const isAuthoritative =
+  origin === 'reconnect-authority' ||
+  (origin && typeof origin === 'object' && 'undo' in origin);
+```
+
+When `isAuthoritative` is true AND `hasLocalChanges()` is true, the effect cancels the debounce, clears the dirty flag, and forces DOM sync (BlockItem.tsx:586–590).
+
+#### 6.3a Reconnect during composing
+
+**What happens today**: WebSocket reconnects → `performBidirectionalResync()` (useSyncedYDoc.ts:402) → `Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority')` → observer fires → content sync effect detects `isAuthoritative` → cancels pending debounce → overwrites DOM with server content → cursor restored via save/restore.
+
+**What should happen in the new model**: **Force-commit composing content, then apply authoritative update.**
+
+Rationale:
+- **Discard composing** loses user keystrokes since last commit. Reconnect is common (laptop sleep, network blip). Losing 2 seconds of typing on every reconnect is unacceptable.
+- **Queue authoritative** creates split-brain: composing content diverges from Y.Doc, and the user sees stale state until commit. Defeats the purpose of reconnect.
+- **Force-commit first** writes composing content to Y.Doc BEFORE the server state arrives. CRDT merge resolves any conflicts. User's keystrokes survive. Server state also survives. This is what CRDTs are for.
+
+**Implementation**: `blockController.forceCommit()` → then Y.Doc applies reconnect state. The commit must be synchronous (within the same microtask as the reconnect apply) to ensure the CRDT merge sees both states.
+
+**Risk**: If the server state contains a different version of the same block's content, CRDT last-write-wins applies at the field level. The user's commit timestamp is newer (they just typed it), so their content wins. This is correct — the server state is from before the reconnect gap.
+
+#### 6.3b Undo during composing
+
+**What happens today**: User presses Cmd+Z → `sharedUndoManager.undo()` → Y.Doc reverses the last tracked transaction → observer fires with UndoManager instance as origin → content sync effect detects `isAuthoritative` → cancels pending debounce → overwrites DOM with undo result → cursor restored.
+
+**What should happen in the new model**: **Discard composing content, apply undo.**
+
+Rationale:
+- **Force-commit first** would commit the current text, then undo it immediately. The undo stack now has the committed version on top, which is what the user just typed. Cmd+Z twice to undo the pre-commit state. This is confusing — undo should undo, not "save then undo the save."
+- **Queue undo** makes no sense — user expects immediate response.
+- **Discard composing** is correct: the user pressed Cmd+Z while typing. They want to undo. Discarding uncommitted keystrokes and reverting to the Y.Doc undo target is the right behavior. The composing content was never committed, so nothing is lost from the CRDT perspective.
+
+**Implementation**: `blockController.discard()` → clear composingContent signal → let Y.Doc undo apply → content sync effect shows undo result. The discard must happen BEFORE the undo's observer fires, or the sync effect won't trigger (composingContent still blocks it).
+
+**Practical concern**: UndoManager tracked origins are `[null, undefined, 'user', 'user-drag']` (useSyncedYDoc.ts:1625). The composing model's commit uses `'user'` origin, so commits ARE tracked. Each commit is one undo step. Undo during composing = discard uncommitted + revert last commit. Two keystrokes (Cmd+Z, Cmd+Z) to get to pre-last-commit state. This matches user expectation.
+
+#### Summary
+
+| Authoritative event | During composing | Action | Why |
+|---------------------|-----------------|--------|-----|
+| Reconnect (`'reconnect-authority'`) | `composingContent !== null` | Force-commit, then apply server state | Preserve user keystrokes; CRDT merge handles conflicts |
+| Undo (UndoManager instance) | `composingContent !== null` | Discard composing, apply undo | User intent is "undo," not "save then undo" |
+
+### 6.4 Agent Write Path
+
+**Question**: Can `processCommit()` from commitMiddleware.ts be called for ALL write sources, eliminating ctxRouterHook/outlinksHook EventBus subscriptions?
+
+**Current origin-gated EventBus emission** (useBlockStore.ts:590–602):
+
+```typescript
+if (blockEvents.length > 0 &&
+    origin !== Origin.Remote &&           // Skip: metadata already extracted on remote client
+    origin !== Origin.ReconnectAuthority && // Skip: same reason
+    origin !== Origin.BulkImport) {         // Skip: handled by async ProjectionScheduler
+  blockEventBus.emit(envelope);  // Sync lane: hooks run here
+}
+```
+
+Origins that DO emit to EventBus: `'user'`, `'executor'`, `'user-drag'`, `'hook'`, `null/undefined`.
+Origins that DON'T: `'remote'`, `'reconnect-authority'`, `'bulk_import'`.
+
+**Can processCommit() replace EventBus for all origins?**
+
+**No — but it can replace it for the `'user'` origin, which is the only one that matters for the composing model.** Here's why:
+
+1. **`'user'` origin** (keyboard input, paste): This is the composing→commit path. `processCommit()` handles metadata extraction at commit time. **Replaces EventBus for this origin.**
+
+2. **`'executor'` origin** (handler output, e.g., `ai::` writes back): The executor calls `updateBlockContent(id, content)` or `updateBlockContentFromExecutor(id, content)`. This goes directly to Y.Doc — no composing phase, no blockController. The EventBus STILL needs to fire for this origin so hooks extract metadata from handler-written content.
+
+3. **`'hook'` origin** (metadata writes by hooks themselves): Hooks filter this out (`if origin === 'hook' return`). No change needed.
+
+4. **`'user-drag'` origin**: Block moves. Hooks may need to re-extract if parentage changes outlinks. EventBus still needed.
+
+**Conclusion**: The EventBus survives for non-user origins. `processCommit()` handles the user-typing path only. The ctxRouterHook and outlinksHook EventBus subscriptions cannot be fully deleted — they still serve `'executor'` and `'user-drag'` origins.
+
+**Revised architecture**:
+
+```
+User typing → composing → commit → processCommit() → metadata extraction
+                                                     (replaces hook for 'user' origin)
+
+Executor/Agent → updateBlockContent() → Y.Doc → observer → EventBus → hooks
+                                                           (unchanged)
+```
+
+**Migration note**: The audit's appendix claims ctxRouterHook.ts goes from 166→~60 lines and outlinksHook.ts from 141→~50 lines ("extract pure function, delete EventBus subscription"). This is WRONG — the EventBus subscription must remain for non-user origins. The pure extraction functions can still be shared between `processCommit()` and the hooks, but the hooks themselves survive as EventBus subscribers. Revised line counts: ctxRouterHook.ts ~166→~120, outlinksHook.ts ~141→~100 (extract shared pure functions, keep subscriptions).
+
+### 6.5 Test Blast Radius
+
+Grep results across all test files for affected code paths.
+
+#### Test files examined
+
+| File | Tests | Focus |
+|------|-------|-------|
+| `useBlockInput.test.ts` | 35 | `determineKeyAction()` pure function |
+| `BlockItem.test.tsx` | 3 | Context injection, click handling, collapse arrow |
+| `cursorUtils.test.ts` | 29 | DOM offset calculation, boundary detection |
+| `pasteHandler.test.ts` | 12 | `handleStructuredPaste()` with mocked store actions |
+| `useBlockStore.batch.test.ts` | 8 | Batch transaction API |
+| `ctxRouterHook.test.ts` | 7 | EventBus → metadata extraction |
+| `outlinksHook.test.ts` | 7 | EventBus → wikilink extraction |
+| `executor.test.ts` | ~5 | Handler execution with mocked `updateBlockContent` |
+| `funcRegistry.test.ts` | ~6 | Handler registry with mocked `updateBlockContent` |
+
+#### Categorization
+
+**[PASSES] — 93 tests unaffected**:
+
+- `useBlockInput.test.ts` (35 tests): Tests `determineKeyAction()`, a pure function that returns action objects. Doesn't touch debounce, flush, or sync. **Zero changes needed.**
+- `cursorUtils.test.ts` (29 tests): Tests DOM offset math. Audit confirms cursorUtils.ts is unchanged. **Zero changes needed.**
+- `pasteHandler.test.ts` (12 tests): Tests `handleStructuredPaste()` with mocked `updateBlockContent`. The mock stays the same — paste handler calls store methods directly, not the debounced path. **Zero changes needed.**
+- `useBlockStore.batch.test.ts` (8 tests): Tests batch Y.Doc transactions. No debounce or flush involvement. **Zero changes needed.**
+- `executor.test.ts` (~5 tests): Mocks `updateBlockContent` directly. **Zero changes needed.**
+- `funcRegistry.test.ts` (~4 tests): Mocks `updateBlockContent` directly. **Zero changes needed.**
+
+**[ADAPTS] — 10 tests need setup/assertion changes**:
+
+- `BlockItem.test.tsx` (3 tests): Tests render with mock stores. Currently creates `createMockBlockStore()` — needs to also provide a mock `blockController` or equivalent. Test assertions on click/collapse behavior are unchanged; only the provider setup changes.
+- `ctxRouterHook.test.ts` (7 tests): Tests EventBus → metadata extraction. The EventBus subscription remains (per 6.4), but the pure extraction function is shared with `processCommit()`. Tests need to verify the pure function works correctly when called from BOTH paths (EventBus and commit middleware). New tests needed for `processCommit()` calling the pure function.
+
+**[BREAKS] — 7 tests test deleted code paths**:
+
+- `outlinksHook.test.ts` (7 tests): Tests EventBus → outlinks extraction. Same situation as ctxRouterHook — EventBus subscription remains, but the tests currently exercise the full EventBus→hook→metadata pipeline. If the pure function is extracted, tests should be restructured to test:
+  1. Pure extraction function (unit test, new)
+  2. EventBus subscription routing (integration test, adapted from existing)
+  3. `processCommit()` calling extraction (new)
+
+Wait — re-examining: the EventBus subscription in outlinksHook survives per 6.4. These tests exercise that subscription. They don't test deleted code. **Revised: [ADAPTS], not [BREAKS].**
+
+**Revised counts**:
+
+| Category | Count | Notes |
+|----------|-------|-------|
+| PASSES | 93 | Pure functions, store operations, cursor math |
+| ADAPTS | 17 | BlockItem setup (3), ctxRouterHook (7), outlinksHook (7) — setup changes, shared pure function extraction |
+| BREAKS | 0 | No tests directly exercise the deleted content sync effect or debounce machinery |
+
+**Gap**: There are NO tests for:
+- The 80-line content sync effect (BlockItem.tsx:563–639)
+- The `createDebouncedUpdater` function
+- The `handleBlur` DOM sync
+- The `hasLocalChanges` dirty flag gating
+- The authoritative origin bypass
+
+This is actually good news for migration — the most complex deleted code has zero test coverage. No tests break. But it also means the NEW code (blockController, commitMiddleware, simplified sync effect) needs tests written from scratch to cover what was previously untested.
