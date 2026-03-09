@@ -910,15 +910,25 @@ Code that becomes dead after migration. Each entry verified by grep.
 **Note**: `getAbsoluteCursorOffset` and `setCursorAtOffset` themselves survive — called from useCursor.ts and useBlockInput.ts for split/merge operations.
 **Confidence**: CERTAIN (these specific call sites in the sync effect are dead, not the functions themselves).
 
+#### `lastUpdateOrigin` full stack (useBlockStore.ts + WorkspaceContext.tsx)
+
+**What**: The entire `lastUpdateOrigin` signal — definition, setter, getter, interface, and mock. Full-stack grep confirms the ONLY reader outside definition/setter is BlockItem.tsx:567 (inside the deleted sync effect). No other component reads it.
+**Scope** (7 locations across 2 files):
+- `useBlockStore.ts:142` — type definition in `BlockStoreInterface`
+- `useBlockStore.ts:351` — `createSignal(null)` initialization
+- `useBlockStore.ts:414` — setter in bulk import path (`setLastUpdateOrigin(origin)`)
+- `useBlockStore.ts:476` — setter in normal observer path (`setLastUpdateOrigin(origin)`)
+- `useBlockStore.ts:1682` — getter in returned interface (`lastUpdateOrigin`)
+- `WorkspaceContext.tsx:39` — interface declaration
+- `WorkspaceContext.tsx:237` — mock factory (`lastUpdateOrigin: () => null`)
+**Why dead**: With the composing model, the sync effect gates on `composingContent() !== null` — it never checks origin. No other component consumes this signal.
+**Confidence**: CERTAIN. Remove entire signal (definition, setter, getter, interface, mock). The observer still sets origin for Y.Doc transaction tagging — that's `event.transaction.origin`, not this signal.
+
 ### 9.2 PROBABLE — Other Callers Exist But May Also Change
 
-#### `store.lastUpdateOrigin` signal reads in BlockItem.tsx
+#### ~~`store.lastUpdateOrigin` signal reads in BlockItem.tsx~~ → PROMOTED TO §9.1
 
-**What**: `const origin = store.lastUpdateOrigin` (BlockItem.tsx:567) — reactive read that triggers sync effect on every Y.Doc transaction.
-**Why probably dead in BlockItem**: The simplified sync effect doesn't check origin. It only checks `composingContent() !== null`.
-**But**: `lastUpdateOrigin` is a signal on the block store interface. Other consumers may read it. Need to check if any other component reads `store.lastUpdateOrigin`.
-**Grep result**: `lastUpdateOrigin` is read in BlockItem.tsx (sync effect — deleted) and defined/set in useBlockStore.ts. No other component reads it.
-**Revised confidence**: CERTAIN for BlockItem reads. The signal definition and setter in useBlockStore.ts may become dead too IF no other consumer is added. But it's cheap to keep (one signal set per transaction).
+**Moved**: Full-stack grep confirmed no consumer outside BlockItem.tsx sync effect. Promoted to CERTAIN dead — see "lastUpdateOrigin full stack" entry in §9.1 above.
 
 #### `displayContent` blur sync (BlockItem.tsx:658-660)
 
