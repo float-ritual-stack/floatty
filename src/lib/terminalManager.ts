@@ -20,9 +20,9 @@ import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
 import { readText, readImageBase64, readFiles, writeText as clipboardWriteText } from 'tauri-plugin-clipboard-api';
 
-// Batched clipboard info from Rust (replaces 3 sequential IPC calls)
+// Batched clipboard info from Rust (image/text detection via arboard)
+// File detection handled separately by tauri-plugin-clipboard-api's readFiles()
 interface ClipboardInfo {
-  has_files: boolean;
   has_image: boolean;
   has_text: boolean;
 }
@@ -630,16 +630,23 @@ class TerminalManager {
               // Uses batched IPC call (1 call vs 3 sequential)
               (async () => {
                 try {
-                  const info = await invoke<ClipboardInfo>('get_clipboard_info');
-
-                  if (info.has_files) {
-                    // Files in clipboard (Finder Cmd+C) - paste paths
+                  // 1. Try files first — tauri plugin reads NSPasteboard directly,
+                  //    arboard's text-pattern heuristic misses macOS Finder copies
+                  try {
                     const files = await readFiles();
                     if (files && files.length > 0) {
                       const formatted = files.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
                       invoke('plugin:pty|write', { pid, data: formatted }).catch(console.error);
+                      return;
                     }
-                  } else if (info.has_image) {
+                  } catch {
+                    // readFiles() may throw on non-file clipboard — continue to image/text
+                  }
+
+                  // 2. Then check image/text via arboard (still batched)
+                  const info = await invoke<ClipboardInfo>('get_clipboard_info');
+
+                  if (info.has_image) {
                     // Image in clipboard - save to temp file, paste path
                     const base64 = await readImageBase64();
                     if (base64) {

@@ -6,39 +6,32 @@ use crate::services::clipboard;
 use serde::Serialize;
 
 /// Clipboard content type info - batched check for IPC efficiency
+///
+/// Note: file detection is handled by tauri-plugin-clipboard-api's readFiles()
+/// which uses NSPasteboard directly. arboard's text-pattern heuristic misses
+/// macOS Finder copies (returns filename, not file:// URL).
 #[derive(Serialize)]
 pub struct ClipboardInfo {
-    pub has_files: bool,
     pub has_image: bool,
     pub has_text: bool,
 }
 
-/// Check what types of content are in the clipboard (single IPC call)
+/// Check image/text presence in clipboard (single IPC call).
 ///
-/// Replaces 3 sequential calls to hasFiles/hasImage/hasText from JS.
-/// Uses arboard for direct clipboard inspection.
+/// File detection is done separately via tauri-plugin-clipboard-api's readFiles()
+/// which correctly reads NSPasteboard on macOS. Uses arboard for image/text.
 #[tauri::command]
 pub fn get_clipboard_info() -> ClipboardInfo {
     use arboard::Clipboard;
 
     let mut info = ClipboardInfo {
-        has_files: false,
         has_image: false,
         has_text: false,
     };
 
     if let Ok(mut clipboard) = Clipboard::new() {
-        // Check for text
         info.has_text = clipboard.get_text().is_ok();
-
-        // Check for image
         info.has_image = clipboard.get_image().is_ok();
-
-        // Files check: macOS stores file paths as text with file:// URLs
-        // The JS plugin handles this - we check via text content pattern
-        if let Ok(text) = clipboard.get_text() {
-            info.has_files = text.lines().all(|line| line.starts_with("file://") || line.is_empty());
-        }
     }
 
     info

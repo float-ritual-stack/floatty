@@ -18,6 +18,7 @@ import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
 import { type SearchResults, type DoorEnvelope } from '../lib/handlers';
 import { handleStructuredPaste } from '../lib/pasteHandler';
+import { readFiles } from 'tauri-plugin-clipboard-api';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { DoorHost, DoorExecCard } from './views/DoorHost';
@@ -665,7 +666,42 @@ export function BlockItem(props: BlockItemProps) {
   const handlePaste = (e: ClipboardEvent) => {
     // Get plain text only (fixes FLO-62: rich text causing duplicates)
     const text = e.clipboardData?.getData('text/plain');
-    if (!text) return;
+
+    const pasteActions = {
+      getBlock: (id: string) => store.blocks[id],
+      updateBlockContent: store.updateBlockContent,
+      batchCreateBlocksAfter: store.batchCreateBlocksAfter,
+      batchCreateBlocksInside: store.batchCreateBlocksInside,
+    };
+
+    // If no text, probe for file paths (Finder Cmd+C doesn't populate
+    // clipboardData.files in Tauri WKWebView — readFiles() reads NSPasteboard directly)
+    if (!text) {
+      e.preventDefault();
+      readFiles().then((files) => {
+        if (!files || files.length === 0) return;
+        const paths = files.map(p => p.includes(' ') ? `"${p}"` : p).join('\n');
+        // Re-focus contentEditable before execCommand (focus may drift during async)
+        if (contentRef && document.contains(contentRef) && document.activeElement !== contentRef) {
+          contentRef.focus();
+        }
+        flushContentUpdate();
+        const result = handleStructuredPaste(props.id, paths, pasteActions);
+        if (result.handled && result.focusId) {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              props.onFocus(result.focusId!);
+            });
+          });
+        } else {
+          document.execCommand('insertText', false, paths);
+        }
+      }).catch((err) => {
+        // readFiles() throws on non-file clipboard (expected for image/screenshot paste)
+        console.debug('[BlockItem] readFiles probe:', err);
+      });
+      return;
+    }
 
     // FIX: Flush pending content before structured paste check
     // Without this, store.blocks[id] may be stale (150ms debounce)
@@ -673,12 +709,7 @@ export function BlockItem(props: BlockItemProps) {
     flushContentUpdate();
 
     // Try structured paste (FLO-128, FLO-322: batch transaction)
-    const result = handleStructuredPaste(props.id, text, {
-      getBlock: (id) => store.blocks[id],
-      updateBlockContent: store.updateBlockContent,
-      batchCreateBlocksAfter: store.batchCreateBlocksAfter,
-      batchCreateBlocksInside: store.batchCreateBlocksInside,
-    });
+    const result = handleStructuredPaste(props.id, text, pasteActions);
 
     if (result.handled) {
       e.preventDefault();
