@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-The current architecture syncs contentEditable ↔ Y.Doc on a 150ms debounce during active editing. This creates a three-layer feedback loop: DOM input → debounced Y.Doc write → observer fires → signal updates → content sync effect → DOM update (with cursor save/restore). The entire cursorUtils.ts module (320 lines) exists solely to survive this round-trip. The proposed Composing → Committed model eliminates the round-trip entirely — editing is local, persistence is a discrete commit.
+The current architecture syncs contentEditable ↔ Y.Doc on a 150ms debounce during active editing. This creates a three-layer feedback loop: DOM input → debounced Y.Doc write → observer fires → signal updates → content sync effect → DOM update (with cursor save/restore). The cursor save/restore in the content sync effect is the *primary* reason cursorUtils.ts exists, though the module also serves split offset calculation, cursor positioning after merge, and boundary detection for navigation (4 surviving call sites — see §2). The proposed Composing → Committed model eliminates the round-trip entirely — editing is local, persistence is a discrete commit.
 
 **What we can delete**: ~170 lines of sync spaghetti (content sync effect, debounce machinery, dirty flag guards) and replace with ~210 lines of clean orchestration (blockController, commitMiddleware, composingRegistry). See appendix for per-file breakdown.
 **What we keep**: cursorUtils.ts (still needed for split offset calculation), inlineParser.ts, EventBus/hooks.
@@ -20,7 +20,7 @@ The current architecture syncs contentEditable ↔ Y.Doc on a 150ms debounce dur
 
 ### The Hot Path (every keystroke)
 
-```
+```text
 User types character
     ↓
 BlockItem.tsx:738 — onInput fires
@@ -80,7 +80,8 @@ createEffect(() => {                              // L563: Runs on ANY store cha
   const origin = store.lastUpdateOrigin;           // L567: Global origin signal
 
   // L573-575: Authoritative bypass (reconnect, undo)
-  const isAuthoritative = origin === 'reconnect-authority' || isUndoManager(origin);
+  const isAuthoritative = origin === 'reconnect-authority' ||
+    (origin && typeof origin === 'object' && 'undo' in origin);  // UndoManager duck-type
 
   // L585-591: Race condition guard — skip if local edit pending
   if (hasLocalChanges()) {
@@ -147,7 +148,7 @@ The **cursor save/restore during sync** pattern (BlockItem.tsx:618-636) is the p
 
 ### Current State: Metadata Fires Per-Keystroke (via 150ms debounce)
 
-```
+```text
 User types → 150ms → Y.Doc write → observer → EventBus.emit()
                                                      ↓
                                     ctxRouterHook (priority 50, sync)
@@ -171,7 +172,7 @@ User types → 150ms → Y.Doc write → observer → EventBus.emit()
 
 In the Composing → Committed model, metadata extraction runs exactly **once per commit**, not per keystroke.
 
-```
+```text
 User leaves block (blur / Enter / pause)
     ↓
 BlockController.commit(blockId, domContent)
@@ -271,9 +272,20 @@ function extractMarkers(tokens: InlineToken[]): Marker[] {
 
 function extractOutlinks(tokens: InlineToken[]): string[] {
   // Lifted from outlinksHook.ts:29-42
+  // Note: wikilink tokens use `target` field (not `content`) for the link destination
   return [...new Set(
-    tokens.filter(t => t.type === 'wikilink').map(t => t.content)
+    tokens.filter(t => t.type === 'wikilink').map(t => t.target)
   )];
+}
+
+function markersEqual(a: Marker[] | undefined, b: Marker[]): boolean {
+  if (!a || a.length !== b.length) return a?.length === 0 && b.length === 0;
+  return a.every((m, i) => m.markerType === b[i].markerType && m.value === b[i].value);
+}
+
+function outlinksEqual(a: string[] | undefined, b: string[]): boolean {
+  if (!a || a.length !== b.length) return a?.length === 0 && b.length === 0;
+  return a.every((link, i) => link === b[i]);
 }
 ```
 
@@ -289,9 +301,12 @@ function extractOutlinks(tokens: InlineToken[]): string[] {
 
 **New file**: `src/lib/blockController.ts`
 
+BlockController is created per-BlockItem instance. It receives `paneId` via constructor (from `props.paneId` in BlockItem.tsx:110). The `paneId` is used for ComposingRegistry key (`${blockId}:${paneId}`) — see §7 PR 2.
+
 ```typescript
 export interface BlockController {
-  /** Enter composing phase — load committed content into DOM */
+  /** Enter composing phase — load committed content into DOM.
+   *  Registers with ComposingRegistry using constructor-provided paneId. */
   beginComposing(blockId: string): string;
 
   /** Commit composing content to Y.Doc (blur, Enter, pause) */
@@ -356,16 +371,18 @@ const updateContentFromDom = () => {
 **Change**: `handleBlur` becomes the commit boundary.
 
 ```typescript
-// BEFORE
+// BEFORE (BlockItem.tsx:642-660)
 const handleBlur = () => {
-  flushContentUpdate();                    // Force Y.Doc write
+  autocomplete.dismiss();                    // FLO-376: dismiss on blur
+  flushContentUpdate();                      // Force Y.Doc write
   if (contentRef.innerText !== block.content) {
-    contentRef.innerText = block.content;  // Sync DOM to store
+    contentRef.innerText = block.content;    // Sync DOM to store
   }
 };
 
 // AFTER
 const handleBlur = () => {
+  autocomplete.dismiss();                    // FLO-376: dismiss on blur (preserved)
   const composing = composingContent();
   if (composing !== null && composing !== block().content) {
     controller.commit(props.id, composing);  // Single Y.Doc write
@@ -623,7 +640,7 @@ Origins that DON'T: `'remote'`, `'reconnect-authority'`, `'bulk_import'`.
 
 **Revised architecture**:
 
-```
+```text
 User typing → composing → commit → processCommit() → metadata extraction
                                                      (replaces hook for 'user' origin)
 
@@ -823,7 +840,7 @@ Changes:
 
 ### Step Dependency Graph
 
-```
+```text
 PR 1 (pure additions)
   │
   ▼
@@ -1139,6 +1156,8 @@ Option 1 is correct. The `store.updateBlockContent()` call at line 609 becomes `
 - If they blurred it (to focus current) → blur triggered commit → store is current.
 - Focus transitions always go through blur → commit → focus. So `prevBlock.content` is always committed when we read it for merge.
 
+**Browser ordering assumption**: This depends on the browser guarantee that `blur` on element A fires synchronously before `focus` on element B. This is specified in the [WHATWG focus update steps](https://html.spec.whatwg.org/multipage/interaction.html#focus-update-steps) and is consistent across all modern browsers. The composing model inherits this same assumption from the current debounce model (which also relies on blur→flush ordering).
+
 This is already true today (blur → flush → focus next). No new risk.
 
 #### ArrowUp at block boundary (navigate_up)
@@ -1196,7 +1215,7 @@ This is already true today (blur → flush → focus next). No new risk.
 
 The realistic pattern is: type content, Enter, type content, Enter — not creating empty blocks. Trace for 3 blocks with meaningful content:
 
-```
+```text
 Type "item 1 [project::floatty]" → composing (no Y.Doc write)
 Enter 1: commit("b1", "item 1 [project::floatty]") [~150μs: hasCtx=false, hasWikilink=false, but project tag in markers] → splitBlock → onFocus("b2")
 
