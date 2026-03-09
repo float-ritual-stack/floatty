@@ -349,27 +349,27 @@ One test per flush point from §6.1. Each verifies that `controller.commit()` ma
 
 **Actions**:
 1. WebSocket reconnects
-2. `performBidirectionalResync()` is about to apply server state
+2. `triggerFullResync()` is about to apply server state
 
 **Expected**:
 - `controller.forceCommit()` fires BEFORE server state applied
 - Store content becomes "hello world" (user's keystrokes)
 - Server state applied via `Y.applyUpdate(doc, serverState, 'reconnect-authority')`
-- CRDT merge: user's "hello world" wins (newer timestamp)
+- CRDT merge: user's "hello world" wins (local Lamport clock advanced with commit; server has same content "hello" so no conflict)
 - composingContent is null
 - Content sync effect runs → DOM shows "hello world"
 
 ### E2. Reconnect during composing — server has different content
 
-**Setup**: Block "b1" composing with "local edit". Server state has "server edit" for same block.
+**Setup**: Block "b1" composing with "local edit". Server state has "server edit" for same block (written by another client or agent during the gap).
 
 **Actions**: Same as E1.
 
 **Expected**:
 - forceCommit writes "local edit" to Y.Doc
-- Server state applied — CRDT field-level last-write-wins
-- User's commit is newer → "local edit" wins
-- DOM shows "local edit"
+- Server state applied — CRDT field-level merge via Y.Map
+- CRDT merge produces a deterministic result based on Lamport timestamps (logical clocks, not wall-clock). In typical single-user scenarios (no other writers during the gap), the local edit wins because the local Lamport clock advanced with the commit. In multi-writer scenarios (agents wrote via API during the gap), the result depends on clock state at merge time — the client with the higher Lamport timestamp wins.
+- DOM shows the merge result (verify by reading store content after merge)
 
 ### E3. Undo during composing — discards uncommitted
 
@@ -419,3 +419,67 @@ One test per flush point from §6.1. Each verifies that `controller.commit()` ma
 - Store content becomes "hello"
 - Content sync effect runs → DOM shows "hello"
 - The uncommitted "hello world" is permanently lost (expected — it was never committed)
+
+---
+
+## F. IME Composition Interaction
+
+BlockItem.tsx:169 has an `isComposing` signal set by `onCompositionStart`/`onCompositionEnd` (lines 1084-1088). In the current model, IME composition suppresses debounced Y.Doc updates. In the new model, it should suppress commit.
+
+### F1. compositionstart suppresses commit
+
+**Preconditions**: Block "b1" composing with "hello". IME composition starts (user begins CJK input).
+
+**Actions**: `compositionstart` fires → `isComposing` set to true. Blur fires (e.g., clicking elsewhere).
+
+**Expected**:
+- Blur handler checks `isComposing` — if true, does NOT call `controller.commit()`
+- Incomplete IME character is not written to Y.Doc
+- composingContent retains the pre-IME content
+
+**Note**: This is the safe behavior. An incomplete CJK character would corrupt content if committed mid-composition.
+
+### F2. compositionend resumes normal commit behavior
+
+**Preconditions**: Block "b1" in IME composition. User finalizes the character (e.g., selects kanji).
+
+**Actions**: `compositionend` fires → `isComposing` set to false → `updateContentFromDom()` called (BlockItem.tsx:1087).
+
+**Expected**:
+- `updateContentFromDom()` sets `composingContent` to include the finalized character
+- Subsequent blur/Enter triggers normal `controller.commit()`
+- Y.Doc receives the finalized content
+
+### F3. Enter during IME composition
+
+**Preconditions**: Block "b1" in IME composition (isComposing is true).
+
+**Actions**: User presses Enter to confirm IME candidate.
+
+**Expected**:
+- Browser fires `compositionend` BEFORE the Enter key event
+- `isComposing` is false by the time `determineKeyAction()` runs
+- Normal Enter behavior (split/execute/create) proceeds with correct content
+
+---
+
+## G. Filter Interaction During Composing
+
+### G1. Block matches filter, edit removes match, commit updates filter
+
+**Preconditions**: Active filter `project::floatty`. Block "b1" content is "ctx::2026-03-09 [project::floatty] notes" (matches filter). Block is visible.
+
+**Actions**:
+1. User focuses block, begins editing
+2. User deletes "[project::floatty]" text (composingContent now "ctx::2026-03-09  notes")
+3. Block is still composing (not yet committed)
+
+**Expected during composing**:
+- Block remains visible in filter (filter reads from committed Y.Doc content, not composingContent)
+- No mid-edit flicker or disappearance
+
+**Expected on commit** (blur):
+- `controller.commit()` writes new content to Y.Doc
+- `processCommit()` detects metadata change (`metadataChanged: true` — project tag removed)
+- Filter re-evaluates: block no longer matches → block disappears
+- Disappearance only on commit, never during composing

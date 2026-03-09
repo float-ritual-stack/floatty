@@ -10,7 +10,7 @@
 
 The current architecture syncs contentEditable ↔ Y.Doc on a 150ms debounce during active editing. This creates a three-layer feedback loop: DOM input → debounced Y.Doc write → observer fires → signal updates → content sync effect → DOM update (with cursor save/restore). The entire cursorUtils.ts module (320 lines) exists solely to survive this round-trip. The proposed Composing → Committed model eliminates the round-trip entirely — editing is local, persistence is a discrete commit.
 
-**What we can delete**: ~500 lines of sync spaghetti across 3 files.
+**What we can delete**: ~170 lines of sync spaghetti (content sync effect, debounce machinery, dirty flag guards) and replace with ~210 lines of clean orchestration (blockController, commitMiddleware, composingRegistry). See appendix for per-file breakdown.
 **What we keep**: cursorUtils.ts (still needed for split offset calculation), inlineParser.ts, EventBus/hooks.
 **What we move**: Metadata extraction from per-keystroke observer to commit boundary middleware.
 
@@ -61,7 +61,7 @@ useSyncedYDoc.ts:537 — Y.Doc 'update' event fires
 
 | File | Lines | Role | Deletable? |
 |------|-------|------|-----------|
-| `src/components/BlockItem.tsx` | 560-639 | Content sync effect (Y.Doc → DOM) | **YES** — entire effect |
+| `src/components/BlockItem.tsx` | 557-639 | Content sync effect (Y.Doc → DOM) | **YES** — entire effect |
 | `src/components/BlockItem.tsx` | 67-106 | `createDebouncedUpdater` | **YES** — no mid-edit debounce needed |
 | `src/components/BlockItem.tsx` | 701-736 | `updateContentFromDom` | **SIMPLIFY** — remove Y.Doc write, keep displayContent |
 | `src/components/BlockItem.tsx` | 642-662 | `handleBlur` | **REPLACE** — becomes commit trigger |
@@ -70,7 +70,7 @@ useSyncedYDoc.ts:537 — Y.Doc 'update' event fires
 | `src/hooks/useBlockStore.ts` | 470-608 | `_blocksObserver` → EventBus | **KEEP** — still fires on commit |
 | `src/hooks/useSyncedYDoc.ts` | 537-546 | `moduleUpdateHandler` | **KEEP** — syncs commits to server |
 
-### The Sync Spaghetti (content sync effect, BlockItem.tsx:560-639)
+### The Sync Spaghetti (content sync effect, BlockItem.tsx:557-639)
 
 This is the most complex single effect in the codebase. It exists because Y.Doc updates during editing must be reflected back to the DOM without destroying the cursor. Line-by-line:
 
@@ -200,7 +200,7 @@ ProjectionScheduler: search index, backlinks (async)
 | `ctxRouterHook.ts` | EventBus subscriber (sync, per keystroke) | `Karen.extractMarkers()` | Commit middleware (once) |
 | `outlinksHook.ts` | EventBus subscriber (sync, per keystroke) | `Karen.extractOutlinks()` | Commit middleware (once) |
 | `inlineParser.ts` | Called by both hooks + BlockDisplay | `Karen.parse()` + `BlockDisplay` | Commit + display (separate) |
-| `eventBus.ts` subscribers | `blockEventBus.subscribe()` in `registerHandlers()` | `BlockController.commit()` | Single call site |
+| `eventBus.ts` subscribers | `blockEventBus.subscribe()` in `registerHandlers()` | `BlockController.commit()` (for `'user'` origin) + EventBus (for non-user origins, §6.4) | Dual path |
 
 ### The Karen Interface (Skeleton)
 
@@ -221,7 +221,6 @@ export interface CommitOutput {
   content: string;
   metadata: BlockMetadata;
   metadataChanged: boolean;
-  tokens: InlineToken[];  // Cache for display layer
 }
 
 /**
@@ -255,8 +254,13 @@ export function processCommit(input: CommitInput): CommitOutput {
   const metadataChanged = !markersEqual(previousMetadata.markers, markers)
     || !outlinksEqual(previousMetadata.outlinks, outlinks);
 
-  return { content: nextContent, metadata, metadataChanged, tokens };
+  return { content: nextContent, metadata, metadataChanged };
 }
+
+// Note: tokens are NOT cached in CommitOutput. BlockDisplay.tsx already
+// has its own createMemo(() => parseAllInlineTokens(props.content)) at
+// line 120, reading from displayContent which updates during composing.
+// The display layer never needs commit-time tokens — it already has them.
 
 function extractMarkers(tokens: InlineToken[]): Marker[] {
   // Lifted from ctxRouterHook.ts:31-64
@@ -296,12 +300,27 @@ export interface BlockController {
   /** Check if a block is currently being composed */
   isComposing(blockId: string): boolean;
 
-  /** Cancel composing — revert DOM to committed state */
+  /** Cancel composing — revert DOM to committed state (no Y.Doc write) */
   cancelComposing(blockId: string): void;
+
+  /**
+   * Synchronous commit for reconnect path (§6.3a).
+   * Writes composing content to Y.Doc immediately so CRDT merge sees it
+   * before server state is applied. Must complete in the same call stack.
+   * No-op if not composing. Returns committed blockId or null.
+   */
+  forceCommit(): string | null;
+
+  /**
+   * Discard composing content without writing to Y.Doc (§6.3b).
+   * Used before undo — user intent is "undo," not "save then undo."
+   * Clears composingContent signal. No-op if not composing.
+   */
+  discard(): void;
 }
 ```
 
-This is a thin orchestrator. `commit()` calls Karen's `processCommit()`, then writes to Y.Doc in a single transaction. No debounce — commit is synchronous and immediate.
+This is a thin orchestrator. `commit()` calls Karen's `processCommit()`, then writes to Y.Doc in a single transaction. No debounce — commit is synchronous and immediate. `forceCommit()` and `discard()` handle authoritative overrides (reconnect and undo — see §6.3).
 
 **Impact**: New file, ~80 lines. No existing code changes yet.
 
@@ -361,7 +380,7 @@ const handleBlur = () => {
 
 **File**: `src/components/BlockItem.tsx`
 
-**Change**: The 80-line content sync effect (L560-639) reduces to ~15 lines. No cursor save/restore. No dirty flag. No origin gating.
+**Change**: The 80-line content sync effect (L557-639) reduces to ~15 lines. No cursor save/restore. No dirty flag. No origin gating.
 
 ```typescript
 // AFTER: Simple committed content sync for non-composing blocks
@@ -417,9 +436,9 @@ commit(blockId: string, domContent: string): CommitResult {
 }
 ```
 
-**Impact**: `ctxRouterHook.ts` and `outlinksHook.ts` can be simplified to pure functions (no EventBus subscription, no origin filtering, no equality-check guards). The EventBus subscription code (~40 lines per hook) becomes dead code.
+**Impact**: The pure extraction functions can be shared between `processCommit()` and the existing hooks. See §6.4 for the full analysis.
 
-**Caveat**: Remote/agent writes still need metadata extraction. Keep the EventBus path for `origin !== 'user'` writes, or add Karen processing to the server-side update handler. This is a follow-up concern, not blocking.
+**Correction (from §6.4)**: The EventBus subscriptions in `ctxRouterHook.ts` and `outlinksHook.ts` **cannot be deleted**. Non-user origins (`'executor'`, `'user-drag'`) still need metadata extraction via the EventBus path. `processCommit()` replaces hooks for the `'user'` origin only. The hooks survive as EventBus subscribers for all other origins. Line count estimates: `ctxRouterHook.ts` 166→~120, `outlinksHook.ts` 141→~100 (extract shared pure functions, keep subscriptions).
 
 ---
 
@@ -434,7 +453,7 @@ commit(blockId: string, domContent: string): CommitResult {
 | Paste with flush | Low | `handlePaste` currently calls `flushContentUpdate()` before structured paste. New: call `controller.commit()` first. |
 | Split block offset | Low | `splitBlock()` uses cursor offset from cursorUtils — still works, offset calculation doesn't depend on Y.Doc. |
 | Multi-pane echo | Low | Currently prevented by origin + focus gate. New model: composing is local, no observer fires, no echo possible. |
-| Keyboard flush points | Medium | 5 places in `useBlockInput.ts` call `flushContentUpdate()` before structural operations. Each becomes `controller.commit()`. |
+| Keyboard flush points | Medium | 4 places in `useBlockInput.ts` call `flushContentUpdate()` before structural operations (execute, split, split-to-child, merge). 4 more in BlockItem.tsx/Outliner.tsx (8 total — see §6.1). Each becomes `controller.commit()` or is eliminated. |
 
 ### What Gets Simpler
 
@@ -535,7 +554,7 @@ When `isAuthoritative` is true AND `hasLocalChanges()` is true, the effect cance
 
 #### 6.3a Reconnect during composing
 
-**What happens today**: WebSocket reconnects → `performBidirectionalResync()` (useSyncedYDoc.ts:402) → `Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority')` → observer fires → content sync effect detects `isAuthoritative` → cancels pending debounce → overwrites DOM with server content → cursor restored via save/restore.
+**What happens today**: WebSocket reconnects → `triggerFullResync()` (useSyncedYDoc.ts:369) → `Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority')` → observer fires → content sync effect detects `isAuthoritative` → cancels pending debounce → overwrites DOM with server content → cursor restored via save/restore.
 
 **What should happen in the new model**: **Force-commit composing content, then apply authoritative update.**
 
@@ -546,7 +565,7 @@ Rationale:
 
 **Implementation**: `blockController.forceCommit()` → then Y.Doc applies reconnect state. The commit must be synchronous (within the same microtask as the reconnect apply) to ensure the CRDT merge sees both states.
 
-**Risk**: If the server state contains a different version of the same block's content, CRDT last-write-wins applies at the field level. The user's commit timestamp is newer (they just typed it), so their content wins. This is correct — the server state is from before the reconnect gap.
+**Risk**: If the server state contains a different version of the same block's content, Y.Map field-level merge applies using Lamport timestamps (logical clocks). In typical single-user scenarios, the local edit wins because the local clock advanced with the commit. In multi-writer scenarios (agents wrote via API during the gap), the result depends on clock state at merge time.
 
 #### 6.3b Undo during composing
 
@@ -612,7 +631,7 @@ Executor/Agent → updateBlockContent() → Y.Doc → observer → EventBus → 
                                                            (unchanged)
 ```
 
-**Migration note**: The audit's appendix claims ctxRouterHook.ts goes from 166→~60 lines and outlinksHook.ts from 141→~50 lines ("extract pure function, delete EventBus subscription"). This is WRONG — the EventBus subscription must remain for non-user origins. The pure extraction functions can still be shared between `processCommit()` and the hooks, but the hooks themselves survive as EventBus subscribers. Revised line counts: ctxRouterHook.ts ~166→~120, outlinksHook.ts ~141→~100 (extract shared pure functions, keep subscriptions).
+**Migration note**: The appendix originally claimed ctxRouterHook.ts goes from 166→~60 lines and outlinksHook.ts from 141→~50 lines ("extract pure function, delete EventBus subscription"). This was incorrect — the EventBus subscription must remain for non-user origins. The pure extraction functions can still be shared between `processCommit()` and the hooks, but the hooks themselves survive as EventBus subscribers. The appendix has been corrected to: ctxRouterHook.ts ~166→~120, outlinksHook.ts ~141→~100 (extract shared pure functions, keep subscriptions).
 
 ### 6.5 Test Blast Radius
 
@@ -674,7 +693,7 @@ Wait — re-examining: the EventBus subscription in outlinksHook survives per 6.
 
 This is actually good news for migration — the most complex deleted code has zero test coverage. No tests break. But it also means the NEW code (blockController, commitMiddleware, simplified sync effect) needs tests written from scratch to cover what was previously untested.
 
-See `docs/architecture/BLOCK_CONTROLLER_TEST_PLAN.md` for the full test specification covering BlockController, processCommit, the simplified sync effect, flush point migration, and reconnect/undo integration.
+See `docs/architecture/BLOCK_CONTROLLER_TEST_PLAN.md` for the full test specification covering BlockController, processCommit, the simplified sync effect, flush point migration, reconnect/undo integration, IME composition interaction, and filter behavior during composing.
 
 ---
 
@@ -760,10 +779,15 @@ Also in this PR:
   - Enter to split → both blocks have correct content
   - Backspace to merge → content concatenated at correct offset
   - Cmd+Z while typing → composing discarded, undo applied
+  - Cmd+Z after commit → UndoManager reverses commit
   - Paste multi-line markdown → structured paste works
   - Execute sh:: block → handler sees committed content
   - Two panes showing same block → edit in A, B updates on commit
-  - Close laptop lid → reconnect → no data loss
+  - Close laptop lid → reopen → content persisted (reconnect + forceCommitAll)
+  - Edit block A → arrow down to B → arrow up back to A → content intact (blur→commit on each transition)
+  - Indent block while composing → tree changes, content preserved
+  - Type `ctx::2026-03-09 [project::floatty]` → blur → metadata populated (Karen extraction at commit time)
+  - Type `[[Page Name]]` → blur → outlinks metadata populated
 
 **Rollback**: Revert entire PR (single commit preferred for atomic revert).
 
@@ -885,6 +909,19 @@ Content that becomes outdated or wrong after migration. Items flagged by categor
 | `Outliner.tsx:526-527` | "FLO-197: Blur first to flush uncommitted edits before undo" | [UPDATE] | "Discard composing content before undo (composing changes are uncommitted)". |
 | `Outliner.tsx:530,533,544,545` | "Triggers handleBlur → flushContentUpdate" | [UPDATE] | "controller.discard() before undo/redo". |
 | `useSyncedYDoc.ts:1622-1626` | UndoManager tracked origins comment | [CORRECT] | Unchanged — commits still use `'user'` origin which is tracked. Keep but add note: "Each commit() is one undo step." |
+
+### Test Files (from §6.5)
+
+| File | Current State | Category | Action |
+|---|---|---|---|
+| `ctxRouterHook.test.ts` | 7 tests exercise EventBus → metadata pipeline | [ADAPTS] | Tests survive (EventBus subscription remains per §6.4) but need adaptation: extract shared pure function, add tests calling it from both EventBus path and `processCommit()` path. |
+| `outlinksHook.test.ts` | 7 tests exercise EventBus → outlinks pipeline | [ADAPTS] | Same as ctxRouterHook — restructure to test pure function + both call paths. |
+
+### BLOCK_CONTROLLER_TEST_PLAN.md (this audit's companion)
+
+| Section | Current State | Category | Action |
+|---|---|---|---|
+| §E2 | Claims "User's commit is newer → 'local edit' wins" | [CORRECT] | Y.Map LWW uses Lamport timestamps, not wall-clock. Rewrite expected outcome — see §10 fix. |
 
 ### docs/archive/ and docs/explorations/
 
@@ -1155,25 +1192,28 @@ This is already true today (blur → flush → focus next). No new risk.
 
 **Latency**: [SAME] — Navigation triggers zoom, which triggers blur on current block → commit via blur handler. Same as ArrowUp/Down.
 
-#### Rapid Enter-Enter-Enter (5 blocks in 2 seconds)
+#### Rapid Enter-Enter-Enter (realistic: type, Enter, type, Enter)
 
-Trace for creating 5 blocks via Enter at end of each:
+The realistic pattern is: type content, Enter, type content, Enter — not creating empty blocks. Trace for 3 blocks with meaningful content:
 
 ```
-Enter 1: commit("b1", content) [~200μs] → splitBlock [~50μs] → onFocus("b2") → SolidJS effect → focus
-Enter 2: commit("b2", "") [~2μs, no-op] → splitBlock → onFocus("b3") → effect → focus
-Enter 3: commit("b3", "") [~2μs, no-op] → splitBlock → onFocus("b4") → effect → focus
-Enter 4: commit("b4", "") [~2μs, no-op] → splitBlock → onFocus("b5") → effect → focus
-Enter 5: commit("b5", "") [~2μs, no-op] → splitBlock → onFocus("b6") → effect → focus
+Type "item 1 [project::floatty]" → composing (no Y.Doc write)
+Enter 1: commit("b1", "item 1 [project::floatty]") [~150μs: hasCtx=false, hasWikilink=false, but project tag in markers] → splitBlock → onFocus("b2")
+
+Type "item 2" → composing
+Enter 2: commit("b2", "item 2") [~50μs: no patterns, fast path] → splitBlock → onFocus("b3")
+
+Type "item 3 [[some link]]" → composing
+Enter 3: commit("b3", "item 3 [[some link]]") [~100μs: hasWikilink=true, parse + extract outlinks] → splitBlock → onFocus("b4")
 ```
 
-**Key insight**: After the first Enter, each subsequent Enter is committing an EMPTY block (no-op commit). processCommit() for empty content: `hasCtxPatterns("")` returns false, `hasWikilinkPatterns("")` returns false, early return. ~2μs. Effectively free.
+**Key insight**: Even the most expensive commit (block with `[project::floatty]` + patterns) is ~150μs. Plain text blocks are ~50μs. Blocks with wikilinks are ~100μs. All well under 1ms.
 
-**Frame timing**: Each Enter → commit (sync, <1ms) → splitBlock (sync, <1ms) → onFocus sets signal (sync) → stack returns → SolidJS batch → focus effect → cursor in new block. Total sync work per Enter: <2ms. At 60fps (16ms frames), 5 Enters in 2 seconds is one Enter every 400ms. Each Enter completes in <2ms. **Zero perceptible delay.**
+**Frame timing**: Each Enter → commit (sync, <1ms) → splitBlock (sync, <1ms) → onFocus sets signal (sync) → stack returns → SolidJS batch → focus effect → cursor in new block. Total sync work per Enter: <2ms. At 60fps (16ms frames), rapid-fire Enters at ~400ms intervals complete in <2ms each. **Zero perceptible delay.**
 
-**Today's path**: Each Enter → flush (if timer pending, forces Y.Doc write) → splitBlock → focus. Flush triggers observer → sync effect → origin gating → possibly cursor save/restore. More work per Enter, but also <16ms total. So both models complete within a single frame.
+**Today's path**: Each Enter → flush (if timer pending, forces Y.Doc write) → splitBlock → focus. Flush triggers observer → sync effect → origin gating → possibly cursor save/restore. More work per Enter, but also <16ms total.
 
-**Verdict**: [FASTER] — Less work per frame (no observer round-trip for the sync effect during composing). But difference is sub-millisecond. User won't notice.
+**Verdict**: [FASTER] — Less work per frame (no observer round-trip during composing). But difference is sub-millisecond. User won't notice.
 
 ### Summary
 
@@ -1191,7 +1231,49 @@ Enter 5: commit("b5", "") [~2μs, no-op] → splitBlock → onFocus("b6") → ef
 | Cmd+Shift+Z (redo) | SAME | Mirror of undo |
 | Cmd+Up/Down (move) | SAME | Tree operation only |
 | Shift+Arrow (selection) | SAME | No content involved |
-| Rapid Enter×5 | FASTER | Empty blocks = no-op commits |
+| Rapid type+Enter×3 | FASTER | <150μs per commit even with metadata |
 | Paste (structured) | FASTER | Direct commit vs flush-then-observer |
 
 **No operation rated [RISK]**. processCommit() adds <200μs worst case to keystroke handlers that need commits (Enter, Backspace, Execute, Paste). All operations complete within a single frame at 60fps. The composing model is strictly equal or faster than the debounce model for every keyboard interaction.
+
+---
+
+## 11. Consistency Audit Log
+
+**Date**: 2026-03-09
+**Triggered by**: Critical review of §1-10 as a single document (three sessions merged)
+
+### Fixes from critical review
+
+| # | Issue | Sections | Resolution |
+|---|-------|----------|------------|
+| 1 | Appendix table had wrong line counts for hook files | §4 appendix, §6.4 | Fixed in prior session. Appendix now shows ctxRouterHook 166→~120, outlinksHook 141→~100 (matching §6.4 correction). |
+| 2 | BlockController interface missing `forceCommit()` and `discard()` | §4 Step 1, §6.3 | Added both methods with JSDoc to the interface definition in §4 Step 1. |
+| 3 | §4 Step 5 caveat dismissed EventBus survival as "follow-up, not blocking" | §4 Step 5, §6.4 | Rewrote caveat to match §6.4 conclusion. EventBus subscriptions survive for non-user origins. Removed "not blocking" framing. |
+| 4 | §7 PR 2 said "requires a registry or global signal" without specifying one | §7 PR 2 | Added in prior session. ComposingRegistry: `Map<string, ComposingEntry>` keyed by `${blockId}:${paneId}`, with `forceCommitAll()`/`discardAll()` API. Plain Map (not signal). |
+| 5 | §7 PR 2 manual testing checklist missing 6 scenarios | §7 PR 2 | Added: reconnect + forceCommitAll, Cmd+Z after commit, arrow navigation round-trip, indent while composing, ctx:: metadata population, wikilink outlinks. |
+| 6 | §8 missing test file adaptation items and test plan self-reference | §8 | Added ctxRouterHook.test.ts and outlinksHook.test.ts as [ADAPTS], and BLOCK_CONTROLLER_TEST_PLAN.md E2 as [CORRECT]. |
+| 7 | CommitOutput had unused `tokens: InlineToken[]` field | §3 CommitOutput, §4 Step 5 | Removed `tokens` from interface and return value. BlockDisplay.tsx:120 already has its own `createMemo(() => parseAllInlineTokens(props.content))` — commit-time tokens would never be consumed. |
+| 8 | Test plan missing IME composition and filter interaction specs | BLOCK_CONTROLLER_TEST_PLAN.md | Added §F (3 IME tests: compositionstart suppresses commit, compositionend resumes, Enter during IME) and §G (1 filter test: mid-edit visibility, commit-time disappearance). |
+| 9 | Rapid Enter×5 trace showed empty-block no-ops instead of realistic pattern | §10 | Rewrote trace: type content → Enter × 3 with actual metadata costs (50-150μs per commit). Same conclusion, honest reasoning. |
+| 10 | Test E2 claimed "newer timestamp wins" using wall-clock reasoning | §10, BLOCK_CONTROLLER_TEST_PLAN.md E2 | Rewrote to use Lamport timestamp (logical clock) reasoning. Single-user: local wins. Multi-writer: depends on clock state at merge. Also fixed §6.3a's "Risk" paragraph with same correction. |
+
+### Issues discovered in full-document consistency scan
+
+| # | Issue | Sections | Resolution |
+|---|-------|----------|------------|
+| 11 | §5 migration risk table: "5 places in useBlockInput.ts" — actual count is 4 | §5, §6.1 | Fixed to "4 places in useBlockInput.ts" with correct total of 8 across all files (referencing §6.1). |
+| 12 | §3 table row for `eventBus.ts` subscribers said "Single call site" — implies full replacement | §3, §6.4 | Fixed to "Dual path" — `BlockController.commit()` for `'user'` origin + EventBus for non-user origins (§6.4). |
+| 13 | `performBidirectionalResync()` — wrong function name | §6.3a, BLOCK_CONTROLLER_TEST_PLAN.md E1 | Actual function is `triggerFullResync()` (useSyncedYDoc.ts:369). Fixed in both files. |
+| 14 | Content sync effect line range inconsistent: 560-639, 557-639, 563-639 used interchangeably | §1, §4 Step 4 | Standardized to 557-639 (includes comment block preceding `createEffect` at line 563). |
+| 15 | Executive summary: "~500 lines of sync spaghetti" — actual deleted lines ~170 | §0 (exec summary), appendix | Rewritten: "~170 lines deleted, ~210 lines added" with reference to appendix breakdown. |
+| 16 | §6.4 migration note said "The audit's appendix claims..." (present tense, but appendix is now fixed) | §6.4 | Changed to past tense: "The appendix originally claimed..." with note that appendix has been corrected. |
+| 17 | Test plan reference in §6.5 didn't mention new §F and §G sections | §6.5 | Updated reference to include "IME composition interaction, and filter behavior during composing." |
+
+### Verified as consistent (no fix needed)
+
+- **EventBus survival**: §3 (updated), §4 Step 5 (updated), §6.4, §7 PR 3, §9 NOT dead — all agree EventBus survives for non-user origins.
+- **Origin list**: §6.4 origins match §9 Origin constants. All origins remain defined.
+- **processCommit interface**: §3 CommitInput/CommitOutput matches §4 Step 5 code and §B test plan assertions (after tokens removal).
+- **15-line replacement effect**: §4 Step 4 code handles all cases §6.3 and §10 assume — composingContent gate covers reconnect (forceCommit clears it) and undo (discard clears it). No cursor save/restore needed for non-focused blocks.
+- **BlockController interface**: §4 Step 1 (updated) matches §6.3 requirements (forceCommit, discard) and test plan §A (A1-A10).
