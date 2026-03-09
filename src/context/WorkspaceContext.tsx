@@ -112,9 +112,9 @@ export interface WorkspaceContextValue {
   /** Singleton pageNames memo — sorted page names from pages:: container (FLO-322). */
   pageNames: Accessor<string[]>;
   /** Lowercase page name Set for O(1) stub detection in wikilink rendering. */
-  pageNameSet: Accessor<Set<string>>;
+  pageNameSet: Accessor<ReadonlySet<string>>;
   /** Short-hash index: 8-char prefix → full UUID (empty string = ambiguous). */
-  shortHashIndex: Accessor<Map<string, string>>;
+  shortHashIndex: Accessor<ReadonlyMap<string, string>>;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue>();

@@ -20,7 +20,7 @@ import { registry } from './registry';
 import { doorRegistry } from './doorRegistry';
 import { doorToBlockHandler } from './doorAdapter';
 import { createDoorContext } from './doorSandbox';
-import type { ExecutorActions } from './types';
+import type { BlockHandler, ExecutorActions } from './types';
 import type {
   Door,
   DoorMeta,
@@ -175,6 +175,28 @@ function validateDoorModule(mod: Record<string, unknown>): {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * Build a BlockHandler for selfRender doors (bypasses adapter envelope).
+ * Used in both initial load and hot-reload paths.
+ */
+function buildSelfRenderHandler(
+  door: Door,
+  meta: DoorMeta,
+  settings: Record<string, unknown>,
+): BlockHandler {
+  return {
+    prefixes: door.prefixes,
+    async execute(blockId: string, content: string, actions: ExecutorActions) {
+      const ctx = createDoorContext({ blockId, content, meta, actions, settings });
+      try {
+        await door.execute(blockId, content, ctx);
+      } catch (err) {
+        console.error(`[door:${meta.id}] selfRender execution error:`, err);
+      }
+    },
+  };
+}
+
+/**
  * Load all doors from disk.
  * Called once during app init (fire-and-forget from registerHandlers).
  */
@@ -250,13 +272,7 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
     // Register handler in HandlerRegistry
     if (meta.selfRender) {
       // selfRender: door acts as a direct BlockHandler, bypassing adapter
-      registry.register({
-        prefixes: door.prefixes,
-        async execute(blockId: string, content: string, actions: ExecutorActions) {
-          const ctx = createDoorContext({ blockId, content, meta, actions, settings });
-          await door.execute(blockId, content, ctx);
-        },
-      });
+      registry.register(buildSelfRenderHandler(door, meta, settings));
     } else {
       const handler = doorToBlockHandler(door, meta, settings);
       registry.register(handler);
@@ -331,13 +347,7 @@ async function reloadDoor(
 
     // Re-register handler
     if (meta.selfRender) {
-      registry.register({
-        prefixes: door.prefixes,
-        async execute(blockId: string, content: string, actions: ExecutorActions) {
-          const ctx = createDoorContext({ blockId, content, meta, actions, settings });
-          await door.execute(blockId, content, ctx);
-        },
-      });
+      registry.register(buildSelfRenderHandler(door, meta, settings));
     } else {
       const handler = doorToBlockHandler(door, meta, settings);
       registry.register(handler);

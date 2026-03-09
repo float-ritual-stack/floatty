@@ -1668,7 +1668,14 @@ async fn resolve_block_prefix(
 ) -> Result<Json<ResolveResponse>, ApiError> {
     // Validate: must be 6+ hex chars (or a full UUID which we redirect to exact lookup)
     let trimmed = prefix.trim();
-    let is_full_uuid = trimmed.len() == 36 && trimmed.contains('-');
+    let is_full_uuid = trimmed.len() == 36 && {
+        let b = trimmed.as_bytes();
+        b[8] == b'-' && b[13] == b'-' && b[18] == b'-' && b[23] == b'-'
+            && trimmed.chars().enumerate().all(|(i, c)| {
+                if i == 8 || i == 13 || i == 18 || i == 23 { c == '-' }
+                else { c.is_ascii_hexdigit() }
+            })
+    };
 
     if !is_full_uuid {
         // Must be 6+ hex chars
@@ -1691,15 +1698,19 @@ async fn resolve_block_prefix(
 
     // If full UUID, do exact lookup
     if is_full_uuid {
-        let value = blocks_map
-            .get(&txn, &lower)
-            .or_else(|| blocks_map.get(&txn, trimmed))
-            .ok_or_else(|| ApiError::NotFound(trimmed.to_string()))?;
+        // Try lowercase first (canonical), then original casing
+        let (canonical_id, value) = if let Some(v) = blocks_map.get(&txn, &lower) {
+            (lower.clone(), v)
+        } else if let Some(v) = blocks_map.get(&txn, trimmed) {
+            (trimmed.to_string(), v)
+        } else {
+            return Err(ApiError::NotFound(trimmed.to_string()));
+        };
 
         if let yrs::Out::YMap(block_map) = value {
-            let block_dto = read_block_dto(&block_map, &txn, trimmed, &state)?;
+            let block_dto = read_block_dto(&block_map, &txn, &canonical_id, &state)?;
             return Ok(Json(ResolveResponse {
-                id: trimmed.to_string(),
+                id: canonical_id,
                 block: block_dto,
             }));
         }

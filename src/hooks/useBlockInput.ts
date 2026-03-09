@@ -19,10 +19,8 @@ import { registry, executeHandler, createHookBlockStore } from '../lib/handlers'
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
 import type { Block } from '../lib/blockTypes';
-import { useNavigationActions } from './blockInput/useNavigationActions';
-import { useZoomActions } from './blockInput/useZoomActions';
-import { useEditingActions } from './blockInput/useEditingActions';
-import { useExecutionAction } from './blockInput/useExecutionAction';
+// Sub-hook implementations (hooks/blockInput/) are scaffolded for future
+// delegation. Currently useBlockInput still owns the switch — wiring TBD.
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES

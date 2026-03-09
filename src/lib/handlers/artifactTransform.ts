@@ -130,6 +130,12 @@ export function detectCssFrameworks(source: string): string[] {
 
   // Tailwind CSS: detect by presence of utility class patterns
   const tailwindIndicators = [
+    // Layout/display utilities (flex, grid, hidden, container)
+    /\b(?:flex|inline-flex|grid|inline-grid|block|inline-block|hidden|container)\b/,
+    // Alignment utilities (items-center, justify-between, etc.)
+    /\b(?:items|justify|content|place-items|place-content)-(?:start|end|center|between|around|evenly|stretch)\b/,
+    // Sizing utilities (w-full, h-screen, min-h-screen)
+    /\b(?:w|h|min-w|min-h|max-h)-(?:full|screen|\d+)\b/,
     // Color utilities with Tailwind palette names (bg-zinc-950, text-slate-100)
     /(?:bg|text|border|ring|shadow)-(?:zinc|slate|gray|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}/,
     // Spacing utilities (p-4, mx-auto, gap-2)
