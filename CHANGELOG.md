@@ -6,6 +6,16 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.8.2] - 2026-03-09
+
+### Bug Fixes
+
+- **Image paste lands file icon instead of image** (PR #165): Finder copy-paste produced file type icons because arboard's text clipboard returned filenames that the outliner rendered as text blocks. Now probes Tauri `readFiles()` for actual file paths, with `contentRef` refocus guard for async focus drift.
+
+### Documentation
+
+- **`blockId` vs `id` convention** (FLO-431): Search hits use `blockId` (foreign key, greppable), block CRUD uses `id` (primary key). Documented in `serde-api-patterns.md`.
+
 ## [0.8.1] - 2026-03-09
 
 ### Features

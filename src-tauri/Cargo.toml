@@ -3,11 +3,11 @@ members = [".", "floatty-core", "floatty-server"]
 resolver = "2"
 
 [workspace.package]
-version = "0.8.1"
+version = "0.8.2"
 
 [package]
 name = "float-pty"
-version = "0.8.1"
+version = "0.8.2"
 description = "Float PTY - Terminal Emulator"
 authors = ["evan"]
 license = "MIT"
