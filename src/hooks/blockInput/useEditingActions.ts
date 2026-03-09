@@ -207,7 +207,7 @@ export function useEditingActions(deps: EditingActionDeps) {
               // Use document.activeElement (focus already moved via onFocus)
               // FIX 3: Use innerText for comparison (preserves newlines from <div>/<br>)
               const el = document.activeElement as HTMLElement;
-              if (el) {
+              if (el?.isContentEditable) {
                 setCursorAtOffset(el, prevContentLength);
               }
             });

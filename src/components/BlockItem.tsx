@@ -441,7 +441,7 @@ export function BlockItem(props: BlockItemProps) {
     // Position cursor after ]]
     const newCursorPos = startOffset + replacement.length;
     queueMicrotask(() => {
-      if (contentRef) {
+      if (contentRef && document.contains(contentRef)) {
         setCursorAtOffset(contentRef, newCursorPos);
       }
     });
