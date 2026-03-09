@@ -183,6 +183,28 @@ curl -H "Authorization: Bearer $KEY" \
 
 Search also supports `include_breadcrumb=true` and `include_metadata=true`.
 
+### Short-Hash Block Resolution
+
+`GET /api/v1/blocks/resolve/:prefix` resolves 6+ hex-char prefixes to full block UUIDs (git-sha style):
+
+```bash
+# Resolve 8-char prefix to full block
+curl -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/blocks/resolve/0b3dc892"
+# Returns: { "id": "0b3dc892-e563-4868-...", "block": {...} }
+```
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Unique match — returns full block |
+| 400 | Prefix too short (<6 chars) or invalid hex |
+| 404 | No block matches prefix |
+| 409 | Ambiguous — multiple blocks match (returns match list) |
+
+If prefix is a full 36-char UUID, redirects to exact lookup. Case-insensitive matching with canonical stored key returned.
+
+**Client-side**: `shortHashIndex` singleton memo in `WorkspaceContext` provides O(1) 8-char prefix lookups without server round-trip.
+
 ### Sync & Restore Endpoints
 
 | Endpoint | Method | Purpose |
@@ -292,7 +314,7 @@ WebSocket Clients (via tokio::broadcast)
 
 | File | Purpose |
 |------|---------|
-| `src/context/WorkspaceContext.tsx` | DI context for block/pane stores; `createMockBlockStore()` factory |
+| `src/context/WorkspaceContext.tsx` | DI context for block/pane stores; singleton memos (`pageNames`, `shortHashIndex`); `createMockBlockStore()` factory |
 | `src/hooks/useCursor.ts` | Cursor abstraction; `createMockCursor()` for tests |
 | `src/hooks/useBlockInput.ts` | Pure `determineKeyAction()` function returns typed `KeyboardAction` |
 | `src/hooks/useBlockInput.test.ts` | 32 keyboard behavior tests (no DOM needed) |
@@ -393,6 +415,8 @@ Critical rules:
 | `cursorUtils.ts` | Cursor position utilities for keybind logic |
 | `executor.ts` | Command execution for `sh::` blocks (child_process via Tauri) |
 | `handlers/artifact.ts` | `artifact::` handler — React/Babel transpilation for Claude.ai JSX artifacts |
+| `handlers/doorTypes.ts` | Door type definitions (`Door`, `DoorMeta`, `DoorContext`); `selfRender` flag for inline doors |
+| `handlers/doorLoader.ts` | Door discovery, blob import pipeline, import shim system, hot-reload listener |
 | `tvResolver.ts` | `$tv()` pattern resolution - spawns TV picker, receives selection from Rust |
 | `events/blockEventBus.ts` | Typed event bus for block lifecycle events (`block:create`, `block:update`, `block:delete`, `block:move`) |
 
@@ -415,7 +439,7 @@ Hooks subscribe to `blockEventBus`, use Origin filtering to prevent infinite loo
 | `useBlockStore.ts` | Block tree CRUD operations (Y.Doc backed) |
 | `useBlockOperations.ts` | Navigation helpers (findNext/Prev, getAncestors) |
 | `useCursor.ts` | DOM cursor abstraction for testability |
-| `useBlockInput.ts` | Pure keyboard logic extraction (`determineKeyAction`) |
+| `useBlockInput.ts` | Keyboard coordinator — `determineKeyAction()` + sub-hook scaffold in `blockInput/` |
 | `useBacklinkNavigation.ts` | Page navigation, `pages::` container lookup, backlinks extraction |
 | `usePaneLinkStore.ts` | Session-scoped pane→pane linking, overlay mode, link resolution |
 | `useCommandBar.ts` | Command palette state (⌘K) — pages + built-in commands |

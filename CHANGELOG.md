@@ -6,6 +6,32 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.8.1] - 2026-03-09
+
+### Features
+
+- **Short-hash block resolution** (PR #164): `GET /api/v1/blocks/resolve/:prefix` resolves 6+ hex-char prefixes to full block UUIDs. Client-side `shortHashIndex` singleton memo in WorkspaceContext for O(1) 8-char lookups
+- **selfRender doors** (PR #164): `DoorMeta.selfRender` flag lets doors render inline via `setBlockOutput()`, bypassing adapter child-block envelope
+- **Unified chirp navigate** (PR #164): `handleChirpNavigate()` replaces duplicated iframe→outline navigation logic across EvalOutput and DoorHost
+- **blockInput sub-hook scaffold** (PR #164): `useBlockInput` split into `blockInput/` sub-hooks (editing, navigation, execution, zoom) for future delegation
+
+### Bug Fixes
+
+- **UUID validation tightened**: Resolve endpoint validates dash positions and hex digits, not just string length
+- **Canonical ID on case-insensitive match**: Returns stored key casing, not request casing
+- **Door hot-reload kind change**: Stale view unregistered from doorRegistry when door changes from view→block
+- **Door selfRender error handling**: try/catch in both initial load and hot-reload paths
+- **Dead imports removed**: Unused sub-hook imports cleaned from useBlockInput.ts
+
+### Documentation
+
+- Accessibility baseline rule (ARIA landmarks, focus indicators, motion preferences)
+- YJS decoupling audit document (`docs/architecture/AUDIT_2026-03.md`)
+- CLAUDE.md updated with resolve endpoint, door types, blockInput sub-hooks, shortHashIndex
+- floatty-backend skill updated: stale "use search to resolve" gotcha replaced with resolve endpoint
+
+---
+
 ## [0.8.0] - 2026-03-06
 
 ### Features
