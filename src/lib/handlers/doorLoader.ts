@@ -340,9 +340,11 @@ async function reloadDoor(
     const oldPrefixes = doorRegistry.getPrefixes(meta.id);
     registry.unregisterByPrefixes(oldPrefixes ?? door.prefixes);
 
-    // Re-register view
+    // Re-register view (or unregister stale view if door changed from view→block)
     if (door.kind === 'view' && door.view) {
       doorRegistry.update(meta.id, door.view, settings, meta, door.prefixes);
+    } else {
+      doorRegistry.unregister(meta.id);
     }
 
     // Re-register handler
