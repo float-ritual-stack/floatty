@@ -620,10 +620,15 @@ export function Outliner(props: OutlinerProps) {
         exportToBinary();
       }
       // Unit 12.0: Cmd+Shift+F - Toggle full-width on focused block
+      // Guard: active tab AND active pane (all outliners register on document)
       else if (isMod && isShift && e.key === 'f') {
-        e.preventDefault();
+        const myTab = findTabIdByPaneId(props.paneId);
+        if (myTab !== tabStore.activeTabId()) return;
+        const layout = layoutStore.layouts[myTab];
+        if (layout?.activePaneId !== props.paneId) return;
         const focused = focusedBlockId();
         if (focused) {
+          e.preventDefault();
           paneStore.toggleFullWidth(props.paneId, focused);
         }
       }
