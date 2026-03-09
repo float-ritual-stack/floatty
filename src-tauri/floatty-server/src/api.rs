@@ -3098,7 +3098,7 @@ fn default_search_limit() -> usize {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockSearchHit {
-    /// Block ID
+    /// Block ID (foreign key — serializes as "blockId" via camelCase rename)
     pub block_id: String,
     /// Relevance score (higher = more relevant)
     pub score: f32,

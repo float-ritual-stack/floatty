@@ -71,6 +71,19 @@ const request = { parent_id: blockId, content: text };
 | Query params (GET) | Optional - stricter is better |
 | Response structs | No - responses are outbound |
 
+## Field Naming: `id` vs `blockId`
+
+| Context | Rust field | Wire field | Why |
+|---------|-----------|-----------|-----|
+| Block CRUD response | `id` | `id` | Primary key of the resource you requested |
+| Search hit, backlink ref | `block_id` | `blockId` | Foreign key referencing a block |
+
+**Grepability**: `blockId` is precise in jq/grep. `id` matches everything. Agents parsing search results benefit from the distinct name.
+
+**SQL analogy**: `blocks.id` vs `search_hits.block_id`. The search hit is a different entity that contains a reference to a block.
+
+**Rule**: When a struct IS the block, use `id`. When a struct REFERENCES a block from another context, use `block_id`/`blockId`.
+
 ## See Also
 
 - `src-tauri/floatty-server/src/api.rs` - API request structs
