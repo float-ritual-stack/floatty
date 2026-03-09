@@ -667,6 +667,13 @@ export function BlockItem(props: BlockItemProps) {
     // Get plain text only (fixes FLO-62: rich text causing duplicates)
     const text = e.clipboardData?.getData('text/plain');
 
+    const pasteActions = {
+      getBlock: (id: string) => store.blocks[id],
+      updateBlockContent: store.updateBlockContent,
+      batchCreateBlocksAfter: store.batchCreateBlocksAfter,
+      batchCreateBlocksInside: store.batchCreateBlocksInside,
+    };
+
     // If no text, probe for file paths (Finder Cmd+C doesn't populate
     // clipboardData.files in Tauri WKWebView — readFiles() reads NSPasteboard directly)
     if (!text) {
@@ -675,15 +682,11 @@ export function BlockItem(props: BlockItemProps) {
         if (!files || files.length === 0) return;
         const paths = files.map(p => p.includes(' ') ? `"${p}"` : p).join('\n');
         // Re-focus contentEditable before execCommand (focus may drift during async)
-        const el = document.querySelector(`[data-block-id="${props.id}"] [contenteditable]`) as HTMLElement;
-        if (el && document.activeElement !== el) el.focus();
+        if (contentRef && document.contains(contentRef) && document.activeElement !== contentRef) {
+          contentRef.focus();
+        }
         flushContentUpdate();
-        const result = handleStructuredPaste(props.id, paths, {
-          getBlock: (id) => store.blocks[id],
-          updateBlockContent: store.updateBlockContent,
-          batchCreateBlocksAfter: store.batchCreateBlocksAfter,
-          batchCreateBlocksInside: store.batchCreateBlocksInside,
-        });
+        const result = handleStructuredPaste(props.id, paths, pasteActions);
         if (result.handled && result.focusId) {
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
@@ -706,12 +709,6 @@ export function BlockItem(props: BlockItemProps) {
     flushContentUpdate();
 
     // Try structured paste (FLO-128, FLO-322: batch transaction)
-    const pasteActions = {
-      getBlock: (id: string) => store.blocks[id],
-      updateBlockContent: store.updateBlockContent,
-      batchCreateBlocksAfter: store.batchCreateBlocksAfter,
-      batchCreateBlocksInside: store.batchCreateBlocksInside,
-    };
     const result = handleStructuredPaste(props.id, text, pasteActions);
 
     if (result.handled) {
