@@ -11,6 +11,7 @@ import { findTabIdByPaneId, navigateToPage as navigateToPageImpl } from '../hook
 import { blockStore } from '../hooks/useBlockStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
+import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE } from './blockTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -163,6 +164,81 @@ export function scrollToBlock(blockId: string): void {
   } else {
     console.warn('[navigation] scrollToBlock: element not found', { blockId });
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CHIRP NAVIGATE (unified handler for iframe → outline navigation)
+// ═══════════════════════════════════════════════════════════════
+
+export interface ChirpNavigateOptions {
+  type?: 'block' | 'page' | 'wikilink';
+  sourcePaneId: string;
+  sourceBlockId?: string;
+  splitDirection?: 'horizontal' | 'vertical';
+  originBlockId?: string;
+}
+
+/**
+ * Unified navigation handler for chirp protocol messages.
+ *
+ * Used by both EvalOutput (eval:: iframes via postMessage) and DoorHost
+ * (door views via onNavigate callback). Single codepath for:
+ * - Block ID resolution (full UUID or hex prefix)
+ * - Block existence validation (don't zoom to nonexistent blocks)
+ * - Hex prefix guard (don't create pages for block ID lookalikes)
+ * - Page navigation fallback
+ * - Pane link resolution
+ */
+export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions): NavigateResult {
+  const { type, sourcePaneId, sourceBlockId, splitDirection, originBlockId } = opts;
+
+  if (!target) {
+    return { success: false, targetPaneId: null, error: 'empty target' };
+  }
+
+  // Resolve target pane through link chain
+  const targetPaneId = paneLinkStore.resolveLink(sourcePaneId, sourceBlockId) ?? sourcePaneId;
+
+  // Block ID resolution: full UUID or hex prefix
+  const blockIds = Object.keys(blockStore.blocks);
+  const resolvedId = resolveBlockIdPrefix(target, blockIds);
+
+  if (resolvedId || type === 'block') {
+    const effectiveId = resolvedId ?? target;
+
+    // Existence check: block must actually be in this outline
+    const block = blockStore.getBlock(effectiveId);
+    if (!block) {
+      console.warn('[navigation] chirp navigate: block not in outline', {
+        target: effectiveId,
+        blockCount: blockIds.length,
+      });
+      return { success: false, targetPaneId, error: 'block not found in outline' };
+    }
+
+    return navigateToBlock(effectiveId, {
+      paneId: targetPaneId,
+      highlight: true,
+      splitDirection,
+      originBlockId,
+    });
+  }
+
+  // Guard: hex prefix that didn't resolve → never create page for block ID lookalikes
+  if (BLOCK_ID_PREFIX_RE.test(target)) {
+    console.warn('[navigation] chirp navigate: block ID prefix did not resolve', {
+      target,
+      blockCount: blockIds.length,
+    });
+    return { success: false, targetPaneId, error: 'block not found' };
+  }
+
+  // Page navigation fallback
+  return navigateToPage(target, {
+    paneId: targetPaneId,
+    highlight: true,
+    splitDirection,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

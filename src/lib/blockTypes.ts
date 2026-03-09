@@ -76,13 +76,30 @@ export const BLOCK_ID_PREFIX_RE = /^[0-9a-f]{6,}$/i;
 /**
  * Resolve a partial hex prefix to a full block ID, git-sha style.
  * Returns the full ID if exactly one match, null if zero or ambiguous.
+ *
+ * When `shortHashIndex` is provided (from WorkspaceContext), 8-char prefix
+ * lookups are O(1). Falls back to O(n) scan for other prefix lengths or
+ * when no index is available (server-side reuse, tests).
  */
-export function resolveBlockIdPrefix(prefix: string, blockIds: string[]): string | null {
+export function resolveBlockIdPrefix(
+  prefix: string,
+  blockIds: string[],
+  shortHashIndex?: Map<string, string>,
+): string | null {
   if (BLOCK_ID_RE.test(prefix)) return prefix; // Already a full UUID
   if (!BLOCK_ID_PREFIX_RE.test(prefix)) return null;
 
   const lower = prefix.toLowerCase();
-  // Match against the first segment of the UUID (before first dash) or full ID
+
+  // Fast path: 8-char prefix with index available
+  if (shortHashIndex && lower.length === 8) {
+    const resolved = shortHashIndex.get(lower);
+    if (resolved) return resolved; // Non-empty string = unique match
+    if (resolved === '') return null; // Empty string = ambiguous
+    // Not in index → fall through to O(n) scan (shouldn't happen, but safe)
+  }
+
+  // O(n) scan fallback
   const matches = blockIds.filter(id => id.toLowerCase().startsWith(lower));
   if (matches.length === 1) return matches[0];
   // Also check without dashes (user might paste contiguous hex)

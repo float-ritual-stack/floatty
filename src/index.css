@@ -1038,6 +1038,31 @@ body.pane-dragging .terminal-pane-positioned {
   background-color: color-mix(in srgb, var(--color-ansi-blue) 15%, transparent);
 }
 
+/* Aliased wikilink parts — [[target|label]] */
+/* Scaffolding stays at normal weight; label gets emphasis to stand out */
+.block-display .md-wikilink .md-wikilink-punct {
+  opacity: 0.6;
+}
+.block-display .md-wikilink .md-wikilink-id {
+  opacity: 0.6;
+}
+.block-display .md-wikilink .md-wikilink-label {
+  color: var(--color-fg);
+  font-weight: 600;
+}
+
+/* Stub wikilink — page doesn't exist yet */
+/* Dashed underline = shape distinction (works even when colors are close) */
+.block-display .md-wikilink-stub {
+  color: var(--color-fg-muted);
+  text-decoration-style: dashed;
+  opacity: 0.7;
+}
+.block-display .md-wikilink-stub:hover {
+  opacity: 1;
+  background-color: color-mix(in srgb, var(--color-fg-muted) 15%, transparent);
+}
+
 /* Nested wikilink - slightly different base to hint it's clickable separately */
 .block-display .md-wikilink-nested {
   text-decoration-style: dotted;

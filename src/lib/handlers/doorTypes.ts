@@ -66,6 +66,8 @@ export interface DoorMeta {
   };
   /** Whether this door can appear as a sidebar tab (Phase 2+) */
   sidebarEligible?: boolean;
+  /** Skip adapter wrapping — door calls setBlockOutput on itself */
+  selfRender?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════

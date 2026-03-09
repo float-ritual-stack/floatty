@@ -19,6 +19,8 @@ import { listen } from '@tauri-apps/api/event';
 import { registry } from './registry';
 import { doorRegistry } from './doorRegistry';
 import { doorToBlockHandler } from './doorAdapter';
+import { createDoorContext } from './doorSandbox';
+import type { ExecutorActions } from './types';
 import type {
   Door,
   DoorMeta,
@@ -245,11 +247,22 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
       doorRegistry.register(meta.id, door.view, settings, meta, door.prefixes);
     }
 
-    // Register handler in HandlerRegistry via adapter
-    const handler = doorToBlockHandler(door, meta, settings);
-    registry.register(handler);
+    // Register handler in HandlerRegistry
+    if (meta.selfRender) {
+      // selfRender: door acts as a direct BlockHandler, bypassing adapter
+      registry.register({
+        prefixes: door.prefixes,
+        async execute(blockId: string, content: string, actions: ExecutorActions) {
+          const ctx = createDoorContext({ blockId, content, meta, actions, settings });
+          await door.execute(blockId, content, ctx);
+        },
+      });
+    } else {
+      const handler = doorToBlockHandler(door, meta, settings);
+      registry.register(handler);
+    }
 
-    console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')}${meta.sidebarEligible ? ', sidebar' : ''})`);
+    console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')}${meta.selfRender ? ', selfRender' : ''}${meta.sidebarEligible ? ', sidebar' : ''})`);
     return { doorId: meta.id, ok: true };
   }));
 
@@ -317,10 +330,20 @@ async function reloadDoor(
     }
 
     // Re-register handler
-    const handler = doorToBlockHandler(door, meta, settings);
-    registry.register(handler);
+    if (meta.selfRender) {
+      registry.register({
+        prefixes: door.prefixes,
+        async execute(blockId: string, content: string, actions: ExecutorActions) {
+          const ctx = createDoorContext({ blockId, content, meta, actions, settings });
+          await door.execute(blockId, content, ctx);
+        },
+      });
+    } else {
+      const handler = doorToBlockHandler(door, meta, settings);
+      registry.register(handler);
+    }
 
-    console.log(`[doors] Hot-reloaded: ${meta.id} (prefixes: ${door.prefixes.join(', ')})`);
+    console.log(`[doors] Hot-reloaded: ${meta.id} (prefixes: ${door.prefixes.join(', ')}${meta.selfRender ? ', selfRender' : ''})`);
   } catch (err) {
     console.error(`[doors] Hot-reload failed for ${doorId}, keeping old version:`, err);
   }

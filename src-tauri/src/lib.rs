@@ -386,10 +386,11 @@ pub fn run() {
         builder = builder.plugin(tauri_nspanel::init());
     }
 
-    #[cfg(debug_assertions)]
-    {
-        builder = builder.plugin(tauri_plugin_mcp_bridge::init());
-    }
+    builder = builder.plugin(
+        tauri_plugin_mcp_bridge::Builder::new()
+            .bind_address("127.0.0.1")
+            .build(),
+    );
 
     builder
         .manage(state)

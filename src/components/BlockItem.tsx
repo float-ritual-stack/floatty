@@ -8,7 +8,7 @@ import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
-import { navigateToBlock, navigateToPage as navigateToPageNav } from '../lib/navigation';
+import { navigateToBlock, navigateToPage as navigateToPageNav, handleChirpNavigate } from '../lib/navigation';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
@@ -119,7 +119,7 @@ interface BlockItemProps {
 }
 
 export function BlockItem(props: BlockItemProps) {
-  const { blockStore, paneStore, pageNames } = useWorkspace();
+  const { blockStore, paneStore, pageNames, pageNameSet, shortHashIndex } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
   const drag = useBlockDrag();
@@ -785,8 +785,14 @@ export function BlockItem(props: BlockItemProps) {
 
     // Block-ID links: full UUID or partial hex prefix (git-sha style)
     const blockIds = Object.keys(store.blocks);
-    const resolvedBlockId = resolveBlockIdPrefix(target, blockIds);
+    const resolvedBlockId = resolveBlockIdPrefix(target, blockIds, shortHashIndex());
     if (resolvedBlockId) {
+      // Block must exist in the outline (resolveBlockIdPrefix may return a full UUID
+      // that matches the regex but the block isn't in this outline)
+      if (!store.getBlock(resolvedBlockId)) {
+        console.warn('[BlockItem] Wikilink block ID not in outline', { target: resolvedBlockId });
+        return;
+      }
       let targetPaneId = props.paneId;
       if (splitDirection === 'none') {
         const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
@@ -1018,15 +1024,13 @@ export function BlockItem(props: BlockItemProps) {
                         error={envelope.error}
                         status={block()?.outputStatus}
                         onNavigate={(target, opts) => {
-                          const targetPaneId = paneLinkStore.resolveLink(props.paneId, props.id) ?? props.paneId;
-                          const resolvedId = resolveBlockIdPrefix(target, Object.keys(store.blocks));
-                          if (resolvedId || opts?.type === 'block') {
-                            navigateToBlock(resolvedId ?? target, { paneId: targetPaneId, highlight: true, splitDirection: opts?.splitDirection });
-                          } else if (BLOCK_ID_PREFIX_RE.test(target)) {
-                            console.warn('[BlockItem] DoorHost navigate: block ID prefix did not resolve', { target });
-                          } else {
-                            navigateToPageNav(target, { paneId: targetPaneId, highlight: true, splitDirection: opts?.splitDirection });
-                          }
+                          handleChirpNavigate(target, {
+                            type: opts?.type,
+                            sourcePaneId: props.paneId,
+                            sourceBlockId: props.id,
+                            splitDirection: opts?.splitDirection,
+                            originBlockId: props.id,
+                          });
                         }}
                       />
                     : <DoorExecCard
@@ -1054,6 +1058,7 @@ export function BlockItem(props: BlockItemProps) {
                 onWikilinkClick={handleWikilinkClick}
                 blockId={props.id}
                 onUpdateContent={(content) => store.updateBlockContent(props.id, content)}
+                pageNameSet={pageNameSet()}
               />
             </Show>
 
@@ -1126,25 +1131,17 @@ export function BlockItem(props: BlockItemProps) {
                 <EvalOutput
                   output={block()!.output as EvalResult}
                   onChirp={(message: string, data?: unknown) => {
-                    // Route navigate intents to linked outliner pane (or own pane if unlinked)
+                    // Route navigate intents through unified chirp handler
                     if (message === 'navigate' && typeof data === 'object' && data) {
                       const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' };
-                      const targetPaneId = paneLinkStore.resolveLink(props.paneId, props.id) ?? props.paneId;
-                      if (!nav.target) {
-                        pokeIframe?.('ack: navigate', { success: false, error: 'empty target' });
-                        return;
-                      }
-                      const resolvedId = resolveBlockIdPrefix(nav.target, Object.keys(store.blocks));
-                      if (resolvedId || nav.type === 'block') {
-                        navigateToBlock(resolvedId ?? nav.target, { paneId: targetPaneId, highlight: true, splitDirection: nav.splitDirection });
-                      } else if (BLOCK_ID_PREFIX_RE.test(nav.target)) {
-                        console.warn('[BlockItem] chirp navigate: block ID prefix did not resolve', { target: nav.target });
-                        pokeIframe?.('ack: navigate', { success: false, error: 'block not found' });
-                        return;
-                      } else {
-                        navigateToPageNav(nav.target, { paneId: targetPaneId, highlight: true, splitDirection: nav.splitDirection });
-                      }
-                      pokeIframe?.('ack: navigate', { success: true, target: nav.target });
+                      const result = handleChirpNavigate(nav.target, {
+                        type: nav.type,
+                        sourcePaneId: props.paneId,
+                        sourceBlockId: props.id,
+                        splitDirection: nav.splitDirection,
+                        originBlockId: props.id,
+                      });
+                      pokeIframe?.('ack: navigate', { success: result.success, target: nav.target, error: result.error });
                       return;
                     }
                     // Default: create child block (throttled to max 10/sec to prevent runaway iframes)
