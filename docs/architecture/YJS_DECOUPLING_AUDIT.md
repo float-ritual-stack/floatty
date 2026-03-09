@@ -832,17 +832,24 @@ Content that becomes outdated or wrong after migration. Items flagged by categor
 | Section | Current Content | Category | Action |
 |---|---|---|---|
 | EventBus lifecycle | "Events emitted on every Y.Doc observer fire for tracked origins" | [UPDATE] | Note that user-origin content changes no longer emit on every keystroke — they emit once at commit time. EventBus still fires for the commit transaction. |
+| Timing Guidelines table | "Input (BlockItem) \| 150ms \| Batch keystrokes" | [UPDATE] | Replace with "Input (BlockItem) \| commit on blur/Enter/pause \| Discrete commit (no debounce)". Same change as ydoc-patterns.md §5. |
 
 ### Code Comments (affected files)
 
 | File:Line | Current Comment | Category | Action |
 |---|---|---|---|
+| `BlockItem.tsx:28-29` | `const UPDATE_DEBOUNCE_MS = 150` with "Keeps typing responsive" comment | [DELETE] | Constant deleted. Commit model replaces debounce. |
 | `BlockItem.tsx:63-66` | JSDoc for `createDebouncedUpdater` | [DELETE] | Function deleted entirely. |
+| `BlockItem.tsx:163-164` | "Store content is debounced (150ms), but overlay needs to track DOM immediately" | [UPDATE] | displayContent survives but reason changes: overlay tracks composing content not yet committed to Y.Doc. |
+| `BlockItem.tsx:167-168` | "IME composition state - prevents debounced updates during CJK" | [UPDATE] | IME now prevents commit, not debounced update. Signal survives, framing changes. |
+| `BlockItem.tsx:171-174` | FLO-197 dirty flag + `hasLocalChanges` signal | [DELETE] | Signal deleted. Composing model replaces dirty flag. |
 | `BlockItem.tsx:191-198` | "Debounced Y.Doc updates - DOM stays immediate via contentEditable" | [DELETE] | Debounce machinery deleted. |
+| `BlockItem.tsx:402-407` | `cancelContentUpdate()` — "Cancel pending debounced update, it would overwrite our replacement" | [DELETE] | No debounced update to cancel. |
 | `BlockItem.tsx:557-562` | "Origin-aware gate" comment block describing sync effect | [DELETE] | Entire sync effect replaced with 15-line version. |
 | `BlockItem.tsx:580-584` | FLO-197 race condition comment | [DELETE] | Race condition eliminated by composing model. |
 | `BlockItem.tsx:646-648` | "Flush any pending debounced content updates to Y.Doc before blur" | [UPDATE] | Becomes "Commit composing content to Y.Doc". |
 | `BlockItem.tsx:670-672` | "Flush pending content before structured paste check" | [UPDATE] | Becomes "Commit composing content before structured paste check". |
+| `BlockItem.tsx:707-729` | `updateContentFromDom` comments referencing FLO-197 dirty flag, debounce | [UPDATE] | Rewrite for commit model. No dirty flag. No debounce call. Content stays local. |
 | `useBlockInput.ts:47-48` | `flushContentUpdate: () => void` type definition | [UPDATE] | Becomes commit function type. |
 | `useBlockInput.ts:495` | "Flush pending content before execute" | [UPDATE] | "Commit composing content before execute". |
 | `useBlockInput.ts:552` | "Flush pending content before split" | [UPDATE] | "Commit composing content before split". |
