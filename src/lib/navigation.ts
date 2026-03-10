@@ -299,7 +299,13 @@ function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDel
     const element = findBlockInPane(blockId, paneId);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      if (highlight) highlightBlockInPane(blockId, paneId);
+      if (highlight) {
+        highlightBlockInPane(blockId, paneId);
+      } else {
+        // Clear any stale highlight from previous navigation in this pane
+        highlightCleanupByPaneId.get(paneId)?.();
+        highlightCleanupByPaneId.delete(paneId);
+      }
       // Clean up token on success
       if (pendingRetryTokenByPaneId.get(paneId) === token) {
         pendingRetryTokenByPaneId.delete(paneId);
