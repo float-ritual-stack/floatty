@@ -6,6 +6,20 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.8.4] - 2026-03-11
+
+### Bug Fixes
+
+- **Wikilink block-id zoom overshoots to root** (FLO-432, PR #166): `navigateToBlock` now walks ancestor chain to pick a useful zoom target — stops before root-level blocks like `pages::`. Block-level wikilinks (`[[id|label]]`) land in focused context instead of the entire outline.
+- **Full-width toggle broken in multi-pane** (PR #166): `Cmd+Shift+F` now guards against inactive pane, preventing toggle from firing on wrong pane.
+- **Per-pane highlight cleanup** (PR #166): Replaced global highlight singleton with `Map<string, () => void>` keyed by paneId. Concurrent multi-pane navigation no longer tears down each other's highlights.
+- **Strict pane scoping for highlight retry** (PR #166): Removed global `document.querySelector` fallback from `findBlockInPane`. Per-pane cancellation via Symbol tokens prevents stale retry loops.
+- **setCursorAtOffset ReferenceError**: Guarded async cursor positioning against detached DOM nodes and non-contentEditable elements after block merge/navigation.
+- **Stale highlight on highlight:false navigation**: Old pane highlights now explicitly cleaned up when navigating with highlight disabled.
+- **Event listener leak in highlight dismiss** (PR #166): Fixed split `if/else` listener target so cleanup always removes from the same target that `addEventListener` used.
+
+---
+
 ## [0.8.3] - 2026-03-09
 
 ### Features
