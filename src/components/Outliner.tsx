@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, on } from 'solid-js';
+import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, on, batch } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
@@ -213,11 +213,23 @@ export function Outliner(props: OutlinerProps) {
     }
 
     if (zoomTarget && zoomTarget !== prevTarget) {
-      // FLO-281: Use ensureExpandedToDepth instead of expandToDepth
-      // This only expands blocks up to the depth threshold without
-      // force-collapsing deeper blocks that the user manually expanded.
-      const depth = cachedConfig()?.initial_collapse_depth ?? 2;
-      collapse.ensureExpandedToDepth(zoomTarget, depth);
+      // Expand the zoom target so its children are visible, then collapse
+      // all direct children — giving "top-level list, collapsed" on every
+      // navigate. Batched so SolidJS renders once, not N times.
+      // (Replaces ensureExpandedToDepth which expanded children too,
+      //  causing lock-up on large containers like pages:: with 368 children.)
+      batch(() => {
+        paneStore.setCollapsed(props.paneId, zoomTarget, false);
+        const block = store.blocks[zoomTarget];
+        if (block) {
+          for (const childId of block.childIds) {
+            const child = store.blocks[childId];
+            if (child && child.childIds.length > 0) {
+              paneStore.setCollapsed(props.paneId, childId, true);
+            }
+          }
+        }
+      });
     }
   }));
 
