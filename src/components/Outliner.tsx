@@ -213,23 +213,13 @@ export function Outliner(props: OutlinerProps) {
     }
 
     if (zoomTarget && zoomTarget !== prevTarget) {
-      // Expand the zoom target so its children are visible, then collapse
-      // all direct children — giving "top-level list, collapsed" on every
-      // navigate. Batched so SolidJS renders once, not N times.
-      // (Replaces ensureExpandedToDepth which expanded children too,
-      //  causing lock-up on large containers like pages:: with 368 children.)
-      batch(() => {
-        paneStore.setCollapsed(props.paneId, zoomTarget, false);
-        const block = store.blocks[zoomTarget];
-        if (block) {
-          for (const childId of block.childIds) {
-            const child = store.blocks[childId];
-            if (child && child.childIds.length > 0) {
-              paneStore.setCollapsed(props.paneId, childId, true);
-            }
-          }
-        }
-      });
+      // Ensure the zoom target itself is expanded so its children are visible.
+      // Do NOT touch children's collapse state — they retain whatever state they
+      // have from Y.Doc block.collapsed or prior user interactions.
+      //
+      // Large container performance (pages:: with 300+ children) is handled by
+      // the render limit in BlockItem (100 children rendered initially), not here.
+      paneStore.setCollapsed(props.paneId, zoomTarget, false);
     }
   }));
 

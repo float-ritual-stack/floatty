@@ -136,6 +136,13 @@ export function BlockItem(props: BlockItemProps) {
     const defaultCollapsed = b?.collapsed || false;
     return paneStore.isCollapsed(props.paneId, props.id, defaultCollapsed);
   });
+  // Render limit for large child lists — prevents mounting 300+ BlockItems at once.
+  // Resets to 100 when block collapses so re-expand stays fast.
+  const CHILD_RENDER_LIMIT = 100;
+  const [childLimit, setChildLimit] = createSignal(CHILD_RENDER_LIMIT);
+  createEffect(on(isCollapsed, (collapsed) => { if (collapsed) setChildLimit(CHILD_RENDER_LIMIT); }));
+  const visibleChildIds = createMemo(() => (block()?.childIds ?? []).slice(0, childLimit()));
+
   // FLO-58: Detect table blocks for picker pattern rendering
   const isTableBlock = createMemo(() => hasTablePattern(block()?.content ?? ''));
   // FLO-58: Lift showRaw state to persist across TableView remounts
@@ -1219,7 +1226,7 @@ export function BlockItem(props: BlockItemProps) {
 
       <Show when={!isCollapsed() && block()?.childIds.length}>
         <div class="block-children">
-          <Key each={block()?.childIds} by={(id) => id}>
+          <Key each={visibleChildIds()} by={(id) => id}>
             {(childId) => {
               const id = childId();
               return (
@@ -1237,6 +1244,14 @@ export function BlockItem(props: BlockItemProps) {
               );
             }}
           </Key>
+          <Show when={(block()?.childIds.length ?? 0) > childLimit()}>
+            <div
+              class="block-children-more"
+              onClick={() => setChildLimit(n => n + CHILD_RENDER_LIMIT)}
+            >
+              {(block()?.childIds.length ?? 0) - childLimit()} more...
+            </div>
+          </Show>
         </div>
       </Show>
 
