@@ -96,10 +96,13 @@ export function Outliner(props: OutlinerProps) {
         const block = store.blocks[id];
         if (!block || block.childIds.length === 0) return;
 
-        // Only force-collapse blocks DEEPER than threshold
-        // Blocks at/above threshold keep their existing state
-        if (currentDepth > depth) {
+        // Force-collapse blocks AT and DEEPER than threshold.
+        // depth=1 collapses root blocks themselves (only 7 indicators visible).
+        // depth=2 collapses root children (roots visible, children collapsed).
+        // Matches collapseToDepth semantics: currentDepth >= depth.
+        if (currentDepth >= depth) {
           paneStore.setCollapsed(props.paneId, id, true);
+          return; // No need to recurse — children are hidden anyway
         }
 
         for (const childId of block.childIds) {
