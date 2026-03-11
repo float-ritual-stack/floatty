@@ -1658,16 +1658,22 @@ pub struct BlocksQuery {
     pub marker_value: Option<String>,
 }
 
-/// GET /api/v1/blocks/resolve/:prefix - Resolve short-hash prefix to full block ID
+/// Resolve a block ID or short-hash prefix to a full canonical block ID.
 ///
-/// Accepts 6+ hex character prefixes (git-sha style). Returns the full block if
-/// exactly one match. 400 for invalid prefix, 404 for no match, 409 for ambiguous.
-async fn resolve_block_prefix(
-    State(state): State<AppState>,
-    Path(prefix): Path<String>,
-) -> Result<Json<ResolveResponse>, ApiError> {
-    // Validate: must be 6+ hex chars (or a full UUID which we redirect to exact lookup)
-    let trimmed = prefix.trim();
+/// - Full UUID (36 chars with dashes): O(1) exact lookup, case-insensitive
+/// - 6+ hex chars: O(n) prefix scan, dash-stripped matching
+/// - Non-hex or <6 chars: treated as literal ID, exact lookup (backward compat)
+///
+/// Returns the canonical (stored) key on success.
+fn resolve_block_id<T: ReadTxn>(
+    id_or_prefix: &str,
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+) -> Result<String, ApiError> {
+    let trimmed = id_or_prefix.trim();
+    let lower = trimmed.to_lowercase();
+
+    // Check if it's a full UUID (36 chars with dashes at positions 8,13,18,23)
     let is_full_uuid = trimmed.len() == 36 && {
         let b = trimmed.as_bytes();
         b[8] == b'-' && b[13] == b'-' && b[18] == b'-' && b[23] == b'-'
@@ -1677,42 +1683,24 @@ async fn resolve_block_prefix(
             })
     };
 
-    if !is_full_uuid {
-        // Must be 6+ hex chars
-        if trimmed.len() < 6 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(ApiError::InvalidRequest(
-                "Prefix must be 6+ hex characters".to_string(),
-            ));
+    if is_full_uuid {
+        // O(1) exact lookup — try lowercase first (canonical), then original
+        if blocks_map.get(txn, &lower).is_some() {
+            return Ok(lower);
         }
+        if blocks_map.get(txn, trimmed).is_some() {
+            return Ok(trimmed.to_string());
+        }
+        return Err(ApiError::NotFound(trimmed.to_string()));
     }
 
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
+    // Check if it looks like a valid hex prefix (6+ hex chars)
+    let is_hex_prefix = trimmed.len() >= 6 && trimmed.chars().all(|c| c.is_ascii_hexdigit());
 
-    let blocks_map = txn
-        .get_map("blocks")
-        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
-
-    let lower = trimmed.to_lowercase();
-
-    // If full UUID, do exact lookup
-    if is_full_uuid {
-        // Try lowercase first (canonical), then original casing
-        let (canonical_id, value) = if let Some(v) = blocks_map.get(&txn, &lower) {
-            (lower.clone(), v)
-        } else if let Some(v) = blocks_map.get(&txn, trimmed) {
-            (trimmed.to_string(), v)
-        } else {
-            return Err(ApiError::NotFound(trimmed.to_string()));
-        };
-
-        if let yrs::Out::YMap(block_map) = value {
-            let block_dto = read_block_dto(&block_map, &txn, &canonical_id, &state)?;
-            return Ok(Json(ResolveResponse {
-                id: canonical_id,
-                block: block_dto,
-            }));
+    if !is_hex_prefix {
+        // Not a prefix — try exact lookup as literal ID (backward compat)
+        if blocks_map.get(txn, trimmed).is_some() {
+            return Ok(trimmed.to_string());
         }
         return Err(ApiError::NotFound(trimmed.to_string()));
     }
@@ -1720,9 +1708,8 @@ async fn resolve_block_prefix(
     // Prefix scan: iterate all keys, collect matches
     let mut matches: Vec<String> = Vec::new();
 
-    for (key, _value) in blocks_map.iter(&txn) {
+    for (key, _value) in blocks_map.iter(txn) {
         let key_lower = key.to_lowercase();
-        // Match against UUID with dashes
         if key_lower.starts_with(&lower) {
             matches.push(key.to_string());
             continue;
@@ -1736,23 +1723,59 @@ async fn resolve_block_prefix(
 
     match matches.len() {
         0 => Err(ApiError::NotFound(format!("No block matches prefix '{}'", trimmed))),
-        1 => {
-            let full_id = &matches[0];
-            let value = blocks_map
-                .get(&txn, full_id.as_str())
-                .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
-
-            if let yrs::Out::YMap(block_map) = value {
-                let block_dto = read_block_dto(&block_map, &txn, full_id, &state)?;
-                Ok(Json(ResolveResponse {
-                    id: full_id.clone(),
-                    block: block_dto,
-                }))
-            } else {
-                Err(ApiError::NotFound(full_id.clone()))
-            }
-        }
+        1 => Ok(matches.into_iter().next().unwrap()),
         n => Err(ApiError::Ambiguous(n)),
+    }
+}
+
+/// Resolve a block ID field from a request body, wrapping errors with field name context.
+fn resolve_body_field<T: ReadTxn>(
+    id_or_prefix: &str,
+    field_name: &str,
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+) -> Result<String, ApiError> {
+    resolve_block_id(id_or_prefix, blocks_map, txn).map_err(|e| match e {
+        ApiError::Ambiguous(n) => ApiError::InvalidRequest(
+            format!("Ambiguous prefix in {}: {} matches", field_name, n),
+        ),
+        ApiError::NotFound(msg) => ApiError::NotFound(
+            format!("{} not found: {}", field_name, msg),
+        ),
+        other => other,
+    })
+}
+
+/// GET /api/v1/blocks/resolve/:prefix - Resolve short-hash prefix to full block ID
+///
+/// Accepts 6+ hex character prefixes (git-sha style). Returns the full block if
+/// exactly one match. 400 for invalid prefix, 404 for no match, 409 for ambiguous.
+async fn resolve_block_prefix(
+    State(state): State<AppState>,
+    Path(prefix): Path<String>,
+) -> Result<Json<ResolveResponse>, ApiError> {
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let blocks_map = txn
+        .get_map("blocks")
+        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+
+    let full_id = resolve_block_id(&prefix, &blocks_map, &txn)?;
+
+    let value = blocks_map
+        .get(&txn, full_id.as_str())
+        .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
+
+    if let yrs::Out::YMap(block_map) = value {
+        let block_dto = read_block_dto(&block_map, &txn, &full_id, &state)?;
+        Ok(Json(ResolveResponse {
+            id: full_id,
+            block: block_dto,
+        }))
+    } else {
+        Err(ApiError::NotFound(full_id))
     }
 }
 
@@ -2195,6 +2218,9 @@ async fn get_block(
         .get_map("blocks")
         .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
 
+    // Resolve short-hash prefix to full block ID
+    let id = resolve_block_id(&id, &blocks_map, &txn)?;
+
     let value = blocks_map
         .get(&txn, &id)
         .ok_or_else(|| ApiError::NotFound(id.clone()))?;
@@ -2334,6 +2360,23 @@ async fn create_block(
 
     let doc = state.store.doc();
     let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+
+    // Resolve short-hash prefixes in body fields (if blocks map exists)
+    let mut req = req;
+    {
+        let txn = doc_guard.transact();
+        if let Some(blocks_map) = txn.get_map("blocks") {
+            if let Some(ref parent_id) = req.parent_id {
+                let resolved = resolve_body_field(parent_id, "parentId", &blocks_map, &txn)?;
+                req.parent_id = Some(resolved);
+            }
+            if let Some(ref after_id) = req.after_id {
+                let resolved = resolve_body_field(after_id, "afterId", &blocks_map, &txn)?;
+                req.after_id = Some(resolved);
+            }
+        }
+    }
+
     let update = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
@@ -2532,6 +2575,29 @@ async fn update_block(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
+
+    // Resolve short-hash prefixes in path and body fields
+    let mut req = req;
+    let (id, req) = {
+        let txn = doc_guard.transact();
+        let blocks_map = txn
+            .get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+
+        let id = resolve_block_id(&id, &blocks_map, &txn)?;
+
+        // Resolve body field prefixes
+        if let Some(Some(ref parent_id)) = req.parent_id {
+            let resolved = resolve_body_field(parent_id, "parentId", &blocks_map, &txn)?;
+            req.parent_id = Some(Some(resolved));
+        }
+        if let Some(ref after_id) = req.after_id {
+            let resolved = resolve_body_field(after_id, "afterId", &blocks_map, &txn)?;
+            req.after_id = Some(resolved);
+        }
+
+        (id, req)
+    };
 
     // Read existing block data
     let (old_parent_id, child_ids, collapsed, existing_content, existing_metadata, created_at) = {
@@ -2926,6 +2992,9 @@ async fn delete_block(
     let (update, deleted_blocks) = {
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
+
+        // Resolve short-hash prefix to full block ID
+        let id = resolve_block_id(&id, &blocks, &txn)?;
 
         // Get block's parentId before deleting
         let parent_id: Option<String> = match blocks.get(&txn, &id) {
@@ -4823,7 +4892,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
-        assert!(error.error.contains("afterId block not found"));
+        assert!(error.error.contains("afterId not found"));
     }
 
     #[tokio::test]
@@ -5038,7 +5107,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
-        assert!(error.error.contains("afterId block not found"));
+        assert!(error.error.contains("afterId not found"));
     }
 
     #[tokio::test]
@@ -5454,5 +5523,156 @@ mod tests {
         let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.blocks.len(), 1);
         assert_eq!(result.blocks[0].id, block_a.id);
+    }
+
+    // ========================================================================
+    // Short-hash prefix resolution tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_get_block_by_prefix() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block = create_test_block(&mut app, "prefix test", None).await;
+        // Use first 8 chars of UUID (dash-stripped)
+        let prefix: String = block.id.chars().filter(|c| *c != '-').take(8).collect();
+
+        let request = Request::get(&format!("/api/v1/blocks/{}", prefix))
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.id, block.id);
+    }
+
+    #[tokio::test]
+    async fn test_get_block_full_uuid_passthrough() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block = create_test_block(&mut app, "full uuid", None).await;
+        let result = get_test_block(&mut app, &block.id).await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, block.id);
+    }
+
+    #[tokio::test]
+    async fn test_get_block_prefix_not_found() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let _block = create_test_block(&mut app, "exists", None).await;
+
+        let request = Request::get("/api/v1/blocks/aaaaaa")
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_patch_block_by_prefix() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block = create_test_block(&mut app, "original", None).await;
+        let prefix: String = block.id.chars().filter(|c| *c != '-').take(8).collect();
+
+        let body = r#"{"content": "updated via prefix"}"#;
+        let request = Request::patch(&format!("/api/v1/blocks/{}", prefix))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.content, "updated via prefix");
+        assert_eq!(result.id, block.id);
+    }
+
+    #[tokio::test]
+    async fn test_delete_block_by_prefix() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block = create_test_block(&mut app, "to delete", None).await;
+        let prefix: String = block.id.chars().filter(|c| *c != '-').take(8).collect();
+
+        let request = Request::delete(&format!("/api/v1/blocks/{}", prefix))
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify actually deleted
+        let result = get_test_block(&mut app, &block.id).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_create_block_with_short_parent_id() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let parent = create_test_block(&mut app, "parent", None).await;
+        let prefix: String = parent.id.chars().filter(|c| *c != '-').take(8).collect();
+
+        let body = format!(r#"{{"content": "child", "parentId": "{}"}}"#, prefix);
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.parent_id, Some(parent.id));
+    }
+
+    #[tokio::test]
+    async fn test_prefix_case_insensitive() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let block = create_test_block(&mut app, "case test", None).await;
+        let prefix: String = block.id.chars().filter(|c| *c != '-').take(8).collect();
+        let upper_prefix = prefix.to_uppercase();
+
+        let request = Request::get(&format!("/api/v1/blocks/{}", upper_prefix))
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.id, block.id);
     }
 }

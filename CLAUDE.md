@@ -185,13 +185,24 @@ Search also supports `include_breadcrumb=true` and `include_metadata=true`.
 
 ### Short-Hash Block Resolution
 
-`GET /api/v1/blocks/resolve/:prefix` resolves 6+ hex-char prefixes to full block UUIDs (git-sha style):
+**All block ID endpoints accept short-hash prefixes.** Any `:id` path parameter (`GET`, `PATCH`, `DELETE`) and body fields (`parentId`, `afterId` in `POST`/`PATCH`) resolve 6+ hex-char prefixes to full block UUIDs (git-sha style).
 
 ```bash
-# Resolve 8-char prefix to full block
+# GET by prefix
 curl -H "Authorization: Bearer $KEY" \
-  "http://127.0.0.1:$PORT/api/v1/blocks/resolve/0b3dc892"
-# Returns: { "id": "0b3dc892-e563-4868-...", "block": {...} }
+  "http://127.0.0.1:$PORT/api/v1/blocks/0b3dc892"
+
+# PATCH by prefix
+curl -X PATCH -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"content":"updated"}' "http://127.0.0.1:$PORT/api/v1/blocks/0b3dc892"
+
+# POST with short parentId
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"content":"child","parentId":"0b3dc892"}' "http://127.0.0.1:$PORT/api/v1/blocks"
+
+# DELETE by prefix
+curl -X DELETE -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/blocks/0b3dc892"
 ```
 
 | Status | Meaning |
@@ -201,7 +212,9 @@ curl -H "Authorization: Bearer $KEY" \
 | 404 | No block matches prefix |
 | 409 | Ambiguous — multiple blocks match (returns match list) |
 
-If prefix is a full 36-char UUID, redirects to exact lookup. Case-insensitive matching with canonical stored key returned.
+Full 36-char UUIDs use O(1) exact lookup. Prefixes do O(n) scan with dash-stripped, case-insensitive matching.
+
+**Dedicated resolve endpoint**: `GET /api/v1/blocks/resolve/:prefix` still exists for CLI discovery (returns `{ id, block }` wrapper).
 
 **Client-side**: `shortHashIndex` singleton memo in `WorkspaceContext` provides O(1) 8-char prefix lookups without server round-trip.
 
