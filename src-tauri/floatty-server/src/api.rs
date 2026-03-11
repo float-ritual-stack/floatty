@@ -3187,7 +3187,7 @@ pub struct BlockSearchHit {
 pub struct BlockSearchResponse {
     /// Search results (IDs + scores)
     pub hits: Vec<BlockSearchHit>,
-    /// Total number of hits returned
+    /// Total number of matching blocks (may exceed hits.len() when limit applies)
     pub total: usize,
 }
 
@@ -3232,11 +3232,9 @@ async fn search_blocks(
     };
 
     // Execute search
-    let hits = service
+    let (total, hits) = service
         .search_with_filters(&query.q, filters, query.limit)
         .map_err(|e| ApiError::Search(e.to_string()))?;
-
-    let total = hits.len();
 
     let want_breadcrumb = query.include_breadcrumb.unwrap_or(false);
     let want_metadata = query.include_metadata.unwrap_or(false);

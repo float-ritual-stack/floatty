@@ -38,7 +38,7 @@
 
 use super::{IndexManager, SearchError};
 use std::sync::Arc;
-use tantivy::collector::TopDocs;
+use tantivy::collector::{Count, TopDocs};
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
 use tantivy::schema::{IndexRecordOption, Value};
 use tantivy::Term;
@@ -131,7 +131,7 @@ impl SearchService {
     /// ```rust,ignore
     /// let hits = service.search("project meeting", 10)?;
     /// ```
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, SearchError> {
+    pub fn search(&self, query: &str, limit: usize) -> Result<(usize, Vec<SearchHit>), SearchError> {
         self.search_with_filters(query, SearchFilters::default(), limit)
     }
 
@@ -158,11 +158,11 @@ impl SearchService {
         query: &str,
         filters: SearchFilters,
         limit: usize,
-    ) -> Result<Vec<SearchHit>, SearchError> {
+    ) -> Result<(usize, Vec<SearchHit>), SearchError> {
         // Empty query returns no results
         let query_trimmed = query.trim();
         if query_trimmed.is_empty() {
-            return Ok(Vec::new());
+            return Ok((0, Vec::new()));
         }
 
         // Pre-process query: escape Tantivy special characters so user input
@@ -194,8 +194,8 @@ impl SearchService {
             Box::new(BooleanQuery::new(clauses))
         };
 
-        // Execute search
-        let top_docs = searcher.search(&final_query, &TopDocs::with_limit(limit))?;
+        // Execute search (Count collector gives true total, TopDocs gives limited results)
+        let (total_count, top_docs) = searcher.search(&final_query, &(Count, TopDocs::with_limit(limit)))?;
 
         // Map results to SearchHit
         let mut hits = Vec::with_capacity(top_docs.len());
@@ -212,7 +212,7 @@ impl SearchService {
             }
         }
 
-        Ok(hits)
+        Ok((total_count, hits))
     }
 
     /// Build filter queries from SearchFilters.
@@ -311,7 +311,7 @@ mod tests {
 
         let service = SearchService::new(manager);
 
-        let hits = service.search("floatty", 10).unwrap();
+        let (_total, hits) = service.search("floatty", 10).unwrap();
         assert_eq!(hits.len(), 2);
 
         // Both b1 and b3 should match
@@ -327,11 +327,11 @@ mod tests {
         let service = SearchService::new(manager);
 
         // Empty query should return no results
-        let hits = service.search("", 10).unwrap();
+        let (_total, hits) = service.search("", 10).unwrap();
         assert!(hits.is_empty());
 
         // Whitespace-only should also return no results
-        let hits = service.search("   ", 10).unwrap();
+        let (_total, hits) = service.search("   ", 10).unwrap();
         assert!(hits.is_empty());
     }
 
@@ -341,7 +341,7 @@ mod tests {
 
         let service = SearchService::new(manager);
 
-        let hits = service.search("nonexistent", 10).unwrap();
+        let (_total, hits) = service.search("nonexistent", 10).unwrap();
         assert!(hits.is_empty());
     }
 
@@ -355,9 +355,10 @@ mod tests {
 
         let service = SearchService::new(manager);
 
-        // Limit to 2 results
-        let hits = service.search("floatty", 2).unwrap();
+        // Limit to 2 results — total should reflect all 3 matches
+        let (total, hits) = service.search("floatty", 2).unwrap();
         assert_eq!(hits.len(), 2);
+        assert_eq!(total, 3, "total should be true match count, not truncated len");
     }
 
     #[test]
@@ -371,7 +372,7 @@ mod tests {
         let service = SearchService::new(manager);
 
         // Filter to only sh blocks
-        let hits = service
+        let (_total, hits) = service
             .search_with_filters(
                 "floatty",
                 SearchFilters {
@@ -397,7 +398,7 @@ mod tests {
         let service = SearchService::new(manager);
 
         // Filter to sh OR ai
-        let hits = service
+        let (_total, hits) = service
             .search_with_filters(
                 "floatty",
                 SearchFilters {
@@ -424,7 +425,7 @@ mod tests {
         let service = SearchService::new(manager);
 
         // Only blocks with markers
-        let hits = service
+        let (_total, hits) = service
             .search_with_filters(
                 "floatty",
                 SearchFilters {
@@ -439,7 +440,7 @@ mod tests {
         assert_eq!(hits[0].block_id, "b1");
 
         // Only blocks without markers
-        let hits = service
+        let (_total, hits) = service
             .search_with_filters(
                 "floatty",
                 SearchFilters {
@@ -466,7 +467,7 @@ mod tests {
         let service = SearchService::new(manager);
 
         // sh blocks with markers
-        let hits = service
+        let (_total, hits) = service
             .search_with_filters(
                 "floatty",
                 SearchFilters {
@@ -491,7 +492,7 @@ mod tests {
 
         let service = SearchService::new(manager);
 
-        let hits = service.search("floatty", 10).unwrap();
+        let (_total, hits) = service.search("floatty", 10).unwrap();
         assert_eq!(hits.len(), 2);
 
         // First result should have higher score (more term frequency)
@@ -510,17 +511,17 @@ mod tests {
         let service = SearchService::new(manager);
 
         // Search for project::floatty - should match b1's markers field
-        let hits = service.search("project::floatty", 10).unwrap();
+        let (_total, hits) = service.search("project::floatty", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].block_id, "b1");
 
         // Search for project::pharmacy - should match b2
-        let hits = service.search("project::pharmacy", 10).unwrap();
+        let (_total, hits) = service.search("project::pharmacy", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].block_id, "b2");
 
         // Search for mode::dev - should match b1
-        let hits = service.search("mode::dev", 10).unwrap();
+        let (_total, hits) = service.search("mode::dev", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].block_id, "b1");
     }
@@ -536,7 +537,7 @@ mod tests {
         let service = SearchService::new(manager);
 
         // Search for just "floatty" - should match via markers field
-        let hits = service.search("floatty", 10).unwrap();
+        let (_total, hits) = service.search("floatty", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].block_id, "b1");
     }
