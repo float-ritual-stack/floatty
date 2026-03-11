@@ -191,7 +191,7 @@ function getISOWeek(d: Date): number {
   const jan4 = new Date(d.getFullYear(), 0, 4);
   const monday = new Date(jan4);
   monday.setDate(jan4.getDate() - (jan4.getDay() || 7) + 1);
-  return Math.ceil((d.getTime() - monday.getTime()) / 604800000 + 1);
+  return Math.floor((d.getTime() - monday.getTime()) / 604800000) + 1;
 }
 
 function parseTimelog(section: string): TimelogEntry[] {
@@ -242,7 +242,7 @@ function parseRefs(section: string): string[] {
 }
 
 function extractSection(raw: string, header: string): string {
-  const re = new RegExp(`^## ${header}\\s*\\n([\\s\\S]*?)(?=\\n---\\n|\\n## [a-z]|$)`, 'm');
+  const re = new RegExp(`(?:^|\\n)## ${header}[^\\n]*\\n([\\s\\S]*?)(?=\\n---\\n|\\n## [a-z]|\\s*$)`);
   return raw.match(re)?.[1] ?? '';
 }
 
