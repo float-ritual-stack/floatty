@@ -1754,6 +1754,12 @@ async fn resolve_block_prefix(
     State(state): State<AppState>,
     Path(prefix): Path<String>,
 ) -> Result<Json<ResolveResponse>, ApiError> {
+    let trimmed = prefix.trim();
+    if trimmed.len() < 6 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::InvalidRequest(
+            "Prefix must be at least 6 hex characters".to_string(),
+        ));
+    }
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
@@ -1762,7 +1768,7 @@ async fn resolve_block_prefix(
         .get_map("blocks")
         .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
 
-    let full_id = resolve_block_id(&prefix, &blocks_map, &txn)?;
+    let full_id = resolve_block_id(trimmed, &blocks_map, &txn)?;
 
     let value = blocks_map
         .get(&txn, full_id.as_str())

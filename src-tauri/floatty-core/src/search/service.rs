@@ -129,7 +129,7 @@ impl SearchService {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let hits = service.search("project meeting", 10)?;
+    /// let (_total, hits) = service.search("project meeting", 10)?;
     /// ```
     pub fn search(&self, query: &str, limit: usize) -> Result<(usize, Vec<SearchHit>), SearchError> {
         self.search_with_filters(query, SearchFilters::default(), limit)
@@ -143,7 +143,7 @@ impl SearchService {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let hits = service.search_with_filters(
+    /// let (_total, hits) = service.search_with_filters(
     ///     "meeting notes",
     ///     SearchFilters {
     ///         block_types: Some(vec!["ctx".into()]),
