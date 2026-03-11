@@ -43,3 +43,4 @@ src-tauri/binaries/
 
 # btca cache (cloned repos for context queries)
 .btca/
+__pycache__/
