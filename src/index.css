@@ -1985,13 +1985,23 @@ body.block-dragging * {
 
 @keyframes block-highlight-pulse {
   0% { background-color: transparent; }
-  30% { background-color: color-mix(in srgb, var(--color-accent) 30%, transparent); }
-  100% { background-color: color-mix(in srgb, var(--color-accent) 15%, transparent); }
+  20% { background-color: color-mix(in srgb, var(--color-accent) 40%, transparent); }
+  100% { background-color: color-mix(in srgb, var(--color-accent) 20%, transparent); }
 }
 
 .block-highlight {
-  animation: block-highlight-pulse 0.5s ease-out forwards;
-  /* Stays at 15% accent until class removed */
+  animation: block-highlight-pulse 0.6s ease-out forwards;
+  border-radius: 3px;
+  /* Stays at 20% accent until pane interaction triggers fade */
+}
+
+.block-highlight.block-highlight-fade {
+  animation: block-highlight-fadeout 2s ease-out forwards;
+}
+
+@keyframes block-highlight-fadeout {
+  0% { background-color: color-mix(in srgb, var(--color-accent) 20%, transparent); }
+  100% { background-color: transparent; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
