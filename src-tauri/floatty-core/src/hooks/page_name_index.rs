@@ -73,6 +73,10 @@ pub struct PageNameIndex {
 
     /// ID of the `pages::` container block (cached for efficiency).
     pages_container_id: Option<String>,
+
+    /// Reusable nucleo Matcher — holds scratch buffers, expensive to reallocate per call.
+    /// Wrapped in Mutex for interior mutability through &self.
+    matcher: std::sync::Mutex<Matcher>,
 }
 
 impl PageNameIndex {
@@ -81,6 +85,7 @@ impl PageNameIndex {
             existing: HashSet::new(),
             referenced: HashMap::new(),
             pages_container_id: None,
+            matcher: std::sync::Mutex::new(Matcher::new(Config::DEFAULT)),
         }
     }
 
@@ -138,7 +143,7 @@ impl PageNameIndex {
             Normalization::Smart,
             AtomKind::Fuzzy,
         );
-        let mut matcher = Matcher::new(Config::DEFAULT);
+        let mut matcher = self.matcher.lock().unwrap_or_else(|e| e.into_inner());
 
         // Score existing pages
         let mut scored: Vec<(u32, bool, String)> = self
@@ -165,8 +170,8 @@ impl PageNameIndex {
 
         scored.extend(stub_scores);
 
-        // Sort: highest score first; at equal scores, existing before stubs
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+        // Sort: highest score first; existing before stubs at equal scores; name as final tie-breaker
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then_with(|| a.2.cmp(&b.2)));
 
         scored
             .into_iter()

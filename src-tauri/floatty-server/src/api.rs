@@ -1617,8 +1617,18 @@ async fn get_page_content(
 }
 
 /// Strip heading prefix (# ## ### etc) from content.
+///
+/// Mirrors `PageNameIndexHook::strip_heading_prefix` in floatty-core:
+/// - Takes first line only (multi-line pages embed markers on subsequent lines)
+/// - Strips leading '#' characters and surrounding whitespace
+///
+/// Examples:
+///   "# My Page"                    → "My Page"
+///   "# Summary\n[board:: recon]"   → "Summary"
+///   "No prefix"                    → "No prefix"
 fn strip_heading_prefix(content: &str) -> &str {
-    content.trim_start_matches('#').trim_start()
+    let first_line = content.lines().next().unwrap_or(content);
+    first_line.trim_start_matches('#').trim()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3573,17 +3583,33 @@ struct PresenceRequest {
     pane_id: Option<String>,
 }
 
-/// GET /api/v1/presence — returns the last focused block, or 204 if none yet
+/// GET /api/v1/presence — returns the last focused block, or 204 if none yet / block deleted
 async fn get_presence(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    match state.broadcaster.get_last_presence() {
-        Some(info) => Json(serde_json::json!({
-            "blockId": info.block_id,
-            "paneId": info.pane_id,
-        })).into_response(),
-        None => StatusCode::NO_CONTENT.into_response(),
+    let Some(info) = state.broadcaster.get_last_presence() else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
+
+    // Validate block still exists — cached presence can outlive deleted blocks
+    let doc = state.store.doc();
+    let Ok(doc_guard) = doc.read() else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let txn = doc_guard.transact();
+    let block_exists = txn
+        .get_map("blocks")
+        .and_then(|m| m.get(&txn, &info.block_id))
+        .is_some();
+
+    if !block_exists {
+        return StatusCode::NO_CONTENT.into_response();
     }
+
+    Json(serde_json::json!({
+        "blockId": info.block_id,
+        "paneId": info.pane_id,
+    })).into_response()
 }
 
 async fn post_presence(
