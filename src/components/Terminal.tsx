@@ -758,7 +758,7 @@ export function Terminal() {
       // Handled here (before the action guard) because it's not in the keybind registry.
       // Outliners handle their own Cmd+L guarded by activePaneId check — no double-fire.
       {
-        const isCmdL = isMac()
+        const isCmdL = isMac
           ? (e.metaKey && !e.shiftKey && !e.altKey && e.key === 'l')
           : (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'l');
         if (isCmdL) {
