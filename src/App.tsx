@@ -12,6 +12,8 @@ import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { initHttpClient } from './lib/httpClient';
 import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
+import * as navigationLib from './lib/navigation';
+import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
 import { registerHandlers } from './lib/handlers';
 import { blockStore } from './hooks/useBlockStore';
@@ -126,6 +128,47 @@ function App() {
         data: formattedPaths
       }).catch(console.error);
     });
+  });
+
+  // Deep link handler: floatty://navigate/<page>?pane=<uuid>
+  //
+  // Routing priority:
+  //   1. ?pane=<uuid> present → resolveLink(pane) → linked outliner (terminal→outliner link)
+  //   2. No pane hint → active tab's focused/first outliner pane
+  //   3. No outliner open → open page in a new tab
+  onMount(async () => {
+    const unlistenDeepLink = await listen<string>('deep-link', (event) => {
+      try {
+        const url = new URL(event.payload);
+        if (url.hostname !== 'navigate') return;
+
+        // Decode page name from path: /Page%20Name → "Page Name"
+        const pageName = decodeURIComponent(url.pathname.replace(/^\//, ''));
+        if (!pageName) return;
+
+        // Optional source pane hint (set by pi extension via FLOATTY_PANE_ID)
+        const sourcePaneId = url.searchParams.get('pane') ?? undefined;
+
+        console.log('[deep-link] navigate', { pageName, sourcePaneId });
+
+        // Resolve target pane using pane link store
+        const { resolveTargetPane } = navigationLib;
+        const targetPaneId = sourcePaneId
+          ? (paneLinkStore.resolveLink(sourcePaneId) ?? resolveTargetPane(sourcePaneId))
+          : resolveTargetPane('');
+
+        if (!targetPaneId) {
+          console.warn('[deep-link] no outliner pane available, opening new tab');
+          // TODO: open in new tab — for now log and skip
+          return;
+        }
+
+        navigationLib.navigateToPage(pageName, { paneId: targetPaneId, highlight: true });
+      } catch (e) {
+        console.warn('[deep-link] failed to handle event', event.payload, e);
+      }
+    });
+    onCleanup(() => unlistenDeepLink());
   });
 
   // FLO-350: Listen for orphan detection events from Rust background worker

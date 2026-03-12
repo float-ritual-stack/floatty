@@ -65,6 +65,7 @@ arboard = "3"  # Direct clipboard access for batched IPC
 # TypeScript bindings generation (for ts-gen binary)
 ts-rs = "10"
 tauri-plugin-window-state = "2.4.1"
+tauri-plugin-deep-link = "2"
 
 [dev-dependencies]
 tempfile = "3"

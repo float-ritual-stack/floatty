@@ -1,0 +1,35 @@
+{
+  "$schema": "https://btca.dev/btca.schema.json",
+  "resources": [
+    {
+      "type": "git",
+      "name": "solidJs",
+      "url": "https://github.com/solidjs/solid-docs",
+      "branch": "main",
+      "searchPath": "src/routes"
+    },
+    {
+      "type": "git",
+      "name": "vite",
+      "url": "https://github.com/vitejs/vite",
+      "branch": "main",
+      "searchPath": "docs"
+    },
+    {
+      "type": "git",
+      "name": "zod",
+      "url": "https://github.com/colinhacks/zod",
+      "branch": "main",
+      "searchPath": "packages/docs/content"
+    },
+    {
+      "type": "git",
+      "name": "tailwind",
+      "url": "https://github.com/tailwindlabs/tailwindcss.com",
+      "branch": "main",
+      "searchPath": "src/docs"
+    }
+  ],
+  "model": "claude-haiku-4-5",
+  "provider": "opencode"
+}

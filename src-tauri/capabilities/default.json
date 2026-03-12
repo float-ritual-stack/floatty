@@ -39,6 +39,7 @@
       ]
     },
     "mcp-bridge:default",
-    "window-state:default"
+    "window-state:default",
+    "deep-link:default"
   ]
 }
