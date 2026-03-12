@@ -104,9 +104,9 @@ export async function execJSON(command: string): Promise<unknown> {
   return JSON.parse(raw.slice(start));
 }
 
-/** Find the first `{` and JSON.parse; returns null on failure */
+/** Find the first `{` or `[` and JSON.parse; returns null on failure */
 export function parseJSON(raw: string): unknown | null {
-  const start = raw.search(/\{/);
+  const start = raw.search(/[{[]/);
   if (start < 0) return null;
   try { return JSON.parse(raw.slice(start)); } catch { return null; }
 }

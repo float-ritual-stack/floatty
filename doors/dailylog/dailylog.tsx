@@ -193,7 +193,9 @@ function getISOWeek(d: Date): number {
   const jan4 = new Date(d.getFullYear(), 0, 4);
   const monday = new Date(jan4);
   monday.setDate(jan4.getDate() - (jan4.getDay() || 7) + 1);
-  return Math.floor((d.getTime() - monday.getTime()) / 604800000) + 1;
+  const week = Math.floor((d.getTime() - monday.getTime()) / 604800000) + 1;
+  if (week <= 0) return getISOWeek(new Date(d.getFullYear() - 1, 11, 31));
+  return week;
 }
 
 function parseTimelog(section: string): TimelogEntry[] {
@@ -319,7 +321,7 @@ export const door = {
         );
       }
 
-      if (timelog.length > 0 || arcs.length > 0) {
+      if (timelog.length > 0 || arcs.length > 0 || refs.length > 0) {
         days.push({ date, weekLabel, dayLabel, timelog, arcs, refs });
       }
     }
