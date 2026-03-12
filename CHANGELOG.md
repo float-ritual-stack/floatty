@@ -6,6 +6,23 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.8.5] - 2026-03-12
+
+### Features
+
+- **Short-hash block resolution** (PR #168): All block ID endpoints now accept 6+ hex-char prefix lookups (git-sha style). `GET /api/v1/blocks/resolve/:prefix` returns unique match or conflict list. Client-side `shortHashIndex` singleton in WorkspaceContext provides O(1) prefix lookups without server round-trip.
+
+### Bug Fixes
+
+- **Large container lock-up on zoom-navigate** (PR #169): Block render limit (100 children) now resets when a `BlockItem` is rebound to a new block ID. Prevents stale `childLimit` from over-mounting children when navigating from a large container (e.g. `pages::`) to a new zoom target.
+- **dailylog:: date filter misses target file** (PR #169): Removed `head -N` limiter for date-specific and `today` lookups. Previously `dailylog:: 2026-01-15` would silently miss files not in the two most-recent results.
+- **dailylog:: project color prefix shadowing** (PR #169): `float-av` entries now correctly get the amber color rather than falling through to the `float` blue. Keys are sorted by descending length before prefix match.
+- **stripOSC drops ST-terminated sequences** (PR #169): `@floatty/stdlib` `stripOSC` now handles both BEL (`\x07`) and String Terminator (`\x1b\`) OSC terminators. Shell hooks emitting OSC 133/1337 with ST were corrupting `execJSON` output.
+- **Search total count truncated** (PR #168): Search result total now reflects true match count, not the truncated page size.
+- **resolve_block_prefix 400 validation** (PR #168): Restored proper validation error responses for short-hash resolution edge cases.
+
+---
+
 ## [0.8.4] - 2026-03-11
 
 ### Bug Fixes
