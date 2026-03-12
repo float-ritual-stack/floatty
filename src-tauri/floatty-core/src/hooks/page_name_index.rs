@@ -315,9 +315,20 @@ impl PageNameIndexHook {
     }
 
     /// Strip heading prefix (# ## ### etc) from content.
+    /// Extract the page title from block content.
+    ///
+    /// Mirrors the frontend's `getPageTitle()` in useBacklinkNavigation.ts:
+    /// - Take the first line only (multi-line pages embed markers on subsequent lines)
+    /// - Strip heading prefix (# ## ### etc)
+    /// - Trim whitespace
+    ///
+    /// Examples:
+    ///   "# My Page"                    → "My Page"
+    ///   "# Summary\n[board:: recon]"   → "Summary"
+    ///   "No prefix"                    → "No prefix"
     fn strip_heading_prefix(content: &str) -> &str {
-        let trimmed = content.trim_start_matches('#');
-        trimmed.trim_start()
+        let first_line = content.lines().next().unwrap_or(content);
+        first_line.trim_start_matches('#').trim()
     }
 
     /// Check if content starts with `pages::` (case-insensitive).
