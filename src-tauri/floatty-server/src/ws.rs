@@ -53,7 +53,7 @@ use floatty_core::YDocStore;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -94,6 +94,8 @@ pub struct WsBroadcaster {
     tx: broadcast::Sender<BroadcastMessage>,
     /// Flag to track if any update was broadcast since last heartbeat check
     update_sent_since_heartbeat: AtomicBool,
+    /// Last known presence (focused block) — persisted for GET /api/v1/presence
+    last_presence: Mutex<Option<PresenceInfo>>,
 }
 
 impl WsBroadcaster {
@@ -103,6 +105,7 @@ impl WsBroadcaster {
         Self {
             tx,
             update_sent_since_heartbeat: AtomicBool::new(false),
+            last_presence: Mutex::new(None),
         }
     }
 
@@ -156,15 +159,24 @@ impl WsBroadcaster {
         }
     }
 
-    /// Broadcast cursor presence (spike for TUI follower)
+    /// Broadcast cursor presence (spike for TUI follower) and persist for GET /api/v1/presence
     pub fn broadcast_presence(&self, block_id: String, pane_id: Option<String>) {
+        let info = PresenceInfo { block_id, pane_id };
+        if let Ok(mut guard) = self.last_presence.lock() {
+            *guard = Some(info.clone());
+        }
         let msg = BroadcastMessage {
             seq: None,
             tx_id: None,
             data: None,
-            presence: Some(PresenceInfo { block_id, pane_id }),
+            presence: Some(info),
         };
         let _ = self.tx.send(msg);
+    }
+
+    /// Get the last known presence (focused block), if any
+    pub fn get_last_presence(&self) -> Option<PresenceInfo> {
+        self.last_presence.lock().ok()?.clone()
     }
 
     /// Check and reset the update-sent flag.

@@ -559,7 +559,7 @@ pub fn create_router(
         .route("/api/v1/backup/restore", post(backup_restore))
         .route("/api/v1/backup/config", get(backup_config))
         // Presence (spike for TUI follower)
-        .route("/api/v1/presence", post(post_presence))
+        .route("/api/v1/presence", get(get_presence).post(post_presence))
         .with_state(state)
 }
 
@@ -3571,6 +3571,19 @@ async fn backup_config(State(state): State<AppState>) -> Result<Json<BackupConfi
 struct PresenceRequest {
     block_id: String,
     pane_id: Option<String>,
+}
+
+/// GET /api/v1/presence — returns the last focused block, or 204 if none yet
+async fn get_presence(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.broadcaster.get_last_presence() {
+        Some(info) => Json(serde_json::json!({
+            "blockId": info.block_id,
+            "paneId": info.pane_id,
+        })).into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 async fn post_presence(
