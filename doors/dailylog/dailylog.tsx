@@ -32,7 +32,9 @@ const PROJ_COLORS: Record<string, { bg: string; border: string; text: string }> 
 };
 
 function projColor(proj: string) {
-  const key = Object.keys(PROJ_COLORS).find(k => proj?.startsWith(k) || proj === k);
+  const key = Object.keys(PROJ_COLORS)
+    .sort((a, b) => b.length - a.length)
+    .find(k => proj?.startsWith(k) || proj === k);
   return PROJ_COLORS[key || ''] || { bg: '#1a2028', border: '#3a5068', text: '#6090c8' };
 }
 
@@ -276,7 +278,9 @@ export const door = {
     }
 
     const fileList = await exec(
-      `ls -1t ~/.evans-notes/daily/*.md 2>/dev/null | head -${count * 2}`
+      dateFilter || rawArg === 'today'
+        ? `ls -1t ~/.evans-notes/daily/*.md 2>/dev/null`
+        : `ls -1t ~/.evans-notes/daily/*.md 2>/dev/null | head -${count * 2}`
     ).catch(() => '');
 
     if (!fileList.trim()) return { data: { days: [] } };

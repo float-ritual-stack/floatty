@@ -1232,7 +1232,7 @@ body.pane-dragging .terminal-pane-positioned {
   margin-left: 20px;
   padding: 2px 6px;
   font-size: 0.8em;
-  color: var(--color-text-muted);
+  color: var(--color-fg-muted);
   cursor: pointer;
   user-select: none;
   opacity: 0.7;

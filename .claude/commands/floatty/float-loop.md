@@ -229,7 +229,6 @@ they evolve during implementation. Final docs go to `docs/` AFTER code ships.
 ## Discovered Gaps
 
 {Add gaps discovered during implementation here}
-```
 
 #### ARCHITECTURE.md Template (medium/large)
 ```markdown
@@ -266,7 +265,7 @@ they evolve during implementation. Final docs go to `docs/` AFTER code ships.
 1. {Question needing resolution}
 ```
 
-#### AGENT_PROMPT.md Template (medium/large)
+### AGENT_PROMPT.md Template (medium/large)
 
 Generate this with track-specific content — fill placeholders from what the user provides:
 

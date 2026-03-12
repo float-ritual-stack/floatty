@@ -85,7 +85,7 @@ export function findPageBlock(actions: BlockTreeAccess, pagesId: string, pageNam
 /** Strip OSC escape sequences injected by shell hooks (.zshrc) */
 export function stripOSC(raw: string): string {
   // eslint-disable-next-line no-control-regex
-  return raw.replace(/\x1b\][^\x07]*\x07/g, '');
+  return raw.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
 }
 
 /** Invoke a shell command via Tauri and return trimmed stdout */

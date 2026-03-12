@@ -141,6 +141,7 @@ export function BlockItem(props: BlockItemProps) {
   const CHILD_RENDER_LIMIT = 100;
   const [childLimit, setChildLimit] = createSignal(CHILD_RENDER_LIMIT);
   createEffect(on(isCollapsed, (collapsed) => { if (collapsed) setChildLimit(CHILD_RENDER_LIMIT); }));
+  createEffect(on(() => props.id, () => setChildLimit(CHILD_RENDER_LIMIT)));
   const visibleChildIds = createMemo(() => (block()?.childIds ?? []).slice(0, childLimit()));
 
   // FLO-58: Detect table blocks for picker pattern rendering
