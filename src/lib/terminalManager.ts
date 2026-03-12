@@ -593,6 +593,11 @@ class TerminalManager {
             TERM: 'xterm-256color',
             COLORTERM: 'truecolor',
             FLOATTY_HOOKS_ACTIVE: '',  // Clear to allow fresh hook registration
+            // Pane identity — read by pi extension for floatty://navigate?pane=<id> routing
+            FLOATTY_PANE_ID: id,
+            // Server URL + key so pi extension can call floatty API without config.toml lookup
+            ...(window.__FLOATTY_SERVER_URL__ ? { FLOATTY_URL: window.__FLOATTY_SERVER_URL__ } : {}),
+            ...(window.__FLOATTY_API_KEY__ ? { FLOATTY_API_KEY: window.__FLOATTY_API_KEY__ } : {}),
           },
           onData,
           onExit,
