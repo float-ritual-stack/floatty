@@ -560,6 +560,8 @@ pub fn create_router(
         .route("/api/v1/backup/config", get(backup_config))
         // Presence (spike for TUI follower)
         .route("/api/v1/presence", get(get_presence).post(post_presence))
+        // Attachments — static file serving from {data_dir}/__attachments/
+        .route("/api/v1/attachments/:filename", get(get_attachment))
         .with_state(state)
 }
 
@@ -930,6 +932,46 @@ async fn export_binary(State(state): State<AppState>) -> Result<impl IntoRespons
             (header::CONTENT_DISPOSITION, header::HeaderValue::from_str(&content_disposition).unwrap()),
         ],
         full_state,
+    ))
+}
+
+/// GET /api/v1/attachments/:filename - Serve a file from {data_dir}/__attachments/
+///
+/// Single-user loopback endpoint. Auth is handled by the global Bearer middleware.
+/// Path traversal is prevented by rejecting filenames with `/`, `\`, or `..`.
+/// The directory is created on first request if it doesn't exist.
+async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoResponse, ApiError> {
+    // Reject path traversal attempts
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(ApiError::InvalidRequest("Invalid filename".to_string()));
+    }
+
+    let attachments_dir = crate::config::data_dir().join("__attachments");
+    // Create dir lazily so the endpoint works even before any files are placed there
+    let _ = tokio::fs::create_dir_all(&attachments_dir).await;
+
+    let file_path = attachments_dir.join(&filename);
+    let bytes = tokio::fs::read(&file_path).await
+        .map_err(|_| ApiError::NotFound(format!("Attachment not found: {}", filename)))?;
+
+    // Infer content type from extension
+    let content_type: &'static str = match file_path.extension().and_then(|e| e.to_str()) {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("pdf") => "application/pdf",
+        Some("html") | Some("htm") => "text/html",
+        _ => "application/octet-stream",
+    };
+
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, header::HeaderValue::from_static(content_type))],
+        bytes,
     ))
 }
 

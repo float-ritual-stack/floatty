@@ -22,6 +22,7 @@ import { readFiles } from 'tauri-plugin-clipboard-api';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { DoorHost, DoorExecCard } from './views/DoorHost';
+import { ImgView } from './views/ImgView';
 import { EvalOutput } from './EvalOutput';
 import type { EvalResult } from '../lib/evalEngine';
 
@@ -233,8 +234,28 @@ export function BlockItem(props: BlockItemProps) {
   // Detect output blocks that need special keyboard handling
   const isOutputBlock = createMemo(() => {
     const ot = block()?.outputType;
-    return ot?.startsWith('search-') || ot === 'door';
+    return ot?.startsWith('search-') || ot === 'door' || ot === 'img-view';
   });
+
+  // img:: auto-render — fires when content starts with img:: AND filename has a known extension.
+  // Extension-gated to prevent 404 spam while the user is still typing the filename.
+  // Also strips to basename so pasted absolute paths work (e.g. /Users/evan/.floatty/__attachments/photo.jpg).
+  createEffect(on(() => block()?.content, (content) => {
+    if (!content) return;
+    const lower = content.toLowerCase();
+    if (!lower.startsWith('img::')) return;
+    const rawPath = content.slice(5).trim();
+    if (!rawPath) return;
+    // Strip to basename — handles pasted full paths
+    const filename = rawPath.replace(/.*[/\\]/g, '');
+    if (!filename) return;
+    // Only trigger when filename has a recognized extension (prevents 404 while mid-typing)
+    if (!/\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|pdf|html|htm)$/i.test(filename)) return;
+    // Guard: only write if output is stale (prevents loop)
+    const current = block();
+    if (current?.outputType === 'img-view' && (current?.output as { filename?: string })?.filename === filename) return;
+    store.setBlockOutput(props.id, { filename }, 'img-view');
+  }));
 
   // Search results keyboard navigation state
   // Focus stays on outputFocusRef — SearchResultsView is display-only.
@@ -299,6 +320,12 @@ export function BlockItem(props: BlockItemProps) {
       const target = findFocusAfterDelete(props.id, props.paneId);
       store.deleteBlock(props.id);
       if (target) props.onFocus(target);
+      return;
+    } else if (e.key === 'Escape' && block()?.outputType === 'img-view') {
+      // Escape from img-view → back to edit mode (contentEditable shows, user can fix filename)
+      // The auto-execute effect won't re-fire unless content actually changes.
+      e.preventDefault();
+      store.setBlockOutput(props.id, null, '');
       return;
     }
 
@@ -1082,6 +1109,15 @@ export function BlockItem(props: BlockItemProps) {
                         createdBlockIds={envelope.createdBlockIds}
                       />;
                 })()}
+              </Show>
+
+              {/* IMG VIEW — local attachment from __attachments/ */}
+              <Show when={block()?.outputType === 'img-view'}>
+                <ImgView
+                  filename={(block()!.output as { filename: string })?.filename ?? ''}
+                  serverUrl={window.__FLOATTY_SERVER_URL__ ?? ''}
+                  apiKey={window.__FLOATTY_API_KEY__ ?? ''}
+                />
               </Show>
             </div>
           </Show>

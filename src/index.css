@@ -2279,6 +2279,92 @@ body.block-dragging * {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   IMG VIEW
+   Local attachment renderer for img:: blocks
+   ═══════════════════════════════════════════════════════════════ */
+
+.img-view-wrapper {
+  /* Full-bleed: pull left to pane edge using inherited --block-depth from .block-wrapper */
+  --block-gutter: 40px;
+  --outliner-pad: 16px;
+  --fw-pull-left: calc(var(--outliner-pad) + var(--block-depth, 0) * (var(--block-indent-width) + 5px) + var(--block-gutter));
+  position: relative;
+  display: block;
+  min-width: 80px;
+  margin-top: 4px;
+  margin-left: calc(-1 * var(--fw-pull-left));
+  width: calc(100% + var(--fw-pull-left));
+  user-select: none;
+}
+
+.img-view-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #333);
+}
+
+.img-view-caption {
+  font-size: 11px;
+  color: var(--color-text-muted, #666);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.img-view-loading,
+.img-view-error {
+  font-size: 12px;
+  padding: 4px 8px;
+  color: var(--color-text-muted, #666);
+  font-style: italic;
+}
+
+.img-view-error {
+  color: var(--color-error, #e05252);
+}
+
+.img-view-pdf {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 4px;
+  background: #fff;
+}
+
+/* Bottom-edge drag handle for PDF height */
+.img-view-height-handle {
+  position: relative;
+  height: 8px;
+  margin-top: -4px;
+  cursor: row-resize;
+  border-radius: 2px;
+}
+
+.img-view-height-handle:hover {
+  background: var(--color-accent, #4fc3f7);
+  opacity: 0.5;
+}
+
+/* Drag-to-resize handle — right edge */
+.img-view-resize-handle {
+  position: absolute;
+  right: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  border-radius: 2px;
+}
+
+.img-view-resize-handle:hover {
+  background: var(--color-accent, #4fc3f7);
+  opacity: 0.5;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    FILTER BLOCK DISPLAY
    Live filter query view for filter:: blocks
    ═══════════════════════════════════════════════════════════════ */
