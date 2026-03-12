@@ -34,6 +34,9 @@ regex = "1"
 # Full-text search
 tantivy = "0.25"
 
+# Fuzzy matching (page name autocomplete)
+nucleo-matcher = "0.3.1"
+
 # Async runtime (for broadcast channel, timer, spawn)
 tokio = { version = "1", features = ["sync", "time", "rt"] }
 

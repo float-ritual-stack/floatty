@@ -3086,12 +3086,15 @@ async fn delete_block(
 /// Search query parameters
 #[derive(Deserialize)]
 pub struct PageSearchQuery {
-    /// Prefix to search for (e.g., "My Pa" to find "My Page")
+    /// Prefix/query to search for (e.g., "My Pa" to find "My Page")
     #[serde(default)]
     pub prefix: String,
     /// Maximum results to return (default: 10)
     #[serde(default = "default_limit")]
     pub limit: usize,
+    /// Use fuzzy matching instead of prefix matching (typo-tolerant, nucleo scorer)
+    #[serde(default)]
+    pub fuzzy: bool,
 }
 
 fn default_limit() -> usize {
@@ -3122,7 +3125,11 @@ async fn search_pages(
 ) -> Result<Json<PageSearchResponse>, ApiError> {
     let index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
 
-    let results = index.search(&query.prefix);
+    let results = if query.fuzzy {
+        index.fuzzy_search(&query.prefix)
+    } else {
+        index.search(&query.prefix)
+    };
 
     let pages: Vec<PageSearchResult> = results
         .into_iter()

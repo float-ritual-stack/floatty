@@ -19,6 +19,10 @@
 use crate::{
     events::BlockChange, hooks::BlockHook, BlockChangeBatch, Origin, YDocStore,
 };
+use nucleo_matcher::{
+    pattern::{AtomKind, CaseMatching, Normalization, Pattern},
+    Config, Matcher, Utf32Str,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tracing::{debug, instrument, trace};
@@ -114,6 +118,66 @@ impl PageNameIndex {
         // Combine: existing first, then stubs
         existing_matches.extend(stub_matches);
         existing_matches
+    }
+
+    /// Fuzzy search for pages matching a query (typo-tolerant).
+    ///
+    /// Uses nucleo-matcher (subsequence scoring, same algorithm as Helix/fzf).
+    /// Returns all pages that score above zero, sorted by score descending.
+    /// Existing pages beat stubs at equal scores.
+    ///
+    /// Empty query returns all pages in the same order as `search("")`.
+    pub fn fuzzy_search(&self, query: &str) -> Vec<PageSuggestion> {
+        if query.is_empty() {
+            return self.search("");
+        }
+
+        let pattern = Pattern::new(
+            query,
+            CaseMatching::Ignore,
+            Normalization::Smart,
+            AtomKind::Fuzzy,
+        );
+        let mut matcher = Matcher::new(Config::DEFAULT);
+
+        // Score existing pages
+        let mut scored: Vec<(u32, bool, String)> = self
+            .existing
+            .iter()
+            .filter_map(|name| {
+                let mut buf = Vec::new();
+                let haystack = Utf32Str::new(name.as_str(), &mut buf);
+                pattern.score(haystack, &mut matcher).map(|s| (s, true, name.clone()))
+            })
+            .collect();
+
+        // Score stubs (referenced but not existing)
+        let stub_scores: Vec<(u32, bool, String)> = self
+            .referenced
+            .keys()
+            .filter(|name| !self.existing.contains(*name))
+            .filter_map(|name| {
+                let mut buf = Vec::new();
+                let haystack = Utf32Str::new(name.as_str(), &mut buf);
+                pattern.score(haystack, &mut matcher).map(|s| (s, false, name.clone()))
+            })
+            .collect();
+
+        scored.extend(stub_scores);
+
+        // Sort: highest score first; at equal scores, existing before stubs
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+        scored
+            .into_iter()
+            .map(|(_, is_existing, name)| {
+                if is_existing {
+                    PageSuggestion::existing(name)
+                } else {
+                    PageSuggestion::stub(name)
+                }
+            })
+            .collect()
     }
 
     /// Check if a page exists (not a stub).
