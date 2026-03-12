@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -573,7 +573,7 @@ export function BlockItem(props: BlockItemProps) {
     const currentBlock = block();
     if (!contentRef || !currentBlock) return;
 
-    const origin = store.lastUpdateOrigin;
+    const origin = untrack(() => store.lastUpdateOrigin);
 
     // FLO-256: Authoritative origins bypass the hasLocalChanges guard
     // These origins represent state that MUST sync to DOM:
