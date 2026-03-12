@@ -96,10 +96,13 @@ export function Outliner(props: OutlinerProps) {
         const block = store.blocks[id];
         if (!block || block.childIds.length === 0) return;
 
-        // Only force-collapse blocks DEEPER than threshold
-        // Blocks at/above threshold keep their existing state
-        if (currentDepth > depth) {
+        // Force-collapse blocks AT and DEEPER than threshold.
+        // depth=1 collapses root blocks themselves (only 7 indicators visible).
+        // depth=2 collapses root children (roots visible, children collapsed).
+        // Matches collapseToDepth semantics: currentDepth >= depth.
+        if (currentDepth >= depth) {
           paneStore.setCollapsed(props.paneId, id, true);
+          return; // No need to recurse — children are hidden anyway
         }
 
         for (const childId of block.childIds) {
@@ -210,11 +213,13 @@ export function Outliner(props: OutlinerProps) {
     }
 
     if (zoomTarget && zoomTarget !== prevTarget) {
-      // FLO-281: Use ensureExpandedToDepth instead of expandToDepth
-      // This only expands blocks up to the depth threshold without
-      // force-collapsing deeper blocks that the user manually expanded.
-      const depth = cachedConfig()?.initial_collapse_depth ?? 2;
-      collapse.ensureExpandedToDepth(zoomTarget, depth);
+      // Ensure the zoom target itself is expanded so its children are visible.
+      // Do NOT touch children's collapse state — they retain whatever state they
+      // have from Y.Doc block.collapsed or prior user interactions.
+      //
+      // Large container performance (pages:: with 300+ children) is handled by
+      // the render limit in BlockItem (100 children rendered initially), not here.
+      paneStore.setCollapsed(props.paneId, zoomTarget, false);
     }
   }));
 
