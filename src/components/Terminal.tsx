@@ -754,6 +754,30 @@ export function Terminal() {
         console.log('[Keybind] key:', e.key, 'meta:', e.metaKey, 'ctrl:', e.ctrlKey, 'shift:', e.shiftKey, 'action:', action);
       }
 
+      // Cmd+L — link active terminal pane to an outliner pane.
+      // Handled here (before the action guard) because it's not in the keybind registry.
+      // Outliners handle their own Cmd+L guarded by activePaneId check — no double-fire.
+      {
+        const isCmdL = isMac()
+          ? (e.metaKey && !e.shiftKey && !e.altKey && e.key === 'l')
+          : (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'l');
+        if (isCmdL) {
+          const activeId = tabStore.activeTabId();
+          if (activeId) {
+            const activePaneId = getActivePaneId(activeId);
+            if (activePaneId) {
+              const leaf = getPaneLeaf(activeId, activePaneId);
+              if (leaf?.leafType === 'terminal') {
+                e.preventDefault();
+                e.stopPropagation();
+                paneLinkStore.startLinking(activePaneId);
+                return;
+              }
+            }
+          }
+        }
+      }
+
       if (!action) return;
       if (!isGlobalKeyAction(action)) return;
 
@@ -898,25 +922,6 @@ export function Terminal() {
         }
       }
 
-      // Cmd+L — link active terminal pane to an outliner pane.
-      // Mirrors Outliner.tsx FLO-223 R9 handler but fires when active pane is a terminal.
-      // Outliners handle their own Cmd+L (guarded by activePaneId check there), so no double-fire.
-      if (action === null && activeId) {
-        const isCmdL = isMac()
-          ? (e.metaKey && !e.shiftKey && e.key === 'l')
-          : (e.ctrlKey && !e.shiftKey && e.key === 'l');
-        if (isCmdL) {
-          const activePaneId = getActivePaneId(activeId);
-          if (activePaneId) {
-            const leaf = getPaneLeaf(activeId, activePaneId);
-            if (leaf?.leafType === 'terminal') {
-              e.preventDefault();
-              e.stopPropagation();
-              paneLinkStore.startLinking(activePaneId);
-            }
-          }
-        }
-      }
     };
 
     window.addEventListener('keydown', handleKeydown, true);
