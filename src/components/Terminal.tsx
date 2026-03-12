@@ -897,6 +897,26 @@ export function Terminal() {
           break;
         }
       }
+
+      // Cmd+L — link active terminal pane to an outliner pane.
+      // Mirrors Outliner.tsx FLO-223 R9 handler but fires when active pane is a terminal.
+      // Outliners handle their own Cmd+L (guarded by activePaneId check there), so no double-fire.
+      if (action === null && activeId) {
+        const isCmdL = isMac()
+          ? (e.metaKey && !e.shiftKey && e.key === 'l')
+          : (e.ctrlKey && !e.shiftKey && e.key === 'l');
+        if (isCmdL) {
+          const activePaneId = getActivePaneId(activeId);
+          if (activePaneId) {
+            const leaf = getPaneLeaf(activeId, activePaneId);
+            if (leaf?.leafType === 'terminal') {
+              e.preventDefault();
+              e.stopPropagation();
+              paneLinkStore.startLinking(activePaneId);
+            }
+          }
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeydown, true);
@@ -1257,11 +1277,13 @@ export function Terminal() {
           onCommand={(commandId) => {
             setCommandBarOpen(false);
 
-            // Link Pane — start pane link overlay for active outliner pane
+            // Link Pane — start pane link overlay for the currently active pane.
+            // Works from both terminal panes (→ picks outliner target) and outliner panes (→ picks outliner target).
             if (commandId === 'link-pane') {
-              const outlinerPaneId = resolvedOutlinerPaneId();
-              if (outlinerPaneId) {
-                paneLinkStore.startLinking(outlinerPaneId);
+              const activeId = tabStore.activeTabId();
+              if (activeId) {
+                const activePaneId = getActivePaneId(activeId);
+                if (activePaneId) paneLinkStore.startLinking(activePaneId);
               }
               return;
             }
@@ -1278,11 +1300,12 @@ export function Terminal() {
               return;
             }
 
-            // Unlink active outliner pane
+            // Unlink active pane (works for terminal and outliner source panes)
             if (commandId === 'unlink-pane') {
-              const outlinerPaneId = resolvedOutlinerPaneId();
-              if (outlinerPaneId) {
-                paneLinkStore.clearPaneLink(outlinerPaneId);
+              const activeId = tabStore.activeTabId();
+              if (activeId) {
+                const activePaneId = getActivePaneId(activeId);
+                if (activePaneId) paneLinkStore.clearPaneLink(activePaneId);
               }
               return;
             }
