@@ -330,7 +330,8 @@ class TerminalManager {
     //   [[page|alias]]         → navigate to page, alias is display-only
     term.registerLinkProvider({
       provideLinks(lineNumber: number, callback: (links: ILink[] | undefined) => void) {
-        const line = term.buffer.active.getLine(lineNumber);
+        // provideLinks receives 1-based y; getLine() takes 0-based
+        const line = term.buffer.active.getLine(lineNumber - 1);
         if (!line) { callback(undefined); return; }
 
         const text = line.translateToString(true);
@@ -340,8 +341,8 @@ class TerminalManager {
 
         while ((match = re.exec(text)) !== null) {
           const target = match[1].trim();   // block hash or page name
-          const startX = match.index + 1;  // 1-indexed
-          const endX = match.index + match[0].length; // inclusive end
+          const startX = match.index + 1;  // 0-based → 1-based inclusive
+          const endX = match.index + match[0].length; // 0-based exclusive = 1-based inclusive of last char
 
           links.push({
             range: {
