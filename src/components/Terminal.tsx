@@ -955,15 +955,15 @@ export function Terminal() {
     const activeId = tabStore.activeTabId();
     if (!activeId) return;
     const activePaneId = getActivePaneId(activeId);
-    // Forward: active pane links TO this target
+    // Forward: active pane links TO a target
     const forwardTarget = activePaneId ? paneLinkStore.getLinkedPaneForPane(activePaneId) : null;
-    // Reverse: some pane links TO the active pane (active is the target)
-    const reverseSource = activePaneId ? paneLinkStore.getSourcePaneFor(activePaneId) : null;
+    // Reverse: ALL panes that link TO the active pane (many→one supported)
+    const reverseSources = activePaneId ? paneLinkStore.getSourcePanesFor(activePaneId) : [];
 
     // Clear previous tint
     document.querySelectorAll('.pane-link-target').forEach(el => el.classList.remove('pane-link-target'));
 
-    const partnersToTint = [forwardTarget, reverseSource].filter(Boolean) as string[];
+    const partnersToTint = [forwardTarget, ...reverseSources].filter(Boolean) as string[];
     for (const paneId of partnersToTint) {
       if (paneId === activePaneId) continue; // Don't tint self
       const outlinerEl = document.querySelector(`.outliner-container[data-pane-id="${CSS.escape(paneId)}"]`);
