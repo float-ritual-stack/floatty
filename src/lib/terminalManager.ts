@@ -8,7 +8,7 @@
  * 4. SolidJS just renders containers; manager owns the terminals
  */
 
-import { Terminal as XTerm } from '@xterm/xterm';
+import { Terminal as XTerm, type ILink } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -321,6 +321,50 @@ class TerminalManager {
     } catch (e) {
       console.warn(`[TerminalManager] WebLinks addon failed for ${id}:`, e);
     }
+
+    // [[wikilinks]] and [[blockref|alias]] — clickable in terminal output.
+    // Routes to the linked outliner pane for this terminal (via paneLinkStore).
+    // Patterns:
+    //   [[page name]]          → navigate to page by name
+    //   [[973df4d9|alias]]     → navigate to block by short hash (alias is display-only)
+    //   [[page|alias]]         → navigate to page, alias is display-only
+    term.registerLinkProvider({
+      provideLinks(lineNumber: number, callback: (links: ILink[] | undefined) => void) {
+        const line = term.buffer.active.getLine(lineNumber);
+        if (!line) { callback(undefined); return; }
+
+        const text = line.translateToString(true);
+        const links: ILink[] = [];
+        const re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+        let match: RegExpExecArray | null;
+
+        while ((match = re.exec(text)) !== null) {
+          const target = match[1].trim();   // block hash or page name
+          const startX = match.index + 1;  // 1-indexed
+          const endX = match.index + match[0].length; // inclusive end
+
+          links.push({
+            range: {
+              start: { x: startX, y: lineNumber },
+              end:   { x: endX,   y: lineNumber },
+            },
+            text: target,
+            decorations: { underline: true, pointerCursor: true },
+            activate(_event: MouseEvent) {
+              // Lazy import to avoid circular deps — navigation imports blockStore etc.
+              import('./navigation').then(({ handleChirpNavigate }) => {
+                handleChirpNavigate(target, {
+                  sourcePaneId: id,
+                  type: 'wikilink',
+                });
+              }).catch(console.error);
+            },
+          });
+        }
+
+        callback(links.length > 0 ? links : undefined);
+      },
+    });
 
     fitAddon.fit();
 
