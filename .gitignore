@@ -43,3 +43,8 @@ src-tauri/binaries/
 
 # btca cache (cloned repos for context queries)
 .btca/
+__pycache__/
+
+# Rendered video output (build artifacts from float_av compositions)
+*.mp4
+*.ydoc
