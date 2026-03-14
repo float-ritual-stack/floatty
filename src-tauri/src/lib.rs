@@ -378,7 +378,8 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build());
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_deep_link::init());
 
     // macOS-only: NSPanel floating window support
     #[cfg(target_os = "macos")]
@@ -556,6 +557,30 @@ pub fn run() {
                     doors_path,
                     app.handle().clone(),
                 );
+
+                // Deep link handler: floatty://<action>/<target>?pane=<uuid>
+                //
+                // URLs are forwarded to the frontend as a "deep-link" event.
+                // The frontend resolves the target pane using the pane link store:
+                //   ?pane=<uuid>  → resolveLink(pane) → linked outliner (if any)
+                //   (no pane)     → active tab's active/last-focused outliner
+                //   (no outliner) → open in new tab
+                //
+                // Supported actions:
+                //   floatty://navigate/<page-name>           navigate to page
+                //   floatty://navigate/<page-name>?pane=<id> navigate in linked pane
+                {
+                    use tauri_plugin_deep_link::DeepLinkExt;
+                    let app_handle_dl = app.handle().clone();
+                    app.deep_link().on_open_url(move |event| {
+                        for url in event.urls() {
+                            tracing::info!(url = %url, "Deep link received");
+                            if let Err(e) = app_handle_dl.emit("deep-link", url.to_string()) {
+                                tracing::warn!(error = %e, "Failed to emit deep-link event");
+                            }
+                        }
+                    });
+                }
 
                 Ok(())
             }

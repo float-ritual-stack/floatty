@@ -99,6 +99,15 @@ function createPaneLinkStore() {
     return null;
   }
 
+  /** All source panes that link TO this target (supports many→one) */
+  function getSourcePanesFor(targetPaneId: string): string[] {
+    const sources: string[] = [];
+    for (const [source, target] of paneLinks()) {
+      if (target === targetPaneId) sources.push(source);
+    }
+    return sources;
+  }
+
   function clearAllLinks(): void {
     setPaneLinks(new Map());
     setBlockLinks(new Map());
@@ -181,6 +190,7 @@ function createPaneLinkStore() {
     hasPaneLink,
     clearAllLinks,
     getSourcePaneFor,
+    getSourcePanesFor,
     // Resolution
     resolveLink,
     // Overlay

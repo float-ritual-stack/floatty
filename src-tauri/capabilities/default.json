@@ -32,13 +32,17 @@
       "allow": [
         { "path": "$HOME/.floatty/**/*" },
         { "path": "$HOME/.floatty-dev/**/*" },
+        { "path": "$HOME/.rotfield/**/*" },
         { "path": "$HOME/float-hub/**/*" },
         { "path": "$HOME/float-hub-operations/**/*" },
         { "path": "$HOME/projects/**/*" },
+        { "path": "$HOME/Desktop/**/*" },
+        { "path": "$HOME/Documents/**/*" },
         { "path": "/opt/float/**/*" }
       ]
     },
     "mcp-bridge:default",
-    "window-state:default"
+    "window-state:default",
+    "deep-link:default"
   ]
 }

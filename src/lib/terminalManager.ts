@@ -8,7 +8,7 @@
  * 4. SolidJS just renders containers; manager owns the terminals
  */
 
-import { Terminal as XTerm } from '@xterm/xterm';
+import { Terminal as XTerm, type ILink } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -322,6 +322,51 @@ class TerminalManager {
       console.warn(`[TerminalManager] WebLinks addon failed for ${id}:`, e);
     }
 
+    // [[wikilinks]] and [[blockref|alias]] — clickable in terminal output.
+    // Routes to the linked outliner pane for this terminal (via paneLinkStore).
+    // Patterns:
+    //   [[page name]]          → navigate to page by name
+    //   [[973df4d9|alias]]     → navigate to block by short hash (alias is display-only)
+    //   [[page|alias]]         → navigate to page, alias is display-only
+    term.registerLinkProvider({
+      provideLinks(lineNumber: number, callback: (links: ILink[] | undefined) => void) {
+        // provideLinks receives 1-based y; getLine() takes 0-based
+        const line = term.buffer.active.getLine(lineNumber - 1);
+        if (!line) { callback(undefined); return; }
+
+        const text = line.translateToString(true);
+        const links: ILink[] = [];
+        const re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+        let match: RegExpExecArray | null;
+
+        while ((match = re.exec(text)) !== null) {
+          const target = match[1].trim();   // block hash or page name
+          const startX = match.index + 1;  // 0-based → 1-based inclusive
+          const endX = match.index + match[0].length; // 0-based exclusive = 1-based inclusive of last char
+
+          links.push({
+            range: {
+              start: { x: startX, y: lineNumber },
+              end:   { x: endX,   y: lineNumber },
+            },
+            text: target,
+            decorations: { underline: true, pointerCursor: true },
+            activate(_event: MouseEvent) {
+              // Lazy import to avoid circular deps — navigation imports blockStore etc.
+              import('./navigation').then(({ handleChirpNavigate }) => {
+                handleChirpNavigate(target, {
+                  sourcePaneId: id,
+                  type: 'wikilink',
+                });
+              }).catch(console.error);
+            },
+          });
+        }
+
+        callback(links.length > 0 ? links : undefined);
+      },
+    });
+
     fitAddon.fit();
 
     instance = {
@@ -593,6 +638,11 @@ class TerminalManager {
             TERM: 'xterm-256color',
             COLORTERM: 'truecolor',
             FLOATTY_HOOKS_ACTIVE: '',  // Clear to allow fresh hook registration
+            // Pane identity — read by pi extension for floatty://navigate?pane=<id> routing
+            FLOATTY_PANE_ID: id,
+            // Server URL + key so pi extension can call floatty API without config.toml lookup
+            ...(window.__FLOATTY_SERVER_URL__ ? { FLOATTY_URL: window.__FLOATTY_SERVER_URL__ } : {}),
+            ...(window.__FLOATTY_API_KEY__ ? { FLOATTY_API_KEY: window.__FLOATTY_API_KEY__ } : {}),
           },
           onData,
           onExit,

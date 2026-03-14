@@ -754,6 +754,30 @@ export function Terminal() {
         console.log('[Keybind] key:', e.key, 'meta:', e.metaKey, 'ctrl:', e.ctrlKey, 'shift:', e.shiftKey, 'action:', action);
       }
 
+      // Cmd+L — link active terminal pane to an outliner pane.
+      // Handled here (before the action guard) because it's not in the keybind registry.
+      // Outliners handle their own Cmd+L guarded by activePaneId check — no double-fire.
+      {
+        const isCmdL = isMac
+          ? (e.metaKey && !e.shiftKey && !e.altKey && e.key === 'l')
+          : (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'l');
+        if (isCmdL) {
+          const activeId = tabStore.activeTabId();
+          if (activeId) {
+            const activePaneId = getActivePaneId(activeId);
+            if (activePaneId) {
+              const leaf = getPaneLeaf(activeId, activePaneId);
+              if (leaf?.leafType === 'terminal') {
+                e.preventDefault();
+                e.stopPropagation();
+                paneLinkStore.startLinking(activePaneId);
+                return;
+              }
+            }
+          }
+        }
+      }
+
       if (!action) return;
       if (!isGlobalKeyAction(action)) return;
 
@@ -897,6 +921,7 @@ export function Terminal() {
           break;
         }
       }
+
     };
 
     window.addEventListener('keydown', handleKeydown, true);
@@ -930,15 +955,15 @@ export function Terminal() {
     const activeId = tabStore.activeTabId();
     if (!activeId) return;
     const activePaneId = getActivePaneId(activeId);
-    // Forward: active pane links TO this target
+    // Forward: active pane links TO a target
     const forwardTarget = activePaneId ? paneLinkStore.getLinkedPaneForPane(activePaneId) : null;
-    // Reverse: some pane links TO the active pane (active is the target)
-    const reverseSource = activePaneId ? paneLinkStore.getSourcePaneFor(activePaneId) : null;
+    // Reverse: ALL panes that link TO the active pane (many→one supported)
+    const reverseSources = activePaneId ? paneLinkStore.getSourcePanesFor(activePaneId) : [];
 
     // Clear previous tint
     document.querySelectorAll('.pane-link-target').forEach(el => el.classList.remove('pane-link-target'));
 
-    const partnersToTint = [forwardTarget, reverseSource].filter(Boolean) as string[];
+    const partnersToTint = [forwardTarget, ...reverseSources].filter(Boolean) as string[];
     for (const paneId of partnersToTint) {
       if (paneId === activePaneId) continue; // Don't tint self
       const outlinerEl = document.querySelector(`.outliner-container[data-pane-id="${CSS.escape(paneId)}"]`);
@@ -1257,11 +1282,13 @@ export function Terminal() {
           onCommand={(commandId) => {
             setCommandBarOpen(false);
 
-            // Link Pane — start pane link overlay for active outliner pane
+            // Link Pane — start pane link overlay for the currently active pane.
+            // Works from both terminal panes (→ picks outliner target) and outliner panes (→ picks outliner target).
             if (commandId === 'link-pane') {
-              const outlinerPaneId = resolvedOutlinerPaneId();
-              if (outlinerPaneId) {
-                paneLinkStore.startLinking(outlinerPaneId);
+              const activeId = tabStore.activeTabId();
+              if (activeId) {
+                const activePaneId = getActivePaneId(activeId);
+                if (activePaneId) paneLinkStore.startLinking(activePaneId);
               }
               return;
             }
@@ -1278,11 +1305,12 @@ export function Terminal() {
               return;
             }
 
-            // Unlink active outliner pane
+            // Unlink active pane (works for terminal and outliner source panes)
             if (commandId === 'unlink-pane') {
-              const outlinerPaneId = resolvedOutlinerPaneId();
-              if (outlinerPaneId) {
-                paneLinkStore.clearPaneLink(outlinerPaneId);
+              const activeId = tabStore.activeTabId();
+              if (activeId) {
+                const activePaneId = getActivePaneId(activeId);
+                if (activePaneId) paneLinkStore.clearPaneLink(activePaneId);
               }
               return;
             }

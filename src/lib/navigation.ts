@@ -6,6 +6,7 @@
  */
 
 import { paneStore } from '../hooks/usePaneStore';
+import { tabStore } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { findTabIdByPaneId, navigateToPage as navigateToPageImpl } from '../hooks/useBacklinkNavigation';
 import { blockStore } from '../hooks/useBlockStore';
@@ -440,9 +441,11 @@ export function resolveTargetPane(sourcePaneId: string, blockId?: string): strin
 
 /**
  * Find an outliner pane to navigate, preferring the active pane.
+ * When excludePaneId is empty/unknown, searches the active tab.
  */
 function findFallbackOutlinerPane(excludePaneId: string): string | null {
-  const tabId = findTabIdByPaneId(excludePaneId);
+  // Try to find the tab by pane ID; fall back to active tab for no-hint case
+  const tabId = findTabIdByPaneId(excludePaneId) ?? tabStore.activeTabId() ?? null;
   if (!tabId) return null;
   const layout = layoutStore.layouts[tabId];
   if (!layout) return null;

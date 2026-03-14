@@ -28,7 +28,7 @@ vergen-gix = { version = "1", features = ["build", "cargo", "rustc"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"  # Keep for compatibility during migration
-tauri = { version = "2", features = [] }
+tauri = { version = "2.10", features = [] }
 tauri-plugin-pty = { path = "plugins/tauri-plugin-pty" }
 tauri-plugin-os = "2"
 floatty-core = { path = "floatty-core" }
@@ -65,6 +65,7 @@ arboard = "3"  # Direct clipboard access for batched IPC
 # TypeScript bindings generation (for ts-gen binary)
 ts-rs = "10"
 tauri-plugin-window-state = "2.4.1"
+tauri-plugin-deep-link = "2"
 
 [dev-dependencies]
 tempfile = "3"

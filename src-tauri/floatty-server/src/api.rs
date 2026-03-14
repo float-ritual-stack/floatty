@@ -559,7 +559,9 @@ pub fn create_router(
         .route("/api/v1/backup/restore", post(backup_restore))
         .route("/api/v1/backup/config", get(backup_config))
         // Presence (spike for TUI follower)
-        .route("/api/v1/presence", post(post_presence))
+        .route("/api/v1/presence", get(get_presence).post(post_presence))
+        // Attachments — static file serving from {data_dir}/__attachments/
+        .route("/api/v1/attachments/:filename", get(get_attachment))
         .with_state(state)
 }
 
@@ -930,6 +932,46 @@ async fn export_binary(State(state): State<AppState>) -> Result<impl IntoRespons
             (header::CONTENT_DISPOSITION, header::HeaderValue::from_str(&content_disposition).unwrap()),
         ],
         full_state,
+    ))
+}
+
+/// GET /api/v1/attachments/:filename - Serve a file from {data_dir}/__attachments/
+///
+/// Single-user loopback endpoint. Auth is handled by the global Bearer middleware.
+/// Path traversal is prevented by rejecting filenames with `/`, `\`, or `..`.
+/// The directory is created on first request if it doesn't exist.
+async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoResponse, ApiError> {
+    // Reject path traversal attempts
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(ApiError::InvalidRequest("Invalid filename".to_string()));
+    }
+
+    let attachments_dir = crate::config::data_dir().join("__attachments");
+    // Create dir lazily so the endpoint works even before any files are placed there
+    let _ = tokio::fs::create_dir_all(&attachments_dir).await;
+
+    let file_path = attachments_dir.join(&filename);
+    let bytes = tokio::fs::read(&file_path).await
+        .map_err(|_| ApiError::NotFound(format!("Attachment not found: {}", filename)))?;
+
+    // Infer content type from extension
+    let content_type: &'static str = match file_path.extension().and_then(|e| e.to_str()) {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("pdf") => "application/pdf",
+        Some("html") | Some("htm") => "text/html",
+        _ => "application/octet-stream",
+    };
+
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, header::HeaderValue::from_static(content_type))],
+        bytes,
     ))
 }
 
@@ -1617,8 +1659,18 @@ async fn get_page_content(
 }
 
 /// Strip heading prefix (# ## ### etc) from content.
+///
+/// Mirrors `PageNameIndexHook::strip_heading_prefix` in floatty-core:
+/// - Takes first line only (multi-line pages embed markers on subsequent lines)
+/// - Strips leading '#' characters and surrounding whitespace
+///
+/// Examples:
+///   "# My Page"                    → "My Page"
+///   "# Summary\n[board:: recon]"   → "Summary"
+///   "No prefix"                    → "No prefix"
 fn strip_heading_prefix(content: &str) -> &str {
-    content.trim_start_matches('#').trim_start()
+    let first_line = content.lines().next().unwrap_or(content);
+    first_line.trim_start_matches('#').trim()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3086,12 +3138,15 @@ async fn delete_block(
 /// Search query parameters
 #[derive(Deserialize)]
 pub struct PageSearchQuery {
-    /// Prefix to search for (e.g., "My Pa" to find "My Page")
+    /// Prefix/query to search for (e.g., "My Pa" to find "My Page")
     #[serde(default)]
     pub prefix: String,
     /// Maximum results to return (default: 10)
     #[serde(default = "default_limit")]
     pub limit: usize,
+    /// Use fuzzy matching instead of prefix matching (typo-tolerant, nucleo scorer)
+    #[serde(default)]
+    pub fuzzy: bool,
 }
 
 fn default_limit() -> usize {
@@ -3104,6 +3159,8 @@ fn default_limit() -> usize {
 pub struct PageSearchResult {
     pub name: String,
     pub is_stub: bool,
+    /// Block ID of the page block. `None` for stubs (referenced but not yet created).
+    pub block_id: Option<String>,
 }
 
 /// Page search response
@@ -3122,7 +3179,11 @@ async fn search_pages(
 ) -> Result<Json<PageSearchResponse>, ApiError> {
     let index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
 
-    let results = index.search(&query.prefix);
+    let results = if query.fuzzy {
+        index.fuzzy_search(&query.prefix)
+    } else {
+        index.search(&query.prefix)
+    };
 
     let pages: Vec<PageSearchResult> = results
         .into_iter()
@@ -3130,6 +3191,7 @@ async fn search_pages(
         .map(|s| PageSearchResult {
             name: s.name,
             is_stub: s.is_stub,
+            block_id: s.block_id,
         })
         .collect();
 
@@ -3564,6 +3626,35 @@ async fn backup_config(State(state): State<AppState>) -> Result<Json<BackupConfi
 struct PresenceRequest {
     block_id: String,
     pane_id: Option<String>,
+}
+
+/// GET /api/v1/presence — returns the last focused block, or 204 if none yet / block deleted
+async fn get_presence(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let Some(info) = state.broadcaster.get_last_presence() else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
+
+    // Validate block still exists — cached presence can outlive deleted blocks
+    let doc = state.store.doc();
+    let Ok(doc_guard) = doc.read() else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let txn = doc_guard.transact();
+    let block_exists = txn
+        .get_map("blocks")
+        .and_then(|m| m.get(&txn, &info.block_id))
+        .is_some();
+
+    if !block_exists {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+
+    Json(serde_json::json!({
+        "blockId": info.block_id,
+        "paneId": info.pane_id,
+    })).into_response()
 }
 
 async fn post_presence(
