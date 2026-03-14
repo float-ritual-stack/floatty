@@ -6,6 +6,34 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.0] - 2026-03-13
+
+### Features
+
+- **Fuzzy page search** (PR #170): `GET /api/v1/pages/search?fuzzy=true` — typo-tolerant page name matching via nucleo-matcher. Existing pages beat stubs at tie scores; deterministic name tie-breaker. Page search now returns `blockId` for existing pages.
+- **Presence API** (PR #170): `POST /api/v1/presence` persists last focused block; `GET /api/v1/presence` returns `{ blockId, paneId }` or 204. Validates block still exists before returning.
+- **Deep links** (PR #170): `floatty://navigate/<page>?pane=<uuid>` routes to linked outliner pane or active tab fallback.
+- **`[[wikilinks]]` clickable in xterm** (PR #170): Custom link provider matches `[[page]]` and `[[hash|alias]]` in terminal output. Click navigates to linked outliner pane.
+- **Terminal → outliner pane linking** (PR #170): `Cmd+L` from terminal opens letter overlay. Many→one: multiple terminals can link to same outliner.
+- **PTY env injection** (PR #170): `FLOATTY_PANE_ID`, `FLOATTY_URL`, `FLOATTY_API_KEY` injected into every spawned PTY for agent/extension integration.
+- **`img::` inline media viewer**: Auth-fetched blob URLs render images, PDFs, and HTML files inline. Full-bleed CSS via `--block-depth`, right-edge resize for images, bottom-edge resize for PDFs. Extension-gated auto-execute prevents 404 mid-type.
+- **Expanded `artifact::` read scope**: `~/.rotfield`, `~/Desktop`, `~/Documents` added to Tauri fs capabilities.
+
+### Performance
+
+- **Eliminate O(N) effect cascade** (FLO-452): Untrack `lastUpdateOrigin` from SolidJS store — was triggering full block tree re-render on every keystroke.
+
+### Bug Fixes
+
+- **`resolveTargetPane` fallback**: Returns active tab's outliner when no pane hint provided.
+- **Wikilink off-by-one**: `getLine()` 0-based vs `provideLinks(y)` 1-based — underline was on wrong line.
+- **`isMac` is boolean not function**: Was throwing TypeError on every keydown.
+- **`Cmd+L` dead code**: Handler was after early-return guard; moved before it.
+- **`strip_heading_prefix` symmetry**: Core and server now both take first line only, mirroring frontend.
+- **Tauri bumped to 2.10** to match `@tauri-apps/api` 2.10.1.
+
+---
+
 ## [0.8.5] - 2026-03-12
 
 ### Features
