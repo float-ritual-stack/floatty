@@ -543,6 +543,10 @@ html, body, #root {
   cursor: pointer;
 }
 
+body.block-dragging .pane-inactive-overlay {
+  pointer-events: none;
+}
+
 .pane-drag-handle {
   position: absolute;
   top: 6px;
