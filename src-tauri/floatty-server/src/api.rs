@@ -3159,6 +3159,8 @@ fn default_limit() -> usize {
 pub struct PageSearchResult {
     pub name: String,
     pub is_stub: bool,
+    /// Block ID of the page block. `None` for stubs (referenced but not yet created).
+    pub block_id: Option<String>,
 }
 
 /// Page search response
@@ -3189,6 +3191,7 @@ async fn search_pages(
         .map(|s| PageSearchResult {
             name: s.name,
             is_stub: s.is_stub,
+            block_id: s.block_id,
         })
         .collect();
 

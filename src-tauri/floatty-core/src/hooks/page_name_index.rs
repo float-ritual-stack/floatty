@@ -36,13 +36,16 @@ pub struct PageSuggestion {
     pub name: String,
     /// True if this page is referenced but doesn't exist yet
     pub is_stub: bool,
+    /// Block ID of the page block (None for stubs — they don't exist yet)
+    pub block_id: Option<String>,
 }
 
 impl PageSuggestion {
-    pub fn existing(name: impl Into<String>) -> Self {
+    pub fn existing(name: impl Into<String>, block_id: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             is_stub: false,
+            block_id: Some(block_id.into()),
         }
     }
 
@@ -50,6 +53,7 @@ impl PageSuggestion {
         Self {
             name: name.into(),
             is_stub: true,
+            block_id: None,
         }
     }
 }
@@ -63,9 +67,9 @@ impl PageSuggestion {
 ///
 /// Uses RwLock for concurrent read access during autocomplete.
 pub struct PageNameIndex {
-    /// Names of blocks that are direct children of `pages::`.
-    /// Normalized (lowercase, heading prefix stripped).
-    existing: HashSet<String>,
+    /// Existing pages: normalized name → block ID.
+    /// Blocks that are direct children of `pages::` container.
+    existing: HashMap<String, String>,
 
     /// Names referenced via `[[wikilink]]` across all blocks.
     /// Maps normalized name → set of block IDs that reference it.
@@ -82,7 +86,7 @@ pub struct PageNameIndex {
 impl PageNameIndex {
     pub fn new() -> Self {
         Self {
-            existing: HashSet::new(),
+            existing: HashMap::new(),
             referenced: HashMap::new(),
             pages_container_id: None,
             matcher: std::sync::Mutex::new(Matcher::new(Config::DEFAULT)),
@@ -103,15 +107,15 @@ impl PageNameIndex {
         let mut existing_matches: Vec<_> = self
             .existing
             .iter()
-            .filter(|name| name.starts_with(&normalized_prefix))
-            .map(|name| PageSuggestion::existing(name.clone()))
+            .filter(|(name, _block_id)| name.starts_with(&normalized_prefix))
+            .map(|(name, block_id)| PageSuggestion::existing(name.clone(), block_id.clone()))
             .collect();
 
         let mut stub_matches: Vec<_> = self
             .referenced
             .keys()
             .filter(|name| {
-                name.starts_with(&normalized_prefix) && !self.existing.contains(*name)
+                name.starts_with(&normalized_prefix) && !self.existing.contains_key(*name)
             })
             .map(|name| PageSuggestion::stub(name.clone()))
             .collect();
@@ -148,7 +152,7 @@ impl PageNameIndex {
         // Score existing pages
         let mut scored: Vec<(u32, bool, String)> = self
             .existing
-            .iter()
+            .keys()
             .filter_map(|name| {
                 let mut buf = Vec::new();
                 let haystack = Utf32Str::new(name.as_str(), &mut buf);
@@ -160,7 +164,7 @@ impl PageNameIndex {
         let stub_scores: Vec<(u32, bool, String)> = self
             .referenced
             .keys()
-            .filter(|name| !self.existing.contains(*name))
+            .filter(|name| !self.existing.contains_key(*name))
             .filter_map(|name| {
                 let mut buf = Vec::new();
                 let haystack = Utf32Str::new(name.as_str(), &mut buf);
@@ -177,7 +181,8 @@ impl PageNameIndex {
             .into_iter()
             .map(|(_, is_existing, name)| {
                 if is_existing {
-                    PageSuggestion::existing(name)
+                    let block_id = self.existing.get(&name).cloned().unwrap_or_default();
+                    PageSuggestion::existing(name, block_id)
                 } else {
                     PageSuggestion::stub(name)
                 }
@@ -187,19 +192,19 @@ impl PageNameIndex {
 
     /// Check if a page exists (not a stub).
     pub fn page_exists(&self, name: &str) -> bool {
-        self.existing.contains(&name.to_lowercase())
+        self.existing.contains_key(&name.to_lowercase())
     }
 
     /// Get all existing page names.
     pub fn existing_pages(&self) -> Vec<String> {
-        self.existing.iter().cloned().collect()
+        self.existing.keys().cloned().collect()
     }
 
     /// Get all stub (referenced but not existing) page names.
     pub fn stub_pages(&self) -> Vec<String> {
         self.referenced
             .keys()
-            .filter(|name| !self.existing.contains(*name))
+            .filter(|name| !self.existing.contains_key(*name))
             .cloned()
             .collect()
     }
@@ -228,17 +233,19 @@ impl PageNameIndex {
     /// Add an existing page to the index.
     ///
     /// `name` should be the page title with heading prefix stripped.
-    pub fn add_existing_page(&mut self, name: &str) {
+    /// `block_id` is the Y.Doc block ID of the page block.
+    pub fn add_existing_page(&mut self, name: &str, block_id: &str) {
         let normalized = name.to_lowercase();
-        if self.existing.insert(normalized.clone()) {
-            trace!("Added existing page: {}", name);
+        let prev = self.existing.insert(normalized.clone(), block_id.to_string());
+        if prev.is_none() {
+            trace!("Added existing page: {} ({})", name, block_id);
         }
     }
 
     /// Remove an existing page from the index.
     pub fn remove_existing_page(&mut self, name: &str) {
         let normalized = name.to_lowercase();
-        if self.existing.remove(&normalized) {
+        if self.existing.remove(&normalized).is_some() {
             trace!("Removed existing page: {}", name);
         }
     }
@@ -376,7 +383,7 @@ impl PageNameIndexHook {
             if parent_id == Some(container_id) {
                 let page_name = Self::strip_heading_prefix(content);
                 if !page_name.is_empty() {
-                    index.add_existing_page(page_name);
+                    index.add_existing_page(page_name, id);
                 }
             }
         }
@@ -420,7 +427,7 @@ impl PageNameIndexHook {
                     // Add new page name
                     let new_name = Self::strip_heading_prefix(new_content);
                     if !new_name.is_empty() {
-                        index.add_existing_page(new_name);
+                        index.add_existing_page(new_name, id);
                     }
                 }
             }
@@ -483,7 +490,7 @@ impl PageNameIndexHook {
         // Check if moved into pages::
         if let Some(ref cid) = container_id {
             if new_parent_id == Some(cid.as_str()) && old_parent_id != Some(cid.as_str()) {
-                index.add_existing_page(page_name);
+                index.add_existing_page(page_name, id);
             }
         }
     }
@@ -539,7 +546,7 @@ mod tests {
     #[test]
     fn test_add_existing_page() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("My Page");
+        index.add_existing_page("My Page", "page-1");
 
         assert!(index.page_exists("My Page"));
         assert!(index.page_exists("my page")); // Case-insensitive
@@ -549,7 +556,7 @@ mod tests {
     #[test]
     fn test_remove_existing_page() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("My Page");
+        index.add_existing_page("My Page", "page-1");
         index.remove_existing_page("my page"); // Case-insensitive
 
         assert!(!index.page_exists("My Page"));
@@ -584,21 +591,21 @@ mod tests {
     #[test]
     fn test_search_existing_first() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("Alpha");
-        index.add_existing_page("Bravo");
+        index.add_existing_page("Alpha", "alpha-id");
+        index.add_existing_page("Bravo", "bravo-id");
         index.add_references("b1", &["Able".to_string()]); // Stub
 
         let results = index.search("a");
 
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0], PageSuggestion::existing("alpha"));
+        assert_eq!(results[0], PageSuggestion::existing("alpha", "alpha-id"));
         assert_eq!(results[1], PageSuggestion::stub("able"));
     }
 
     #[test]
     fn test_search_case_insensitive() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("MyPage");
+        index.add_existing_page("MyPage", "mypage-id");
 
         assert_eq!(index.search("my").len(), 1);
         assert_eq!(index.search("MY").len(), 1);
@@ -608,9 +615,9 @@ mod tests {
     #[test]
     fn test_search_prefix_match() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("JavaScript");
-        index.add_existing_page("Java");
-        index.add_existing_page("Python");
+        index.add_existing_page("JavaScript", "js-id");
+        index.add_existing_page("Java", "java-id");
+        index.add_existing_page("Python", "python-id");
 
         let results = index.search("jav");
         assert_eq!(results.len(), 2);
@@ -621,7 +628,7 @@ mod tests {
     #[test]
     fn test_stub_pages_excludes_existing() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("Real Page");
+        index.add_existing_page("Real Page", "real-page-id");
         index.add_references("b1", &["Real Page".to_string(), "Ghost Page".to_string()]);
 
         let stubs = index.stub_pages();
@@ -632,7 +639,7 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("Page");
+        index.add_existing_page("Page", "page-id");
         index.add_references("b1", &["Ref".to_string()]);
         index.set_pages_container_id(Some("container".to_string()));
 
