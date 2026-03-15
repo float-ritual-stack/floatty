@@ -552,6 +552,10 @@ pub fn create_router(
         .route("/api/v1/search", get(search_blocks))
         .route("/api/v1/search/clear", post(clear_search_index))
         .route("/api/v1/search/reindex", post(reindex_search))
+        // Vocabulary discovery endpoints
+        .route("/api/v1/markers", get(list_marker_types))
+        .route("/api/v1/markers/:marker_type/values", get(list_marker_values))
+        .route("/api/v1/stats", get(get_block_stats))
         // Backup endpoints
         .route("/api/v1/backup/status", get(backup_status))
         .route("/api/v1/backup/list", get(backup_list))
@@ -3516,6 +3520,62 @@ pub struct BackupConfigResponse {
     pub retain_weekly: u32,
     pub backup_dir: String,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VOCABULARY DISCOVERY
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// GET /api/v1/markers - List distinct marker types with counts
+///
+/// Returns all marker types found across blocks with their occurrence counts.
+/// Sorted by count descending.
+async fn list_marker_types(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let types = state.store.enumerate_marker_types();
+    let items: Vec<serde_json::Value> = types
+        .into_iter()
+        .map(|(marker_type, count)| {
+            serde_json::json!({ "type": marker_type, "count": count })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "markers": items, "total": items.len() })))
+}
+
+/// GET /api/v1/markers/:marker_type/values - List values for a marker type
+///
+/// Returns distinct values for a specific marker type with counts.
+/// E.g., `/api/v1/markers/project/values` returns `[{value: "floatty", count: 350}, ...]`
+async fn list_marker_values(
+    State(state): State<AppState>,
+    axum::extract::Path(marker_type): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let values = state.store.enumerate_marker_values(&marker_type);
+    let items: Vec<serde_json::Value> = values
+        .into_iter()
+        .map(|(value, count)| {
+            serde_json::json!({ "value": value, "count": count })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "markerType": marker_type,
+        "values": items,
+        "total": items.len()
+    })))
+}
+
+/// GET /api/v1/stats - Block statistics
+///
+/// Returns total block count, root count, type distribution, and metadata coverage.
+async fn get_block_stats(
+    State(state): State<AppState>,
+) -> Result<Json<floatty_core::store::BlockStats>, ApiError> {
+    Ok(Json(state.store.get_stats()))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BACKUP
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Format SystemTime as ISO 8601 string (UTC)
 fn format_system_time(t: SystemTime) -> String {

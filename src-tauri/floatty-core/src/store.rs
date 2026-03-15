@@ -1056,6 +1056,151 @@ impl YDocStore {
 
         Ok(())
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ENUMERATION / VOCABULARY DISCOVERY
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Get distinct marker types with counts across all blocks.
+    ///
+    /// Returns a sorted vec of (marker_type, count) pairs.
+    /// Scans all blocks' metadata — O(n) where n = total blocks.
+    pub fn enumerate_marker_types(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+        let doc = match self.doc.read() {
+            Ok(d) => d,
+            Err(_) => return Vec::new(),
+        };
+        let txn = doc.transact();
+        let Some(blocks_map) = txn.get_map("blocks") else {
+            return Vec::new();
+        };
+
+        for (_key, value) in blocks_map.iter(&txn) {
+            if let yrs::Out::YMap(block_map) = value {
+                if let Some(metadata_val) = block_map.get(&txn, "metadata") {
+                    if let Some(meta) = parse_metadata_from_out(metadata_val, &txn) {
+                        for marker in &meta.markers {
+                            *counts.entry(marker.marker_type.clone()).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<_> = counts.into_iter().collect();
+        result.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        result
+    }
+
+    /// Get distinct values for a specific marker type.
+    ///
+    /// Returns a sorted vec of (value, count) pairs.
+    /// Only includes markers with non-None values.
+    pub fn enumerate_marker_values(&self, marker_type: &str) -> Vec<(String, usize)> {
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+        let doc = match self.doc.read() {
+            Ok(d) => d,
+            Err(_) => return Vec::new(),
+        };
+        let txn = doc.transact();
+        let Some(blocks_map) = txn.get_map("blocks") else {
+            return Vec::new();
+        };
+
+        for (_key, value) in blocks_map.iter(&txn) {
+            if let yrs::Out::YMap(block_map) = value {
+                if let Some(metadata_val) = block_map.get(&txn, "metadata") {
+                    if let Some(meta) = parse_metadata_from_out(metadata_val, &txn) {
+                        for marker in &meta.markers {
+                            if marker.marker_type == marker_type {
+                                if let Some(ref v) = marker.value {
+                                    *counts.entry(v.clone()).or_default() += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<_> = counts.into_iter().collect();
+        result.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        result
+    }
+
+    /// Get block statistics: total count, root count, block type distribution.
+    pub fn get_stats(&self) -> BlockStats {
+        use crate::block::parse_block_type;
+
+        let doc = match self.doc.read() {
+            Ok(d) => d,
+            Err(_) => return BlockStats::default(),
+        };
+        let txn = doc.transact();
+
+        let blocks_map = match txn.get_map("blocks") {
+            Some(m) => m,
+            None => return BlockStats::default(),
+        };
+        let root_ids = txn.get_array("rootIds");
+
+        let total = blocks_map.len(&txn);
+        let root_count = root_ids.map(|r| r.len(&txn)).unwrap_or(0);
+
+        let mut type_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut with_markers = 0usize;
+        let mut with_outlinks = 0usize;
+
+        for (_key, value) in blocks_map.iter(&txn) {
+            if let yrs::Out::YMap(block_map) = value {
+                // Block type from content
+                if let Some(yrs::Out::Any(yrs::Any::String(content))) =
+                    block_map.get(&txn, "content")
+                {
+                    let bt = parse_block_type(&content).as_str().to_string();
+                    *type_counts.entry(bt).or_default() += 1;
+                }
+
+                // Metadata stats
+                if let Some(metadata_val) = block_map.get(&txn, "metadata") {
+                    if let Some(meta) = parse_metadata_from_out(metadata_val, &txn) {
+                        if !meta.markers.is_empty() {
+                            with_markers += 1;
+                        }
+                        if !meta.outlinks.is_empty() {
+                            with_outlinks += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut type_distribution: Vec<_> = type_counts.into_iter().collect();
+        type_distribution.sort_by(|a, b| b.1.cmp(&a.1));
+
+        BlockStats {
+            total_blocks: total as usize,
+            root_count: root_count as usize,
+            with_markers,
+            with_outlinks,
+            type_distribution,
+        }
+    }
+}
+
+/// Block statistics returned by `get_stats()`.
+#[derive(Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockStats {
+    pub total_blocks: usize,
+    pub root_count: usize,
+    pub with_markers: usize,
+    pub with_outlinks: usize,
+    pub type_distribution: Vec<(String, usize)>,
 }
 
 #[cfg(test)]
