@@ -6,6 +6,26 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.4] - 2026-03-15
+
+### Features
+
+- ⌘K command bar surfaces commands above pages when query matches (FLO-466)
+- Double-tap ⌘ copies focused block ID as `[[wikilink]]` to clipboard
+- ⌘K "Home" command — zoom out to document root
+- ⌘K "Today's Daily Note" — navigate to today's date page
+- Unfocused outliner panes now scroll with mouse wheel (removed blocking overlay)
+
+### Bug Fixes
+
+- Clear stale command bar pane snapshot when no active tab
+- Consolidate BlockItem navigation through `lib/navigation` wrapper (partial FLO-378)
+
+### Reverted
+
+- Todo progress counter (FLO-472) — performance regression, needs parent-level computation
+- Double-click checkbox toggle (FLO-473) — event conflict with collapse bullet
+
 ## [0.9.3] - 2026-03-15
 
 ### Features
