@@ -6,6 +6,19 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.3] - 2026-03-15
+
+### Features
+
+- Own vs inherited marker filter — `inherited=false` query param filters to own-only markers (#173, FLO-491)
+- `marker_val` param replaces broken `marker_value` — no more `::` URL encoding issues
+- Vocabulary discovery endpoints: `GET /markers`, `GET /markers/:type/values`, `GET /stats`
+- `BlockIndexData` struct replaces 12-arg writer sprawl
+
+### Bug Fixes
+
+- `q` param now optional in search API — filter-only queries without `q=` no longer return 400
+
 ## [0.9.2] - 2026-03-15
 
 ### Features
