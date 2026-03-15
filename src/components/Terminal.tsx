@@ -238,8 +238,9 @@ function TabBar(props: {
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
-  // Snapshot focused block when ⌘K opens (focus moves to command bar input)
+  // Snapshot focused block + pane when ⌘K opens (focus moves to command bar input)
   let commandBarFocusedBlockId: string | null = null;
+  let commandBarSourcePaneId: string | null = null;
   const [semanticState, setSemanticState] = createSignal<SemanticState | null>(null);
   // FLO-197: Collapse depth for split panes (loaded from config)
   const [splitCollapseDepth, setSplitCollapseDepth] = createSignal(0);
@@ -907,6 +908,7 @@ export function Terminal() {
           if (!isCommandBarOpen() && activeId) {
             const ap = getActivePaneId(activeId);
             commandBarFocusedBlockId = ap ? paneStore.getFocusedBlockId(ap) : null;
+            commandBarSourcePaneId = ap ?? null;
           }
           setCommandBarOpen(open => !open);
           break;
@@ -1325,6 +1327,29 @@ export function Terminal() {
             if (commandId === 'copy-block-id') {
               if (commandBarFocusedBlockId) {
                 navigator.clipboard.writeText(commandBarFocusedBlockId.slice(0, 8));
+              }
+              return;
+            }
+
+            // Home: zoom out to root
+            if (commandId === 'go-home') {
+              const paneId = commandBarSourcePaneId;
+              if (paneId) {
+                paneStore.zoomTo(paneId, null);
+              }
+              return;
+            }
+
+            // Today's daily note
+            if (commandId === 'go-today') {
+              const today = new Date();
+              const yyyy = today.getFullYear();
+              const mm = String(today.getMonth() + 1).padStart(2, '0');
+              const dd = String(today.getDate()).padStart(2, '0');
+              const pageName = `${yyyy}-${mm}-${dd}`;
+              const paneId = commandBarSourcePaneId;
+              if (paneId) {
+                navigateToPage(pageName, { paneId });
               }
               return;
             }

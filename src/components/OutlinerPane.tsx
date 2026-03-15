@@ -160,11 +160,10 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       {/* Click interceptor for dimmed panes with iframes.
           Iframe clicks don't bubble to parent — this overlay catches the first click
           to activate the pane, then disappears so the iframe gets normal interaction. */}
+      {/* Unfocused pane click-to-activate: pointer-events: none lets scroll through,
+          mousedown on the pane wrapper (below) handles focus activation */}
       {!props.isActive && (
-        <div
-          class="pane-inactive-overlay"
-          onMouseDown={() => props.onPaneClick?.()}
-        />
+        <div class="pane-inactive-overlay" />
       )}
       <Outliner paneId={props.id} initialCollapseDepth={props.initialCollapseDepth} />
     </div>
