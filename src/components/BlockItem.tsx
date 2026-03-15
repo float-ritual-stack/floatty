@@ -990,6 +990,20 @@ export function BlockItem(props: BlockItemProps) {
             e.preventDefault();
             paneStore.toggleCollapsed(props.paneId, props.id, block()?.collapsed || false);
           }}
+          onDblClick={(e) => {
+            // FLO-473: Double-click bullet on todo blocks toggles checkbox
+            const b = block();
+            if (b?.type !== 'todo') return;
+            e.stopPropagation();
+            e.preventDefault();
+            const content = b.content;
+            const toggled = content.startsWith('- [x] ') || content.startsWith('- [X] ')
+              ? content.replace(/^- \[[xX]\] /, '- [ ] ')
+              : content.replace(/^- \[ \] /, '- [x] ');
+            if (toggled !== content) {
+              store.updateBlockContent(props.id, toggled);
+            }
+          }}
         >
           {bulletChar()}
         </div>
