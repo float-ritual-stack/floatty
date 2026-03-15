@@ -6,6 +6,14 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.1] - 2026-03-14
+
+### Bug Fixes
+
+- **Cross-pane drag-and-drop restored** (PR #171, FLO-483): `pane-inactive-overlay` (added for iframe click activation) blocked pointer events on non-active panes, preventing drop target detection. Overlay now becomes pointer-transparent during block drag via `body.block-dragging`.
+
+---
+
 ## [0.9.0] - 2026-03-13
 
 ### Features
