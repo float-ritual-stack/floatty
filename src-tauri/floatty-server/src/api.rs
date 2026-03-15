@@ -3225,6 +3225,29 @@ pub struct BlockSearchQuery {
     /// Include block metadata per hit
     #[serde(default)]
     pub include_metadata: Option<bool>,
+    /// Filter by [[wikilink]] outlink target
+    #[serde(default)]
+    pub outlink: Option<String>,
+    /// Filter by marker type (e.g., "project", "mode")
+    #[serde(default)]
+    pub marker_type: Option<String>,
+    /// Filter by "type::value" pair (e.g., "project::floatty")
+    #[serde(default)]
+    pub marker_value: Option<String>,
+    /// Filter: created after this epoch timestamp (seconds).
+    /// Note: BlockDto.createdAt is milliseconds, but search filters use seconds
+    /// for consistency across all temporal filters (created_at, ctx_at).
+    #[serde(default)]
+    pub created_after: Option<i64>,
+    /// Filter: created before this epoch timestamp (seconds)
+    #[serde(default)]
+    pub created_before: Option<i64>,
+    /// Filter: ctx:: event after this epoch timestamp (seconds)
+    #[serde(default)]
+    pub ctx_after: Option<i64>,
+    /// Filter: ctx:: event before this epoch timestamp (seconds)
+    #[serde(default)]
+    pub ctx_before: Option<i64>,
 }
 
 fn default_search_limit() -> usize {
@@ -3293,10 +3316,19 @@ async fn search_blocks(
     let service = SearchService::new(index_manager);
 
     // Build filters from query params
+    // All temporal search filters use epoch seconds. Tantivy stores seconds internally.
+    // Note: BlockDto.createdAt is milliseconds — different contract. Search = seconds.
     let filters = SearchFilters {
         block_types: query.types.map(|t| t.split(',').map(String::from).collect()),
         has_markers: query.has_markers,
         parent_id: query.parent_id,
+        outlink: query.outlink,
+        marker_type: query.marker_type,
+        marker_value: query.marker_value,
+        created_after: query.created_after,
+        created_before: query.created_before,
+        ctx_after: query.ctx_after,
+        ctx_before: query.ctx_before,
     };
 
     // Execute search

@@ -39,7 +39,7 @@
 use super::{IndexManager, SearchError};
 use std::sync::Arc;
 use tantivy::collector::{Count, TopDocs};
-use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
+use tantivy::query::{AllQuery, BooleanQuery, Occur, Query, QueryParser, RangeQuery, TermQuery};
 use tantivy::schema::{IndexRecordOption, Value};
 use tantivy::Term;
 
@@ -105,6 +105,23 @@ pub struct SearchFilters {
     /// Filter by parent block ID.
     /// Useful for searching within a subtree.
     pub parent_id: Option<String>,
+
+    /// Filter by [[wikilink]] outlink target (exact match).
+    pub outlink: Option<String>,
+
+    /// Filter by marker type (e.g., "project", "mode", "ctx").
+    pub marker_type: Option<String>,
+
+    /// Filter by "type::value" marker pair (e.g., "project::floatty").
+    pub marker_value: Option<String>,
+
+    /// Filter by created_at range (epoch seconds, inclusive).
+    pub created_after: Option<i64>,
+    pub created_before: Option<i64>,
+
+    /// Filter by ctx_at range (epoch seconds, inclusive).
+    pub ctx_after: Option<i64>,
+    pub ctx_before: Option<i64>,
 }
 
 /// Search service for querying indexed blocks.
@@ -159,35 +176,34 @@ impl SearchService {
         filters: SearchFilters,
         limit: usize,
     ) -> Result<(usize, Vec<SearchHit>), SearchError> {
-        // Empty query returns no results
         let query_trimmed = query.trim();
-        if query_trimmed.is_empty() {
+        let filter_queries = self.build_filter_queries(&filters);
+
+        // Empty text + no filters = no results
+        if query_trimmed.is_empty() && filter_queries.is_empty() {
             return Ok((0, Vec::new()));
         }
-
-        // Pre-process query: escape Tantivy special characters so user input
-        // is treated as literal text. Common in floatty notes: `ctx::`, `project::`,
-        // `[[wikilinks]]`, `[tags]`.
-        let query_escaped = escape_tantivy_query(query_trimmed);
 
         // Get reader and searcher
         let reader = self.index.index().reader()?;
         let searcher = reader.searcher();
         let fields = self.index.fields();
 
-        // Build the text query - searches both content and extracted markers
-        let query_parser =
-            QueryParser::for_index(self.index.index(), vec![fields.content, fields.markers]);
-        let text_query = query_parser.parse_query(&query_escaped)?;
-
-        // Build filter queries
-        let filter_queries = self.build_filter_queries(&filters);
-
-        // Combine text query with filters (AND logic)
-        let final_query: Box<dyn Query> = if filter_queries.is_empty() {
-            text_query
+        // Build the text query (or AllQuery for filter-only searches)
+        let base_query: Box<dyn Query> = if query_trimmed.is_empty() {
+            Box::new(AllQuery)
         } else {
-            let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, text_query)];
+            let query_escaped = escape_tantivy_query(query_trimmed);
+            let query_parser =
+                QueryParser::for_index(self.index.index(), vec![fields.content, fields.markers]);
+            query_parser.parse_query(&query_escaped)?
+        };
+
+        // Combine base query with filters (AND logic)
+        let final_query: Box<dyn Query> = if filter_queries.is_empty() {
+            base_query
+        } else {
+            let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, base_query)];
             for filter in filter_queries {
                 clauses.push((Occur::Must, filter));
             }
@@ -250,6 +266,50 @@ impl SearchService {
         if let Some(ref parent_id) = filters.parent_id {
             let term = Term::from_field_text(fields.parent_id, parent_id);
             queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // outlink filter (exact match on [[wikilink]] target)
+        if let Some(ref outlink) = filters.outlink {
+            let term = Term::from_field_text(fields.outlinks, outlink);
+            queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // marker_type filter
+        if let Some(ref mt) = filters.marker_type {
+            let term = Term::from_field_text(fields.marker_types, mt);
+            queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // marker_value filter ("type::value" pair)
+        if let Some(ref mv) = filters.marker_value {
+            let term = Term::from_field_text(fields.marker_values, mv);
+            queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // created_at range filter
+        if filters.created_after.is_some() || filters.created_before.is_some() {
+            let lower = filters
+                .created_after
+                .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.created_at, v)))
+                .unwrap_or(std::ops::Bound::Unbounded);
+            let upper = filters
+                .created_before
+                .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.created_at, v)))
+                .unwrap_or(std::ops::Bound::Unbounded);
+            queries.push(Box::new(RangeQuery::new(lower, upper)));
+        }
+
+        // ctx_at range filter
+        if filters.ctx_after.is_some() || filters.ctx_before.is_some() {
+            let lower = filters
+                .ctx_after
+                .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.ctx_at, v)))
+                .unwrap_or(std::ops::Bound::Unbounded);
+            let upper = filters
+                .ctx_before
+                .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.ctx_at, v)))
+                .unwrap_or(std::ops::Bound::Unbounded);
+            queries.push(Box::new(RangeQuery::new(lower, upper)));
         }
 
         queries
@@ -540,5 +600,245 @@ mod tests {
         let (_total, hits) = service.search("floatty", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].block_id, "b1");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Enriched field filter tests (Unit 1.1/1.2)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Helper to create an index with fully enriched documents.
+    struct EnrichedDoc {
+        id: &'static str,
+        content: &'static str,
+        block_type: &'static str,
+        has_markers: bool,
+        markers: &'static str,
+        outlinks: Vec<&'static str>,
+        marker_types: Vec<&'static str>,
+        marker_values: Vec<&'static str>,
+        created_at: i64,
+        ctx_at: i64,
+    }
+
+    fn create_enriched_index(docs: &[EnrichedDoc]) -> (tempfile::TempDir, Arc<IndexManager>) {
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join("search_index");
+        let manager = Arc::new(IndexManager::open_or_create_at(index_path).unwrap());
+
+        let fields = manager.fields();
+        let mut writer = manager.index().writer::<tantivy::TantivyDocument>(15_000_000).unwrap();
+
+        for d in docs {
+            let mut doc = tantivy::TantivyDocument::new();
+            doc.add_text(fields.block_id, d.id);
+            doc.add_text(fields.content, d.content);
+            doc.add_text(fields.block_type, d.block_type);
+            doc.add_text(fields.parent_id, "");
+            doc.add_text(fields.has_markers, if d.has_markers { "true" } else { "false" });
+            doc.add_text(fields.markers, d.markers);
+            for outlink in &d.outlinks {
+                doc.add_text(fields.outlinks, *outlink);
+            }
+            for mt in &d.marker_types {
+                doc.add_text(fields.marker_types, *mt);
+            }
+            for mv in &d.marker_values {
+                doc.add_text(fields.marker_values, *mv);
+            }
+            if d.created_at > 0 {
+                doc.add_i64(fields.created_at, d.created_at);
+            }
+            if d.ctx_at > 0 {
+                doc.add_i64(fields.ctx_at, d.ctx_at);
+            }
+            writer.add_document(doc).unwrap();
+        }
+
+        writer.commit().unwrap();
+        (dir, manager)
+    }
+
+    fn test_docs() -> Vec<EnrichedDoc> {
+        vec![
+            EnrichedDoc {
+                id: "b1",
+                content: "ctx::2026-03-11 project::floatty meeting notes with [[Daily Page]]",
+                block_type: "ctx",
+                has_markers: true,
+                markers: "ctx project::floatty",
+                outlinks: vec!["Daily Page", "Weekly Index"],
+                marker_types: vec!["ctx", "project"],
+                marker_values: vec!["project::floatty"],
+                created_at: 1773220000, // Mar 11
+                ctx_at: 1773220000,
+            },
+            EnrichedDoc {
+                id: "b2",
+                content: "project::pharmacy mode::dev fixing [[Issue #264]]",
+                block_type: "text",
+                has_markers: true,
+                markers: "project::pharmacy mode::dev",
+                outlinks: vec!["Issue #264"],
+                marker_types: vec!["project", "mode"],
+                marker_values: vec!["project::pharmacy", "mode::dev"],
+                created_at: 1773300000, // Mar 12
+                ctx_at: 0,
+            },
+            EnrichedDoc {
+                id: "b3",
+                content: "plain text no markers no links",
+                block_type: "text",
+                has_markers: false,
+                markers: "",
+                outlinks: vec![],
+                marker_types: vec![],
+                marker_values: vec![],
+                created_at: 1773400000, // Mar 13
+                ctx_at: 0,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_filter_outlink() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        let (_total, hits) = service
+            .search_with_filters("project meeting fixing text", SearchFilters {
+                outlink: Some("Daily Page".into()),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b1");
+    }
+
+    #[test]
+    fn test_filter_marker_type() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        // Filter by marker_type=mode → only b2 has mode
+        let (_total, hits) = service
+            .search_with_filters("project meeting fixing text", SearchFilters {
+                marker_type: Some("mode".into()),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b2");
+    }
+
+    #[test]
+    fn test_filter_marker_value() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        let (_total, hits) = service
+            .search_with_filters("project meeting fixing text", SearchFilters {
+                marker_value: Some("project::pharmacy".into()),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b2");
+    }
+
+    #[test]
+    fn test_filter_created_after() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        // created_after Mar 12 → b2 and b3
+        let (_total, hits) = service
+            .search_with_filters("project meeting fixing text", SearchFilters {
+                created_after: Some(1773300000),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        assert_eq!(hits.len(), 2);
+        let ids: Vec<_> = hits.iter().map(|h| h.block_id.as_str()).collect();
+        assert!(ids.contains(&"b2"));
+        assert!(ids.contains(&"b3"));
+    }
+
+    #[test]
+    fn test_filter_created_range() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        // Between Mar 11 and Mar 12 (inclusive) → b1 and b2
+        let (_total, hits) = service
+            .search_with_filters("project meeting fixing text", SearchFilters {
+                created_after: Some(1773220000),
+                created_before: Some(1773300000),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        assert_eq!(hits.len(), 2);
+        let ids: Vec<_> = hits.iter().map(|h| h.block_id.as_str()).collect();
+        assert!(ids.contains(&"b1"));
+        assert!(ids.contains(&"b2"));
+    }
+
+    #[test]
+    fn test_filter_ctx_at() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        // Only b1 has ctx_at set
+        let (_total, hits) = service
+            .search_with_filters("project meeting fixing text", SearchFilters {
+                ctx_after: Some(1773200000),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b1");
+    }
+
+    #[test]
+    fn test_filter_only_no_text_query() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        // Empty text query + filter = should use AllQuery as base
+        let (_total, hits) = service
+            .search_with_filters("", SearchFilters {
+                marker_type: Some("project".into()),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        // b1 and b2 both have marker_type=project
+        assert_eq!(hits.len(), 2);
+        let ids: Vec<_> = hits.iter().map(|h| h.block_id.as_str()).collect();
+        assert!(ids.contains(&"b1"));
+        assert!(ids.contains(&"b2"));
+    }
+
+    #[test]
+    fn test_filter_combined_marker_type_and_outlink() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        // marker_type=project AND outlink="Issue #264" → only b2
+        let (_total, hits) = service
+            .search_with_filters("project meeting fixing text", SearchFilters {
+                marker_type: Some("project".into()),
+                outlink: Some("Issue #264".into()),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b2");
     }
 }

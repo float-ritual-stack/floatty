@@ -30,5 +30,6 @@ isStub: boolean,
 /**
  * Timestamp of last metadata extraction.
  * Used to skip re-extraction if content unchanged.
+ * Accepts both i64 and f64 on deserialization (yrs stores as f64 in legacy data).
  */
 extractedAt: number | null, };

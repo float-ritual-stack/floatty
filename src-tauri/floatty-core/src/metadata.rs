@@ -6,8 +6,50 @@
 //! NOTE: These types are exported to TypeScript via ts-rs. Run `cargo run --bin ts-gen`
 //! after modifying this file to regenerate bindings.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
+
+/// Accept both integer and float timestamps from yrs deserialization.
+/// Legacy Y.Doc data stores extractedAt as f64 (yrs::Any::Number),
+/// new data stores as i64 (yrs::Any::BigInt).
+fn deserialize_timestamp_lenient<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    struct TimestampVisitor;
+
+    impl<'de> de::Visitor<'de> for TimestampVisitor {
+        type Value = Option<i64>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an integer, float, or null")
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(v as i64))
+        }
+
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
+            Ok(Some(v as i64))
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(TimestampVisitor)
+}
 
 /// A :: marker extracted from block content.
 ///
@@ -76,7 +118,8 @@ pub struct BlockMetadata {
 
     /// Timestamp of last metadata extraction.
     /// Used to skip re-extraction if content unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Accepts both i64 and f64 on deserialization (yrs stores as f64 in legacy data).
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_timestamp_lenient")]
     #[ts(type = "number | null")]
     pub extracted_at: Option<i64>,
 }

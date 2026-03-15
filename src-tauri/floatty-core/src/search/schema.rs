@@ -10,6 +10,11 @@
 //! | parent_id | TEXT | STRING, STORED | Context retrieval |
 //! | updated_at | DATE | FAST, STORED | Recency sorting |
 //! | has_markers | BOOL | FAST, STORED | Filter for ctx:: blocks |
+//! | outlinks | TEXT | STRING | [[wikilink]] targets (multi-value) |
+//! | marker_types | TEXT | STRING | Marker type faceting (multi-value) |
+//! | marker_values | TEXT | STRING | "type::value" pairs (multi-value) |
+//! | created_at | I64 | FAST, STORED | Block creation timestamp |
+//! | ctx_at | I64 | FAST, STORED | ctx:: event timestamp |
 //!
 //! # Why block_id is Indexed STRING
 //!
@@ -65,6 +70,31 @@ pub fn build_schema() -> Schema {
     // TEXT = tokenized with standard analyzer, so "project::floatty" is searchable
     builder.add_text_field("markers", TEXT);
 
+    // outlinks: Multi-value TEXT field for [[wikilink]] targets
+    // Each outlink added separately via add_text() for multi-value behavior
+    // STRING = exact match (case-sensitive term queries)
+    builder.add_text_field("outlinks", STRING);
+
+    // marker_types: Multi-value TEXT field for marker type faceting
+    // e.g., "project", "mode", "ctx" — allows filtering by marker type
+    builder.add_text_field("marker_types", STRING);
+
+    // marker_values: Multi-value TEXT field for "type::value" formatted strings
+    // e.g., "project::floatty" — more specific than marker_types
+    builder.add_text_field("marker_values", STRING);
+
+    // created_at: Block creation timestamp (epoch seconds)
+    // FAST = column-oriented for range queries, STORED = retrievable
+    let i64_options = tantivy::schema::NumericOptions::default()
+        .set_fast()
+        .set_stored()
+        .set_indexed();
+    builder.add_i64_field("created_at", i64_options.clone());
+
+    // ctx_at: Temporal axis for ctx:: markers (event time, not creation time)
+    // A block about a Feb 15 meeting created Mar 11: created_at=Mar 11, ctx_at=Feb 15
+    builder.add_i64_field("ctx_at", i64_options);
+
     builder.build()
 }
 
@@ -96,15 +126,19 @@ mod tests {
         assert!(schema.get_field("updated_at").is_ok());
         assert!(schema.get_field("has_markers").is_ok());
         assert!(schema.get_field("markers").is_ok());
+        assert!(schema.get_field("outlinks").is_ok());
+        assert!(schema.get_field("marker_types").is_ok());
+        assert!(schema.get_field("marker_values").is_ok());
+        assert!(schema.get_field("created_at").is_ok());
+        assert!(schema.get_field("ctx_at").is_ok());
     }
 
     #[test]
     fn test_schema_field_count() {
         let schema = build_schema();
-        // Should have exactly 7 fields
-        // schema.fields() returns an iterator of (Field, &FieldEntry)
+        // Should have exactly 12 fields (7 original + 5 new)
         let field_count = schema.fields().count();
-        assert_eq!(field_count, 7);
+        assert_eq!(field_count, 12);
     }
 
     #[test]

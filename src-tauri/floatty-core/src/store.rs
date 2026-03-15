@@ -59,19 +59,31 @@ const COMPACT_THRESHOLD: i64 = 100;
 fn parse_metadata_from_out<T: ReadTxn>(value: Out, txn: &T) -> Option<BlockMetadata> {
     match value {
         Out::Any(yrs::Any::String(s)) => {
-            serde_json::from_str::<BlockMetadata>(&s).ok()
+            serde_json::from_str::<BlockMetadata>(&s)
+                .map_err(|e| tracing::warn!("parse_metadata_from_out: Any::String failed: {e}"))
+                .ok()
         }
         Out::Any(yrs::Any::Map(map)) => {
             // Convert Any::Map to JSON, then deserialize
             let json = yrs_any_map_to_json(&map);
-            serde_json::from_value::<BlockMetadata>(json).ok()
+            let key_count = map.len();
+            serde_json::from_value::<BlockMetadata>(json)
+                .map_err(|e| tracing::warn!("parse_metadata_from_out: Any::Map failed: {e}, keys={key_count}"))
+                .ok()
         }
         Out::YMap(map) => {
             // Convert Y.Map to JSON, then deserialize
             let json = yrs_ymap_to_json(&map, txn);
-            serde_json::from_value::<BlockMetadata>(json).ok()
+            let key_count = map.len(txn);
+            serde_json::from_value::<BlockMetadata>(json)
+                .map_err(|e| tracing::warn!("parse_metadata_from_out: YMap failed: {e}, keys={key_count}"))
+                .ok()
         }
-        _ => None,
+        Out::Any(yrs::Any::Undefined | yrs::Any::Null) => None,
+        other => {
+            tracing::warn!("parse_metadata_from_out: unhandled Out variant: {other:?}");
+            None
+        }
     }
 }
 
@@ -160,9 +172,10 @@ fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
         .map(|s| any!(s.clone()))
         .collect();
 
-    // extractedAt: include as f64 or null
+    // extractedAt: store as BigInt (i64) — NOT f64.
+    // yrs::Any::Number is f64 which serde rejects for Option<i64> on read-back.
     let extracted_at: yrs::Any = match metadata.extracted_at {
-        Some(ts) => any!(ts as f64),
+        Some(ts) => yrs::Any::BigInt(ts),
         None => yrs::Any::Null,
     };
 
@@ -867,9 +880,21 @@ impl YDocStore {
             .get(&txn, "metadata")
             .and_then(|v| match v {
                 Out::Any(yrs::Any::String(s)) => {
-                    serde_json::from_str::<serde_json::Value>(&s).ok()
+                    serde_json::from_str::<serde_json::Value>(&s)
+                        .map_err(|e| tracing::warn!("get_block_metadata_json: parse failed: {e}"))
+                        .ok()
                 }
-                _ => None,
+                Out::Any(yrs::Any::Map(map)) => {
+                    Some(yrs_any_map_to_json(&map))
+                }
+                Out::YMap(map) => {
+                    Some(yrs_ymap_to_json(&map, &txn))
+                }
+                Out::Any(yrs::Any::Undefined | yrs::Any::Null) => None,
+                other => {
+                    tracing::warn!("get_block_metadata_json: unhandled variant: {other:?}");
+                    None
+                }
             })
     }
 
