@@ -48,6 +48,16 @@ pub enum WriterMessage {
         has_markers: bool,
         /// Space-separated marker values for full-text search (e.g., "project::floatty mode::dev").
         markers: String,
+        /// [[wikilink]] targets from block.metadata.outlinks.
+        outlinks: Vec<String>,
+        /// Distinct marker types (e.g., ["project", "mode"]).
+        marker_types: Vec<String>,
+        /// "type::value" formatted marker pairs (e.g., ["project::floatty"]).
+        marker_values: Vec<String>,
+        /// Block creation timestamp (epoch seconds). 0 if unknown.
+        created_at: i64,
+        /// ctx:: event timestamp (epoch seconds). 0 if no ctx datetime.
+        ctx_at: i64,
     },
     /// Delete a document by block ID.
     Delete { block_id: String },
@@ -83,6 +93,7 @@ impl WriterHandle {
     /// Add or update a block in the index.
     ///
     /// This is atomic: deletes any existing doc with the ID, then adds new.
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_or_update(
         &self,
         block_id: String,
@@ -92,6 +103,11 @@ impl WriterHandle {
         updated_at: i64,
         has_markers: bool,
         markers: String,
+        outlinks: Vec<String>,
+        marker_types: Vec<String>,
+        marker_values: Vec<String>,
+        created_at: i64,
+        ctx_at: i64,
     ) -> Result<(), SearchError> {
         self.tx
             .send(WriterMessage::AddOrUpdate {
@@ -102,6 +118,11 @@ impl WriterHandle {
                 updated_at,
                 has_markers,
                 markers,
+                outlinks,
+                marker_types,
+                marker_values,
+                created_at,
+                ctx_at,
             })
             .await
             .map_err(|_| SearchError::WriterClosed)
@@ -234,6 +255,11 @@ impl TantivyWriter {
                     updated_at,
                     has_markers,
                     markers,
+                    outlinks,
+                    marker_types,
+                    marker_values,
+                    created_at,
+                    ctx_at,
                 } => {
                     if let Err(e) = self.handle_add_or_update(
                         &block_id,
@@ -243,6 +269,11 @@ impl TantivyWriter {
                         updated_at,
                         has_markers,
                         &markers,
+                        &outlinks,
+                        &marker_types,
+                        &marker_values,
+                        created_at,
+                        ctx_at,
                     ) {
                         error!(block_id = %block_id, error = %e, "Failed to index block");
                     } else {
@@ -318,6 +349,7 @@ impl TantivyWriter {
     }
 
     /// Handle AddOrUpdate: delete by term, then add document.
+    #[allow(clippy::too_many_arguments)]
     fn handle_add_or_update(
         &mut self,
         block_id: &str,
@@ -327,6 +359,11 @@ impl TantivyWriter {
         updated_at: i64,
         has_markers: bool,
         markers: &str,
+        outlinks: &[String],
+        marker_types: &[String],
+        marker_values: &[String],
+        created_at: i64,
+        ctx_at: i64,
     ) -> Result<(), SearchError> {
         // Delete any existing document with this ID
         let term = Term::from_field_text(self.fields.block_id, block_id);
@@ -351,6 +388,25 @@ impl TantivyWriter {
         );
         // Full-text searchable marker values (e.g., "project::floatty mode::dev")
         doc.add_text(self.fields.markers, markers);
+
+        // Multi-value fields: each value added separately
+        for outlink in outlinks {
+            doc.add_text(self.fields.outlinks, outlink);
+        }
+        for mt in marker_types {
+            doc.add_text(self.fields.marker_types, mt);
+        }
+        for mv in marker_values {
+            doc.add_text(self.fields.marker_values, mv);
+        }
+
+        // Temporal fields (0 = not set)
+        if created_at > 0 {
+            doc.add_i64(self.fields.created_at, created_at);
+        }
+        if ctx_at > 0 {
+            doc.add_i64(self.fields.ctx_at, ctx_at);
+        }
 
         self.writer
             .add_document(doc)
@@ -380,22 +436,39 @@ mod tests {
         (handle, dir)
     }
 
+    /// Helper: add_or_update with default empty values for new fields.
+    async fn add_simple(
+        handle: &WriterHandle,
+        block_id: &str,
+        content: &str,
+        block_type: &str,
+        parent_id: Option<String>,
+        updated_at: i64,
+        has_markers: bool,
+        markers: String,
+    ) -> Result<(), SearchError> {
+        handle
+            .add_or_update(
+                block_id.to_string(),
+                content.to_string(),
+                block_type.to_string(),
+                parent_id,
+                updated_at,
+                has_markers,
+                markers,
+                vec![],
+                vec![],
+                vec![],
+                0,
+                0,
+            )
+            .await
+    }
+
     #[tokio::test]
     async fn test_add_or_update() {
         let (handle, _dir) = setup_writer().await;
-
-        let result = handle
-            .add_or_update(
-                "block_1".to_string(),
-                "Hello world".to_string(),
-                "text".to_string(),
-                None,
-                1704067200,
-                false,
-                String::new(),
-            )
-            .await;
-
+        let result = add_simple(&handle, "block_1", "Hello world", "text", None, 1704067200, false, String::new()).await;
         assert!(result.is_ok());
         handle.shutdown().await.ok();
     }
@@ -403,62 +476,27 @@ mod tests {
     #[tokio::test]
     async fn test_delete() {
         let (handle, _dir) = setup_writer().await;
-
-        // Add then delete
-        handle
-            .add_or_update(
-                "block_2".to_string(),
-                "To be deleted".to_string(),
-                "text".to_string(),
-                None,
-                1704067200,
-                false,
-                String::new(),
-            )
-            .await
-            .unwrap();
-
+        add_simple(&handle, "block_2", "To be deleted", "text", None, 1704067200, false, String::new()).await.unwrap();
         let result = handle.delete("block_2".to_string()).await;
         assert!(result.is_ok());
-
         handle.shutdown().await.ok();
     }
 
     #[tokio::test]
     async fn test_commit() {
         let (handle, _dir) = setup_writer().await;
-
-        handle
-            .add_or_update(
-                "block_3".to_string(),
-                "Commit me".to_string(),
-                "text".to_string(),
-                Some("parent_1".to_string()),
-                1704067200,
-                true,
-                "project::test".to_string(),
-            )
-            .await
-            .unwrap();
-
+        add_simple(&handle, "block_3", "Commit me", "text", Some("parent_1".to_string()), 1704067200, true, "project::test".to_string()).await.unwrap();
         let result = handle.commit().await;
         assert!(result.is_ok());
-
         handle.shutdown().await.ok();
     }
 
     #[tokio::test]
     async fn test_shutdown() {
         let (handle, _dir) = setup_writer().await;
-
-        // Should complete cleanly
         let result = handle.shutdown().await;
         assert!(result.is_ok());
-
-        // Give actor time to process shutdown and close channel
         sleep(Duration::from_millis(50)).await;
-
-        // Subsequent sends should fail (channel closed)
         let result = handle.commit().await;
         assert!(result.is_err());
     }
@@ -466,45 +504,39 @@ mod tests {
     #[tokio::test]
     async fn test_bounded_channel_capacity() {
         let (handle, _dir) = setup_writer().await;
-
-        // Channel should have capacity initially
         assert!(handle.has_capacity());
-
         handle.shutdown().await.ok();
     }
 
     #[tokio::test]
     async fn test_update_replaces_existing() {
         let (handle, _dir) = setup_writer().await;
+        add_simple(&handle, "block_4", "Original content", "text", None, 1704067200, false, String::new()).await.unwrap();
+        add_simple(&handle, "block_4", "Updated content", "text", None, 1704067201, true, "project::floatty mode::dev".to_string()).await.unwrap();
+        handle.commit().await.unwrap();
+        handle.shutdown().await.ok();
+    }
 
-        // Add initial
-        handle
+    #[tokio::test]
+    async fn test_add_with_enriched_fields() {
+        let (handle, _dir) = setup_writer().await;
+        let result = handle
             .add_or_update(
-                "block_4".to_string(),
-                "Original content".to_string(),
-                "text".to_string(),
+                "block_5".to_string(),
+                "ctx::2026-03-11 project::floatty".to_string(),
+                "ctx".to_string(),
                 None,
                 1704067200,
-                false,
-                String::new(),
-            )
-            .await
-            .unwrap();
-
-        // Update (same ID, different content)
-        handle
-            .add_or_update(
-                "block_4".to_string(),
-                "Updated content".to_string(),
-                "text".to_string(),
-                None,
-                1704067201,
                 true,
-                "project::floatty mode::dev".to_string(),
+                "ctx project::floatty".to_string(),
+                vec!["Page A".to_string(), "Page B".to_string()],
+                vec!["ctx".to_string(), "project".to_string()],
+                vec!["project::floatty".to_string()],
+                1704067200,
+                1773379200,
             )
-            .await
-            .unwrap();
-
+            .await;
+        assert!(result.is_ok());
         handle.commit().await.unwrap();
         handle.shutdown().await.ok();
     }

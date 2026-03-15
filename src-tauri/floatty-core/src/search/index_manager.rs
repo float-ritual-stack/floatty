@@ -65,6 +65,16 @@ pub struct SchemaFields {
     pub has_markers: Field,
     /// Full-text searchable marker values (e.g., "project::floatty mode::dev").
     pub markers: Field,
+    /// [[wikilink]] targets (multi-value, exact match).
+    pub outlinks: Field,
+    /// Marker types for faceting (e.g., "project", "mode").
+    pub marker_types: Field,
+    /// "type::value" formatted marker pairs (e.g., "project::floatty").
+    pub marker_values: Field,
+    /// Block creation timestamp (epoch seconds).
+    pub created_at: Field,
+    /// ctx:: event timestamp (epoch seconds). Distinct from created_at.
+    pub ctx_at: Field,
 }
 
 impl SchemaFields {
@@ -78,6 +88,11 @@ impl SchemaFields {
             updated_at: get_field(schema, "updated_at"),
             has_markers: get_field(schema, "has_markers"),
             markers: get_field(schema, "markers"),
+            outlinks: get_field(schema, "outlinks"),
+            marker_types: get_field(schema, "marker_types"),
+            marker_values: get_field(schema, "marker_values"),
+            created_at: get_field(schema, "created_at"),
+            ctx_at: get_field(schema, "ctx_at"),
         }
     }
 }
@@ -187,8 +202,8 @@ mod tests {
         // Index directory should now exist
         assert!(index_path.exists());
 
-        // Schema should have 7 fields
-        assert_eq!(manager.schema().fields().count(), 7);
+        // Schema should have 12 fields (7 original + 5 new)
+        assert_eq!(manager.schema().fields().count(), 12);
     }
 
     #[test]

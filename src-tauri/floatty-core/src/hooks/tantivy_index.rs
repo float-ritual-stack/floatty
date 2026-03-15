@@ -112,13 +112,25 @@ impl BlockHook for TantivyIndexHook {
 impl TantivyIndexHook {
     /// Index a block, extracting all necessary fields.
     fn index_block(&self, writer: &WriterHandle, id: &str, content: &str, store: &YDocStore) {
+        use crate::hooks::parsing::extract_ctx_datetime;
+
         // Extract block type from content
         let block_type = parse_block_type(content).as_str().to_string();
 
-        // Get parent_id, has_markers, and formatted markers string from store
-        // Includes inherited markers from ancestors for search coverage
-        let (parent_id, has_markers, markers) = store
-            .get_block(id)
+        // Get all indexable data from block metadata
+        let block_data = store.get_block(id);
+
+        let parent_id = block_data.as_ref().and_then(|b| b.parent_id.clone());
+        // created_at is stored in Y.Doc as milliseconds, convert to seconds for Tantivy
+        // (consistent with updated_at and ctx_at which use epoch seconds)
+        let created_at = block_data
+            .as_ref()
+            .map(|b| b.created_at / 1000)
+            .unwrap_or(0);
+
+        // Extract marker data and outlinks from metadata
+        let (has_markers, markers, outlinks, marker_types, marker_values) = block_data
+            .as_ref()
             .map(|b| {
                 let own_markers = b
                     .metadata
@@ -126,7 +138,7 @@ impl TantivyIndexHook {
                     .map(|m| &m.markers[..])
                     .unwrap_or(&[]);
 
-                // Format own markers
+                // Format own markers for full-text search
                 let mut formatted_parts: Vec<String> = own_markers
                     .iter()
                     .map(|marker| {
@@ -138,8 +150,7 @@ impl TantivyIndexHook {
                     })
                     .collect();
 
-                // Include inherited markers (InheritanceIndex already filters per-type —
-                // only includes marker types the block doesn't own)
+                // Include inherited markers
                 if let Ok(index) = self.inheritance_index.read() {
                     for marker in index.get(id) {
                         formatted_parts.push(format!("{}::{}", marker.marker_type, marker.value));
@@ -148,11 +159,49 @@ impl TantivyIndexHook {
 
                 let has_markers = !formatted_parts.is_empty();
                 let markers_str = formatted_parts.join(" ");
-                (b.parent_id, has_markers, markers_str)
-            })
-            .unwrap_or((None, false, String::new()));
 
-        // Get timestamp
+                // Extract distinct marker types and "type::value" pairs
+                let mut m_types: Vec<String> = own_markers
+                    .iter()
+                    .map(|m| m.marker_type.clone())
+                    .collect();
+                m_types.sort();
+                m_types.dedup();
+
+                let m_values: Vec<String> = own_markers
+                    .iter()
+                    .filter_map(|m| {
+                        m.value
+                            .as_ref()
+                            .map(|v| format!("{}::{}", m.marker_type, v))
+                    })
+                    .collect();
+
+                // Outlinks from metadata
+                let outlinks = b
+                    .metadata
+                    .as_ref()
+                    .map(|m| m.outlinks.clone())
+                    .unwrap_or_default();
+
+                (has_markers, markers_str, outlinks, m_types, m_values)
+            })
+            .unwrap_or((false, String::new(), vec![], vec![], vec![]));
+
+        // Extract ctx_at from content (uses dedicated datetime parser)
+        let ctx_at = extract_ctx_datetime(content)
+            .and_then(|dt_str| {
+                // Parse ISO datetime to epoch. Handles "2026-03-11" and "2026-03-11T16:42:00"
+                chrono::NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%dT%H:%M:%S")
+                    .or_else(|_| {
+                        chrono::NaiveDate::parse_from_str(&dt_str, "%Y-%m-%d")
+                            .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+                    })
+                    .ok()
+                    .map(|ndt| ndt.and_utc().timestamp())
+            })
+            .unwrap_or(0);
+
         let updated_at = chrono::Utc::now().timestamp();
 
         trace!(
@@ -160,16 +209,31 @@ impl TantivyIndexHook {
             block_type = %block_type,
             has_markers = has_markers,
             markers = %markers,
+            outlinks = ?outlinks,
+            ctx_at = ctx_at,
             "Indexing block"
         );
 
-        // Send to writer (async, but we use spawn to not block)
+        // Send to writer (async)
         let writer = writer.clone();
         let id = id.to_string();
         let content = content.to_string();
         tokio::spawn(async move {
             if let Err(e) = writer
-                .add_or_update(id.clone(), content, block_type, parent_id, updated_at, has_markers, markers)
+                .add_or_update(
+                    id.clone(),
+                    content,
+                    block_type,
+                    parent_id,
+                    updated_at,
+                    has_markers,
+                    markers,
+                    outlinks,
+                    marker_types,
+                    marker_values,
+                    created_at,
+                    ctx_at,
+                )
                 .await
             {
                 warn!(block_id = %id, error = %e, "Failed to index block");
