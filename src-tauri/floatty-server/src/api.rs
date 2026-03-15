@@ -552,6 +552,10 @@ pub fn create_router(
         .route("/api/v1/search", get(search_blocks))
         .route("/api/v1/search/clear", post(clear_search_index))
         .route("/api/v1/search/reindex", post(reindex_search))
+        // Vocabulary discovery endpoints
+        .route("/api/v1/markers", get(list_marker_types))
+        .route("/api/v1/markers/:marker_type/values", get(list_marker_values))
+        .route("/api/v1/stats", get(get_block_stats))
         // Backup endpoints
         .route("/api/v1/backup/status", get(backup_status))
         .route("/api/v1/backup/list", get(backup_list))
@@ -3205,7 +3209,8 @@ async fn search_pages(
 /// Full-text search query parameters
 #[derive(Deserialize)]
 pub struct BlockSearchQuery {
-    /// Search text (required)
+    /// Search text (optional — omit or empty for filter-only queries)
+    #[serde(default)]
     pub q: String,
     /// Maximum results to return (default: 20)
     #[serde(default = "default_search_limit")]
@@ -3231,9 +3236,11 @@ pub struct BlockSearchQuery {
     /// Filter by marker type (e.g., "project", "mode")
     #[serde(default)]
     pub marker_type: Option<String>,
-    /// Filter by "type::value" pair (e.g., "project::floatty")
+    /// Filter by marker value (e.g., "floatty", "rangle/pharmacy").
+    /// Combines with marker_type to form the internal "type::value" term query.
+    /// Use alone for "any marker with this value" or with marker_type for precise match.
     #[serde(default)]
-    pub marker_value: Option<String>,
+    pub marker_val: Option<String>,
     /// Filter: created after this epoch timestamp (seconds).
     /// Note: BlockDto.createdAt is milliseconds, but search filters use seconds
     /// for consistency across all temporal filters (created_at, ctx_at).
@@ -3248,6 +3255,10 @@ pub struct BlockSearchQuery {
     /// Filter: ctx:: event before this epoch timestamp (seconds)
     #[serde(default)]
     pub ctx_before: Option<i64>,
+    /// When false, marker_type/marker_value filter only own markers (excludes inherited).
+    /// Default: true (includes inherited markers from ancestors).
+    #[serde(default)]
+    pub inherited: Option<bool>,
 }
 
 fn default_search_limit() -> usize {
@@ -3323,12 +3334,19 @@ async fn search_blocks(
         has_markers: query.has_markers,
         parent_id: query.parent_id,
         outlink: query.outlink,
-        marker_type: query.marker_type,
-        marker_value: query.marker_value,
+        marker_type: query.marker_type.clone(),
+        // Join marker_type + marker_val into "type::value" for internal Tantivy term query.
+        // Callers send ?marker_type=project&marker_val=floatty → internal "project::floatty"
+        marker_value: match (&query.marker_type, &query.marker_val) {
+            (Some(mt), Some(mv)) => Some(format!("{mt}::{mv}")),
+            (None, Some(mv)) => Some(mv.clone()),  // value-only search (rare)
+            _ => None,
+        },
         created_after: query.created_after,
         created_before: query.created_before,
         ctx_after: query.ctx_after,
         ctx_before: query.ctx_before,
+        include_inherited: query.inherited,
     };
 
     // Execute search
@@ -3502,6 +3520,62 @@ pub struct BackupConfigResponse {
     pub retain_weekly: u32,
     pub backup_dir: String,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VOCABULARY DISCOVERY
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// GET /api/v1/markers - List distinct marker types with counts
+///
+/// Returns all marker types found across blocks with their occurrence counts.
+/// Sorted by count descending.
+async fn list_marker_types(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let types = state.store.enumerate_marker_types();
+    let items: Vec<serde_json::Value> = types
+        .into_iter()
+        .map(|(marker_type, count)| {
+            serde_json::json!({ "type": marker_type, "count": count })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "markers": items, "total": items.len() })))
+}
+
+/// GET /api/v1/markers/:marker_type/values - List values for a marker type
+///
+/// Returns distinct values for a specific marker type with counts.
+/// E.g., `/api/v1/markers/project/values` returns `[{value: "floatty", count: 350}, ...]`
+async fn list_marker_values(
+    State(state): State<AppState>,
+    axum::extract::Path(marker_type): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let values = state.store.enumerate_marker_values(&marker_type);
+    let items: Vec<serde_json::Value> = values
+        .into_iter()
+        .map(|(value, count)| {
+            serde_json::json!({ "value": value, "count": count })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "markerType": marker_type,
+        "values": items,
+        "total": items.len()
+    })))
+}
+
+/// GET /api/v1/stats - Block statistics
+///
+/// Returns total block count, root count, type distribution, and metadata coverage.
+async fn get_block_stats(
+    State(state): State<AppState>,
+) -> Result<Json<floatty_core::store::BlockStats>, ApiError> {
+    Ok(Json(state.store.get_stats()))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BACKUP
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Format SystemTime as ISO 8601 string (UTC)
 fn format_system_time(t: SystemTime) -> String {

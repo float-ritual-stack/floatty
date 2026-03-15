@@ -122,6 +122,10 @@ pub struct SearchFilters {
     /// Filter by ctx_at range (epoch seconds, inclusive).
     pub ctx_after: Option<i64>,
     pub ctx_before: Option<i64>,
+
+    /// When false, marker_type/marker_value queries use own-only fields
+    /// (excludes inherited markers from ancestors). Default: true (combined).
+    pub include_inherited: Option<bool>,
 }
 
 /// Search service for querying indexed blocks.
@@ -274,15 +278,18 @@ impl SearchService {
             queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
         }
 
-        // marker_type filter
+        // marker_type filter — use own-only fields when include_inherited=false
+        let use_own_only = filters.include_inherited == Some(false);
         if let Some(ref mt) = filters.marker_type {
-            let term = Term::from_field_text(fields.marker_types, mt);
+            let field = if use_own_only { fields.marker_types_own } else { fields.marker_types };
+            let term = Term::from_field_text(field, mt);
             queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
         }
 
         // marker_value filter ("type::value" pair)
         if let Some(ref mv) = filters.marker_value {
-            let term = Term::from_field_text(fields.marker_values, mv);
+            let field = if use_own_only { fields.marker_values_own } else { fields.marker_values };
+            let term = Term::from_field_text(field, mv);
             queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
         }
 
@@ -616,6 +623,10 @@ mod tests {
         outlinks: Vec<&'static str>,
         marker_types: Vec<&'static str>,
         marker_values: Vec<&'static str>,
+        /// Own-only marker types (subset of marker_types, excludes inherited)
+        marker_types_own: Vec<&'static str>,
+        /// Own-only marker values (subset of marker_values, excludes inherited)
+        marker_values_own: Vec<&'static str>,
         created_at: i64,
         ctx_at: i64,
     }
@@ -645,6 +656,12 @@ mod tests {
             for mv in &d.marker_values {
                 doc.add_text(fields.marker_values, *mv);
             }
+            for mt in &d.marker_types_own {
+                doc.add_text(fields.marker_types_own, *mt);
+            }
+            for mv in &d.marker_values_own {
+                doc.add_text(fields.marker_values_own, *mv);
+            }
             if d.created_at > 0 {
                 doc.add_i64(fields.created_at, d.created_at);
             }
@@ -667,8 +684,12 @@ mod tests {
                 has_markers: true,
                 markers: "ctx project::floatty",
                 outlinks: vec!["Daily Page", "Weekly Index"],
-                marker_types: vec!["ctx", "project"],
-                marker_values: vec!["project::floatty"],
+                // Combined: own ctx + project, plus inherited "repo" from ancestor
+                marker_types: vec!["ctx", "project", "repo"],
+                marker_values: vec!["project::floatty", "repo::floatty"],
+                // Own only: ctx + project (repo is inherited)
+                marker_types_own: vec!["ctx", "project"],
+                marker_values_own: vec!["project::floatty"],
                 created_at: 1773220000, // Mar 11
                 ctx_at: 1773220000,
             },
@@ -681,6 +702,8 @@ mod tests {
                 outlinks: vec!["Issue #264"],
                 marker_types: vec!["project", "mode"],
                 marker_values: vec!["project::pharmacy", "mode::dev"],
+                marker_types_own: vec!["project", "mode"],
+                marker_values_own: vec!["project::pharmacy", "mode::dev"],
                 created_at: 1773300000, // Mar 12
                 ctx_at: 0,
             },
@@ -693,6 +716,8 @@ mod tests {
                 outlinks: vec![],
                 marker_types: vec![],
                 marker_values: vec![],
+                marker_types_own: vec![],
+                marker_values_own: vec![],
                 created_at: 1773400000, // Mar 13
                 ctx_at: 0,
             },
@@ -822,6 +847,42 @@ mod tests {
         let ids: Vec<_> = hits.iter().map(|h| h.block_id.as_str()).collect();
         assert!(ids.contains(&"b1"));
         assert!(ids.contains(&"b2"));
+    }
+
+    #[test]
+    fn test_filter_inherited_false() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        // Default (inherited=true): marker_type=repo matches b1 (inherited from ancestor)
+        let (_total, hits) = service
+            .search_with_filters("", SearchFilters {
+                marker_type: Some("repo".into()),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "b1");
+
+        // inherited=false: marker_type=repo returns 0 (b1 doesn't OWN repo marker)
+        let (_total, hits) = service
+            .search_with_filters("", SearchFilters {
+                marker_type: Some("repo".into()),
+                include_inherited: Some(false),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+        assert_eq!(hits.len(), 0);
+
+        // inherited=false: marker_type=project still returns b1 (it OWNS project)
+        let (_total, hits) = service
+            .search_with_filters("", SearchFilters {
+                marker_type: Some("project".into()),
+                include_inherited: Some(false),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+        assert_eq!(hits.len(), 2); // b1 and b2 both own project
     }
 
     #[test]

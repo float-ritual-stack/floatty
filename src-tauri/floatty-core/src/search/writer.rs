@@ -35,30 +35,46 @@ const CHANNEL_CAPACITY: usize = 1000;
 /// Heap size for IndexWriter (50MB).
 const WRITER_HEAP_SIZE: usize = 50_000_000;
 
+/// All data needed to index a block in Tantivy.
+///
+/// # Marker field semantics
+/// - `markers`: Space-separated formatted pairs for full-text search (own + inherited)
+/// - `marker_types` / `marker_values`: Combined own + inherited (default filter target)
+/// - `marker_types_own` / `marker_values_own`: Own only (for `inherited=false` queries)
+///
+/// All marker fields are derived from `block.metadata.markers` + `InheritanceIndex`
+/// by the TantivyIndexHook. They must be kept in sync.
+#[derive(Debug, Clone)]
+pub struct BlockIndexData {
+    pub block_id: String,
+    pub content: String,
+    pub block_type: String,
+    pub parent_id: Option<String>,
+    pub updated_at: i64,
+    pub has_markers: bool,
+    /// Space-separated marker values for full-text search (e.g., "project::floatty mode::dev").
+    pub markers: String,
+    /// [[wikilink]] targets from block.metadata.outlinks.
+    pub outlinks: Vec<String>,
+    /// Distinct marker types — own + inherited (e.g., ["project", "mode"]).
+    pub marker_types: Vec<String>,
+    /// "type::value" pairs — own + inherited (e.g., ["project::floatty"]).
+    pub marker_values: Vec<String>,
+    /// Distinct marker types — own only (excludes inherited).
+    pub marker_types_own: Vec<String>,
+    /// "type::value" pairs — own only (excludes inherited).
+    pub marker_values_own: Vec<String>,
+    /// Block creation timestamp (epoch seconds). 0 if unknown.
+    pub created_at: i64,
+    /// ctx:: event timestamp (epoch seconds). 0 if no ctx datetime.
+    pub ctx_at: i64,
+}
+
 /// Messages that can be sent to the writer actor.
 #[derive(Debug)]
 pub enum WriterMessage {
     /// Add or update a document (delete by ID first, then add).
-    AddOrUpdate {
-        block_id: String,
-        content: String,
-        block_type: String,
-        parent_id: Option<String>,
-        updated_at: i64,
-        has_markers: bool,
-        /// Space-separated marker values for full-text search (e.g., "project::floatty mode::dev").
-        markers: String,
-        /// [[wikilink]] targets from block.metadata.outlinks.
-        outlinks: Vec<String>,
-        /// Distinct marker types (e.g., ["project", "mode"]).
-        marker_types: Vec<String>,
-        /// "type::value" formatted marker pairs (e.g., ["project::floatty"]).
-        marker_values: Vec<String>,
-        /// Block creation timestamp (epoch seconds). 0 if unknown.
-        created_at: i64,
-        /// ctx:: event timestamp (epoch seconds). 0 if no ctx datetime.
-        ctx_at: i64,
-    },
+    AddOrUpdate(BlockIndexData),
     /// Delete a document by block ID.
     Delete { block_id: String },
     /// Delete all documents from the index (fire-and-forget).
@@ -93,37 +109,9 @@ impl WriterHandle {
     /// Add or update a block in the index.
     ///
     /// This is atomic: deletes any existing doc with the ID, then adds new.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn add_or_update(
-        &self,
-        block_id: String,
-        content: String,
-        block_type: String,
-        parent_id: Option<String>,
-        updated_at: i64,
-        has_markers: bool,
-        markers: String,
-        outlinks: Vec<String>,
-        marker_types: Vec<String>,
-        marker_values: Vec<String>,
-        created_at: i64,
-        ctx_at: i64,
-    ) -> Result<(), SearchError> {
+    pub async fn add_or_update(&self, data: BlockIndexData) -> Result<(), SearchError> {
         self.tx
-            .send(WriterMessage::AddOrUpdate {
-                block_id,
-                content,
-                block_type,
-                parent_id,
-                updated_at,
-                has_markers,
-                markers,
-                outlinks,
-                marker_types,
-                marker_values,
-                created_at,
-                ctx_at,
-            })
+            .send(WriterMessage::AddOrUpdate(data))
             .await
             .map_err(|_| SearchError::WriterClosed)
     }
@@ -247,38 +235,12 @@ impl TantivyWriter {
 
         while let Some(msg) = self.rx.recv().await {
             match msg {
-                WriterMessage::AddOrUpdate {
-                    block_id,
-                    content,
-                    block_type,
-                    parent_id,
-                    updated_at,
-                    has_markers,
-                    markers,
-                    outlinks,
-                    marker_types,
-                    marker_values,
-                    created_at,
-                    ctx_at,
-                } => {
-                    if let Err(e) = self.handle_add_or_update(
-                        &block_id,
-                        &content,
-                        &block_type,
-                        parent_id.as_deref(),
-                        updated_at,
-                        has_markers,
-                        &markers,
-                        &outlinks,
-                        &marker_types,
-                        &marker_values,
-                        created_at,
-                        ctx_at,
-                    ) {
-                        error!(block_id = %block_id, error = %e, "Failed to index block");
+                WriterMessage::AddOrUpdate(data) => {
+                    if let Err(e) = self.handle_add_or_update(&data) {
+                        error!(block_id = %data.block_id, error = %e, "Failed to index block");
                     } else {
                         pending_ops += 1;
-                        trace!(block_id = %block_id, pending_ops, "Block indexed");
+                        trace!(block_id = %data.block_id, pending_ops, "Block indexed");
                     }
                 }
 
@@ -349,69 +311,48 @@ impl TantivyWriter {
     }
 
     /// Handle AddOrUpdate: delete by term, then add document.
-    #[allow(clippy::too_many_arguments)]
-    fn handle_add_or_update(
-        &mut self,
-        block_id: &str,
-        content: &str,
-        block_type: &str,
-        parent_id: Option<&str>,
-        updated_at: i64,
-        has_markers: bool,
-        markers: &str,
-        outlinks: &[String],
-        marker_types: &[String],
-        marker_values: &[String],
-        created_at: i64,
-        ctx_at: i64,
-    ) -> Result<(), SearchError> {
+    fn handle_add_or_update(&mut self, d: &BlockIndexData) -> Result<(), SearchError> {
         // Delete any existing document with this ID
-        let term = Term::from_field_text(self.fields.block_id, block_id);
+        let term = Term::from_field_text(self.fields.block_id, &d.block_id);
         self.writer.delete_term(term);
 
         // Build new document
         let mut doc = tantivy::TantivyDocument::new();
-        doc.add_text(self.fields.block_id, block_id);
-        doc.add_text(self.fields.content, content);
-        doc.add_text(self.fields.block_type, block_type);
-        doc.add_text(
-            self.fields.parent_id,
-            parent_id.unwrap_or(""),
-        );
-        doc.add_date(
-            self.fields.updated_at,
-            DateTime::from_timestamp_secs(updated_at),
-        );
-        doc.add_text(
-            self.fields.has_markers,
-            if has_markers { "true" } else { "false" },
-        );
-        // Full-text searchable marker values (e.g., "project::floatty mode::dev")
-        doc.add_text(self.fields.markers, markers);
+        doc.add_text(self.fields.block_id, &d.block_id);
+        doc.add_text(self.fields.content, &d.content);
+        doc.add_text(self.fields.block_type, &d.block_type);
+        doc.add_text(self.fields.parent_id, d.parent_id.as_deref().unwrap_or(""));
+        doc.add_date(self.fields.updated_at, DateTime::from_timestamp_secs(d.updated_at));
+        doc.add_text(self.fields.has_markers, if d.has_markers { "true" } else { "false" });
+        doc.add_text(self.fields.markers, &d.markers);
 
         // Multi-value fields: each value added separately
-        for outlink in outlinks {
+        for outlink in &d.outlinks {
             doc.add_text(self.fields.outlinks, outlink);
         }
-        for mt in marker_types {
+        for mt in &d.marker_types {
             doc.add_text(self.fields.marker_types, mt);
         }
-        for mv in marker_values {
+        for mv in &d.marker_values {
             doc.add_text(self.fields.marker_values, mv);
+        }
+        // Own-only marker fields (for inherited=false queries)
+        for mt in &d.marker_types_own {
+            doc.add_text(self.fields.marker_types_own, mt);
+        }
+        for mv in &d.marker_values_own {
+            doc.add_text(self.fields.marker_values_own, mv);
         }
 
         // Temporal fields (0 = not set)
-        if created_at > 0 {
-            doc.add_i64(self.fields.created_at, created_at);
+        if d.created_at > 0 {
+            doc.add_i64(self.fields.created_at, d.created_at);
         }
-        if ctx_at > 0 {
-            doc.add_i64(self.fields.ctx_at, ctx_at);
+        if d.ctx_at > 0 {
+            doc.add_i64(self.fields.ctx_at, d.ctx_at);
         }
 
-        self.writer
-            .add_document(doc)
-            .map_err(SearchError::Tantivy)?;
-
+        self.writer.add_document(doc).map_err(SearchError::Tantivy)?;
         Ok(())
     }
 
@@ -436,39 +377,30 @@ mod tests {
         (handle, dir)
     }
 
-    /// Helper: add_or_update with default empty values for new fields.
-    async fn add_simple(
-        handle: &WriterHandle,
-        block_id: &str,
-        content: &str,
-        block_type: &str,
-        parent_id: Option<String>,
-        updated_at: i64,
-        has_markers: bool,
-        markers: String,
-    ) -> Result<(), SearchError> {
-        handle
-            .add_or_update(
-                block_id.to_string(),
-                content.to_string(),
-                block_type.to_string(),
-                parent_id,
-                updated_at,
-                has_markers,
-                markers,
-                vec![],
-                vec![],
-                vec![],
-                0,
-                0,
-            )
-            .await
+    /// Helper: create a minimal BlockIndexData for tests.
+    fn simple_data(block_id: &str, content: &str, block_type: &str, parent_id: Option<&str>, has_markers: bool, markers: &str) -> BlockIndexData {
+        BlockIndexData {
+            block_id: block_id.to_string(),
+            content: content.to_string(),
+            block_type: block_type.to_string(),
+            parent_id: parent_id.map(String::from),
+            updated_at: 1704067200,
+            has_markers,
+            markers: markers.to_string(),
+            outlinks: vec![],
+            marker_types: vec![],
+            marker_values: vec![],
+            marker_types_own: vec![],
+            marker_values_own: vec![],
+            created_at: 0,
+            ctx_at: 0,
+        }
     }
 
     #[tokio::test]
     async fn test_add_or_update() {
         let (handle, _dir) = setup_writer().await;
-        let result = add_simple(&handle, "block_1", "Hello world", "text", None, 1704067200, false, String::new()).await;
+        let result = handle.add_or_update(simple_data("block_1", "Hello world", "text", None, false, "")).await;
         assert!(result.is_ok());
         handle.shutdown().await.ok();
     }
@@ -476,7 +408,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete() {
         let (handle, _dir) = setup_writer().await;
-        add_simple(&handle, "block_2", "To be deleted", "text", None, 1704067200, false, String::new()).await.unwrap();
+        handle.add_or_update(simple_data("block_2", "To be deleted", "text", None, false, "")).await.unwrap();
         let result = handle.delete("block_2".to_string()).await;
         assert!(result.is_ok());
         handle.shutdown().await.ok();
@@ -485,7 +417,7 @@ mod tests {
     #[tokio::test]
     async fn test_commit() {
         let (handle, _dir) = setup_writer().await;
-        add_simple(&handle, "block_3", "Commit me", "text", Some("parent_1".to_string()), 1704067200, true, "project::test".to_string()).await.unwrap();
+        handle.add_or_update(simple_data("block_3", "Commit me", "text", Some("parent_1"), true, "project::test")).await.unwrap();
         let result = handle.commit().await;
         assert!(result.is_ok());
         handle.shutdown().await.ok();
@@ -511,8 +443,8 @@ mod tests {
     #[tokio::test]
     async fn test_update_replaces_existing() {
         let (handle, _dir) = setup_writer().await;
-        add_simple(&handle, "block_4", "Original content", "text", None, 1704067200, false, String::new()).await.unwrap();
-        add_simple(&handle, "block_4", "Updated content", "text", None, 1704067201, true, "project::floatty mode::dev".to_string()).await.unwrap();
+        handle.add_or_update(simple_data("block_4", "Original content", "text", None, false, "")).await.unwrap();
+        handle.add_or_update(simple_data("block_4", "Updated content", "text", None, true, "project::floatty mode::dev")).await.unwrap();
         handle.commit().await.unwrap();
         handle.shutdown().await.ok();
     }
@@ -520,22 +452,23 @@ mod tests {
     #[tokio::test]
     async fn test_add_with_enriched_fields() {
         let (handle, _dir) = setup_writer().await;
-        let result = handle
-            .add_or_update(
-                "block_5".to_string(),
-                "ctx::2026-03-11 project::floatty".to_string(),
-                "ctx".to_string(),
-                None,
-                1704067200,
-                true,
-                "ctx project::floatty".to_string(),
-                vec!["Page A".to_string(), "Page B".to_string()],
-                vec!["ctx".to_string(), "project".to_string()],
-                vec!["project::floatty".to_string()],
-                1704067200,
-                1773379200,
-            )
-            .await;
+        let data = BlockIndexData {
+            block_id: "block_5".to_string(),
+            content: "ctx::2026-03-11 project::floatty".to_string(),
+            block_type: "ctx".to_string(),
+            parent_id: None,
+            updated_at: 1704067200,
+            has_markers: true,
+            markers: "ctx project::floatty".to_string(),
+            outlinks: vec!["Page A".to_string(), "Page B".to_string()],
+            marker_types: vec!["ctx".to_string(), "project".to_string()],
+            marker_values: vec!["project::floatty".to_string()],
+            marker_types_own: vec!["ctx".to_string(), "project".to_string()],
+            marker_values_own: vec!["project::floatty".to_string()],
+            created_at: 1704067200,
+            ctx_at: 1773379200,
+        };
+        let result = handle.add_or_update(data).await;
         assert!(result.is_ok());
         handle.commit().await.unwrap();
         handle.shutdown().await.ok();

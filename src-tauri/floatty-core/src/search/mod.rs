@@ -42,7 +42,7 @@ mod writer;
 pub use index_manager::{IndexManager, SchemaFields};
 pub use schema::build_schema;
 pub use service::{SearchFilters, SearchHit, SearchService};
-pub use writer::{TantivyWriter, WriterHandle, WriterMessage};
+pub use writer::{BlockIndexData, TantivyWriter, WriterHandle, WriterMessage};
 
 /// Errors that can occur during search operations.
 #[derive(Debug, thiserror::Error)]
