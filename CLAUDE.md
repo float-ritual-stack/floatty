@@ -183,6 +183,58 @@ curl -H "Authorization: Bearer $KEY" \
 
 Search also supports `include_breadcrumb=true` and `include_metadata=true`.
 
+### Search API (v0.9.3)
+
+`GET /api/v1/search` — full-text + structured filter search.
+
+```bash
+# Text search
+curl -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/search?q=floatty&limit=10"
+
+# Filter-only (no text query needed)
+curl -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/search?marker_type=project&marker_val=floatty"
+
+# Own markers only (excludes inherited from ancestors)
+curl -H "Authorization: Bearer $KEY" \
+  "http://127.0.0.1:$PORT/api/v1/search?marker_type=project&inherited=false"
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `q` | String | Full-text search (optional — omit for filter-only) |
+| `limit` | usize | Max results (default 20) |
+| `types` | String | Comma-separated block types (e.g., "sh,ctx") |
+| `has_markers` | bool | Filter by marker presence |
+| `parent_id` | String | Search within subtree |
+| `outlink` | String | Filter by [[wikilink]] target (exact match) |
+| `marker_type` | String | Filter by marker type (e.g., "project") |
+| `marker_val` | String | Filter by marker value (e.g., "floatty"). Combines with marker_type |
+| `inherited` | bool | When false, marker filters use own-only (default true) |
+| `created_after` | i64 | Epoch seconds — block creation time |
+| `created_before` | i64 | Epoch seconds — block creation time |
+| `ctx_after` | i64 | Epoch seconds — ctx:: event time |
+| `ctx_before` | i64 | Epoch seconds — ctx:: event time |
+| `include_breadcrumb` | bool | Include parent chain per hit |
+| `include_metadata` | bool | Include block metadata per hit |
+
+### Vocabulary Discovery (v0.9.3)
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/v1/markers` | Distinct marker types + counts |
+| `GET /api/v1/markers/:type/values` | Values for a marker type |
+| `GET /api/v1/stats` | Block count, roots, type distribution, metadata coverage |
+
+```bash
+# What marker types exist?
+curl -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/markers"
+
+# What projects are tagged?
+curl -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/markers/project/values"
+```
+
 ### Short-Hash Block Resolution
 
 **All block ID endpoints accept short-hash prefixes.** Any `:id` path parameter (`GET`, `PATCH`, `DELETE`) and body fields (`parentId`, `afterId` in `POST`/`PATCH`) resolve 6+ hex-char prefixes to full block UUIDs (git-sha style).
