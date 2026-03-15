@@ -597,6 +597,14 @@ export function Outliner(props: OutlinerProps) {
             });
           }
         },
+        // FLO-quick: Double-tap Cmd → copy focused block ID to clipboard (short hash)
+        'Meta Meta': (e) => {
+          e.preventDefault();
+          const id = focusedBlockId();
+          if (id) {
+            navigator.clipboard.writeText(id.slice(0, 8));
+          }
+        },
       });
       onCleanup(unsubscribe);
     }
