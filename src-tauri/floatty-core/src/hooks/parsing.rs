@@ -753,6 +753,23 @@ mod tests {
     }
 
     #[test]
+    fn test_ctx_datetime_24h_no_ampm() {
+        // 24h format without AM/PM — hour passes through unchanged
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-11 @ 14:30"),
+            Some("2026-03-11T14:30:00".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ctx_datetime_lowercase_pm() {
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-11 @ 4:42 pm"),
+            Some("2026-03-11T16:42:00".to_string())
+        );
+    }
+
+    #[test]
     fn test_ctx_datetime_no_ctx() {
         assert_eq!(extract_ctx_datetime("project::floatty"), None);
     }

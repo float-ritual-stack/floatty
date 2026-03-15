@@ -3234,13 +3234,15 @@ pub struct BlockSearchQuery {
     /// Filter by "type::value" pair (e.g., "project::floatty")
     #[serde(default)]
     pub marker_value: Option<String>,
-    /// Filter: created after this epoch timestamp (milliseconds, consistent with BlockDto.createdAt)
+    /// Filter: created after this epoch timestamp (seconds).
+    /// Note: BlockDto.createdAt is milliseconds, but search filters use seconds
+    /// for consistency across all temporal filters (created_at, ctx_at).
     #[serde(default)]
     pub created_after: Option<i64>,
-    /// Filter: created before this epoch timestamp (milliseconds, consistent with BlockDto.createdAt)
+    /// Filter: created before this epoch timestamp (seconds)
     #[serde(default)]
     pub created_before: Option<i64>,
-    /// Filter: ctx:: event after this epoch timestamp (seconds — ctx_at is derived from ctx:: content, always seconds)
+    /// Filter: ctx:: event after this epoch timestamp (seconds)
     #[serde(default)]
     pub ctx_after: Option<i64>,
     /// Filter: ctx:: event before this epoch timestamp (seconds)
@@ -3314,8 +3316,8 @@ async fn search_blocks(
     let service = SearchService::new(index_manager);
 
     // Build filters from query params
-    // created_after/before arrive as milliseconds (consistent with BlockDto.createdAt),
-    // but Tantivy stores created_at as seconds. Convert at the API boundary.
+    // All temporal search filters use epoch seconds. Tantivy stores seconds internally.
+    // Note: BlockDto.createdAt is milliseconds — different contract. Search = seconds.
     let filters = SearchFilters {
         block_types: query.types.map(|t| t.split(',').map(String::from).collect()),
         has_markers: query.has_markers,
@@ -3323,8 +3325,8 @@ async fn search_blocks(
         outlink: query.outlink,
         marker_type: query.marker_type,
         marker_value: query.marker_value,
-        created_after: query.created_after.map(|ms| ms / 1000),
-        created_before: query.created_before.map(|ms| ms / 1000),
+        created_after: query.created_after,
+        created_before: query.created_before,
         ctx_after: query.ctx_after,
         ctx_before: query.ctx_before,
     };
