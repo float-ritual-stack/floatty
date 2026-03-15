@@ -61,12 +61,12 @@ static TAG_PATTERN: LazyLock<Regex> =
 pub const KNOWN_TAG_TYPES: &[&str] = &["project", "mode", "issue", "repo", "branch", "meeting"];
 
 /// Regex for standalone markers: `project::floatty` (not in brackets).
-/// Captures: (1) marker_type, (2) value
+/// Captures: (1) marker_type, (2) value (optional — bare `floatctl::` is valid)
 /// We must exclude matches inside brackets or code chains, done via post-filtering.
 static STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    // Match word boundary, marker_type, ::, value
-    // \b ensures we match whole words, not partial (e.g., won't match inside `[project::floatty]`)
-    Regex::new(r"\b([a-zA-Z_][a-zA-Z0-9_-]*)::([\w/.@_-]+)").expect("valid regex")
+    // Match word boundary, marker_type, ::, optional value (immediately adjacent)
+    // Value group is optional → bare `floatctl::` matches with value=None
+    Regex::new(r"\b([a-zA-Z_][a-zA-Z0-9_-]*)::(?:([\w/.@_-]+))?").expect("valid regex")
 });
 
 /// Extract all tag markers from content.
@@ -117,9 +117,8 @@ pub fn extract_standalone_markers(content: &str) -> Vec<Marker> {
     STANDALONE_PATTERN
         .captures_iter(content)
         .filter_map(|cap| {
-            // cap[1] = marker_type, cap[2] = value
+            // cap[1] = marker_type, cap[2] = value (optional)
             let marker_type = &cap[1];
-            let marker_type_lower = marker_type.to_lowercase();
 
             // Skip code namespaces
             if CODE_NAMESPACES
@@ -129,9 +128,12 @@ pub fn extract_standalone_markers(content: &str) -> Vec<Marker> {
                 return None;
             }
 
-            // Skip prefix markers (already extracted as prefix, no value)
-            // We want standalone to capture the VALUE, but prefix extraction only captures type
-            if PREFIX_MARKERS.contains(&marker_type_lower.as_str()) {
+            // Skip prefix markers — their "values" are command content, not metadata.
+            // Exception: ctx:: values are dates/timestamps we want to capture.
+            let marker_type_lower = marker_type.to_lowercase();
+            if PREFIX_MARKERS.contains(&marker_type_lower.as_str())
+                && marker_type_lower != "ctx"
+            {
                 return None;
             }
 
@@ -146,7 +148,11 @@ pub fn extract_standalone_markers(content: &str) -> Vec<Marker> {
                 return None;
             }
 
-            Some(Marker::with_value(marker_type, &cap[2]))
+            // Value is optional (bare `floatctl::` has no value)
+            match cap.get(2) {
+                Some(value_match) => Some(Marker::with_value(marker_type, value_match.as_str())),
+                None => Some(Marker::new(marker_type.to_string())),
+            }
         })
         .collect()
 }
@@ -318,6 +324,63 @@ pub fn has_wikilink_patterns(content: &str) -> bool {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CTX DATETIME EXTRACTION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Regex for extracting full datetime from ctx:: markers.
+/// Handles: `ctx::2026-03-11`, `ctx::2026-03-11 @ 04:42:47 AM`, `ctx::2026-03-11 @ 4:42 PM`
+static CTX_DATETIME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"ctx::(\d{4}-\d{2}-\d{2})(?:\s*@\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?))?",
+    )
+    .expect("valid regex")
+});
+
+/// Extract ISO datetime from a ctx:: marker.
+///
+/// Returns the most specific datetime string possible:
+/// - `ctx::2026-03-11` → `"2026-03-11"`
+/// - `ctx::2026-03-11 @ 04:42:47 AM` → `"2026-03-11T04:42:47"`
+/// - `ctx::2026-03-11 @ 4:42 PM` → `"2026-03-11T16:42:00"`
+pub fn extract_ctx_datetime(content: &str) -> Option<String> {
+    let caps = CTX_DATETIME.captures(content)?;
+    let date = caps.get(1)?.as_str();
+
+    match caps.get(2) {
+        None => Some(date.to_string()),
+        Some(time_match) => {
+            let time_str = time_match.as_str().trim();
+            // Parse 12h time to 24h
+            let is_pm = time_str.ends_with("PM");
+            let is_am = time_str.ends_with("AM");
+            let time_digits = time_str
+                .trim_end_matches("AM")
+                .trim_end_matches("PM")
+                .trim();
+
+            let parts: Vec<&str> = time_digits.split(':').collect();
+            if parts.is_empty() {
+                return Some(date.to_string());
+            }
+
+            let mut hour: u32 = parts[0].parse().ok()?;
+            let minute: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let second: u32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+            if is_pm || is_am {
+                if is_pm && hour != 12 {
+                    hour += 12;
+                } else if is_am && hour == 12 {
+                    hour = 0;
+                }
+            }
+
+            Some(format!("{date}T{hour:02}:{minute:02}:{second:02}"))
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // COMBINED EXTRACTION
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -486,6 +549,43 @@ mod tests {
         assert!(markers.is_empty());
     }
 
+    #[test]
+    fn test_standalone_bare_marker() {
+        // Bare marker with no value (e.g., `floatctl::`)
+        let markers = extract_standalone_markers("floatctl::");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "floatctl");
+        assert_eq!(markers[0].value, None);
+    }
+
+    #[test]
+    fn test_standalone_bare_in_prose() {
+        // Bare marker followed by prose — value is None, prose is not captured
+        let markers = extract_standalone_markers("portless:: is a door type");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "portless");
+        assert_eq!(markers[0].value, None);
+    }
+
+    #[test]
+    fn test_standalone_bare_at_end() {
+        let markers = extract_standalone_markers("this is floatctl::");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "floatctl");
+        assert_eq!(markers[0].value, None);
+    }
+
+    #[test]
+    fn test_standalone_prefix_markers_capture_value() {
+        // PREFIX_MARKERS should NOT be filtered from standalone —
+        // standalone captures the value that prefix extraction misses
+        let markers = extract_standalone_markers("ctx::2026-01-10 project::floatty");
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0].marker_type, "ctx");
+        assert_eq!(markers[0].value, Some("2026-01-10".to_string()));
+        assert_eq!(markers[1].marker_type, "project");
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Wikilink bracket counting
     // ─────────────────────────────────────────────────────────────────────────
@@ -608,6 +708,63 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // ctx:: datetime extraction
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_ctx_datetime_date_only() {
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-11"),
+            Some("2026-03-11".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ctx_datetime_full() {
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-11 @ 04:42:47 AM"),
+            Some("2026-03-11T04:42:47".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ctx_datetime_pm() {
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-11 @ 4:42 PM"),
+            Some("2026-03-11T16:42:00".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ctx_datetime_noon() {
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-11 @ 12:00 PM"),
+            Some("2026-03-11T12:00:00".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ctx_datetime_midnight() {
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-11 @ 12:00 AM"),
+            Some("2026-03-11T00:00:00".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ctx_datetime_no_ctx() {
+        assert_eq!(extract_ctx_datetime("project::floatty"), None);
+    }
+
+    #[test]
+    fn test_ctx_datetime_in_context() {
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-11 @ 11:22:26 PM [project::floatty]"),
+            Some("2026-03-11T23:22:26".to_string())
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Combined extraction
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -629,11 +786,16 @@ mod tests {
     #[test]
     fn test_extract_all_markers_mixed() {
         let markers = extract_all_markers("ctx::2026-01-10 [project::floatty] [mode::dev]");
-        assert_eq!(markers.len(), 3);
-        // Sorted alphabetically by (marker_type, value)
+        // ctx prefix gives {ctx, None}, standalone gives {ctx, Some("2026-01-10")}
+        // Both survive dedup (different values). Total: 4
+        assert_eq!(markers.len(), 4);
+        // Sorted: ctx(None) < ctx(Some) < mode < project
         assert_eq!(markers[0].marker_type, "ctx");
-        assert_eq!(markers[1].marker_type, "mode");
-        assert_eq!(markers[2].marker_type, "project");
+        assert_eq!(markers[0].value, None);
+        assert_eq!(markers[1].marker_type, "ctx");
+        assert_eq!(markers[1].value, Some("2026-01-10".to_string()));
+        assert_eq!(markers[2].marker_type, "mode");
+        assert_eq!(markers[3].marker_type, "project");
     }
 
     #[test]
@@ -665,11 +827,14 @@ mod tests {
     fn test_extract_all_markers_mixed_with_standalone() {
         let content = "ctx::2026-01-11 [project::floatty] mode::synthesis issue::264";
         let markers = extract_all_markers(content);
-        // ctx, issue, mode, project (sorted alphabetically by type)
-        assert_eq!(markers.len(), 4);
+        // ctx prefix {ctx, None} + standalone {ctx, Some("2026-01-11")} + issue, mode, project
+        assert_eq!(markers.len(), 5);
         assert_eq!(markers[0].marker_type, "ctx");
-        assert_eq!(markers[1].marker_type, "issue");
-        assert_eq!(markers[2].marker_type, "mode");
-        assert_eq!(markers[3].marker_type, "project");
+        assert_eq!(markers[0].value, None);
+        assert_eq!(markers[1].marker_type, "ctx");
+        assert_eq!(markers[1].value, Some("2026-01-11".to_string()));
+        assert_eq!(markers[2].marker_type, "issue");
+        assert_eq!(markers[3].marker_type, "mode");
+        assert_eq!(markers[4].marker_type, "project");
     }
 }
