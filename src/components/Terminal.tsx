@@ -904,11 +904,16 @@ export function Terminal() {
           break;
         }
         case 'commandPalette': {
-          // Snapshot focused block BEFORE command bar steals focus
-          if (!isCommandBarOpen() && activeId) {
-            const ap = getActivePaneId(activeId);
-            commandBarFocusedBlockId = ap ? paneStore.getFocusedBlockId(ap) : null;
-            commandBarSourcePaneId = ap ?? null;
+          // Snapshot focused block + pane BEFORE command bar steals focus
+          if (!isCommandBarOpen()) {
+            if (activeId) {
+              const ap = getActivePaneId(activeId);
+              commandBarFocusedBlockId = ap ? paneStore.getFocusedBlockId(ap) : null;
+              commandBarSourcePaneId = ap ?? null;
+            } else {
+              commandBarFocusedBlockId = null;
+              commandBarSourcePaneId = null;
+            }
           }
           setCommandBarOpen(open => !open);
           break;
