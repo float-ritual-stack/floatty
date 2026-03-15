@@ -540,9 +540,7 @@ html, body, #root {
   position: absolute;
   inset: 0;
   z-index: 20;
-  /* pointer-events: none lets wheel/scroll pass through to outliner underneath.
-     Click-to-focus is handled by mousedown on the pane wrapper instead. */
-  pointer-events: none;
+  cursor: pointer;
 }
 
 body.block-dragging .pane-inactive-overlay {
