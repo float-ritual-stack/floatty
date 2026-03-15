@@ -39,7 +39,7 @@
 use super::{IndexManager, SearchError};
 use std::sync::Arc;
 use tantivy::collector::{Count, TopDocs};
-use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, RangeQuery, TermQuery};
+use tantivy::query::{AllQuery, BooleanQuery, Occur, Query, QueryParser, RangeQuery, TermQuery};
 use tantivy::schema::{IndexRecordOption, Value};
 use tantivy::Term;
 
@@ -176,35 +176,34 @@ impl SearchService {
         filters: SearchFilters,
         limit: usize,
     ) -> Result<(usize, Vec<SearchHit>), SearchError> {
-        // Empty query returns no results
         let query_trimmed = query.trim();
-        if query_trimmed.is_empty() {
+        let filter_queries = self.build_filter_queries(&filters);
+
+        // Empty text + no filters = no results
+        if query_trimmed.is_empty() && filter_queries.is_empty() {
             return Ok((0, Vec::new()));
         }
-
-        // Pre-process query: escape Tantivy special characters so user input
-        // is treated as literal text. Common in floatty notes: `ctx::`, `project::`,
-        // `[[wikilinks]]`, `[tags]`.
-        let query_escaped = escape_tantivy_query(query_trimmed);
 
         // Get reader and searcher
         let reader = self.index.index().reader()?;
         let searcher = reader.searcher();
         let fields = self.index.fields();
 
-        // Build the text query - searches both content and extracted markers
-        let query_parser =
-            QueryParser::for_index(self.index.index(), vec![fields.content, fields.markers]);
-        let text_query = query_parser.parse_query(&query_escaped)?;
-
-        // Build filter queries
-        let filter_queries = self.build_filter_queries(&filters);
-
-        // Combine text query with filters (AND logic)
-        let final_query: Box<dyn Query> = if filter_queries.is_empty() {
-            text_query
+        // Build the text query (or AllQuery for filter-only searches)
+        let base_query: Box<dyn Query> = if query_trimmed.is_empty() {
+            Box::new(AllQuery)
         } else {
-            let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, text_query)];
+            let query_escaped = escape_tantivy_query(query_trimmed);
+            let query_parser =
+                QueryParser::for_index(self.index.index(), vec![fields.content, fields.markers]);
+            query_parser.parse_query(&query_escaped)?
+        };
+
+        // Combine base query with filters (AND logic)
+        let final_query: Box<dyn Query> = if filter_queries.is_empty() {
+            base_query
+        } else {
+            let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, base_query)];
             for filter in filter_queries {
                 clauses.push((Occur::Must, filter));
             }
@@ -803,6 +802,26 @@ mod tests {
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].block_id, "b1");
+    }
+
+    #[test]
+    fn test_filter_only_no_text_query() {
+        let (_dir, manager) = create_enriched_index(&test_docs());
+        let service = SearchService::new(manager);
+
+        // Empty text query + filter = should use AllQuery as base
+        let (_total, hits) = service
+            .search_with_filters("", SearchFilters {
+                marker_type: Some("project".into()),
+                ..Default::default()
+            }, 10)
+            .unwrap();
+
+        // b1 and b2 both have marker_type=project
+        assert_eq!(hits.len(), 2);
+        let ids: Vec<_> = hits.iter().map(|h| h.block_id.as_str()).collect();
+        assert!(ids.contains(&"b1"));
+        assert!(ids.contains(&"b2"));
     }
 
     #[test]

@@ -161,14 +161,13 @@ impl TantivyIndexHook {
                 let markers_str = formatted_parts.join(" ");
 
                 // Extract distinct marker types and "type::value" pairs
+                // Includes inherited markers so filter queries work on inherited context
                 let mut m_types: Vec<String> = own_markers
                     .iter()
                     .map(|m| m.marker_type.clone())
                     .collect();
-                m_types.sort();
-                m_types.dedup();
 
-                let m_values: Vec<String> = own_markers
+                let mut m_values: Vec<String> = own_markers
                     .iter()
                     .filter_map(|m| {
                         m.value
@@ -176,6 +175,17 @@ impl TantivyIndexHook {
                             .map(|v| format!("{}::{}", m.marker_type, v))
                     })
                     .collect();
+
+                // Add inherited marker types/values
+                if let Ok(index) = self.inheritance_index.read() {
+                    for marker in index.get(id) {
+                        m_types.push(marker.marker_type.clone());
+                        m_values.push(format!("{}::{}", marker.marker_type, marker.value));
+                    }
+                }
+
+                m_types.sort();
+                m_types.dedup();
 
                 // Outlinks from metadata
                 let outlinks = b

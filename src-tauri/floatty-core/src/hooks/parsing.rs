@@ -329,9 +329,10 @@ pub fn has_wikilink_patterns(content: &str) -> bool {
 
 /// Regex for extracting full datetime from ctx:: markers.
 /// Handles: `ctx::2026-03-11`, `ctx::2026-03-11 @ 04:42:47 AM`, `ctx::2026-03-11 @ 4:42 PM`
+/// Case-insensitive for AM/PM (accepts am/pm/Am/Pm).
 static CTX_DATETIME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"ctx::(\d{4}-\d{2}-\d{2})(?:\s*@\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?))?",
+        r"(?i)ctx::(\d{4}-\d{2}-\d{2})(?:\s*@\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?))?",
     )
     .expect("valid regex")
 });
@@ -351,11 +352,11 @@ pub fn extract_ctx_datetime(content: &str) -> Option<String> {
         Some(time_match) => {
             let time_str = time_match.as_str().trim();
             // Parse 12h time to 24h
-            let is_pm = time_str.ends_with("PM");
-            let is_am = time_str.ends_with("AM");
+            let time_upper = time_str.to_uppercase();
+            let is_pm = time_upper.ends_with("PM");
+            let is_am = time_upper.ends_with("AM");
             let time_digits = time_str
-                .trim_end_matches("AM")
-                .trim_end_matches("PM")
+                .trim_end_matches(|c: char| c.is_ascii_alphabetic())
                 .trim();
 
             let parts: Vec<&str> = time_digits.split(':').collect();
