@@ -369,11 +369,20 @@ pub fn extract_ctx_datetime(content: &str) -> Option<String> {
             let second: u32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
 
             if is_pm || is_am {
+                // Validate 12h range before conversion
+                if !(1..=12).contains(&hour) {
+                    return None;
+                }
                 if is_pm && hour != 12 {
                     hour += 12;
                 } else if is_am && hour == 12 {
                     hour = 0;
                 }
+            }
+
+            // Validate ranges
+            if hour > 23 || minute > 59 || second > 59 {
+                return None;
             }
 
             Some(format!("{date}T{hour:02}:{minute:02}:{second:02}"))
@@ -578,8 +587,8 @@ mod tests {
 
     #[test]
     fn test_standalone_prefix_markers_capture_value() {
-        // PREFIX_MARKERS should NOT be filtered from standalone —
-        // standalone captures the value that prefix extraction misses
+        // Standalone filters all PREFIX_MARKERS except "ctx" — ctx:: values are dates
+        // we want to capture, while other prefixes (sh::, ai::) have command content as values.
         let markers = extract_standalone_markers("ctx::2026-01-10 project::floatty");
         assert_eq!(markers.len(), 2);
         assert_eq!(markers[0].marker_type, "ctx");
