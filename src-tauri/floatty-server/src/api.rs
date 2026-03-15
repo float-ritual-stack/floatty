@@ -3205,7 +3205,8 @@ async fn search_pages(
 /// Full-text search query parameters
 #[derive(Deserialize)]
 pub struct BlockSearchQuery {
-    /// Search text (required)
+    /// Search text (optional — omit or empty for filter-only queries)
+    #[serde(default)]
     pub q: String,
     /// Maximum results to return (default: 20)
     #[serde(default = "default_search_limit")]
