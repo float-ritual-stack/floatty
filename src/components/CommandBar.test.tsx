@@ -44,8 +44,8 @@ describe('CommandBar', () => {
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const listbox = getByRole('listbox');
-    // 3 pages + 9 commands = 12
-    expect(listbox.children.length).toBe(12);
+    // 3 pages + 11 commands = 14
+    expect(listbox.children.length).toBe(14);
   });
 
   it('Escape calls onClose', () => {
@@ -122,8 +122,8 @@ describe('CommandBar', () => {
     fireEvent.keyDown(input, { key: 'ArrowUp' });
 
     const options = getAllByRole('option');
-    // Last item (index 11) should be selected (3 pages + 9 commands - 1)
-    expect(options[11].getAttribute('aria-selected')).toBe('true');
+    // Last item (index 13) should be selected (3 pages + 11 commands - 1)
+    expect(options[13].getAttribute('aria-selected')).toBe('true');
   });
 
   it('clicking scrim calls onClose', () => {
@@ -180,6 +180,6 @@ describe('CommandBar', () => {
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const commandItems = container.querySelectorAll('.command-bar-command');
-    expect(commandItems.length).toBe(9);
+    expect(commandItems.length).toBe(11);
   });
 });

@@ -48,6 +48,8 @@ export const BUILT_IN_COMMANDS: ResultItem[] = [
   { type: 'command', id: 'unlink-pane',     label: 'Unlink Pane' },
   { type: 'command', id: 'unlink-all',      label: 'Unlink All Panes' },
   { type: 'command', id: 'copy-block-id',   label: 'Copy Block ID' },
+  { type: 'command', id: 'go-home',         label: 'Home (Top of Document)' },
+  { type: 'command', id: 'go-today',        label: "Today's Daily Note" },
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -128,7 +130,9 @@ export function useCommandBar() {
       isCreate: !exactPage,
     };
 
-    return [typedTextItem, ...fuzzyPages, ...commands];
+    // FLO-466: When query matches command names, surface commands above pages.
+    // "export" should show Export JSON/Binary/Markdown before pages containing "export".
+    return [typedTextItem, ...commands, ...fuzzyPages];
   });
 
   // Reset selection when query changes (on() prevents dependency leak)

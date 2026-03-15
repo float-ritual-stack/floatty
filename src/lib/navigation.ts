@@ -27,6 +27,8 @@ export interface NavigateOptions {
   highlight?: boolean;
   /** Block where navigation originated (for focus restoration on back navigation) */
   originBlockId?: string;
+  /** If true, split is ephemeral (Opt+Click — auto-closes when navigating away) */
+  ephemeral?: boolean;
 }
 
 export interface NavigateResult {
@@ -102,7 +104,7 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
  * @param options - Navigation options
  */
 export function navigateToPage(pageName: string, options: NavigateOptions = {}): NavigateResult {
-  const { paneId, splitDirection, highlight } = options;
+  const { paneId, splitDirection, highlight, originBlockId, ephemeral } = options;
 
   if (!paneId) {
     console.warn('[navigation] navigateToPage: no paneId provided');
@@ -114,7 +116,8 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
     pageName,
     paneId,
     splitDirection ?? 'none',
-    false // ephemeral
+    ephemeral ?? false,
+    originBlockId ? { originBlockId } : undefined
   );
 
   if (!result.success) {

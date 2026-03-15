@@ -157,15 +157,9 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       >
         ⋮⋮
       </div>
-      {/* Click interceptor for dimmed panes with iframes.
-          Iframe clicks don't bubble to parent — this overlay catches the first click
-          to activate the pane, then disappears so the iframe gets normal interaction. */}
-      {!props.isActive && (
-        <div
-          class="pane-inactive-overlay"
-          onMouseDown={() => props.onPaneClick?.()}
-        />
-      )}
+      {/* No overlay for outliner panes — click-to-focus handled by wrapper onMouseDown.
+          Overlay was blocking scroll on unfocused panes. Iframes inside blocks (door/artifact)
+          have their own focus management via DoorHost.tsx postMessage bridge. */}
       <Outliner paneId={props.id} initialCollapseDepth={props.initialCollapseDepth} />
     </div>
   );

@@ -7,8 +7,8 @@ import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
-import { navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
-import { navigateToBlock, navigateToPage as navigateToPageNav, handleChirpNavigate } from '../lib/navigation';
+import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { navigateToBlock, navigateToPage, handleChirpNavigate } from '../lib/navigation';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
@@ -404,8 +404,8 @@ export function BlockItem(props: BlockItemProps) {
 
   // Wrapper for navigateToPage that matches hook's expected signature
   const navigateToPageForHook = (target: string, paneId: string) => {
-    const result = navigateToPage(target, paneId, 'none');
-    return { success: result.success, focusTargetId: result.focusTargetId };
+    const result = navigateToPage(target, { paneId });
+    return { success: result.success };
   };
 
   // Wire up the keyboard handler hook - single source of truth for keyboard logic
@@ -898,25 +898,26 @@ export function BlockItem(props: BlockItemProps) {
         const sourceTab = findTabIdByPaneId(props.paneId);
         const linkedTab = findTabIdByPaneId(linkedPaneId);
         if (sourceTab && sourceTab === linkedTab) {
-          navigateToPageNav(target, { paneId: linkedPaneId, highlight: true, originBlockId: props.id });
+          navigateToPage(target, { paneId: linkedPaneId, highlight: true, originBlockId: props.id });
           return;
         }
       }
     }
 
     // FLO-211: Pass current block as origin for focus restoration on back navigation
-    const result = navigateToPage(target, props.paneId, splitDirection, ephemeral, {
+    const result = navigateToPage(target, {
+      paneId: props.paneId,
+      splitDirection: splitDirection === 'none' ? undefined : splitDirection,
+      ephemeral,
       originBlockId: props.id,
     });
     if (!result.success) {
       console.warn('[BlockItem] Wikilink navigation failed:', result.error);
     } else {
-      // FLO-135: Focus in the CORRECT pane (new split, not source)
-      if (result.focusTargetId && result.targetPaneId) {
-        // Set focus on the target pane directly (not via source pane's callback)
-        paneStore.setFocusedBlockId(result.targetPaneId, result.focusTargetId);
-
-        // Also set active pane so keyboard focus follows
+      // FLO-135: Focus + active pane in the CORRECT pane (new split, not source)
+      // navigateToPage already sets focusedBlockId via the wrapper.
+      // We still need to set activePaneId so keyboard focus follows.
+      if (result.targetPaneId) {
         const tabId = findTabIdByPaneId(result.targetPaneId);
         if (tabId) {
           layoutStore.setActivePaneId(tabId, result.targetPaneId);

@@ -597,6 +597,14 @@ export function Outliner(props: OutlinerProps) {
             });
           }
         },
+        // Double-tap Cmd → copy focused block ID as [[wikilink]] to clipboard
+        'Meta Meta': (e) => {
+          e.preventDefault();
+          const id = focusedBlockId();
+          if (id) {
+            navigator.clipboard.writeText(`[[${id.slice(0, 8)}]]`);
+          }
+        },
       });
       onCleanup(unsubscribe);
     }
