@@ -68,7 +68,8 @@ async function main() {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${API_KEY}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'X-Floatty-Confirm-Destructive': 'true'
     },
     body: JSON.stringify({ state: base64 })
   });
