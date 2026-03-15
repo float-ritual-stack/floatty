@@ -779,6 +779,23 @@ mod tests {
     }
 
     #[test]
+    fn test_ctx_datetime_with_dash_project() {
+        // Real text expander format: ctx::DATE @ TIME AM - [project::X]
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-15 @ 03:33:24 AM - [project::rangle/pharmacy]"),
+            Some("2026-03-15T03:33:24".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ctx_datetime_with_newline() {
+        assert_eq!(
+            extract_ctx_datetime("ctx::2026-03-15 @ 12:27:25 AM\n"),
+            Some("2026-03-15T00:27:25".to_string())
+        );
+    }
+
+    #[test]
     fn test_ctx_datetime_no_ctx() {
         assert_eq!(extract_ctx_datetime("project::floatty"), None);
     }
