@@ -3232,9 +3232,11 @@ pub struct BlockSearchQuery {
     /// Filter by marker type (e.g., "project", "mode")
     #[serde(default)]
     pub marker_type: Option<String>,
-    /// Filter by "type::value" pair (e.g., "project::floatty")
+    /// Filter by marker value (e.g., "floatty", "rangle/pharmacy").
+    /// Combines with marker_type to form the internal "type::value" term query.
+    /// Use alone for "any marker with this value" or with marker_type for precise match.
     #[serde(default)]
-    pub marker_value: Option<String>,
+    pub marker_val: Option<String>,
     /// Filter: created after this epoch timestamp (seconds).
     /// Note: BlockDto.createdAt is milliseconds, but search filters use seconds
     /// for consistency across all temporal filters (created_at, ctx_at).
@@ -3328,8 +3330,14 @@ async fn search_blocks(
         has_markers: query.has_markers,
         parent_id: query.parent_id,
         outlink: query.outlink,
-        marker_type: query.marker_type,
-        marker_value: query.marker_value,
+        marker_type: query.marker_type.clone(),
+        // Join marker_type + marker_val into "type::value" for internal Tantivy term query.
+        // Callers send ?marker_type=project&marker_val=floatty → internal "project::floatty"
+        marker_value: match (&query.marker_type, &query.marker_val) {
+            (Some(mt), Some(mv)) => Some(format!("{mt}::{mv}")),
+            (None, Some(mv)) => Some(mv.clone()),  // value-only search (rare)
+            _ => None,
+        },
         created_after: query.created_after,
         created_before: query.created_before,
         ctx_after: query.ctx_after,
