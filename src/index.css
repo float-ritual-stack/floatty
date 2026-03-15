@@ -901,19 +901,6 @@ body.pane-dragging .terminal-pane-positioned {
 .block-bullet-quote { color: var(--color-fg-muted); }
 .block-bullet-todo { color: var(--color-success); }
 
-/* FLO-472: Todo progress counter */
-.todo-counter {
-  font-size: 10px;
-  color: var(--color-fg-muted);
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
-  padding: 0 4px;
-  border-radius: 3px;
-  margin-right: 4px;
-  white-space: nowrap;
-  align-self: center;
-  user-select: none;
-}
-
 .block-content-wrapper {
   flex: 1;
   min-width: 0;

@@ -145,40 +145,6 @@ export function BlockItem(props: BlockItemProps) {
   createEffect(on(() => props.id, () => setChildLimit(CHILD_RENDER_LIMIT)));
   const visibleChildIds = createMemo(() => (block()?.childIds ?? []).slice(0, childLimit()));
 
-  // FLO-472: Todo progress counter for first block in a consecutive todo group
-  const todoCounter = createMemo(() => {
-    const b = block();
-    if (b?.type !== 'todo') return null;
-
-    // Find parent to get siblings
-    const parentId = b.parentId;
-    const siblings = parentId
-      ? store.blocks[parentId]?.childIds ?? []
-      : store.rootIds ?? [];
-
-    const myIdx = siblings.indexOf(props.id);
-    if (myIdx < 0) return null;
-
-    // Am I the first todo in a consecutive run?
-    if (myIdx > 0) {
-      const prevSibling = store.blocks[siblings[myIdx - 1]];
-      if (prevSibling?.type === 'todo') return null; // not first in group
-    }
-
-    // Count consecutive todos from here
-    let total = 0;
-    let done = 0;
-    for (let i = myIdx; i < siblings.length; i++) {
-      const sib = store.blocks[siblings[i]];
-      if (sib?.type !== 'todo') break;
-      total++;
-      if (/^- \[[xX]\] /.test(sib.content)) done++;
-    }
-
-    if (total < 2) return null; // only show for 2+ consecutive
-    return { done, total };
-  });
-
   // FLO-58: Detect table blocks for picker pattern rendering
   const isTableBlock = createMemo(() => hasTablePattern(block()?.content ?? ''));
   // FLO-58: Lift showRaw state to persist across TableView remounts
@@ -1025,35 +991,9 @@ export function BlockItem(props: BlockItemProps) {
             e.preventDefault();
             paneStore.toggleCollapsed(props.paneId, props.id, block()?.collapsed || false);
           }}
-          onDblClick={(e) => {
-            // FLO-473: Double-click bullet on todo blocks toggles checkbox
-            const b = block();
-            if (b?.type !== 'todo') return;
-            e.stopPropagation();
-            e.preventDefault();
-            const content = b.content;
-            const toggled = content.startsWith('- [x] ') || content.startsWith('- [X] ')
-              ? content.replace(/^- \[[xX]\] /, '- [ ] ')
-              : content.replace(/^- \[ \] /, '- [x] ');
-            if (toggled !== content) {
-              store.updateBlockContent(props.id, toggled);
-            }
-          }}
         >
           {bulletChar()}
         </div>
-
-        {/* FLO-472: Todo progress counter */}
-        <Show when={todoCounter()}>
-          {(counter) => (
-            <span
-              class="todo-counter"
-              title={`${counter().done}/${counter().total} done`}
-            >
-              {counter().done}/{counter().total}
-            </span>
-          )}
-        </Show>
 
         {/* FLO-223: Pane link indicator on iframe-output blocks (artifact/door/eval-url) */}
         <Show when={paneLinkStore.hasPaneLink(props.paneId) && (block()?.outputType === 'eval-result' || block()?.outputType === 'door')}>
