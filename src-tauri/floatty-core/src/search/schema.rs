@@ -83,6 +83,13 @@ pub fn build_schema() -> Schema {
     // e.g., "project::floatty" — more specific than marker_types
     builder.add_text_field("marker_values", STRING);
 
+    // marker_types_own: Own markers only (excludes inherited from ancestors)
+    // For `inherited=false` queries
+    builder.add_text_field("marker_types_own", STRING);
+
+    // marker_values_own: Own "type::value" pairs only (excludes inherited)
+    builder.add_text_field("marker_values_own", STRING);
+
     // created_at: Block creation timestamp (epoch seconds)
     // FAST = column-oriented for range queries, STORED = retrievable
     let i64_options = tantivy::schema::NumericOptions::default()
@@ -131,14 +138,16 @@ mod tests {
         assert!(schema.get_field("marker_values").is_ok());
         assert!(schema.get_field("created_at").is_ok());
         assert!(schema.get_field("ctx_at").is_ok());
+        assert!(schema.get_field("marker_types_own").is_ok());
+        assert!(schema.get_field("marker_values_own").is_ok());
     }
 
     #[test]
     fn test_schema_field_count() {
         let schema = build_schema();
-        // Should have exactly 12 fields (7 original + 5 new)
+        // Should have exactly 14 fields (7 original + 5 enrichment + 2 own-only)
         let field_count = schema.fields().count();
-        assert_eq!(field_count, 12);
+        assert_eq!(field_count, 14);
     }
 
     #[test]

@@ -3248,6 +3248,10 @@ pub struct BlockSearchQuery {
     /// Filter: ctx:: event before this epoch timestamp (seconds)
     #[serde(default)]
     pub ctx_before: Option<i64>,
+    /// When false, marker_type/marker_value filter only own markers (excludes inherited).
+    /// Default: true (includes inherited markers from ancestors).
+    #[serde(default)]
+    pub inherited: Option<bool>,
 }
 
 fn default_search_limit() -> usize {
@@ -3329,6 +3333,7 @@ async fn search_blocks(
         created_before: query.created_before,
         ctx_after: query.ctx_after,
         ctx_before: query.ctx_before,
+        include_inherited: query.inherited,
     };
 
     // Execute search

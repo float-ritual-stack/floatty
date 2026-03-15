@@ -20,7 +20,7 @@ use crate::{
     block::parse_block_type,
     events::BlockChange,
     hooks::InheritanceIndex,
-    search::WriterHandle,
+    search::{BlockIndexData, WriterHandle},
     BlockChangeBatch, Origin, YDocStore,
 };
 use std::sync::{Arc, RwLock};
@@ -129,74 +129,64 @@ impl TantivyIndexHook {
             .unwrap_or(0);
 
         // Extract marker data and outlinks from metadata
-        let (has_markers, markers, outlinks, marker_types, marker_values) = block_data
+        let own_markers: Vec<_> = block_data
             .as_ref()
-            .map(|b| {
-                let own_markers = b
-                    .metadata
-                    .as_ref()
-                    .map(|m| &m.markers[..])
-                    .unwrap_or(&[]);
+            .and_then(|b| b.metadata.as_ref())
+            .map(|m| m.markers.clone())
+            .unwrap_or_default();
 
-                // Format own markers for full-text search
-                let mut formatted_parts: Vec<String> = own_markers
-                    .iter()
-                    .map(|marker| {
-                        if let Some(ref v) = marker.value {
-                            format!("{}::{}", marker.marker_type, v)
-                        } else {
-                            marker.marker_type.clone()
-                        }
-                    })
-                    .collect();
+        let outlinks = block_data
+            .as_ref()
+            .and_then(|b| b.metadata.as_ref())
+            .map(|m| m.outlinks.clone())
+            .unwrap_or_default();
 
-                // Extract distinct marker types and "type::value" pairs from own markers
-                let mut m_types: Vec<String> = own_markers
-                    .iter()
-                    .map(|m| m.marker_type.clone())
-                    .collect();
+        // Own marker types and values
+        let mut m_types_own: Vec<String> = own_markers.iter().map(|m| m.marker_type.clone()).collect();
+        m_types_own.sort();
+        m_types_own.dedup();
 
-                let mut m_values: Vec<String> = own_markers
-                    .iter()
-                    .filter_map(|m| {
-                        m.value
-                            .as_ref()
-                            .map(|v| format!("{}::{}", m.marker_type, v))
-                    })
-                    .collect();
+        let m_values_own: Vec<String> = own_markers
+            .iter()
+            .filter_map(|m| m.value.as_ref().map(|v| format!("{}::{}", m.marker_type, v)))
+            .collect();
 
-                // Include inherited markers (single lock acquisition for all uses)
-                if let Ok(index) = self.inheritance_index.read() {
-                    for marker in index.get(id) {
-                        let formatted = format!("{}::{}", marker.marker_type, marker.value);
-                        formatted_parts.push(formatted.clone());
-                        m_types.push(marker.marker_type.clone());
-                        m_values.push(formatted);
-                    }
+        // Format own markers for full-text search
+        let mut formatted_parts: Vec<String> = own_markers
+            .iter()
+            .map(|marker| {
+                if let Some(ref v) = marker.value {
+                    format!("{}::{}", marker.marker_type, v)
+                } else {
+                    marker.marker_type.clone()
                 }
-
-                let has_markers = !formatted_parts.is_empty();
-                let markers_str = formatted_parts.join(" ");
-
-                // Dedup marker types (own + inherited may overlap)
-                m_types.sort();
-                m_types.dedup();
-
-                // Outlinks from metadata
-                let outlinks = b
-                    .metadata
-                    .as_ref()
-                    .map(|m| m.outlinks.clone())
-                    .unwrap_or_default();
-
-                (has_markers, markers_str, outlinks, m_types, m_values)
             })
-            .unwrap_or((false, String::new(), vec![], vec![], vec![]));
+            .collect();
 
-        // Extract ctx_at from content (uses dedicated datetime parser)
+        // Combined types/values start from own, add inherited
+        let mut m_types = m_types_own.clone();
+        let mut m_values = m_values_own.clone();
+
+        // Include inherited markers (single lock acquisition)
+        if let Ok(index) = self.inheritance_index.read() {
+            for marker in index.get(id) {
+                let formatted = format!("{}::{}", marker.marker_type, marker.value);
+                formatted_parts.push(formatted.clone());
+                m_types.push(marker.marker_type.clone());
+                m_values.push(formatted);
+            }
+        }
+
+        let has_markers = !formatted_parts.is_empty();
+        let markers = formatted_parts.join(" ");
+
+        // Dedup combined types (own + inherited may overlap)
+        m_types.sort();
+        m_types.dedup();
+
+        // Extract ctx_at from content
         let ctx_at = extract_ctx_datetime(content)
             .and_then(|dt_str| {
-                // Parse ISO datetime to epoch. Handles "2026-03-11" and "2026-03-11T16:42:00"
                 chrono::NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%dT%H:%M:%S")
                     .or_else(|_| {
                         chrono::NaiveDate::parse_from_str(&dt_str, "%Y-%m-%d")
@@ -219,29 +209,29 @@ impl TantivyIndexHook {
             "Indexing block"
         );
 
-        // Send to writer (async)
+        // Build BlockIndexData and send to writer
+        let data = BlockIndexData {
+            block_id: id.to_string(),
+            content: content.to_string(),
+            block_type,
+            parent_id,
+            updated_at,
+            has_markers,
+            markers,
+            outlinks,
+            marker_types: m_types,
+            marker_values: m_values,
+            marker_types_own: m_types_own,
+            marker_values_own: m_values_own,
+            created_at,
+            ctx_at,
+        };
+
         let writer = writer.clone();
-        let id = id.to_string();
-        let content = content.to_string();
+        let block_id = data.block_id.clone();
         tokio::spawn(async move {
-            if let Err(e) = writer
-                .add_or_update(
-                    id.clone(),
-                    content,
-                    block_type,
-                    parent_id,
-                    updated_at,
-                    has_markers,
-                    markers,
-                    outlinks,
-                    marker_types,
-                    marker_values,
-                    created_at,
-                    ctx_at,
-                )
-                .await
-            {
-                warn!(block_id = %id, error = %e, "Failed to index block");
+            if let Err(e) = writer.add_or_update(data).await {
+                warn!(block_id = %block_id, error = %e, "Failed to index block");
             }
         });
     }

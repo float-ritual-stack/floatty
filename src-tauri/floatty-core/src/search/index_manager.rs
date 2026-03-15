@@ -71,6 +71,10 @@ pub struct SchemaFields {
     pub marker_types: Field,
     /// "type::value" formatted marker pairs (e.g., "project::floatty").
     pub marker_values: Field,
+    /// Marker types — own only (excludes inherited from ancestors).
+    pub marker_types_own: Field,
+    /// "type::value" pairs — own only (excludes inherited).
+    pub marker_values_own: Field,
     /// Block creation timestamp (epoch seconds).
     pub created_at: Field,
     /// ctx:: event timestamp (epoch seconds). Distinct from created_at.
@@ -91,6 +95,8 @@ impl SchemaFields {
             outlinks: get_field(schema, "outlinks"),
             marker_types: get_field(schema, "marker_types"),
             marker_values: get_field(schema, "marker_values"),
+            marker_types_own: get_field(schema, "marker_types_own"),
+            marker_values_own: get_field(schema, "marker_values_own"),
             created_at: get_field(schema, "created_at"),
             ctx_at: get_field(schema, "ctx_at"),
         }
@@ -202,8 +208,8 @@ mod tests {
         // Index directory should now exist
         assert!(index_path.exists());
 
-        // Schema should have 12 fields (7 original + 5 new)
-        assert_eq!(manager.schema().fields().count(), 12);
+        // Schema should have 14 fields (7 original + 5 enrichment + 2 own-only)
+        assert_eq!(manager.schema().fields().count(), 14);
     }
 
     #[test]
