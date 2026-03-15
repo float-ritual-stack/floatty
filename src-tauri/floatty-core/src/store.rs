@@ -880,9 +880,21 @@ impl YDocStore {
             .get(&txn, "metadata")
             .and_then(|v| match v {
                 Out::Any(yrs::Any::String(s)) => {
-                    serde_json::from_str::<serde_json::Value>(&s).ok()
+                    serde_json::from_str::<serde_json::Value>(&s)
+                        .map_err(|e| tracing::warn!("get_block_metadata_json: parse failed: {e}"))
+                        .ok()
                 }
-                _ => None,
+                Out::Any(yrs::Any::Map(map)) => {
+                    Some(yrs_any_map_to_json(&map))
+                }
+                Out::YMap(map) => {
+                    Some(yrs_ymap_to_json(&map, &txn))
+                }
+                Out::Any(yrs::Any::Undefined | yrs::Any::Null) => None,
+                other => {
+                    tracing::warn!("get_block_metadata_json: unhandled variant: {other:?}");
+                    None
+                }
             })
     }
 
