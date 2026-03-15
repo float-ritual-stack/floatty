@@ -39,7 +39,7 @@
 use super::{IndexManager, SearchError};
 use std::sync::Arc;
 use tantivy::collector::{Count, TopDocs};
-use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
+use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, RangeQuery, TermQuery};
 use tantivy::schema::{IndexRecordOption, Value};
 use tantivy::Term;
 
@@ -105,6 +105,23 @@ pub struct SearchFilters {
     /// Filter by parent block ID.
     /// Useful for searching within a subtree.
     pub parent_id: Option<String>,
+
+    /// Filter by [[wikilink]] outlink target (exact match).
+    pub outlink: Option<String>,
+
+    /// Filter by marker type (e.g., "project", "mode", "ctx").
+    pub marker_type: Option<String>,
+
+    /// Filter by "type::value" marker pair (e.g., "project::floatty").
+    pub marker_value: Option<String>,
+
+    /// Filter by created_at range (epoch seconds, inclusive).
+    pub created_after: Option<i64>,
+    pub created_before: Option<i64>,
+
+    /// Filter by ctx_at range (epoch seconds, inclusive).
+    pub ctx_after: Option<i64>,
+    pub ctx_before: Option<i64>,
 }
 
 /// Search service for querying indexed blocks.
@@ -250,6 +267,50 @@ impl SearchService {
         if let Some(ref parent_id) = filters.parent_id {
             let term = Term::from_field_text(fields.parent_id, parent_id);
             queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // outlink filter (exact match on [[wikilink]] target)
+        if let Some(ref outlink) = filters.outlink {
+            let term = Term::from_field_text(fields.outlinks, outlink);
+            queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // marker_type filter
+        if let Some(ref mt) = filters.marker_type {
+            let term = Term::from_field_text(fields.marker_types, mt);
+            queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // marker_value filter ("type::value" pair)
+        if let Some(ref mv) = filters.marker_value {
+            let term = Term::from_field_text(fields.marker_values, mv);
+            queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // created_at range filter
+        if filters.created_after.is_some() || filters.created_before.is_some() {
+            let lower = filters
+                .created_after
+                .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.created_at, v)))
+                .unwrap_or(std::ops::Bound::Unbounded);
+            let upper = filters
+                .created_before
+                .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.created_at, v)))
+                .unwrap_or(std::ops::Bound::Unbounded);
+            queries.push(Box::new(RangeQuery::new(lower, upper)));
+        }
+
+        // ctx_at range filter
+        if filters.ctx_after.is_some() || filters.ctx_before.is_some() {
+            let lower = filters
+                .ctx_after
+                .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.ctx_at, v)))
+                .unwrap_or(std::ops::Bound::Unbounded);
+            let upper = filters
+                .ctx_before
+                .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.ctx_at, v)))
+                .unwrap_or(std::ops::Bound::Unbounded);
+            queries.push(Box::new(RangeQuery::new(lower, upper)));
         }
 
         queries
