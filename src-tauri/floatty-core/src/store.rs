@@ -66,15 +66,17 @@ fn parse_metadata_from_out<T: ReadTxn>(value: Out, txn: &T) -> Option<BlockMetad
         Out::Any(yrs::Any::Map(map)) => {
             // Convert Any::Map to JSON, then deserialize
             let json = yrs_any_map_to_json(&map);
-            serde_json::from_value::<BlockMetadata>(json.clone())
-                .map_err(|e| tracing::warn!("parse_metadata_from_out: Any::Map failed: {e}, json={json}"))
+            let key_count = map.len();
+            serde_json::from_value::<BlockMetadata>(json)
+                .map_err(|e| tracing::warn!("parse_metadata_from_out: Any::Map failed: {e}, keys={key_count}"))
                 .ok()
         }
         Out::YMap(map) => {
             // Convert Y.Map to JSON, then deserialize
             let json = yrs_ymap_to_json(&map, txn);
-            serde_json::from_value::<BlockMetadata>(json.clone())
-                .map_err(|e| tracing::warn!("parse_metadata_from_out: YMap failed: {e}, json={json}"))
+            let key_count = map.len(txn);
+            serde_json::from_value::<BlockMetadata>(json)
+                .map_err(|e| tracing::warn!("parse_metadata_from_out: YMap failed: {e}, keys={key_count}"))
                 .ok()
         }
         Out::Any(yrs::Any::Undefined | yrs::Any::Null) => None,
