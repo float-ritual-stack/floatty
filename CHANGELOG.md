@@ -6,6 +6,25 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.2] - 2026-03-15
+
+### Features
+
+- Search metadata round-trip fix + schema enrichment + API filters (#172)
+  - Fixed `has_markers=true` returning 0 results — `extractedAt` stored as f64, serde rejected for `Option<i64>`
+  - Lenient timestamp deserializer for legacy Y.Doc data
+  - Parser: bare markers (`floatctl::`), ctx:: value capture, `extract_ctx_datetime()` with 12h→24h
+  - 5 new Tantivy fields: `outlinks`, `marker_types`, `marker_values`, `created_at`, `ctx_at`
+  - 7 new search API filter params: `outlink`, `marker_type`, `marker_value`, `created_after/before`, `ctx_after/before`
+  - Filter-only search (empty `q` + filters uses `AllQuery`)
+  - Inherited markers included in filter fields via `InheritanceIndex`
+
+### Bug Fixes
+
+- Add `X-Floatty-Confirm-Destructive` header to binary-import script
+- `get_block_metadata_json` now handles `Any::Map` and `YMap` variants (was `Any::String` only)
+- Pin chrono >= 0.4.31 for `NaiveDateTime::and_utc()`
+
 ## [0.9.1] - 2026-03-14
 
 ### Bug Fixes
