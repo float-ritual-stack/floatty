@@ -150,18 +150,7 @@ impl TantivyIndexHook {
                     })
                     .collect();
 
-                // Include inherited markers
-                if let Ok(index) = self.inheritance_index.read() {
-                    for marker in index.get(id) {
-                        formatted_parts.push(format!("{}::{}", marker.marker_type, marker.value));
-                    }
-                }
-
-                let has_markers = !formatted_parts.is_empty();
-                let markers_str = formatted_parts.join(" ");
-
-                // Extract distinct marker types and "type::value" pairs
-                // Includes inherited markers so filter queries work on inherited context
+                // Extract distinct marker types and "type::value" pairs from own markers
                 let mut m_types: Vec<String> = own_markers
                     .iter()
                     .map(|m| m.marker_type.clone())
@@ -176,14 +165,20 @@ impl TantivyIndexHook {
                     })
                     .collect();
 
-                // Add inherited marker types/values
+                // Include inherited markers (single lock acquisition for all uses)
                 if let Ok(index) = self.inheritance_index.read() {
                     for marker in index.get(id) {
+                        let formatted = format!("{}::{}", marker.marker_type, marker.value);
+                        formatted_parts.push(formatted.clone());
                         m_types.push(marker.marker_type.clone());
-                        m_values.push(format!("{}::{}", marker.marker_type, marker.value));
+                        m_values.push(formatted);
                     }
                 }
 
+                let has_markers = !formatted_parts.is_empty();
+                let markers_str = formatted_parts.join(" ");
+
+                // Dedup marker types (own + inherited may overlap)
                 m_types.sort();
                 m_types.dedup();
 
