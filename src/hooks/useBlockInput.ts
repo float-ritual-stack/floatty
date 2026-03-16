@@ -51,6 +51,7 @@ export interface BlockInputDependencies {
 
   // Content sync
   flushContentUpdate: () => void;
+  cancelContentUpdate?: () => void;
 
   // Selection (optional - for multi-select support)
   onSelect?: (id: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => void;
@@ -402,12 +403,14 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'delete_block':
         e.preventDefault();
+        deps.cancelContentUpdate?.();
         store.deleteBlock(deps.getBlockId());
         if (keyAction.prevId) deps.onFocus(keyAction.prevId);
         return;
 
       case 'move_block_up': {
         e.preventDefault();
+        deps.flushContentUpdate();
         store.moveBlockUp(deps.getBlockId());
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         const contentRef = deps.getContentRef();
@@ -419,6 +422,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'move_block_down': {
         e.preventDefault();
+        deps.flushContentUpdate();
         store.moveBlockDown(deps.getBlockId());
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         const contentRef = deps.getContentRef();
@@ -485,6 +489,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       case 'create_trailing_block': {
         // FLO-92: Create block when at tree end (respects zoom scope)
         e.preventDefault();
+        deps.flushContentUpdate();
         const targetParent = keyAction.parentId;
         // If targeting a specific parent (zoom context), create as last child
         // Otherwise fall back to creating sibling of current block
@@ -540,6 +545,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'create_block_before': {
         e.preventDefault();
+        deps.flushContentUpdate();
         const newId = store.createBlockBefore(deps.getBlockId());
         if (newId) deps.onFocus(newId);
         return;
@@ -547,6 +553,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'create_block_inside': {
         e.preventDefault();
+        deps.flushContentUpdate();
         const newId = store.createBlockInsideAtTop(deps.getBlockId());
         if (newId) deps.onFocus(newId);
         return;
@@ -572,6 +579,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'indent':
         e.preventDefault();
+        deps.flushContentUpdate();
         store.indentBlock(deps.getBlockId());
         // FLO-61: After indent, ensure new parent is expanded in this pane
         requestAnimationFrame(() => {
@@ -584,6 +592,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'outdent':
         e.preventDefault();
+        deps.flushContentUpdate();
         store.outdentBlock(deps.getBlockId());
         return;
 
@@ -595,6 +604,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'remove_spaces': {
         e.preventDefault();
+        deps.flushContentUpdate();
         const contentRef = deps.getContentRef();
         if (contentRef) {
           // Use innerText for reading - textContent ignores <div>/<br>, losing line breaks
@@ -624,31 +634,19 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         deps.flushContentUpdate();
         const prevBlock = store.blocks[keyAction.prevId];
         if (prevBlock) {
-          const oldContent = block.content;
           const prevContentLength = prevBlock.content.length;
-          const childrenToLift = [...block.childIds];  // Copy before mutation
 
-          // FIX 1: Focus BEFORE mutations (optimistic - UI feels instant)
+          // Focus BEFORE mutations (optimistic - UI feels instant)
           deps.onFocus(keyAction.prevId);
 
-          // If block has children, lift them to be siblings after merged block
-          // This preserves the subtree when merging expanded blocks
-          if (childrenToLift.length > 0) {
-            store.liftChildrenToSiblings(deps.getBlockId(), keyAction.prevId);
-          }
+          // Atomic merge: lift children + merge content + delete source in single transaction
+          store.mergeBlocks(keyAction.prevId, deps.getBlockId());
 
-          // Mutations: merge content with newline separator and delete (now childless) block
-          const separator = (prevBlock.content && oldContent) ? '\n' : '';
-          store.updateBlockContent(keyAction.prevId, prevBlock.content + separator + oldContent);
-          store.deleteBlock(deps.getBlockId());
-
-          // FIX 2: Use queueMicrotask chain (not rAF)
+          // Use queueMicrotask chain (not rAF)
           // 1st microtask: Y.Doc transaction batches
           // 2nd microtask: SolidJS effects propagate
           queueMicrotask(() => {
             queueMicrotask(() => {
-              // Use document.activeElement (focus already moved via onFocus)
-              // FIX 3: Use innerText for comparison (preserves newlines from <div>/<br>)
               const el = document.activeElement as HTMLElement;
               if (el) {
                 setCursorAtOffset(el, prevContentLength);

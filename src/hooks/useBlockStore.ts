@@ -1521,6 +1521,78 @@ function createBlockStore() {
   };
 
   /**
+   * Atomic merge: lift source's children to siblings after target, merge content, delete source.
+   * Single Y.Doc transaction = single undo step.
+   */
+  const mergeBlocks = (targetId: string, sourceId: string): boolean => {
+    if (!_doc) { warnDocNotReady('mergeBlocks'); return false; }
+
+    const target = state.blocks[targetId];
+    const source = state.blocks[sourceId];
+    if (!target || !source) return false;
+
+    const childrenToLift = [...source.childIds];
+    const targetContent = target.content;
+    const sourceContent = source.content;
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      // 1. Lift source's children to be siblings after target (inline from liftChildrenToSiblings)
+      if (childrenToLift.length > 0) {
+        const targetParentId = target.parentId;
+
+        if (targetParentId) {
+          const parentData = blocksMap.get(targetParentId);
+          if (parentData) {
+            const childIds = (getValue(parentData, 'childIds') as string[]) || [];
+            const afterIndex = childIds.indexOf(targetId);
+            if (afterIndex >= 0) {
+              clearChildIds(blocksMap, sourceId);
+              insertChildIds(blocksMap, targetParentId, childrenToLift, afterIndex + 1);
+            }
+          }
+        } else {
+          // Target is at root level
+          const rootIds = _doc.getArray<string>('rootIds');
+          const arr = rootIds.toArray();
+          const afterIndex = arr.indexOf(targetId);
+          if (afterIndex >= 0) {
+            clearChildIds(blocksMap, sourceId);
+            rootIds.insert(afterIndex + 1, childrenToLift);
+          }
+        }
+
+        // Update parentId for lifted children
+        for (const childId of childrenToLift) {
+          setValueOnYMap(blocksMap, childId, 'parentId', target.parentId);
+          setValueOnYMap(blocksMap, childId, 'updatedAt', Date.now());
+        }
+      }
+
+      // 2. Merge content
+      const separator = (targetContent && sourceContent) ? '\n' : '';
+      setValueOnYMap(blocksMap, targetId, 'content', targetContent + separator + sourceContent);
+      setValueOnYMap(blocksMap, targetId, 'updatedAt', Date.now());
+
+      // 3. Delete source block (inline from deleteBlock — source should have 0 children after lift)
+      if (source.parentId) {
+        removeChildId(blocksMap, source.parentId, sourceId);
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        const arr = rootIds.toArray();
+        const index = arr.indexOf(sourceId);
+        if (index >= 0) {
+          rootIds.delete(index, 1);
+        }
+      }
+      blocksMap.delete(sourceId);
+    }, 'user');
+
+    return true;
+  };
+
+  /**
    * FLO-75: Move block before its previous sibling
    * Returns true if move happened, false if already first or escaped to parent level
    * When at first sibling position, escapes to become sibling after parent (like outdent)
@@ -1772,6 +1844,7 @@ function createBlockStore() {
     indentBlock,
     outdentBlock,
     liftChildrenToSiblings,
+    mergeBlocks,
     moveBlock,
     // FLO-75: Block movement
     moveBlockUp,

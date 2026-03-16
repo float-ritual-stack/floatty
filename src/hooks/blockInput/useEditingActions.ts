@@ -49,12 +49,13 @@ export interface EditingActionDeps {
     | 'indentBlock'
     | 'outdentBlock'
     | 'updateBlockContent'
-    | 'liftChildrenToSiblings'
+    | 'mergeBlocks'
   >;
   getBlock: () => Block | undefined;
   cursor: CursorState;
   getContentRef: () => HTMLElement | undefined;
   flushContentUpdate: () => void;
+  cancelContentUpdate?: () => void;
   onFocus: (id: string) => void;
 }
 
@@ -68,12 +69,14 @@ export function useEditingActions(deps: EditingActionDeps) {
 
       case 'delete_block':
         e.preventDefault();
+        deps.cancelContentUpdate?.();
         deps.blockStore.deleteBlock(deps.getBlockId());
         if (action.prevId) deps.onFocus(action.prevId);
         return;
 
       case 'move_block_up': {
         e.preventDefault();
+        deps.flushContentUpdate();
         deps.blockStore.moveBlockUp(deps.getBlockId());
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         const contentRef = deps.getContentRef();
@@ -85,6 +88,7 @@ export function useEditingActions(deps: EditingActionDeps) {
 
       case 'move_block_down': {
         e.preventDefault();
+        deps.flushContentUpdate();
         deps.blockStore.moveBlockDown(deps.getBlockId());
         // Double rAF: first for Y.Doc update, second for SolidJS DOM reconciliation
         const contentRef = deps.getContentRef();
@@ -96,6 +100,7 @@ export function useEditingActions(deps: EditingActionDeps) {
 
       case 'create_block_before': {
         e.preventDefault();
+        deps.flushContentUpdate();
         const newId = deps.blockStore.createBlockBefore(deps.getBlockId());
         if (newId) deps.onFocus(newId);
         return;
@@ -103,6 +108,7 @@ export function useEditingActions(deps: EditingActionDeps) {
 
       case 'create_block_inside': {
         e.preventDefault();
+        deps.flushContentUpdate();
         const newId = deps.blockStore.createBlockInsideAtTop(deps.getBlockId());
         if (newId) deps.onFocus(newId);
         return;
@@ -128,6 +134,7 @@ export function useEditingActions(deps: EditingActionDeps) {
 
       case 'indent':
         e.preventDefault();
+        deps.flushContentUpdate();
         deps.blockStore.indentBlock(deps.getBlockId());
         // FLO-61: After indent, ensure new parent is expanded in this pane
         requestAnimationFrame(() => {
@@ -140,6 +147,7 @@ export function useEditingActions(deps: EditingActionDeps) {
 
       case 'outdent':
         e.preventDefault();
+        deps.flushContentUpdate();
         deps.blockStore.outdentBlock(deps.getBlockId());
         return;
 
@@ -151,6 +159,7 @@ export function useEditingActions(deps: EditingActionDeps) {
 
       case 'remove_spaces': {
         e.preventDefault();
+        deps.flushContentUpdate();
         const contentRef = deps.getContentRef();
         if (contentRef) {
           // Use innerText for reading — textContent ignores <div>/<br>, losing line breaks
@@ -178,34 +187,21 @@ export function useEditingActions(deps: EditingActionDeps) {
         e.preventDefault();
         // Flush pending content before merge (debounced updates can race with store operations)
         deps.flushContentUpdate();
-        const block = deps.getBlock();
         const prevBlock = deps.blockStore.blocks[action.prevId];
-        if (block && prevBlock) {
-          const oldContent = block.content;
+        if (prevBlock) {
           const prevContentLength = prevBlock.content.length;
-          const childrenToLift = [...block.childIds]; // Copy before mutation
 
-          // FIX 1: Focus BEFORE mutations (optimistic - UI feels instant)
+          // Focus BEFORE mutations (optimistic - UI feels instant)
           deps.onFocus(action.prevId);
 
-          // If block has children, lift them to be siblings after merged block
-          // This preserves the subtree when merging expanded blocks
-          if (childrenToLift.length > 0) {
-            deps.blockStore.liftChildrenToSiblings(deps.getBlockId(), action.prevId);
-          }
+          // Atomic merge: lift children + merge content + delete source in single transaction
+          deps.blockStore.mergeBlocks(action.prevId, deps.getBlockId());
 
-          // Merge content with newline separator and delete the (now childless) block
-          const separator = prevBlock.content && oldContent ? '\n' : '';
-          deps.blockStore.updateBlockContent(action.prevId, prevBlock.content + separator + oldContent);
-          deps.blockStore.deleteBlock(deps.getBlockId());
-
-          // FIX 2: Use queueMicrotask chain (not rAF)
+          // Use queueMicrotask chain (not rAF)
           // 1st microtask: Y.Doc transaction batches
           // 2nd microtask: SolidJS effects propagate
           queueMicrotask(() => {
             queueMicrotask(() => {
-              // Use document.activeElement (focus already moved via onFocus)
-              // FIX 3: Use innerText for comparison (preserves newlines from <div>/<br>)
               const el = document.activeElement as HTMLElement;
               if (el?.isContentEditable) {
                 setCursorAtOffset(el, prevContentLength);

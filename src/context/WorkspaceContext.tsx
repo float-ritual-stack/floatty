@@ -67,6 +67,7 @@ export interface BlockStoreInterface {
   indentBlock: (id: string) => void;
   outdentBlock: (id: string) => void;
   liftChildrenToSiblings: (blockId: string, afterId: string) => void;
+  mergeBlocks: (targetId: string, sourceId: string) => boolean;
   toggleCollapsed: (id: string) => void;
   // FLO-322: Batch block creation (single Y.Doc transaction)
   batchCreateBlocksAfter: (afterId: string, ops: BatchBlockOp[], origin?: string) => string[];
@@ -301,6 +302,7 @@ export function createMockBlockStore(overrides: Partial<BlockStoreInterface> = {
     indentBlock: () => {},
     outdentBlock: () => {},
     liftChildrenToSiblings: () => {},
+    mergeBlocks: () => false,
     toggleCollapsed: () => {},
     batchCreateBlocksAfter: () => [],
     batchCreateBlocksInside: () => [],

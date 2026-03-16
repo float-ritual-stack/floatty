@@ -282,6 +282,8 @@ export function BlockItem(props: BlockItemProps) {
 
   // Keyboard handler for output blocks (no contentEditable → need manual nav)
   const handleOutputBlockKeyDown = (e: KeyboardEvent) => {
+    // Cancel any stale pending debounce from before this block became output
+    cancelContentUpdate();
     const idx = searchFocusedIdx();
 
     // Block-level operations (work at any idx)
@@ -423,6 +425,7 @@ export function BlockItem(props: BlockItemProps) {
     findFocusAfterDelete,
     onFocus: props.onFocus,
     flushContentUpdate,
+    cancelContentUpdate,
     onSelect: props.onSelect,
     selectionAnchor: props.selectionAnchor,
     getWikilinkAtCursor,
