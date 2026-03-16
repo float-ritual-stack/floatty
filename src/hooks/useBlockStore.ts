@@ -1527,6 +1527,8 @@ function createBlockStore() {
   const mergeBlocks = (targetId: string, sourceId: string): boolean => {
     if (!_doc) { warnDocNotReady('mergeBlocks'); return false; }
 
+    if (targetId === sourceId) return false;
+
     const target = state.blocks[targetId];
     const source = state.blocks[sourceId];
     if (!target || !source) return false;
