@@ -4,13 +4,15 @@
 
 Evaluation of current codebase state against a composing→committed editing model where Y.Doc writes only happen on explicit commit gestures (blur, Enter, structural ops), not during active typing. This is a terrain map, not an implementation plan.
 
+> **Line number advisory (2026-03-16)**: Line references throughout this document are approximate. BlockItem.tsx lines have drifted ~3 lines since the original March 8 audit. Sections 3 and 8 (Dragons 2, 3) were updated to reflect merge atomicity and flush coverage fixes. Use function/variable names (not line numbers) for reliable navigation.
+
 ---
 
 ## 1. The Hot Path Audit
 
-### March 8 Audit: STILL ACCURATE
+### March 8 Audit: MOSTLY ACCURATE (reviewed 2026-03-16)
 
-No regressions. PRs #172/#173 (search-work) modified Rust backend search metadata only — zero keystroke hot path changes.
+Core hot path unchanged. Line numbers have drifted by ~3 lines in BlockItem.tsx (consistent with small insertions). `updateBlockContent` callers have expanded significantly since March 8 (see updated note below), but all new callers are handler output paths — the keystroke hot path is the same.
 
 **Current hot path (keystroke → Y.Doc → DOM):**
 
@@ -28,7 +30,7 @@ No regressions. PRs #172/#173 (search-work) modified Rust backend search metadat
 - Sync debounce = 50ms (useSyncedYDoc)
 - ProjectionScheduler flush = 2000ms
 
-**No new consumers found.** Grep for `updateBlockContent` confirms only these callers: BlockItem (debounced), useEditingActions (merge content + remove_spaces), useExecutionAction (handler output).
+**No new consumers found.** Grep for `updateBlockContent` shows callers across: BlockItem (debounced input), useBlockInput/useEditingActions (merge, remove_spaces), useExecutionAction/executor (handler output), pasteHandler, tvResolver, backlinkNavigation, and many command handlers (search, eval, conversation, backup, send, help, info, pick, commandDoor, doorSandbox). Most of these are handler output paths — they write results back to blocks. The hot-path consumer is still BlockItem's debounced updater.
 
 ### IME Composition gate
 `isComposing()` signal (BlockItem.tsx:179) gates `updateContentFromDom()` at line 790 — skips Y.Doc update during CJK input, final character syncs on `compositionend`.
@@ -177,7 +179,7 @@ When user presses Enter (split): `flushContentUpdate()` fires → Y.Doc write (c
 
 2. **Double-rAF** (useEditingActions.ts:80-82): `moveBlockUp`/`moveBlockDown` use two `requestAnimationFrame` calls before re-focusing contentRef. Waits for Y.Doc update + SolidJS reconciliation.
 
-3. **queueMicrotask chain** (useEditingActions.ts:205-213): `merge_with_previous` uses double `queueMicrotask` for cursor placement at merge point. Waits for Y.Doc batch + SolidJS effects.
+3. **queueMicrotask chain** (useBlockInput.ts:648-655 and useEditingActions.ts:203-210): `merge_with_previous` uses double `queueMicrotask` for cursor placement at merge point. Waits for Y.Doc batch + SolidJS effects. Handled in both useBlockInput.ts (direct path) and useEditingActions.ts (action dispatch path).
 
 4. **Paste double-rAF** (BlockItem.tsx:752-758): After batch block creation, two rAFs before focusing the new block.
 
@@ -265,7 +267,7 @@ No code references to these FLO numbers. Cannot determine current state.
 
 ### Dragon 1: lastUpdateOrigin is GLOBAL
 
-`state.lastUpdateOrigin` (useBlockStore.ts:476) is a single global signal set by every Y.Doc transaction. The content sync effect reads it via `untrack()` (line 603), but the effect STILL re-runs because `block()` is reactive and observer updates `setState('blocks', key, block)` for every changed block.
+`state.lastUpdateOrigin` (useBlockStore.ts:476) is a single global signal set by every Y.Doc transaction. The content sync effect in BlockItem.tsx reads it via `untrack()` (~line 606), but the effect STILL re-runs because `block()` is reactive and observer updates `setState('blocks', key, block)` for every changed block.
 
 **Impact**: With 1000 blocks, a content commit causes observer → setState for 1 block → `block()` accessor fires in that one BlockItem → effect runs. The `untrack()` on origin prevents the effect from running in ALL BlockItems. This is correct and efficient.
 
@@ -304,7 +306,7 @@ The content sync effect (BlockItem.tsx:599) has `const currentBlock = block()` o
 
 ### Dragon 7: insert_spaces uses execCommand
 
-`useEditingActions.ts:149`: `document.execCommand('insertText', false, '  ')` — this goes through the DOM → input event → `updateContentFromDom()` → debounce → Y.Doc. It does NOT bypass the debounce. **Compatible with composing→committed** since it's just another DOM mutation.
+`useEditingActions.ts:157`: `document.execCommand('insertText', false, '  ')` — this goes through the DOM → input event → `updateContentFromDom()` → debounce → Y.Doc. It does NOT bypass the debounce. **Compatible with composing→committed** since it's just another DOM mutation. (Note: useEditingActions.ts is at `src/hooks/blockInput/useEditingActions.ts`.)
 
 ### Dragon 8: Timing assumptions in cursor restoration
 
