@@ -1356,7 +1356,12 @@ function createBlockStore() {
     }, 'user');
   };
 
-  const outdentBlock = (id: string) => {
+  /**
+   * Simple outdent: extract block from parent and insert as sibling after parent.
+   * Used by moveBlockUp/moveBlockDown escape paths where the intent is pure extraction
+   * (no sibling adoption). Also used as the non-first-child path of outdentBlock.
+   */
+  const _outdentBlockSimple = (id: string) => {
     if (!_doc) { warnDocNotReady('outdentBlock'); return; }
 
     const block = state.blocks[id];
@@ -1370,6 +1375,76 @@ function createBlockStore() {
 
       removeChildId(blocksMap, block.parentId!, id);
 
+      if (parent.parentId) {
+        const grandparentData = blocksMap.get(parent.parentId);
+        if (grandparentData) {
+          const childIds = (getValue(grandparentData, 'childIds') as string[]) || [];
+          const parentIndex = childIds.indexOf(block.parentId!);
+          insertChildId(blocksMap, parent.parentId, id, parentIndex + 1);
+        }
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        const arr = rootIds.toArray();
+        const parentIndex = arr.indexOf(block.parentId!);
+        rootIds.insert(parentIndex + 1, [id]);
+      }
+
+      setValueOnYMap(blocksMap, id, 'parentId', parent.parentId);
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    }, 'user');
+  };
+
+  /**
+   * FLO-498: Position-dependent outdent.
+   * - First child: "extract and adopt" — promote self, take younger siblings as children
+   * - Non-first child: simple extract (same as before)
+   */
+  const outdentBlock = (id: string) => {
+    if (!_doc) { warnDocNotReady('outdentBlock'); return; }
+
+    const block = state.blocks[id];
+    if (!block || !block.parentId) return;
+
+    const parent = state.blocks[block.parentId];
+    if (!parent) return;
+
+    // Determine ordinal position among siblings
+    const siblings = parent.childIds;
+    const myIndex = siblings.indexOf(id);
+
+    // Non-first child (or not found): simple extract
+    if (myIndex !== 0) {
+      _outdentBlockSimple(id);
+      return;
+    }
+
+    // First child: extract and adopt younger siblings
+    const youngerSiblingIds = siblings.slice(1); // everything after index 0
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      // 1. Remove self from parent
+      removeChildId(blocksMap, block.parentId!, id);
+
+      // 2. Remove younger siblings from parent (reverse order for stable indices)
+      for (let i = youngerSiblingIds.length - 1; i >= 0; i--) {
+        removeChildId(blocksMap, block.parentId!, youngerSiblingIds[i]);
+      }
+
+      // 3. Adopt younger siblings as children (after any existing children)
+      if (youngerSiblingIds.length > 0) {
+        const existingChildCount = block.childIds.length;
+        insertChildIds(blocksMap, id, youngerSiblingIds, existingChildCount);
+        for (const sibId of youngerSiblingIds) {
+          setValueOnYMap(blocksMap, sibId, 'parentId', id);
+          setValueOnYMap(blocksMap, sibId, 'updatedAt', Date.now());
+        }
+        // Auto-expand so user sees adopted children (matches indentBlock behavior)
+        setValueOnYMap(blocksMap, id, 'collapsed', false);
+      }
+
+      // 4. Insert self after parent in grandparent/rootIds
       if (parent.parentId) {
         const grandparentData = blocksMap.get(parent.parentId);
         if (grandparentData) {
@@ -1470,9 +1545,9 @@ function createBlockStore() {
 
     // If already first sibling
     if (index === 0) {
-      // Escape to parent level if has parent (mirrors outdent)
+      // Escape to parent level if has parent (simple extract, no sibling adoption)
       if (block.parentId) {
-        outdentBlock(id);
+        _outdentBlockSimple(id);
         return true;
       }
       // Root level first - nowhere to go
@@ -1524,9 +1599,9 @@ function createBlockStore() {
 
     // If already last sibling
     if (index >= siblings.length - 1) {
-      // Escape to parent level if has parent (mirrors outdent)
+      // Escape to parent level if has parent (simple extract, no sibling adoption)
       if (block.parentId) {
-        outdentBlock(id);
+        _outdentBlockSimple(id);
         return true;
       }
       // Root level last - nowhere to go

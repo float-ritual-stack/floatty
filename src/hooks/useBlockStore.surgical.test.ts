@@ -911,3 +911,334 @@ describe('undo/redo with surgical ops', () => {
     expect(getChildIds(blocksMap, 'parent')).toEqual(['a', 'b', 'c']);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// FLO-498: Position-dependent outdent
+// ═══════════════════════════════════════════════════════════════
+
+function getValue(blocksMap: Y.Map<unknown>, blockId: string, field: string): unknown {
+  const blockMap = blocksMap.get(blockId);
+  if (!(blockMap instanceof Y.Map)) return undefined;
+  return blockMap.get(field);
+}
+
+function setField(blocksMap: Y.Map<unknown>, blockId: string, field: string, value: unknown): void {
+  const blockMap = blocksMap.get(blockId);
+  if (!(blockMap instanceof Y.Map)) return;
+  blockMap.set(field, value);
+}
+
+/**
+ * Build a tree structure in a Y.Doc for outdent testing.
+ *
+ * Example: setupTree(doc, { root: ['parent'], parent: ['a', 'b', 'c'] })
+ * Creates blocks root, parent, a, b, c with parent relationships and childIds.
+ * Returns blocksMap and rootIds.
+ */
+function setupTree(
+  doc: Y.Doc,
+  tree: Record<string, string[]>,
+  rootIds: string[] = Object.keys(tree).filter(id => {
+    // Roots are keys that aren't anyone's child
+    const allChildren = Object.values(tree).flat();
+    return !allChildren.includes(id);
+  }),
+): { blocksMap: Y.Map<unknown>; rootIdsArr: Y.Array<string> } {
+  const blocksMap = doc.getMap('blocks');
+  const rootIdsArr = doc.getArray<string>('rootIds');
+
+  doc.transact(() => {
+    // Create all blocks
+    for (const [id, children] of Object.entries(tree)) {
+      blocksMap.set(id, createBlockMap(id, children));
+    }
+    // Create leaf blocks that aren't keys in tree
+    const allChildren = Object.values(tree).flat();
+    for (const childId of allChildren) {
+      if (!tree[childId]) {
+        blocksMap.set(childId, createBlockMap(childId));
+      }
+    }
+    // Set parentIds
+    for (const [parentId, children] of Object.entries(tree)) {
+      for (const childId of children) {
+        setField(blocksMap, childId, 'parentId', parentId);
+      }
+    }
+    // Set rootIds
+    rootIdsArr.push(rootIds);
+    // Roots have null parentId (already default)
+  });
+
+  return { blocksMap, rootIdsArr };
+}
+
+/**
+ * Simulate simple outdent: extract block from parent, insert after parent.
+ * This mirrors _outdentBlockSimple in useBlockStore.ts.
+ */
+function simpleOutdent(doc: Y.Doc, blocksMap: Y.Map<unknown>, rootIdsArr: Y.Array<string>, id: string): void {
+  const blockMap = blocksMap.get(id) as Y.Map<unknown>;
+  const parentId = blockMap.get('parentId') as string;
+  const parentMap = blocksMap.get(parentId) as Y.Map<unknown>;
+  const grandparentId = parentMap.get('parentId') as string | null;
+
+  doc.transact(() => {
+    removeChildId(blocksMap, parentId, id);
+
+    if (grandparentId) {
+      const gpChildIds = getChildIds(blocksMap, grandparentId);
+      const parentIndex = gpChildIds.indexOf(parentId);
+      insertChildId(blocksMap, grandparentId, id, parentIndex + 1);
+    } else {
+      const arr = rootIdsArr.toArray();
+      const parentIndex = arr.indexOf(parentId);
+      rootIdsArr.insert(parentIndex + 1, [id]);
+    }
+
+    setField(blocksMap, id, 'parentId', grandparentId);
+  }, 'user');
+}
+
+/**
+ * Simulate position-dependent outdent (FLO-498):
+ * - First child: extract + adopt younger siblings
+ * - Non-first child: simple extract
+ */
+function positionDependentOutdent(
+  doc: Y.Doc, blocksMap: Y.Map<unknown>, rootIdsArr: Y.Array<string>, id: string,
+): void {
+  const blockMap = blocksMap.get(id) as Y.Map<unknown>;
+  const parentId = blockMap.get('parentId') as string;
+  const parentMap = blocksMap.get(parentId) as Y.Map<unknown>;
+  const grandparentId = parentMap.get('parentId') as string | null;
+
+  // Get siblings BEFORE mutation
+  const siblings = getChildIds(blocksMap, parentId);
+  const myIndex = siblings.indexOf(id);
+
+  if (myIndex !== 0) {
+    simpleOutdent(doc, blocksMap, rootIdsArr, id);
+    return;
+  }
+
+  // First child: extract and adopt
+  const youngerSiblingIds = siblings.slice(1);
+  const existingChildIds = getChildIds(blocksMap, id);
+
+  doc.transact(() => {
+    // Remove self from parent
+    removeChildId(blocksMap, parentId, id);
+
+    // Remove younger siblings from parent (reverse for stable indices)
+    for (let i = youngerSiblingIds.length - 1; i >= 0; i--) {
+      removeChildId(blocksMap, parentId, youngerSiblingIds[i]);
+    }
+
+    // Adopt younger siblings after existing children
+    if (youngerSiblingIds.length > 0) {
+      insertChildIds(blocksMap, id, youngerSiblingIds, existingChildIds.length);
+      for (const sibId of youngerSiblingIds) {
+        setField(blocksMap, sibId, 'parentId', id);
+      }
+    }
+
+    // Insert self after parent
+    if (grandparentId) {
+      const gpChildIds = getChildIds(blocksMap, grandparentId);
+      const parentIndex = gpChildIds.indexOf(parentId);
+      insertChildId(blocksMap, grandparentId, id, parentIndex + 1);
+    } else {
+      const arr = rootIdsArr.toArray();
+      const parentIndex = arr.indexOf(parentId);
+      rootIdsArr.insert(parentIndex + 1, [id]);
+    }
+
+    setField(blocksMap, id, 'parentId', grandparentId);
+  }, 'user');
+}
+
+describe('FLO-498: position-dependent outdent', () => {
+  describe('non-first child (simple extract)', () => {
+    it('extracts middle child without affecting siblings', () => {
+      // parent: [a, b, c] → outdent b → parent: [a, c], b is sibling after parent
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a', 'b', 'c'] });
+
+      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'b');
+
+      expect(getChildIds(blocksMap, 'parent')).toEqual(['a', 'c']);
+      expect(rootIdsArr.toArray()).toEqual(['parent', 'b']);
+      expect(getValue(blocksMap, 'b', 'parentId')).toBeNull();
+    });
+
+    it('extracts last child without affecting siblings', () => {
+      // parent: [a, b, c] → outdent c → parent: [a, b], c is sibling after parent
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a', 'b', 'c'] });
+
+      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'c');
+
+      expect(getChildIds(blocksMap, 'parent')).toEqual(['a', 'b']);
+      expect(rootIdsArr.toArray()).toEqual(['parent', 'c']);
+    });
+  });
+
+  describe('first child (extract and adopt)', () => {
+    it('adopts younger siblings as children', () => {
+      // parent: [a, b, c] → outdent a → parent: [], a: [b, c], a is sibling after parent
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a', 'b', 'c'] });
+
+      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+
+      expect(getChildIds(blocksMap, 'parent')).toEqual([]);
+      expect(getChildIds(blocksMap, 'a')).toEqual(['b', 'c']);
+      expect(rootIdsArr.toArray()).toEqual(['parent', 'a']);
+      expect(getValue(blocksMap, 'b', 'parentId')).toBe('a');
+      expect(getValue(blocksMap, 'c', 'parentId')).toBe('a');
+      expect(getValue(blocksMap, 'a', 'parentId')).toBeNull();
+    });
+
+    it('only child acts as simple extract (no siblings to adopt)', () => {
+      // parent: [a] → outdent a → parent: [], a is sibling after parent
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a'] });
+
+      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+
+      expect(getChildIds(blocksMap, 'parent')).toEqual([]);
+      expect(getChildIds(blocksMap, 'a')).toEqual([]);
+      expect(rootIdsArr.toArray()).toEqual(['parent', 'a']);
+    });
+
+    it('adopted siblings go AFTER existing children', () => {
+      // parent: [a, b, c], a: [x, y] → outdent a → a: [x, y, b, c]
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, {
+        parent: ['a', 'b', 'c'],
+        a: ['x', 'y'],
+      });
+
+      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+
+      expect(getChildIds(blocksMap, 'a')).toEqual(['x', 'y', 'b', 'c']);
+      expect(getChildIds(blocksMap, 'parent')).toEqual([]);
+      expect(getValue(blocksMap, 'b', 'parentId')).toBe('a');
+      expect(getValue(blocksMap, 'c', 'parentId')).toBe('a');
+      // Existing children's parentId unchanged
+      expect(getValue(blocksMap, 'x', 'parentId')).toBe('a');
+    });
+
+    it('works in nested context (grandparent exists)', () => {
+      // grandparent: [parent], parent: [a, b] → outdent a
+      // → grandparent: [parent, a], a: [b]
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, {
+        grandparent: ['parent'],
+        parent: ['a', 'b'],
+      });
+
+      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+
+      expect(getChildIds(blocksMap, 'grandparent')).toEqual(['parent', 'a']);
+      expect(getChildIds(blocksMap, 'parent')).toEqual([]);
+      expect(getChildIds(blocksMap, 'a')).toEqual(['b']);
+      expect(getValue(blocksMap, 'a', 'parentId')).toBe('grandparent');
+      expect(getValue(blocksMap, 'b', 'parentId')).toBe('a');
+    });
+  });
+
+  describe('atomic undo', () => {
+    it('first-child outdent is one undo step', () => {
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a', 'b', 'c'] });
+
+      const undoManager = new Y.UndoManager([blocksMap, rootIdsArr], {
+        trackedOrigins: new Set(['user']),
+      });
+      undoManager.clear();
+
+      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+
+      // Should be exactly 1 undo step
+      expect(undoManager.undoStack.length).toBe(1);
+
+      // Undo should restore original state
+      undoManager.undo();
+
+      expect(getChildIds(blocksMap, 'parent')).toEqual(['a', 'b', 'c']);
+      expect(getChildIds(blocksMap, 'a')).toEqual([]);
+      expect(rootIdsArr.toArray()).toEqual(['parent']);
+      expect(getValue(blocksMap, 'a', 'parentId')).toBe('parent');
+      expect(getValue(blocksMap, 'b', 'parentId')).toBe('parent');
+      expect(getValue(blocksMap, 'c', 'parentId')).toBe('parent');
+    });
+  });
+
+  describe('moveBlockUp/Down escape uses simple outdent', () => {
+    it('simple outdent does NOT adopt siblings when first child', () => {
+      // This verifies the moveBlockUp/Down escape path behavior:
+      // first child + simpleOutdent → just extract, siblings stay with parent
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a', 'b', 'c'] });
+
+      simpleOutdent(doc, blocksMap, rootIdsArr, 'a');
+
+      expect(getChildIds(blocksMap, 'parent')).toEqual(['b', 'c']);
+      expect(getChildIds(blocksMap, 'a')).toEqual([]);
+      expect(rootIdsArr.toArray()).toEqual(['parent', 'a']);
+      // b and c stay with parent
+      expect(getValue(blocksMap, 'b', 'parentId')).toBe('parent');
+      expect(getValue(blocksMap, 'c', 'parentId')).toBe('parent');
+    });
+  });
+
+  describe('CRDT merge safety', () => {
+    it('first-child outdent with surgical mutations survives bidirectional merge', () => {
+      const docA = new Y.Doc();
+      const { blocksMap: blocksA, rootIdsArr: rootA } = setupTree(docA, {
+        parent: ['a', 'b', 'c'],
+      });
+
+      // Fork
+      const docB = new Y.Doc();
+      Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
+
+      // A: outdent first child (extract + adopt)
+      positionDependentOutdent(docA, blocksA, rootA, 'a');
+
+      // B: add a new child to parent (concurrent edit)
+      const blocksB = docB.getMap('blocks');
+      docB.transact(() => {
+        appendChildId(blocksB, 'parent', 'd');
+        blocksB.set('d', createBlockMap('d'));
+        setField(blocksB, 'd', 'parentId', 'parent');
+      }, 'user');
+
+      // Merge
+      const updateFromA = Y.encodeStateAsUpdate(docA, Y.encodeStateVector(docB));
+      const updateFromB = Y.encodeStateAsUpdate(docB, Y.encodeStateVector(docA));
+      Y.applyUpdate(docA, updateFromB);
+      Y.applyUpdate(docB, updateFromA);
+
+      // Both docs should converge — no duplicates
+      const finalARoots = rootA.toArray();
+      const finalAParentChildren = getChildIds(blocksA, 'parent');
+      const finalAChildren = getChildIds(blocksA, 'a');
+
+      // No duplicates in any array
+      expect(new Set(finalARoots).size).toBe(finalARoots.length);
+      expect(new Set(finalAParentChildren).size).toBe(finalAParentChildren.length);
+      expect(new Set(finalAChildren).size).toBe(finalAChildren.length);
+
+      // 'a' should be a root-level sibling of parent
+      expect(finalARoots).toContain('parent');
+      expect(finalARoots).toContain('a');
+
+      // 'b' and 'c' should be children of 'a' (adopted)
+      expect(finalAChildren).toContain('b');
+      expect(finalAChildren).toContain('c');
+    });
+  });
+});
