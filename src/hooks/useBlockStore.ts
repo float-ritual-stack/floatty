@@ -1535,6 +1535,8 @@ function createBlockStore() {
     const targetContent = target.content;
     const sourceContent = source.content;
 
+    let success = true;
+
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
@@ -1577,7 +1579,10 @@ function createBlockStore() {
       }
 
       // Bail if children couldn't be safely relocated
-      if (!liftOk) return;
+      if (!liftOk) {
+        success = false;
+        return;
+      }
 
       // 2. Merge content
       const separator = (targetContent && sourceContent) ? '\n' : '';
@@ -1598,7 +1603,7 @@ function createBlockStore() {
       blocksMap.delete(sourceId);
     }, 'user');
 
-    return true;
+    return success;
   };
 
   /**
