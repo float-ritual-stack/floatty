@@ -1539,7 +1539,9 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
 
       // 1. Lift source's children to be siblings after target (inline from liftChildrenToSiblings)
+      let liftOk = true;
       if (childrenToLift.length > 0) {
+        liftOk = false;
         const targetParentId = target.parentId;
 
         if (targetParentId) {
@@ -1550,6 +1552,7 @@ function createBlockStore() {
             if (afterIndex >= 0) {
               clearChildIds(blocksMap, sourceId);
               insertChildIds(blocksMap, targetParentId, childrenToLift, afterIndex + 1);
+              liftOk = true;
             }
           }
         } else {
@@ -1560,15 +1563,21 @@ function createBlockStore() {
           if (afterIndex >= 0) {
             clearChildIds(blocksMap, sourceId);
             rootIds.insert(afterIndex + 1, childrenToLift);
+            liftOk = true;
           }
         }
 
-        // Update parentId for lifted children
-        for (const childId of childrenToLift) {
-          setValueOnYMap(blocksMap, childId, 'parentId', target.parentId);
-          setValueOnYMap(blocksMap, childId, 'updatedAt', Date.now());
+        // Only update parentId if lift actually succeeded
+        if (liftOk) {
+          for (const childId of childrenToLift) {
+            setValueOnYMap(blocksMap, childId, 'parentId', target.parentId);
+            setValueOnYMap(blocksMap, childId, 'updatedAt', Date.now());
+          }
         }
       }
+
+      // Bail if children couldn't be safely relocated
+      if (!liftOk) return;
 
       // 2. Merge content
       const separator = (targetContent && sourceContent) ? '\n' : '';
