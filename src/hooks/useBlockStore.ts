@@ -1427,14 +1427,14 @@ function createBlockStore() {
       // 1. Remove self from parent
       removeChildId(blocksMap, block.parentId!, id);
 
-      // 2. Remove younger siblings from parent (reverse order for stable indices)
-      for (let i = youngerSiblingIds.length - 1; i >= 0; i--) {
-        removeChildId(blocksMap, block.parentId!, youngerSiblingIds[i]);
+      // 2. Remove younger siblings from parent
+      for (const sibId of youngerSiblingIds) {
+        removeChildId(blocksMap, block.parentId!, sibId);
       }
 
       // 3. Adopt younger siblings as children (after any existing children)
       if (youngerSiblingIds.length > 0) {
-        const existingChildCount = block.childIds.length;
+        const existingChildCount = getChildIds(blocksMap, id).length;
         insertChildIds(blocksMap, id, youngerSiblingIds, existingChildCount);
         for (const sibId of youngerSiblingIds) {
           setValueOnYMap(blocksMap, sibId, 'parentId', id);
