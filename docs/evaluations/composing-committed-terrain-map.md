@@ -80,39 +80,39 @@ No regressions. PRs #172/#173 (search-work) modified Rust backend search metadat
 
 ## 3. Structural Operations Inventory
 
-### Summary table:
+### Summary table (updated 2026-03-16):
 
 | Operation | Flushes first? | Single transaction? | Reads from | Notes |
 |-----------|---------------|---------------------|------------|-------|
-| `splitBlock` | YES (`flushContentUpdate()` at useEditingActions.ts:114) | YES (useBlockStore.ts:1003-1025) | **Y.Doc** (store.blocks[id].content at line 979) | Reads committed content. Flush ensures content is committed first. |
-| `splitBlockToFirstChild` | YES (useEditingActions.ts:123) | YES (useBlockStore.ts:1059-1073) | **Y.Doc** (store.blocks[id].content at line 1042) | Same pattern as splitBlock. |
-| `merge_with_previous` | YES (useEditingActions.ts:180) | **NO — 3 separate calls** | **Y.Doc** (block.content, prevBlock.content at lines 184-185) | `liftChildrenToSiblings()` + `updateBlockContent()` + `deleteBlock()` = 3 transactions. **Breaks atomic undo.** |
-| `indentBlock` | NO | YES (useBlockStore.ts:1339-1356) | N/A (structural only, no content) | Pure tree reparenting. No content read. |
-| `outdentBlock` | NO | YES (useBlockStore.ts:1368-1389) | N/A (structural only, no content) | Pure tree reparenting. |
-| `deleteBlock` | NO | YES (useBlockStore.ts:1098-1118) | N/A | Recursive delete in single transaction. |
-| `deleteBlocks` | NO | YES (useBlockStore.ts:1156-1179) | N/A | Multi-select delete, single transaction. |
-| `moveBlockUp` | NO | Delegates to `moveBlock()` → YES | N/A | May fall through to `outdentBlock()` (useBlockStore.ts:1475). |
-| `moveBlockDown` | NO | Delegates to `moveBlock()` → YES | N/A | May fall through to `outdentBlock()` (useBlockStore.ts:1529). |
-| `remove_spaces` | NO | Direct `updateBlockContent()` call | **DOM** (`contentRef.innerText` at useEditingActions.ts:157) | Reads from DOM, writes to Y.Doc. No flush. |
+| `splitBlock` | YES (`flushContentUpdate()`) | YES | **Y.Doc** (store.blocks[id].content) | Reads committed content. Flush ensures content is committed first. |
+| `splitBlockToFirstChild` | YES (`flushContentUpdate()`) | YES | **Y.Doc** (store.blocks[id].content) | Same pattern as splitBlock. |
+| `merge_with_previous` | YES (`flushContentUpdate()`) | YES — single `mergeBlocks()` transaction | **Y.Doc** (block.content, prevBlock.content) | `mergeBlocks()` wraps lift children + content merge + delete in one `_doc.transact()`. Single undo step. |
+| `indentBlock` | YES (`flushContentUpdate()`) | YES | N/A (structural only) | Pure tree reparenting. Flush prevents stale debounce after reparent. |
+| `outdentBlock` | YES (`flushContentUpdate()`) | YES | N/A (structural only) | Pure tree reparenting. Same flush rationale. |
+| `deleteBlock` | YES (`cancelContentUpdate()`) | YES | N/A | Recursive delete. Cancel (not flush) — no point committing content for a dying block. |
+| `deleteBlocks` | NO (multi-select path) | YES | N/A | Multi-select delete, single transaction. |
+| `moveBlockUp` | YES (`flushContentUpdate()`) | Delegates to `moveBlock()` → YES | N/A | May fall through to `outdentBlock()`. |
+| `moveBlockDown` | YES (`flushContentUpdate()`) | Delegates to `moveBlock()` → YES | N/A | May fall through to `outdentBlock()`. |
+| `remove_spaces` | YES (`flushContentUpdate()`) | Direct `updateBlockContent()` call | **DOM** (`contentRef.innerText`) | Flush cancels pending debounce before DOM read + Y.Doc write. No more race. |
+| `create_block_before` | YES (`flushContentUpdate()`) | YES | N/A | Commit current content before creating sibling. |
+| `create_block_inside` | YES (`flushContentUpdate()`) | YES | N/A | Commit current content before creating child. |
+| `create_trailing_block` | YES (`flushContentUpdate()`) | YES | N/A | Commit current content before creating block at tree end. |
 
-### Critical finding: merge is NOT atomic
+### ~~Critical finding: merge is NOT atomic~~ RESOLVED (2026-03-16)
 
-`merge_with_previous` (useEditingActions.ts:177-217) executes three separate Y.Doc operations:
-1. `liftChildrenToSiblings()` — own transaction
-2. `updateBlockContent()` — own transaction
-3. `deleteBlock()` — own transaction
+`merge_with_previous` now calls `mergeBlocks(targetId, sourceId)` in useBlockStore.ts, which wraps the full operation — lifting source children via `liftChildrenToSiblings` logic, merging content (previously done by `updateBlockContent()`), and deleting the source block (previously `deleteBlock()`) — in a single `_doc.transact(() => { ... }, 'user')`. This produces one undo step. `Cmd+Z` after merge reverts the entire operation atomically.
 
-This creates 3 undo steps. `Cmd+Z` after merge only undoes the delete, leaving orphaned content in the previous block. **This is a pre-existing bug** that exists regardless of composing→committed.
+The previous code called `liftChildrenToSiblings()` + `updateBlockContent()` + `deleteBlock()` as three separate transactions creating three undo entries. Fixed by inlining the sub-operations into `mergeBlocks()` using the existing surgical Y.Array helpers.
 
 ### Content source analysis for composing→committed:
 
 - **splitBlock/splitBlockToFirstChild**: Read from `state.blocks[id].content` (Y.Doc/store). The `flushContentUpdate()` call ensures DOM content is written to Y.Doc before the read. **Post-refactor: structural ops would need to read composing content from DOM directly**, since Y.Doc may be stale during composing. The flush call already handles this — it's the right pattern.
 
-- **merge_with_previous**: Also reads from store after flush. Same pattern works.
+- **merge_with_previous**: Also reads from store after `flushContentUpdate()`. Same pattern works. Now atomic (single `mergeBlocks()` transaction).
 
-- **remove_spaces**: Reads directly from DOM (`contentRef.innerText`), then writes to Y.Doc. **This already works in a composing→committed model** since it reads DOM truth. But it does NOT flush first, so the debounce may race. Minor issue.
+- **remove_spaces**: Reads directly from DOM (`contentRef.innerText`), then writes to Y.Doc. Now calls `flushContentUpdate()` first, cancelling any pending debounce before the DOM read + Y.Doc write. The race where a stale debounce could clobber the spaces removal is eliminated.
 
-- **indent/outdent/moveBlock/delete**: No content reads. Pure structural. No impact from composing→committed.
+- **indent/outdent/moveBlock/delete**: No content reads. Pure structural. All now call `flushContentUpdate()` (or `cancelContentUpdate()` for delete) before mutating, preventing stale debounced writes from clobbering post-mutation state.
 
 ---
 
@@ -136,7 +136,7 @@ sharedUndoManager = new Y.UndoManager([blocksMap, rootIds], {
 
 **Current**: Every 150ms debounce commit = one undo entry. Y.UndoManager has built-in capture merging (500ms window by default in yjs), so rapid typing may merge into fewer entries. But there's no explicit `stopCapturing()` usage except:
 
-- `stopUndoCaptureBoundary()` exported at useSyncedYDoc.ts:67-68 — **NOT called anywhere in the codebase currently.** It exists as infrastructure.
+- `stopUndoCaptureBoundary()` exported at useSyncedYDoc.ts:67-68 — called by `moveBlock()` in useBlockStore.ts (drag-and-drop undo isolation). Not yet used for content commit boundaries.
 
 **Practical effect**: While typing, undo granularity is ~150ms intervals (debounce rate), coalesced by yjs's internal merge window. Structural operations (split, delete, indent) create their own entries because they're separate transactions.
 
@@ -271,17 +271,13 @@ No code references to these FLO numbers. Cannot determine current state.
 
 **Post-refactor**: No change needed. Fewer commits = fewer effect runs.
 
-### Dragon 2: merge_with_previous is 3 transactions
+### ~~Dragon 2: merge_with_previous is 3 transactions~~ RESOLVED (2026-03-16)
 
-As documented in section 3. Three separate Y.Doc transactions = three undo entries. Pre-existing issue. Composing→committed makes this MORE visible because the content flush + structural ops should be atomic. **Recommendation: combine into single transaction when implementing.**
+`merge_with_previous` now uses `mergeBlocks()` — a single `_doc.transact()` wrapping `liftChildrenToSiblings` logic + content merge (previously `updateBlockContent()`) + source deletion (previously `deleteBlock()`). Single undo step. See section 3.
 
-### Dragon 3: remove_spaces reads DOM without flushing
+### ~~Dragon 3: remove_spaces reads DOM without flushing~~ RESOLVED (2026-03-16)
 
-`useEditingActions.ts:157` reads `contentRef.innerText` directly, then calls `updateBlockContent()`. No `flushContentUpdate()` first. If there's a pending 150ms debounce, two writes race: the debounce fires its stale content AFTER remove_spaces writes new content. **The debounce wins (it fires after), clobbering the spaces removal.**
-
-**Current mitigation**: The debounce captures args at call time (line 81: `pendingArgs = args`), so the old content with spaces would be what fires. But `updateBlockContent` in remove_spaces writes the spaceless version immediately. Then the debounce fires with old content. **This is a latent bug.**
-
-**Post-refactor**: remove_spaces should cancel the debounce and write directly, or the composing model eliminates this class of bug by not having a background debounce.
+`remove_spaces` now calls `flushContentUpdate()` before reading DOM and writing to Y.Doc. The flush cancels any pending debounce, eliminating the race where stale debounced content could overwrite the spaces removal.
 
 ### Dragon 4: Reconnect-authority during composing
 
@@ -330,7 +326,7 @@ For the future `lens::` concept:
 
 **The structural change**: Replace `createDebouncedUpdater` + 150ms timer with explicit commit triggers. The `flushContentUpdate()` pattern already exists for structural ops — generalize it.
 
-**The risks**: merge atomicity (3 transactions), remove_spaces race, reconnect-authority data loss during composing, and undo granularity changes need explicit handling.
+**The risks**: ~~merge atomicity (3 transactions)~~ fixed, ~~remove_spaces race~~ fixed, reconnect-authority data loss during composing, and undo granularity changes need explicit handling.
 
 **The deletable code**: The content sync effect (BlockItem.tsx:599-675) shrinks but doesn't disappear — undo/redo/remote still need DOM sync. The debouncer infrastructure (`createDebouncedUpdater`, `debouncedUpdateContent`, `flushContentUpdate`, `cancelContentUpdate`) gets replaced with a commit function.
 
