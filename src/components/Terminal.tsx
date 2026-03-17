@@ -239,6 +239,7 @@ function TabBar(props: {
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
+  const [sidebarWidth, setSidebarWidth] = createSignal<number | string>('280px');
   const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
   // Snapshot focused block + pane when ⌘K opens (focus moves to command bar input)
   let commandBarFocusedBlockId: string | null = null;
@@ -820,7 +821,19 @@ export function Terminal() {
           break;
         case 'toggleSidebar':
           setSidebarVisible((v) => !v);
-          // Refit handled by Resizable onSizesChange callback
+          // onSizesChange won't fire when <Show> unmounts/mounts the panel,
+          // so refit terminals explicitly after DOM settles
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              const currentActiveId = tabStore.activeTabId();
+              if (currentActiveId) {
+                const paneIds = getAllPaneIds(currentActiveId);
+                for (const paneId of paneIds) {
+                  paneRefs.get(paneId)?.fit();
+                }
+              }
+            }, 50);
+          });
           break;
         // Split management
         case 'splitHorizontal':
@@ -1135,7 +1148,12 @@ export function Terminal() {
       <Resizable
         orientation="horizontal"
         style={{ display: 'flex', width: '100%', height: '100%' }}
-        onSizesChange={() => {
+        onSizesChange={(sizes) => {
+          // Persist sidebar width across side swaps
+          const sideIdx = sidebarSide() === 'left' ? 0 : sizes.length - 1;
+          if (sidebarVisible() && sizes[sideIdx] > 0) {
+            setSidebarWidth(sizes[sideIdx]);
+          }
           // Refit all visible terminals when sidebar resizes
           requestAnimationFrame(() => {
             const currentActiveId = tabStore.activeTabId();
@@ -1151,9 +1169,9 @@ export function Terminal() {
         {/* Sidebar on left side */}
         <Show when={sidebarVisible() && sidebarSide() === 'left'}>
           <Resizable.Panel
-            class="sidebar-panel-wrapper"
+            class="sidebar-panel-wrapper sidebar-left"
             minSize={'200px'}
-            initialSize={'280px'}
+            initialSize={sidebarWidth()}
             collapsible
             collapsedSize={0}
             collapseThreshold={'50px'}
@@ -1291,7 +1309,7 @@ export function Terminal() {
           <Resizable.Panel
             class="sidebar-panel-wrapper"
             minSize={'200px'}
-            initialSize={'280px'}
+            initialSize={sidebarWidth()}
             collapsible
             collapsedSize={0}
             collapseThreshold={'50px'}

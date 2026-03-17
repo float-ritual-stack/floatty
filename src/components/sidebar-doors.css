@@ -25,7 +25,7 @@
 }
 
 /* When sidebar is on the left, border goes on right side */
-.sidebar-panel-wrapper:first-child .sidebar-door-container {
+.sidebar-left .sidebar-door-container {
   border-left: none;
   border-right: 1px solid var(--color-border);
 }
