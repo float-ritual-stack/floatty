@@ -14,6 +14,7 @@ import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { blockStore } from '../hooks/useBlockStore';
+import { tabStore } from '../hooks/useTabStore';
 import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
 
 /** Get a short label describing what's visible in a pane */
@@ -86,10 +87,15 @@ export function PaneLinkOverlay() {
           });
         }
       } else {
-        // Link mode: create pane link
+        // Link mode: create pane link + set sidebar target for active tab
         const sourcePaneId = paneLinkStore.linkingSourcePaneId();
         if (sourcePaneId) {
           paneLinkStore.setPaneLink(sourcePaneId, match.paneId);
+          // Also link sidebar → this target so chirp navigation follows the same link
+          const activeTab = tabStore.activeTabId();
+          if (activeTab) {
+            paneLinkStore.setSidebarLink(activeTab, match.paneId);
+          }
         }
       }
 
