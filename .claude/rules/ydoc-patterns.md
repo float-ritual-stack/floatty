@@ -307,3 +307,36 @@ blocksMap.unobserveDeep(handler);
 ```
 
 **Rule**: Keep a reference to the handler function. Pass the same reference to both `observeDeep()` and `unobserveDeep()`.
+
+## 13. Pre-Flight Validation for Structural Mutations
+
+**Problem**: Removing a block from its parent before validating the insertion destination creates orphan risk. If `indexOf` returns -1 or the destination container doesn't exist, the block is already detached.
+
+```typescript
+// ❌ WRONG - remove before validating destination
+removeChildId(blocksMap, parentId, id);  // Block detached!
+const gpChildIds = getChildIds(blocksMap, grandparentId);
+const parentIndex = gpChildIds.indexOf(parentId);
+// If parentIndex is -1, block is orphaned
+
+// ✅ CORRECT - validate THEN mutate
+let insertIndex = -1;
+if (grandparentId) {
+  const gpData = blocksMap.get(grandparentId);
+  if (!gpData) return;  // Bail — no mutation happened
+  const gpChildIds = (getValue(gpData, 'childIds') as string[]) || [];
+  insertIndex = gpChildIds.indexOf(parentId);
+  if (insertIndex < 0) return;  // Bail — no mutation happened
+}
+removeChildId(blocksMap, parentId, id);  // Safe — destination verified
+insertChildId(blocksMap, grandparentId, id, insertIndex + 1);
+```
+
+**Pattern**: For any operation that moves a block (outdent, merge-lift, reparent):
+1. Resolve ALL destination lookups (`indexOf`, `blocksMap.get`)
+2. Verify ALL return non-null/non-negative
+3. THEN begin mutations
+
+**Also guard ancestry**: Operations that delete a block (merge, delete) should check `isDescendant()` to prevent deleting an ancestor of a referenced block. `mergeBlocks` and `moveBlock` both use this.
+
+**Reference implementations**: `_outdentBlockSimple`, `outdentBlock` adopt path, `mergeBlocks` `liftOk` flag.

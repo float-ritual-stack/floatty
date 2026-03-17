@@ -51,6 +51,17 @@ Critical anti-patterns that will break floatty.
 - Set cursor offset without clamping to node length (DOM may have changed, throws IndexSizeError)
 - Assume ArrowUp/Down works when only newlines exist before/after cursor (browser can't navigate - handle manually)
 
+## Structural Mutations (Block Tree)
+
+- Remove a block from its parent before validating the insertion destination exists (orphan risk — always resolve the destination index BEFORE `removeChildId`. See `_outdentBlockSimple`, `outdentBlock` adopt path)
+- Write a merge/combine operation without checking `isDescendant(sourceId, targetId)` (deleting source orphans target if target is in source's subtree — see `mergeBlocks`, `moveBlock`)
+- Add a new block tree mutation without the pre-flight pattern: (1) validate all lookups, (2) bail if any return -1/null/undefined, (3) THEN mutate. The `mergeBlocks` `liftOk` flag is the reference implementation.
+
+## HMR Cleanup
+
+- Add module-level mutable state (`let foo = ...`, `const bar = new Map()`) or EventBus subscriptions without `import.meta.hot.dispose()` cleanup (leaks on hot reload — see `outlinksHook.ts`, `ctxRouterHook.ts` for the pattern, `funcRegistry.ts` and `doorLoader.ts` for what happens when you forget)
+- Create Blob URLs (`URL.createObjectURL()`) without revoking them in HMR dispose (browser has limited Blob URL slots)
+
 ## Y.Doc/Search (see @.claude/rules/ydoc-patterns.md)
 
 - Recreate wikilink/marker parsing in Rust (reuse `inlineParser.ts` or port with TS as spec)
