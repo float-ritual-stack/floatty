@@ -131,7 +131,7 @@ Check this list when adding keybinds to avoid conflicts.
 - `⌘W` / `Ctrl+W` - Close tab
 - `⌘1-9` - Jump to tab N
 - `⌘⇧[` / `⌘⇧]` - Prev/next tab
-- `⌘B` - Toggle sidebar
+- `⌘\` - Toggle sidebar
 - `⌘K` - Command palette
 - `⌘L` - Link pane (overlay picker)
 - `⌘J` - Focus pane (overlay picker)
