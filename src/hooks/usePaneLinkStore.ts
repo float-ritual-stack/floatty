@@ -20,6 +20,8 @@ function createPaneLinkStore() {
   const [blockLinks, setBlockLinks] = createSignal<Map<string, string>>(new Map());
   // Pane-level links: sourcePaneId → targetPaneId
   const [paneLinks, setPaneLinks] = createSignal<Map<string, string>>(new Map());
+  // Sidebar link targets: tabId → paneId (which outliner pane sidebar chirps navigate to)
+  const [sidebarLinks, setSidebarLinks] = createSignal<Map<string, string>>(new Map());
   // Overlay state
   const [linkingSourcePaneId, setLinkingSourcePaneId] = createSignal<string | null>(null);
   const [overlayMode, setOverlayMode] = createSignal<'link' | 'focus' | null>(null);
@@ -111,6 +113,52 @@ function createPaneLinkStore() {
   function clearAllLinks(): void {
     setPaneLinks(new Map());
     setBlockLinks(new Map());
+    setSidebarLinks(new Map());
+  }
+
+  // ── Sidebar → pane links (per-tab) ──
+
+  function setSidebarLink(tabId: string, paneId: string): void {
+    setSidebarLinks(prev => {
+      const next = new Map(prev);
+      next.set(tabId, paneId);
+      return next;
+    });
+  }
+
+  function clearSidebarLink(tabId: string): void {
+    setSidebarLinks(prev => {
+      const next = new Map(prev);
+      next.delete(tabId);
+      return next;
+    });
+  }
+
+  function hasSidebarLink(tabId: string): boolean {
+    return sidebarLinks().has(tabId);
+  }
+
+  /**
+   * Resolve which outliner pane the sidebar should navigate to for a given tab.
+   * Priority: explicit sidebar link → first outliner pane in tab.
+   */
+  function resolveSidebarTarget(tabId: string): string | null {
+    // Check explicit link first
+    const linked = sidebarLinks().get(tabId);
+    if (linked) {
+      // Validate it still exists
+      const checkTab = findTabIdByPaneId(linked);
+      if (checkTab === tabId) return linked;
+      // Stale — clean up
+      clearSidebarLink(tabId);
+    }
+
+    // Fallback: first outliner pane in the tab
+    const layout = layoutStore.layouts[tabId];
+    if (!layout) return null;
+    const leaves = collectLeaves(layout.root);
+    const outliner = leaves.find(l => l.leafType === 'outliner');
+    return outliner?.id ?? null;
   }
 
   // ── Overlay mode ──
@@ -191,6 +239,11 @@ function createPaneLinkStore() {
     clearAllLinks,
     getSourcePaneFor,
     getSourcePanesFor,
+    // Sidebar links
+    setSidebarLink,
+    clearSidebarLink,
+    hasSidebarLink,
+    resolveSidebarTarget,
     // Resolution
     resolveLink,
     // Overlay

@@ -7,12 +7,15 @@
  * sidebar is display-only, main app owns focus.
  */
 
-import { Show, For, createMemo } from 'solid-js';
+import { Show, For, createMemo, onMount, onCleanup } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { ContextSidebar } from './ContextSidebar';
 import { createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
 import { doorRegistry } from '../lib/handlers/doorRegistry';
 import { getServerAccess } from './views/DoorHost';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { navigateToPage, navigateToBlock } from '../lib/navigation';
+import { tabStore } from '../hooks/useTabStore';
 import './sidebar-doors.css';
 
 interface SidebarDoorContainerProps {
@@ -22,6 +25,31 @@ interface SidebarDoorContainerProps {
 
 export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
   const store = createSidebarDoorStore();
+
+  // Chirp listener for sidebar iframes (manifest, portless doors)
+  // Routes navigation to the sidebar's linked pane for the active tab
+  onMount(() => {
+    const handler = (e: MessageEvent) => {
+      if (!e.data?.type?.startsWith('chirp:')) return;
+      const { type, target } = e.data;
+
+      if (type === 'chirp:navigate' && target) {
+        const activeTab = tabStore.activeTabId();
+        if (!activeTab) return;
+        const paneId = paneLinkStore.resolveSidebarTarget(activeTab);
+        if (!paneId) return;
+
+        // Try as page first, then as block ID
+        const pageResult = navigateToPage(target, { paneId, highlight: true });
+        if (!pageResult.success) {
+          navigateToBlock(target, { paneId, highlight: true });
+        }
+      }
+    };
+
+    window.addEventListener('message', handler);
+    onCleanup(() => window.removeEventListener('message', handler));
+  });
 
   // Get the view component for the active door (if it's a registry door, not built-in ctx)
   const activeView = createMemo(() => {
