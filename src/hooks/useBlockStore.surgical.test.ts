@@ -1253,6 +1253,15 @@ describe('FLO-498: outdent with adoption', () => {
       expect(finalBRoots).toContain('a');
       expect(finalBChildren).toContain('b');
       expect(finalBChildren).toContain('c');
+
+      // Concurrent child 'd' must survive on both replicas (not dropped by merge)
+      const dSurvivedA = finalAParentChildren.includes('d') || finalAChildren.includes('d');
+      const dSurvivedB = finalBParentChildren.includes('d') || finalBChildren.includes('d');
+      expect(dSurvivedA).toBe(true);
+      expect(dSurvivedB).toBe(true);
+      // Block data preserved
+      expect(blocksA.has('d')).toBe(true);
+      expect(blocksB.has('d')).toBe(true);
     });
   });
 
