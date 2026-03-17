@@ -1277,6 +1277,18 @@ describe('FLO-498: outdent with adoption', () => {
       const sourceMap = blocksMap.get(sourceId) as Y.Map<unknown> | undefined;
       if (!targetMap || !sourceMap) return false;
 
+      // Reject if target is inside source's subtree
+      function isDescendant(ancestorId: string, checkId: string): boolean {
+        const stack = [...getChildIds(blocksMap, ancestorId)];
+        while (stack.length > 0) {
+          const id = stack.pop()!;
+          if (id === checkId) return true;
+          stack.push(...getChildIds(blocksMap, id));
+        }
+        return false;
+      }
+      if (isDescendant(sourceId, targetId)) return false;
+
       const targetContent = targetMap.get('content') as string;
       const sourceContent = sourceMap.get('content') as string;
       const targetParentId = targetMap.get('parentId') as string | null;
@@ -1457,6 +1469,23 @@ describe('FLO-498: outdent with adoption', () => {
       expect(getValue(blocksMap, 'target', 'content')).toBe('sh::\necho hi');
       // Type should still be 'sh' since content starts with sh::
       expect(getValue(blocksMap, 'target', 'type')).toBe('sh');
+    });
+
+    it('rejects merge when target is descendant of source', () => {
+      // source: [child], target=child → mergeBlocks(child, source) should reject
+      const doc = new Y.Doc();
+      const { blocksMap } = setupTree(doc, { source: ['child'] });
+      setField(blocksMap, 'source', 'content', 'parent content');
+      setField(blocksMap, 'child', 'content', 'child content');
+
+      const result = mergeBlocks(doc, blocksMap, 'child', 'source');
+
+      expect(result).toBe(false);
+      // Both blocks unchanged
+      expect(blocksMap.has('source')).toBe(true);
+      expect(blocksMap.has('child')).toBe(true);
+      expect(getValue(blocksMap, 'source', 'content')).toBe('parent content');
+      expect(getChildIds(blocksMap, 'source')).toEqual(['child']);
     });
   });
 });

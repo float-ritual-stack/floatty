@@ -1539,6 +1539,9 @@ function createBlockStore() {
     const source = state.blocks[sourceId];
     if (!target || !source) return false;
 
+    // Reject if target is inside source's subtree (deleting source would orphan target)
+    if (isDescendant(sourceId, targetId)) return false;
+
     // Pre-transaction reads are safe — single-threaded JS has no async gap
     // before transact(). SolidJS store is a synchronous projection of Y.Doc.
     const childrenToLift = [...source.childIds];
