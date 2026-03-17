@@ -1407,6 +1407,19 @@ export function Terminal() {
               return;
             }
 
+            // Link sidebar to the currently active outliner pane
+            // (sidebar chirp navigation will target this pane)
+            if (commandId === 'sidebar-link') {
+              const activeId = tabStore.activeTabId();
+              if (activeId) {
+                const activePaneId = getActivePaneId(activeId);
+                if (activePaneId) {
+                  paneLinkStore.setSidebarLink(activeId, activePaneId);
+                }
+              }
+              return;
+            }
+
             // Dispatch keyboard events that Outliner.tsx already handles
             const keyMap: Record<string, string> = {
               'export-json': 'j',
