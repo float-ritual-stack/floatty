@@ -1239,6 +1239,23 @@ describe('FLO-498: position-dependent outdent', () => {
       // 'b' and 'c' should be children of 'a' (adopted)
       expect(finalAChildren).toContain('b');
       expect(finalAChildren).toContain('c');
+
+      // Verify docB converged to same state
+      const rootB = docB.getArray<string>('rootIds');
+      const finalBRoots = rootB.toArray();
+      const finalBParentChildren = getChildIds(blocksB, 'parent');
+      const finalBChildren = getChildIds(blocksB, 'a');
+
+      // No duplicates in docB
+      expect(new Set(finalBRoots).size).toBe(finalBRoots.length);
+      expect(new Set(finalBParentChildren).size).toBe(finalBParentChildren.length);
+      expect(new Set(finalBChildren).size).toBe(finalBChildren.length);
+
+      // Same structural assertions
+      expect(finalBRoots).toContain('parent');
+      expect(finalBRoots).toContain('a');
+      expect(finalBChildren).toContain('b');
+      expect(finalBChildren).toContain('c');
     });
   });
 });

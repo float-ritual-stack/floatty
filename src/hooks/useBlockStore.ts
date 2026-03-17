@@ -1434,7 +1434,7 @@ function createBlockStore() {
 
       // 3. Adopt younger siblings as children (after any existing children)
       if (youngerSiblingIds.length > 0) {
-        const existingChildCount = getChildIds(blocksMap, id).length;
+        const existingChildCount = getChildIdsArray(blocksMap, id)?.length ?? 0;
         insertChildIds(blocksMap, id, youngerSiblingIds, existingChildCount);
         for (const sibId of youngerSiblingIds) {
           setValueOnYMap(blocksMap, sibId, 'parentId', id);
@@ -1588,7 +1588,9 @@ function createBlockStore() {
 
       // 2. Merge content
       const separator = (targetContent && sourceContent) ? '\n' : '';
-      setValueOnYMap(blocksMap, targetId, 'content', targetContent + separator + sourceContent);
+      const mergedContent = targetContent + separator + sourceContent;
+      setValueOnYMap(blocksMap, targetId, 'content', mergedContent);
+      setValueOnYMap(blocksMap, targetId, 'type', parseBlockType(mergedContent));
       setValueOnYMap(blocksMap, targetId, 'updatedAt', Date.now());
 
       // 3. Delete source block (inline from deleteBlock — source should have 0 children after lift)

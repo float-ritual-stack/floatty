@@ -16,6 +16,7 @@
 
 import { getActionForEvent } from '../lib/keybinds';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
+import { setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
 import type { BlockStoreInterface, PaneStoreInterface } from '../context/WorkspaceContext';
 import type { Block } from '../lib/blockTypes';
