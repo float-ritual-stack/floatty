@@ -82,7 +82,21 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `navigation.ts` | Unified navigation (navigateToBlock, navigateToPage) |
 | `handlers/artifact.ts` | JSX transpilation for artifact:: |
 | `handlers/doorLoader.ts` | Door discovery + hot-reload |
+| `handlers/doorTypes.ts` | Door type definitions (`selfRender` flag) |
 | `events/blockEventBus.ts` | Block lifecycle event bus |
+| `markdownParser.ts` | Markdown → block hierarchy (headings, lists, fences) |
+| `cursorUtils.ts` | Cursor position utilities for keybind logic |
+| `executor.ts` | `sh::` command execution via Tauri |
+| `tvResolver.ts` | `$tv()` pattern → TV picker → selection |
+
+**Block Lifecycle Hooks** (`src/lib/handlers/hooks/`):
+
+| File | Purpose |
+|------|---------|
+| `ctxRouterHook.ts` | Extracts ctx:: markers → `block.metadata.markers` |
+| `outlinksHook.ts` | Extracts [[wikilink]] targets → `block.metadata.outlinks` |
+
+Hooks subscribe to `blockEventBus` with origin filtering. See `docs/architecture/FLOATTY_HOOK_SYSTEM.md`.
 
 ### Hooks (`src/hooks/`)
 | File | Purpose |
