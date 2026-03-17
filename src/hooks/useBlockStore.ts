@@ -1373,20 +1373,27 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
+      // Validate destination BEFORE removing from source (prevent orphan on failed lookup)
+      let insertIndex = -1;
+      if (parent.parentId) {
+        const grandparentData = blocksMap.get(parent.parentId);
+        if (!grandparentData) return;
+        const gpChildIds = (getValue(grandparentData, 'childIds') as string[]) || [];
+        insertIndex = gpChildIds.indexOf(block.parentId!);
+        if (insertIndex < 0) return;
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        insertIndex = rootIds.toArray().indexOf(block.parentId!);
+        if (insertIndex < 0) return;
+      }
+
       removeChildId(blocksMap, block.parentId!, id);
 
       if (parent.parentId) {
-        const grandparentData = blocksMap.get(parent.parentId);
-        if (grandparentData) {
-          const childIds = (getValue(grandparentData, 'childIds') as string[]) || [];
-          const parentIndex = childIds.indexOf(block.parentId!);
-          insertChildId(blocksMap, parent.parentId, id, parentIndex + 1);
-        }
+        insertChildId(blocksMap, parent.parentId, id, insertIndex + 1);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
-        const arr = rootIds.toArray();
-        const parentIndex = arr.indexOf(block.parentId!);
-        rootIds.insert(parentIndex + 1, [id]);
+        rootIds.insert(insertIndex + 1, [id]);
       }
 
       setValueOnYMap(blocksMap, id, 'parentId', parent.parentId);
