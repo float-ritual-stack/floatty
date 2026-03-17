@@ -14,7 +14,7 @@ import { createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
 import { doorRegistry } from '../lib/handlers/doorRegistry';
 import { getServerAccess } from './views/DoorHost';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
-import { navigateToPage, navigateToBlock } from '../lib/navigation';
+import { handleChirpNavigate } from '../lib/navigation';
 import { tabStore } from '../hooks/useTabStore';
 import './sidebar-doors.css';
 
@@ -26,25 +26,26 @@ interface SidebarDoorContainerProps {
 export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
   const store = createSidebarDoorStore();
 
-  // Chirp listener for sidebar iframes (manifest, portless doors)
-  // Routes navigation to the sidebar's linked pane for the active tab
+  // Chirp listener for sidebar door iframes (manifest, portless doors)
+  // Uses handleChirpNavigate (the ONE canonical navigation path) with
+  // resolveSidebarTarget to find the right outliner pane per tab.
+  //
+  // Canonical chirp format: { type: 'chirp', message: 'navigate', data: { target } }
+  // (same as EvalOutput / DoorHost — one format, not many)
   onMount(() => {
     const handler = (e: MessageEvent) => {
-      if (!e.data?.type?.startsWith('chirp:')) return;
-      const { type, target } = e.data;
+      // Only handle chirp messages
+      if (e.data?.type !== 'chirp') return;
+      if (e.data?.message !== 'navigate') return;
+      const target = e.data?.data?.target;
+      if (!target) return;
 
-      if (type === 'chirp:navigate' && target) {
-        const activeTab = tabStore.activeTabId();
-        if (!activeTab) return;
-        const paneId = paneLinkStore.resolveSidebarTarget(activeTab);
-        if (!paneId) return;
+      const activeTab = tabStore.activeTabId();
+      if (!activeTab) return;
+      const paneId = paneLinkStore.resolveSidebarTarget(activeTab);
+      if (!paneId) return;
 
-        // Try as page first, then as block ID
-        const pageResult = navigateToPage(target, { paneId, highlight: true });
-        if (!pageResult.success) {
-          navigateToBlock(target, { paneId, highlight: true });
-        }
-      }
+      handleChirpNavigate(target, { sourcePaneId: paneId });
     };
 
     window.addEventListener('message', handler);
