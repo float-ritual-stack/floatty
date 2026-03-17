@@ -316,3 +316,9 @@ export function getSharedTracker(): SyncSequenceTracker {
 export function resetSharedTracker(): void {
   sharedTracker = null;
 }
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    resetSharedTracker();
+  });
+}

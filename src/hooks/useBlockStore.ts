@@ -1356,7 +1356,12 @@ function createBlockStore() {
     }, 'user');
   };
 
-  const outdentBlock = (id: string) => {
+  /**
+   * Simple outdent: extract block from parent and insert as sibling after parent.
+   * Used by moveBlockUp/moveBlockDown escape paths where the intent is pure extraction
+   * (no sibling adoption). Also used as the non-first-child path of outdentBlock.
+   */
+  const _outdentBlockSimple = (id: string) => {
     if (!_doc) { warnDocNotReady('outdentBlock'); return; }
 
     const block = state.blocks[id];
@@ -1368,20 +1373,96 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
+      // Validate destination BEFORE removing from source (prevent orphan on failed lookup)
+      let insertIndex = -1;
+      if (parent.parentId) {
+        const grandparentData = blocksMap.get(parent.parentId);
+        if (!grandparentData) return;
+        const gpChildIds = (getValue(grandparentData, 'childIds') as string[]) || [];
+        insertIndex = gpChildIds.indexOf(block.parentId!);
+        if (insertIndex < 0) return;
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        insertIndex = rootIds.toArray().indexOf(block.parentId!);
+        if (insertIndex < 0) return;
+      }
+
       removeChildId(blocksMap, block.parentId!, id);
 
       if (parent.parentId) {
-        const grandparentData = blocksMap.get(parent.parentId);
-        if (grandparentData) {
-          const childIds = (getValue(grandparentData, 'childIds') as string[]) || [];
-          const parentIndex = childIds.indexOf(block.parentId!);
-          insertChildId(blocksMap, parent.parentId, id, parentIndex + 1);
-        }
+        insertChildId(blocksMap, parent.parentId, id, insertIndex + 1);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
-        const arr = rootIds.toArray();
-        const parentIndex = arr.indexOf(block.parentId!);
-        rootIds.insert(parentIndex + 1, [id]);
+        rootIds.insert(insertIndex + 1, [id]);
+      }
+
+      setValueOnYMap(blocksMap, id, 'parentId', parent.parentId);
+      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+    }, 'user');
+  };
+
+  /**
+   * FLO-498: Outdent with adoption — extract self, take younger siblings as children.
+   * Applies at any position. Younger siblings (everything after self) become children.
+   */
+  const outdentBlock = (id: string) => {
+    if (!_doc) { warnDocNotReady('outdentBlock'); return; }
+
+    const block = state.blocks[id];
+    if (!block || !block.parentId) return;
+
+    const parent = state.blocks[block.parentId];
+    if (!parent) return;
+
+    const siblings = parent.childIds;
+    const myIndex = siblings.indexOf(id);
+    if (myIndex < 0) return;
+
+    const youngerSiblingIds = siblings.slice(myIndex + 1);
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      // Pre-flight: validate destination before any mutations
+      let insertIndex = -1;
+      if (parent.parentId) {
+        const grandparentData = blocksMap.get(parent.parentId);
+        if (!grandparentData) return;
+        const gpChildIds = (getValue(grandparentData, 'childIds') as string[]) || [];
+        insertIndex = gpChildIds.indexOf(block.parentId!);
+        if (insertIndex < 0) return;
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        insertIndex = rootIds.toArray().indexOf(block.parentId!);
+        if (insertIndex < 0) return;
+      }
+
+      // 1. Remove self from parent
+      removeChildId(blocksMap, block.parentId!, id);
+
+      // 2. Remove younger siblings from parent
+      for (const sibId of youngerSiblingIds) {
+        removeChildId(blocksMap, block.parentId!, sibId);
+      }
+
+      // 3. Adopt younger siblings as children (after any existing children)
+      if (youngerSiblingIds.length > 0) {
+        const existingChildCount = getChildIdsArray(blocksMap, id)?.length ?? 0;
+        insertChildIds(blocksMap, id, youngerSiblingIds, existingChildCount);
+        for (const sibId of youngerSiblingIds) {
+          setValueOnYMap(blocksMap, sibId, 'parentId', id);
+          setValueOnYMap(blocksMap, sibId, 'updatedAt', Date.now());
+        }
+        // Auto-expand so user sees adopted children (matches indentBlock behavior)
+        setValueOnYMap(blocksMap, id, 'collapsed', false);
+      }
+
+      // 4. Insert self after parent in grandparent/rootIds
+      if (parent.parentId) {
+        insertChildId(blocksMap, parent.parentId, id, insertIndex + 1);
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        rootIds.insert(insertIndex + 1, [id]);
       }
 
       setValueOnYMap(blocksMap, id, 'parentId', parent.parentId);
@@ -1446,6 +1527,101 @@ function createBlockStore() {
   };
 
   /**
+   * Atomic merge: lift source's children to siblings after target, merge content, delete source.
+   * Single Y.Doc transaction = single undo step.
+   */
+  const mergeBlocks = (targetId: string, sourceId: string): boolean => {
+    if (!_doc) { warnDocNotReady('mergeBlocks'); return false; }
+
+    if (targetId === sourceId) return false;
+
+    const target = state.blocks[targetId];
+    const source = state.blocks[sourceId];
+    if (!target || !source) return false;
+
+    // Reject if target is inside source's subtree (deleting source would orphan target)
+    if (isDescendant(sourceId, targetId)) return false;
+
+    // Pre-transaction reads are safe — single-threaded JS has no async gap
+    // before transact(). SolidJS store is a synchronous projection of Y.Doc.
+    const childrenToLift = [...source.childIds];
+    const targetContent = target.content;
+    const sourceContent = source.content;
+
+    let success = true;
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      // 1. Lift source's children to be siblings after target (inline from liftChildrenToSiblings)
+      let liftOk = true;
+      if (childrenToLift.length > 0) {
+        liftOk = false;
+        const targetParentId = target.parentId;
+
+        if (targetParentId) {
+          const parentData = blocksMap.get(targetParentId);
+          if (parentData) {
+            const childIds = (getValue(parentData, 'childIds') as string[]) || [];
+            const afterIndex = childIds.indexOf(targetId);
+            if (afterIndex >= 0) {
+              clearChildIds(blocksMap, sourceId);
+              insertChildIds(blocksMap, targetParentId, childrenToLift, afterIndex + 1);
+              liftOk = true;
+            }
+          }
+        } else {
+          // Target is at root level
+          const rootIds = _doc.getArray<string>('rootIds');
+          const arr = rootIds.toArray();
+          const afterIndex = arr.indexOf(targetId);
+          if (afterIndex >= 0) {
+            clearChildIds(blocksMap, sourceId);
+            rootIds.insert(afterIndex + 1, childrenToLift);
+            liftOk = true;
+          }
+        }
+
+        // Only update parentId if lift actually succeeded
+        if (liftOk) {
+          for (const childId of childrenToLift) {
+            setValueOnYMap(blocksMap, childId, 'parentId', target.parentId);
+            setValueOnYMap(blocksMap, childId, 'updatedAt', Date.now());
+          }
+        }
+      }
+
+      // Bail if children couldn't be safely relocated
+      if (!liftOk) {
+        success = false;
+        return;
+      }
+
+      // 2. Merge content
+      const separator = (targetContent && sourceContent) ? '\n' : '';
+      const mergedContent = targetContent + separator + sourceContent;
+      setValueOnYMap(blocksMap, targetId, 'content', mergedContent);
+      setValueOnYMap(blocksMap, targetId, 'type', parseBlockType(mergedContent));
+      setValueOnYMap(blocksMap, targetId, 'updatedAt', Date.now());
+
+      // 3. Delete source block (inline from deleteBlock — source should have 0 children after lift)
+      if (source.parentId) {
+        removeChildId(blocksMap, source.parentId, sourceId);
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        const arr = rootIds.toArray();
+        const index = arr.indexOf(sourceId);
+        if (index >= 0) {
+          rootIds.delete(index, 1);
+        }
+      }
+      blocksMap.delete(sourceId);
+    }, 'user');
+
+    return success;
+  };
+
+  /**
    * FLO-75: Move block before its previous sibling
    * Returns true if move happened, false if already first or escaped to parent level
    * When at first sibling position, escapes to become sibling after parent (like outdent)
@@ -1470,9 +1646,9 @@ function createBlockStore() {
 
     // If already first sibling
     if (index === 0) {
-      // Escape to parent level if has parent (mirrors outdent)
+      // Escape to parent level if has parent (simple extract, no sibling adoption)
       if (block.parentId) {
-        outdentBlock(id);
+        _outdentBlockSimple(id);
         return true;
       }
       // Root level first - nowhere to go
@@ -1524,9 +1700,9 @@ function createBlockStore() {
 
     // If already last sibling
     if (index >= siblings.length - 1) {
-      // Escape to parent level if has parent (mirrors outdent)
+      // Escape to parent level if has parent (simple extract, no sibling adoption)
       if (block.parentId) {
-        outdentBlock(id);
+        _outdentBlockSimple(id);
         return true;
       }
       // Root level last - nowhere to go
@@ -1697,6 +1873,7 @@ function createBlockStore() {
     indentBlock,
     outdentBlock,
     liftChildrenToSiblings,
+    mergeBlocks,
     moveBlock,
     // FLO-75: Block movement
     moveBlockUp,

@@ -177,3 +177,12 @@ export async function clearLastContiguousSeq(): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
 }
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (dbPromise) {
+      dbPromise.then(db => db.close()).catch(() => {});
+      dbPromise = null;
+    }
+  });
+}

@@ -36,6 +36,26 @@ grep -rn '\.join(".floatty")' src-tauri/ --include='*.rs'
 grep -rn 'blockEventBus\|emit_change\|on_change' src/ --include='*.ts'
 ```
 
+## HMR Cleanup
+Module-level state must have `import.meta.hot.dispose()`.
+```bash
+# Find module-level mutable state
+grep -rn '^let \|^const.*= new ' src/ --include='*.ts' --include='*.tsx' | grep -v test | grep -v node_modules | grep -v '\.d\.ts'
+
+# Find existing HMR cleanup
+grep -rn 'import.meta.hot' src/ --include='*.ts' --include='*.tsx' | grep -v node_modules
+
+# Find EventBus subscriptions (must have matching unsubscribe in dispose)
+grep -rn 'blockEventBus.subscribe' src/ --include='*.ts'
+```
+
+## Structural Mutation Pre-Flight
+All block move/merge operations must validate destination BEFORE removing from source.
+```bash
+grep -rn 'removeChildId\|rootIds.delete' src/hooks/useBlockStore.ts
+```
+For each, verify: is the insertion destination validated before this line?
+
 ## Red Flags
 
 - [ ] Function has siblings doing the same thing a different way
