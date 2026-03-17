@@ -278,3 +278,20 @@ function getAllBlocks(actions: ExecutorActions): BlockLike[] {
 
   return result;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// HMR CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (funcIndexSubId) {
+      blockEventBus.unsubscribe(funcIndexSubId);
+      funcIndexSubId = null;
+    }
+    if (rebuildTimer) {
+      clearTimeout(rebuildTimer);
+      rebuildTimer = null;
+    }
+  });
+}

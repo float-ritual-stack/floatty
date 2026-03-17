@@ -394,3 +394,13 @@ function listenForDoorChanges(
     console.error('[doors] Failed to set up hot-reload listener:', err);
   });
 }
+
+// ═══════════════════════════════════════════════════════════════
+// HMR CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    cleanupDoorDeps();
+  });
+}
