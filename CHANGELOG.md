@@ -6,6 +6,38 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.5] - 2026-03-17
+
+### Features
+
+- Position-dependent outdent: first child adopts younger siblings, non-first child extracts cleanly (FLO-498, #175)
+- Atomic merge: `mergeBlocks()` in single Y.Doc transaction (was 3 transactions, 3 undo entries)
+- Flush/cancel discipline across all structural operations (9 actions previously unprotected)
+
+### Bug Fixes
+
+- Pre-flight validation: validate destination before `removeChildId` (prevents orphan on failed lookup)
+- `mergeBlocks` guards: self-merge, target-is-descendant-of-source checks
+- `liftOk` flag pattern: bail if children can't be safely relocated
+
+### HMR Cleanup
+
+- `funcRegistry`: EventBus subscription leaked on hot reload
+- `doorLoader`: Blob URLs from shim creation never revoked
+- `syncSequenceTracker`: `resetSharedTracker()` now called in HMR dispose
+- `idbBackup`: IDB connection accumulated across reloads
+
+### Documentation
+
+- Compressed CLAUDE.md from 948 to 191 lines (#177)
+- Extracted API reference, architecture, and config/logging to focused rules files
+- Terrain map committed to `docs/evaluations/`
+- Updated `do-not.md` and `ydoc-patterns.md` with new structural mutation rules
+
+### Tests
+
+- 587 new surgical block store tests (outdent, merge, lift, concurrent CRDT scenarios)
+
 ## [0.9.4] - 2026-03-15
 
 ### Features
