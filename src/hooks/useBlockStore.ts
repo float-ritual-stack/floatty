@@ -1533,6 +1533,8 @@ function createBlockStore() {
     const source = state.blocks[sourceId];
     if (!target || !source) return false;
 
+    // Pre-transaction reads are safe — single-threaded JS has no async gap
+    // before transact(). SolidJS store is a synchronous projection of Y.Doc.
     const childrenToLift = [...source.childIds];
     const targetContent = target.content;
     const sourceContent = source.content;
