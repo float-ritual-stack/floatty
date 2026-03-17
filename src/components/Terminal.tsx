@@ -1133,9 +1133,10 @@ export function Terminal() {
         onNewTab={() => handleNewTab()}
         getStickyState={getTabStickyState}
       />
+      <div class="terminal-wrapper">
       <Resizable
-        class="terminal-wrapper"
         orientation="horizontal"
+        style={{ display: 'flex', width: '100%', height: '100%' }}
         onSizesChange={() => {
           // Refit all visible terminals when sidebar resizes
           requestAnimationFrame(() => {
@@ -1286,6 +1287,7 @@ export function Terminal() {
           </Resizable.Panel>
         </Show>
       </Resizable>
+      </div>
       <Show when={isCommandBarOpen()}>
         <CommandBar
           onClose={() => setCommandBarOpen(false)}
