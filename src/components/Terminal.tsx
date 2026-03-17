@@ -765,19 +765,16 @@ export function Terminal() {
           ? (e.metaKey && !e.shiftKey && !e.altKey && e.key === 'l')
           : (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'l');
         if (isCmdL) {
+          e.preventDefault();
+          e.stopPropagation();
           const activeId = tabStore.activeTabId();
           if (activeId) {
             const activePaneId = getActivePaneId(activeId);
             if (activePaneId) {
-              const leaf = getPaneLeaf(activeId, activePaneId);
-              if (leaf?.leafType === 'terminal') {
-                e.preventDefault();
-                e.stopPropagation();
-                paneLinkStore.startLinking(activePaneId);
-                return;
-              }
+              paneLinkStore.startLinking(activePaneId);
             }
           }
+          return;
         }
       }
 
