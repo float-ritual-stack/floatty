@@ -8,6 +8,7 @@ import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
 import { ResizeOverlay } from './ResizeOverlay';
 import { SidebarDoorContainer } from './SidebarDoorContainer';
+import Resizable from '@corvu/resizable';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -821,18 +822,7 @@ export function Terminal() {
           break;
         case 'toggleSidebar':
           setSidebarVisible((v) => !v);
-          // Refit all visible panes after sidebar toggle
-          requestAnimationFrame(() => {
-            setTimeout(() => {
-              const currentActiveId = tabStore.activeTabId();
-              if (currentActiveId) {
-                const paneIds = getAllPaneIds(currentActiveId);
-                for (const paneId of paneIds) {
-                  paneRefs.get(paneId)?.fit();
-                }
-              }
-            }, 100);
-          });
+          // Refit handled by Resizable onSizesChange callback
           break;
         // Split management
         case 'splitHorizontal':
@@ -1143,8 +1133,23 @@ export function Terminal() {
         onNewTab={() => handleNewTab()}
         getStickyState={getTabStickyState}
       />
-      <div class="terminal-wrapper">
-        <main class="terminal-container" role="main">
+      <Resizable
+        class="terminal-wrapper"
+        orientation="horizontal"
+        onSizesChange={() => {
+          // Refit all visible terminals when sidebar resizes
+          requestAnimationFrame(() => {
+            const currentActiveId = tabStore.activeTabId();
+            if (currentActiveId) {
+              const paneIds = getAllPaneIds(currentActiveId);
+              for (const paneId of paneIds) {
+                paneRefs.get(paneId)?.fit();
+              }
+            }
+          });
+        }}
+      >
+        <Resizable.Panel class="terminal-container" as="main" role="main" minSize={0.3}>
           {/* Layout layer - just placeholder divs */}
           <For each={tabStore.tabs}>
             {(tab) => {
@@ -1263,14 +1268,24 @@ export function Terminal() {
               />
             )}
           </For>
-        </main>
+        </Resizable.Panel>
         <Show when={sidebarVisible()}>
-          <SidebarDoorContainer
-            visible={sidebarVisible()}
-            getOutlinerPaneId={() => resolvedOutlinerPaneId()}
-          />
+          <Resizable.Handle class="sidebar-resize-handle" aria-label="Resize sidebar" />
+          <Resizable.Panel
+            class="sidebar-panel-wrapper"
+            minSize={'200px'}
+            initialSize={'280px'}
+            collapsible
+            collapsedSize={0}
+            collapseThreshold={'50px'}
+          >
+            <SidebarDoorContainer
+              visible={sidebarVisible()}
+              getOutlinerPaneId={() => resolvedOutlinerPaneId()}
+            />
+          </Resizable.Panel>
         </Show>
-      </div>
+      </Resizable>
       <Show when={isCommandBarOpen()}>
         <CommandBar
           onClose={() => setCommandBarOpen(false)}
