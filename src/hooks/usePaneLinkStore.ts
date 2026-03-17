@@ -153,12 +153,14 @@ function createPaneLinkStore() {
       clearSidebarLink(tabId);
     }
 
-    // Fallback: first outliner pane in the tab
+    // Fallback: first outliner pane in the tab, or any pane if no outliner
     const layout = layoutStore.layouts[tabId];
     if (!layout) return null;
     const leaves = collectLeaves(layout.root);
     const outliner = leaves.find(l => l.leafType === 'outliner');
-    return outliner?.id ?? null;
+    if (outliner) return outliner.id;
+    // No outliner pane — use first pane (terminal can still navigate)
+    return leaves[0]?.id ?? null;
   }
 
   // ── Overlay mode ──
