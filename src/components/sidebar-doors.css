@@ -24,6 +24,12 @@
   flex: 1;
 }
 
+/* When sidebar is on the left, border goes on right side */
+.sidebar-panel-wrapper:first-child .sidebar-door-container {
+  border-left: none;
+  border-right: 1px solid var(--color-border);
+}
+
 /* Resize handle between main content and sidebar */
 .sidebar-resize-handle {
   width: 4px;

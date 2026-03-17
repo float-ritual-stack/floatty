@@ -238,6 +238,7 @@ function TabBar(props: {
 
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
+  const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
   const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
   // Snapshot focused block + pane when ⌘K opens (focus moves to command bar input)
   let commandBarFocusedBlockId: string | null = null;
@@ -1150,6 +1151,23 @@ export function Terminal() {
           });
         }}
       >
+        {/* Sidebar on left side */}
+        <Show when={sidebarVisible() && sidebarSide() === 'left'}>
+          <Resizable.Panel
+            class="sidebar-panel-wrapper"
+            minSize={'200px'}
+            initialSize={'280px'}
+            collapsible
+            collapsedSize={0}
+            collapseThreshold={'50px'}
+          >
+            <SidebarDoorContainer
+              visible={sidebarVisible()}
+              getOutlinerPaneId={() => resolvedOutlinerPaneId()}
+            />
+          </Resizable.Panel>
+          <Resizable.Handle class="sidebar-resize-handle" aria-label="Resize sidebar" />
+        </Show>
         <Resizable.Panel class="terminal-container" as="main" role="main" minSize={0.3}>
           {/* Layout layer - just placeholder divs */}
           <For each={tabStore.tabs}>
@@ -1270,7 +1288,8 @@ export function Terminal() {
             )}
           </For>
         </Resizable.Panel>
-        <Show when={sidebarVisible()}>
+        {/* Sidebar on right side */}
+        <Show when={sidebarVisible() && sidebarSide() === 'right'}>
           <Resizable.Handle class="sidebar-resize-handle" aria-label="Resize sidebar" />
           <Resizable.Panel
             class="sidebar-panel-wrapper"
@@ -1379,6 +1398,12 @@ export function Terminal() {
             // Toggle pane dimming
             if (commandId === 'toggle-dim') {
               toggleDimming();
+              return;
+            }
+
+            // Swap sidebar side (left ↔ right)
+            if (commandId === 'sidebar-swap') {
+              setSidebarSide(s => s === 'right' ? 'left' : 'right');
               return;
             }
 
