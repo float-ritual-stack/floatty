@@ -1402,9 +1402,8 @@ function createBlockStore() {
   };
 
   /**
-   * FLO-498: Position-dependent outdent.
-   * - First child: "extract and adopt" — promote self, take younger siblings as children
-   * - Non-first child: simple extract (same as before)
+   * FLO-498: Outdent with adoption — extract self, take younger siblings as children.
+   * Applies at any position. Younger siblings (everything after self) become children.
    */
   const outdentBlock = (id: string) => {
     if (!_doc) { warnDocNotReady('outdentBlock'); return; }
@@ -1415,21 +1414,28 @@ function createBlockStore() {
     const parent = state.blocks[block.parentId];
     if (!parent) return;
 
-    // Determine ordinal position among siblings
     const siblings = parent.childIds;
     const myIndex = siblings.indexOf(id);
+    if (myIndex < 0) return;
 
-    // Non-first child (or not found): simple extract
-    if (myIndex !== 0) {
-      _outdentBlockSimple(id);
-      return;
-    }
-
-    // First child: extract and adopt younger siblings
-    const youngerSiblingIds = siblings.slice(1); // everything after index 0
+    const youngerSiblingIds = siblings.slice(myIndex + 1);
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
+
+      // Pre-flight: validate destination before any mutations
+      let insertIndex = -1;
+      if (parent.parentId) {
+        const grandparentData = blocksMap.get(parent.parentId);
+        if (!grandparentData) return;
+        const gpChildIds = (getValue(grandparentData, 'childIds') as string[]) || [];
+        insertIndex = gpChildIds.indexOf(block.parentId!);
+        if (insertIndex < 0) return;
+      } else {
+        const rootIds = _doc.getArray<string>('rootIds');
+        insertIndex = rootIds.toArray().indexOf(block.parentId!);
+        if (insertIndex < 0) return;
+      }
 
       // 1. Remove self from parent
       removeChildId(blocksMap, block.parentId!, id);
@@ -1453,17 +1459,10 @@ function createBlockStore() {
 
       // 4. Insert self after parent in grandparent/rootIds
       if (parent.parentId) {
-        const grandparentData = blocksMap.get(parent.parentId);
-        if (grandparentData) {
-          const childIds = (getValue(grandparentData, 'childIds') as string[]) || [];
-          const parentIndex = childIds.indexOf(block.parentId!);
-          insertChildId(blocksMap, parent.parentId, id, parentIndex + 1);
-        }
+        insertChildId(blocksMap, parent.parentId, id, insertIndex + 1);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
-        const arr = rootIds.toArray();
-        const parentIndex = arr.indexOf(block.parentId!);
-        rootIds.insert(parentIndex + 1, [id]);
+        rootIds.insert(insertIndex + 1, [id]);
       }
 
       setValueOnYMap(blocksMap, id, 'parentId', parent.parentId);

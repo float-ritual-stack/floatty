@@ -1001,11 +1001,10 @@ function simpleOutdent(doc: Y.Doc, blocksMap: Y.Map<unknown>, rootIdsArr: Y.Arra
 }
 
 /**
- * Simulate position-dependent outdent (FLO-498):
- * - First child: extract + adopt younger siblings
- * - Non-first child: simple extract
+ * Simulate outdent with adoption (FLO-498):
+ * Extract self, adopt all younger siblings as children (any position).
  */
-function positionDependentOutdent(
+function outdentWithAdoption(
   doc: Y.Doc, blocksMap: Y.Map<unknown>, rootIdsArr: Y.Array<string>, id: string,
 ): void {
   const blockMap = blocksMap.get(id) as Y.Map<unknown>;
@@ -1016,14 +1015,9 @@ function positionDependentOutdent(
   // Get siblings BEFORE mutation
   const siblings = getChildIds(blocksMap, parentId);
   const myIndex = siblings.indexOf(id);
+  if (myIndex < 0) return;
 
-  if (myIndex !== 0) {
-    simpleOutdent(doc, blocksMap, rootIdsArr, id);
-    return;
-  }
-
-  // First child: extract and adopt
-  const youngerSiblingIds = siblings.slice(1);
+  const youngerSiblingIds = siblings.slice(myIndex + 1);
   const existingChildIds = getChildIds(blocksMap, id);
 
   doc.transact(() => {
@@ -1058,28 +1052,31 @@ function positionDependentOutdent(
   }, 'user');
 }
 
-describe('FLO-498: position-dependent outdent', () => {
-  describe('non-first child (simple extract)', () => {
-    it('extracts middle child without affecting siblings', () => {
-      // parent: [a, b, c] → outdent b → parent: [a, c], b is sibling after parent
+describe('FLO-498: outdent with adoption', () => {
+  describe('middle child (adopts younger siblings)', () => {
+    it('middle child adopts younger siblings', () => {
+      // parent: [a, b, c] → outdent b → parent: [a], b: [c], b is sibling after parent
       const doc = new Y.Doc();
       const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a', 'b', 'c'] });
 
-      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'b');
+      outdentWithAdoption(doc, blocksMap, rootIdsArr, 'b');
 
-      expect(getChildIds(blocksMap, 'parent')).toEqual(['a', 'c']);
+      expect(getChildIds(blocksMap, 'parent')).toEqual(['a']);
+      expect(getChildIds(blocksMap, 'b')).toEqual(['c']);
       expect(rootIdsArr.toArray()).toEqual(['parent', 'b']);
       expect(getValue(blocksMap, 'b', 'parentId')).toBeNull();
+      expect(getValue(blocksMap, 'c', 'parentId')).toBe('b');
     });
 
-    it('extracts last child without affecting siblings', () => {
+    it('last child extracts without adoption (no younger siblings)', () => {
       // parent: [a, b, c] → outdent c → parent: [a, b], c is sibling after parent
       const doc = new Y.Doc();
       const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a', 'b', 'c'] });
 
-      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'c');
+      outdentWithAdoption(doc, blocksMap, rootIdsArr, 'c');
 
       expect(getChildIds(blocksMap, 'parent')).toEqual(['a', 'b']);
+      expect(getChildIds(blocksMap, 'c')).toEqual([]);
       expect(rootIdsArr.toArray()).toEqual(['parent', 'c']);
     });
   });
@@ -1090,7 +1087,7 @@ describe('FLO-498: position-dependent outdent', () => {
       const doc = new Y.Doc();
       const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a', 'b', 'c'] });
 
-      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+      outdentWithAdoption(doc, blocksMap, rootIdsArr, 'a');
 
       expect(getChildIds(blocksMap, 'parent')).toEqual([]);
       expect(getChildIds(blocksMap, 'a')).toEqual(['b', 'c']);
@@ -1105,7 +1102,7 @@ describe('FLO-498: position-dependent outdent', () => {
       const doc = new Y.Doc();
       const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['a'] });
 
-      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+      outdentWithAdoption(doc, blocksMap, rootIdsArr, 'a');
 
       expect(getChildIds(blocksMap, 'parent')).toEqual([]);
       expect(getChildIds(blocksMap, 'a')).toEqual([]);
@@ -1120,7 +1117,7 @@ describe('FLO-498: position-dependent outdent', () => {
         a: ['x', 'y'],
       });
 
-      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+      outdentWithAdoption(doc, blocksMap, rootIdsArr, 'a');
 
       expect(getChildIds(blocksMap, 'a')).toEqual(['x', 'y', 'b', 'c']);
       expect(getChildIds(blocksMap, 'parent')).toEqual([]);
@@ -1139,7 +1136,7 @@ describe('FLO-498: position-dependent outdent', () => {
         parent: ['a', 'b'],
       });
 
-      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+      outdentWithAdoption(doc, blocksMap, rootIdsArr, 'a');
 
       expect(getChildIds(blocksMap, 'grandparent')).toEqual(['parent', 'a']);
       expect(getChildIds(blocksMap, 'parent')).toEqual([]);
@@ -1159,7 +1156,7 @@ describe('FLO-498: position-dependent outdent', () => {
       });
       undoManager.clear();
 
-      positionDependentOutdent(doc, blocksMap, rootIdsArr, 'a');
+      outdentWithAdoption(doc, blocksMap, rootIdsArr, 'a');
 
       // Should be exactly 1 undo step
       expect(undoManager.undoStack.length).toBe(1);
@@ -1206,7 +1203,7 @@ describe('FLO-498: position-dependent outdent', () => {
       Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
 
       // A: outdent first child (extract + adopt)
-      positionDependentOutdent(docA, blocksA, rootA, 'a');
+      outdentWithAdoption(docA, blocksA, rootA, 'a');
 
       // B: add a new child to parent (concurrent edit)
       const blocksB = docB.getMap('blocks');
