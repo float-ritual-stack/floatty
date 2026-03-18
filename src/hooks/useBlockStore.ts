@@ -18,7 +18,7 @@ import {
   type BlockMovePosition,
 } from '../lib/events';
 import { stopUndoCaptureBoundary } from './useSyncedYDoc';
-import { recordParentValidationFailure } from '../lib/syncDiagnostics';
+import { recordParentValidationFailure, recordChildIdsTypeMismatch } from '../lib/syncDiagnostics';
 
 // ═══════════════════════════════════════════════════════════════
 // BATCH BLOCK CREATION TYPES (FLO-322)
@@ -841,6 +841,11 @@ function createBlockStore() {
   // Creates multiple blocks in a single Y.Doc transaction.
   // Used by paste handler and sh:: output to avoid N×2 transactions.
   // Single transaction → single observeDeep → single SolidJS batch.
+  //
+  // ALL-OR-NOTHING SEMANTICS: If the parent is concurrently deleted
+  // mid-transaction, the entire batch bails — no partial results.
+  // This is intentional: a half-inserted paste is worse than a
+  // failed paste. The caller receives an empty array.
   // ═══════════════════════════════════════════════════════════════
 
   // (type exported below for external callers)
@@ -1179,6 +1184,10 @@ function createBlockStore() {
             for (const childId of childArr.toArray() as string[]) {
               stack.push(childId);
             }
+          } else if (childArr !== undefined) {
+            // childIds exists but is not a Y.Array — corrupted block structure
+            console.warn('[BlockStore] deleteBlock: childIds is not Y.Array for block', currentId);
+            recordChildIdsTypeMismatch();
           }
         }
       }
@@ -1240,6 +1249,9 @@ function createBlockStore() {
               for (const childId of childArr.toArray() as string[]) {
                 stack.push(childId);
               }
+            } else if (childArr !== undefined) {
+              console.warn('[BlockStore] deleteBlocks: childIds is not Y.Array for block', currentId);
+              recordChildIdsTypeMismatch();
             }
           }
         }

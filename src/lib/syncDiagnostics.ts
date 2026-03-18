@@ -27,6 +27,8 @@ export interface SyncDiagnostics {
   crossParentFixes: number;
   /** Number of parent existence validation failures (createBlock with missing parent) */
   parentValidationFailures: number;
+  /** Number of childIds type mismatches encountered during descendant walks */
+  childIdsTypeMismatches: number;
   /** Timestamp of last diagnostic event */
   lastEventAt: number | null;
   /** Session start time */
@@ -43,6 +45,7 @@ const counters: SyncDiagnostics = {
   phantomChildrenRemoved: 0,
   crossParentFixes: 0,
   parentValidationFailures: 0,
+  childIdsTypeMismatches: 0,
   lastEventAt: null,
   sessionStartedAt: Date.now(),
 };
@@ -105,6 +108,12 @@ export function recordParentValidationFailure(): void {
   touch();
 }
 
+/** Record childIds type mismatch (block exists but childIds is not Y.Array) */
+export function recordChildIdsTypeMismatch(): void {
+  counters.childIdsTypeMismatches++;
+  touch();
+}
+
 /** Get snapshot of current diagnostics */
 export function getSyncDiagnostics(): Readonly<SyncDiagnostics> {
   return { ...counters };
@@ -120,6 +129,7 @@ export function resetSyncDiagnostics(): void {
   counters.phantomChildrenRemoved = 0;
   counters.crossParentFixes = 0;
   counters.parentValidationFailures = 0;
+  counters.childIdsTypeMismatches = 0;
   counters.lastEventAt = null;
   counters.sessionStartedAt = Date.now();
 }

@@ -11,6 +11,7 @@ import {
   recordPhantomChildrenRemoved,
   recordCrossParentFixes,
   recordParentValidationFailure,
+  recordChildIdsTypeMismatch,
   logDiagnosticsSummary,
 } from './syncDiagnostics';
 
@@ -29,6 +30,7 @@ describe('syncDiagnostics', () => {
     expect(d.phantomChildrenRemoved).toBe(0);
     expect(d.crossParentFixes).toBe(0);
     expect(d.parentValidationFailures).toBe(0);
+    expect(d.childIdsTypeMismatches).toBe(0);
     expect(d.lastEventAt).toBeNull();
     expect(d.sessionStartedAt).toBeGreaterThan(0);
   });
@@ -81,6 +83,11 @@ describe('syncDiagnostics', () => {
     const d2 = getSyncDiagnostics();
     expect(d1.fullResyncs).toBe(0);
     expect(d2.fullResyncs).toBe(1);
+  });
+
+  it('records childIds type mismatches', () => {
+    recordChildIdsTypeMismatch();
+    expect(getSyncDiagnostics().childIdsTypeMismatches).toBe(1);
   });
 
   it('records echo gap fills', () => {
