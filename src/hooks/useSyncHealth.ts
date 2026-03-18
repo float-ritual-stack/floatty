@@ -21,6 +21,7 @@
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds } from './useSyncedYDoc';
+import { logDiagnosticsSummary } from '../lib/syncDiagnostics';
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -105,6 +106,9 @@ async function performHealthCheck(): Promise<void> {
     const localBlockCount = getLocalBlockCount();
 
     setLastCheckTime(Date.now());
+
+    // Log diagnostics summary with each health check (dev visibility)
+    logDiagnosticsSummary();
 
     if (serverHealth.blockCount !== localBlockCount) {
       const newCount = consecutiveMismatches() + 1;

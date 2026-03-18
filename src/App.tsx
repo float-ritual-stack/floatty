@@ -17,6 +17,7 @@ import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
 import { registerHandlers } from './lib/handlers';
 import { blockStore } from './hooks/useBlockStore';
+import { recordOrphansDetected } from './lib/syncDiagnostics';
 // Initialize logger early - intercepts console.* calls and forwards to Rust log files
 import './lib/logger';
 import './App.css';
@@ -178,6 +179,7 @@ function App() {
       if (!orphans || orphans.length === 0) return;
 
       console.warn(`[App] Orphan detector found ${orphans.length} orphaned blocks`);
+      recordOrphansDetected(orphans.length);
       const orphanIds = orphans.map(o => o.blockId);
       blockStore.quarantineOrphans(orphanIds);
     });

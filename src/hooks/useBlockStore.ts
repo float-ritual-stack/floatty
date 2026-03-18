@@ -18,6 +18,7 @@ import {
   type BlockMovePosition,
 } from '../lib/events';
 import { stopUndoCaptureBoundary } from './useSyncedYDoc';
+import { recordParentValidationFailure } from '../lib/syncDiagnostics';
 
 // ═══════════════════════════════════════════════════════════════
 // BATCH BLOCK CREATION TYPES (FLO-322)
@@ -685,6 +686,13 @@ function createBlockStore() {
     const beforeBlock = state.blocks[beforeId];
     if (!beforeBlock) return '';
 
+    // Pre-flight: validate parent still exists if parentId is set
+    if (beforeBlock.parentId && !state.blocks[beforeBlock.parentId]) {
+      console.warn(`[BlockStore] createBlockBefore: parent ${beforeBlock.parentId} no longer exists for ${beforeId}`);
+      recordParentValidationFailure();
+      return '';
+    }
+
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, '', beforeBlock.parentId);
 
@@ -694,6 +702,7 @@ function createBlockStore() {
 
       if (beforeBlock.parentId) {
         const parentData = blocksMap.get(beforeBlock.parentId);
+        if (!parentData) return; // Parent deleted concurrently — bail inside transaction
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const beforeIndex = childIds.indexOf(beforeId);
         insertChildId(blocksMap, beforeBlock.parentId, newId, beforeIndex);
@@ -714,6 +723,13 @@ function createBlockStore() {
     const afterBlock = state.blocks[afterId];
     if (!afterBlock) return '';
 
+    // Pre-flight: validate parent still exists if parentId is set
+    if (afterBlock.parentId && !state.blocks[afterBlock.parentId]) {
+      console.warn(`[BlockStore] createBlockAfter: parent ${afterBlock.parentId} no longer exists for ${afterId}`);
+      recordParentValidationFailure();
+      return '';
+    }
+
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, '', afterBlock.parentId);
 
@@ -723,6 +739,7 @@ function createBlockStore() {
 
       if (afterBlock.parentId) {
         const parentData = blocksMap.get(afterBlock.parentId);
+        if (!parentData) return; // Parent deleted concurrently — bail inside transaction
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const afterIndex = childIds.indexOf(afterId);
         insertChildId(blocksMap, afterBlock.parentId, newId, afterIndex + 1);
@@ -748,6 +765,8 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
+      // Verify parent still exists in Y.Doc (may have been deleted concurrently)
+      if (!blocksMap.has(parentId)) return;
       blocksMap.set(newId, blockToYMap(newBlock));
 
       appendChildId(blocksMap, parentId, newId);
@@ -768,6 +787,8 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
+      // Verify parent still exists in Y.Doc (may have been deleted concurrently)
+      if (!blocksMap.has(parentId)) return;
       blocksMap.set(newId, blockToYMap(newBlock));
 
       insertChildId(blocksMap, parentId, newId, 0);
@@ -814,6 +835,7 @@ function createBlockStore() {
       let insertIdx: number;
       if (parentId) {
         const parentData = blocksMap.get(parentId);
+        if (!parentData) return; // Parent deleted concurrently — bail
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         insertIdx = childIds.indexOf(afterId) + 1;
       } else {
@@ -883,6 +905,8 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
+      // Verify parent still exists in Y.Doc (may have been deleted concurrently)
+      if (!blocksMap.has(parentId)) return;
 
       const createChildren = (parentBlockId: string, children: BatchBlockOp[]) => {
         for (const child of children) {
@@ -935,6 +959,8 @@ function createBlockStore() {
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
+      // Verify parent still exists in Y.Doc (may have been deleted concurrently)
+      if (!blocksMap.has(parentId)) return;
 
       const createChildren = (parentBlockId: string, children: BatchBlockOp[]) => {
         for (const child of children) {
