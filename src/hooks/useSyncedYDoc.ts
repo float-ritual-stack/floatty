@@ -24,6 +24,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import type { AggregatorConfig } from '../lib/tauriTypes';
 import { SyncSequenceTracker } from '../lib/syncSequenceTracker';
+import { recordFullResync, recordDedupRepairs, recordGapFill, recordEchoGapFill } from '../lib/syncDiagnostics';
 
 // ═══════════════════════════════════════════════════════════════
 // SYNC STATUS (singleton signals for UI visibility)
@@ -331,6 +332,7 @@ export function deduplicateChildIds(): number {
   }, 'system');
 
   if (totalRemoved > 0 || parentIdUpdates.length > 0) {
+    recordDedupRepairs(totalRemoved);
     const parts = [];
     if (blockDups.length > 0 || rootIndicesToRemove.length > 0) {
       parts.push('within-array duplicates');
@@ -373,6 +375,7 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
   }
 
   console.log('[useSyncedYDoc] Triggering bidirectional resync');
+  recordFullResync();
   const httpClient = getHttpClient();
   let pushedBytes = 0;
 
@@ -739,6 +742,7 @@ function scheduleEchoGapFetch(fromSeq: number, toSeq: number): void {
 
     // Gap still open — genuine missed update, fetch it
     console.warn(`[WS] Echo gap persisted after debounce, fetching: ${pendingEchoGap.fromSeq} → ${pendingEchoGap.toSeq}`);
+    recordEchoGapFill();
     queueGapFetch(pendingEchoGap.fromSeq, pendingEchoGap.toSeq);
     pendingEchoGap = null;
   }, 200);
@@ -862,6 +866,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
     return;
   }
 
+  recordGapFill();
   const gapSize = toSeq - fromSeq - 1;
 
   // Large gap - full resync is faster
