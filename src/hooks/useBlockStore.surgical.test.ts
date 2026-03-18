@@ -1258,4 +1258,272 @@ describe('FLO-498: position-dependent outdent', () => {
       expect(finalBChildren).toContain('c');
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // mergeBlocks — atomic merge: lift children + merge content + delete source
+  // ═══════════════════════════════════════════════════════════════
+
+  describe('mergeBlocks', () => {
+    /**
+     * Re-implements mergeBlocks from useBlockStore.ts for isolated Y.Doc testing.
+     * Mirrors the atomic transaction: lift source children → merge content → delete source.
+     */
+    function mergeBlocks(
+      doc: Y.Doc,
+      blocksMap: Y.Map<unknown>,
+      rootIdsArr: Y.Array<string>,
+      targetId: string,
+      sourceId: string,
+    ): boolean {
+      if (targetId === sourceId) return false;
+
+      const targetMap = blocksMap.get(targetId);
+      const sourceMap = blocksMap.get(sourceId);
+      if (!(targetMap instanceof Y.Map) || !(sourceMap instanceof Y.Map)) return false;
+
+      const childrenToLift = getChildIds(blocksMap, sourceId);
+      const targetContent = (targetMap.get('content') as string) || '';
+      const sourceContent = (sourceMap.get('content') as string) || '';
+      const targetParentId = targetMap.get('parentId') as string | null;
+      const sourceParentId = sourceMap.get('parentId') as string | null;
+
+      let success = true;
+
+      doc.transact(() => {
+        // 1. Lift source's children to be siblings after target
+        let liftOk = true;
+        if (childrenToLift.length > 0) {
+          liftOk = false;
+
+          if (targetParentId) {
+            const parentData = blocksMap.get(targetParentId);
+            if (parentData instanceof Y.Map) {
+              const parentChildIds = getChildIds(blocksMap, targetParentId);
+              const afterIndex = parentChildIds.indexOf(targetId);
+              if (afterIndex >= 0) {
+                clearChildIds(blocksMap, sourceId);
+                insertChildIds(blocksMap, targetParentId, childrenToLift, afterIndex + 1);
+                liftOk = true;
+              }
+            }
+          } else {
+            const arr = rootIdsArr.toArray();
+            const afterIndex = arr.indexOf(targetId);
+            if (afterIndex >= 0) {
+              clearChildIds(blocksMap, sourceId);
+              rootIdsArr.insert(afterIndex + 1, childrenToLift);
+              liftOk = true;
+            }
+          }
+
+          if (liftOk) {
+            for (const childId of childrenToLift) {
+              setField(blocksMap, childId, 'parentId', targetParentId);
+            }
+          }
+        }
+
+        if (!liftOk) {
+          success = false;
+          return;
+        }
+
+        // 2. Merge content
+        const separator = (targetContent && sourceContent) ? '\n' : '';
+        const mergedContent = targetContent + separator + sourceContent;
+        setField(blocksMap, targetId, 'content', mergedContent);
+
+        // 3. Delete source
+        if (sourceParentId) {
+          removeChildId(blocksMap, sourceParentId, sourceId);
+        } else {
+          const arr = rootIdsArr.toArray();
+          const index = arr.indexOf(sourceId);
+          if (index >= 0) {
+            rootIdsArr.delete(index, 1);
+          }
+        }
+        blocksMap.delete(sourceId);
+      }, 'user');
+
+      return success;
+    }
+
+    it('merges content with newline separator', () => {
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['target', 'source'] });
+      setField(blocksMap, 'target', 'content', 'hello');
+      setField(blocksMap, 'source', 'content', 'world');
+
+      const result = mergeBlocks(doc, blocksMap, rootIdsArr, 'target', 'source');
+
+      expect(result).toBe(true);
+      expect(getValue(blocksMap, 'target', 'content')).toBe('hello\nworld');
+      expect(blocksMap.get('source')).toBeUndefined();
+      expect(getChildIds(blocksMap, 'parent')).toEqual(['target']);
+    });
+
+    it('merges with empty source (no trailing separator)', () => {
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['target', 'source'] });
+      setField(blocksMap, 'target', 'content', 'hello');
+      setField(blocksMap, 'source', 'content', '');
+
+      const result = mergeBlocks(doc, blocksMap, rootIdsArr, 'target', 'source');
+
+      expect(result).toBe(true);
+      expect(getValue(blocksMap, 'target', 'content')).toBe('hello');
+      expect(blocksMap.get('source')).toBeUndefined();
+    });
+
+    it('merges with empty target', () => {
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['target', 'source'] });
+      setField(blocksMap, 'target', 'content', '');
+      setField(blocksMap, 'source', 'content', 'world');
+
+      const result = mergeBlocks(doc, blocksMap, rootIdsArr, 'target', 'source');
+
+      expect(result).toBe(true);
+      expect(getValue(blocksMap, 'target', 'content')).toBe('world');
+    });
+
+    it('lifts source children to siblings after target (nested)', () => {
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, {
+        parent: ['target', 'source'],
+        source: ['child1', 'child2'],
+      });
+      setField(blocksMap, 'target', 'content', 'hello');
+      setField(blocksMap, 'source', 'content', 'world');
+
+      const result = mergeBlocks(doc, blocksMap, rootIdsArr, 'target', 'source');
+
+      expect(result).toBe(true);
+      expect(getChildIds(blocksMap, 'parent')).toEqual(['target', 'child1', 'child2']);
+      expect(getValue(blocksMap, 'child1', 'parentId')).toBe('parent');
+      expect(getValue(blocksMap, 'child2', 'parentId')).toBe('parent');
+      expect(getChildIds(blocksMap, 'source')).toEqual([]); // source deleted, but check before delete
+      expect(blocksMap.get('source')).toBeUndefined();
+    });
+
+    it('lifts source children to siblings after target (root level)', () => {
+      const doc = new Y.Doc();
+      const blocksMap = doc.getMap('blocks');
+      const rootIdsArr = doc.getArray<string>('rootIds');
+      doc.transact(() => {
+        blocksMap.set('target', createBlockMap('target'));
+        blocksMap.set('source', createBlockMap('source', ['child1']));
+        blocksMap.set('child1', createBlockMap('child1'));
+        setField(blocksMap, 'child1', 'parentId', 'source');
+        rootIdsArr.push(['target', 'source']);
+      });
+      setField(blocksMap, 'target', 'content', 'hello');
+      setField(blocksMap, 'source', 'content', 'world');
+
+      const result = mergeBlocks(doc, blocksMap, rootIdsArr, 'target', 'source');
+
+      expect(result).toBe(true);
+      expect(rootIdsArr.toArray()).toEqual(['target', 'child1']);
+      expect(getValue(blocksMap, 'child1', 'parentId')).toBeNull();
+      expect(blocksMap.get('source')).toBeUndefined();
+    });
+
+    it('returns false for self-merge', () => {
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['target'] });
+
+      const result = mergeBlocks(doc, blocksMap, rootIdsArr, 'target', 'target');
+
+      expect(result).toBe(false);
+      expect(blocksMap.get('target')).toBeDefined();
+    });
+
+    it('returns false when target or source not found', () => {
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, { parent: ['target'] });
+
+      expect(mergeBlocks(doc, blocksMap, rootIdsArr, 'target', 'nonexistent')).toBe(false);
+      expect(mergeBlocks(doc, blocksMap, rootIdsArr, 'nonexistent', 'target')).toBe(false);
+    });
+
+    it('is a single undo step', () => {
+      const doc = new Y.Doc();
+      const { blocksMap, rootIdsArr } = setupTree(doc, {
+        parent: ['target', 'source'],
+        source: ['child'],
+      });
+      // Set content inside a transaction so it's part of setup, not undo-tracked
+      doc.transact(() => {
+        setField(blocksMap, 'target', 'content', 'hello');
+        setField(blocksMap, 'source', 'content', 'world');
+      });
+
+      const undoManager = new Y.UndoManager([blocksMap, rootIdsArr], {
+        trackedOrigins: new Set(['user']),
+      });
+      undoManager.clear();
+
+      mergeBlocks(doc, blocksMap, rootIdsArr, 'target', 'source');
+
+      expect(undoManager.undoStack.length).toBe(1);
+
+      undoManager.undo();
+
+      // Full tree restored
+      expect(getValue(blocksMap, 'target', 'content')).toBe('hello');
+      expect(blocksMap.get('source')).toBeDefined();
+      expect(getValue(blocksMap, 'source', 'content')).toBe('world');
+      expect(getChildIds(blocksMap, 'parent')).toEqual(['target', 'source']);
+      expect(getChildIds(blocksMap, 'source')).toEqual(['child']);
+      expect(getValue(blocksMap, 'child', 'parentId')).toBe('source');
+    });
+
+    it('survives bidirectional CRDT merge', () => {
+      const docA = new Y.Doc();
+      const { blocksMap: blocksA, rootIdsArr: rootA } = setupTree(docA, {
+        parent: ['target', 'source'],
+        source: ['child1', 'child2'],
+      });
+      setField(blocksA, 'target', 'content', 'hello');
+      setField(blocksA, 'source', 'content', 'world');
+
+      // Fork
+      const docB = new Y.Doc();
+      Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
+
+      // A: merge blocks
+      mergeBlocks(docA, blocksA, rootA, 'target', 'source');
+
+      // B: concurrent edit to target content
+      const blocksB = docB.getMap('blocks');
+      docB.transact(() => {
+        setField(blocksB, 'target', 'content', 'hello edited');
+      }, 'user');
+
+      // Bidirectional sync
+      const updateFromA = Y.encodeStateAsUpdate(docA, Y.encodeStateVector(docB));
+      const updateFromB = Y.encodeStateAsUpdate(docB, Y.encodeStateVector(docA));
+      Y.applyUpdate(docA, updateFromB);
+      Y.applyUpdate(docB, updateFromA);
+
+      // No duplicates in parent's children
+      const parentChildrenA = getChildIds(blocksA, 'parent');
+      expect(new Set(parentChildrenA).size).toBe(parentChildrenA.length);
+
+      // Source should be deleted in both docs
+      expect(blocksA.get('source')).toBeUndefined();
+
+      // Children were lifted
+      expect(parentChildrenA).toContain('child1');
+      expect(parentChildrenA).toContain('child2');
+
+      // Both docs converge
+      const rootB = docB.getArray<string>('rootIds');
+      const parentChildrenB = getChildIds(blocksB, 'parent');
+      expect(new Set(parentChildrenB).size).toBe(parentChildrenB.length);
+      expect(parentChildrenB).toContain('child1');
+      expect(parentChildrenB).toContain('child2');
+    });
+  });
 });

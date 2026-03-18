@@ -195,19 +195,24 @@ export function useEditingActions(deps: EditingActionDeps) {
           deps.onFocus(action.prevId);
 
           // Atomic merge: lift children + merge content + delete source in single transaction
-          deps.blockStore.mergeBlocks(action.prevId, deps.getBlockId());
+          const merged = deps.blockStore.mergeBlocks(action.prevId, deps.getBlockId());
 
-          // Use queueMicrotask chain (not rAF)
-          // 1st microtask: Y.Doc transaction batches
-          // 2nd microtask: SolidJS effects propagate
-          queueMicrotask(() => {
+          if (merged) {
+            // Use queueMicrotask chain (not rAF)
+            // 1st microtask: Y.Doc transaction batches
+            // 2nd microtask: SolidJS effects propagate
             queueMicrotask(() => {
-              const el = document.activeElement as HTMLElement;
-              if (el?.isContentEditable) {
-                setCursorAtOffset(el, prevContentLength);
-              }
+              queueMicrotask(() => {
+                const el = document.activeElement as HTMLElement;
+                if (el?.isContentEditable) {
+                  setCursorAtOffset(el, prevContentLength);
+                }
+              });
             });
-          });
+          } else {
+            // Merge failed (e.g. children couldn't be lifted) — restore focus
+            deps.onFocus(deps.getBlockId());
+          }
         }
         return;
       }
