@@ -19,6 +19,8 @@ export interface SyncDiagnostics {
   dedupRepairs: number;
   /** Number of gap-fill fetches performed (incremental catch-up) */
   gapFills: number;
+  /** Number of echo gap-fill fetches (debounced gap fills from own updates) */
+  echoGapFills: number;
   /** Number of phantom children removed (childIds referencing non-existent blocks) */
   phantomChildrenRemoved: number;
   /** Number of cross-parent conflicts resolved */
@@ -37,6 +39,7 @@ const counters: SyncDiagnostics = {
   fullResyncs: 0,
   dedupRepairs: 0,
   gapFills: 0,
+  echoGapFills: 0,
   phantomChildrenRemoved: 0,
   crossParentFixes: 0,
   parentValidationFailures: 0,
@@ -74,6 +77,12 @@ export function recordGapFill(): void {
   touch();
 }
 
+/** Record an echo gap-fill (debounced gap from own updates triggering hook broadcasts) */
+export function recordEchoGapFill(): void {
+  counters.echoGapFills++;
+  touch();
+}
+
 /** Record phantom children removal */
 export function recordPhantomChildrenRemoved(count: number): void {
   if (count > 0) {
@@ -107,11 +116,26 @@ export function resetSyncDiagnostics(): void {
   counters.fullResyncs = 0;
   counters.dedupRepairs = 0;
   counters.gapFills = 0;
+  counters.echoGapFills = 0;
   counters.phantomChildrenRemoved = 0;
   counters.crossParentFixes = 0;
   counters.parentValidationFailures = 0;
   counters.lastEventAt = null;
   counters.sessionStartedAt = Date.now();
+}
+
+/** Get a compact human-readable summary string */
+export function getSyncDiagnosticsSummary(): string {
+  const d = counters;
+  const uptimeMin = Math.round((Date.now() - d.sessionStartedAt) / 60000);
+  return [
+    `session=${uptimeMin}min`,
+    `orphans=${d.orphansDetected}`,
+    `resyncs=${d.fullResyncs}`,
+    `dedups=${d.dedupRepairs}`,
+    `gaps=${d.gapFills}`,
+    `echoGaps=${d.echoGapFills}`,
+  ].join(', ');
 }
 
 /** Log diagnostics summary (for dev console) */
@@ -122,7 +146,7 @@ export function logDiagnosticsSummary(): void {
 
   console.log(
     `[SyncDiagnostics] Session ${uptime}s | ` +
-    `resyncs:${d.fullResyncs} gapFills:${d.gapFills} ` +
+    `resyncs:${d.fullResyncs} gapFills:${d.gapFills} echoGaps:${d.echoGapFills} ` +
     `orphans:${d.orphansDetected} dedups:${d.dedupRepairs} ` +
     `phantoms:${d.phantomChildrenRemoved} crossParent:${d.crossParentFixes} ` +
     `parentValidation:${d.parentValidationFailures} | ` +

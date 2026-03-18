@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getSyncDiagnostics,
+  getSyncDiagnosticsSummary,
   resetSyncDiagnostics,
   recordOrphansDetected,
   recordFullResync,
   recordDedupRepairs,
   recordGapFill,
+  recordEchoGapFill,
   recordPhantomChildrenRemoved,
   recordCrossParentFixes,
   recordParentValidationFailure,
@@ -23,6 +25,7 @@ describe('syncDiagnostics', () => {
     expect(d.fullResyncs).toBe(0);
     expect(d.dedupRepairs).toBe(0);
     expect(d.gapFills).toBe(0);
+    expect(d.echoGapFills).toBe(0);
     expect(d.phantomChildrenRemoved).toBe(0);
     expect(d.crossParentFixes).toBe(0);
     expect(d.parentValidationFailures).toBe(0);
@@ -80,11 +83,27 @@ describe('syncDiagnostics', () => {
     expect(d2.fullResyncs).toBe(1);
   });
 
+  it('records echo gap fills', () => {
+    recordEchoGapFill();
+    recordEchoGapFill();
+    expect(getSyncDiagnostics().echoGapFills).toBe(2);
+  });
+
+  it('getSyncDiagnosticsSummary returns compact string', () => {
+    recordFullResync();
+    recordGapFill();
+    const summary = getSyncDiagnosticsSummary();
+    expect(summary).toContain('resyncs=1');
+    expect(summary).toContain('gaps=1');
+    expect(summary).toContain('session=');
+  });
+
   it('resets all counters', () => {
     recordOrphansDetected(1);
     recordFullResync();
     recordDedupRepairs(1);
     recordGapFill();
+    recordEchoGapFill();
     recordParentValidationFailure();
     resetSyncDiagnostics();
     const d = getSyncDiagnostics();
@@ -92,6 +111,7 @@ describe('syncDiagnostics', () => {
     expect(d.fullResyncs).toBe(0);
     expect(d.dedupRepairs).toBe(0);
     expect(d.gapFills).toBe(0);
+    expect(d.echoGapFills).toBe(0);
     expect(d.parentValidationFailures).toBe(0);
     expect(d.lastEventAt).toBeNull();
   });

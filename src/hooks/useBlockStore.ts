@@ -71,6 +71,7 @@ function mapTransactionOrigin(txOrigin: unknown): OriginType {
   if (txOrigin === 'bulk_import') return Origin.BulkImport;
   if (txOrigin === 'system') return Origin.System;
   if (txOrigin === 'reconnect-authority') return Origin.ReconnectAuthority;
+  if (txOrigin === 'gap-fill') return Origin.Remote;
   // Y.UndoManager passes itself as origin
   if (txOrigin && typeof txOrigin === 'object' && 'undo' in txOrigin) {
     return Origin.Undo;
@@ -695,26 +696,40 @@ function createBlockStore() {
 
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, '', beforeBlock.parentId);
+    let success = false;
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      blocksMap.set(newId, blockToYMap(newBlock));
 
       if (beforeBlock.parentId) {
+        if (!blocksMap.has(beforeBlock.parentId)) {
+          console.warn('[BlockStore] createBlockBefore: parent missing in Y.Doc', beforeBlock.parentId);
+          return;
+        }
         const parentData = blocksMap.get(beforeBlock.parentId);
-        if (!parentData) return; // Parent deleted concurrently — bail inside transaction
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const beforeIndex = childIds.indexOf(beforeId);
+        if (beforeIndex < 0) {
+          console.warn('[BlockStore] createBlockBefore: beforeId not in parent childIds', beforeId);
+          return;
+        }
+        blocksMap.set(newId, blockToYMap(newBlock));
         insertChildId(blocksMap, beforeBlock.parentId, newId, beforeIndex);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
         const beforeIndex = arr.indexOf(beforeId);
-        rootIds.insert(beforeIndex, [newId]);  // Insert BEFORE
+        if (beforeIndex < 0) {
+          console.warn('[BlockStore] createBlockBefore: beforeId not in rootIds', beforeId);
+          return;
+        }
+        blocksMap.set(newId, blockToYMap(newBlock));
+        rootIds.insert(beforeIndex, [newId]);
       }
+      success = true;
     }, 'user');
 
-    return newId;
+    return success ? newId : '';
   };
 
   const createBlockAfter = (afterId: string) => {
@@ -732,26 +747,40 @@ function createBlockStore() {
 
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, '', afterBlock.parentId);
+    let success = false;
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      blocksMap.set(newId, blockToYMap(newBlock));
 
       if (afterBlock.parentId) {
+        if (!blocksMap.has(afterBlock.parentId)) {
+          console.warn('[BlockStore] createBlockAfter: parent missing in Y.Doc', afterBlock.parentId);
+          return;
+        }
         const parentData = blocksMap.get(afterBlock.parentId);
-        if (!parentData) return; // Parent deleted concurrently — bail inside transaction
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const afterIndex = childIds.indexOf(afterId);
+        if (afterIndex < 0) {
+          console.warn('[BlockStore] createBlockAfter: afterId not in parent childIds', afterId);
+          return;
+        }
+        blocksMap.set(newId, blockToYMap(newBlock));
         insertChildId(blocksMap, afterBlock.parentId, newId, afterIndex + 1);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
         const afterIndex = arr.indexOf(afterId);
+        if (afterIndex < 0) {
+          console.warn('[BlockStore] createBlockAfter: afterId not in rootIds', afterId);
+          return;
+        }
+        blocksMap.set(newId, blockToYMap(newBlock));
         rootIds.insert(afterIndex + 1, [newId]);
       }
+      success = true;
     }, 'user');
 
-    return newId;
+    return success ? newId : '';
   };
 
   const createBlockInside = (parentId: string) => {
@@ -762,18 +791,22 @@ function createBlockStore() {
 
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, '', parentId);
+    let success = false;
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      // Verify parent still exists in Y.Doc (may have been deleted concurrently)
-      if (!blocksMap.has(parentId)) return;
+      if (!blocksMap.has(parentId)) {
+        console.warn('[BlockStore] createBlockInside: parent missing in Y.Doc', parentId);
+        recordParentValidationFailure();
+        return;
+      }
       blocksMap.set(newId, blockToYMap(newBlock));
-
       appendChildId(blocksMap, parentId, newId);
       setValueOnYMap(blocksMap, parentId, 'collapsed', false);
+      success = true;
     }, 'user');
 
-    return newId;
+    return success ? newId : '';
   };
 
   const createBlockInsideAtTop = (parentId: string) => {
@@ -784,18 +817,22 @@ function createBlockStore() {
 
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, '', parentId);
+    let success = false;
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
-      // Verify parent still exists in Y.Doc (may have been deleted concurrently)
-      if (!blocksMap.has(parentId)) return;
+      if (!blocksMap.has(parentId)) {
+        console.warn('[BlockStore] createBlockInsideAtTop: parent missing in Y.Doc', parentId);
+        recordParentValidationFailure();
+        return;
+      }
       blocksMap.set(newId, blockToYMap(newBlock));
-
       insertChildId(blocksMap, parentId, newId, 0);
       setValueOnYMap(blocksMap, parentId, 'collapsed', false);
+      success = true;
     }, 'user');
 
-    return newId;
+    return success ? newId : '';
   };
 
   // ═══════════════════════════════════════════════════════════════
@@ -835,7 +872,7 @@ function createBlockStore() {
       let insertIdx: number;
       if (parentId) {
         const parentData = blocksMap.get(parentId);
-        if (!parentData) return; // Parent deleted concurrently — bail
+        if (!parentData) { recordParentValidationFailure(); return; } // Parent deleted concurrently — bail
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         insertIdx = childIds.indexOf(afterId) + 1;
       } else {
@@ -906,7 +943,7 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       // Verify parent still exists in Y.Doc (may have been deleted concurrently)
-      if (!blocksMap.has(parentId)) return;
+      if (!blocksMap.has(parentId)) { recordParentValidationFailure(); return; }
 
       const createChildren = (parentBlockId: string, children: BatchBlockOp[]) => {
         for (const child of children) {
@@ -960,7 +997,7 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       // Verify parent still exists in Y.Doc (may have been deleted concurrently)
-      if (!blocksMap.has(parentId)) return;
+      if (!blocksMap.has(parentId)) { recordParentValidationFailure(); return; }
 
       const createChildren = (parentBlockId: string, children: BatchBlockOp[]) => {
         for (const child of children) {
@@ -1026,31 +1063,45 @@ function createBlockStore() {
     const newId = crypto.randomUUID();
     const newBlock = createBlock(newId, contentAfter, block.parentId);
 
+    let success = false;
+
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
-      // Update current block content
-      setValueOnYMap(blocksMap, id, 'content', contentBefore);
-      setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-
-      // Create new block
-      blocksMap.set(newId, blockToYMap(newBlock));
-
-      // Insert new block after current
+      // Validate insertion target BEFORE modifying any content
       if (block.parentId) {
+        if (!blocksMap.has(block.parentId)) {
+          console.warn('[BlockStore] splitBlock: parent missing in Y.Doc', block.parentId);
+          return;
+        }
         const parentData = blocksMap.get(block.parentId);
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const afterIndex = childIds.indexOf(id);
+        if (afterIndex < 0) {
+          console.warn('[BlockStore] splitBlock: block not in parent childIds', id);
+          return;
+        }
+
+        // Now safe to modify content and insert
+        setValueOnYMap(blocksMap, id, 'content', contentBefore);
+        setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+        blocksMap.set(newId, blockToYMap(newBlock));
         insertChildId(blocksMap, block.parentId, newId, afterIndex + 1);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
         const afterIndex = arr.indexOf(id);
+
+        // Now safe to modify content and insert
+        setValueOnYMap(blocksMap, id, 'content', contentBefore);
+        setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
+        blocksMap.set(newId, blockToYMap(newBlock));
         rootIds.insert(afterIndex + 1, [newId]);
       }
+      success = true;
     }, 'user');
 
-    return newId;
+    return success ? newId : null;
   };
 
   /**
@@ -1082,23 +1133,27 @@ function createBlockStore() {
     // New block becomes child of current block (not sibling)
     const newBlock = createBlock(newId, contentAfter, id);
 
+    let success = false;
+
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
-      // Update current block content
+      // Validate this block still exists in Y.Doc before modifying
+      if (!blocksMap.has(id)) {
+        console.warn('[BlockStore] splitBlockToFirstChild: block missing in Y.Doc', id);
+        return;
+      }
+
+      // All validation passed — now safe to modify content and insert
       setValueOnYMap(blocksMap, id, 'content', contentBefore);
       setValueOnYMap(blocksMap, id, 'updatedAt', Date.now());
-
-      // Create new block
       blocksMap.set(newId, blockToYMap(newBlock));
-
-      // Insert as FIRST child (unshift, not push)
       insertChildId(blocksMap, id, newId, 0);
-      // Ensure expanded so user sees the new child
       setValueOnYMap(blocksMap, id, 'collapsed', false);
+      success = true;
     }, 'user');
 
-    return newId;
+    return success ? newId : null;
   };
 
   const deleteBlock = (id: string): boolean => {
@@ -1107,28 +1162,31 @@ function createBlockStore() {
     const block = state.blocks[id];
     if (!block) return false;
 
-    // Collect all descendant IDs recursively
-    const toDelete = new Set<string>();
-    const stack = [id];
-
-    while (stack.length > 0) {
-      const currentId = stack.pop()!;
-      toDelete.add(currentId);
-      
-      const currentBlock = state.blocks[currentId];
-      if (currentBlock && currentBlock.childIds.length > 0) {
-        stack.push(...currentBlock.childIds);
-      }
-    }
-
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
+
+      // Collect all descendant IDs from Y.Doc directly (not reactive state)
+      // This ensures we don't miss children due to state staleness
+      const toDelete = new Set<string>();
+      const stack = [id];
+      while (stack.length > 0) {
+        const currentId = stack.pop()!;
+        toDelete.add(currentId);
+        const yBlock = blocksMap.get(currentId);
+        if (yBlock instanceof Y.Map) {
+          const childArr = yBlock.get('childIds');
+          if (childArr instanceof Y.Array) {
+            for (const childId of childArr.toArray() as string[]) {
+              stack.push(childId);
+            }
+          }
+        }
+      }
 
       // Remove from parent's children list
       if (block.parentId) {
         removeChildId(blocksMap, block.parentId, id);
       } else {
-        // Remove from rootIds
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();
         const index = arr.indexOf(id);
@@ -1154,39 +1212,42 @@ function createBlockStore() {
     if (!_doc) { warnDocNotReady('deleteBlocks'); return false; }
     if (ids.length === 0) return false;
 
-    // Collect all blocks to delete (including descendants)
-    const toDelete = new Set<string>();
-    const blocksToRemoveFromParent: Array<{ id: string; parentId: string | undefined }> = [];
-
+    // Pre-capture parent relationships from state (immutable snapshot)
+    const blocksToRemoveFromParent: Array<{ id: string; parentId: string | null | undefined }> = [];
     for (const id of ids) {
       const block = state.blocks[id];
       if (!block) continue;
-
-      // Track parent relationship for removal
       blocksToRemoveFromParent.push({ id, parentId: block.parentId });
-
-      // Collect descendants
-      const stack = [id];
-      while (stack.length > 0) {
-        const currentId = stack.pop()!;
-        toDelete.add(currentId);
-        const currentBlock = state.blocks[currentId];
-        if (currentBlock && currentBlock.childIds.length > 0) {
-          stack.push(...currentBlock.childIds);
-        }
-      }
     }
 
-    if (toDelete.size === 0) return false;
+    if (blocksToRemoveFromParent.length === 0) return false;
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       const rootIds = _doc.getArray<string>('rootIds');
 
+      // Collect all descendants from Y.Doc directly (not reactive state)
+      const toDelete = new Set<string>();
+      for (const { id } of blocksToRemoveFromParent) {
+        const stack = [id];
+        while (stack.length > 0) {
+          const currentId = stack.pop()!;
+          toDelete.add(currentId);
+          const yBlock = blocksMap.get(currentId);
+          if (yBlock instanceof Y.Map) {
+            const childArr = yBlock.get('childIds');
+            if (childArr instanceof Y.Array) {
+              for (const childId of childArr.toArray() as string[]) {
+                stack.push(childId);
+              }
+            }
+          }
+        }
+      }
+
       // Remove each block from its parent's childIds (or rootIds)
       for (const { id, parentId } of blocksToRemoveFromParent) {
         if (parentId) {
-          // Skip if parent is also being deleted
           if (toDelete.has(parentId)) continue;
           removeChildId(blocksMap, parentId, id);
         } else {
@@ -1568,9 +1629,6 @@ function createBlockStore() {
     // Reject if target is inside source's subtree (deleting source would orphan target)
     if (isDescendant(sourceId, targetId)) return false;
 
-    // Pre-transaction reads are safe — single-threaded JS has no async gap
-    // before transact(). SolidJS store is a synchronous projection of Y.Doc.
-    const childrenToLift = [...source.childIds];
     const targetContent = target.content;
     const sourceContent = source.content;
 
@@ -1579,11 +1637,29 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
 
+      // Read children from Y.Doc directly (not reactive state) to avoid staleness
+      const sourceYBlock = blocksMap.get(sourceId);
+      if (!(sourceYBlock instanceof Y.Map)) {
+        success = false;
+        return;
+      }
+      const sourceChildArr = sourceYBlock.get('childIds');
+      const childrenToLift = (sourceChildArr instanceof Y.Array)
+        ? (sourceChildArr.toArray() as string[])
+        : [];
+
+      // Read target's parentId from Y.Doc
+      const targetYBlock = blocksMap.get(targetId);
+      if (!(targetYBlock instanceof Y.Map)) {
+        success = false;
+        return;
+      }
+      const targetParentId = targetYBlock.get('parentId') as string | null | undefined;
+
       // 1. Lift source's children to be siblings after target (inline from liftChildrenToSiblings)
       let liftOk = true;
       if (childrenToLift.length > 0) {
         liftOk = false;
-        const targetParentId = target.parentId;
 
         if (targetParentId) {
           const parentData = blocksMap.get(targetParentId);
@@ -1611,7 +1687,7 @@ function createBlockStore() {
         // Only update parentId if lift actually succeeded
         if (liftOk) {
           for (const childId of childrenToLift) {
-            setValueOnYMap(blocksMap, childId, 'parentId', target.parentId);
+            setValueOnYMap(blocksMap, childId, 'parentId', targetParentId ?? null);
             setValueOnYMap(blocksMap, childId, 'updatedAt', Date.now());
           }
         }
@@ -1631,8 +1707,9 @@ function createBlockStore() {
       setValueOnYMap(blocksMap, targetId, 'updatedAt', Date.now());
 
       // 3. Delete source block (inline from deleteBlock — source should have 0 children after lift)
-      if (source.parentId) {
-        removeChildId(blocksMap, source.parentId, sourceId);
+      const sourceParentId = sourceYBlock.get('parentId') as string | null | undefined;
+      if (sourceParentId) {
+        removeChildId(blocksMap, sourceParentId, sourceId);
       } else {
         const rootIds = _doc.getArray<string>('rootIds');
         const arr = rootIds.toArray();

@@ -605,12 +605,16 @@ export function BlockItem(props: BlockItemProps) {
 
     const origin = untrack(() => store.lastUpdateOrigin);
 
-    // FLO-256: Authoritative origins bypass the hasLocalChanges guard
+    // Authoritative origins bypass the hasLocalChanges guard
     // These origins represent state that MUST sync to DOM:
     // - 'reconnect-authority': Server state on WebSocket reconnect (server is truth)
+    // - 'gap-fill': Missing updates fetched via HTTP (server data filling gaps)
+    // - 'system': Integrity repairs (dedup, orphan quarantine)
     // - UndoManager instance: Undo/redo operations (CRDT history is truth)
     const isAuthoritative =
       origin === 'reconnect-authority' ||
+      origin === 'gap-fill' ||
+      origin === 'system' ||
       (origin && typeof origin === 'object' && 'undo' in origin);
 
     // FLO-197: CRITICAL - Skip sync if we have uncommitted local changes

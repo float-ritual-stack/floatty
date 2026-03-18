@@ -28,9 +28,9 @@ import {
   recordFullResync,
   recordDedupRepairs,
   recordGapFill,
+  recordEchoGapFill,
   recordPhantomChildrenRemoved,
   recordCrossParentFixes,
-  logDiagnosticsSummary,
 } from '../lib/syncDiagnostics';
 
 // ═══════════════════════════════════════════════════════════════
@@ -360,8 +360,9 @@ export function deduplicateChildIds(): number {
     }
     console.warn(`[useSyncedYDoc] Tree integrity: fixed ${totalRemoved} issues (${parts.join(', ')})`);
 
-    // Record diagnostics
-    recordDedupRepairs(totalRemoved);
+    // Record diagnostics — use category-specific counts (not totalRemoved which double-counts)
+    const withinArrayDedups = blockDups.reduce((sum, d) => sum + d.indicesToRemove.length, 0) + rootIndicesToRemove.length;
+    recordDedupRepairs(withinArrayDedups);
     recordPhantomChildrenRemoved(phantomChildren.length);
     recordCrossParentFixes(crossParentRemovals.length);
   }
@@ -756,6 +757,7 @@ function scheduleEchoGapFetch(fromSeq: number, toSeq: number): void {
 
     // Gap still open — genuine missed update, fetch it
     console.warn(`[WS] Echo gap persisted after debounce, fetching: ${pendingEchoGap.fromSeq} → ${pendingEchoGap.toSeq}`);
+    recordEchoGapFill();
     queueGapFetch(pendingEchoGap.fromSeq, pendingEchoGap.toSeq);
     pendingEchoGap = null;
   }, 200);
