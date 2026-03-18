@@ -44,3 +44,6 @@ src-tauri/binaries/
 # btca cache (cloned repos for context queries)
 .btca/
 btca.config.jsonc
+
+# Replit-specific build artifacts
+src-tauri/target-server/

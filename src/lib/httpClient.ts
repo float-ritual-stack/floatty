@@ -277,8 +277,17 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
   // Start initialization
   initPromise = (async () => {
     try {
-      // Get server info from Tauri (contains URL and API key)
-      const serverInfo = await invoke('get_server_info', {});
+      // In browser mode (no Tauri), connect directly to the server
+      let serverInfo: ServerInfo;
+      const isTauri = !!(window as Record<string, unknown>).__TAURI_INTERNALS__;
+      if (isTauri) {
+        serverInfo = await invoke('get_server_info', {});
+      } else {
+        const serverUrl = (window as Record<string, unknown>).__FLOATTY_SERVER_URL__ as string
+          || `${window.location.protocol}//${window.location.hostname}:8080`;
+        const apiKey = (window as Record<string, unknown>).__FLOATTY_API_KEY__ as string || '';
+        serverInfo = { url: serverUrl, api_key: apiKey };
+      }
       const client = new HttpClient(serverInfo);
 
       // Store URL and API key globally for lightweight fire-and-forget calls

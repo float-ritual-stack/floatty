@@ -81,3 +81,7 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.
 [[bin]]
 name = "ts-gen"
 path = "src/bin/ts-gen.rs"
+
+[profile.dev]
+debug = 0
+opt-level = 0
