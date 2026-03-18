@@ -21,6 +21,7 @@
 import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds } from './useSyncedYDoc';
+import { getSyncDiagnosticsSummary } from '../lib/syncDiagnostics';
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -58,6 +59,16 @@ export const getLastCheckTime = lastCheckTime;
 
 /** Check if resync is in progress (reactive) */
 export const getIsResyncing = isResyncing;
+
+/** Get full sync health status including diagnostics (for dev tools / programmatic access) */
+export function getSyncHealthStatus() {
+  return {
+    consecutiveMismatches: consecutiveMismatches(),
+    lastCheckTime: lastCheckTime(),
+    isResyncing: isResyncing(),
+    diagnostics: getSyncDiagnosticsSummary(),
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════
 // BLOCK COUNT (replaces broken hash comparison - FLO-197/P4)
@@ -173,6 +184,7 @@ async function performHealthCheck(): Promise<void> {
         console.log('[SyncHealth] Block counts match, clearing mismatch counter');
       }
       setConsecutiveMismatches(0);
+      console.log(`[SyncHealth] ✓ ${localBlockCount} blocks in sync | ${getSyncDiagnosticsSummary()}`);
     }
   } catch (err) {
     console.error('[SyncHealth] Health check failed:', err);

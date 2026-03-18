@@ -41,6 +41,12 @@ Server config is at `~/.floatty-replit/config.toml`:
 
 In browser mode (no Tauri), `src/lib/httpClient.ts` bypasses Tauri IPC and connects directly to the floatty-server REST API at port 8080.
 
+## Sync Integrity
+
+- `src/lib/syncDiagnostics.ts` — Session-level counters for orphans, resyncs, dedups, gap fills. Logged in periodic health checks.
+- All structural mutations (create/delete/merge/split) read Y.Doc directly inside transactions to prevent stale-state orphans.
+- Origin tagging: 'user', 'system', 'gap-fill', 'reconnect-authority' — authoritative origins bypass local-change guards in content sync.
+
 ## Key Files
 
 - `src/` — SolidJS frontend source
