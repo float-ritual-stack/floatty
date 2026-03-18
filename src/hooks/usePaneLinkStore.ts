@@ -135,7 +135,15 @@ function createPaneLinkStore() {
   }
 
   function hasSidebarLink(tabId: string): boolean {
-    return sidebarLinks().has(tabId);
+    const linked = sidebarLinks().get(tabId);
+    if (!linked) return false;
+    // Validate it still exists in this tab
+    const checkTab = findTabIdByPaneId(linked);
+    if (checkTab !== tabId) {
+      clearSidebarLink(tabId);
+      return false;
+    }
+    return true;
   }
 
   /**

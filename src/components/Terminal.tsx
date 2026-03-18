@@ -8,7 +8,7 @@ import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
 import { ResizeOverlay } from './ResizeOverlay';
 import { SidebarDoorContainer } from './SidebarDoorContainer';
-import Resizable from '@corvu/resizable';
+import { Resizable } from '@corvu/resizable';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -1427,9 +1427,9 @@ export function Terminal() {
             if (commandId === 'sidebar-link') {
               const activeId = tabStore.activeTabId();
               if (activeId) {
-                const activePaneId = getActivePaneId(activeId);
-                if (activePaneId) {
-                  paneLinkStore.setSidebarLink(activeId, activePaneId);
+                const paneId = resolvedOutlinerPaneId();
+                if (paneId) {
+                  paneLinkStore.setSidebarLink(activeId, paneId);
                 }
               }
               return;

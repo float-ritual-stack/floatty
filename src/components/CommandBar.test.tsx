@@ -122,7 +122,7 @@ describe('CommandBar', () => {
     fireEvent.keyDown(input, { key: 'ArrowUp' });
 
     const options = getAllByRole('option');
-    // Last item (index 13) should be selected (3 pages + 11 commands - 1)
+    // Last item should be selected (wraps around from top)
     expect(options[15].getAttribute('aria-selected')).toBe('true');
   });
 
