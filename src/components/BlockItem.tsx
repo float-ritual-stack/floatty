@@ -404,10 +404,97 @@ export function BlockItem(props: BlockItemProps) {
     }
   };
 
-  // Wrapper for navigateToPage that matches hook's expected signature
-  const navigateToPageForHook = (target: string, paneId: string) => {
-    const result = navigateToPage(target, { paneId });
-    return { success: result.success };
+  // Shared wikilink navigation: block-ID resolution, pane link, page fallback.
+  // Used by both handleWikilinkClick (mouse) and navigateToPageForHook (Cmd+Enter).
+  // Prevents the hydra: one path for "follow a [[wikilink]]", regardless of trigger.
+  const navigateWikilink = (
+    target: string,
+    sourcePaneId: string,
+    opts: { splitDirection?: 'horizontal' | 'vertical' } = {},
+  ): { success: boolean; focusTargetId?: string } => {
+    const { splitDirection } = opts;
+
+    // Block-ID links: full UUID or partial hex prefix (git-sha style)
+    const blockIds = Object.keys(store.blocks);
+    const resolvedBlockId = resolveBlockIdPrefix(target, blockIds, shortHashIndex());
+    if (resolvedBlockId) {
+      if (!store.getBlock(resolvedBlockId)) {
+        console.warn('[BlockItem] Wikilink block ID not in outline', { target: resolvedBlockId });
+        return { success: false };
+      }
+      // FLO-378: Resolve pane link at call site (not inside funnel — see FM #7)
+      let targetPaneId = sourcePaneId;
+      if (!splitDirection) {
+        const linkedPaneId = paneLinkStore.resolveLink(sourcePaneId);
+        if (linkedPaneId) {
+          const sourceTab = findTabIdByPaneId(sourcePaneId);
+          const linkedTab = findTabIdByPaneId(linkedPaneId);
+          if (sourceTab && sourceTab === linkedTab) {
+            targetPaneId = linkedPaneId;
+          }
+        }
+      }
+      navigateToBlock(resolvedBlockId, {
+        paneId: targetPaneId,
+        highlight: true,
+        splitDirection,
+        originBlockId: props.id,
+      });
+      return { success: true };
+    }
+
+    // Guard: hex prefix that didn't resolve → never create a page for block ID lookalikes
+    if (BLOCK_ID_PREFIX_RE.test(target)) {
+      console.warn('[BlockItem] Block ID prefix did not resolve, not creating page', {
+        target,
+        blockCount: Object.keys(store.blocks).length,
+      });
+      return { success: false };
+    }
+
+    // Resolve pane link for page navigation
+    let targetPaneId = sourcePaneId;
+    if (!splitDirection) {
+      const linkedPaneId = paneLinkStore.resolveLink(sourcePaneId);
+      if (linkedPaneId) {
+        const sourceTab = findTabIdByPaneId(sourcePaneId);
+        const linkedTab = findTabIdByPaneId(linkedPaneId);
+        if (sourceTab && sourceTab === linkedTab) {
+          targetPaneId = linkedPaneId;
+        }
+      }
+    }
+
+    const result = navigateToPage(target, {
+      paneId: targetPaneId,
+      splitDirection,
+      originBlockId: props.id,
+    });
+
+    if (!result.success) {
+      console.warn('[BlockItem] Wikilink navigation failed:', result.error);
+      return { success: false };
+    }
+
+    // FLO-135: Focus + active pane in the CORRECT pane
+    if (result.targetPaneId) {
+      const tabId = findTabIdByPaneId(result.targetPaneId);
+      if (tabId) {
+        layoutStore.setActivePaneId(tabId, result.targetPaneId);
+      }
+      if (result.targetPaneId === props.paneId) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
+        });
+      }
+    }
+
+    return { success: true, focusTargetId: result.focusTargetId ?? undefined };
+  };
+
+  // Wrapper for navigateToPage that matches hook's expected signature (Cmd+Enter on [[wikilink]])
+  const navigateToPageForHook = (target: string, _paneId: string) => {
+    return navigateWikilink(target, props.paneId);
   };
 
   // Wire up the keyboard handler hook - single source of truth for keyboard logic
@@ -837,107 +924,18 @@ export function BlockItem(props: BlockItemProps) {
     return '•';
   };
 
-  // [[Wikilink]] click handler - navigate to page
-  // Cmd+Click → permanent horizontal split, Cmd+Shift+Click → permanent vertical split
-  // Opt+Click → ephemeral horizontal split, Shift+Opt+Click → ephemeral vertical split (FLO-136)
+  // [[Wikilink]] click handler — delegates to navigateWikilink with mouse-event modifiers
+  // Cmd+Click / Opt+Click → horizontal split, +Shift → vertical split
   const handleWikilinkClick = (target: string, e: MouseEvent) => {
     const modKey = isMac ? e.metaKey : e.ctrlKey;
     const optKey = e.altKey;
 
-    let splitDirection: 'none' | 'horizontal' | 'vertical' = 'none';
-    let ephemeral = false;
-
-    if (optKey) {
-      // Opt+Click = ephemeral split (preview mode)
-      splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
-      ephemeral = true;
-    } else if (modKey) {
-      // Cmd+Click = permanent split (existing behavior)
+    let splitDirection: 'horizontal' | 'vertical' | undefined;
+    if (modKey || optKey) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
-    // Block-ID links: full UUID or partial hex prefix (git-sha style)
-    const blockIds = Object.keys(store.blocks);
-    const resolvedBlockId = resolveBlockIdPrefix(target, blockIds, shortHashIndex());
-    if (resolvedBlockId) {
-      // Block must exist in the outline (resolveBlockIdPrefix may return a full UUID
-      // that matches the regex but the block isn't in this outline)
-      if (!store.getBlock(resolvedBlockId)) {
-        console.warn('[BlockItem] Wikilink block ID not in outline', { target: resolvedBlockId });
-        return;
-      }
-      let targetPaneId = props.paneId;
-      if (splitDirection === 'none') {
-        const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
-        if (linkedPaneId) {
-          // Verify linked pane is on same tab (don't navigate cross-tab)
-          const sourceTab = findTabIdByPaneId(props.paneId);
-          const linkedTab = findTabIdByPaneId(linkedPaneId);
-          if (sourceTab && sourceTab === linkedTab) {
-            targetPaneId = linkedPaneId;
-          }
-        }
-      }
-      navigateToBlock(resolvedBlockId, {
-        paneId: targetPaneId,
-        highlight: true,
-        splitDirection: splitDirection !== 'none' ? splitDirection : undefined,
-        originBlockId: props.id,
-      });
-      return;
-    }
-
-    // Guard: hex prefix that didn't resolve → never create a page for block ID lookalikes
-    if (BLOCK_ID_PREFIX_RE.test(target)) {
-      console.warn('[BlockItem] Block ID prefix did not resolve, not creating page', {
-        target,
-        blockCount: Object.keys(store.blocks).length,
-      });
-      return;
-    }
-
-    // FLO-223: Plain click + explicit pane link → navigate in linked target pane
-    // Uses resolveLink (no fallback) — wikilinks only redirect when explicitly linked
-    if (splitDirection === 'none') {
-      const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
-      if (linkedPaneId) {
-        // Same-tab check: don't send navigation to another tab
-        const sourceTab = findTabIdByPaneId(props.paneId);
-        const linkedTab = findTabIdByPaneId(linkedPaneId);
-        if (sourceTab && sourceTab === linkedTab) {
-          navigateToPage(target, { paneId: linkedPaneId, highlight: true, originBlockId: props.id });
-          return;
-        }
-      }
-    }
-
-    // FLO-211: Pass current block as origin for focus restoration on back navigation
-    const result = navigateToPage(target, {
-      paneId: props.paneId,
-      splitDirection: splitDirection === 'none' ? undefined : splitDirection,
-      ephemeral,
-      originBlockId: props.id,
-    });
-    if (!result.success) {
-      console.warn('[BlockItem] Wikilink navigation failed:', result.error);
-    } else {
-      // FLO-135: Focus + active pane in the CORRECT pane (new split, not source)
-      // navigateToPage already sets focusedBlockId via the wrapper.
-      // We still need to set activePaneId so keyboard focus follows.
-      if (result.targetPaneId) {
-        const tabId = findTabIdByPaneId(result.targetPaneId);
-        if (tabId) {
-          layoutStore.setActivePaneId(tabId, result.targetPaneId);
-        }
-
-        // If navigating within current pane, still call onFocus for DOM focus
-        if (result.targetPaneId === props.paneId) {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
-          });
-        }
-      }
-    }
+    navigateWikilink(target, props.paneId, { splitDirection });
   };
 
   return (
