@@ -361,8 +361,18 @@ export function BlockItem(props: BlockItemProps) {
         e.preventDefault();
         const hit = hits[idx];
         if (hit) {
+          // FLO-378: Resolve pane link at call site (FM #7)
+          let targetPaneId: string = props.paneId;
+          const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
+          if (linkedPaneId) {
+            const sourceTab = findTabIdByPaneId(props.paneId);
+            const linkedTab = findTabIdByPaneId(linkedPaneId);
+            if (sourceTab && sourceTab === linkedTab) {
+              targetPaneId = linkedPaneId;
+            }
+          }
           navigateToBlock(hit.blockId, {
-            paneId: props.paneId,
+            paneId: targetPaneId,
             highlight: true,
             originBlockId: props.id,
           });
