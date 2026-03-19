@@ -3337,7 +3337,9 @@ async fn search_blocks(
     // All temporal search filters use epoch seconds. Tantivy stores seconds internally.
     // Note: BlockDto.createdAt is milliseconds — different contract. Search = seconds.
     let filters = SearchFilters {
-        block_types: query.types.map(|t| t.split(',').map(String::from).collect()),
+        block_types: query.types.map(|t| {
+            t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
+        }),
         has_markers: query.has_markers,
         parent_id: query.parent_id,
         outlink: query.outlink,
@@ -3356,7 +3358,7 @@ async fn search_blocks(
         include_inherited: query.inherited,
         exclude_types: Some(match query.exclude_types {
             // Caller specified explicit exclusions — use those
-            Some(t) => t.split(',').map(String::from).collect(),
+            Some(t) => t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
             // No exclusions specified — apply defaults for low-signal block types
             // These are internal machinery that never match user intent in general search.
             // Callers can override by passing exclude_types= (empty) to disable defaults,
