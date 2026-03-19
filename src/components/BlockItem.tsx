@@ -461,7 +461,7 @@ export function BlockItem(props: BlockItemProps) {
       if (tabId) {
         layoutStore.setActivePaneId(tabId, result.targetPaneId);
       }
-      if (result.targetPaneId === props.paneId) {
+      if (result.targetPaneId === props.paneId && result.focusTargetId) {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => props.onFocus(result.focusTargetId!));
         });

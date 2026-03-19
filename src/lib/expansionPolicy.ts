@@ -73,6 +73,8 @@ export function countDescendantsToDepth(
   blockStore: BlockStoreView,
   bailAt: number = EXPANSION_SIZE_CAP
 ): number | 'over_cap' {
+  if (maxDepth <= 0) return 0;
+
   let count = 0;
 
   const walk = (id: string, depth: number): boolean => {

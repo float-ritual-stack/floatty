@@ -93,6 +93,14 @@ describe('countDescendantsToDepth', () => {
     const store = makeBlockStore({});
     expect(countDescendantsToDepth('missing', 1, store)).toBe(0);
   });
+
+  it('returns 0 for depth 0 (collapse-all)', () => {
+    const store = makeBlockStore({
+      root: ['a', 'b', 'c'],
+      a: ['a1'], b: [], c: [],
+    });
+    expect(countDescendantsToDepth('root', 0, store)).toBe(0);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════

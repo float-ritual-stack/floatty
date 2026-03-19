@@ -34,6 +34,7 @@ export interface NavigateOptions {
 export interface NavigateResult {
   success: boolean;
   targetPaneId: string | null;
+  focusTargetId?: string | null;
   error?: string;
 }
 
@@ -175,7 +176,7 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
     }, delay);
   }
 
-  return { success: true, targetPaneId: result.targetPaneId };
+  return { success: true, targetPaneId: result.targetPaneId, focusTargetId: result.focusTargetId };
 }
 
 /**
@@ -327,6 +328,7 @@ function pickZoomTarget(blockId: string, targetBlock: Block | null): string {
  * Cap at 10 levels to prevent runaway expansion (matches expandAncestors cap).
  */
 function expandAncestorsToTarget(blockId: string, zoomTargetId: string, paneId: string): void {
+  if (blockId === zoomTargetId) return;
   const MAX_LEVELS = 10;
   let current = blockStore.getBlock(blockId);
   let levels = 0;
@@ -458,9 +460,13 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
 
   element.classList.add('block-highlight');
 
-  // Scope interaction detection to the pane container that actually has the block.
-  // Use the block's own ancestor (handles dual data-pane-id: placeholder + outliner).
-  const listenerTarget: EventTarget = element.closest(`[data-pane-id]`) ?? document;
+  // Scope interaction detection to the outliner container, not the block itself.
+  // BlockItem stamps data-pane-id on every .block-item, so closest('[data-pane-id]')
+  // would resolve to the block — clicks elsewhere in the pane wouldn't clear highlight.
+  const listenerTarget: EventTarget =
+    element.closest(`.outliner-container[data-pane-id]`)
+    ?? document.querySelector(`.outliner-container[data-pane-id="${CSS.escape(paneId)}"]`)
+    ?? document;
 
   let fadeTimeout: ReturnType<typeof setTimeout> | null = null;
 
