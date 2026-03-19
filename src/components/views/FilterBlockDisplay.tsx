@@ -23,6 +23,8 @@ import {
 } from '../../lib/filterParser';
 import { blockEventBus, EventFilters } from '../../lib/events';
 import { navigateToBlock } from '../../lib/navigation';
+import { paneLinkStore } from '../../hooks/usePaneLinkStore';
+import { findTabIdByPaneId } from '../../hooks/useBacklinkNavigation';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -54,8 +56,21 @@ function FilterResultCard(props: { block: Block; paneId?: string }) {
       splitDirection = e.shiftKey ? 'vertical' : 'horizontal';
     }
 
+    // FLO-378: Resolve pane link at call site (FM #7)
+    let targetPaneId = props.paneId;
+    if (!splitDirection && targetPaneId) {
+      const linkedPaneId = paneLinkStore.resolveLink(targetPaneId);
+      if (linkedPaneId) {
+        const sourceTab = findTabIdByPaneId(targetPaneId);
+        const linkedTab = findTabIdByPaneId(linkedPaneId);
+        if (sourceTab && sourceTab === linkedTab) {
+          targetPaneId = linkedPaneId;
+        }
+      }
+    }
+
     navigateToBlock(props.block.id, {
-      paneId: props.paneId,
+      paneId: targetPaneId,
       splitDirection,
       highlight: true,
     });
