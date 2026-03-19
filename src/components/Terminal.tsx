@@ -8,7 +8,7 @@ import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
 import { ResizeOverlay } from './ResizeOverlay';
 import { SidebarDoorContainer } from './SidebarDoorContainer';
-import { Resizable } from '@corvu/resizable';
+import Resizable from '@corvu/resizable';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
