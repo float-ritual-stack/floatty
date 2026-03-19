@@ -6,6 +6,26 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.6] - 2026-03-18
+
+### Features
+
+- Resizable sidebar with @corvu/resizable, ⌘\ toggle, left/right swap (FLO-267, #178)
+
+### Bug Fixes
+
+- Use default import for @corvu/resizable (named export doesn't exist)
+
+### Infrastructure
+
+- Harden sync & tree integrity with parent validation and diagnostics (#180)
+  - Parent existence validation in all createBlock operations
+  - Y.Doc-authoritative descendant walks in deleteBlock/deleteBlocks
+  - Centralized sync diagnostics module (syncDiagnostics.ts)
+  - Transaction Authority Rules documented (ydoc-patterns.md §14)
+
+---
+
 ## [0.9.5] - 2026-03-17
 
 ### Features
