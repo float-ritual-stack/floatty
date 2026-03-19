@@ -9,6 +9,7 @@
 import { createRoot, createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { blockStore } from './useBlockStore';
+import { computeExpansion } from '../lib/expansionPolicy';
 import {
   createNavigationState,
   pushNavigation as pushNavigationPure,
@@ -57,8 +58,6 @@ function createPaneStore() {
     setPersistenceVersion((v) => v + 1);
   };
 
-  const SMART_EXPAND_THRESHOLD = 10;
-
   const toggleCollapsed = (paneId: string, blockId: string, blockDefaultCollapsed: boolean = false) => {
     // Get current value first to ensure proper toggle
     const currentValue = isCollapsed(paneId, blockId, blockDefaultCollapsed);
@@ -71,24 +70,19 @@ function createPaneStore() {
       setState('collapsed', paneId, blockId, newValue);
     }
 
-    // Smart expand: when expanding a block with many children,
-    // auto-collapse those children to prevent "expand everything at once"
+    // When expanding, use expansion policy for smart auto-collapse
     if (!newValue) {
-      // Expanding — check if children should be auto-collapsed
-      const block = blockStore.blocks[blockId];
-      if (block && block.childIds.length >= SMART_EXPAND_THRESHOLD) {
-        for (const childId of block.childIds) {
-          const child = blockStore.blocks[childId];
-          if (child && child.childIds.length > 0) {
-            // Only auto-collapse children that HAVE their own children
-            if (!state.collapsed[paneId]) {
-              setState('collapsed', paneId, { [childId]: true });
-            } else if (state.collapsed[paneId]?.[childId] === undefined) {
-              // Only set if no explicit state — don't override user's choice
-              setState('collapsed', paneId, childId, true);
-            }
-          }
-        }
+      const result = computeExpansion({
+        targetId: blockId,
+        trigger: 'toggle',
+        blockStore: { blocks: blockStore.blocks, rootIds: blockStore.rootIds },
+      });
+      // Apply actions (skip target — already set above)
+      for (const action of result.actions) {
+        if (action.blockId === blockId) continue;
+        // Only set if no explicit state — don't override user's choice
+        if (state.collapsed[paneId]?.[action.blockId] !== undefined) continue;
+        setState('collapsed', paneId, action.blockId, action.collapsed);
       }
     }
 
