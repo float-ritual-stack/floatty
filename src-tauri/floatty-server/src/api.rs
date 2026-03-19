@@ -3336,6 +3336,7 @@ async fn search_blocks(
     // Build filters from query params
     // All temporal search filters use epoch seconds. Tantivy stores seconds internally.
     // Note: BlockDto.createdAt is milliseconds — different contract. Search = seconds.
+    let has_explicit_types = query.types.is_some();
     let filters = SearchFilters {
         block_types: query.types.map(|t| {
             t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
@@ -3359,15 +3360,15 @@ async fn search_blocks(
         exclude_types: Some(match query.exclude_types {
             // Caller specified explicit exclusions — use those
             Some(t) => t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
-            // No exclusions specified — apply defaults for low-signal block types
-            // These are internal machinery that never match user intent in general search.
-            // Callers can override by passing exclude_types= (empty) to disable defaults,
-            // or types=picker to explicitly include a default-excluded type.
-            None => vec![
+            // No exclusions specified — apply defaults ONLY for general queries.
+            // Skip defaults when caller used `types=` (explicit include would
+            // conflict with default MustNot on the same type, e.g. types=picker).
+            None if !has_explicit_types => vec![
                 "picker".into(),
                 "output".into(),
                 "ran".into(),
             ],
+            None => vec![],
         }),
     };
 
