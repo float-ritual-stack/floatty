@@ -6,7 +6,9 @@
  */
 
 import { createMemo, Show, For } from 'solid-js';
-import { findBacklinks, findPagesContainer, navigateToPage, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { findBacklinks, findPagesContainer, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { navigateToPage } from '../lib/navigation';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -52,10 +54,26 @@ export function LinkedReferences(props: LinkedReferencesProps) {
   // FLO-211: Pass pageBlockId as origin for focus restoration on back navigation
   const handleWikilinkClick = (target: string, e: MouseEvent) => {
     const modKey = isMac ? e.metaKey : e.ctrlKey;
-    const splitDirection = modKey
+    const splitDirection: 'none' | 'horizontal' | 'vertical' = modKey
       ? (e.shiftKey ? 'vertical' : 'horizontal')
       : 'none';
-    navigateToPage(target, props.paneId, splitDirection, false, {
+
+    // FLO-427: Resolve pane link at call site (not inside funnel — see FM #7)
+    let targetPaneId = props.paneId;
+    if (splitDirection === 'none') {
+      const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
+      if (linkedPaneId) {
+        const sourceTab = findTabIdByPaneId(props.paneId);
+        const linkedTab = findTabIdByPaneId(linkedPaneId);
+        if (sourceTab && sourceTab === linkedTab) {
+          targetPaneId = linkedPaneId;
+        }
+      }
+    }
+
+    navigateToPage(target, {
+      paneId: targetPaneId,
+      splitDirection: splitDirection !== 'none' ? splitDirection : undefined,
       originBlockId: props.pageBlockId,
     });
   };
@@ -82,9 +100,20 @@ export function LinkedReferences(props: LinkedReferencesProps) {
       }
     }
 
+    // FLO-427: Resolve pane link at call site (not inside funnel — see FM #7)
+    let targetPaneId = props.paneId;
+    const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
+    if (linkedPaneId) {
+      const sourceTab = findTabIdByPaneId(props.paneId);
+      const linkedTab = findTabIdByPaneId(linkedPaneId);
+      if (sourceTab && sourceTab === linkedTab) {
+        targetPaneId = linkedPaneId;
+      }
+    }
+
     // FLO-211: Use unified zoomTo API for consistent history behavior
     // Pass pageBlockId as origin for focus restoration on back navigation
-    paneStore.zoomTo(props.paneId, targetId, {
+    paneStore.zoomTo(targetPaneId, targetId, {
       originBlockId: props.pageBlockId,
     });
 
