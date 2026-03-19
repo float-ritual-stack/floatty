@@ -8,6 +8,7 @@
 
 import { createRoot, createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
+import { blockStore } from './useBlockStore';
 import {
   createNavigationState,
   pushNavigation as pushNavigationPure,
@@ -56,19 +57,41 @@ function createPaneStore() {
     setPersistenceVersion((v) => v + 1);
   };
 
+  const SMART_EXPAND_THRESHOLD = 10;
+
   const toggleCollapsed = (paneId: string, blockId: string, blockDefaultCollapsed: boolean = false) => {
     // Get current value first to ensure proper toggle
-    // Must pass the block's own collapsed state as default to match display logic
     const currentValue = isCollapsed(paneId, blockId, blockDefaultCollapsed);
     const newValue = !currentValue;
 
     // Set in a single operation to avoid SolidJS store batching issues
-    // If pane entry doesn't exist, create it WITH the blockId value in one shot
     if (!state.collapsed[paneId]) {
       setState('collapsed', paneId, { [blockId]: newValue });
     } else {
       setState('collapsed', paneId, blockId, newValue);
     }
+
+    // Smart expand: when expanding a block with many children,
+    // auto-collapse those children to prevent "expand everything at once"
+    if (!newValue) {
+      // Expanding — check if children should be auto-collapsed
+      const block = blockStore.blocks[blockId];
+      if (block && block.childIds.length >= SMART_EXPAND_THRESHOLD) {
+        for (const childId of block.childIds) {
+          const child = blockStore.blocks[childId];
+          if (child && child.childIds.length > 0) {
+            // Only auto-collapse children that HAVE their own children
+            if (!state.collapsed[paneId]) {
+              setState('collapsed', paneId, { [childId]: true });
+            } else if (state.collapsed[paneId]?.[childId] === undefined) {
+              // Only set if no explicit state — don't override user's choice
+              setState('collapsed', paneId, childId, true);
+            }
+          }
+        }
+      }
+    }
+
     bumpPersistenceVersion();
   };
 

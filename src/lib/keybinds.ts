@@ -118,8 +118,8 @@ export const defaultKeybinds: Keybind[] = [
   { key: '8', modifiers: { mod: true }, action: 'goToTab8' },
   { key: '9', modifiers: { mod: true }, action: 'goToTab9' },
 
-  // Sidebar
-  { key: 'b', modifiers: { mod: true }, action: 'toggleSidebar' },
+  // Sidebar (⌘\ — matches VS Code convention)
+  { key: '\\', modifiers: { mod: true }, action: 'toggleSidebar' },
 
   // Floating panel (NSPanel spike)
   { key: 'p', modifiers: { mod: true, shift: true }, action: 'togglePanel' },

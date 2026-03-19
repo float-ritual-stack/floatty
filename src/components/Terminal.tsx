@@ -8,6 +8,7 @@ import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
 import { ResizeOverlay } from './ResizeOverlay';
 import { SidebarDoorContainer } from './SidebarDoorContainer';
+import { Resizable } from '@corvu/resizable';
 import { tabStore } from '../hooks/useTabStore';
 import type { Tab } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -237,6 +238,8 @@ function TabBar(props: {
 
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
+  const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
+  const [sidebarWidth, setSidebarWidth] = createSignal<number | string>('280px');
   const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
   // Snapshot focused block + pane when ⌘K opens (focus moves to command bar input)
   let commandBarFocusedBlockId: string | null = null;
@@ -763,19 +766,16 @@ export function Terminal() {
           ? (e.metaKey && !e.shiftKey && !e.altKey && e.key === 'l')
           : (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'l');
         if (isCmdL) {
+          e.preventDefault();
+          e.stopPropagation();
           const activeId = tabStore.activeTabId();
           if (activeId) {
             const activePaneId = getActivePaneId(activeId);
             if (activePaneId) {
-              const leaf = getPaneLeaf(activeId, activePaneId);
-              if (leaf?.leafType === 'terminal') {
-                e.preventDefault();
-                e.stopPropagation();
-                paneLinkStore.startLinking(activePaneId);
-                return;
-              }
+              paneLinkStore.startLinking(activePaneId);
             }
           }
+          return;
         }
       }
 
@@ -821,7 +821,8 @@ export function Terminal() {
           break;
         case 'toggleSidebar':
           setSidebarVisible((v) => !v);
-          // Refit all visible panes after sidebar toggle
+          // onSizesChange won't fire when <Show> unmounts/mounts the panel,
+          // so refit terminals explicitly after DOM settles
           requestAnimationFrame(() => {
             setTimeout(() => {
               const currentActiveId = tabStore.activeTabId();
@@ -831,7 +832,7 @@ export function Terminal() {
                   paneRefs.get(paneId)?.fit();
                 }
               }
-            }, 100);
+            }, 50);
           });
           break;
         // Split management
@@ -1144,7 +1145,45 @@ export function Terminal() {
         getStickyState={getTabStickyState}
       />
       <div class="terminal-wrapper">
-        <main class="terminal-container" role="main">
+      <Resizable
+        orientation="horizontal"
+        style={{ display: 'flex', width: '100%', height: '100%' }}
+        onSizesChange={(sizes) => {
+          // Persist sidebar width across side swaps
+          const sideIdx = sidebarSide() === 'left' ? 0 : sizes.length - 1;
+          if (sidebarVisible() && sizes[sideIdx] > 0) {
+            setSidebarWidth(sizes[sideIdx]);
+          }
+          // Refit all visible terminals when sidebar resizes
+          requestAnimationFrame(() => {
+            const currentActiveId = tabStore.activeTabId();
+            if (currentActiveId) {
+              const paneIds = getAllPaneIds(currentActiveId);
+              for (const paneId of paneIds) {
+                paneRefs.get(paneId)?.fit();
+              }
+            }
+          });
+        }}
+      >
+        {/* Sidebar on left side */}
+        <Show when={sidebarVisible() && sidebarSide() === 'left'}>
+          <Resizable.Panel
+            class="sidebar-panel-wrapper sidebar-left"
+            minSize={'200px'}
+            initialSize={sidebarWidth()}
+            collapsible
+            collapsedSize={0}
+            collapseThreshold={'50px'}
+          >
+            <SidebarDoorContainer
+              visible={sidebarVisible()}
+              getOutlinerPaneId={() => resolvedOutlinerPaneId()}
+            />
+          </Resizable.Panel>
+          <Resizable.Handle class="sidebar-resize-handle" aria-label="Resize sidebar" />
+        </Show>
+        <Resizable.Panel class="terminal-container" as="main" role="main" minSize={0.3}>
           {/* Layout layer - just placeholder divs */}
           <For each={tabStore.tabs}>
             {(tab) => {
@@ -1263,13 +1302,25 @@ export function Terminal() {
               />
             )}
           </For>
-        </main>
-        <Show when={sidebarVisible()}>
-          <SidebarDoorContainer
-            visible={sidebarVisible()}
-            getOutlinerPaneId={() => resolvedOutlinerPaneId()}
-          />
+        </Resizable.Panel>
+        {/* Sidebar on right side */}
+        <Show when={sidebarVisible() && sidebarSide() === 'right'}>
+          <Resizable.Handle class="sidebar-resize-handle" aria-label="Resize sidebar" />
+          <Resizable.Panel
+            class="sidebar-panel-wrapper"
+            minSize={'200px'}
+            initialSize={sidebarWidth()}
+            collapsible
+            collapsedSize={0}
+            collapseThreshold={'50px'}
+          >
+            <SidebarDoorContainer
+              visible={sidebarVisible()}
+              getOutlinerPaneId={() => resolvedOutlinerPaneId()}
+            />
+          </Resizable.Panel>
         </Show>
+      </Resizable>
       </div>
       <Show when={isCommandBarOpen()}>
         <CommandBar
@@ -1362,6 +1413,25 @@ export function Terminal() {
             // Toggle pane dimming
             if (commandId === 'toggle-dim') {
               toggleDimming();
+              return;
+            }
+
+            // Swap sidebar side (left ↔ right)
+            if (commandId === 'sidebar-swap') {
+              setSidebarSide(s => s === 'right' ? 'left' : 'right');
+              return;
+            }
+
+            // Link sidebar to the currently active outliner pane
+            // (sidebar chirp navigation will target this pane)
+            if (commandId === 'sidebar-link') {
+              const activeId = tabStore.activeTabId();
+              if (activeId) {
+                const paneId = resolvedOutlinerPaneId();
+                if (paneId) {
+                  paneLinkStore.setSidebarLink(activeId, paneId);
+                }
+              }
               return;
             }
 

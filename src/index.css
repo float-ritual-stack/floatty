@@ -116,13 +116,13 @@ html, body, #root {
 
 /* Context Sidebar */
 .ctx-sidebar {
-  width: 280px;
-  min-width: 280px;
+  width: 100%;
+  min-width: 0;
   background: var(--color-bg-dark);
-  border-left: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  flex: 1;
 }
 
 .ctx-sidebar-empty {

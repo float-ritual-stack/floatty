@@ -7,12 +7,15 @@
  * sidebar is display-only, main app owns focus.
  */
 
-import { Show, For, createMemo } from 'solid-js';
+import { Show, For, createMemo, onMount, onCleanup } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { ContextSidebar } from './ContextSidebar';
 import { createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
 import { doorRegistry } from '../lib/handlers/doorRegistry';
 import { getServerAccess } from './views/DoorHost';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { handleChirpNavigate } from '../lib/navigation';
+import { tabStore } from '../hooks/useTabStore';
 import './sidebar-doors.css';
 
 interface SidebarDoorContainerProps {
@@ -22,6 +25,32 @@ interface SidebarDoorContainerProps {
 
 export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
   const store = createSidebarDoorStore();
+
+  // Chirp listener for sidebar door iframes (manifest, portless doors)
+  // Uses handleChirpNavigate (the ONE canonical navigation path) with
+  // resolveSidebarTarget to find the right outliner pane per tab.
+  //
+  // Canonical chirp format: { type: 'chirp', message: 'navigate', data: { target } }
+  // (same as EvalOutput / DoorHost — one format, not many)
+  onMount(() => {
+    const handler = (e: MessageEvent) => {
+      // Only handle chirp messages
+      if (e.data?.type !== 'chirp') return;
+      if (e.data?.message !== 'navigate') return;
+      const target = e.data?.data?.target;
+      if (!target) return;
+
+      const activeTab = tabStore.activeTabId();
+      if (!activeTab) return;
+      const paneId = paneLinkStore.resolveSidebarTarget(activeTab);
+      if (!paneId) return;
+
+      handleChirpNavigate(target, { sourcePaneId: paneId });
+    };
+
+    window.addEventListener('message', handler);
+    onCleanup(() => window.removeEventListener('message', handler));
+  });
 
   // Get the view component for the active door (if it's a registry door, not built-in ctx)
   const activeView = createMemo(() => {
