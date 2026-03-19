@@ -3259,6 +3259,10 @@ pub struct BlockSearchQuery {
     /// Default: true (includes inherited markers from ancestors).
     #[serde(default)]
     pub inherited: Option<bool>,
+    /// Block types to exclude (comma-separated, e.g., "eval,sh").
+    /// Uses MustNot logic — all specified types are excluded from results.
+    #[serde(default)]
+    pub exclude_types: Option<String>,
 }
 
 fn default_search_limit() -> usize {
@@ -3282,6 +3286,9 @@ pub struct BlockSearchHit {
     /// Block metadata (markers, wikilinks, etc)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Highlighted snippet from Tantivy (HTML with <b> tags around matched terms)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
 }
 
 /// Full-text search response
@@ -3347,6 +3354,7 @@ async fn search_blocks(
         ctx_after: query.ctx_after,
         ctx_before: query.ctx_before,
         include_inherited: query.inherited,
+        exclude_types: query.exclude_types.map(|t| t.split(',').map(String::from).collect()),
     };
 
     // Execute search
@@ -3427,6 +3435,7 @@ async fn search_blocks(
                     content,
                     breadcrumb,
                     metadata,
+                    snippet: h.snippet,
                 }
             })
             .collect()

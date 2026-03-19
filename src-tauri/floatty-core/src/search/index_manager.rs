@@ -79,6 +79,8 @@ pub struct SchemaFields {
     pub created_at: Field,
     /// ctx:: event timestamp (epoch seconds). Distinct from created_at.
     pub ctx_at: Field,
+    /// Block tree depth (0 = root, 1 = direct child, etc.). For ranking boost.
+    pub depth: Field,
 }
 
 impl SchemaFields {
@@ -99,6 +101,7 @@ impl SchemaFields {
             marker_values_own: get_field(schema, "marker_values_own"),
             created_at: get_field(schema, "created_at"),
             ctx_at: get_field(schema, "ctx_at"),
+            depth: get_field(schema, "depth"),
         }
     }
 }
@@ -208,8 +211,8 @@ mod tests {
         // Index directory should now exist
         assert!(index_path.exists());
 
-        // Schema should have 14 fields (7 original + 5 enrichment + 2 own-only)
-        assert_eq!(manager.schema().fields().count(), 14);
+        // Schema should have 15 fields (7 original + 5 enrichment + 2 own-only + depth)
+        assert_eq!(manager.schema().fields().count(), 15);
     }
 
     #[test]

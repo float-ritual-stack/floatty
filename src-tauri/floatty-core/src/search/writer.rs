@@ -25,9 +25,100 @@
 //! ```
 
 use super::{IndexManager, SchemaFields, SearchError};
+use regex::Regex;
+use std::sync::LazyLock;
 use tantivy::{DateTime, IndexWriter, Term};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
+
+/// Regex for `prefix::value` patterns (word chars before ::, anything non-whitespace after).
+static COLONCOLON_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"([a-zA-Z_]\w*)::(\S+)").expect("valid regex")
+});
+
+/// Regex for bare `prefix::` (word:: with nothing after, or at end of string).
+static BARE_PREFIX_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"([a-zA-Z_]\w*)::(?:\s|$)").expect("valid regex")
+});
+
+/// Regex for `[[wikilinks]]` — matches `[[anything]]` including nested brackets.
+static WIKILINK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[\[([^\]]+)\]\]").expect("valid regex")
+});
+
+/// Regex for `[inline::markers]` — single square brackets around prefix::value.
+static INLINE_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[([a-zA-Z_]\w*::\S*)\]").expect("valid regex")
+});
+
+/// Preprocess block content before Tantivy indexing.
+///
+/// Tantivy's standard tokenizer splits on punctuation, destroying floatty's
+/// native `::` and `[[]]` syntax. This function emits additional tokens so
+/// both compound forms and individual words are searchable.
+///
+/// Transforms:
+/// - `eval::https://thing` → keeps original + emits `eval https thing`
+/// - `[[Daily Page]]` → strips brackets: `Daily Page`
+/// - `[like::this]` → strips brackets + emits parts: `like::this like this`
+/// - `portless::` → keeps original + emits `portless`
+pub fn preprocess_content_for_index(content: &str) -> String {
+    let mut result = content.to_string();
+
+    // 1. Strip [[wikilinks]] → inner text (do this first, before :: processing)
+    result = WIKILINK_PATTERN.replace_all(&result, "$1").to_string();
+
+    // 2. Strip [inline::markers] → inner content + parts
+    // Collect replacements first to avoid borrow conflict
+    let inline_replacements: Vec<(String, String)> = INLINE_MARKER_PATTERN
+        .captures_iter(content)
+        .map(|cap| {
+            let full = cap[0].to_string();
+            let inner = &cap[1];
+            // Split the inner marker into parts
+            let parts: Vec<&str> = inner.split("::").collect();
+            let extra_parts = parts.join(" ");
+            (full, format!("{inner} {extra_parts}"))
+        })
+        .collect();
+    for (old, new) in inline_replacements {
+        result = result.replace(&old, &new);
+    }
+
+    // 3. Expand prefix::value → keep compound + emit parts
+    let expanded: Vec<(String, String)> = COLONCOLON_PATTERN
+        .captures_iter(&result.clone())
+        .map(|cap| {
+            let full = cap[0].to_string();
+            let prefix = &cap[1];
+            let value = &cap[2];
+            // Split value on non-word chars for individual tokens
+            let value_parts: Vec<&str> = value.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+                .filter(|s| !s.is_empty())
+                .collect();
+            let parts = format!("{prefix} {}", value_parts.join(" "));
+            (full.clone(), format!("{full} {parts}"))
+        })
+        .collect();
+    for (old, new) in expanded {
+        result = result.replacen(&old, &new, 1);
+    }
+
+    // 4. Expand bare prefix:: → emit prefix word
+    let bare_expanded: Vec<(String, String)> = BARE_PREFIX_PATTERN
+        .captures_iter(&result.clone())
+        .map(|cap| {
+            let full = cap[0].to_string();
+            let prefix = &cap[1];
+            (full.clone(), format!("{full}{prefix} "))
+        })
+        .collect();
+    for (old, new) in bare_expanded {
+        result = result.replacen(&old, &new, 1);
+    }
+
+    result
+}
 
 /// Channel capacity - provides backpressure during bulk operations.
 const CHANNEL_CAPACITY: usize = 1000;
@@ -68,6 +159,8 @@ pub struct BlockIndexData {
     pub created_at: i64,
     /// ctx:: event timestamp (epoch seconds). 0 if no ctx datetime.
     pub ctx_at: i64,
+    /// Block depth in tree (0 = root/page, 1 = direct child, etc.).
+    pub depth: u32,
 }
 
 /// Messages that can be sent to the writer actor.
@@ -319,7 +412,8 @@ impl TantivyWriter {
         // Build new document
         let mut doc = tantivy::TantivyDocument::new();
         doc.add_text(self.fields.block_id, &d.block_id);
-        doc.add_text(self.fields.content, &d.content);
+        let preprocessed = preprocess_content_for_index(&d.content);
+        doc.add_text(self.fields.content, &preprocessed);
         doc.add_text(self.fields.block_type, &d.block_type);
         doc.add_text(self.fields.parent_id, d.parent_id.as_deref().unwrap_or(""));
         doc.add_date(self.fields.updated_at, DateTime::from_timestamp_secs(d.updated_at));
@@ -351,6 +445,9 @@ impl TantivyWriter {
         if d.ctx_at > 0 {
             doc.add_i64(self.fields.ctx_at, d.ctx_at);
         }
+
+        // Depth field (always set)
+        doc.add_i64(self.fields.depth, d.depth as i64);
 
         self.writer.add_document(doc).map_err(SearchError::Tantivy)?;
         Ok(())
@@ -394,8 +491,108 @@ mod tests {
             marker_values_own: vec![],
             created_at: 0,
             ctx_at: 0,
+            depth: 0,
         }
     }
+
+    // --- preprocess_content_for_index tests ---
+
+    #[test]
+    fn test_preprocess_prefix_value() {
+        let result = preprocess_content_for_index("eval::https://deploy-url.com");
+        assert!(result.contains("eval::https://deploy-url.com"));
+        assert!(result.contains("eval"));
+        assert!(result.contains("https"));
+        assert!(result.contains("deploy-url"));
+        assert!(result.contains("com"));
+    }
+
+    #[test]
+    fn test_preprocess_bare_prefix() {
+        let result = preprocess_content_for_index("portless:: some text");
+        assert!(result.contains("portless::"));
+        assert!(result.contains("portless "));
+    }
+
+    #[test]
+    fn test_preprocess_bare_prefix_at_end() {
+        let result = preprocess_content_for_index("hello floatctl::");
+        assert!(result.contains("floatctl::"));
+        assert!(result.contains("floatctl"));
+    }
+
+    #[test]
+    fn test_preprocess_wikilinks() {
+        let result = preprocess_content_for_index("see [[Daily Page]] for details");
+        assert!(result.contains("Daily Page"));
+        assert!(!result.contains("[["));
+        assert!(!result.contains("]]"));
+    }
+
+    #[test]
+    fn test_preprocess_inline_marker() {
+        let result = preprocess_content_for_index("check [issue::264] status");
+        assert!(result.contains("issue::264"));
+        assert!(result.contains("issue"));
+        assert!(result.contains("264"));
+        assert!(!result.contains("[issue"));
+    }
+
+    #[test]
+    fn test_preprocess_mixed_content() {
+        let result = preprocess_content_for_index(
+            "ctx::2026-03-11 discussed [[FLO-368]] eval::https://thing.com"
+        );
+        // ctx:: prefix::value expanded
+        assert!(result.contains("ctx::2026-03-11"));
+        assert!(result.contains("ctx"));
+        // wikilinks stripped
+        assert!(result.contains("FLO-368"));
+        assert!(!result.contains("[[FLO-368]]"));
+        // eval:: expanded
+        assert!(result.contains("eval::https://thing.com"));
+        assert!(result.contains("eval"));
+    }
+
+    #[test]
+    fn test_preprocess_duplicate_prefix() {
+        let result = preprocess_content_for_index("eval::url1 and eval::url2");
+        // Both should be expanded, not just the first
+        assert!(result.contains("eval::url1"));
+        assert!(result.contains("eval::url2"));
+        // Count occurrences of "eval " — should have at least 2 (one per expansion)
+        let eval_count = result.matches("eval ").count();
+        assert!(eval_count >= 2, "Expected at least 2 'eval ' tokens, got {eval_count} in: {result}");
+    }
+
+    #[test]
+    fn test_preprocess_plain_text_unchanged() {
+        let input = "just some normal text with no special patterns";
+        let result = preprocess_content_for_index(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_preprocess_code_namespace_expanded() {
+        // Code namespaces like std::io get expanded — acceptable since
+        // the original compound token is preserved too
+        let result = preprocess_content_for_index("use std::io::Read");
+        assert!(result.contains("std::io::Read"));
+        assert!(result.contains("std"));
+    }
+
+    #[test]
+    fn test_preprocess_project_marker() {
+        let result = preprocess_content_for_index("project::floatty mode::dev");
+        assert!(result.contains("project::floatty"));
+        assert!(result.contains("project"));
+        assert!(result.contains("floatty"));
+        assert!(result.contains("mode::dev"));
+        assert!(result.contains("mode"));
+        assert!(result.contains("dev"));
+    }
+
+    // --- writer actor tests ---
 
     #[tokio::test]
     async fn test_add_or_update() {
@@ -467,6 +664,7 @@ mod tests {
             marker_values_own: vec!["project::floatty".to_string()],
             created_at: 1704067200,
             ctx_at: 1773379200,
+            depth: 2,
         };
         let result = handle.add_or_update(data).await;
         assert!(result.is_ok());
