@@ -58,10 +58,14 @@ static INLINE_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// both compound forms and individual words are searchable.
 ///
 /// Transforms:
-/// - `eval::https://thing` → keeps original + emits `eval https thing`
-/// - `[[Daily Page]]` → strips brackets: `Daily Page`
-/// - `[like::this]` → strips brackets + emits parts: `like::this like this`
-/// - `portless::` → keeps original + emits `portless`
+/// - `eval::https://thing` → `https thing` (prefix stripped, value parts kept)
+/// - `[[Daily Page]]` → `Daily Page` (brackets stripped)
+/// - `[like::this]` → `like::this` (brackets stripped)
+/// - `portless::` → removed (prefix lives in markers field)
+///
+/// The prefix (e.g., "eval") is NOT kept in content — it lives in the
+/// `markers` Tantivy field at 1.0x boost. Prose "eval" in content gets
+/// 2.0x boost. This ensures prose matches outrank marker blocks.
 pub fn preprocess_content_for_index(content: &str) -> String {
     let mut result = content.to_string();
 
@@ -83,10 +87,12 @@ pub fn preprocess_content_for_index(content: &str) -> String {
         result = result.replace(&old, &new);
     }
 
-    // 3. Expand prefix::value → keep compound, emit ONLY value parts (not prefix again)
-    // The standard tokenizer already splits "eval::url" into "eval" + "url".
-    // Emitting the prefix again would double its TF, boosting marker blocks
-    // above prose blocks for prefix-as-keyword queries like "eval loop".
+    // 3. REMOVE prefix::value compounds from content entirely.
+    // The prefix (e.g., "eval") lives in the `markers` field (1.0x boost).
+    // Keeping it in content (2.0x boost) makes marker blocks outrank prose
+    // for keyword queries like "eval loop". By stripping, prose "eval" gets
+    // 2.0x content boost while marker "eval" only gets 1.0x markers boost.
+    // Value parts are kept so URL components remain searchable.
     let expanded: Vec<(String, String)> = COLONCOLON_PATTERN
         .captures_iter(&result.clone())
         .map(|cap| {
@@ -96,25 +102,23 @@ pub fn preprocess_content_for_index(content: &str) -> String {
             let value_parts: Vec<&str> = value.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
                 .filter(|s| !s.is_empty())
                 .collect();
-            // Only emit value parts — prefix already tokenized from compound
-            let parts = value_parts.join(" ");
-            (full.clone(), format!("{full} {parts}"))
+            // Replace compound with just the value parts
+            (full, value_parts.join(" "))
         })
         .collect();
     for (old, new) in expanded {
         result = result.replacen(&old, &new, 1);
     }
 
-    // 4. Expand bare prefix:: → emit prefix word
-    let bare_expanded: Vec<(String, String)> = BARE_PREFIX_PATTERN
+    // 4. REMOVE bare prefix:: → just delete it (prefix lives in markers field)
+    let bare_removed: Vec<(String, String)> = BARE_PREFIX_PATTERN
         .captures_iter(&result.clone())
         .map(|cap| {
             let full = cap[0].to_string();
-            let prefix = &cap[1];
-            (full.clone(), format!("{full}{prefix} "))
+            (full, String::new())
         })
         .collect();
-    for (old, new) in bare_expanded {
+    for (old, new) in bare_removed {
         result = result.replacen(&old, &new, 1);
     }
 
@@ -501,31 +505,29 @@ mod tests {
     #[test]
     fn test_preprocess_prefix_value() {
         let result = preprocess_content_for_index("eval::https://deploy-url.com");
-        // Compound preserved (so "eval::" exact search works)
-        assert!(result.contains("eval::https://deploy-url.com"));
-        // Value parts emitted for searchability
+        // Compound REMOVED — prefix lives in markers field, not content
+        assert!(!result.contains("eval::"));
+        assert!(!result.contains("eval"));
+        // Value parts kept for searchability
         assert!(result.contains("https"));
         assert!(result.contains("deploy-url"));
         assert!(result.contains("com"));
-        // Prefix NOT emitted as extra token — standard tokenizer already
-        // splits the compound into "eval" + "https" + etc.
-        // Count: "eval" should appear exactly once (in the compound only)
-        let eval_count = result.matches("eval").count();
-        assert_eq!(eval_count, 1, "eval should appear once (in compound), got {eval_count} in: {result}");
     }
 
     #[test]
     fn test_preprocess_bare_prefix() {
         let result = preprocess_content_for_index("portless:: some text");
-        assert!(result.contains("portless::"));
-        assert!(result.contains("portless "));
+        // Bare prefix removed — lives in markers field
+        assert!(!result.contains("portless"));
+        assert!(result.contains("some text"));
     }
 
     #[test]
     fn test_preprocess_bare_prefix_at_end() {
         let result = preprocess_content_for_index("hello floatctl::");
-        assert!(result.contains("floatctl::"));
-        assert!(result.contains("floatctl"));
+        // Bare prefix removed
+        assert!(!result.contains("floatctl"));
+        assert!(result.contains("hello"));
     }
 
     #[test]
@@ -539,10 +541,12 @@ mod tests {
     #[test]
     fn test_preprocess_inline_marker() {
         let result = preprocess_content_for_index("check [issue::264] status");
-        // Brackets stripped, inner content preserved
-        assert!(result.contains("issue::264"));
+        // Brackets stripped, then prefix::value removed by step 3
+        // "issue" stripped (prefix), "264" kept (value)
+        assert!(result.contains("264"));
         assert!(!result.contains("[issue"));
-        assert!(!result.contains("264]"));
+        assert!(result.contains("check"));
+        assert!(result.contains("status"));
     }
 
     #[test]
@@ -550,28 +554,29 @@ mod tests {
         let result = preprocess_content_for_index(
             "ctx::2026-03-11 discussed [[FLO-368]] eval::https://thing.com"
         );
-        // Compounds preserved
-        assert!(result.contains("ctx::2026-03-11"));
-        assert!(result.contains("eval::https://thing.com"));
+        // Compounds removed — prefixes live in markers field
+        assert!(!result.contains("ctx::"));
+        assert!(!result.contains("eval::"));
+        // Value parts kept
+        assert!(result.contains("2026-03-11"));
+        assert!(result.contains("thing"));
         // Wikilinks stripped
         assert!(result.contains("FLO-368"));
         assert!(!result.contains("[[FLO-368]]"));
-        // Value parts emitted
-        assert!(result.contains("thing"));
+        // Prose preserved
+        assert!(result.contains("discussed"));
     }
 
     #[test]
     fn test_preprocess_duplicate_prefix() {
         let result = preprocess_content_for_index("eval::url1 and eval::url2");
-        // Both compounds preserved
-        assert!(result.contains("eval::url1"));
-        assert!(result.contains("eval::url2"));
-        // Value parts emitted
+        // Compounds removed
+        assert!(!result.contains("eval::"));
+        assert!(!result.contains("eval"));
+        // Value parts kept
         assert!(result.contains("url1"));
         assert!(result.contains("url2"));
-        // "eval" only appears in compounds (2x), not as extra tokens
-        let eval_count = result.matches("eval").count();
-        assert_eq!(eval_count, 2, "eval should appear twice (in compounds only), got {eval_count} in: {result}");
+        assert!(result.contains("and"));
     }
 
     #[test]
@@ -583,25 +588,23 @@ mod tests {
 
     #[test]
     fn test_preprocess_code_namespace_expanded() {
-        // Code namespaces like std::io get expanded — value parts emitted
+        // Code namespaces like std::io — prefix stripped, value parts kept
         let result = preprocess_content_for_index("use std::io::Read");
-        assert!(result.contains("std::io::Read"));
-        // "io" and "Read" are value parts
+        // "std" stripped (prefix), "io::Read" is value → split to "io" + "Read"
         assert!(result.contains("io"));
         assert!(result.contains("Read"));
+        assert!(result.contains("use"));
     }
 
     #[test]
     fn test_preprocess_project_marker() {
         let result = preprocess_content_for_index("project::floatty mode::dev");
-        // Compounds preserved
-        assert!(result.contains("project::floatty"));
-        assert!(result.contains("mode::dev"));
-        // Value parts emitted (not prefix parts)
+        // Prefixes stripped — they live in markers field
+        assert!(!result.contains("project::"));
+        assert!(!result.contains("mode::"));
+        // Values kept
         assert!(result.contains("floatty"));
         assert!(result.contains("dev"));
-        // "project" only in compound, "mode" only in compound
-        // (standard tokenizer will split compounds into prefix+value naturally)
     }
 
     // --- writer actor tests ---
