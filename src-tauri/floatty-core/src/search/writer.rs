@@ -76,7 +76,7 @@ pub fn preprocess_content_for_index(content: &str) -> String {
     // The standard tokenizer will split the inner "prefix::value" into parts.
     // No need to emit extra tokens — just strip the brackets.
     let inline_replacements: Vec<(String, String)> = INLINE_MARKER_PATTERN
-        .captures_iter(content)
+        .captures_iter(&result.clone())
         .map(|cap| {
             let full = cap[0].to_string();
             let inner = &cap[1];

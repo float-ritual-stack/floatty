@@ -209,7 +209,9 @@ impl TantivyIndexHook {
             "Indexing block"
         );
 
-        // Compute depth by walking parent chain (max 50 to prevent infinite loops)
+        // Compute depth by walking parent chain (max 50 to prevent infinite loops).
+        // TODO: Wire into ranking (shallow boost, deep penalty) once real-world
+        // observation confirms it's needed. Field is indexed for queries/filters.
         let depth = {
             let mut d: u32 = 0;
             let mut current_parent = parent_id.clone();
