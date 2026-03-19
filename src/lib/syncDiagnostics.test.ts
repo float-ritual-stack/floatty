@@ -99,9 +99,13 @@ describe('syncDiagnostics', () => {
   it('getSyncDiagnosticsSummary returns compact string', () => {
     recordFullResync();
     recordGapFill();
+    recordParentValidationFailure();
+    recordChildIdsTypeMismatch();
     const summary = getSyncDiagnosticsSummary();
     expect(summary).toContain('resyncs=1');
     expect(summary).toContain('gaps=1');
+    expect(summary).toContain('parentValidation=1');
+    expect(summary).toContain('typeMismatch=1');
     expect(summary).toContain('session=');
   });
 

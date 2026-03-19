@@ -145,6 +145,8 @@ export function getSyncDiagnosticsSummary(): string {
     `dedups=${d.dedupRepairs}`,
     `gaps=${d.gapFills}`,
     `echoGaps=${d.echoGapFills}`,
+    `parentValidation=${d.parentValidationFailures}`,
+    `typeMismatch=${d.childIdsTypeMismatches}`,
   ].join(', ');
 }
 
@@ -152,14 +154,14 @@ export function getSyncDiagnosticsSummary(): string {
 export function logDiagnosticsSummary(): void {
   const d = counters;
   const uptime = Math.round((Date.now() - d.sessionStartedAt) / 1000);
-  const totalIssues = d.orphansDetected + d.dedupRepairs + d.phantomChildrenRemoved + d.crossParentFixes + d.parentValidationFailures;
+  const totalIssues = d.orphansDetected + d.dedupRepairs + d.phantomChildrenRemoved + d.crossParentFixes + d.parentValidationFailures + d.childIdsTypeMismatches;
 
   console.log(
     `[SyncDiagnostics] Session ${uptime}s | ` +
     `resyncs:${d.fullResyncs} gapFills:${d.gapFills} echoGaps:${d.echoGapFills} ` +
     `orphans:${d.orphansDetected} dedups:${d.dedupRepairs} ` +
     `phantoms:${d.phantomChildrenRemoved} crossParent:${d.crossParentFixes} ` +
-    `parentValidation:${d.parentValidationFailures} | ` +
+    `parentValidation:${d.parentValidationFailures} typeMismatch:${d.childIdsTypeMismatches} | ` +
     `total issues: ${totalIssues}`
   );
 }

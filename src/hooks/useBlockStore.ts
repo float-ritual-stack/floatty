@@ -1258,7 +1258,10 @@ function createBlockStore() {
       }
 
       // Remove each block from its parent's childIds (or rootIds)
-      for (const { id, parentId } of blocksToRemoveFromParent) {
+      // Re-read parentId from Y.Doc (not pre-captured state) per Transaction Authority Rule #1
+      for (const { id } of blocksToRemoveFromParent) {
+        const yBlock = blocksMap.get(id);
+        const parentId = (yBlock instanceof Y.Map) ? yBlock.get('parentId') as string | null : null;
         if (parentId) {
           if (toDelete.has(parentId)) continue;
           removeChildId(blocksMap, parentId, id);
