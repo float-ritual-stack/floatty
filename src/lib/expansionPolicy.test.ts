@@ -337,20 +337,5 @@ describe('computeExpansion — keybind', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════
-// computeExpansion — startup trigger
-// ═══════════════════════════════════════════════════════════════
-
-describe('computeExpansion — startup', () => {
-  it('returns empty actions (startup uses applyCollapseDepth)', () => {
-    const store = makeBlockStore({});
-    const result = computeExpansion({
-      targetId: 'root',
-      trigger: 'startup',
-      blockStore: store,
-      paneId: 'p1',
-      paneStore: makePaneStore(),
-    });
-    expect(result.actions).toEqual([]);
-  });
-});
+// Startup expansion uses applyCollapseDepth in Outliner.tsx directly —
+// not routed through computeExpansion. No 'startup' trigger exists.

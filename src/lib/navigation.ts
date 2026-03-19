@@ -38,6 +38,25 @@ export interface NavigateResult {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// PANE LINK RESOLUTION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Resolve pane link for same-tab navigation only.
+ * Returns linkedPaneId if linked and in same tab, otherwise sourcePaneId.
+ *
+ * This is the call-site resolution pattern (FM #7): callers resolve before
+ * entering the navigation funnel, not inside it.
+ */
+export function resolveSameTabLink(sourcePaneId: string, blockId?: string): string {
+  const linked = paneLinkStore.resolveLink(sourcePaneId, blockId);
+  if (!linked) return sourcePaneId;
+  const sourceTab = findTabIdByPaneId(sourcePaneId);
+  const linkedTab = findTabIdByPaneId(linked);
+  return sourceTab && sourceTab === linkedTab ? linked : sourcePaneId;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // NAVIGATION FUNCTIONS
 // ═══════════════════════════════════════════════════════════════
 

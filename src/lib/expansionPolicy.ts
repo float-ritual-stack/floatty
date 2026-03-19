@@ -32,7 +32,7 @@ export interface ExpansionResult {
   actions: ExpansionAction[];
 }
 
-export type ExpansionTrigger = 'toggle' | 'zoom' | 'navigate' | 'keybind' | 'startup';
+export type ExpansionTrigger = 'toggle' | 'zoom' | 'navigate' | 'keybind';
 
 export interface BlockStoreView {
   blocks: Record<string, { childIds: string[] }>;
@@ -141,10 +141,6 @@ export function computeExpansion(params: ExpansionParams): ExpansionResult {
 
     case 'keybind':
       return computeKeybindExpansion(targetId, depth ?? 1, blockStore);
-
-    case 'startup':
-      // Startup uses applyCollapseDepth in Outliner.tsx — no change needed
-      return { actions: [] };
   }
 }
 

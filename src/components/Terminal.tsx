@@ -18,8 +18,7 @@ import { CommandBar } from './CommandBar';
 import { PaneLinkOverlay } from './PaneLinkOverlay';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { paneStore } from '../hooks/usePaneStore';
-import { navigateToPage } from '../lib/navigation';
-import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { navigateToPage, resolveSameTabLink } from '../lib/navigation';
 import { emitCtxMarkersChanged } from '../lib/ctxEvents';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
@@ -1329,17 +1328,7 @@ export function Terminal() {
           onNavigate={(pageName) => {
             const paneId = resolvedOutlinerPaneId();
             if (!paneId) return;
-            // FLO-378: Resolve pane link at call site (FM #7)
-            let targetPaneId = paneId;
-            const linkedPaneId = paneLinkStore.resolveLink(paneId);
-            if (linkedPaneId) {
-              const sourceTab = findTabIdByPaneId(paneId);
-              const linkedTab = findTabIdByPaneId(linkedPaneId);
-              if (sourceTab && sourceTab === linkedTab) {
-                targetPaneId = linkedPaneId;
-              }
-            }
-            navigateToPage(pageName, { paneId: targetPaneId });
+            navigateToPage(pageName, { paneId: resolveSameTabLink(paneId) });
             setCommandBarOpen(false);
             // Restore DOM focus to the outliner pane after CommandBar unmounts
             requestAnimationFrame(() => {
@@ -1416,17 +1405,7 @@ export function Terminal() {
               const pageName = `${yyyy}-${mm}-${dd}`;
               const paneId = commandBarSourcePaneId;
               if (paneId) {
-                // FLO-378: Resolve pane link at call site (FM #7)
-                let targetPaneId = paneId;
-                const linkedPaneId = paneLinkStore.resolveLink(paneId);
-                if (linkedPaneId) {
-                  const sourceTab = findTabIdByPaneId(paneId);
-                  const linkedTab = findTabIdByPaneId(linkedPaneId);
-                  if (sourceTab && sourceTab === linkedTab) {
-                    targetPaneId = linkedPaneId;
-                  }
-                }
-                navigateToPage(pageName, { paneId: targetPaneId });
+                navigateToPage(pageName, { paneId: resolveSameTabLink(paneId) });
               }
               return;
             }

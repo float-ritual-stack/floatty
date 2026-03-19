@@ -8,7 +8,7 @@ import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
-import { navigateToBlock, navigateToPage, handleChirpNavigate } from '../lib/navigation';
+import { navigateToBlock, navigateToPage, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
@@ -361,18 +361,8 @@ export function BlockItem(props: BlockItemProps) {
         e.preventDefault();
         const hit = hits[idx];
         if (hit) {
-          // FLO-378: Resolve pane link at call site (FM #7)
-          let targetPaneId: string = props.paneId;
-          const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
-          if (linkedPaneId) {
-            const sourceTab = findTabIdByPaneId(props.paneId);
-            const linkedTab = findTabIdByPaneId(linkedPaneId);
-            if (sourceTab && sourceTab === linkedTab) {
-              targetPaneId = linkedPaneId;
-            }
-          }
           navigateToBlock(hit.blockId, {
-            paneId: targetPaneId,
+            paneId: resolveSameTabLink(props.paneId),
             highlight: true,
             originBlockId: props.id,
           });
@@ -424,6 +414,10 @@ export function BlockItem(props: BlockItemProps) {
   ): { success: boolean; focusTargetId?: string } => {
     const { splitDirection } = opts;
 
+    // FLO-378: Resolve pane link once at top (FM #7: at call site, not in funnel)
+    // Skip resolution when splitting — new pane is the target
+    const targetPaneId = splitDirection ? sourcePaneId : resolveSameTabLink(sourcePaneId);
+
     // Block-ID links: full UUID or partial hex prefix (git-sha style)
     const blockIds = Object.keys(store.blocks);
     const resolvedBlockId = resolveBlockIdPrefix(target, blockIds, shortHashIndex());
@@ -431,18 +425,6 @@ export function BlockItem(props: BlockItemProps) {
       if (!store.getBlock(resolvedBlockId)) {
         console.warn('[BlockItem] Wikilink block ID not in outline', { target: resolvedBlockId });
         return { success: false };
-      }
-      // FLO-378: Resolve pane link at call site (not inside funnel — see FM #7)
-      let targetPaneId = sourcePaneId;
-      if (!splitDirection) {
-        const linkedPaneId = paneLinkStore.resolveLink(sourcePaneId);
-        if (linkedPaneId) {
-          const sourceTab = findTabIdByPaneId(sourcePaneId);
-          const linkedTab = findTabIdByPaneId(linkedPaneId);
-          if (sourceTab && sourceTab === linkedTab) {
-            targetPaneId = linkedPaneId;
-          }
-        }
       }
       navigateToBlock(resolvedBlockId, {
         paneId: targetPaneId,
@@ -460,19 +442,6 @@ export function BlockItem(props: BlockItemProps) {
         blockCount: Object.keys(store.blocks).length,
       });
       return { success: false };
-    }
-
-    // Resolve pane link for page navigation
-    let targetPaneId = sourcePaneId;
-    if (!splitDirection) {
-      const linkedPaneId = paneLinkStore.resolveLink(sourcePaneId);
-      if (linkedPaneId) {
-        const sourceTab = findTabIdByPaneId(sourcePaneId);
-        const linkedTab = findTabIdByPaneId(linkedPaneId);
-        if (sourceTab && sourceTab === linkedTab) {
-          targetPaneId = linkedPaneId;
-        }
-      }
     }
 
     const result = navigateToPage(target, {

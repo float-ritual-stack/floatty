@@ -7,8 +7,7 @@
 
 import { createMemo, Show, For } from 'solid-js';
 import { findBacklinks, findPagesContainer, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
-import { navigateToPage } from '../lib/navigation';
-import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { navigateToPage, resolveSameTabLink } from '../lib/navigation';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { layoutStore } from '../hooks/useLayoutStore';
@@ -58,21 +57,8 @@ export function LinkedReferences(props: LinkedReferencesProps) {
       ? (e.shiftKey ? 'vertical' : 'horizontal')
       : 'none';
 
-    // FLO-427: Resolve pane link at call site (not inside funnel — see FM #7)
-    let targetPaneId = props.paneId;
-    if (splitDirection === 'none') {
-      const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
-      if (linkedPaneId) {
-        const sourceTab = findTabIdByPaneId(props.paneId);
-        const linkedTab = findTabIdByPaneId(linkedPaneId);
-        if (sourceTab && sourceTab === linkedTab) {
-          targetPaneId = linkedPaneId;
-        }
-      }
-    }
-
     navigateToPage(target, {
-      paneId: targetPaneId,
+      paneId: splitDirection === 'none' ? resolveSameTabLink(props.paneId) : props.paneId,
       splitDirection: splitDirection !== 'none' ? splitDirection : undefined,
       originBlockId: props.pageBlockId,
     });
@@ -100,20 +86,9 @@ export function LinkedReferences(props: LinkedReferencesProps) {
       }
     }
 
-    // FLO-427: Resolve pane link at call site (not inside funnel — see FM #7)
-    let targetPaneId = props.paneId;
-    const linkedPaneId = paneLinkStore.resolveLink(props.paneId);
-    if (linkedPaneId) {
-      const sourceTab = findTabIdByPaneId(props.paneId);
-      const linkedTab = findTabIdByPaneId(linkedPaneId);
-      if (sourceTab && sourceTab === linkedTab) {
-        targetPaneId = linkedPaneId;
-      }
-    }
-
     // FLO-211: Use unified zoomTo API for consistent history behavior
     // Pass pageBlockId as origin for focus restoration on back navigation
-    paneStore.zoomTo(targetPaneId, targetId, {
+    paneStore.zoomTo(resolveSameTabLink(props.paneId), targetId, {
       originBlockId: props.pageBlockId,
     });
 

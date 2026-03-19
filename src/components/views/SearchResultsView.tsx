@@ -14,11 +14,9 @@
 
 import { For, Show, createSignal, createEffect, createMemo } from 'solid-js';
 import type { SearchResults, SearchHit } from '../../lib/handlers/search';
-import { navigateToBlock } from '../../lib/navigation';
+import { navigateToBlock, resolveSameTabLink } from '../../lib/navigation';
 import { isMac } from '../../lib/keybinds';
 import { blockStore } from '../../hooks/useBlockStore';
-import { paneLinkStore } from '../../hooks/usePaneLinkStore';
-import { findTabIdByPaneId } from '../../hooks/useBacklinkNavigation';
 
 interface SearchResultsViewProps {
   data: SearchResults;
@@ -188,18 +186,6 @@ function SearchResultItem(props: {
     return buildBreadcrumbRows(crumbList, openPeeks, 0, 0);
   });
 
-  // FLO-378: Resolve pane link at call site (FM #7)
-  const resolveNavPaneId = (sourcePaneId: string | undefined, splitDirection?: string): string | undefined => {
-    if (!sourcePaneId || splitDirection) return sourcePaneId;
-    const linkedPaneId = paneLinkStore.resolveLink(sourcePaneId);
-    if (linkedPaneId) {
-      const sourceTab = findTabIdByPaneId(sourcePaneId);
-      const linkedTab = findTabIdByPaneId(linkedPaneId);
-      if (sourceTab && sourceTab === linkedTab) return linkedPaneId;
-    }
-    return sourcePaneId;
-  };
-
   const handleClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -211,7 +197,7 @@ function SearchResultItem(props: {
     }
 
     navigateToBlock(props.hit.blockId, {
-      paneId: resolveNavPaneId(props.paneId, splitDirection),
+      paneId: splitDirection ? props.paneId : (props.paneId ? resolveSameTabLink(props.paneId) : undefined),
       splitDirection,
       highlight: true,
       originBlockId: props.blockId,
@@ -285,7 +271,7 @@ function SearchResultItem(props: {
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                navigateToBlock(crumb.blockId, { paneId: resolveNavPaneId(props.paneId), highlight: true, originBlockId: props.blockId });
+                                navigateToBlock(crumb.blockId, { paneId: props.paneId ? resolveSameTabLink(props.paneId) : undefined, highlight: true, originBlockId: props.blockId });
                               }}
                             >
                               {crumb.label}
@@ -340,7 +326,7 @@ function SearchResultItem(props: {
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    navigateToBlock(row.id, { paneId: resolveNavPaneId(props.paneId), highlight: true, originBlockId: props.blockId });
+                    navigateToBlock(row.id, { paneId: props.paneId ? resolveSameTabLink(props.paneId) : undefined, highlight: true, originBlockId: props.blockId });
                   }}
                 >
                   <span class="search-breadcrumb-child-arrow">▸</span>

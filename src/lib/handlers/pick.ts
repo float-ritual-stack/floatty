@@ -11,9 +11,7 @@
  */
 
 import type { BlockHandler, ExecutorActions } from './types';
-import { navigateToBlock } from '../navigation';
-import { paneLinkStore } from '../../hooks/usePaneLinkStore';
-import { findTabIdByPaneId } from '../../hooks/useBacklinkNavigation';
+import { navigateToBlock, resolveSameTabLink } from '../navigation';
 import { terminalManager } from '../terminalManager';
 import { invoke } from '../tauriTypes';
 import type { ServerInfo } from '../httpClient';
@@ -145,18 +143,8 @@ export const pickHandler: BlockHandler = {
 
       if (selectedBlockId) {
         console.log('[pick] Navigating to:', selectedBlockId);
-        // FLO-378: Resolve pane link at call site (FM #7)
-        let targetPaneId = actions.paneId;
-        const linkedPaneId = paneLinkStore.resolveLink(actions.paneId);
-        if (linkedPaneId) {
-          const sourceTab = findTabIdByPaneId(actions.paneId);
-          const linkedTab = findTabIdByPaneId(linkedPaneId);
-          if (sourceTab && sourceTab === linkedTab) {
-            targetPaneId = linkedPaneId;
-          }
-        }
         navigateToBlock(selectedBlockId, {
-          paneId: targetPaneId,
+          paneId: resolveSameTabLink(actions.paneId),
           highlight: true,
         });
 
