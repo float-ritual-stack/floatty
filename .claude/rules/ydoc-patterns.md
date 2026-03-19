@@ -337,6 +337,8 @@ insertChildId(blocksMap, grandparentId, id, insertIndex + 1);
 2. Verify ALL return non-null/non-negative
 3. THEN begin mutations
 
+**Clarification vs Rule #8**: Rule #8 prohibits scanning arrays to *find* a block (use `blocksMap.get(id)` instead). The `indexOf` calls here are different — they compute *sibling position* after block identity is already resolved via ID-based lookup. `indexOf` on a `childIds` array is the correct way to determine where a known-valid block sits among its siblings.
+
 **Also guard ancestry**: Operations that delete a block (merge, delete) should check `isDescendant()` to prevent deleting an ancestor of a referenced block. `mergeBlocks` and `moveBlock` both use this.
 
 **Reference implementations**: `_outdentBlockSimple`, `outdentBlock` adopt path, `mergeBlocks` `liftOk` flag.
