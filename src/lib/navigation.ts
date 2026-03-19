@@ -114,6 +114,12 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   // Set focus on the target block so it receives DOM focus after zoom
   paneStore.setFocusedBlockId(targetPaneId, blockId);
 
+  // Update active pane so Cmd+J overlay knows where we landed (Gap 6)
+  const navTabId = findTabIdByPaneId(targetPaneId);
+  if (navTabId) {
+    layoutStore.setActivePaneId(navTabId, targetPaneId);
+  }
+
   // Scroll to the actual target block (after DOM settles), optionally highlight
   const delay = splitDirection ? 150 : 50;
   scrollAndHighlightWithRetry(blockId, targetPaneId, delay, highlight);
@@ -151,6 +157,14 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
   // Focus first child so keyboard works immediately after navigation
   if (result.focusTargetId && result.targetPaneId) {
     paneStore.setFocusedBlockId(result.targetPaneId, result.focusTargetId);
+  }
+
+  // Update active pane so Cmd+J overlay knows where we landed (Gap 6)
+  if (result.targetPaneId) {
+    const navTabId = findTabIdByPaneId(result.targetPaneId);
+    if (navTabId) {
+      layoutStore.setActivePaneId(navTabId, result.targetPaneId);
+    }
   }
 
   if (highlight && result.pageId && result.targetPaneId) {
