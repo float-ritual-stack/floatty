@@ -340,3 +340,50 @@ insertChildId(blocksMap, grandparentId, id, insertIndex + 1);
 **Also guard ancestry**: Operations that delete a block (merge, delete) should check `isDescendant()` to prevent deleting an ancestor of a referenced block. `mergeBlocks` and `moveBlock` both use this.
 
 **Reference implementations**: `_outdentBlockSimple`, `outdentBlock` adopt path, `mergeBlocks` `liftOk` flag.
+
+## 14. Transaction Authority Rules (v0.9.5)
+
+Inside `_doc.transact()`, Y.Doc is the **only** source of truth. Reactive state (`state.blocks[id]`) is a rendering convenience — it may be stale after WebSocket updates arrive between SolidJS reconciliation cycles.
+
+**Rules**:
+
+1. **Read from Y.Doc inside transactions, not reactive state**: Use `blocksMap.get(id)` with `instanceof Y.Map` / `Y.Array` checks, not `state.blocks[id].childIds`.
+
+2. **Validate before mutate**: All lookups (`blocksMap.has()`, `indexOf()`, `instanceof`) must succeed BEFORE any `blocksMap.set()` or `setValueOnYMap()` call. If validation fails, return early — empty transactions emit no update events.
+
+3. **Defer block creation**: `blocksMap.set(newId, blockToYMap(newBlock))` goes AFTER confirming the insertion target exists and the reference block is in the correct parent's childIds. Creating a block before confirming its home = orphan-by-creation.
+
+4. **Descendant walks use Y.Map/Y.Array**: `deleteBlock` and `deleteBlocks` walk `blocksMap.get(id) → Y.Map → .get('childIds') → Y.Array` to collect descendants. Never `state.blocks[id].childIds` — misses remotely-added children.
+
+5. **Track success**: Use a `let success = false` flag outside the transaction, set `success = true` at the end of the happy path. Return `success ? newId : ''` so callers know if the operation actually happened.
+
+6. **Every bail-out gets a diagnostic counter**: When a validation fails inside a transaction, call the appropriate `record*()` from `syncDiagnostics.ts`. Silent bail-outs hide root causes.
+
+```typescript
+// ❌ WRONG - reads from reactive state, creates block before validation
+_doc.transact(() => {
+  const blocksMap = _doc.getMap('blocks');
+  blocksMap.set(newId, blockToYMap(newBlock));  // Created before validation!
+  const childIds = state.blocks[parentId].childIds;  // Reactive state!
+  insertChildId(blocksMap, parentId, newId, childIds.indexOf(afterId) + 1);
+}, 'user');
+
+// ✅ CORRECT - reads from Y.Doc, defers creation, tracks success
+let success = false;
+_doc.transact(() => {
+  const blocksMap = _doc.getMap('blocks');
+  if (!blocksMap.has(parentId)) { recordParentValidationFailure(); return; }
+  const parentData = blocksMap.get(parentId);
+  const childIds = (getValue(parentData, 'childIds') as string[]) || [];
+  const afterIndex = childIds.indexOf(afterId);
+  if (afterIndex < 0) return;
+  blocksMap.set(newId, blockToYMap(newBlock));  // After validation
+  insertChildId(blocksMap, parentId, newId, afterIndex + 1);
+  success = true;
+}, 'user');
+return success ? newId : '';
+```
+
+**Why empty transactions are safe**: yjs `transact()` only emits an update event if mutations occurred. A transaction that returns early without mutating anything is a no-op — no sync traffic, no observer fires.
+
+**Origin values**: `'user'`, `'executor'`, `'hook'`, `'system'`, `'bulk_import'`, `'reconnect-authority'`, `'gap-fill'`, `'user-drag'`

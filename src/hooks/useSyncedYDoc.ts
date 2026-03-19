@@ -24,6 +24,14 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import type { AggregatorConfig } from '../lib/tauriTypes';
 import { SyncSequenceTracker } from '../lib/syncSequenceTracker';
+import {
+  recordFullResync,
+  recordDedupRepairs,
+  recordGapFill,
+  recordEchoGapFill,
+  recordPhantomChildrenRemoved,
+  recordCrossParentFixes,
+} from '../lib/syncDiagnostics';
 
 // ═══════════════════════════════════════════════════════════════
 // SYNC STATUS (singleton signals for UI visibility)
@@ -132,6 +140,9 @@ export async function forceSyncNow(): Promise<void> {
 // Shared implementation in src/lib/encoding.ts
 import { base64ToBytes, bytesToBase64 } from '../lib/encoding';
 export { base64ToBytes, bytesToBase64 };
+
+// Re-export diagnostics for dev tools and health endpoint
+export { getSyncDiagnostics } from '../lib/syncDiagnostics';
 
 /**
  * Get the singleton Y.Doc instance.
@@ -348,6 +359,12 @@ export function deduplicateChildIds(): number {
       parts.push(`${orphanBlockIds.length} orphan blocks deleted`);
     }
     console.warn(`[useSyncedYDoc] Tree integrity: fixed ${totalRemoved} issues (${parts.join(', ')})`);
+
+    // Record diagnostics — use category-specific counts (not totalRemoved which double-counts)
+    const withinArrayDedups = blockDups.reduce((sum, d) => sum + d.indicesToRemove.length, 0) + rootIndicesToRemove.length;
+    recordDedupRepairs(withinArrayDedups);
+    recordPhantomChildrenRemoved(phantomChildren.length);
+    recordCrossParentFixes(crossParentRemovals.length);
   }
 
   return totalRemoved;
@@ -373,6 +390,7 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
   }
 
   console.log('[useSyncedYDoc] Triggering bidirectional resync');
+  recordFullResync();
   const httpClient = getHttpClient();
   let pushedBytes = 0;
 
@@ -739,6 +757,7 @@ function scheduleEchoGapFetch(fromSeq: number, toSeq: number): void {
 
     // Gap still open — genuine missed update, fetch it
     console.warn(`[WS] Echo gap persisted after debounce, fetching: ${pendingEchoGap.fromSeq} → ${pendingEchoGap.toSeq}`);
+    recordEchoGapFill();
     queueGapFetch(pendingEchoGap.fromSeq, pendingEchoGap.toSeq);
     pendingEchoGap = null;
   }, 200);
@@ -881,6 +900,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
     }
 
     const httpClient = getHttpClient();
+    recordGapFill();
     const result = await httpClient.getUpdatesSince(fromSeq, gapSize + 1);
 
     if (!result.ok) {
