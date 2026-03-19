@@ -402,8 +402,9 @@ function findBlockInPane(blockId: string, paneId: string): Element | null {
     if (block) return block;
   }
 
-  // Fallback: find globally (block may be in a different DOM subtree for this pane)
-  return document.querySelector(blockSelector);
+  // No global fallback — returning null lets the retry loop handle unrendered blocks.
+  // A global querySelector would match the block in the wrong pane in multi-pane layouts.
+  return null;
 }
 
 /**

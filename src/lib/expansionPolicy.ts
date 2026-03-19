@@ -49,8 +49,10 @@ export interface ExpansionParams {
   /** For 'keybind' trigger: the depth level to expand to */
   depth?: number;
   blockStore: BlockStoreView;
-  paneId: string;
-  paneStore: PaneStoreView;
+  /** Phase B: used by computeZoomExpansion once wired */
+  paneId?: string;
+  /** Phase B: used by computeZoomExpansion once wired */
+  paneStore?: PaneStoreView;
   /** For 'navigate': ancestor chain from target to root (target-first order) */
   ancestors?: string[];
 }
