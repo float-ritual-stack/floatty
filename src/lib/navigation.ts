@@ -87,6 +87,11 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   // Pass originBlockId so goBack() can restore focus to the search output block
   paneStore.zoomTo(targetPaneId, zoomTarget, { originBlockId });
 
+  // Gap 3 fix: expand ancestors between zoom target and destination block.
+  // Without this, collapsed intermediate ancestors hide the target from DOM,
+  // causing scrollAndHighlightWithRetry to fail silently.
+  expandAncestorsToTarget(blockId, zoomTarget, targetPaneId);
+
   // Set focus on the target block so it receives DOM focus after zoom
   paneStore.setFocusedBlockId(targetPaneId, blockId);
 
@@ -279,6 +284,28 @@ function pickZoomTarget(blockId: string, targetBlock: Block | null): string {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * Expand collapsed ancestors between a zoom target and a destination block.
+ *
+ * After zooming to an ancestor, intermediate blocks between the zoom target
+ * and the actual destination may be collapsed. This walks from destination
+ * up to (but not including) the zoom target, expanding each ancestor so
+ * the destination block renders in the DOM.
+ *
+ * Cap at 10 levels to prevent runaway expansion (matches expandAncestors cap).
+ */
+function expandAncestorsToTarget(blockId: string, zoomTargetId: string, paneId: string): void {
+  const MAX_LEVELS = 10;
+  let current = blockStore.getBlock(blockId);
+  let levels = 0;
+  while (current?.parentId && current.parentId !== zoomTargetId && levels < MAX_LEVELS) {
+    // Expand the parent so its children (including our path) are visible
+    paneStore.setCollapsed(paneId, current.parentId, false);
+    current = blockStore.getBlock(current.parentId);
+    levels++;
+  }
+}
+
+/**
  * Scroll to and highlight a block after zoom settles.
  *
  * Problem: zoomTo() triggers SolidJS re-render. If we find the element too early,
@@ -340,12 +367,24 @@ function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDel
 }
 
 /**
- * Find a block element within a specific pane
+ * Find a block element within a specific pane.
+ *
+ * Searches all elements with matching data-pane-id (there can be multiple:
+ * the pane-layout-leaf placeholder AND the outliner container). Falls back
+ * to global search if pane-scoped search fails.
  */
 function findBlockInPane(blockId: string, paneId: string): Element | null {
-  const paneContainer = document.querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`);
-  if (!paneContainer) return null;
-  return paneContainer.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`);
+  const blockSelector = `[data-block-id="${CSS.escape(blockId)}"]`;
+
+  // Try all pane containers with this ID (placeholder + outliner may both exist)
+  const paneContainers = document.querySelectorAll(`[data-pane-id="${CSS.escape(paneId)}"]`);
+  for (const container of paneContainers) {
+    const block = container.querySelector(blockSelector);
+    if (block) return block;
+  }
+
+  // Fallback: find globally (block may be in a different DOM subtree for this pane)
+  return document.querySelector(blockSelector);
 }
 
 /**
@@ -385,8 +424,9 @@ function highlightBlockInPane(blockId: string, paneId: string): void {
 
   element.classList.add('block-highlight');
 
-  // Scope interaction detection to pane container, fall back to document
-  const listenerTarget: EventTarget = document.querySelector(`[data-pane-id="${CSS.escape(paneId)}"]`) ?? document;
+  // Scope interaction detection to the pane container that actually has the block.
+  // Use the block's own ancestor (handles dual data-pane-id: placeholder + outliner).
+  const listenerTarget: EventTarget = element.closest(`[data-pane-id]`) ?? document;
 
   let fadeTimeout: ReturnType<typeof setTimeout> | null = null;
 
