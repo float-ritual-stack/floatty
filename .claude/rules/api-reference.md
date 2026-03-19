@@ -54,6 +54,7 @@ Client-side: `shortHashIndex` singleton memo in WorkspaceContext for O(1) 8-char
 | `marker_type` | String | Marker type (e.g., "project") |
 | `marker_val` | String | Marker value (e.g., "floatty"). Joins with marker_type internally |
 | `inherited` | bool | When false, use own-only marker fields (default true) |
+| `exclude_types` | String | Comma-separated block types to exclude (MustNot) |
 | `created_after/before` | i64 | Epoch seconds — block creation time |
 | `ctx_after/before` | i64 | Epoch seconds — ctx:: event time |
 | `include_breadcrumb` | bool | Parent chain per hit |

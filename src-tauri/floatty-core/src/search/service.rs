@@ -41,6 +41,7 @@ use std::sync::Arc;
 use tantivy::collector::{Count, TopDocs};
 use tantivy::query::{AllQuery, BooleanQuery, Occur, Query, QueryParser, RangeQuery, TermQuery};
 use tantivy::schema::{IndexRecordOption, Value};
+use tantivy::snippet::SnippetGenerator;
 use tantivy::Term;
 
 /// Escape Tantivy query syntax characters so user input is treated as literal text.
@@ -126,6 +127,10 @@ pub struct SearchFilters {
     /// When false, marker_type/marker_value queries use own-only fields
     /// (excludes inherited markers from ancestors). Default: true (combined).
     pub include_inherited: Option<bool>,
+
+    /// Exclude specific block types (e.g., ["eval", "sh"]).
+    /// Uses MustNot logic - excludes ALL specified types.
+    pub exclude_types: Option<Vec<String>>,
 }
 
 /// Search service for querying indexed blocks.
@@ -198,18 +203,26 @@ impl SearchService {
             Box::new(AllQuery)
         } else {
             let query_escaped = escape_tantivy_query(query_trimmed);
-            let query_parser =
+            let mut query_parser =
                 QueryParser::for_index(self.index.index(), vec![fields.content, fields.markers]);
+            query_parser.set_field_boost(fields.content, 2.0);
+            query_parser.set_field_boost(fields.markers, 1.0);
             query_parser.parse_query(&query_escaped)?
         };
 
-        // Combine base query with filters (AND logic)
-        let final_query: Box<dyn Query> = if filter_queries.is_empty() {
+        // Build exclusion queries (MustNot)
+        let exclude_queries = self.build_exclude_queries(&filters);
+
+        // Combine base query with filters (AND logic) + exclusions (MustNot)
+        let final_query: Box<dyn Query> = if filter_queries.is_empty() && exclude_queries.is_empty() {
             base_query
         } else {
             let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, base_query)];
             for filter in filter_queries {
                 clauses.push((Occur::Must, filter));
+            }
+            for exclude in exclude_queries {
+                clauses.push((Occur::MustNot, exclude));
             }
             Box::new(BooleanQuery::new(clauses))
         };
@@ -217,16 +230,28 @@ impl SearchService {
         // Execute search (Count collector gives true total, TopDocs gives limited results)
         let (total_count, top_docs) = searcher.search(&final_query, &(Count, TopDocs::with_limit(limit)))?;
 
+        // Create snippet generator for text queries (not filter-only)
+        let snippet_gen = if !query_trimmed.is_empty() {
+            SnippetGenerator::create(&searcher, &final_query, fields.content).ok()
+        } else {
+            None
+        };
+
         // Map results to SearchHit
         let mut hits = Vec::with_capacity(top_docs.len());
         for (score, doc_address) in top_docs {
             let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
             if let Some(block_id) = doc.get_first(fields.block_id) {
                 if let Some(id_str) = block_id.as_str() {
+                    let snippet = snippet_gen.as_ref().and_then(|gen| {
+                        let s = gen.snippet_from_doc(&doc);
+                        let html = s.to_html();
+                        if html.is_empty() { None } else { Some(html) }
+                    });
                     hits.push(SearchHit {
                         block_id: id_str.to_string(),
                         score,
-                        snippet: None, // TODO: Add snippet generation
+                        snippet,
                     });
                 }
             }
@@ -317,6 +342,21 @@ impl SearchService {
                 .map(|v| std::ops::Bound::Included(Term::from_field_i64(fields.ctx_at, v)))
                 .unwrap_or(std::ops::Bound::Unbounded);
             queries.push(Box::new(RangeQuery::new(lower, upper)));
+        }
+
+        queries
+    }
+
+    /// Build exclusion queries (MustNot) for exclude_types filter.
+    fn build_exclude_queries(&self, filters: &SearchFilters) -> Vec<Box<dyn Query>> {
+        let fields = self.index.fields();
+        let mut queries: Vec<Box<dyn Query>> = Vec::new();
+
+        if let Some(ref types) = filters.exclude_types {
+            for t in types {
+                let term = Term::from_field_text(fields.block_type, t);
+                queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+            }
         }
 
         queries

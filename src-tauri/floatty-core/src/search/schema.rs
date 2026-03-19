@@ -5,7 +5,7 @@
 //! | Field | Type | Options | Purpose |
 //! |-------|------|---------|---------|
 //! | block_id | TEXT | STRING, STORED | Primary key, term-based deletion |
-//! | content | TEXT | TEXT | Full-text search with tokenization |
+//! | content | TEXT | TEXT, STORED | Full-text search + snippet generation |
 //! | block_type | TEXT | STRING, FAST | Facet filtering (sh, ai, ctx, etc.) |
 //! | parent_id | TEXT | STRING, STORED | Context retrieval |
 //! | updated_at | DATE | FAST, STORED | Recency sorting |
@@ -15,6 +15,7 @@
 //! | marker_values | TEXT | STRING | "type::value" pairs (multi-value) |
 //! | created_at | I64 | FAST, STORED | Block creation timestamp |
 //! | ctx_at | I64 | FAST, STORED | ctx:: event timestamp |
+//! | depth | I64 | FAST, STORED | Block tree depth (for ranking boost) |
 //!
 //! # Why block_id is Indexed STRING
 //!
@@ -36,9 +37,9 @@ pub fn build_schema() -> Schema {
     // STRING = indexed without tokenization, STORED = retrievable
     builder.add_text_field("block_id", STRING | STORED);
 
-    // content: Full-text searchable
-    // TEXT = tokenized with standard analyzer
-    builder.add_text_field("content", TEXT);
+    // content: Full-text searchable + stored for snippet generation
+    // TEXT = tokenized with standard analyzer, STORED = retrievable for SnippetGenerator
+    builder.add_text_field("content", TEXT | STORED);
 
     // block_type: Fast field for faceted filtering
     // STRING = exact match, FAST = column-oriented for filtering
@@ -100,7 +101,11 @@ pub fn build_schema() -> Schema {
 
     // ctx_at: Temporal axis for ctx:: markers (event time, not creation time)
     // A block about a Feb 15 meeting created Mar 11: created_at=Mar 11, ctx_at=Feb 15
-    builder.add_i64_field("ctx_at", i64_options);
+    builder.add_i64_field("ctx_at", i64_options.clone());
+
+    // depth: Block depth in tree (0 = root page, 1 = direct child, etc.)
+    // Used for ranking boost: shallow blocks rank higher for same query terms
+    builder.add_i64_field("depth", i64_options);
 
     builder.build()
 }
@@ -145,9 +150,9 @@ mod tests {
     #[test]
     fn test_schema_field_count() {
         let schema = build_schema();
-        // Should have exactly 14 fields (7 original + 5 enrichment + 2 own-only)
+        // Should have exactly 15 fields (7 original + 5 enrichment + 2 own-only + depth)
         let field_count = schema.fields().count();
-        assert_eq!(field_count, 14);
+        assert_eq!(field_count, 15);
     }
 
     #[test]

@@ -3259,6 +3259,10 @@ pub struct BlockSearchQuery {
     /// Default: true (includes inherited markers from ancestors).
     #[serde(default)]
     pub inherited: Option<bool>,
+    /// Block types to exclude (comma-separated, e.g., "eval,sh").
+    /// Uses MustNot logic — all specified types are excluded from results.
+    #[serde(default)]
+    pub exclude_types: Option<String>,
 }
 
 fn default_search_limit() -> usize {
@@ -3282,6 +3286,9 @@ pub struct BlockSearchHit {
     /// Block metadata (markers, wikilinks, etc)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Highlighted snippet from Tantivy (HTML with <b> tags around matched terms)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
 }
 
 /// Full-text search response
@@ -3329,8 +3336,11 @@ async fn search_blocks(
     // Build filters from query params
     // All temporal search filters use epoch seconds. Tantivy stores seconds internally.
     // Note: BlockDto.createdAt is milliseconds — different contract. Search = seconds.
+    let has_explicit_types = query.types.is_some();
     let filters = SearchFilters {
-        block_types: query.types.map(|t| t.split(',').map(String::from).collect()),
+        block_types: query.types.map(|t| {
+            t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
+        }),
         has_markers: query.has_markers,
         parent_id: query.parent_id,
         outlink: query.outlink,
@@ -3347,6 +3357,19 @@ async fn search_blocks(
         ctx_after: query.ctx_after,
         ctx_before: query.ctx_before,
         include_inherited: query.inherited,
+        exclude_types: Some(match query.exclude_types {
+            // Caller specified explicit exclusions — use those
+            Some(t) => t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
+            // No exclusions specified — apply defaults ONLY for general queries.
+            // Skip defaults when caller used `types=` (explicit include would
+            // conflict with default MustNot on the same type, e.g. types=picker).
+            None if !has_explicit_types => vec![
+                "picker".into(),
+                "output".into(),
+                "ran".into(),
+            ],
+            None => vec![],
+        }),
     };
 
     // Execute search
@@ -3427,6 +3450,7 @@ async fn search_blocks(
                     content,
                     breadcrumb,
                     metadata,
+                    snippet: h.snippet,
                 }
             })
             .collect()

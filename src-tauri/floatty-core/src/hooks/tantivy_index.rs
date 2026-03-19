@@ -209,6 +209,20 @@ impl TantivyIndexHook {
             "Indexing block"
         );
 
+        // Compute depth by walking parent chain (max 50 to prevent infinite loops).
+        // TODO: Wire into ranking (shallow boost, deep penalty) once real-world
+        // observation confirms it's needed. Field is indexed for queries/filters.
+        let depth = {
+            let mut d: u32 = 0;
+            let mut current_parent = parent_id.clone();
+            while let Some(ref pid) = current_parent {
+                if d >= 50 { break; }
+                d += 1;
+                current_parent = store.get_block(pid).and_then(|b| b.parent_id.clone());
+            }
+            d
+        };
+
         // Build BlockIndexData and send to writer
         let data = BlockIndexData {
             block_id: id.to_string(),
@@ -225,6 +239,7 @@ impl TantivyIndexHook {
             marker_values_own: m_values_own,
             created_at,
             ctx_at,
+            depth,
         };
 
         let writer = writer.clone();
