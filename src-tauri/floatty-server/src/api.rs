@@ -3354,7 +3354,19 @@ async fn search_blocks(
         ctx_after: query.ctx_after,
         ctx_before: query.ctx_before,
         include_inherited: query.inherited,
-        exclude_types: query.exclude_types.map(|t| t.split(',').map(String::from).collect()),
+        exclude_types: Some(match query.exclude_types {
+            // Caller specified explicit exclusions — use those
+            Some(t) => t.split(',').map(String::from).collect(),
+            // No exclusions specified — apply defaults for low-signal block types
+            // These are internal machinery that never match user intent in general search.
+            // Callers can override by passing exclude_types= (empty) to disable defaults,
+            // or types=picker to explicitly include a default-excluded type.
+            None => vec![
+                "picker".into(),
+                "output".into(),
+                "ran".into(),
+            ],
+        }),
     };
 
     // Execute search
