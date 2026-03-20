@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack, createRoot } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -25,6 +25,28 @@ import { DoorHost, DoorExecCard } from './views/DoorHost';
 import { ImgView } from './views/ImgView';
 import { EvalOutput } from './EvalOutput';
 import type { EvalResult } from '../lib/evalEngine';
+import { invoke } from '@tauri-apps/api/core';
+
+// Module-level child render limit from config (0 = no limit, renders all children).
+// Loaded once from config.toml. HMR-safe via dispose cleanup.
+let _childRenderLimitLoaded = false;
+const [childRenderLimitSignal, setChildRenderLimitSignal] = createRoot(() => createSignal(0));
+
+function loadChildRenderLimit(): void {
+  if (_childRenderLimitLoaded) return;
+  _childRenderLimitLoaded = true;
+  invoke('get_ctx_config').then((config: { child_render_limit?: number }) => {
+    setChildRenderLimitSignal(config.child_render_limit ?? 0);
+  }).catch(() => {
+    // Config load failure — keep default (0 = no limit)
+  });
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    _childRenderLimitLoaded = false;
+  });
+}
 
 // Debounce delay for Y.Doc updates (ms)
 // Keeps typing responsive while reducing sync overhead
@@ -137,13 +159,19 @@ export function BlockItem(props: BlockItemProps) {
     const defaultCollapsed = b?.collapsed || false;
     return paneStore.isCollapsed(props.paneId, props.id, defaultCollapsed);
   });
-  // Render limit for large child lists — prevents mounting 300+ BlockItems at once.
-  // Resets to 100 when block collapses so re-expand stays fast.
-  const CHILD_RENDER_LIMIT = 100;
-  const [childLimit, setChildLimit] = createSignal(CHILD_RENDER_LIMIT);
-  createEffect(on(isCollapsed, (collapsed) => { if (collapsed) setChildLimit(CHILD_RENDER_LIMIT); }));
-  createEffect(on(() => props.id, () => setChildLimit(CHILD_RENDER_LIMIT)));
-  const visibleChildIds = createMemo(() => (block()?.childIds ?? []).slice(0, childLimit()));
+  // Render limit for large child lists (config-driven, 0 = no limit).
+  // With expansion policy keeping children collapsed, rendering all is lightweight.
+  loadChildRenderLimit();
+  const configLimit = childRenderLimitSignal;
+  const [childLimit, setChildLimit] = createSignal(0);
+  createEffect(on(configLimit, (limit) => { if (limit > 0) setChildLimit(limit); }));
+  createEffect(on(isCollapsed, (collapsed) => { const l = configLimit(); if (collapsed && l > 0) setChildLimit(l); }));
+  createEffect(on(() => props.id, () => { const l = configLimit(); if (l > 0) setChildLimit(l); }));
+  const visibleChildIds = createMemo(() => {
+    const ids = block()?.childIds ?? [];
+    const limit = childLimit();
+    return limit > 0 ? ids.slice(0, limit) : ids;
+  });
 
   // FLO-58: Detect table blocks for picker pattern rendering
   const isTableBlock = createMemo(() => hasTablePattern(block()?.content ?? ''));
@@ -1266,10 +1294,10 @@ export function BlockItem(props: BlockItemProps) {
               );
             }}
           </Key>
-          <Show when={(block()?.childIds.length ?? 0) > childLimit()}>
+          <Show when={childLimit() > 0 && (block()?.childIds.length ?? 0) > childLimit()}>
             <div
               class="block-children-more"
-              onClick={() => setChildLimit(n => n + CHILD_RENDER_LIMIT)}
+              onClick={() => setChildLimit(n => n + (configLimit() || 100))}
             >
               {(block()?.childIds.length ?? 0) - childLimit()} more...
             </div>

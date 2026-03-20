@@ -73,6 +73,10 @@ pub struct AggregatorConfig {
     /// Opacity of unfocused panes (0.0–1.0, default 0.7). Set to 1.0 to disable dimming.
     #[serde(default = "default_unfocused_pane_opacity")]
     pub unfocused_pane_opacity: f32,
+    /// Max children to render per block (0 = no limit, renders all children).
+    /// With expansion policy keeping children collapsed, rendering all is lightweight.
+    #[serde(default)]
+    pub child_render_limit: u32,
     /// Per-door plugin settings (e.g., [plugins.daily] notes_dir = "...")
     #[serde(default)]
     pub plugins: std::collections::HashMap<String, toml::Value>,
@@ -167,6 +171,7 @@ impl Default for AggregatorConfig {
             initial_collapse_depth: default_initial_collapse_depth(),
             show_diagnostics: default_show_diagnostics(),
             unfocused_pane_opacity: default_unfocused_pane_opacity(),
+            child_render_limit: 0,
             plugins: std::collections::HashMap::new(),
             is_dev_build: cfg!(debug_assertions),
             data_dir: String::new(), // Populated by load_from
