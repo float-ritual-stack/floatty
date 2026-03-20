@@ -30,21 +30,35 @@ import { invoke } from '@tauri-apps/api/core';
 // Module-level child render limit from config (0 = no limit, renders all children).
 // Loaded once from config.toml. HMR-safe via dispose cleanup.
 let _childRenderLimitLoaded = false;
-const [childRenderLimitSignal, setChildRenderLimitSignal] = createRoot(() => createSignal(0));
+let _disposeRoot: (() => void) | undefined;
+let childRenderLimitSignal: () => number;
+let setChildRenderLimitSignal: (v: number) => void;
+
+function initChildRenderLimitSignal(): void {
+  _disposeRoot?.();
+  createRoot((dispose) => {
+    const [get, set] = createSignal(0);
+    childRenderLimitSignal = get;
+    setChildRenderLimitSignal = set;
+    _disposeRoot = dispose;
+  });
+}
+initChildRenderLimitSignal();
 
 function loadChildRenderLimit(): void {
   if (_childRenderLimitLoaded) return;
   _childRenderLimitLoaded = true;
   invoke('get_ctx_config').then((config: { child_render_limit?: number }) => {
     setChildRenderLimitSignal(config.child_render_limit ?? 0);
-  }).catch(() => {
-    // Config load failure — keep default (0 = no limit)
+  }).catch((err) => {
+    console.warn('[BlockItem] Failed to load config for child_render_limit:', err);
   });
 }
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     _childRenderLimitLoaded = false;
+    _disposeRoot?.();
   });
 }
 

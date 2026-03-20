@@ -424,18 +424,6 @@ function findBlockInPane(blockId: string, paneId: string): Element | null {
   return null;
 }
 
-/**
- * Scroll a block into view within a specific pane
- */
-function scrollToBlockInPane(blockId: string, paneId: string): void {
-  const element = findBlockInPane(blockId, paneId);
-  if (element) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  } else {
-    console.warn('[navigation] scrollToBlockInPane: element not found', { blockId, paneId });
-  }
-}
-
 /** Track highlight cleanup per pane (supports concurrent highlights in multi-pane) */
 const highlightCleanupByPaneId = new Map<string, () => void>();
 
