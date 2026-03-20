@@ -15,6 +15,7 @@ import { invoke, type AggregatorConfig } from '../lib/tauriTypes';
 import { downloadJSON } from '../lib/jsonExport';
 import type { ExportedOutline } from '../lib/jsonExport';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
+import { computeExpansion } from '../lib/expansionPolicy';
 import { downloadBinary } from '../lib/binaryExport';
 import { validateForExport, type ValidationWarning } from '../lib/validation';
 import { ExportValidation } from './ExportValidation';
@@ -213,13 +214,17 @@ export function Outliner(props: OutlinerProps) {
     }
 
     if (zoomTarget && zoomTarget !== prevTarget) {
-      // Ensure the zoom target itself is expanded so its children are visible.
-      // Do NOT touch children's collapse state — they retain whatever state they
-      // have from Y.Doc block.collapsed or prior user interactions.
-      //
-      // Large container performance (pages:: with 300+ children) is handled by
-      // the render limit in BlockItem (100 children rendered initially), not here.
-      paneStore.setCollapsed(props.paneId, zoomTarget, false);
+      // Use expansion policy to decide how much to show:
+      // - Small subtrees (<=500 nodes): expand to depth 2
+      // - Large subtrees (>500 nodes): expand to depth 1, auto-collapse children with descendants
+      const result = computeExpansion({
+        targetId: zoomTarget,
+        trigger: 'zoom',
+        blockStore: { blocks: store.blocks, rootIds: store.rootIds },
+      });
+      for (const action of result.actions) {
+        paneStore.setCollapsed(props.paneId, action.blockId, action.collapsed);
+      }
     }
   }));
 
