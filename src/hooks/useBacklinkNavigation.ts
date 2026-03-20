@@ -14,8 +14,7 @@
 
 import { blockStore } from './useBlockStore';
 import { paneStore } from './usePaneStore';
-import { layoutStore } from './useLayoutStore';
-import { collectPaneIds } from '../lib/layoutTypes';
+import { layoutStore, findTabIdByPaneId } from './useLayoutStore';
 import { extractAllWikilinkTargets } from '../lib/wikilinkUtils';
 import type { Block } from '../lib/blockTypes';
 
@@ -34,24 +33,6 @@ const PAGES_PREFIX = 'pages::';
 export function getPageTitle(content: string): string {
   const firstLine = content.split('\n')[0];
   return firstLine.replace(/^#+\s*/, '').trim();
-}
-
-/**
- * Find the tabId that contains a given paneId.
- * Searches all layouts in layoutStore.
- * Returns null if pane not found in any tab.
- */
-export function findTabIdByPaneId(paneId: string): string | null {
-  const layouts = layoutStore.layouts;
-
-  for (const [tabId, layout] of Object.entries(layouts)) {
-    const paneIds = collectPaneIds(layout.root);
-    if (paneIds.includes(paneId)) {
-      return tabId;
-    }
-  }
-
-  return null;
 }
 
 /**

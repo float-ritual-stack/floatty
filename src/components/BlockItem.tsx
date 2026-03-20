@@ -7,7 +7,7 @@ import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
-import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { navigateToBlock, navigateToPage, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';

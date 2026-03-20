@@ -15,7 +15,7 @@ import { layoutStore } from '../hooks/useLayoutStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { blockStore } from '../hooks/useBlockStore';
 import { tabStore } from '../hooks/useTabStore';
-import { findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { findTabIdByPaneId } from '../hooks/useLayoutStore';
 
 /** Get a short label describing what's visible in a pane */
 function getPaneLabel(paneId: string, leafType?: string): string {

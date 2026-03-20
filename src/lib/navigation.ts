@@ -8,7 +8,8 @@
 import { paneStore } from '../hooks/usePaneStore';
 import { tabStore } from '../hooks/useTabStore';
 import { layoutStore } from '../hooks/useLayoutStore';
-import { findTabIdByPaneId, navigateToPage as navigateToPageImpl } from '../hooks/useBacklinkNavigation';
+import { findTabIdByPaneId } from '../hooks/useLayoutStore';
+import { navigateToPage as navigateToPageImpl } from '../hooks/useBacklinkNavigation';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';

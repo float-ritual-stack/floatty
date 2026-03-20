@@ -512,3 +512,19 @@ function createLayoutStore() {
 
 // Create singleton store
 export const layoutStore = createRoot(createLayoutStore);
+
+/**
+ * Find the tabId that contains a given paneId.
+ * Searches all layouts in layoutStore.
+ * Returns null if pane not found in any tab.
+ */
+export function findTabIdByPaneId(paneId: string): string | null {
+  const layouts = layoutStore.layouts;
+  for (const [tabId, layout] of Object.entries(layouts)) {
+    const paneIds = collectPaneIds(layout.root);
+    if (paneIds.includes(paneId)) {
+      return tabId;
+    }
+  }
+  return null;
+}

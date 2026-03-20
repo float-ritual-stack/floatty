@@ -6,11 +6,11 @@
  */
 
 import { createMemo, Show, For } from 'solid-js';
-import { findBacklinks, findPagesContainer, findTabIdByPaneId } from '../hooks/useBacklinkNavigation';
+import { findBacklinks, findPagesContainer } from '../hooks/useBacklinkNavigation';
 import { navigateToPage, resolveSameTabLink } from '../lib/navigation';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
-import { layoutStore } from '../hooks/useLayoutStore';
+import { layoutStore, findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
 import { BlockDisplay } from './BlockDisplay';
 import type { Block } from '../lib/blockTypes';

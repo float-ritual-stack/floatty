@@ -11,9 +11,8 @@
  */
 
 import { createRoot, createSignal } from 'solid-js';
-import { layoutStore } from './useLayoutStore';
+import { layoutStore, findTabIdByPaneId } from './useLayoutStore';
 import { collectLeaves } from '../lib/layoutTypes';
-import { findTabIdByPaneId } from './useBacklinkNavigation';
 
 function createPaneLinkStore() {
   // Block-level links: blockId → targetPaneId
