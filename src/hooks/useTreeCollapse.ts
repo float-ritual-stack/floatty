@@ -6,6 +6,7 @@
  */
 
 import type { Accessor } from 'solid-js';
+import { countDescendantsToDepth } from '../lib/expansionPolicy';
 
 interface UseTreeCollapseParams {
   blockStore: {
@@ -68,13 +69,24 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
   const expandToDepth = (scopeRootId: string | null, depth: number) => {
     const roots = scopeRootId ? [scopeRootId] : (zoomedRootId() ? [zoomedRootId()!] : store.rootIds);
 
+    // Size cap: if expanding beyond depth 1 would reveal too many blocks, fall back to depth 1
+    let effectiveDepth = depth;
+    if (depth > 1) {
+      const blockStoreView = { blocks: store.blocks, rootIds: store.rootIds };
+      for (const rootId of roots) {
+        const count = countDescendantsToDepth(rootId, depth, blockStoreView);
+        if (count === 'over_cap') {
+          effectiveDepth = 1;
+          break;
+        }
+      }
+    }
+
     const walk = (id: string, currentDepth: number) => {
       const block = store.blocks[id];
       if (!block || block.childIds.length === 0) return;
 
-      // Blocks at depths <= target should be expanded (not collapsed)
-      // Blocks at depths > target should be collapsed
-      const shouldCollapse = currentDepth > depth;
+      const shouldCollapse = currentDepth > effectiveDepth;
       paneStore.setCollapsed(paneId, id, shouldCollapse);
 
       for (const childId of block.childIds) {
