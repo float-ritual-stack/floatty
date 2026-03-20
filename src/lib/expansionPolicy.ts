@@ -282,11 +282,8 @@ function computeKeybindExpansion(
     }
   };
 
-  // Walk from target (or its roots if target is null-like)
-  const roots = [targetId];
-  for (const rootId of roots) {
-    walk(rootId, 1);
-  }
+  // Walk from target, expanding/collapsing to requested depth
+  walk(targetId, 1);
 
   return { actions };
 }
