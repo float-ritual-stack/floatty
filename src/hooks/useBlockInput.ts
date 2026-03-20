@@ -9,7 +9,6 @@
  *
  * Sub-hooks (see hooks/blockInput/):
  *   useNavigationActions  — navigate_up/down, selection, create_trailing_block
- *   useZoomActions        — zoom_in/out, wikilink page navigation
  *   useEditingActions     — create, split, merge, delete, indent/outdent, text ops
  *   useExecutionAction    — execute_block (sh::, ai::, daily::, …)
  */

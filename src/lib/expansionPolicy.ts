@@ -176,7 +176,7 @@ function computeToggleExpansion(
 
 /**
  * Zoom: expand target + ensure visible to depth 2. If subtree is huge, only depth 1.
- * Uses ensureExpandedToDepth semantics (never force-collapse deeper blocks).
+ * One-directional: expands shallow blocks, never force-collapses deeper blocks.
  */
 function computeZoomExpansion(
   targetId: string,
