@@ -149,10 +149,10 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
    * FLO-211: Expand all ancestors of a block to make it visible.
    * Used to restore focus to a previously-visible block after back/forward navigation.
    */
-  const expandAncestors = (blockId: string) => {
+  const expandAncestors = (blockId: string, maxLevels: number = 10) => {
     const ancestors = getAncestors(blockId);
-    for (const ancestorId of ancestors) {
-      // Expand each ancestor (set collapsed = false)
+    const capped = ancestors.slice(0, maxLevels);
+    for (const ancestorId of capped) {
       paneStore.setCollapsed(paneId, ancestorId, false);
     }
   };
