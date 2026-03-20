@@ -6,6 +6,37 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.7] - 2026-03-19
+
+### Features
+
+- **Unified expansion policy** — five competing expand/collapse systems consolidated into one pure function (`expansionPolicy.ts`) with 20 tests. All triggers (toggle, zoom, navigate, keybind) route through a single policy with smart thresholds (FLO-281, FLO-504, #183)
+- **Navigation funnel** — all navigation paths (wikilink click, Cmd+Enter, search/filter/pick results, ⌘K Today, LinkedReferences, deep links) now route through `lib/navigation.ts` with pane link resolution at each call site (FLO-427, FLO-378, FLO-424)
+- **Config-driven child render limit** — `child_render_limit` in config.toml (default 0 = no limit). Removes "77 more..." truncation; all children render collapsed
+- **Search quality Phase 3** — content preprocessing, field boosting, type exclusion, snippet generation, depth scoring (FLO-368)
+
+### Improvements
+
+- Smart expand on toggle: expanding a block with 10+ children auto-collapses grandchildren
+- Zoom auto-expand: large subtrees (500+ nodes) cap at depth 1 to prevent UI freeze
+- `expandAncestors` capped at 10 levels to prevent deep-tree navigation hangs (FLO-464)
+- `expandToDepth` (Cmd+E) with size cap — bails to depth 1 for 500+ node subtrees (FLO-203)
+- Active pane tracks correctly after pane-link navigation (Cmd+J overlay)
+
+### Refactoring
+
+- `findTabIdByPaneId` moved from useBacklinkNavigation to useLayoutStore (layout utility, not backlink concern)
+- Dead code removed: `ensureExpandedToDepth`, `useZoomActions.ts`, `scrollToBlockInPane` (-121 lines)
+- `resolveSameTabLink` extracted, removing 118 lines of duplication across navigation callers
+- HMR dispose fix for module-level `createRoot` in BlockItem config loading
+
+### Documentation
+
+- `docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md` — architecture reference for expand/collapse + navigation routing
+- `.claude/rules/architecture.md` updated with expansionPolicy.ts, useTreeCollapse.ts, useLayoutStore.findTabIdByPaneId
+
+---
+
 ## [0.9.6] - 2026-03-18
 
 ### Features
