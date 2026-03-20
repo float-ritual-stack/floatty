@@ -79,7 +79,8 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `layoutTypes.ts` | Layout tree types + pure transforms |
 | `blockTypes.ts` | Block type detection (`sh::`, `ai::`, etc.) |
 | `inlineParser.ts` | Inline markdown tokenizer + wikilinks |
-| `navigation.ts` | Unified navigation (navigateToBlock, navigateToPage) |
+| `navigation.ts` | Unified navigation (navigateToBlock, navigateToPage). See `docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md` |
+| `expansionPolicy.ts` | Unified expansion logic — one function for all expand/collapse triggers |
 | `handlers/artifact.ts` | JSX transpilation for artifact:: |
 | `handlers/doorLoader.ts` | Door discovery + hot-reload |
 | `handlers/doorTypes.ts` | Door type definitions (`selfRender` flag) |
@@ -103,7 +104,8 @@ Hooks subscribe to `blockEventBus` with origin filtering. See `docs/architecture
 |------|---------|
 | `useBlockStore.ts` | Y.Doc-backed block CRUD |
 | `usePaneStore.ts` | Per-pane state (zoom, focus, history). Use `zoomTo()` for navigation |
-| `useLayoutStore.ts` | Per-tab split layouts |
+| `useLayoutStore.ts` | Per-tab split layouts, `findTabIdByPaneId` |
+| `useTreeCollapse.ts` | `expandToDepth` (size-capped), `expandAncestors` (level-capped), `collapseToDepth` |
 | `useTabStore.ts` | Tab state |
 | `useSyncedYDoc.ts` | CRDT sync, WebSocket, sequence tracking |
 | `useBlockInput.ts` | Keyboard coordinator (`determineKeyAction()`) |

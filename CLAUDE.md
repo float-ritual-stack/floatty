@@ -187,5 +187,6 @@ See @.claude/rules/config-and-logging.md for config fields, logging, sync health
 - See @.claude/rules/accessibility-baseline.md — ARIA, focus, motion
 - See @.claude/rules/symmetry-check.md — hotfix drift prevention
 - See @.claude/rules/architecture.md — full file inventory, data flows
+- See @docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md — unified expansion policy + navigation funnel
 - See @.claude/rules/api-reference.md — all REST/WS endpoints
 - See @.claude/rules/config-and-logging.md — paths, config, logging, sync health
