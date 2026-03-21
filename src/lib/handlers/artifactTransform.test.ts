@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transformJsx, buildImportMap, buildArtifactHtml, detectCssFrameworks } from './artifactTransform';
+import { transformJsx, buildImportMap, buildArtifactHtml, detectCssFrameworks, detectContentType, buildRawHtmlDocument, buildJsonViewerHtml, buildTextViewerHtml } from './artifactTransform';
 
 describe('transformJsx', () => {
   it('transforms JSX to createElement calls', () => {
@@ -263,5 +263,110 @@ describe('buildArtifactHtml', () => {
     const html = buildArtifactHtml('function App() {}', {});
     expect(html).toContain("'poke'");
     expect(html).toContain('window.onPoke');
+  });
+});
+
+describe('detectContentType', () => {
+  it('detects HTML by doctype', () => {
+    expect(detectContentType('<!DOCTYPE html><html><body>hi</body></html>')).toBe('html');
+  });
+
+  it('detects HTML by html tag', () => {
+    expect(detectContentType('<html>\n<head></head></html>')).toBe('html');
+  });
+
+  it('detects HTML by file extension', () => {
+    expect(detectContentType('some random content', 'foo.html')).toBe('html');
+    expect(detectContentType('some random content', '/path/to/bar.htm')).toBe('html');
+  });
+
+  it('detects JSON objects', () => {
+    expect(detectContentType('{"key": "value"}')).toBe('json');
+  });
+
+  it('detects JSON arrays', () => {
+    expect(detectContentType('[1, 2, 3]')).toBe('json');
+  });
+
+  it('detects JSX with import', () => {
+    expect(detectContentType('import React from "react";\nexport default function App() {}')).toBe('jsx');
+  });
+
+  it('detects JSX with export', () => {
+    expect(detectContentType('export default function App() { return <div/>; }')).toBe('jsx');
+  });
+
+  it('detects JSX with const/function', () => {
+    expect(detectContentType('const App = () => <div/>;')).toBe('jsx');
+  });
+
+  it('treats curly brace that is not valid JSON as JSX', () => {
+    // Object destructuring in JSX, not JSON
+    expect(detectContentType('const { useState } = React;\nexport default () => <div/>;')).toBe('jsx');
+  });
+
+  it('detects markdown/text as text', () => {
+    expect(detectContentType('# Hello World\n\nSome paragraph text.')).toBe('text');
+  });
+
+  it('detects Go source as text', () => {
+    expect(detectContentType('package main\n\nfunc main() {}')).toBe('text');
+  });
+
+  it('detects Python as text', () => {
+    expect(detectContentType('def extract_topics(text):\n    pass')).toBe('text');
+  });
+
+  it('handles leading whitespace', () => {
+    expect(detectContentType('  \n  <!DOCTYPE html><html></html>')).toBe('html');
+    expect(detectContentType('  \n  {"key": 1}')).toBe('json');
+  });
+});
+
+describe('buildRawHtmlDocument', () => {
+  it('passes through complete HTML documents', () => {
+    const html = '<!DOCTYPE html><html><body>content</body></html>';
+    expect(buildRawHtmlDocument(html)).toBe(html);
+  });
+
+  it('wraps HTML fragments in a document', () => {
+    const result = buildRawHtmlDocument('<h1>Hello</h1>');
+    expect(result).toContain('<!DOCTYPE html>');
+    expect(result).toContain('<h1>Hello</h1>');
+  });
+});
+
+describe('buildJsonViewerHtml', () => {
+  it('produces HTML with JSON viewer', () => {
+    const result = buildJsonViewerHtml('{"name": "test"}');
+    expect(result).toContain('<!DOCTYPE html>');
+    expect(result).toContain('id="json"');
+    // JSON is embedded via JSON.stringify in a script, so check the raw source is referenced
+    expect(result).toContain('JSON.parse');
+  });
+
+  it('includes syntax highlighting classes', () => {
+    const result = buildJsonViewerHtml('{"key": 1}');
+    expect(result).toContain('.string');
+    expect(result).toContain('.number');
+    expect(result).toContain('.key');
+  });
+});
+
+describe('buildTextViewerHtml', () => {
+  it('produces HTML with text content', () => {
+    const result = buildTextViewerHtml('Hello world');
+    expect(result).toContain('<!DOCTYPE html>');
+    expect(result).toContain('Hello world');
+  });
+
+  it('shows filename when provided', () => {
+    const result = buildTextViewerHtml('content', '/path/to/file.md');
+    expect(result).toContain('file.md');
+  });
+
+  it('escapes HTML in text content', () => {
+    const result = buildTextViewerHtml('<script>alert(1)</script>');
+    expect(result).toContain('&lt;script&gt;');
   });
 });

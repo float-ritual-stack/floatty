@@ -260,14 +260,126 @@ export function createArtifactBlobUrl(html: string): string {
 }
 
 /**
- * Full pipeline: JSX source → blob URL ready for iframe src.
+ * Detect content type from source content for routing to appropriate renderer.
+ * Returns 'jsx' for valid JavaScript/JSX, or the detected non-JSX type.
  */
-export function transformArtifact(source: string): { blobUrl: string; error?: undefined } | { blobUrl?: undefined; error: string } {
+export type ContentType = 'jsx' | 'html' | 'json' | 'text';
+
+export function detectContentType(source: string, filePath?: string): ContentType {
+  // File extension takes priority for HTML
+  if (filePath && /\.html?$/i.test(filePath)) return 'html';
+
+  const trimmed = source.trimStart();
+
+  // HTML documents
+  if (/^<!doctype\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) return 'html';
+
+  // JSON (starts with { or [, validate with parse)
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try { JSON.parse(trimmed); return 'json'; } catch { /* not valid JSON, might be JSX */ }
+  }
+
+  // JSX indicators: import/export statements, function/const/class declarations
+  if (/^(?:import\s|export\s|const\s|let\s|var\s|function\s|class\s|\/\/|\/\*)/m.test(trimmed)) return 'jsx';
+
+  // If it has JSX-like tags with React patterns, treat as JSX
+  if (/<\w+[\s>]/.test(trimmed) && /(?:onClick|className|useState|useEffect|React)/.test(trimmed)) return 'jsx';
+
+  // Everything else is text/markdown
+  return 'text';
+}
+
+/**
+ * Build an HTML document that renders raw HTML content directly (no React).
+ */
+export function buildRawHtmlDocument(source: string): string {
+  // If it's already a complete HTML document, use as-is
+  if (/^<!doctype\s+html/i.test(source.trimStart()) || /^<html[\s>]/i.test(source.trimStart())) {
+    return source;
+  }
+  // Fragment — wrap in minimal document
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; margin: 1rem; }
+</style></head><body>${source}</body></html>`;
+}
+
+/**
+ * Build an HTML document that renders JSON with syntax highlighting.
+ */
+export function buildJsonViewerHtml(source: string): string {
+  // Escape for embedding in HTML
+  const escaped = source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'JetBrains Mono', 'SF Mono', monospace; background: #1a1a2e; color: #e0e0e0; padding: 1rem; }
+  pre { white-space: pre-wrap; word-wrap: break-word; line-height: 1.5; font-size: 13px; }
+  .string { color: #a8db8f; } .number { color: #e0a0ff; } .boolean { color: #ff9e64; }
+  .null { color: #737aa2; } .key { color: #7dcfff; }
+</style></head><body><pre id="json"></pre>
+<script>
+  const raw = ${JSON.stringify(source)};
   try {
-    const importMap = buildImportMap(source);
-    const cssFrameworks = detectCssFrameworks(source);
-    const jsCode = transformJsx(source);
-    const html = buildArtifactHtml(jsCode, importMap, { cssFrameworks });
+    const obj = JSON.parse(raw);
+    const formatted = JSON.stringify(obj, null, 2);
+    document.getElementById('json').innerHTML = formatted
+      .replace(/"([^"]+)"\\s*:/g, '"<span class="key">$1</span>":')
+      .replace(/: "([^"]*)"/g, ': "<span class="string">$1</span>"')
+      .replace(/: (\\d+\\.?\\d*)/g, ': <span class="number">$1</span>')
+      .replace(/: (true|false)/g, ': <span class="boolean">$1</span>')
+      .replace(/: (null)/g, ': <span class="null">$1</span>');
+  } catch { document.getElementById('json').textContent = raw; }
+</script></body></html>`;
+}
+
+/**
+ * Build an HTML document that renders text/markdown content.
+ */
+export function buildTextViewerHtml(source: string, filePath?: string): string {
+  const escaped = source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fileName = filePath ? filePath.split('/').pop() ?? '' : '';
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'JetBrains Mono', 'SF Mono', monospace; background: #1a1a2e; color: #e0e0e0; padding: 1rem; }
+  .filename { color: #737aa2; font-size: 11px; margin-bottom: 0.5rem; }
+  pre { white-space: pre-wrap; word-wrap: break-word; line-height: 1.5; font-size: 13px; }
+</style></head><body>
+${fileName ? `<div class="filename">${fileName}</div>` : ''}
+<pre>${escaped}</pre>
+</body></html>`;
+}
+
+/**
+ * Full pipeline: source → blob URL ready for iframe src.
+ * Routes based on content type: JSX goes through Sucrase, everything else gets a viewer.
+ */
+export function transformArtifact(source: string, filePath?: string): { blobUrl: string; error?: undefined } | { blobUrl?: undefined; error: string } {
+  try {
+    const contentType = detectContentType(source, filePath);
+
+    let html: string;
+    switch (contentType) {
+      case 'html':
+        html = buildRawHtmlDocument(source);
+        break;
+      case 'json':
+        html = buildJsonViewerHtml(source);
+        break;
+      case 'text':
+        html = buildTextViewerHtml(source, filePath);
+        break;
+      case 'jsx':
+      default: {
+        const importMap = buildImportMap(source);
+        const cssFrameworks = detectCssFrameworks(source);
+        const jsCode = transformJsx(source);
+        html = buildArtifactHtml(jsCode, importMap, { cssFrameworks });
+        break;
+      }
+    }
+
     const blobUrl = createArtifactBlobUrl(html);
     return { blobUrl };
   } catch (err) {

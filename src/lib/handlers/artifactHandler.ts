@@ -45,7 +45,7 @@ export const artifactHandler: BlockHandler = {
       const resolvedPath = await resolveTilde(filePath);
       const source = await readTextFile(resolvedPath);
 
-      const result = transformArtifact(source);
+      const result = transformArtifact(source, resolvedPath);
       if (result.error) {
         activeBlobUrls.delete(blockId);
         actions.setBlockOutput?.(blockId, { type: 'error', data: `Transform error: ${result.error}` }, 'eval-result');
