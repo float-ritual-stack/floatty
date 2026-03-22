@@ -588,13 +588,12 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         requestAnimationFrame(() => {
           const updatedBlock = store.blocks[deps.getBlockId()];
           if (updatedBlock?.parentId) {
+            const parentBlockCollapsed = store.blocks[updatedBlock.parentId]?.collapsed || false;
             const isCurrentlyCollapsed = deps.paneStore.isCollapsed(
-              deps.paneId, updatedBlock.parentId,
-              store.blocks[updatedBlock.parentId]?.collapsed || false
+              deps.paneId, updatedBlock.parentId, parentBlockCollapsed
             );
             if (isCurrentlyCollapsed) {
-              deps.paneStore.toggleCollapsed(deps.paneId, updatedBlock.parentId,
-                store.blocks[updatedBlock.parentId]?.collapsed || false);
+              deps.paneStore.toggleCollapsed(deps.paneId, updatedBlock.parentId, parentBlockCollapsed);
             }
           }
         });

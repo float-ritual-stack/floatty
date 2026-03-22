@@ -168,13 +168,17 @@ export function BlockItem(props: BlockItemProps) {
 
   const block = createMemo(() => store.blocks[props.id]);
   const isFocused = createMemo(() => props.focusedBlockId === props.id);
+  // pages:: children default collapsed — untrack parent content read to avoid
+  // N×M reactivity (265 children re-evaluating on every keystroke in parent).
+  // pages:: prefix is structural, doesn't change while children are mounted.
+  const isPageChild = createMemo(() => {
+    const parentId = block()?.parentId;
+    if (!parentId) return false;
+    return untrack(() => store.blocks[parentId]?.content?.startsWith('pages::') ?? false);
+  });
   const isCollapsed = createMemo(() => {
     const b = block();
-    // Children of pages:: default to collapsed — they're page containers,
-    // not content to expand inline. 265 page trees expanding at once = hang.
-    const parentContent = b?.parentId ? store.blocks[b.parentId]?.content : undefined;
-    const isPageChild = parentContent?.startsWith('pages::') ?? false;
-    const defaultCollapsed = isPageChild || (b?.collapsed || false);
+    const defaultCollapsed = isPageChild() || (b?.collapsed || false);
     return paneStore.isCollapsed(props.paneId, props.id, defaultCollapsed);
   });
   // Render limit for large child lists (config-driven, 0 = no limit).

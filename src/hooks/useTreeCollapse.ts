@@ -135,9 +135,11 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
   const expandAncestors = (blockId: string, maxLevels: number = 10) => {
     const ancestors = getAncestors(blockId);
     const capped = ancestors.slice(0, maxLevels);
-    for (const ancestorId of capped) {
-      paneStore.setCollapsed(paneId, ancestorId, false);
-    }
+    batch(() => {
+      for (const ancestorId of capped) {
+        paneStore.setCollapsed(paneId, ancestorId, false);
+      }
+    });
   };
 
   /**

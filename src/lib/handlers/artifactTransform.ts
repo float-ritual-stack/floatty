@@ -301,9 +301,11 @@ export function detectContentType(source: string, filePath?: string): ContentTyp
   if (/^(?:def\s+\w|class\s+\w.*:$|from\s+\w+\s+import)/m.test(trimmed)) return 'text'; // Python (no shebang)
   if (/^(?:package\s+\w+;)/m.test(trimmed)) return 'text'; // Java/Kotlin
 
-  // JSON (starts with { or [, validate with parse)
+  // JSON (starts with { or [, validate with parse — cap at 64KB to avoid blocking thread)
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try { JSON.parse(trimmed); return 'json'; } catch { /* not valid JSON, might be JSX */ }
+    if (trimmed.length <= 65536) {
+      try { JSON.parse(trimmed); return 'json'; } catch { /* not valid JSON, might be JSX */ }
+    }
   }
 
   // JSX indicators: import/export at top level (strong signal)
@@ -341,8 +343,6 @@ export function buildRawHtmlDocument(source: string): string {
  * Build an HTML document that renders JSON with syntax highlighting.
  */
 export function buildJsonViewerHtml(source: string): string {
-  // Escape for embedding in HTML
-  const escaped = source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
