@@ -581,11 +581,20 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         e.preventDefault();
         deps.flushContentUpdate();
         store.indentBlock(deps.getBlockId());
-        // FLO-61: After indent, ensure new parent is expanded in this pane
+        // FLO-61: After indent, ensure new parent is expanded in this pane.
+        // Use toggleCollapsed (routes through expansion policy) so children
+        // with descendants get auto-collapsed — prevents 265-child hang.
         requestAnimationFrame(() => {
           const updatedBlock = store.blocks[deps.getBlockId()];
           if (updatedBlock?.parentId) {
-            deps.paneStore.setCollapsed(deps.paneId, updatedBlock.parentId, false);
+            const isCurrentlyCollapsed = deps.paneStore.isCollapsed(
+              deps.paneId, updatedBlock.parentId,
+              store.blocks[updatedBlock.parentId]?.collapsed || false
+            );
+            if (isCurrentlyCollapsed) {
+              deps.paneStore.toggleCollapsed(deps.paneId, updatedBlock.parentId,
+                store.blocks[updatedBlock.parentId]?.collapsed || false);
+            }
           }
         });
         return;
