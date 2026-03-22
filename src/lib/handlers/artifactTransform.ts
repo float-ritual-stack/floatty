@@ -15,9 +15,15 @@ const DEFAULT_VERSIONS: Record<string, string> = {
   'react': '18',
   'react-dom': '18',
   'react-dom/client': '18',
+  'lucide-react': '0.460',
+  'framer-motion': '11',
+  'recharts': '2',
   'd3': '7',
   'tone': '15',
   'three': '0.170',
+  'zod': '3',
+  'rxjs': '7',
+  'rxjs/operators': '7',
 };
 
 /**
