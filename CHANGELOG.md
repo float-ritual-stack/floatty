@@ -6,6 +6,27 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.9.8] - 2026-03-21
+
+### Features
+
+- **Artifact content sniffing** — `artifact::` auto-detects file content type and routes to appropriate renderer: HTML renders directly, JSON gets syntax-highlighted viewer, text/markdown shows in monospace code viewer. ~429 previously-broken artifact files now render
+- **Artifact CDN deps** — lucide-react, framer-motion, recharts, zod, rxjs added to import map (lucide-react alone fixes 244 artifacts)
+- **Cmd+. on output blocks** — toggle collapse now works on blocks with output (artifact/eval/door), not just blocks with children
+
+### Bug Fixes
+
+- **Expand/collapse 30s hang** — batch() wrapping on all expand/collapse setState loops. 265 children under pages:: triggered 265 individual SolidJS reactivity updates; now batched into one
+- **pages:: children default collapsed** — children of the pages:: container now always default to collapsed, showing page titles instead of 265 expanded page trees
+- **Indent into large parent** — Tab-indent under pages:: now uses expansion policy to auto-collapse children instead of expanding everything
+- **N×M reactivity fix** — isPageChild check uses untrack() for parent content read, preventing 265 memo re-evaluations on every keystroke in parent
+- **Artifact language detection** — Python (shebang), Go (package+import), Rust (use/fn/pub), bash scripts detected before JSX check, routed to text viewer instead of Sucrase error
+- **Artifact runtime errors** — global error handler in iframe catches CDN import failures and render errors, shows message instead of blank white iframe
+- **expandAncestors batched** — consistency with expandToDepth/collapseToDepth
+- **JSON.parse size cap** — 64KB cap prevents blocking thread on large non-JSON files starting with `{`
+
+---
+
 ## [0.9.7] - 2026-03-19
 
 ### Features
