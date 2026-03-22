@@ -77,6 +77,9 @@ pub struct AggregatorConfig {
     /// With expansion policy keeping children collapsed, rendering all is lightweight.
     #[serde(default)]
     pub child_render_limit: u32,
+    /// Sidebar width in pixels (0 = use default 280px). Persisted on resize.
+    #[serde(default)]
+    pub sidebar_width: u32,
     /// Per-door plugin settings (e.g., [plugins.daily] notes_dir = "...")
     #[serde(default)]
     pub plugins: std::collections::HashMap<String, toml::Value>,
@@ -172,6 +175,7 @@ impl Default for AggregatorConfig {
             show_diagnostics: default_show_diagnostics(),
             unfocused_pane_opacity: default_unfocused_pane_opacity(),
             child_render_limit: 0,
+            sidebar_width: 0,
             plugins: std::collections::HashMap::new(),
             is_dev_build: cfg!(debug_assertions),
             data_dir: String::new(), // Populated by load_from
