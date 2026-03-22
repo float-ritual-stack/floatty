@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, on } from 'solid-js';
+import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
@@ -110,9 +110,11 @@ export function Outliner(props: OutlinerProps) {
         }
       };
 
-      for (const rootId of roots) {
-        forceCollapseDeeper(rootId, 1);
-      }
+      batch(() => {
+        for (const rootId of roots) {
+          forceCollapseDeeper(rootId, 1);
+        }
+      });
     };
 
     // Load config (always needed for homebase keybind Cmd+Shift+0)

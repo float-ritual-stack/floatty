@@ -5,7 +5,7 @@
  * Uses "set to depth" model - each level sets the view state, not incremental
  */
 
-import type { Accessor } from 'solid-js';
+import { batch, type Accessor } from 'solid-js';
 import { countDescendantsToDepth } from '../lib/expansionPolicy';
 
 interface UseTreeCollapseParams {
@@ -94,9 +94,11 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
       }
     };
 
-    for (const rootId of roots) {
-      walk(rootId, 1);
-    }
+    batch(() => {
+      for (const rootId of roots) {
+        walk(rootId, 1);
+      }
+    });
   };
 
   /**
@@ -111,7 +113,6 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
       const block = store.blocks[id];
       if (!block || block.childIds.length === 0) return;
 
-      // Blocks at depths >= target should be collapsed
       const shouldCollapse = currentDepth >= depth;
       paneStore.setCollapsed(paneId, id, shouldCollapse);
 
@@ -120,9 +121,11 @@ export function useTreeCollapse(params: UseTreeCollapseParams) {
       }
     };
 
-    for (const rootId of roots) {
-      walk(rootId, 1);
-    }
+    batch(() => {
+      for (const rootId of roots) {
+        walk(rootId, 1);
+      }
+    });
   };
 
   /**

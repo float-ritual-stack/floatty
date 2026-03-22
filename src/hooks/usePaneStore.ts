@@ -6,7 +6,7 @@
  * FLO-180: Added navigation history (back/forward) per pane.
  */
 
-import { createRoot, createSignal } from 'solid-js';
+import { batch, createRoot, createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { blockStore } from './useBlockStore';
 import { computeExpansion } from '../lib/expansionPolicy';
@@ -77,13 +77,15 @@ function createPaneStore() {
         trigger: 'toggle',
         blockStore: { blocks: blockStore.blocks, rootIds: blockStore.rootIds },
       });
-      // Apply actions (skip target — already set above)
-      for (const action of result.actions) {
-        if (action.blockId === blockId) continue;
-        // Only set if no explicit state — don't override user's choice
-        if (state.collapsed[paneId]?.[action.blockId] !== undefined) continue;
-        setState('collapsed', paneId, action.blockId, action.collapsed);
-      }
+      // Batch all auto-collapse setState calls — 265 children = 265 individual
+      // reactivity triggers without batch, causing multi-second hang
+      batch(() => {
+        for (const action of result.actions) {
+          if (action.blockId === blockId) continue;
+          if (state.collapsed[paneId]?.[action.blockId] !== undefined) continue;
+          setState('collapsed', paneId, action.blockId, action.collapsed);
+        }
+      });
     }
 
     bumpPersistenceVersion();
