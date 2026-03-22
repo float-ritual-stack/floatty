@@ -294,12 +294,20 @@ export function detectContentType(source: string, filePath?: string): ContentTyp
   // HTML documents
   if (/^<!doctype\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) return 'html';
 
+  // Non-JS languages: detect before JSX checks (these can have `import` too)
+  if (/^#!/.test(trimmed)) return 'text'; // shebang (python, bash, node scripts)
+  if (/^package\s+\w+/m.test(trimmed) && /^import\s+\(/m.test(trimmed)) return 'text'; // Go
+  if (/^(?:use\s+\w|fn\s+\w|mod\s+\w|pub\s+(?:fn|struct|enum|mod|use))/m.test(trimmed)) return 'text'; // Rust
+  if (/^(?:def\s+\w|class\s+\w.*:$|from\s+\w+\s+import)/m.test(trimmed)) return 'text'; // Python (no shebang)
+  if (/^(?:package\s+\w+;)/m.test(trimmed)) return 'text'; // Java/Kotlin
+
   // JSON (starts with { or [, validate with parse)
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try { JSON.parse(trimmed); return 'json'; } catch { /* not valid JSON, might be JSX */ }
   }
 
   // JSX indicators: import/export at top level (strong signal)
+  // Go's `import (` already caught above, so `import` here means ES modules
   if (/^(?:import\s|export\s)/m.test(trimmed)) return 'jsx';
 
   // Weaker signals: const/function/class — only JSX if file also has React-like patterns

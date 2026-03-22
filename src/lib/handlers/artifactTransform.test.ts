@@ -321,6 +321,29 @@ describe('detectContentType', () => {
     expect(detectContentType('// AST parser\ninterface ConversationAST {\n  nodes: string[];\n}')).toBe('text');
   });
 
+  it('detects Python with shebang as text', () => {
+    expect(detectContentType('#!/usr/bin/env python3\n"""docstring"""\ndef main():')).toBe('text');
+  });
+
+  it('detects Python without shebang as text', () => {
+    expect(detectContentType('def extract_topics(text):\n    pass')).toBe('text');
+    expect(detectContentType('from collections import defaultdict\nclass Foo:')).toBe('text');
+  });
+
+  it('detects Go source as text (import block)', () => {
+    expect(detectContentType('package notes\n\nimport (\n\t"bufio"\n)')).toBe('text');
+  });
+
+  it('detects Rust source as text', () => {
+    expect(detectContentType('use std::collections::HashMap;\nfn main() {}')).toBe('text');
+    expect(detectContentType('pub fn process(input: &str) -> String {')).toBe('text');
+    expect(detectContentType('pub struct Config {\n  name: String,\n}')).toBe('text');
+  });
+
+  it('detects bash scripts as text', () => {
+    expect(detectContentType('#!/bin/bash\nset -e\necho "hello"')).toBe('text');
+  });
+
   it('detects Python as text', () => {
     expect(detectContentType('def extract_topics(text):\n    pass')).toBe('text');
   });
