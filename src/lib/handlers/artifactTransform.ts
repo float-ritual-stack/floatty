@@ -197,9 +197,20 @@ window.addEventListener('message', function(e) {
 
 /**
  * Build the mount script that finds and renders the component.
+ * Includes global error handler so import/runtime failures show in the iframe.
  */
 function buildMountScript(): string {
   return `
+// === Global error handler — catches import failures (e.g. CDN 404) ===
+window.onerror = function(msg, src, line, col, err) {
+  const el = document.getElementById('root');
+  if (el) el.innerHTML = '<div class="artifact-error">Runtime error: ' + msg + (src ? '\\n' + src + ':' + line : '') + '</div>';
+};
+window.addEventListener('unhandledrejection', function(e) {
+  const el = document.getElementById('root');
+  if (el) el.innerHTML = '<div class="artifact-error">Import failed: ' + (e.reason?.message || e.reason || 'unknown') + '</div>';
+});
+
 // === Artifact mount ===
 {
   const _findComponent = () => {
@@ -211,7 +222,10 @@ function buildMountScript(): string {
     const _root = (typeof ReactDOM !== 'undefined' && ReactDOM.createRoot)
       ? ReactDOM.createRoot(document.getElementById('root'))
       : null;
-    if (_root) _root.render(React.createElement(_Component));
+    if (_root) {
+      try { _root.render(React.createElement(_Component)); }
+      catch (e) { document.getElementById('root').innerHTML = '<div class="artifact-error">Render error: ' + e.message + '</div>'; }
+    }
     else document.getElementById('root').innerHTML = '<div class="artifact-error">ReactDOM.createRoot not available</div>';
   } else {
     document.getElementById('root').innerHTML = '<div class="artifact-error">No component found to render</div>';
@@ -279,10 +293,15 @@ export function detectContentType(source: string, filePath?: string): ContentTyp
     try { JSON.parse(trimmed); return 'json'; } catch { /* not valid JSON, might be JSX */ }
   }
 
-  // JSX indicators: import/export statements, function/const/class declarations
-  if (/^(?:import\s|export\s|const\s|let\s|var\s|function\s|class\s|\/\/|\/\*)/m.test(trimmed)) return 'jsx';
+  // JSX indicators: import/export at top level (strong signal)
+  if (/^(?:import\s|export\s)/m.test(trimmed)) return 'jsx';
 
-  // If it has JSX-like tags with React patterns, treat as JSX
+  // Weaker signals: const/function/class — only JSX if file also has React-like patterns
+  if (/^(?:const\s|let\s|var\s|function\s|class\s)/m.test(trimmed)) {
+    if (/(?:React|jsx|createElement|useState|useEffect|onClick|className|<\w+[\s/>])/.test(trimmed)) return 'jsx';
+  }
+
+  // JSX-like tags with React patterns anywhere in file
   if (/<\w+[\s>]/.test(trimmed) && /(?:onClick|className|useState|useEffect|React)/.test(trimmed)) return 'jsx';
 
   // Everything else is text/markdown

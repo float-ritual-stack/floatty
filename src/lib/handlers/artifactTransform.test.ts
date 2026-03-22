@@ -313,6 +313,14 @@ describe('detectContentType', () => {
     expect(detectContentType('package main\n\nfunc main() {}')).toBe('text');
   });
 
+  it('detects IIFE browser scripts as text (no React patterns)', () => {
+    expect(detectContentType('// harvester script\n(() => { try { console.log("hi"); } catch(e) {} })();')).toBe('text');
+  });
+
+  it('detects comment-only JS without React as text', () => {
+    expect(detectContentType('// AST parser\ninterface ConversationAST {\n  nodes: string[];\n}')).toBe('text');
+  });
+
   it('detects Python as text', () => {
     expect(detectContentType('def extract_topics(text):\n    pass')).toBe('text');
   });
