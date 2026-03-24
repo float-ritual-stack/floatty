@@ -72,24 +72,32 @@ export function Outliner(props: OutlinerProps) {
   });
 
   // Detect zoom into a door view block — render full-pane like iframe.
-  // Door output lives on a CHILD block (not the command block itself).
-  // Returns the child block ID with the door envelope, or null.
-  const doorZoomChildId = createMemo(() => {
+  // selfRender doors: output on the block itself (render::)
+  // adapter doors: output on a child block (garden::)
+  // Returns the block ID that has the door envelope.
+  const doorZoomBlockId = createMemo(() => {
     const id = zoomedRootId();
     if (!id) return null;
     const b = store.blocks[id];
-    if (!b?.childIds) return null;
-    // Check if any child is a door view output
-    for (const childId of b.childIds) {
-      const child = store.blocks[childId];
-      if (child?.outputType === 'door') {
-        const envelope = child.output as DoorViewOutput | undefined;
-        if (envelope?.kind === 'view') return childId;
+    if (!b) return null;
+    // Check the block itself (selfRender doors)
+    if (b.outputType === 'door') {
+      const envelope = b.output as DoorViewOutput | undefined;
+      if (envelope?.kind === 'view') return id;
+    }
+    // Check children (adapter doors)
+    if (b.childIds) {
+      for (const childId of b.childIds) {
+        const child = store.blocks[childId];
+        if (child?.outputType === 'door') {
+          const envelope = child.output as DoorViewOutput | undefined;
+          if (envelope?.kind === 'view') return childId;
+        }
       }
     }
     return null;
   });
-  const isDoorZoom = () => doorZoomChildId() !== null;
+  const isDoorZoom = () => doorZoomBlockId() !== null;
 
   // FLO-320: Initialize store AFTER Y.Doc is populated (prevents 13.8k block observer storm)
   // Must fire BEFORE the config effect below so store.rootIds is populated for applyCollapseDepth.
@@ -806,7 +814,7 @@ export function Outliner(props: OutlinerProps) {
                 <DoorPaneView
                   blockId={zoomedRootId()!}
                   paneId={props.paneId}
-                  envelope={store.blocks[doorZoomChildId()!]?.output as DoorViewOutput}
+                  envelope={store.blocks[doorZoomBlockId()!]?.output as DoorViewOutput}
                   onClose={() => paneStore.zoomTo(props.paneId, null)}
                   onNavigate={(target, opts) => {
                     handleChirpNavigate(target, {

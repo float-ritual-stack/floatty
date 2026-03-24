@@ -3,5 +3,5 @@
   "name": "JSON Render",
   "prefixes": ["render::"],
   "version": "0.1.0",
-  "selfRender": false
+  "selfRender": true
 }

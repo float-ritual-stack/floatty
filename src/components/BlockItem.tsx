@@ -287,6 +287,7 @@ export function BlockItem(props: BlockItemProps) {
     return ot?.startsWith('search-') || ot === 'door' || ot === 'img-view';
   });
 
+
   // img:: auto-render — fires when content starts with img:: AND filename has a known extension.
   // Extension-gated to prevent 404 spam while the user is still typing the filename.
   // Also strips to basename so pasted absolute paths work (e.g. /Users/evan/.floatty/__attachments/photo.jpg).

@@ -815,53 +815,61 @@ function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?
 // DOOR EXPORT
 // ═══════════════════════════════════════════════════════════════
 
+/** Set door output on the block itself (selfRender pattern — no child block) */
+function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: string) {
+  const envelope = { kind: 'view', doorId: 'render', schema: 1, data, error };
+  ctx.actions.setBlockOutput(blockId, envelope, 'door');
+  ctx.actions.setBlockStatus(blockId, error ? 'error' : 'complete');
+}
+
 export const door = {
   kind: 'view' as const,
   prefixes: ['render::'],
 
   async execute(blockId: string, content: string, ctx: any) {
+    ctx.actions.setBlockStatus(blockId, 'running');
     const arg = content.replace(/^render::\s*/i, '').trim();
 
     // Route: demo, stats, or raw JSON
     if (arg === 'demo' || arg === '') {
-      return { data: { spec: demoSpec() } };
+      setOutput(blockId, ctx, { spec: demoSpec() });
+      return;
     }
 
     if (arg === 'stats') {
       try {
         const spec = await statsSpec(ctx.server.fetch);
-        return { data: { spec } };
+        setOutput(blockId, ctx, { spec });
       } catch (e: any) {
         ctx.log('stats fetch failed:', e.message);
-        return { data: { spec: null }, error: e.message };
+        setOutput(blockId, ctx, { spec: null }, e.message);
       }
+      return;
     }
 
     if (arg === 'prompt') {
-      // Show the LLM system prompt that bbsCatalog.prompt() generates
       const prompt = bbsCatalog.prompt();
-      return {
-        data: {
-          spec: {
-            root: 'main',
-            elements: {
-              main: { type: 'Stack', props: { direction: 'vertical', gap: 8 }, children: ['header', 'code'] },
-              header: { type: 'Text', props: { content: 'catalog.prompt() output', size: 'lg', weight: 'bold', color: 'var(--color-ansi-cyan)' }, children: [] },
-              code: { type: 'Code', props: { content: prompt, language: 'text' }, children: [] },
-            },
+      setOutput(blockId, ctx, {
+        spec: {
+          root: 'main',
+          elements: {
+            main: { type: 'Stack', props: { direction: 'vertical', gap: 8 }, children: ['header', 'code'] },
+            header: { type: 'Text', props: { content: 'catalog.prompt() output', size: 'lg', weight: 'bold', color: 'var(--color-ansi-cyan)' }, children: [] },
+            code: { type: 'Code', props: { content: prompt, language: 'text' }, children: [] },
           },
         },
-      };
+      });
+      return;
     }
 
     // render:: ai <prompt> — generate spec via Claude structured outputs (ollama fallback)
     if (arg.startsWith('ai ')) {
       const userPrompt = arg.slice(3).trim();
       if (!userPrompt) {
-        return { data: { spec: null }, error: 'Usage: render:: ai <describe what you want>' };
+        setOutput(blockId, ctx, { spec: null }, 'Usage: render:: ai <describe what you want>');
+        return;
       }
 
-      // Try Claude API first, fall back to ollama
       const anthropicKey = ctx.settings?.anthropic_api_key
         || await readAnthropicKeyFromEnv(ctx);
 
@@ -876,24 +884,24 @@ export const door = {
         try {
           ctx.log('[render::ai] using: Claude API');
           const spec = await generateSpecViaClaude(userPrompt, anthropicKey, ctx);
-          return { data: { spec } };
+          setOutput(blockId, ctx, { spec });
+          return;
         } catch (e: any) {
           ctx.log('[render::ai] Claude API failed, falling back to ollama:', e.message);
-          // Fall through to ollama
         }
       } else {
         ctx.log('[render::ai] no API key found, going straight to ollama');
       }
 
-      // Ollama fallback
       try {
         ctx.log('[render::ai] using: ollama', ctx.settings?.ollama_model || 'qwen2.5:7b');
         const spec = await generateSpecViaOllama(userPrompt, ctx);
-        return { data: { spec } };
+        setOutput(blockId, ctx, { spec });
       } catch (e: any) {
         ctx.log('[render::ai] ollama also failed:', e.message);
-        return { data: { spec: null }, error: `AI generation failed: ${e.message}` };
+        setOutput(blockId, ctx, { spec: null }, `AI generation failed: ${e.message}`);
       }
+      return;
     }
 
     // render:: agent [--continue|--resume <id>] <prompt>
@@ -901,7 +909,6 @@ export const door = {
       let rest = arg.slice(6).trim();
       const options: AgentOptions = {};
 
-      // Parse flags
       if (rest.startsWith('--continue ') || rest === '--continue') {
         options.continueSession = true;
         rest = rest.slice(11).trim();
@@ -916,7 +923,8 @@ export const door = {
 
       const userPrompt = rest;
       if (!userPrompt) {
-        return { data: { spec: null }, error: 'Usage: render:: agent [--continue|--resume <id>] <prompt>' };
+        setOutput(blockId, ctx, { spec: null }, 'Usage: render:: agent [--continue|--resume <id>] <prompt>');
+        return;
       }
 
       try {
@@ -928,28 +936,28 @@ export const door = {
         });
         const result = await generateSpecViaAgent(userPrompt, ctx, options);
         ctx.log('[render::agent] spec generated:', Object.keys(result.spec?.elements || {}).length, 'elements');
-        return {
-          data: {
-            spec: result.spec,
-            agentRaw: result.raw,
-            agentSessionId: result.sessionId,
-          },
-        };
+        setOutput(blockId, ctx, {
+          spec: result.spec,
+          agentRaw: result.raw,
+          agentSessionId: result.sessionId,
+        });
       } catch (e: any) {
         ctx.log('[render::agent] failed:', e.message);
-        return { data: { spec: null, agentRaw: e.raw || null }, error: `Agent generation failed: ${e.message}` };
+        setOutput(blockId, ctx, { spec: null, agentRaw: e.raw || null }, `Agent generation failed: ${e.message}`);
       }
+      return;
     }
 
     // Try parsing as raw JSON spec
     try {
       const spec = JSON.parse(arg);
       if (spec.root && spec.elements) {
-        return { data: { spec } };
+        setOutput(blockId, ctx, { spec });
+      } else {
+        setOutput(blockId, ctx, { spec: null }, 'JSON must have root + elements');
       }
-      return { data: { spec: null }, error: 'JSON must have root + elements' };
     } catch {
-      return { data: { spec: null }, error: `Unknown render command: ${arg}` };
+      setOutput(blockId, ctx, { spec: null }, `Unknown render command: ${arg}`);
     }
   },
 
