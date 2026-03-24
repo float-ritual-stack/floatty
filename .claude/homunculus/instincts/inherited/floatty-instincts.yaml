@@ -1,0 +1,433 @@
+# Instincts generated from https://github.com/float-ritual-stack/floatty
+# Generated: 2026-03-24T13:45:35.897Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: floatty-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, feat, chore, docs, refactor
+
+## Evidence
+
+- 200 commits analyzed
+- Detected conventional commit pattern
+- Examples: refactor: render:: door uses selfRender — output on same block, no child, fix: event listener leak in GardenView + remove unused stateStore
+
+---
+id: floatty-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Commit Length
+
+## Action
+
+Write moderate-length commit messages (~60 characters)
+
+## Evidence
+
+- Average commit message length: 60 chars
+- Based on 200 commits
+
+---
+id: floatty-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: floatty-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: floatty-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: floatty-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: assets, components, context, generated, hooks
+
+---
+id: floatty-test-colocate
+trigger: "when writing tests"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Colocate
+
+## Action
+
+Place test file next to the source file (e.g., Button.test.tsx next to Button.tsx)
+
+## Evidence
+
+- Colocated test pattern detected
+- Tests live alongside source files
+
+---
+id: floatty-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Framework
+
+## Action
+
+Use vitest as the test framework
+
+## Evidence
+
+- Test framework detected: vitest
+- File pattern: *.test.ts
+
+---
+id: floatty-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: floatty-test-mocking
+trigger: "when mocking dependencies in tests"
+confidence: 0.75
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Mocking
+
+## Action
+
+Use vi.mock for mocking
+
+## Evidence
+
+- Mocking pattern detected: vi.mock
+- Consistent across test files
+
+---
+id: floatty-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~15x per month
+- Files: src/components/*, src/context/*, src/hooks/blockinput/*
+
+---
+id: floatty-workflow-test-driven-development
+trigger: "when adding new functionality"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Test Driven Development
+
+## Action
+
+Follow the test-driven-development workflow:
+1. Write failing test
+2. Implement code to pass test
+3. Refactor if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: **/*.test.*, **/*.spec.*, src/**/*
+
+---
+id: floatty-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.75
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~5x per month
+- Files: src/**/*
+
+---
+id: floatty-workflow-release-version-bump
+trigger: "when doing release version bump"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Release Version Bump
+
+## Action
+
+Follow the release-version-bump workflow:
+1. Update version numbers in package.json and tauri config files.
+2. Update CHANGELOG.md with release notes.
+3. Update Cargo.toml and Cargo.lock for Rust backend.
+4. Commit all changes with a 'chore: release vX.Y.Z' message.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: CHANGELOG.md, package.json, src-tauri/Cargo.toml
+
+---
+id: floatty-workflow-expand-collapse-navigation-refactor
+trigger: "when doing expand collapse navigation refactor"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Expand Collapse Navigation Refactor
+
+## Action
+
+Follow the expand-collapse-navigation-refactor workflow:
+1. Edit navigation and expansion policy logic in src/lib/expansionPolicy.ts and related test files.
+2. Update or refactor hooks in src/hooks/useTreeCollapse.ts, src/hooks/usePaneStore.ts, and src/hooks/useBlockInput.ts.
+3. Update UI components like src/components/BlockItem.tsx and src/components/Outliner.tsx to use new logic.
+4. Update or add documentation in .claude/rules/architecture.md or docs/architecture.
+5. Commit with 'feat(collapse-nav): ...', 'fix(collapse-nav): ...', or 'refactor(collapse-nav): ...' messages.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: src/lib/expansionPolicy.ts, src/lib/expansionPolicy.test.ts, src/hooks/useTreeCollapse.ts
+
+---
+id: floatty-workflow-add-or-update-sidebar-feature
+trigger: "when doing add or update sidebar feature"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Add Or Update Sidebar Feature
+
+## Action
+
+Follow the add-or-update-sidebar-feature workflow:
+1. Edit src/components/Terminal.tsx and src/components/SidebarDoorContainer.tsx for sidebar logic.
+2. Update hooks in src/hooks/usePaneStore.ts and src/hooks/usePaneLinkStore.ts.
+3. Update or add CSS in src/components/sidebar-doors.css.
+4. Update keybinds or commands in src/lib/keybinds.ts and src/hooks/useCommandBar.ts.
+5. Commit with 'feat: resizable sidebar', 'fix: sidebar', or similar messages.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/components/Terminal.tsx, src/components/SidebarDoorContainer.tsx, src/hooks/usePaneStore.ts
+
+---
+id: floatty-workflow-sync-integrity-hardening
+trigger: "when doing sync integrity hardening"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Sync Integrity Hardening
+
+## Action
+
+Follow the sync-integrity-hardening workflow:
+1. Edit src/hooks/useBlockStore.ts for validation and transaction logic.
+2. Add or update diagnostics in src/lib/syncDiagnostics.ts and src/lib/syncDiagnostics.test.ts.
+3. Update UI components (e.g., src/components/BlockItem.tsx) to reflect new sync logic.
+4. Update or add rules in .claude/rules/ydoc-patterns.md.
+5. Commit with messages referencing sync integrity, parent validation, or diagnostics.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/hooks/useBlockStore.ts, src/lib/syncDiagnostics.ts, src/lib/syncDiagnostics.test.ts
+
+---
+id: floatty-workflow-search-schema-and-ranking-update
+trigger: "when doing search schema and ranking update"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Search Schema And Ranking Update
+
+## Action
+
+Follow the search-schema-and-ranking-update workflow:
+1. Edit Rust backend files: schema.rs, index_manager.rs, service.rs, writer.rs, tantivy_index.rs.
+2. Update API layer in src-tauri/floatty-server/src/api.rs.
+3. Update or add documentation in .claude/rules/api-reference.md.
+4. Commit with 'feat(search): ...' or 'fix(search): ...' messages.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src-tauri/floatty-core/src/search/schema.rs, src-tauri/floatty-core/src/search/index_manager.rs, src-tauri/floatty-core/src/search/service.rs
+
+---
+id: floatty-workflow-door-feature-development
+trigger: "when doing door feature development"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Door Feature Development
+
+## Action
+
+Follow the door-feature-development workflow:
+1. Edit or create door.json and related .tsx/.ts files in doors/ directories.
+2. Update or add catalog, registry, and route files for the door.
+3. Update src/components/Outliner.tsx or views for integration.
+4. Update package.json and scripts if new dependencies or build steps are needed.
+5. Commit with 'feat: ... door', 'refactor: ... door', or similar messages.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: doors/render/door.json, doors/render/render.tsx, doors/session-garden/catalog.ts
+
