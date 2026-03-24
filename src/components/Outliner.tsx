@@ -24,8 +24,10 @@ import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { tabStore } from '../hooks/useTabStore';
 import { layoutStore, findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { IframePaneView } from './views/IframePaneView';
+import { DoorPaneView } from './views/DoorPaneView';
 import { handleChirpNavigate } from '../lib/navigation';
 import type { EvalResult } from '../lib/evalEngine';
+import type { DoorViewOutput } from '../lib/handlers/doorTypes';
 
 interface OutlinerProps {
   paneId: string;
@@ -68,6 +70,26 @@ export function Outliner(props: OutlinerProps) {
     return b?.outputType === 'eval-result'
       && (b?.output as EvalResult | undefined)?.type === 'url';
   });
+
+  // Detect zoom into a door view block — render full-pane like iframe.
+  // Door output lives on a CHILD block (not the command block itself).
+  // Returns the child block ID with the door envelope, or null.
+  const doorZoomChildId = createMemo(() => {
+    const id = zoomedRootId();
+    if (!id) return null;
+    const b = store.blocks[id];
+    if (!b?.childIds) return null;
+    // Check if any child is a door view output
+    for (const childId of b.childIds) {
+      const child = store.blocks[childId];
+      if (child?.outputType === 'door') {
+        const envelope = child.output as DoorViewOutput | undefined;
+        if (envelope?.kind === 'view') return childId;
+      }
+    }
+    return null;
+  });
+  const isDoorZoom = () => doorZoomChildId() !== null;
 
   // FLO-320: Initialize store AFTER Y.Doc is populated (prevents 13.8k block observer storm)
   // Must fire BEFORE the config effect below so store.rootIds is populated for applyCollapseDepth.
@@ -753,32 +775,49 @@ export function Outliner(props: OutlinerProps) {
               </Key>
             }
           >
-            {/* Zoomed: full-pane iframe OR breadcrumb + block subtree */}
+            {/* Zoomed: full-pane iframe, full-pane door, or breadcrumb + block subtree */}
             <Show when={isIframeZoom()} fallback={
-              <>
-                <Breadcrumb blockId={zoomedRootId()!} paneId={props.paneId} />
-                <BlockItem
-                  id={zoomedRootId()!}
-                  paneId={props.paneId}
-                  depth={0}
-                  focusedBlockId={focusedBlockId()}
-                  onFocus={handleFocus}
-                  onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
-                  onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
-                  isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
-                  onSelect={selection.handleSelect}
-                  selectionAnchor={selection.selectionAnchor()}
-                  getVisibleBlockIds={getVisibleBlockIds}
-                />
-                {/* LinkedReferences: show when zoomed into a page under pages:: */}
-                <Show when={isPageBlock(zoomedRootId()!)}>
-                  <LinkedReferences
-                    pageBlockId={zoomedRootId()!}
+              <Show when={isDoorZoom()} fallback={
+                <>
+                  <Breadcrumb blockId={zoomedRootId()!} paneId={props.paneId} />
+                  <BlockItem
+                    id={zoomedRootId()!}
                     paneId={props.paneId}
-                    onFocusBlock={handleFocus}
+                    depth={0}
+                    focusedBlockId={focusedBlockId()}
+                    onFocus={handleFocus}
+                    onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
+                    onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
+                    isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
+                    onSelect={selection.handleSelect}
+                    selectionAnchor={selection.selectionAnchor()}
+                    getVisibleBlockIds={getVisibleBlockIds}
                   />
-                </Show>
-              </>
+                  {/* LinkedReferences: show when zoomed into a page under pages:: */}
+                  <Show when={isPageBlock(zoomedRootId()!)}>
+                    <LinkedReferences
+                      pageBlockId={zoomedRootId()!}
+                      paneId={props.paneId}
+                      onFocusBlock={handleFocus}
+                    />
+                  </Show>
+                </>
+              }>
+                <DoorPaneView
+                  blockId={zoomedRootId()!}
+                  paneId={props.paneId}
+                  envelope={store.blocks[doorZoomChildId()!]?.output as DoorViewOutput}
+                  onClose={() => paneStore.zoomTo(props.paneId, null)}
+                  onNavigate={(target, opts) => {
+                    handleChirpNavigate(target, {
+                      type: opts?.type as 'block' | 'page' | 'wikilink' | undefined,
+                      sourcePaneId: props.paneId,
+                      sourceBlockId: zoomedRootId()!,
+                      splitDirection: opts?.splitDirection as 'horizontal' | 'vertical' | undefined,
+                    });
+                  }}
+                />
+              </Show>
             }>
               <IframePaneView
                 url={String((store.blocks[zoomedRootId()!]?.output as EvalResult)?.data ?? '')}

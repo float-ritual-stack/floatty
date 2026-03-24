@@ -208,6 +208,25 @@
   font-style: italic;
 }
 
+/* ─── Full-pane door view (zoomed via Cmd+Enter) ─── */
+
+.door-pane-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  outline: none;
+}
+
+.door-pane-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.door-pane-content .door-output {
+  height: 100%;
+}
+
 /* ─── Reduced motion ─── */
 
 @media (prefers-reduced-motion: reduce) {
