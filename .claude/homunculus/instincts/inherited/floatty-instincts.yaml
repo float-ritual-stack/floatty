@@ -1,0 +1,429 @@
+# Instincts generated from https://github.com/float-ritual-stack/floatty
+# Generated: 2026-03-24T13:10:30.158Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: floatty-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, feat, chore, docs, refactor
+
+## Evidence
+
+- 200 commits analyzed
+- Detected conventional commit pattern
+- Examples: refactor: simplify review findings — normalizeSpec, markdown fence protection, fix: event listener leak in GardenView + remove unused stateStore
+
+---
+id: floatty-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Commit Length
+
+## Action
+
+Write moderate-length commit messages (~60 characters)
+
+## Evidence
+
+- Average commit message length: 60 chars
+- Based on 200 commits
+
+---
+id: floatty-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: floatty-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: floatty-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: floatty-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: assets, components, context, generated, hooks
+
+---
+id: floatty-test-colocate
+trigger: "when writing tests"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Colocate
+
+## Action
+
+Place test file next to the source file (e.g., Button.test.tsx next to Button.tsx)
+
+## Evidence
+
+- Colocated test pattern detected
+- Tests live alongside source files
+
+---
+id: floatty-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Framework
+
+## Action
+
+Use vitest as the test framework
+
+## Evidence
+
+- Test framework detected: vitest
+- File pattern: *.test.ts
+
+---
+id: floatty-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: floatty-test-mocking
+trigger: "when mocking dependencies in tests"
+confidence: 0.75
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Mocking
+
+## Action
+
+Use vi.mock for mocking
+
+## Evidence
+
+- Mocking pattern detected: vi.mock
+- Consistent across test files
+
+---
+id: floatty-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~16x per month
+- Files: src/components/*, src/hooks/*, src/lib/*
+
+---
+id: floatty-workflow-test-driven-development
+trigger: "when adding new functionality"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Test Driven Development
+
+## Action
+
+Follow the test-driven-development workflow:
+1. Write failing test
+2. Implement code to pass test
+3. Refactor if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: **/*.test.*, **/*.spec.*, src/**/*
+
+---
+id: floatty-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.75
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~5x per month
+- Files: src/**/*
+
+---
+id: floatty-workflow-feature-development-with-implementation-tests-and-docs
+trigger: "when doing feature development with implementation tests and docs"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Feature Development With Implementation Tests And Docs
+
+## Action
+
+Follow the feature-development-with-implementation-tests-and-docs workflow:
+1. Implement new feature in main codebase (e.g., src/components/, src/hooks/, src/lib/)
+2. Update or add related documentation (e.g., CLAUDE.md, docs/architecture/, .claude/rules/)
+3. Add or update tests (e.g., *.test.ts, *.test.tsx)
+4. Update package.json or package-lock.json if dependencies or scripts are affected
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: src/components/, src/hooks/, src/lib/
+
+---
+id: floatty-workflow-config-or-schema-driven-feature-extension
+trigger: "when doing config or schema driven feature extension"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Config Or Schema Driven Feature Extension
+
+## Action
+
+Follow the config-or-schema-driven-feature-extension workflow:
+1. Add new field to Rust config/schema (e.g., src-tauri/src/config.rs)
+2. Update corresponding TypeScript types (e.g., src/lib/tauriTypes.ts)
+3. Wire config field into UI/component logic (e.g., src/components/...)
+4. Update documentation if necessary
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src-tauri/src/config.rs, src/lib/tauriTypes.ts, src/components/
+
+---
+id: floatty-workflow-refactor-to-extract-shared-utility-or-remove-duplication
+trigger: "when doing refactor to extract shared utility or remove duplication"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Refactor To Extract Shared Utility Or Remove Duplication
+
+## Action
+
+Follow the refactor-to-extract-shared-utility-or-remove-duplication workflow:
+1. Identify duplicated logic across files
+2. Extract shared helper to a common module (e.g., src/lib/..., src/hooks/...)
+3. Update all call sites to use the new utility
+4. Remove dead or redundant code
+5. Update related documentation or rules if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/components/, src/hooks/, src/lib/
+
+---
+id: floatty-workflow-release-version-bump-and-changelog-update
+trigger: "when doing release version bump and changelog update"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Release Version Bump And Changelog Update
+
+## Action
+
+Follow the release-version-bump-and-changelog-update workflow:
+1. Update version in package.json
+2. Update version in Cargo.toml and tauri.conf.json (if Tauri app)
+3. Update CHANGELOG.md with new version and changes
+4. Update Cargo.lock if Rust dependencies changed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: package.json, CHANGELOG.md, src-tauri/Cargo.toml
+
+---
+id: floatty-workflow-bugfix-driven-by-code-review-or-user-report
+trigger: "when doing bugfix driven by code review or user report"
+confidence: 0.75
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Bugfix Driven By Code Review Or User Report
+
+## Action
+
+Follow the bugfix-driven-by-code-review-or-user-report workflow:
+1. Identify bug or review issue (often via PR or issue reference)
+2. Make targeted fix in relevant code file(s)
+3. Update or add tests if needed
+4. Sometimes update documentation or rules if behavior changes
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~5x per month
+- Files: src/components/, src/hooks/, src/lib/
+
+---
+id: floatty-workflow-documentation-extraction-and-reorganization
+trigger: "when doing documentation extraction and reorganization"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Documentation Extraction And Reorganization
+
+## Action
+
+Follow the documentation-extraction-and-reorganization workflow:
+1. Move sections from main doc (e.g., CLAUDE.md) to new or existing focused files (e.g., .claude/rules/...)
+2. Compress or rewrite narrative explanations into concise, definitive statements
+3. Update references and pointers in main documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: CLAUDE.md, .claude/rules/, docs/
+
