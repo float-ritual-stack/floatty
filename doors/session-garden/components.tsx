@@ -76,7 +76,16 @@ function inlineFormat(s: string): string {
 function renderMarkdown(text: string): string {
   let s = text;
 
-  // Tables — parse then apply inline formatting per cell
+  // Code fences FIRST — protect from inline formatting
+  const fences: string[] = [];
+  s = s.replace(/```[\s\S]*?```/g, (m) => {
+    const c = m.slice(3, -3).trim().replace(/</g, '&lt;');
+    fences.push('<pre><code>' + c + '</code></pre>');
+    return `\x00FENCE${fences.length - 1}\x00`;
+  });
+
+  // Tables — inline formatting per cell (already formatted, skip later pass)
+  const tables: string[] = [];
   s = s.replace(/((?:^\|.+\|$\n?)+)/gm, (tableBlock) => {
     const rows = tableBlock.trim().split('\n').filter(r => r.trim());
     if (rows.length < 2) return tableBlock;
@@ -92,7 +101,8 @@ function renderMarkdown(text: string): string {
       html += '<tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>';
     });
     html += '</table>';
-    return html;
+    tables.push(html);
+    return `\x00TABLE${tables.length - 1}\x00`;
   });
 
   s = s.replace(/^### (.+)$/gm, '<h3>$1</h3>');
@@ -100,14 +110,14 @@ function renderMarkdown(text: string): string {
   s = s.replace(/^# (.+)$/gm, '<h1>$1</h1>');
   s = s.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
   s = s.replace(/^---$/gm, '<hr>');
-  s = s.replace(/```[\s\S]*?```/g, (m) => {
-    const c = m.slice(3, -3).trim().replace(/</g, '&lt;');
-    return '<pre><code>' + c + '</code></pre>';
-  });
   s = s.replace(/^- (.+)$/gm, '<li>$1</li>');
 
-  // Apply inline formatting to non-table content
+  // Inline formatting on remaining text (fences + tables already extracted)
   s = inlineFormat(s);
+
+  // Restore fences and tables
+  fences.forEach((html, i) => { s = s.replace(`\x00FENCE${i}\x00`, html); });
+  tables.forEach((html, i) => { s = s.replace(`\x00TABLE${i}\x00`, html); });
 
   s = s.replace(/\n\n/g, '</p><p>');
   return s;

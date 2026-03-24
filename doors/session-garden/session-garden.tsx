@@ -384,7 +384,7 @@ function GardenView(props: DoorViewProps) {
   }) as EventListener;
 
   onMount(() => {
-    injectBodyStyles();
+    // injectBodyStyles() already called at registry import time
     viewRef?.addEventListener('garden-navigate', handleGardenNavigate);
   });
 

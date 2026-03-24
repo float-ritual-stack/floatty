@@ -372,6 +372,27 @@ const CLAUDE_SYSTEM_PROMPT = [
   'Use BacklinksFooter for bidirectional links, WikilinkChip for [[bracket]] links.',
 ].join('\n');
 
+/** Normalize an LLM-generated spec: fix gap strings, validate root+elements, auto-fix root */
+function normalizeSpec(spec: any, ctx: any): any {
+  // Fix gap values — LLMs sometimes return "24px" strings, Stack expects numbers
+  for (const el of Object.values(spec.elements || {}) as any[]) {
+    if (el.type === 'Stack' && typeof el.props?.gap === 'string') {
+      el.props.gap = parseInt(el.props.gap) || 8;
+    }
+  }
+  if (!spec.root || !spec.elements) {
+    throw new Error('Invalid spec: missing root or elements');
+  }
+  if (!spec.elements[spec.root]) {
+    const keys = Object.keys(spec.elements);
+    if (keys.length > 0) {
+      spec.root = keys[0];
+      ctx.log('[render] auto-fixed root to:', spec.root);
+    }
+  }
+  return spec;
+}
+
 async function readAnthropicKeyFromEnv(_ctx: any): Promise<string | null> {
   // Door runs in webview — can't read files directly.
   // Key must be set in config.toml [plugins.render] anthropic_api_key
@@ -412,26 +433,7 @@ async function generateSpecViaClaude(userPrompt: string, apiKey: string, ctx: an
 
   const spec = toolBlock.input;
   ctx.log('Claude spec:', Object.keys(spec.elements || {}).length, 'elements');
-
-  // Fix gap values — Claude sometimes returns "24px" strings, Stack expects numbers
-  for (const el of Object.values(spec.elements || {}) as any[]) {
-    if (el.type === 'Stack' && typeof el.props?.gap === 'string') {
-      el.props.gap = parseInt(el.props.gap) || 8;
-    }
-  }
-
-  if (!spec.root || !spec.elements) {
-    throw new Error('Invalid spec: missing root or elements');
-  }
-  if (!spec.elements[spec.root]) {
-    const keys = Object.keys(spec.elements);
-    if (keys.length > 0) {
-      spec.root = keys[0];
-      ctx.log('Auto-fixed root to:', spec.root);
-    }
-  }
-
-  return spec;
+  return normalizeSpec(spec, ctx);
 }
 
 async function generateSpecViaOllama(userPrompt: string, ctx: any): Promise<any> {
@@ -493,20 +495,7 @@ async function generateSpecViaOllama(userPrompt: string, ctx: any): Promise<any>
   if (start < 0) throw new Error('No JSON in ollama response');
   jsonStr = jsonStr.slice(start);
 
-  const spec = JSON.parse(jsonStr);
-  if (!spec.root || !spec.elements) {
-    throw new Error('Invalid spec: missing root or elements');
-  }
-
-  if (!spec.elements[spec.root]) {
-    const keys = Object.keys(spec.elements);
-    if (keys.length > 0) {
-      spec.root = keys[0];
-      ctx.log('Auto-fixed root to:', spec.root);
-    }
-  }
-
-  return spec;
+  return normalizeSpec(JSON.parse(jsonStr), ctx);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -680,25 +669,12 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
     throw err;
   }
 
-  if (!spec.root || !spec.elements) {
-    const err = new Error('Invalid spec: missing root or elements') as any;
+  try {
+    normalizeSpec(spec, ctx);
+  } catch (e: any) {
+    const err = new Error(e.message) as any;
     err.raw = raw;
     throw err;
-  }
-
-  // Fix gap values
-  for (const el of Object.values(spec.elements || {}) as any[]) {
-    if (el.type === 'Stack' && typeof el.props?.gap === 'string') {
-      el.props.gap = parseInt(el.props.gap) || 8;
-    }
-  }
-
-  if (!spec.elements[spec.root]) {
-    const keys = Object.keys(spec.elements);
-    if (keys.length > 0) {
-      spec.root = keys[0];
-      ctx.log('[render::agent] auto-fixed root to:', spec.root);
-    }
   }
 
   // Extract session ID from claude output — look for session patterns in raw
@@ -862,8 +838,8 @@ export const door = {
     }
 
     if (arg === 'prompt') {
-      // Show the LLM system prompt that catalog.prompt() generates
-      const prompt = catalog.prompt();
+      // Show the LLM system prompt that bbsCatalog.prompt() generates
+      const prompt = bbsCatalog.prompt();
       return {
         data: {
           spec: {
