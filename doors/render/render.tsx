@@ -812,8 +812,6 @@ function RenderView(props: DoorViewProps) {
 }
 
 function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?: any) => void }) {
-  const stateStore = useStateStore();
-
   const handlers = {
     navigate: async (params: Record<string, unknown>) => {
       const target = params.target as string;

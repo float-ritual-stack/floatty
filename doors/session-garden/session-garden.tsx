@@ -15,7 +15,7 @@
  *   node scripts/compile-door-bundle.mjs doors/session-garden/session-garden.tsx ~/.floatty-dev/doors/session-garden/index.js
  */
 
-import { createSignal, createMemo, Show, batch, onMount } from 'solid-js';
+import { createSignal, createMemo, Show, batch, onMount, onCleanup } from 'solid-js';
 import {
   Renderer,
   StateProvider,
@@ -376,15 +376,20 @@ function GardenView(props: DoorViewProps) {
 
   let viewRef: HTMLDivElement | undefined;
 
+  const handleGardenNavigate = ((e: CustomEvent) => {
+    const target = e.detail?.target as string;
+    if (target && props.onNavigate) {
+      props.onNavigate(target, { type: 'page' });
+    }
+  }) as EventListener;
+
   onMount(() => {
     injectBodyStyles();
-    // Listen for wikilink navigation from EntryBody
-    viewRef?.addEventListener('garden-navigate', ((e: CustomEvent) => {
-      const target = e.detail?.target as string;
-      if (target && props.onNavigate) {
-        props.onNavigate(target, { type: 'page' });
-      }
-    }) as EventListener);
+    viewRef?.addEventListener('garden-navigate', handleGardenNavigate);
+  });
+
+  onCleanup(() => {
+    viewRef?.removeEventListener('garden-navigate', handleGardenNavigate);
   });
 
   // Action handlers — wired into the spec via on: { press: { action: ... } }
