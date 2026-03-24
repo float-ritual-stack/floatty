@@ -821,6 +821,7 @@ export function Outliner(props: OutlinerProps) {
                       type: opts?.type as 'block' | 'page' | 'wikilink' | undefined,
                       sourcePaneId: props.paneId,
                       sourceBlockId: zoomedRootId()!,
+                      originBlockId: zoomedRootId()!,
                       splitDirection: opts?.splitDirection as 'horizontal' | 'vertical' | undefined,
                     });
                   }}

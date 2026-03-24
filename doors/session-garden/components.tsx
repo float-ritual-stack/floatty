@@ -110,7 +110,9 @@ function renderMarkdown(text: string): string {
   s = s.replace(/^# (.+)$/gm, '<h1>$1</h1>');
   s = s.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
   s = s.replace(/^---$/gm, '<hr>');
+  // List items — wrap consecutive <li> in <ul>
   s = s.replace(/^- (.+)$/gm, '<li>$1</li>');
+  s = s.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
 
   // Inline formatting on remaining text (fences + tables already extracted)
   s = inlineFormat(s);
@@ -526,6 +528,88 @@ export function Text(props: BaseComponentProps<{
 
 export function Divider(_props: BaseComponentProps<Record<string, never>>) {
   return <hr style={{ border: 'none', 'border-top': `1px solid ${V.b}`, margin: '8px 0' }} />;
+}
+
+export function Card(props: BaseComponentProps<{ title?: string; subtitle?: string }>) {
+  return (
+    <div style={{
+      background: V.s1,
+      'border-radius': '8px',
+      border: `1px solid ${V.b2}`,
+      padding: '16px',
+    }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '14px',
+          'font-weight': '600',
+          color: V.t,
+          'margin-bottom': props.props.subtitle ? '2px' : '12px',
+        }}>
+          {props.props.title}
+        </div>
+      </Show>
+      <Show when={props.props.subtitle}>
+        <div style={{ 'font-size': '12px', color: V.td, 'margin-bottom': '12px' }}>
+          {props.props.subtitle}
+        </div>
+      </Show>
+      {props.children}
+    </div>
+  );
+}
+
+export function Metric(props: BaseComponentProps<{ label: string; value: string }>) {
+  return (
+    <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', padding: '4px 0' }}>
+      <span style={{ 'font-size': '12px', color: V.td }}>{props.props.label}</span>
+      <span style={{ 'font-size': '14px', 'font-weight': '600', color: V.cy, 'font-family': V.mono }}>{props.props.value}</span>
+    </div>
+  );
+}
+
+export function Button(props: BaseComponentProps<{ label: string; variant?: string }>) {
+  const bg = () => {
+    switch (props.props.variant) {
+      case 'primary': return V.cy;
+      case 'danger': return V.cor;
+      default: return V.s2;
+    }
+  };
+  return (
+    <button
+      onClick={() => props.emit('press')}
+      style={{
+        background: bg(),
+        color: props.props.variant === 'secondary' ? V.t : '#fff',
+        border: props.props.variant === 'secondary' ? `1px solid ${V.b2}` : 'none',
+        'border-radius': '6px',
+        padding: '6px 12px',
+        'font-size': '12px',
+        'font-family': V.mono,
+        cursor: 'pointer',
+      }}
+    >
+      {props.props.label}
+    </button>
+  );
+}
+
+export function CodeBlock(props: BaseComponentProps<{ content: string; language?: string }>) {
+  return (
+    <pre style={{
+      background: V.s1,
+      'border-radius': '6px',
+      padding: '12px',
+      'font-size': '12px',
+      'font-family': V.mono,
+      color: V.t,
+      overflow: 'auto',
+      margin: '0',
+      'white-space': 'pre-wrap',
+    }}>
+      {props.props.content}
+    </pre>
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -634,7 +634,7 @@ export const door = {
         // Read tracker
         const trackerPath = `${basePath}/${year}-${week}-rangle-weekly.md`;
         const trackerRaw = await invoke('execute_shell_command', {
-          command: `cat ${trackerPath}`,
+          command: `cat "${trackerPath}"`,
         }) as string;
 
         // List and read headline files

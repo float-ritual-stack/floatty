@@ -217,6 +217,11 @@
   outline: none;
 }
 
+.door-pane-view:focus-visible {
+  outline: 2px solid var(--color-accent, var(--door-accent));
+  outline-offset: -2px;
+}
+
 .door-pane-content {
   flex: 1;
   min-height: 0;

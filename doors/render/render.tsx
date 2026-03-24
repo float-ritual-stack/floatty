@@ -916,7 +916,11 @@ export const door = {
         rest = rest.slice(9).trim();
         const spaceIdx = rest.indexOf(' ');
         if (spaceIdx > 0) {
-          options.resumeSessionId = rest.slice(0, spaceIdx);
+          const sid = rest.slice(0, spaceIdx);
+          // Validate: UUID hex chars only (prevent shell injection)
+          if (/^[0-9a-f-]+$/i.test(sid)) {
+            options.resumeSessionId = sid;
+          }
           rest = rest.slice(spaceIdx + 1).trim();
         }
       }

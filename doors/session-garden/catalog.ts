@@ -181,6 +181,42 @@ export const bbsCatalog = schema.createCatalog({
       description: 'Horizontal divider line',
     },
 
+    Card: {
+      props: z.object({
+        title: z.string().optional(),
+        subtitle: z.string().optional(),
+      }),
+      slots: ['default'],
+      description: 'A card container with optional title',
+    },
+
+    Metric: {
+      props: z.object({
+        label: z.string(),
+        value: z.string(),
+      }),
+      slots: [],
+      description: 'A labeled metric value',
+    },
+
+    Button: {
+      props: z.object({
+        label: z.string(),
+        variant: z.enum(['primary', 'secondary', 'danger']).optional(),
+      }),
+      slots: [],
+      description: 'Clickable button that emits press event',
+    },
+
+    Code: {
+      props: z.object({
+        content: z.string(),
+        language: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Code block display',
+    },
+
     // ─── TUI Components ─────────────────────────────────────
     TuiPanel: {
       props: z.object({
