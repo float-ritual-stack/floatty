@@ -239,16 +239,23 @@ function TabBar(props: {
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
-  const [sidebarWidth, setSidebarWidth] = createSignal<string>('280px');
+  // Sidebar width: string '280px' from config restore, or number fraction (0-1) during resize.
+  // corvu resolveSize handles both formats for initialSize.
+  const [sidebarWidth, setSidebarWidth] = createSignal<number | string>('280px');
   let resizableWrapperRef: HTMLDivElement | undefined;
+  let lastSidebarFraction = 0;
   // Debounced save of sidebar width to config.toml (FLO-507)
+  // Converts fraction → px only here (avoids layout thrashing during drag)
   let sidebarSaveTimer: ReturnType<typeof setTimeout> | undefined;
-  const saveSidebarWidth = (widthPx: number) => {
+  const saveSidebarWidth = (fraction: number) => {
     clearTimeout(sidebarSaveTimer);
     sidebarSaveTimer = setTimeout(async () => {
       try {
+        const rootWidth = resizableWrapperRef?.getBoundingClientRect().width ?? 0;
+        const px = Math.round(fraction * rootWidth);
+        if (px <= 0) return;
         const config = await invoke<Record<string, unknown>>('get_ctx_config');
-        await invoke('set_ctx_config', { config: { ...config, sidebar_width: Math.round(widthPx) } });
+        await invoke('set_ctx_config', { config: { ...config, sidebar_width: px } });
       } catch (e) {
         console.warn('[Terminal] Failed to save sidebar width:', e);
       }
@@ -1168,13 +1175,13 @@ export function Terminal() {
         style={{ display: 'flex', width: '100%', height: '100%' }}
         onSizesChange={(sizes) => {
           // Persist sidebar width across side swaps + save to config (FLO-507)
-          // sizes[] are fractions (0-1), convert to px for persistence
+          // sizes[] are fractions (0-1). Convert to px only in debounced save (avoids layout thrashing).
           const sideIdx = sidebarSide() === 'left' ? 0 : sizes.length - 1;
-          const rootWidth = resizableWrapperRef?.getBoundingClientRect().width ?? 0;
-          const sidebarPx = Math.round(sizes[sideIdx] * rootWidth);
-          if (sidebarVisible() && sidebarPx > 0) {
-            setSidebarWidth(`${sidebarPx}px`);
-            saveSidebarWidth(sidebarPx);
+          const fraction = sizes[sideIdx];
+          if (sidebarVisible() && fraction > 0) {
+            setSidebarWidth(fraction);
+            lastSidebarFraction = fraction;
+            saveSidebarWidth(fraction);
           }
           // Refit all visible terminals when sidebar resizes
           requestAnimationFrame(() => {

@@ -34,6 +34,13 @@ import { registry as bbsRegistry } from '../session-garden/registry';
 // including Stack, Card, Text, Metric, Button, Code, Divider.
 // Single source of truth: catalog.ts → registry.ts → components.tsx
 
+function getOllamaConfig(ctx: any) {
+  return {
+    url: ctx.settings?.ollama_endpoint || 'http://float-box:11434',
+    model: ctx.settings?.ollama_model || 'qwen2.5:7b',
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // SPEC GENERATORS
 // ═══════════════════════════════════════════════════════════════
@@ -246,14 +253,13 @@ async function generateSpecViaOllama(userPrompt: string, ctx: any): Promise<any>
     '- gap is a NUMBER not string. colors: #00e5ff (cyan), #e040a0 (magenta), #98c379 (green), #ffb300 (amber)',
   ].join('\n');
 
-  const ollamaUrl = ctx.settings?.ollama_endpoint || 'http://float-box:11434';
-  const ollamaModel = ctx.settings?.ollama_model || 'qwen2.5:7b';
+  const ollama = getOllamaConfig(ctx);
 
-  const resp = await fetch(`${ollamaUrl}/api/generate`, {
+  const resp = await fetch(`${ollama.url}/api/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: ollamaModel,
+      model: ollama.model,
       system: systemPrompt,
       prompt: userPrompt,
       stream: false,
@@ -290,14 +296,13 @@ async function generateSpecViaOllama(userPrompt: string, ctx: any): Promise<any>
  */
 async function generateTitle(content: string, ctx: any): Promise<string | null> {
   try {
-    const ollamaUrl = ctx.settings?.ollama_endpoint || 'http://float-box:11434';
-    const ollamaModel = ctx.settings?.ollama_model || 'qwen2.5:7b';
+    const ollama = getOllamaConfig(ctx);
 
-    const resp = await fetch(`${ollamaUrl}/api/generate`, {
+    const resp = await fetch(`${ollama.url}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: ollamaModel,
+        model: ollama.model,
         system: 'Generate a short title (3-6 words) for this render request. Reply with ONLY the title, no quotes, no explanation.',
         prompt: content.slice(0, 500),
         stream: false,
