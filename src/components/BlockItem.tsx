@@ -348,6 +348,16 @@ export function BlockItem(props: BlockItemProps) {
       requestAnimationFrame(() => outputFocusRef?.focus({ preventScroll: true }));
     };
 
+    // Cmd+. toggle collapse on output blocks (mirrors regular block Cmd+. in useBlockInput)
+    if (modKey && e.key === '.') {
+      e.preventDefault();
+      const b = block();
+      if (b && (b.childIds?.length > 0 || b.outputType)) {
+        paneStore.toggleCollapsed(props.paneId, props.id, b.collapsed || false);
+      }
+      return;
+    }
+
     if (modKey && e.key === 'ArrowUp') {
       e.preventDefault();
       store.moveBlockUp(props.id);
@@ -377,9 +387,8 @@ export function BlockItem(props: BlockItemProps) {
       store.deleteBlock(props.id);
       if (target) props.onFocus(target);
       return;
-    } else if (e.key === 'Escape' && block()?.outputType === 'img-view') {
-      // Escape from img-view → back to edit mode (contentEditable shows, user can fix filename)
-      // The auto-execute effect won't re-fire unless content actually changes.
+    } else if (e.key === 'Escape' && (block()?.outputType === 'img-view' || block()?.outputType === 'door')) {
+      // Escape from img-view/door → back to edit mode (contentEditable shows, user can fix content)
       e.preventDefault();
       store.setBlockOutput(props.id, null, '');
       return;
@@ -1121,9 +1130,17 @@ export function BlockItem(props: BlockItemProps) {
               {/* DOOR OUTPUT VIEW — single branch for all doors */}
               <Show when={block()?.outputType === 'door'}>
                 <ErrorBoundary fallback={(err) => (
-                  <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d' }}>
-                    <span style={{ 'font-weight': 'bold' }}>Door error: </span>
-                    {err?.message || String(err)}
+                  <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d', display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                    <span style={{ flex: 1 }}>
+                      <span style={{ 'font-weight': 'bold' }}>Door error: </span>
+                      {err?.message || String(err)}
+                    </span>
+                    <button
+                      onClick={() => store.setBlockOutput(props.id, null, '')}
+                      style={{ background: '#3c3836', color: '#ebdbb2', border: '1px solid #665c54', 'border-radius': '3px', padding: '2px 8px', cursor: 'pointer', 'font-size': '11px', 'font-family': 'inherit', 'white-space': 'nowrap' }}
+                    >
+                      Clear
+                    </button>
                   </div>
                 )}>
                   {(() => {
@@ -1289,9 +1306,17 @@ export function BlockItem(props: BlockItemProps) {
           {/* INLINE DOOR OUTPUT: below contentEditable for selfRender doors (like artifact::) */}
           <Show when={block()?.outputType === 'door' && block()?.content && block()?.output && !isCollapsed()}>
             <ErrorBoundary fallback={(err: Error) => (
-              <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d' }}>
-                <span style={{ 'font-weight': 'bold' }}>Door error: </span>
-                {err.message}
+              <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d', display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                <span style={{ flex: 1 }}>
+                  <span style={{ 'font-weight': 'bold' }}>Door error: </span>
+                  {err.message}
+                </span>
+                <button
+                  onClick={() => store.setBlockOutput(props.id, null, '')}
+                  style={{ background: '#3c3836', color: '#ebdbb2', border: '1px solid #665c54', 'border-radius': '3px', padding: '2px 8px', cursor: 'pointer', 'font-size': '11px', 'font-family': 'inherit', 'white-space': 'nowrap' }}
+                >
+                  Clear
+                </button>
               </div>
             )}>
             {(() => {
