@@ -1305,11 +1305,11 @@ export function BlockItem(props: BlockItemProps) {
 
           {/* INLINE DOOR OUTPUT: below contentEditable for selfRender doors (like artifact::) */}
           <Show when={block()?.outputType === 'door' && block()?.content && block()?.output && !isCollapsed()}>
-            <ErrorBoundary fallback={(err: Error) => (
+            <ErrorBoundary fallback={(err) => (
               <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d', display: 'flex', 'align-items': 'center', gap: '8px' }}>
                 <span style={{ flex: 1 }}>
                   <span style={{ 'font-weight': 'bold' }}>Door error: </span>
-                  {err.message}
+                  {err?.message || String(err)}
                 </span>
                 <button
                   onClick={() => store.setBlockOutput(props.id, null, '')}

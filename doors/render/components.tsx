@@ -125,7 +125,13 @@ function renderMarkdown(text: string): string {
   fences.forEach((html, i) => { s = s.replace(`\x00FENCE${i}\x00`, html); });
   tables.forEach((html, i) => { s = s.replace(`\x00TABLE${i}\x00`, html); });
 
-  s = s.replace(/\n\n/g, '</p><p>');
+  // Split on double newlines, only wrap non-block-level segments in <p>
+  const blockRe = /^<(h[1-6]|ul|ol|li|blockquote|hr|table|pre|div)/;
+  s = s.split('\n\n').map(seg => {
+    const trimmed = seg.trim();
+    if (!trimmed) return '';
+    return blockRe.test(trimmed) ? trimmed : `<p>${trimmed}</p>`;
+  }).join('\n');
   return s;
 }
 

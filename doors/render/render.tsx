@@ -62,6 +62,7 @@ function demoSpec() {
 
 async function statsSpec(serverFetch: (path: string) => Promise<Response>) {
   const resp = await serverFetch('/api/v1/stats');
+  if (!resp.ok) throw new Error(`Stats fetch failed: ${resp.status}`);
   const stats = await resp.json();
 
   const typeEntries = Object.entries(stats.typeDistribution || {})
@@ -410,6 +411,9 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
     throw new Error(`Invalid agent_binary: must be a simple command name`);
   }
   const rawCwd = ctx.settings?.agent_cwd || '~/.floatty/doors/render/agent';
+  if (!/^[a-zA-Z0-9_.~\/-]+$/.test(rawCwd)) {
+    throw new Error(`Invalid agent_cwd: contains unsafe characters`);
+  }
   const agentCwd = rawCwd.startsWith('~/') ? `$HOME/${rawCwd.slice(2)}` : rawCwd;
 
   let sessionFlag = '';
@@ -481,7 +485,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   if (!sessionId) {
     try {
       const lsResult = await tauriShellExec(
-        `ls -t ~/.claude/projects/-Users-evan-*floatty-doors-render-agent*/*.jsonl 2>/dev/null | head -1`
+        `ls -t $HOME/.claude/projects/-Users-*-*floatty-doors-render-agent*/*.jsonl 2>/dev/null | head -1`
       );
       const latestFile = lsResult.trim();
       if (latestFile) {
@@ -692,7 +696,7 @@ export const door = {
 
       ctx.log('[render::ai] route selection:', {
         hasAnthropicKey: !!anthropicKey,
-        keyPrefix: anthropicKey ? anthropicKey.substring(0, 12) + '...' : 'none',
+        keyLength: anthropicKey ? anthropicKey.length : 0,
         model: ctx.settings?.model || 'claude-haiku-4-5-20251001',
       });
 
