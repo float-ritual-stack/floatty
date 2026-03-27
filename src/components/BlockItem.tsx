@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, onMount, on, untrack, createRoot } from 'solid-js';
+import { Show, ErrorBoundary, createMemo, createEffect, createSignal, onCleanup, onMount, on, untrack, createRoot } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -966,12 +966,15 @@ export function BlockItem(props: BlockItemProps) {
   // Chirp listener: door components emit chirp CustomEvents for wikilink navigation.
   // Catches at block-wrapper level — covers all door rendering paths (output, inline, zoomed).
   // Routes through handleWikilinkClick → navigateWikilink — unified path, not a new head.
-  // Door chirps → navigate, never split.
-  // Pane linking handles the rest: if this pane is linked to another,
-  // navigateWikilink resolves via resolveSameTabLink automatically.
+  // Door chirps: ⌘-click navigates, normal click is ignored.
+  // Never splits. Pane linking resolves via resolveSameTabLink —
+  // if pane A (door) is linked to pane B (outline), ⌘-click opens in B.
   onMount(() => {
     const chirpHandler = ((e: CustomEvent) => {
       if (e.detail?.message === 'navigate' && e.detail?.target) {
+        const src = e.detail.sourceEvent as MouseEvent | undefined;
+        const modKey = src ? (isMac ? src.metaKey : src.ctrlKey) : false;
+        if (!modKey) return; // Normal click → no-op, stay in door
         e.stopPropagation();
         navigateWikilink(e.detail.target, props.paneId);
       }
@@ -1143,6 +1146,7 @@ export function BlockItem(props: BlockItemProps) {
               {/* DOOR OUTPUT VIEW — single branch for all doors */}
               {/* Chirp events bubble to block-wrapper's chirp listener (above) */}
               <Show when={block()?.outputType === 'door'}>
+                <ErrorBoundary fallback={(err) => <div class="door-error">door crashed: {err.message}</div>}>
                 {(() => {
                   const envelope = block()!.output as DoorEnvelope;
                   if (!envelope || !envelope.kind) return null;
@@ -1163,6 +1167,7 @@ export function BlockItem(props: BlockItemProps) {
                         createdBlockIds={envelope.createdBlockIds}
                       />;
                 })()}
+                </ErrorBoundary>
               </Show>
 
               {/* IMG VIEW — local attachment from __attachments/ */}
@@ -1295,6 +1300,7 @@ export function BlockItem(props: BlockItemProps) {
 
           {/* INLINE DOOR OUTPUT: below contentEditable for selfRender doors (like artifact::) */}
           <Show when={block()?.outputType === 'door' && block()?.content && block()?.output && !isCollapsed()}>
+            <ErrorBoundary fallback={(err) => <div class="door-error">door crashed: {err.message}</div>}>
             {(() => {
               const envelope = () => block()!.output as DoorEnvelope;
               const env = envelope();
@@ -1316,6 +1322,7 @@ export function BlockItem(props: BlockItemProps) {
                     createdBlockIds={env.createdBlockIds}
                   />;
             })()}
+            </ErrorBoundary>
           </Show>
 
           {/* FLO-376: Wikilink autocomplete popup */}

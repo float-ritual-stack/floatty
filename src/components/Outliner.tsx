@@ -1,4 +1,4 @@
-import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on } from 'solid-js';
+import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, ErrorBoundary, on } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
@@ -811,6 +811,14 @@ export function Outliner(props: OutlinerProps) {
                   </Show>
                 </>
               }>
+                <ErrorBoundary fallback={(err) => (
+                  <div class="door-error" style={{ padding: '24px' }}>
+                    Door crashed: {err.message}
+                    <button onClick={() => paneStore.zoomTo(props.paneId, null)} style={{ 'margin-left': '12px' }}>
+                      Exit zoom
+                    </button>
+                  </div>
+                )}>
                 <DoorPaneView
                   blockId={zoomedRootId()!}
                   paneId={props.paneId}
@@ -826,6 +834,7 @@ export function Outliner(props: OutlinerProps) {
                     });
                   }}
                 />
+                </ErrorBoundary>
               </Show>
             }>
               <IframePaneView
