@@ -239,19 +239,15 @@ function TabBar(props: {
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
-  const [sidebarWidth, setSidebarWidth] = createSignal<number | string>('280px');
-  // Debounced save of sidebar width to config.toml (FLO-507)
-  let sidebarSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  // Sidebar width — persisted in localStorage (not config.toml, which serializes
+  // the entire struct and caused race conditions with Rust config writes)
+  const SIDEBAR_WIDTH_KEY = 'floatty-sidebar-width-px';
+  const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+  const [sidebarWidth, setSidebarWidth] = createSignal<number | string>(
+    savedWidth ? `${savedWidth}px` : '280px'
+  );
   const saveSidebarWidth = (widthPx: number) => {
-    clearTimeout(sidebarSaveTimer);
-    sidebarSaveTimer = setTimeout(async () => {
-      try {
-        const config = await invoke<Record<string, unknown>>('get_ctx_config');
-        await invoke('set_ctx_config', { config: { ...config, sidebar_width: Math.round(widthPx) } });
-      } catch (e) {
-        console.warn('[Terminal] Failed to save sidebar width:', e);
-      }
-    }, 500);
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(widthPx)));
   };
   const [isCommandBarOpen, setCommandBarOpen] = createSignal(false);
   // Snapshot focused block + pane when ⌘K opens (focus moves to command bar input)
@@ -270,12 +266,8 @@ export function Terminal() {
   // Load config once on mount
   (async () => {
     try {
-      const config = await invoke<{ split_collapse_depth?: number; unfocused_pane_opacity?: number; sidebar_width?: number }>('get_ctx_config');
+      const config = await invoke<{ split_collapse_depth?: number; unfocused_pane_opacity?: number }>('get_ctx_config');
       setSplitCollapseDepth(config.split_collapse_depth ?? 0);
-      // Restore persisted sidebar width
-      if (config.sidebar_width && config.sidebar_width > 0) {
-        setSidebarWidth(`${config.sidebar_width}px`);
-      }
       configDimOpacity = Math.max(0, Math.min(1, config.unfocused_pane_opacity ?? 0.4));
       // Disable dimming if config set to 1.0
       if (configDimOpacity >= 1) setDimEnabled(false);
