@@ -37,6 +37,10 @@ import {
   BacklinksFooter,
   PatternCard,
   ArcTimeline,
+  MeetingDiff,
+  DecisionLog,
+  DependencyChain,
+  ContextStream,
   injectBodyStyles,
 } from './components';
 
@@ -77,6 +81,10 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     BacklinksFooter,
     PatternCard,
     ArcTimeline,
+    MeetingDiff,
+    DecisionLog,
+    DependencyChain,
+    ContextStream,
   },
   actions: {
     selectEntry: async () => {},

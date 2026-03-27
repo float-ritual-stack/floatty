@@ -1345,6 +1345,398 @@ export function ArcTimeline(props: BaseComponentProps<{
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// MEETING DIFF — before/after process change visualization
+// ═══════════════════════════════════════════════════════════════
+
+interface DiffStep { step: string; status: 'unchanged' | 'removed' | 'added'; }
+interface DiffAction { who: string; what: string; status: string; blocker?: string; }
+
+export function MeetingDiff(props: BaseComponentProps<{
+  title: string;
+  meeting: string;
+  before: DiffStep[];
+  after: DiffStep[];
+  newDecisions?: string[];
+  actions?: DiffAction[];
+}>) {
+  const before = () => props.props.before ?? [];
+  const after = () => props.props.after ?? [];
+  const decisions = () => props.props.newDecisions ?? [];
+  const actions = () => props.props.actions ?? [];
+
+  const statusColor = (s: string) =>
+    s === 'blocked' ? V.amb : s === 'todo' ? V.cy : s === 'done' ? V.green : '#555';
+
+  return (
+    <div>
+      <div style={{
+        'font-size': '9px', color: '#555', 'letter-spacing': '0.12em',
+        'margin-bottom': '6px', 'font-family': V.mono,
+      }}>
+        MEETING DIFF · {props.props.meeting}
+      </div>
+      <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr', gap: '16px', 'margin-bottom': '20px' }}>
+        <div>
+          <div style={{
+            'font-size': '11px', 'font-family': V.mono, color: V.cor,
+            'font-weight': '700', 'margin-bottom': '10px', padding: '4px 8px',
+            background: 'rgba(255,107,107,0.08)', 'border-radius': '4px',
+          }}>BEFORE</div>
+          <For each={before()}>
+            {(s, i) => (
+              <div style={{
+                display: 'flex', 'align-items': 'flex-start', gap: '8px', padding: '6px 0',
+                'border-left': `2px solid ${s.status === 'removed' ? 'rgba(255,107,107,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                'padding-left': '10px', 'margin-bottom': '2px',
+                opacity: s.status === 'removed' ? '0.5' : '1',
+                'text-decoration': s.status === 'removed' ? 'line-through' : 'none',
+              }}>
+                <span style={{ 'font-family': V.mono, 'font-size': '11px', color: s.status === 'removed' ? V.cor : '#888' }}>
+                  {i() + 1}.
+                </span>
+                <span style={{ 'font-family': V.mono, 'font-size': '11px', color: s.status === 'removed' ? V.cor : '#aaa' }}>
+                  {s.step}
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+        <div>
+          <div style={{
+            'font-size': '11px', 'font-family': V.mono, color: V.green,
+            'font-weight': '700', 'margin-bottom': '10px', padding: '4px 8px',
+            background: 'rgba(152,195,121,0.08)', 'border-radius': '4px',
+          }}>AFTER</div>
+          <For each={after()}>
+            {(s, i) => (
+              <div style={{
+                display: 'flex', 'align-items': 'flex-start', gap: '8px', padding: '6px 0',
+                'border-left': `2px solid ${s.status === 'added' ? 'rgba(152,195,121,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                'padding-left': '10px', 'margin-bottom': '2px',
+              }}>
+                <span style={{ 'font-family': V.mono, 'font-size': '11px', color: s.status === 'added' ? V.green : '#888' }}>
+                  {i() + 1}.
+                </span>
+                <span style={{ 'font-family': V.mono, 'font-size': '11px', color: s.status === 'added' ? V.green : '#aaa' }}>
+                  {s.step}
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </div>
+      <Show when={decisions().length > 0}>
+        <div style={{ 'border-top': '1px solid rgba(255,255,255,0.06)', 'padding-top': '12px', 'margin-bottom': '16px' }}>
+          <div style={{ 'font-size': '10px', 'font-family': V.mono, color: '#555', 'margin-bottom': '8px', 'letter-spacing': '0.08em' }}>
+            NEW DECISIONS
+          </div>
+          <For each={decisions()}>
+            {(d) => (
+              <div style={{ display: 'flex', gap: '8px', padding: '3px 0', 'font-family': V.mono, 'font-size': '11px', color: V.t }}>
+                <span style={{ color: V.green }}>+</span> {d}
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={actions().length > 0}>
+        <div style={{ 'border-top': '1px solid rgba(255,255,255,0.06)', 'padding-top': '12px' }}>
+          <div style={{ 'font-size': '10px', 'font-family': V.mono, color: '#555', 'margin-bottom': '8px', 'letter-spacing': '0.08em' }}>
+            ACTION ITEMS
+          </div>
+          <For each={actions()}>
+            {(a) => (
+              <div style={{ display: 'flex', gap: '10px', padding: '5px 0', 'font-family': V.mono, 'font-size': '11px', 'align-items': 'center' }}>
+                <span style={{
+                  padding: '1px 6px', 'border-radius': '3px', 'font-size': '9px', 'font-weight': '600',
+                  background: `${statusColor(a.status)}22`, color: statusColor(a.status),
+                }}>{a.status}</span>
+                <span style={{ color: '#888', width: '80px' }}>{a.who}</span>
+                <span style={{ color: V.t }}>{a.what}</span>
+                <Show when={a.blocker}>
+                  <span style={{ color: V.cor, 'font-size': '10px' }}>blocked by {a.blocker}</span>
+                </Show>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DECISION LOG — filterable decision list with status
+// ═══════════════════════════════════════════════════════════════
+
+interface Decision { date: string; meeting: string; text: string; status: string; source?: string; project?: string; }
+
+export function DecisionLog(props: BaseComponentProps<{
+  decisions: Decision[];
+  title?: string;
+}>) {
+  const [filter, setFilter] = createSignal('all');
+  const decisions = () => props.props.decisions ?? [];
+  const filtered = createMemo(() =>
+    filter() === 'all' ? decisions() : decisions().filter(d => d.status === filter())
+  );
+  const statuses = createMemo(() => [...new Set(decisions().map(d => d.status))]);
+
+  return (
+    <div>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '11px', color: '#666', 'margin-bottom': '12px',
+          'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.1em',
+        }}>{props.props.title}</div>
+      </Show>
+      <div style={{ display: 'flex', gap: '8px', 'margin-bottom': '16px' }}>
+        <button onClick={() => setFilter('all')} style={{
+          padding: '4px 10px', border: 'none', 'border-radius': '3px', cursor: 'pointer',
+          'font-family': V.mono, 'font-size': '10px',
+          background: filter() === 'all' ? 'rgba(255,255,255,0.1)' : 'transparent',
+          color: filter() === 'all' ? '#e6edf3' : '#555',
+        }}>all ({decisions().length})</button>
+        <For each={statuses()}>
+          {(s) => (
+            <button onClick={() => setFilter(s)} style={{
+              padding: '4px 10px', border: 'none', 'border-radius': '3px', cursor: 'pointer',
+              'font-family': V.mono, 'font-size': '10px',
+              background: filter() === s ? 'rgba(255,255,255,0.1)' : 'transparent',
+              color: filter() === s ? '#e6edf3' : '#555',
+            }}>{s} ({decisions().filter(d => d.status === s).length})</button>
+          )}
+        </For>
+      </div>
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+        <For each={filtered()}>
+          {(d) => (
+            <div style={{
+              display: 'flex', gap: '12px', padding: '8px 12px', 'align-items': 'flex-start',
+              'border-left': `3px solid ${d.status === 'superseded' ? '#555' : V.cy}`,
+              background: d.status === 'superseded' ? 'transparent' : 'rgba(255,255,255,0.02)',
+              opacity: d.status === 'superseded' ? '0.5' : '1',
+              'border-radius': '0 3px 3px 0',
+            }}>
+              <div style={{ width: '70px', 'flex-shrink': '0' }}>
+                <div style={{ 'font-family': V.mono, 'font-size': '10px', color: '#666' }}>{d.date.slice(5)}</div>
+                <div style={{ 'font-family': V.mono, 'font-size': '9px', color: '#444' }}>{d.meeting}</div>
+              </div>
+              <div style={{ flex: '1', 'min-width': '0' }}>
+                <div style={{
+                  'font-family': V.serif, 'font-size': '12px',
+                  color: d.status === 'superseded' ? '#666' : V.t,
+                  'text-decoration': d.status === 'superseded' ? 'line-through' : 'none',
+                  'line-height': '1.4',
+                }}>{d.text}</div>
+              </div>
+              <div style={{
+                'flex-shrink': '0', 'font-family': V.mono, 'font-size': '9px',
+                padding: '2px 6px', 'border-radius': '3px',
+                background: d.status === 'active' ? 'rgba(152,195,121,0.1)' : 'rgba(255,255,255,0.05)',
+                color: d.status === 'active' ? V.green : '#555',
+              }}>{d.status}</div>
+            </div>
+          )}
+        </For>
+      </div>
+      <div style={{ 'margin-top': '12px', 'font-family': V.mono, 'font-size': '10px', color: '#444' }}>
+        {filtered().length} decisions across {new Set(filtered().map(d => d.meeting)).size} meetings
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DEPENDENCY CHAIN — horizontal linked issue cards
+// ═══════════════════════════════════════════════════════════════
+
+interface DepNode { id: string; title: string; assignee: string; status: string; deps: string[]; }
+
+export function DependencyChain(props: BaseComponentProps<{
+  nodes: DepNode[];
+  blocker?: string;
+}>) {
+  const nodes = () => props.props.nodes ?? [];
+  const statusColor = (s: string) =>
+    s === 'todo' ? V.cy : s === 'blocked' ? V.amb : s === 'done' ? V.green : '#555';
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: '0', 'align-items': 'stretch' }}>
+        <For each={nodes()}>
+          {(dep, i) => {
+            const sc = statusColor(dep.status);
+            return (
+              <div style={{ display: 'flex', 'align-items': 'center', flex: '1' }}>
+                <div style={{
+                  flex: '1', padding: '14px 16px',
+                  background: `${sc}0F`,
+                  border: `1px solid ${sc}33`,
+                  'border-radius': i() === 0 ? '6px 0 0 6px' : i() === nodes().length - 1 ? '0 6px 6px 0' : '0',
+                }}>
+                  <div style={{ 'font-family': V.mono, 'font-size': '12px', 'font-weight': '700', color: sc, 'margin-bottom': '4px' }}>
+                    {dep.id}
+                  </div>
+                  <div style={{ 'font-family': V.mono, 'font-size': '11px', color: '#aaa', 'margin-bottom': '6px' }}>
+                    {dep.title}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', 'align-items': 'center' }}>
+                    <span style={{ 'font-family': V.mono, 'font-size': '10px', color: '#666' }}>{dep.assignee}</span>
+                    <span style={{
+                      padding: '1px 5px', 'border-radius': '2px', 'font-size': '9px', 'font-weight': '600',
+                      'font-family': V.mono, background: `${sc}22`, color: sc,
+                    }}>{dep.status}</span>
+                  </div>
+                </div>
+                <Show when={i() < nodes().length - 1}>
+                  <div style={{
+                    width: '32px', display: 'flex', 'align-items': 'center', 'justify-content': 'center',
+                    color: '#444', 'font-size': '16px', 'font-family': V.mono,
+                  }}>→</div>
+                </Show>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+      <Show when={props.props.blocker}>
+        <div style={{
+          'margin-top': '12px', padding: '8px 12px', 'border-radius': '4px',
+          background: 'rgba(255,179,0,0.06)', border: '1px solid rgba(255,179,0,0.15)',
+          'font-family': V.mono, 'font-size': '11px', color: V.amb,
+        }}>
+          ⚠ {props.props.blocker}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONTEXT STREAM — filterable ctx:: capture timeline
+// ═══════════════════════════════════════════════════════════════
+
+const STREAM_PROJECT_COLORS: Record<string, string> = {
+  floatty: V.cy, 'floatty/doors-v2': V.cy, 'json-render': V.mag,
+  'rangle/pharmacy': V.amb, 'rangle/skills-for-change': V.green, 'float-hub': V.green,
+};
+const STREAM_MODE_COLORS: Record<string, string> = {
+  debugging: V.cor, 'session-archaeology': '#c678dd', digest: V.green,
+  'float-loop': V.cy, 'incoming-requirements': V.amb, onboarding: V.green,
+  meeting: V.mag, 'post-meeting': V.mag,
+};
+
+interface CtxCapture { time: string; project: string; mode: string; text: string; }
+
+export function ContextStream(props: BaseComponentProps<{
+  captures: CtxCapture[];
+  title?: string;
+}>) {
+  const [expandedIdx, setExpandedIdx] = createSignal<number | null>(null);
+  const [projectFilter, setProjectFilter] = createSignal<string | null>(null);
+
+  const captures = () => props.props.captures ?? [];
+  const projects = createMemo(() => [...new Set(captures().map(c => c.project))]);
+  const filtered = createMemo(() =>
+    projectFilter() ? captures().filter(c => c.project === projectFilter()) : captures()
+  );
+  const transitions = createMemo(() => {
+    const t: number[] = [];
+    const f = filtered();
+    for (let i = 1; i < f.length; i++) {
+      if (f[i].project !== f[i - 1].project) t.push(i);
+    }
+    return t;
+  });
+
+  return (
+    <div>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '11px', color: '#666', 'margin-bottom': '12px',
+          'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.1em',
+        }}>{props.props.title}</div>
+      </Show>
+      <div style={{ display: 'flex', gap: '6px', 'margin-bottom': '14px', 'flex-wrap': 'wrap' }}>
+        <button onClick={() => setProjectFilter(null)} style={{
+          padding: '3px 8px', border: 'none', 'border-radius': '3px', cursor: 'pointer',
+          'font-family': V.mono, 'font-size': '10px',
+          background: !projectFilter() ? 'rgba(255,255,255,0.1)' : 'transparent',
+          color: !projectFilter() ? '#e6edf3' : '#555',
+        }}>all</button>
+        <For each={projects()}>
+          {(p) => {
+            const pc = STREAM_PROJECT_COLORS[p] ?? '#888';
+            return (
+              <button onClick={() => setProjectFilter(projectFilter() === p ? null : p)} style={{
+                padding: '3px 8px', border: 'none', 'border-radius': '3px', cursor: 'pointer',
+                'font-family': V.mono, 'font-size': '10px',
+                background: projectFilter() === p ? `${pc}22` : 'transparent',
+                color: projectFilter() === p ? pc : '#555',
+              }}>{p.split('/').pop()}</button>
+            );
+          }}
+        </For>
+      </div>
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '0' }}>
+        <For each={filtered()}>
+          {(ctx, i) => {
+            const isTransition = () => transitions().includes(i());
+            const isExpanded = () => expandedIdx() === i();
+            const projColor = STREAM_PROJECT_COLORS[ctx.project] ?? '#888';
+            const modeColor = STREAM_MODE_COLORS[ctx.mode] ?? '#888';
+            return (
+              <div>
+                <Show when={isTransition()}>
+                  <div style={{
+                    padding: '4px 0', margin: '4px 0',
+                    'border-top': '1px dashed rgba(255,255,255,0.06)',
+                    'font-family': V.mono, 'font-size': '9px', color: '#444',
+                    'padding-left': '52px',
+                  }}>
+                    context switch → {ctx.project}
+                  </div>
+                </Show>
+                <div
+                  onClick={() => setExpandedIdx(isExpanded() ? null : i())}
+                  style={{
+                    display: 'flex', gap: '8px', padding: '5px 8px', cursor: 'pointer',
+                    'border-left': `2px solid ${projColor}`,
+                    background: isExpanded() ? 'rgba(255,255,255,0.03)' : 'transparent',
+                    'border-radius': '0 2px 2px 0',
+                    transition: 'background 0.15s ease',
+                  }}
+                >
+                  <span style={{ 'font-family': V.mono, 'font-size': '10px', color: '#555', width: '58px', 'flex-shrink': '0' }}>
+                    {ctx.time}
+                  </span>
+                  <span style={{
+                    'font-family': V.mono, 'font-size': '9px', padding: '1px 4px', 'border-radius': '2px',
+                    background: `${modeColor}15`, color: modeColor, 'flex-shrink': '0',
+                    width: '80px', 'text-align': 'center', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap',
+                  }}>{ctx.mode}</span>
+                  <span style={{
+                    'font-family': V.mono, 'font-size': '11px', color: '#aaa',
+                    flex: '1', 'min-width': '0',
+                    'white-space': isExpanded() ? 'normal' : 'nowrap',
+                    overflow: isExpanded() ? 'visible' : 'hidden',
+                    'text-overflow': 'ellipsis',
+                  }}>{ctx.text}</span>
+                </div>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+      <div style={{ 'margin-top': '12px', 'font-family': V.mono, 'font-size': '10px', color: '#444' }}>
+        {filtered().length} captures · {new Set(filtered().map(c => c.project)).size} projects · {new Set(filtered().map(c => c.mode)).size} modes
+      </div>
+    </div>
+  );
+}
+
 export function injectBodyStyles() {
   if (typeof document === 'undefined') return;
   if (document.querySelector('[data-bbs-entry-styles]')) return;

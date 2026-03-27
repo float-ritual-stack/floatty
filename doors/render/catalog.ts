@@ -340,6 +340,46 @@ export const bbsCatalog = schema.createCatalog({
       slots: [],
       description: 'Collapsible arc timeline for timelogs. Groups entries into arcs (work sessions) with colored left borders. Click arc to expand entry list. Shows DONE milestones, duration, entry count. Entries have time + dot + label. Orphan entries shown separately. Project colors: floatty=cyan, float-hub=green, rangle=amber, json-render=magenta. Times as "HH:MM" (24h). Good for daily note timelogs.',
     },
+
+    MeetingDiff: {
+      props: z.object({
+        title: z.string(),
+        meeting: z.string(),
+        before: z.array(z.object({ step: z.string(), status: z.enum(['unchanged', 'removed', 'added']) })),
+        after: z.array(z.object({ step: z.string(), status: z.enum(['unchanged', 'removed', 'added']) })),
+        newDecisions: z.array(z.string()).optional(),
+        actions: z.array(z.object({ who: z.string(), what: z.string(), status: z.string(), blocker: z.string().optional() })).optional(),
+      }),
+      slots: [],
+      description: 'Before/after grid showing process changes from a meeting. Steps colored by status (red=removed, green=added, gray=unchanged). Includes new decisions list and action items with assignee/status/blocker. Good for post-meeting synthesis.',
+    },
+
+    DecisionLog: {
+      props: z.object({
+        decisions: z.array(z.object({ date: z.string(), meeting: z.string(), text: z.string(), status: z.string(), source: z.string().optional(), project: z.string().optional() })),
+        title: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Filterable list of project decisions with date, meeting source, and status (active/superseded). Filter tabs at top. Active decisions have cyan border, superseded are dimmed with strikethrough. Good for tracking decisions across meetings.',
+    },
+
+    DependencyChain: {
+      props: z.object({
+        nodes: z.array(z.object({ id: z.string(), title: z.string(), assignee: z.string(), status: z.string(), deps: z.array(z.string()) })),
+        blocker: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Horizontal linked-card chain showing issue dependencies. Cards connected by → arrows with id/title/assignee/status. Colors: todo=cyan, blocked=amber, done=green. Optional blocker callout below. Good for sprint planning, blocked-work viz.',
+    },
+
+    ContextStream: {
+      props: z.object({
+        captures: z.array(z.object({ time: z.string(), project: z.string(), mode: z.string(), text: z.string() })),
+        title: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Filterable timeline of ctx:: captures with project color coding, mode badges, and context-switch markers. Click to expand entries. Project filter chips at top. Good for daily dashboards, session archaeology views.',
+    },
   },
 
   actions: {
