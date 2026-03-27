@@ -7,7 +7,7 @@
  * sidebar is display-only, main app owns focus.
  */
 
-import { Show, For, createMemo, onMount, onCleanup } from 'solid-js';
+import { Show, For, createMemo, onMount, onCleanup, ErrorBoundary } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { ContextSidebar } from './ContextSidebar';
 import { createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
@@ -99,12 +99,19 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
 
         {/* Registry doors: render via Dynamic */}
         <Show when={store.activeDoorId() !== 'ctx' && activeView()}>
-          <Dynamic
-            component={activeView()!}
-            data={null}
-            settings={activeSettings()}
-            server={getServerAccess()}
-          />
+          <ErrorBoundary fallback={(err) => (
+            <div style={{ padding: '12px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace' }}>
+              <div style={{ 'font-weight': 'bold', 'margin-bottom': '4px' }}>Sidebar door error</div>
+              {err?.message || String(err)}
+            </div>
+          )}>
+            <Dynamic
+              component={activeView()!}
+              data={null}
+              settings={activeSettings()}
+              server={getServerAccess()}
+            />
+          </ErrorBoundary>
         </Show>
       </div>
     </aside>

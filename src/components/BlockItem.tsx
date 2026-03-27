@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack, createRoot } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack, createRoot, ErrorBoundary } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -1115,35 +1115,42 @@ export function BlockItem(props: BlockItemProps) {
 
               {/* DOOR OUTPUT VIEW — single branch for all doors */}
               <Show when={block()?.outputType === 'door'}>
-                {(() => {
-                  const envelope = block()!.output as DoorEnvelope;
-                  if (!envelope || !envelope.kind) return null;
-                  return envelope.kind === 'view'
-                    ? <DoorHost
-                        doorId={envelope.doorId}
-                        data={envelope.data}
-                        error={envelope.error}
-                        status={block()?.outputStatus}
-                        onNavigate={(target, opts) => {
-                          handleChirpNavigate(target, {
-                            type: opts?.type,
-                            sourcePaneId: props.paneId,
-                            sourceBlockId: props.id,
-                            splitDirection: opts?.splitDirection,
-                            originBlockId: props.id,
-                          });
-                        }}
-                      />
-                    : <DoorExecCard
-                        doorId={envelope.doorId}
-                        ok={envelope.ok}
-                        startedAt={envelope.startedAt}
-                        finishedAt={envelope.finishedAt}
-                        summary={envelope.summary}
-                        error={envelope.error}
-                        createdBlockIds={envelope.createdBlockIds}
-                      />;
-                })()}
+                <ErrorBoundary fallback={(err) => (
+                  <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d' }}>
+                    <span style={{ 'font-weight': 'bold' }}>Door error: </span>
+                    {err?.message || String(err)}
+                  </div>
+                )}>
+                  {(() => {
+                    const envelope = block()!.output as DoorEnvelope;
+                    if (!envelope || !envelope.kind) return null;
+                    return envelope.kind === 'view'
+                      ? <DoorHost
+                          doorId={envelope.doorId}
+                          data={envelope.data}
+                          error={envelope.error}
+                          status={block()?.outputStatus}
+                          onNavigate={(target, opts) => {
+                            handleChirpNavigate(target, {
+                              type: opts?.type,
+                              sourcePaneId: props.paneId,
+                              sourceBlockId: props.id,
+                              splitDirection: opts?.splitDirection,
+                              originBlockId: props.id,
+                            });
+                          }}
+                        />
+                      : <DoorExecCard
+                          doorId={envelope.doorId}
+                          ok={envelope.ok}
+                          startedAt={envelope.startedAt}
+                          finishedAt={envelope.finishedAt}
+                          summary={envelope.summary}
+                          error={envelope.error}
+                          createdBlockIds={envelope.createdBlockIds}
+                        />;
+                  })()}
+                </ErrorBoundary>
               </Show>
 
               {/* IMG VIEW — local attachment from __attachments/ */}
