@@ -122,6 +122,12 @@ pub struct BlockMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_timestamp_lenient")]
     #[ts(type = "number | null")]
     pub extracted_at: Option<i64>,
+
+    /// Short summary extracted from block output (render doors, etc.).
+    /// Populated by frontend outputSummaryHook when a door produces structured output.
+    /// Makes rich door content discoverable via search without exposing full spec.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 impl BlockMetadata {
@@ -132,7 +138,7 @@ impl BlockMetadata {
 
     /// Check if metadata is empty (no markers, no outlinks, not a stub).
     pub fn is_empty(&self) -> bool {
-        self.markers.is_empty() && self.outlinks.is_empty() && !self.is_stub
+        self.markers.is_empty() && self.outlinks.is_empty() && !self.is_stub && self.summary.is_none()
     }
 
     /// Add a marker.

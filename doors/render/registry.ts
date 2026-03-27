@@ -36,6 +36,7 @@ import {
   WikilinkChip,
   BacklinksFooter,
   PatternCard,
+  ArcTimeline,
   injectBodyStyles,
 } from './components';
 
@@ -75,6 +76,7 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     WikilinkChip,
     BacklinksFooter,
     PatternCard,
+    ArcTimeline,
   },
   actions: {
     selectEntry: async () => {},

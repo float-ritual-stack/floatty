@@ -20,6 +20,7 @@ import { hookRegistry } from '../hooks';
 import { sendContextHook } from './hooks/sendContextHook';
 import { registerCtxRouterHook } from './hooks/ctxRouterHook';
 import { registerOutlinksHook } from './hooks/outlinksHook';
+import { registerOutputSummaryHook } from './hooks/outputSummaryHook';
 import { loadDoors, cleanupDoorDeps } from './doorLoader';
 import { doorRegistry } from './doorRegistry';
 import { registerFuncIndexHook } from './funcRegistry';
@@ -79,6 +80,7 @@ export function registerHandlers(): void {
   // Register EventBus subscriptions (block lifecycle hooks)
   registerCtxRouterHook();
   registerOutlinksHook();
+  registerOutputSummaryHook();
   registerFuncIndexHook();
 
   console.log('[handlers] Registered handlers:', registry.getRegisteredPrefixes().join(', '));

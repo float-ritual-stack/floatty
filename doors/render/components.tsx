@@ -1171,6 +1171,181 @@ export const BODY_STYLES = `
 }
 `;
 
+// ═══════════════════════════════════════════════════════════════
+// ARC TIMELINE — timelog visualization (ported from daddy's mockup)
+// ═══════════════════════════════════════════════════════════════
+
+interface ArcEntry { time: string; label: string; project: string; }
+interface Arc { name: string; start: string; end: string; project: string; entries?: number; }
+
+const ARC_PROJECT_COLORS: Record<string, { fg: string; dim: string; med: string }> = {
+  floatty: { fg: '#00e5ff', dim: 'rgba(0,229,255,0.12)', med: 'rgba(0,229,255,0.3)' },
+  'float-hub': { fg: '#98c379', dim: 'rgba(152,195,121,0.12)', med: 'rgba(152,195,121,0.3)' },
+  'json-render': { fg: '#e040a0', dim: 'rgba(224,64,160,0.12)', med: 'rgba(224,64,160,0.3)' },
+  rangle: { fg: '#ffb300', dim: 'rgba(255,179,0,0.12)', med: 'rgba(255,179,0,0.3)' },
+};
+
+function arcTimeToMinutes(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function arcColor(project: string): { fg: string; dim: string; med: string } {
+  return ARC_PROJECT_COLORS[project] ?? { fg: '#888', dim: 'rgba(136,136,136,0.12)', med: 'rgba(136,136,136,0.3)' };
+}
+
+export function ArcTimeline(props: BaseComponentProps<{
+  entries: ArcEntry[];
+  arcs: Arc[];
+  title?: string;
+}>) {
+  const [expandedArc, setExpandedArc] = createSignal<number | null>(null);
+
+  const entries = () => props.props.entries ?? [];
+  const arcs = () => props.props.arcs ?? [];
+
+  const orphans = () => entries().filter((e) => {
+    return !arcs().some((a) => {
+      const aStart = arcTimeToMinutes(a.start);
+      const aEnd = arcTimeToMinutes(a.end);
+      const eTime = arcTimeToMinutes(e.time);
+      return eTime >= aStart && eTime <= aEnd && (e.project === a.project || e.project === 'float-hub');
+    });
+  });
+
+  return (
+    <div style={{ padding: '0 0 16px 0' }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '11px', color: '#666', 'margin-bottom': '12px',
+          'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.1em',
+        }}>
+          {props.props.title}
+        </div>
+      </Show>
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+        <For each={arcs()}>
+          {(arc, i) => {
+            const colors = arcColor(arc.project);
+            const isExpanded = () => expandedArc() === i();
+            const arcEntries = () => entries().filter((e) => {
+              const aStart = arcTimeToMinutes(arc.start);
+              const aEnd = arcTimeToMinutes(arc.end);
+              const eTime = arcTimeToMinutes(e.time);
+              return eTime >= aStart && eTime <= aEnd && (e.project === arc.project || e.project === 'float-hub');
+            });
+            const durationH = () => ((arcTimeToMinutes(arc.end) - arcTimeToMinutes(arc.start)) / 60).toFixed(1);
+            const doneCount = () => arcEntries().filter(e => e.label.includes('DONE')).length;
+
+            return (
+              <div>
+                <div
+                  onClick={() => setExpandedArc(isExpanded() ? null : i())}
+                  style={{
+                    display: 'flex', 'align-items': 'center', gap: '12px',
+                    padding: '10px 14px', cursor: 'pointer',
+                    background: isExpanded() ? colors.dim : 'rgba(255,255,255,0.02)',
+                    'border-left': `3px solid ${colors.fg}`,
+                    'border-radius': '0 4px 4px 0',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <span style={{
+                    'font-family': V.mono, 'font-size': '10px', color: '#666',
+                    width: '90px', 'flex-shrink': '0',
+                  }}>
+                    {arc.start} → {arc.end}
+                  </span>
+                  <span style={{
+                    'font-family': V.serif, 'font-size': '13px', color: colors.fg,
+                    'font-weight': '600', flex: '1', 'min-width': '0',
+                    'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis',
+                  }}>
+                    {arc.name}
+                  </span>
+                  <div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-shrink': '0' }}>
+                    <Show when={doneCount() > 0}>
+                      <span style={{
+                        'font-family': V.mono, 'font-size': '9px', color: '#98c379',
+                        padding: '2px 6px', background: 'rgba(152,195,121,0.1)', 'border-radius': '3px',
+                      }}>
+                        {doneCount()} DONE
+                      </span>
+                    </Show>
+                    <span style={{ 'font-family': V.mono, 'font-size': '10px', color: '#666' }}>
+                      {durationH()}h · {arcEntries().length} entries
+                    </span>
+                    <span style={{
+                      'font-family': V.mono, 'font-size': '12px', color: '#555',
+                      transform: isExpanded() ? 'rotate(90deg)' : 'rotate(0)',
+                      transition: 'transform 0.2s ease', display: 'inline-block',
+                    }}>
+                      ▸
+                    </span>
+                  </div>
+                </div>
+                <Show when={isExpanded()}>
+                  <div style={{
+                    'border-left': `1px solid ${colors.dim}`,
+                    'margin-left': '14px', 'padding-left': '16px',
+                    'padding-top': '4px', 'padding-bottom': '8px',
+                  }}>
+                    <For each={arcEntries()}>
+                      {(entry) => {
+                        const isDone = entry.label.includes('DONE');
+                        const isDigest = entry.label.includes('digest') || entry.label.includes('sync');
+                        const entryColors = arcColor(entry.project);
+                        return (
+                          <div style={{
+                            display: 'flex', gap: '10px', 'align-items': 'flex-start',
+                            padding: '4px 0', 'font-family': V.mono, 'font-size': '11px',
+                            opacity: isDigest ? '0.5' : '1',
+                          }}>
+                            <span style={{ color: '#555', width: '42px', 'flex-shrink': '0' }}>
+                              {entry.time}
+                            </span>
+                            <span style={{
+                              width: '6px', height: '6px',
+                              'border-radius': isDone ? '1px' : '3px',
+                              background: isDone ? '#98c379' : entryColors.med,
+                              border: `1px solid ${isDone ? '#98c379' : entryColors.fg}`,
+                              'flex-shrink': '0', 'margin-top': '4px',
+                            }} />
+                            <span style={{
+                              color: isDone ? '#98c379' : '#aaa',
+                              'font-weight': isDone ? '600' : '400',
+                            }}>
+                              {entry.label}
+                            </span>
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            );
+          }}
+        </For>
+        <Show when={orphans().length > 0}>
+          <div style={{ 'margin-top': '8px' }}>
+            <div style={{
+              padding: '8px 14px',
+              'border-left': '3px solid #555',
+              'border-radius': '0 4px 4px 0',
+              background: 'rgba(255,255,255,0.02)',
+            }}>
+              <span style={{ 'font-family': V.mono, 'font-size': '11px', color: '#666' }}>
+                {orphans().length} entries outside arcs
+              </span>
+            </div>
+          </div>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
 export function injectBodyStyles() {
   if (typeof document === 'undefined') return;
   if (document.querySelector('[data-bbs-entry-styles]')) return;

@@ -321,6 +321,25 @@ export const bbsCatalog = schema.createCatalog({
       slots: ['default'],
       description: 'Expandable card with type/confidence badges, markdown body, and connectsTo footer',
     },
+
+    ArcTimeline: {
+      props: z.object({
+        entries: z.array(z.object({
+          time: z.string(),
+          label: z.string(),
+          project: z.string(),
+        })),
+        arcs: z.array(z.object({
+          name: z.string(),
+          start: z.string(),
+          end: z.string(),
+          project: z.string(),
+        })),
+        title: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Collapsible arc timeline for timelogs. Groups entries into arcs (work sessions) with colored left borders. Click arc to expand entry list. Shows DONE milestones, duration, entry count. Entries have time + dot + label. Orphan entries shown separately. Project colors: floatty=cyan, float-hub=green, rangle=amber, json-render=magenta. Times as "HH:MM" (24h). Good for daily note timelogs.',
+    },
   },
 
   actions: {
@@ -345,8 +364,8 @@ export const bbsCatalog = schema.createCatalog({
       description: 'Create a child block under the current render:: block with the given content',
     },
     upsertChild: {
-      params: z.object({ content: z.string(), match: z.string() }),
-      description: 'Find or create a child block matching prefix, updating content if found',
+      params: z.object({ content: z.string(), match: z.string().optional(), prefix: z.string().optional() }),
+      description: 'Find or create a child block by prefix match ("match" or "prefix" param). Updates content if found, creates if not.',
     },
     scrollTo: {
       params: z.object({ id: z.string() }),

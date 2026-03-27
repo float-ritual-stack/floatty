@@ -31,4 +31,9 @@ isStub: boolean,
  * Timestamp of last metadata extraction.
  * Used to skip re-extraction if content unchanged.
  */
-extractedAt: number | null, };
+extractedAt: number | null,
+/**
+ * Short summary extracted from block output (render doors, etc.).
+ * Populated by frontend outputSummaryHook when a door produces structured output.
+ */
+summary?: string | null, };

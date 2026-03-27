@@ -27,6 +27,7 @@ import {
 
 import { bbsCatalog } from './catalog';
 import { registry as bbsRegistry } from './registry';
+import { LAYOUT_PATTERNS } from './patterns';
 
 function getOllamaConfig(ctx: any) {
   return {
@@ -141,6 +142,8 @@ const CLAUDE_SYSTEM_PROMPT = [
   'Use TuiPanel for bordered containers, TuiStat for metrics, BarChart+BarItem for data viz.',
   'Use ShippedItem for completed items, PatternCard for expandable technical notes.',
   'Use BacklinksFooter for bidirectional links, WikilinkChip for [[bracket]] links.',
+  '',
+  LAYOUT_PATTERNS,
 ].join('\n');
 
 function normalizeSpec(spec: any, ctx: any): any {
@@ -316,10 +319,13 @@ async function tauriShellExec(command: string): Promise<string> {
   return invoke('execute_shell_command', { command });
 }
 
+// Cache catalog prompt — it's derived from static catalog definition
+let _cachedCatalogPrompt: string | null = null;
+
 // Dynamic prompt from catalog — includes all components, actions, state bindings, repeat fields.
 // Replaces old static AGENT_SYSTEM_PROMPT with catalog.prompt() for auto-sync with catalog changes.
 function buildAgentSystemPrompt(): string {
-  const catalogPrompt = bbsCatalog.prompt();
+  const catalogPrompt = _cachedCatalogPrompt ??= bbsCatalog.prompt();
   const stateIdx = catalogPrompt.indexOf('INITIAL STATE');
   const componentSection = stateIdx > 0 ? catalogPrompt.substring(stateIdx) : catalogPrompt;
 
@@ -346,6 +352,8 @@ function buildAgentSystemPrompt(): string {
     '- Use REAL data from the context provided, not placeholder text',
     '- Colors: #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber)',
     '- Output a SINGLE JSON object, NOT JSONL patches',
+    '',
+    LAYOUT_PATTERNS,
   ].join('\n');
 }
 
@@ -365,12 +373,13 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
 
   let contextBlock = '';
   try {
-    const statsResp = await ctx.server.fetch('/api/v1/stats');
-    const stats = await statsResp.json();
+    const [statsResp, searchResp] = await Promise.all([
+      ctx.server.fetch('/api/v1/stats'),
+      ctx.server.fetch(`/api/v1/search?q=${encodeURIComponent(userPrompt)}&limit=10`),
+    ]);
+    const [stats, searchResults] = await Promise.all([statsResp.json(), searchResp.json()]);
     contextBlock += `Outline stats: ${stats.blockCount} blocks, ${stats.rootCount} roots, ${stats.pageCount} pages\n`;
 
-    const searchResp = await ctx.server.fetch(`/api/v1/search?q=${encodeURIComponent(userPrompt)}&limit=10`);
-    const searchResults = await searchResp.json();
     if (searchResults.hits?.length > 0) {
       contextBlock += '\nRelevant outline blocks:\n';
       for (const hit of searchResults.hits.slice(0, 10)) {
@@ -580,7 +589,7 @@ function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?
     upsertChild: async (params: Record<string, unknown>) => {
       props.onChirp?.('upsert-child', {
         content: params.content as string,
-        match: params.match as string,
+        match: (params.match ?? params.prefix) as string,
       });
     },
     refresh: async () => {},
@@ -629,7 +638,7 @@ export const door = {
       if (explicitTitle) out.title = explicitTitle;
       setOutput(blockId, ctx, out, error);
 
-      if (!explicitTitle && !error && out.spec) {
+      if (!explicitTitle && !out.title && !error && out.spec) {
         generateTitle(content, ctx).then(title => {
           if (title) {
             setOutput(blockId, ctx, { ...out, title });
@@ -639,14 +648,14 @@ export const door = {
     };
 
     if (arg === 'demo' || arg === '') {
-      setOutputWithTitle({ spec: demoSpec(), generatedVia: 'demo' });
+      setOutputWithTitle({ spec: demoSpec(), generatedVia: 'demo', title: 'render:: demo' });
       return;
     }
 
     if (arg === 'stats') {
       try {
         const spec = await statsSpec(ctx.server.fetch);
-        setOutputWithTitle({ spec, generatedVia: 'stats' });
+        setOutputWithTitle({ spec, generatedVia: 'stats', title: 'outline stats' });
       } catch (e: any) {
         ctx.log('stats fetch failed:', e.message);
         setOutputWithTitle({ spec: null }, e.message);
@@ -657,6 +666,7 @@ export const door = {
     if (arg === 'prompt') {
       const prompt = bbsCatalog.prompt();
       setOutputWithTitle({
+        title: 'catalog prompt',
         generatedVia: 'prompt',
         spec: {
           root: 'main',
