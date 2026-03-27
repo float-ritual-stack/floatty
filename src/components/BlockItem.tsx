@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack, createRoot } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup, onMount, on, untrack, createRoot } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -287,7 +287,7 @@ export function BlockItem(props: BlockItemProps) {
     if (ot?.startsWith('search-') || ot === 'img-view') return true;
     // Door output blocks: only adapter children (empty content) replace contentEditable.
     // selfRender doors with content keep contentEditable and render output below (like artifact::).
-    if (ot === 'door' && !block()?.content) return true;
+    if (ot === 'door' && block()?.content === '') return true;
     return false;
   });
 
@@ -963,6 +963,23 @@ export function BlockItem(props: BlockItemProps) {
     return '•';
   };
 
+  // Chirp listener: door components emit chirp CustomEvents for wikilink navigation.
+  // Catches at block-wrapper level — covers all door rendering paths (output, inline, zoomed).
+  // Routes through handleWikilinkClick → navigateWikilink — unified path, not a new head.
+  // Door chirps → navigate, never split.
+  // Pane linking handles the rest: if this pane is linked to another,
+  // navigateWikilink resolves via resolveSameTabLink automatically.
+  onMount(() => {
+    const chirpHandler = ((e: CustomEvent) => {
+      if (e.detail?.message === 'navigate' && e.detail?.target) {
+        e.stopPropagation();
+        navigateWikilink(e.detail.target, props.paneId);
+      }
+    }) as EventListener;
+    wrapperRef?.addEventListener('chirp', chirpHandler);
+    onCleanup(() => wrapperRef?.removeEventListener('chirp', chirpHandler));
+  });
+
   // [[Wikilink]] click handler — delegates to navigateWikilink with mouse-event modifiers
   // Cmd+Click / Opt+Click → horizontal split, +Shift → vertical split
   const handleWikilinkClick = (target: string, e: MouseEvent) => {
@@ -1124,6 +1141,7 @@ export function BlockItem(props: BlockItemProps) {
               </Show>
 
               {/* DOOR OUTPUT VIEW — single branch for all doors */}
+              {/* Chirp events bubble to block-wrapper's chirp listener (above) */}
               <Show when={block()?.outputType === 'door'}>
                 {(() => {
                   const envelope = block()!.output as DoorEnvelope;
@@ -1134,15 +1152,6 @@ export function BlockItem(props: BlockItemProps) {
                         data={envelope.data}
                         error={envelope.error}
                         status={block()?.outputStatus}
-                        onNavigate={(target, opts) => {
-                          handleChirpNavigate(target, {
-                            type: opts?.type,
-                            sourcePaneId: props.paneId,
-                            sourceBlockId: props.id,
-                            splitDirection: opts?.splitDirection,
-                            originBlockId: props.id,
-                          });
-                        }}
                       />
                     : <DoorExecCard
                         doorId={envelope.doorId}
@@ -1296,15 +1305,6 @@ export function BlockItem(props: BlockItemProps) {
                     data={env.data}
                     error={env.error}
                     status={block()?.outputStatus}
-                    onNavigate={(target, opts) => {
-                      handleChirpNavigate(target, {
-                        type: opts?.type,
-                        sourcePaneId: props.paneId,
-                        sourceBlockId: props.id,
-                        splitDirection: opts?.splitDirection,
-                        originBlockId: props.id,
-                      });
-                    }}
                   />
                 : <DoorExecCard
                     doorId={env.doorId}

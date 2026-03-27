@@ -89,7 +89,7 @@ export function Outliner(props: OutlinerProps) {
     if (b.childIds) {
       for (const childId of b.childIds) {
         const child = store.blocks[childId];
-        if (child?.outputType === 'door' && !child.content) {
+        if (child?.outputType === 'door' && child.content === '') {
           const envelope = child.output as DoorViewOutput | undefined;
           if (envelope?.kind === 'view') return childId;
         }

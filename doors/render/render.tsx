@@ -671,15 +671,15 @@ export const door = {
 
     /** Render output, then auto-generate title if none provided */
     const setOutputWithTitle = (data: RenderViewData, error?: string) => {
-      if (explicitTitle) data.title = explicitTitle;
-      setOutput(blockId, ctx, data, error);
+      const out = { ...data };
+      if (explicitTitle) out.title = explicitTitle;
+      setOutput(blockId, ctx, out, error);
 
       // Auto-generate title via ollama if none provided (fire-and-forget)
-      if (!explicitTitle && !error && data.spec) {
+      if (!explicitTitle && !error && out.spec) {
         generateTitle(content, ctx).then(title => {
           if (title) {
-            data.title = title;
-            setOutput(blockId, ctx, data);
+            setOutput(blockId, ctx, { ...out, title });
           }
         });
       }
