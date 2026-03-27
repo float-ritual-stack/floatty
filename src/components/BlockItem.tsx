@@ -284,7 +284,11 @@ export function BlockItem(props: BlockItemProps) {
   // Detect output blocks that need special keyboard handling
   const isOutputBlock = createMemo(() => {
     const ot = block()?.outputType;
-    return ot?.startsWith('search-') || ot === 'door' || ot === 'img-view';
+    if (ot?.startsWith('search-') || ot === 'img-view') return true;
+    // Door output: only adapter children (empty content) replace contentEditable.
+    // selfRender doors with content keep contentEditable and render output below (like artifact::).
+    if (ot === 'door' && block()?.content === '') return true;
+    return false;
   });
 
   // img:: auto-render — fires when content starts with img:: AND filename has a known extension.
@@ -942,7 +946,8 @@ export function BlockItem(props: BlockItemProps) {
 
   const hasCollapsibleOutput = createMemo(() => {
     const b = block();
-    return b?.outputType === 'eval-result' && !!b?.output;
+    if (!b?.output) return false;
+    return b.outputType === 'eval-result' || (b.outputType === 'door' && b.content !== '');
   });
 
   const bulletChar = () => {
@@ -1279,6 +1284,38 @@ export function BlockItem(props: BlockItemProps) {
                 />
               );
             })()}
+          </Show>
+
+          {/* INLINE DOOR OUTPUT: below contentEditable for selfRender doors (like artifact::) */}
+          <Show when={block()?.outputType === 'door' && block()?.content && block()?.output && !isCollapsed()}>
+            <ErrorBoundary fallback={(err: Error) => (
+              <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d' }}>
+                <span style={{ 'font-weight': 'bold' }}>Door error: </span>
+                {err.message}
+              </div>
+            )}>
+            {(() => {
+              const envelope = () => block()!.output as DoorEnvelope;
+              const env = envelope();
+              if (!env || !env.kind) return null;
+              return env.kind === 'view'
+                ? <DoorHost
+                    doorId={env.doorId}
+                    data={env.data}
+                    error={env.error}
+                    status={block()?.outputStatus}
+                  />
+                : <DoorExecCard
+                    doorId={env.doorId}
+                    ok={env.ok}
+                    startedAt={env.startedAt}
+                    finishedAt={env.finishedAt}
+                    summary={env.summary}
+                    error={env.error}
+                    createdBlockIds={env.createdBlockIds}
+                  />;
+            })()}
+            </ErrorBoundary>
           </Show>
 
           {/* FLO-376: Wikilink autocomplete popup */}

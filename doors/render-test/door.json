@@ -1,0 +1,7 @@
+{
+  "id": "render-test",
+  "name": "Render Test",
+  "prefixes": ["render-test::"],
+  "version": "0.0.1",
+  "selfRender": true
+}
