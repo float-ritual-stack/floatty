@@ -88,7 +88,7 @@ export const door = {
 
   async execute(
     _blockId: string,
-    content: string,
+    _content: string,
     ctx: DoorContext,
   ): Promise<DoorResult<MemData>> {
     const url = (ctx.settings?.url as string) || 'http://localhost:4077';
