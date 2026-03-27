@@ -8,13 +8,13 @@
  * Chirp contract: Listens for CustomEvent 'chirp' on container, routes to onNavigate.
  */
 
-import { onMount, onCleanup } from 'solid-js';
+import { onMount, createSignal } from 'solid-js';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { Breadcrumb } from '../Breadcrumb';
 import { DoorHost } from './DoorHost';
 import type { DoorViewOutput } from '../../lib/handlers/doorTypes';
 import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../../lib/chirpWriteHandler';
-import { isMac } from '../../lib/keybinds';
+import { useDoorChirpListener } from '../../hooks/useDoorChirpListener';
 import './doors.css';
 
 interface DoorPaneViewProps {
@@ -27,7 +27,7 @@ interface DoorPaneViewProps {
 
 export function DoorPaneView(props: DoorPaneViewProps) {
   const { blockStore } = useWorkspace();
-  let containerRef: HTMLDivElement | undefined;
+  const [containerRef, setContainerRef] = createSignal<HTMLElement | undefined>(undefined);
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -36,36 +36,22 @@ export function DoorPaneView(props: DoorPaneViewProps) {
     }
   };
 
+  // Chirp listener via shared hook (FM #9: proper cleanup)
+  useDoorChirpListener(containerRef, {
+    getBlockId: () => props.blockId,
+    getStore: () => blockStore,
+    onNavigate: (target, opts) => {
+      props.onNavigate?.(target, opts);
+    },
+  });
+
   onMount(() => {
-    containerRef?.focus();
-
-    // Chirp listener: door components emit chirp CustomEvents for navigation.
-    // Routes through onNavigate — same pattern as BlockItem's wrapperRef chirp listener.
-    const handleChirp = ((e: CustomEvent) => {
-      const message = e.detail?.message;
-      if (message === 'navigate' && e.detail?.target) {
-        e.stopPropagation();
-        const sourceEvent = e.detail.sourceEvent as MouseEvent | undefined;
-        const modKey = sourceEvent ? (isMac ? sourceEvent.metaKey : sourceEvent.ctrlKey) : false;
-        const optKey = sourceEvent?.altKey ?? false;
-        let splitDirection: 'horizontal' | 'vertical' | undefined;
-        if (modKey || optKey) {
-          splitDirection = sourceEvent?.shiftKey ? 'vertical' : 'horizontal';
-        }
-        props.onNavigate?.(e.detail.target, { splitDirection });
-      } else if (isChirpWriteVerb(message)) {
-        e.stopPropagation();
-        handleChirpWrite(message, e.detail?.data as ChirpWriteData, props.blockId, blockStore);
-      }
-    }) as EventListener;
-
-    containerRef?.addEventListener('chirp', handleChirp);
-    onCleanup(() => containerRef?.removeEventListener('chirp', handleChirp));
+    containerRef()?.focus();
   });
 
   return (
     <div
-      ref={containerRef}
+      ref={(el) => setContainerRef(el)}
       class="door-pane-view"
       tabIndex={-1}
       onKeyDown={handleKeyDown}

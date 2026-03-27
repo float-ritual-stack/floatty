@@ -8,6 +8,7 @@ import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { useContentSync } from '../hooks/useContentSync';
+import { useDoorChirpListener } from '../hooks/useDoorChirpListener';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { navigateToBlock, navigateToPage, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
@@ -172,6 +173,7 @@ export function BlockItem(props: BlockItemProps) {
   let contentRef: HTMLDivElement | undefined;
   let outputFocusRef: HTMLDivElement | undefined;
   let wrapperRef: HTMLDivElement | undefined;
+  const [inlineDoorRef, setInlineDoorRef] = createSignal<HTMLElement | undefined>(undefined);
 
   // Content sync hook — handles debounced Y.Doc updates, origin-aware sync,
   // blur flush, input handling, IME composition, and dirty flag (FLO-197/FLO-256)
@@ -223,6 +225,21 @@ export function BlockItem(props: BlockItemProps) {
     window.addEventListener('scroll', handler, { capture: true, passive: true });
     onCleanup(() => window.removeEventListener('scroll', handler, { capture: true }));
   }));
+
+  // Shared chirp listener for inline door output (FM #9: cleanup on unmount/re-run)
+  useDoorChirpListener(inlineDoorRef, {
+    getBlockId: () => props.id,
+    getStore: () => store,
+    onNavigate: (target, opts) => {
+      handleChirpNavigate(target, {
+        type: opts?.type,
+        sourcePaneId: props.paneId,
+        sourceBlockId: props.id,
+        splitDirection: opts?.splitDirection,
+        originBlockId: props.id,
+      });
+    },
+  });
 
   // Find wikilink at cursor position (for keyboard navigation)
   const getWikilinkAtCursor = (): string | null => {
@@ -1116,35 +1133,7 @@ export function BlockItem(props: BlockItemProps) {
               const env = block()!.output as DoorEnvelope;
               if (!env || !env.kind) return null;
               return env.kind === 'view'
-                ? <div ref={(el) => {
-                    // Chirp CustomEvent listener for navigation + write verbs from door components.
-                    // Door components emit chirp events (emitChirpNavigate, emitChirp) that bubble up.
-                    // DoorPaneView has this on its container; inline mode needs it here.
-                    const handler = ((e: CustomEvent) => {
-                      const msg = e.detail?.message;
-                      if (msg === 'navigate' && e.detail?.target) {
-                        e.stopPropagation();
-                        const sourceEvent = e.detail.sourceEvent as MouseEvent | undefined;
-                        const modKey = sourceEvent ? (isMac ? sourceEvent.metaKey : sourceEvent.ctrlKey) : false;
-                        const optKey = sourceEvent?.altKey ?? false;
-                        let splitDirection: 'horizontal' | 'vertical' | undefined;
-                        if (modKey || optKey) {
-                          splitDirection = sourceEvent?.shiftKey ? 'vertical' : 'horizontal';
-                        }
-                        handleChirpNavigate(e.detail.target, {
-                          type: undefined,
-                          sourcePaneId: props.paneId,
-                          sourceBlockId: props.id,
-                          splitDirection,
-                          originBlockId: props.id,
-                        });
-                      } else if (isChirpWriteVerb(msg)) {
-                        e.stopPropagation();
-                        handleChirpWrite(msg, e.detail?.data as ChirpWriteData, props.id, store);
-                      }
-                    }) as EventListener;
-                    el.addEventListener('chirp', handler);
-                  }}>
+                ? <div ref={(el) => setInlineDoorRef(el)}>
                   <DoorHost
                     doorId={env.doorId}
                     data={env.data}
