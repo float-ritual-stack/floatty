@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack, createRoot, ErrorBoundary } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack, createRoot } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -18,16 +18,10 @@ import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE } from '../lib/blockTypes';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
 import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
-import { type SearchResults, type DoorEnvelope } from '../lib/handlers';
-import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../lib/chirpWriteHandler';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { readFiles } from 'tauri-plugin-clipboard-api';
-import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
-import { DoorHost, DoorExecCard } from './views/DoorHost';
-import { ImgView } from './views/ImgView';
-import { EvalOutput } from './EvalOutput';
-import type { EvalResult } from '../lib/evalEngine';
+import { BlockOutputView } from './BlockOutputView';
 import { invoke } from '@tauri-apps/api/core';
 
 // Module-level child render limit from config (0 = no limit, renders all children).
@@ -107,23 +101,6 @@ interface BlockItemProps {
   onSelect?: (id: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => void;
   selectionAnchor?: string | null;
   getVisibleBlockIds?: () => string[];
-}
-
-function doorErrorFallback(onClear: () => void) {
-  return (err: unknown) => (
-    <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d', display: 'flex', 'align-items': 'center', gap: '8px' }}>
-      <span style={{ flex: 1 }}>
-        <span style={{ 'font-weight': 'bold' }}>Door error: </span>
-        {(err as Error)?.message || String(err)}
-      </span>
-      <button
-        onClick={onClear}
-        style={{ background: '#3c3836', color: '#ebdbb2', border: '1px solid #665c54', 'border-radius': '3px', padding: '2px 8px', cursor: 'pointer', 'font-size': '11px', 'font-family': 'inherit', 'white-space': 'nowrap' }}
-      >
-        Clear
-      </button>
-    </div>
-  );
 }
 
 export function BlockItem(props: BlockItemProps) {
@@ -289,162 +266,6 @@ export function BlockItem(props: BlockItemProps) {
     if (current?.outputType === 'img-view' && (current?.output as { filename?: string })?.filename === filename) return;
     store.setBlockOutput(props.id, { filename }, 'img-view');
   }));
-
-  // Search results keyboard navigation state
-  // Focus stays on outputFocusRef — SearchResultsView is display-only.
-  // All keyboard nav handled here because moving focus to a child element
-  // would trigger the focus routing effect which steals it back.
-  const [searchFocusedIdx, setSearchFocusedIdx] = createSignal(-1);
-
-  // Reset search focus when output type/status changes (prevents stale state)
-  createEffect(() => {
-    const ot = block()?.outputType;
-    const st = block()?.outputStatus;
-    if (ot !== 'search-results' || st !== 'complete') {
-      setSearchFocusedIdx(-1);
-    }
-  });
-
-  // Reset search focus on focus GAIN (e.g., back-navigation via Cmd+[)
-  // Uses on() to fire only on false→true transition — interior nav doesn't change isFocused()
-  createEffect(on(isFocused, (focused, wasFocused) => {
-    if (focused && !wasFocused && isOutputBlock()) {
-      setSearchFocusedIdx(-1);
-    }
-  }));
-
-  // Keyboard handler for output blocks (no contentEditable → need manual nav)
-  const handleOutputBlockKeyDown = (e: KeyboardEvent) => {
-    // Cancel any stale pending debounce from before this block became output
-    cancelContentUpdate();
-    const idx = searchFocusedIdx();
-
-    // Block-level operations (work at any idx)
-    const modKey = isMac ? e.metaKey : e.ctrlKey;
-
-    // Re-focus after DOM rearrangement — SolidJS moves nodes but browser drops focus
-    const refocusAfterMove = () => {
-      requestAnimationFrame(() => outputFocusRef?.focus({ preventScroll: true }));
-    };
-
-    // Cmd+. toggle collapse on output blocks (mirrors regular block Cmd+. in useBlockInput)
-    if (modKey && e.key === '.') {
-      e.preventDefault();
-      const b = block();
-      if (b && (b.childIds?.length > 0 || b.outputType)) {
-        paneStore.toggleCollapsed(props.paneId, props.id, b.collapsed || false);
-      }
-      return;
-    }
-
-    if (modKey && e.key === 'ArrowUp') {
-      e.preventDefault();
-      store.moveBlockUp(props.id);
-      refocusAfterMove();
-      return;
-    } else if (modKey && e.key === 'ArrowDown') {
-      e.preventDefault();
-      store.moveBlockDown(props.id);
-      refocusAfterMove();
-      return;
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      if (e.shiftKey) {
-        store.outdentBlock(props.id);
-      } else {
-        store.indentBlock(props.id);
-      }
-      refocusAfterMove();
-      return;
-    } else if (e.key === 'Backspace' || e.key === 'Delete') {
-      e.preventDefault();
-      // Guard: don't delete blocks with children unless explicitly selected
-      const hasChildren = !!block()?.childIds?.length;
-      const isSelected = props.isBlockSelected?.(props.id) ?? false;
-      if (hasChildren && !isSelected) return;
-      const target = findFocusAfterDelete(props.id, props.paneId);
-      store.deleteBlock(props.id);
-      if (target) props.onFocus(target);
-      return;
-    } else if (e.key === 'Escape' && (block()?.outputType === 'img-view' || block()?.outputType === 'door')) {
-      // Escape from img-view/door → back to edit mode (contentEditable shows, user can fix content)
-      e.preventDefault();
-      store.setBlockOutput(props.id, null, '');
-      return;
-    }
-
-    // When navigating inside search results (idx >= 0)
-    if (idx >= 0) {
-      const data = block()?.output as SearchResults | undefined;
-      const hits = data?.hits ?? [];
-      if (!hits.length) { setSearchFocusedIdx(-1); return; }
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (idx < hits.length - 1) {
-          setSearchFocusedIdx(idx + 1);
-        } else {
-          // At last result — escape to next block
-          setSearchFocusedIdx(-1);
-          const next = findNextVisibleBlock(props.id, props.paneId);
-          if (next) props.onFocus(next);
-        }
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (idx > 0) {
-          setSearchFocusedIdx(idx - 1);
-        } else {
-          // At first result — escape to prev block (symmetric with ArrowDown at last)
-          setSearchFocusedIdx(-1);
-          const prev = findPrevVisibleBlock(props.id, props.paneId);
-          if (prev) props.onFocus(prev);
-        }
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        const hit = hits[idx];
-        if (hit) {
-          navigateToBlock(hit.blockId, {
-            paneId: resolveSameTabLink(props.paneId),
-            highlight: true,
-            originBlockId: props.id,
-          });
-        }
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        setSearchFocusedIdx(-1);
-      }
-      return;
-    }
-
-    // Block-level navigation (idx === -1, accent border shown)
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      // Enter results from the bottom (symmetric with ArrowDown entering from top)
-      const ot = block()?.outputType;
-      if (ot === 'search-results' && block()?.outputStatus === 'complete') {
-        const data = block()?.output as SearchResults | undefined;
-        if (data?.hits?.length) {
-          setSearchFocusedIdx(data.hits.length - 1);
-          return;
-        }
-      }
-      const prev = findPrevVisibleBlock(props.id, props.paneId);
-      if (prev) props.onFocus(prev);
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      // If this is a search output block with results, enter the results list
-      const ot = block()?.outputType;
-      if (ot === 'search-results' && block()?.outputStatus === 'complete') {
-        const data = block()?.output as SearchResults | undefined;
-        if (data?.hits?.length) {
-          setSearchFocusedIdx(0);
-          return;
-        }
-      }
-      const next = findNextVisibleBlock(props.id, props.paneId);
-      if (next) props.onFocus(next);
-    }
-  };
 
   // Shared wikilink navigation: block-ID resolution, pane link, page fallback.
   // Used by both handleWikilinkClick (mouse) and navigateToPageForHook (Cmd+Enter).
@@ -686,15 +507,7 @@ export function BlockItem(props: BlockItemProps) {
     return undefined;
   });
 
-  // Focus routing for output blocks (no contentEditable to receive focus)
-  createEffect(() => {
-    if (isFocused() && isOutputBlock() && outputFocusRef) {
-      requestAnimationFrame(() => {
-        outputFocusRef?.focus({ preventScroll: true });
-        outputFocusRef?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      });
-    }
-  });
+  // Focus routing for output blocks is handled by BlockOutputView.
 
   // TODO: AUTO-EXECUTE for external blocks (API/CRDT sync)
   // Pattern documented in docs/BLOCK_TYPE_PATTERNS.md
@@ -925,83 +738,7 @@ export function BlockItem(props: BlockItemProps) {
             </div>
           </Show>
 
-          {/* OUTPUT BLOCKS: search-* and door get a focusable wrapper for keyboard nav */}
-          <Show when={isOutputBlock()}>
-            <div
-              ref={outputFocusRef}
-              tabIndex={0}
-              class="output-block-focus-target"
-              onKeyDown={handleOutputBlockKeyDown}
-              onFocus={() => props.onFocus(props.id)}
-            >
-              {/* SEARCH OUTPUT VIEW */}
-              <Show when={block()?.outputType === 'search-results' || block()?.outputType === 'search-error'}>
-                <div class="search-output">
-                  <Show when={block()?.outputStatus === 'running' || block()?.outputStatus === 'pending'}>
-                    <div class="daily-running">
-                      <span class="daily-running-spinner">◐</span>
-                      <span class="daily-running-text">Searching...</span>
-                    </div>
-                  </Show>
-                  <Show when={block()?.outputType === 'search-results' && block()?.outputStatus === 'complete'}>
-                    <SearchResultsView
-                      data={block()!.output as SearchResults}
-                      paneId={props.paneId}
-                      blockId={props.id}
-                      focusedIdx={searchFocusedIdx}
-                    />
-                  </Show>
-                  <Show when={block()?.outputType === 'search-error' && block()?.outputStatus !== 'running' && block()?.outputStatus !== 'pending'}>
-                    <SearchErrorView data={block()!.output as { error: string; query?: string }} />
-                  </Show>
-                </div>
-              </Show>
-
-              {/* DOOR OUTPUT VIEW — single branch for all doors */}
-              <Show when={block()?.outputType === 'door'}>
-                <ErrorBoundary fallback={doorErrorFallback(() => store.setBlockOutput(props.id, null, ''))}>
-                  {(() => {
-                    const envelope = block()!.output as DoorEnvelope;
-                    if (!envelope || !envelope.kind) return null;
-                    return envelope.kind === 'view'
-                      ? <DoorHost
-                          doorId={envelope.doorId}
-                          data={envelope.data}
-                          error={envelope.error}
-                          status={block()?.outputStatus}
-                          onNavigate={(target, opts) => {
-                            handleChirpNavigate(target, {
-                              type: opts?.type,
-                              sourcePaneId: props.paneId,
-                              sourceBlockId: props.id,
-                              splitDirection: opts?.splitDirection,
-                              originBlockId: props.id,
-                            });
-                          }}
-                        />
-                      : <DoorExecCard
-                          doorId={envelope.doorId}
-                          ok={envelope.ok}
-                          startedAt={envelope.startedAt}
-                          finishedAt={envelope.finishedAt}
-                          summary={envelope.summary}
-                          error={envelope.error}
-                          createdBlockIds={envelope.createdBlockIds}
-                        />;
-                  })()}
-                </ErrorBoundary>
-              </Show>
-
-              {/* IMG VIEW — local attachment from __attachments/ */}
-              <Show when={block()?.outputType === 'img-view'}>
-                <ImgView
-                  filename={(block()!.output as { filename: string })?.filename ?? ''}
-                  serverUrl={window.__FLOATTY_SERVER_URL__ ?? ''}
-                  apiKey={window.__FLOATTY_API_KEY__ ?? ''}
-                />
-              </Show>
-            </div>
-          </Show>
+          {/* Output blocks (search, door, img, eval, inline door, filter) — rendered by BlockOutputView */}
 
           {/* REGULAR BLOCK: display + edit layers (hidden for special block types) */}
           {/* FLO-58: Also show for table blocks in raw mode - use contentEditable for raw markdown editing */}
@@ -1080,93 +817,17 @@ export function BlockItem(props: BlockItemProps) {
             </Show>
           </Show>
 
-          {/* EVAL OUTPUT: inline result below contentEditable for eval:: blocks */}
-          <Show when={block()?.outputType === 'eval-result' && block()?.output && !isCollapsed()}>
-            {(() => {
-              let pokeIframe: ((message: string, data?: unknown) => void) | undefined;
-              return (
-                <EvalOutput
-                  output={block()!.output as EvalResult}
-                  onChirp={(message: string, data?: unknown) => {
-                    // Route navigate intents through unified chirp handler
-                    if (message === 'navigate' && typeof data === 'object' && data) {
-                      const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' };
-                      const result = handleChirpNavigate(nav.target, {
-                        type: nav.type,
-                        sourcePaneId: props.paneId,
-                        sourceBlockId: props.id,
-                        splitDirection: nav.splitDirection,
-                        originBlockId: props.id,
-                      });
-                      pokeIframe?.('ack: navigate', { success: result.success, target: nav.target, error: result.error });
-                      return;
-                    }
-                    // Route write verbs through shared handler
-                    if (isChirpWriteVerb(message)) {
-                      const result = handleChirpWrite(message, data as ChirpWriteData, props.id, store);
-                      pokeIframe?.(`ack: ${message}`, result);
-                      return;
-                    }
-                    // Default: create child block (throttled to max 10/sec to prevent runaway iframes)
-                    const now = Date.now();
-                    const key = `chirp_${props.id}`;
-                    const lastTime = (window as Record<string, unknown>)[key] as number | undefined;
-                    if (lastTime && now - lastTime < 100) {
-                      pokeIframe?.(`ack: ${message}`, { throttled: true });
-                      return;
-                    }
-                    (window as Record<string, unknown>)[key] = now;
-                    const [childId] = store.batchCreateBlocksInside(props.id, [{ content: `chirp:: ${message}` }]);
-                    // Auto-poke back so the iframe knows we received it
-                    pokeIframe?.(`ack: ${message}`, data);
-                  }}
-                  onPokeReady={(poke) => { pokeIframe = poke; }}
-                />
-              );
-            })()}
-          </Show>
-
-          {/* INLINE DOOR OUTPUT: below contentEditable for selfRender doors (like artifact::) */}
-          <Show when={block()?.outputType === 'door' && block()?.content && block()?.output && !isCollapsed()}>
-            <ErrorBoundary fallback={doorErrorFallback(() => store.setBlockOutput(props.id, null, ''))}>
-            {(() => {
-              const env = block()!.output as DoorEnvelope;
-              if (!env || !env.kind) return null;
-              return env.kind === 'view'
-                ? <div ref={(el) => setInlineDoorRef(el)}>
-                  <DoorHost
-                    doorId={env.doorId}
-                    data={env.data}
-                    error={env.error}
-                    status={block()?.outputStatus}
-                    onNavigate={(target, opts) => {
-                      handleChirpNavigate(target, {
-                        type: opts?.type,
-                        sourcePaneId: props.paneId,
-                        sourceBlockId: props.id,
-                        splitDirection: opts?.splitDirection,
-                        originBlockId: props.id,
-                      });
-                    }}
-                    onChirp={(message, data) => {
-                      if (isChirpWriteVerb(message)) {
-                        handleChirpWrite(message, data as ChirpWriteData, props.id, store);
-                      }
-                    }}
-                  />
-                </div>
-                : <DoorExecCard
-                    doorId={env.doorId}
-                    ok={env.ok}
-                    startedAt={env.startedAt}
-                    finishedAt={env.finishedAt}
-                    summary={env.summary}
-                    error={env.error}
-                    createdBlockIds={env.createdBlockIds}
-                  />;
-            })()}
-            </ErrorBoundary>
-          </Show>
+          <BlockOutputView
+            blockId={props.id}
+            paneId={props.paneId}
+            isFocused={isFocused}
+            isCollapsed={isCollapsed}
+            isOutputBlock={isOutputBlock}
+            onFocus={props.onFocus}
+            cancelContentUpdate={cancelContentUpdate}
+            isBlockSelected={props.isBlockSelected}
+            setInlineDoorRef={setInlineDoorRef}
+          />
 
           {/* FLO-376: Wikilink autocomplete popup */}
           <Show when={autocomplete.state()}>
