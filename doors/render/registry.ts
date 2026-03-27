@@ -1,0 +1,84 @@
+/**
+ * render:: door registry — wires catalog to component implementations
+ */
+
+import { defineRegistry } from '@json-render/solid';
+import { bbsCatalog } from './catalog';
+import {
+  DocLayout,
+  NavBrand,
+  NavSection,
+  NavItem,
+  NavFooter,
+  EntryHeader,
+  EntryBody,
+  Ellipsis,
+  TagBar,
+  TagChip,
+  RefSection,
+  RefCard,
+  Breadcrumb,
+  Stack,
+  Text,
+  Divider,
+  Card,
+  Metric,
+  Button,
+  CodeBlock,
+  TuiPanel,
+  TuiStat,
+  BarChart,
+  BarItemComponent,
+  DataBlock,
+  ShippedItem,
+  WikilinkChip,
+  BacklinksFooter,
+  PatternCard,
+  injectBodyStyles,
+} from './components';
+
+// Inject styles when registry is imported
+injectBodyStyles();
+
+export const { registry, handlers } = defineRegistry(bbsCatalog, {
+  components: {
+    DocLayout,
+    NavBrand,
+    NavSection,
+    NavItem,
+    NavFooter,
+    EntryHeader,
+    EntryBody,
+    Ellipsis,
+    TagBar,
+    TagChip,
+    RefSection,
+    RefCard,
+    Breadcrumb,
+    Stack,
+    Text,
+    Divider,
+    Card,
+    Metric,
+    Button,
+    Code: CodeBlock,
+    TuiPanel,
+    TuiStat,
+    BarChart,
+    BarItem: BarItemComponent,
+    DataBlock,
+    ShippedItem,
+    WikilinkChip,
+    BacklinksFooter,
+    PatternCard,
+  },
+  actions: {
+    selectEntry: async () => {},
+    filterTag: async () => {},
+    goBack: async () => {},
+    navigate: async () => {},
+    scrollTo: async () => {},
+  },
+});
+
+export { bbsCatalog };
