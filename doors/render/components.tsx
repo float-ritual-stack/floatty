@@ -108,7 +108,7 @@ function renderMarkdown(text: string): string {
   // Code fences — protect from inline formatting
   const fences: string[] = [];
   s = s.replace(/```[\s\S]*?```/g, (m) => {
-    const c = m.slice(3, -3).trim().replace(/</g, '&lt;');
+    const c = m.slice(3, -3).trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     fences.push('<pre><code>' + c + '</code></pre>');
     return `\x00FENCE${fences.length - 1}\x00`;
   });

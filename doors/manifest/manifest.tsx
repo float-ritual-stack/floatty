@@ -67,7 +67,7 @@ function ClaudeMemView(props: DoorViewProps<MemData | null>) {
           claude-mem worker not responding at {url()}
         </div>
       </Show>
-      <Show when={alive() !== false}>
+      <Show when={alive() === true}>
         <iframe
           src={url()}
           style="width:100%;flex:1;border:none;background:var(--color-bg-dark);min-height:0;"

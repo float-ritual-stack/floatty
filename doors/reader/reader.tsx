@@ -450,10 +450,11 @@ function ReaderView(props: DoorViewProps) {
           {pageName()}
         </h1>
 
-        {/* Render root block content when it has content beyond a page heading */}
+        {/* Render root block content when it has non-heading content */}
         <Show when={root()!.content && !root()!.content.startsWith('# ')}>
+          {/* Render root's own content only (no children — For below handles those) */}
           <BlockRenderer
-            block={root()!}
+            block={{ ...root()!, childIds: [] }}
             blockMap={blockMap()}
             depth={0}
             onNavigate={handleNavigate}

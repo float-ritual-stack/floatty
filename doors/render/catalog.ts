@@ -2,7 +2,7 @@
  * render:: door catalog — Zod schema catalog for @json-render/solid
  *
  * Defines the component vocabulary that LLMs and specs target.
- * 29 components + 5 actions. Single source of truth for both
+ * 29 components + 7 actions. Single source of truth for both
  * prompt generation (catalog.prompt()) and runtime rendering.
  */
 

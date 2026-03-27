@@ -764,7 +764,7 @@ export const door = {
     try {
       const spec = JSON.parse(arg);
       if (spec.root && spec.elements) {
-        setOutputWithTitle({ spec, generatedVia: 'raw-json' });
+        setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: 'raw-json' });
       } else {
         setOutputWithTitle({ spec: null }, 'JSON must have root + elements');
       }

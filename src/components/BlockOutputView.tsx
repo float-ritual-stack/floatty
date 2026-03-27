@@ -8,7 +8,7 @@
  * Display-only for embedded views (search results, img) — single focus point
  * pattern per output-block-patterns.md.
  */
-import { Show, createSignal, createEffect, createMemo, on, ErrorBoundary } from 'solid-js';
+import { Show, createSignal, createEffect, createMemo, on, onCleanup, ErrorBoundary } from 'solid-js';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { navigateToBlock, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
@@ -40,6 +40,9 @@ function doorErrorFallback(onClear: () => void) {
   );
 }
 
+// Chirp throttle timestamps — module-level map replaces window[key] to prevent leak
+const chirpThrottleMap = new Map<string, number>();
+
 // ─── Types ──────────────────────────────────────────────────────────────
 
 interface BlockOutputViewProps {
@@ -64,6 +67,9 @@ export function BlockOutputView(props: BlockOutputViewProps) {
 
   const block = createMemo(() => store.blocks[props.blockId]);
   let outputFocusRef: HTMLDivElement | undefined;
+
+  // Clean up throttle entry on unmount
+  onCleanup(() => chirpThrottleMap.delete(props.blockId));
 
   // ─── Search results keyboard navigation state ─────────────────────
   const [searchFocusedIdx, setSearchFocusedIdx] = createSignal(-1);
@@ -324,13 +330,12 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                   return;
                 }
                 const now = Date.now();
-                const key = `chirp_${props.blockId}`;
-                const lastTime = (window as Record<string, unknown>)[key] as number | undefined;
+                const lastTime = chirpThrottleMap.get(props.blockId);
                 if (lastTime && now - lastTime < 100) {
                   pokeIframe?.(`ack: ${message}`, { throttled: true });
                   return;
                 }
-                (window as Record<string, unknown>)[key] = now;
+                chirpThrottleMap.set(props.blockId, now);
                 store.batchCreateBlocksInside(props.blockId, [{ content: `chirp:: ${message}` }]);
                 pokeIframe?.(`ack: ${message}`, data);
               }}
