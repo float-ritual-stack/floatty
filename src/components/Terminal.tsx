@@ -1167,10 +1167,15 @@ export function Terminal() {
         style={{ display: 'flex', width: '100%', height: '100%' }}
         onSizesChange={(sizes) => {
           // Persist sidebar width across side swaps + save to config (FLO-507)
+          // Corvu sizes are fractions (0-1) — convert to pixels for persistence
           const sideIdx = sidebarSide() === 'left' ? 0 : sizes.length - 1;
           if (sidebarVisible() && sizes[sideIdx] > 0) {
-            setSidebarWidth(sizes[sideIdx]);
-            saveSidebarWidth(sizes[sideIdx]);
+            const containerWidth = document.querySelector('.terminal-wrapper')?.clientWidth ?? 0;
+            const widthPx = Math.round(sizes[sideIdx] * containerWidth);
+            if (widthPx > 50) {
+              setSidebarWidth(`${widthPx}px`);
+              saveSidebarWidth(widthPx);
+            }
           }
           // Refit all visible terminals when sidebar resizes
           requestAnimationFrame(() => {
