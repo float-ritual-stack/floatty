@@ -6,6 +6,42 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.0] - 2026-03-27
+
+### Features
+
+- **render:: door system** — json-render/solid pipeline that lets LLMs generate structured UI specs rendered inside outline blocks. 34 component catalog (DocLayout, ArcTimeline, MeetingDiff, DecisionLog, DependencyChain, ContextStream, PatternCard, TuiPanel, TuiStat, BarChart, EntryHeader/Body, NavBrand/Section/Item, WikilinkChip, BacklinksFooter, and more)
+- **Spec generation modes** — `render:: demo` (hardcoded), `render:: claude` (structured outputs), `render:: ollama` (local), `render:: agent` (multi-turn Claude Code subprocess with outline context search)
+- **Agent session management** — `--continue` / `--resume <id>` for iterative spec refinement across render:: agent calls
+- **Deep link write verbs** — `floatty://` handler with navigate, block, execute, upsert verbs for outline mutations from doors and external tools
+- **findChildByPrefix + upsertChildByPrefix** — atomic Y.Doc transactions for prefix-based child block lookup and creation (14 tests)
+- **chirpWriteHandler** — shared write dispatch for create-child and upsert-child across 3 chirp sites (artifact, inline door, pane door)
+- **DoorPaneView** — full-pane zoom into door output via Cmd+Enter
+- **outputSummaryHook** — extracts title + headings from door output into `block.metadata.summary` for search discovery
+- **BlockMetadata.summary** field added (Rust + TS generated type)
+- **LAYOUT_PATTERNS** — agent prompt guidance for when to use sidebar vs vertical stack, DocLayout 2-children rule
+- **floatty-dev:// scheme** — dev build scheme isolation so dev and release instances run simultaneously
+- **compile-door-bundle.mjs** — esbuild + babel-preset-solid door compilation pipeline
+
+### Improvements
+
+- **BlockItem decomposition** — extracted useContentSync (292 lines), useDoorChirpListener (59 lines), BlockOutputView (387 lines). BlockItem.tsx 1446→891 lines (−38%)
+- **ErrorBoundary UX** — shared doorErrorFallback with Clear button across all door rendering sites
+- **ArcTimeline memoization** — createMemo for arcEntries, shared entryMatchesArc predicate, pre-computed arc boundaries
+- **Single-pass extractRenderSummary** — 3 loops over elements collapsed to 1
+- **Agent prompt auto-sync** — replaced static prompt with catalog.prompt() so prompt stays current with component additions
+
+### Bug Fixes
+
+- **Sidebar width persistence** (FLO-507) — moved from config.toml to localStorage, capped max at 40vw, converted Corvu fractions to pixels
+- **Server retry on startup** — wraps full IPC+health flow with backoff, prevents dev restart from killing healthy server
+- **upsertChild prefix/match mismatch** — LLM used `prefix` param, handler only read `match`. Now accepts both.
+- **Raw JSON normalizeSpec bypass** — raw JSON spec path now goes through normalizeSpec like other routes
+- **fireHandler content mismatch** — uses existing block content when upsert finds a match, not URL content
+- **Server body limit** — bumped 16MB → 64MB for large Y.Doc restores
+
+---
+
 ## [0.9.8] - 2026-03-21
 
 ### Features
