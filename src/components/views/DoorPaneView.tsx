@@ -12,6 +12,7 @@ import { onMount } from 'solid-js';
 import { Breadcrumb } from '../Breadcrumb';
 import { DoorHost } from './DoorHost';
 import type { DoorViewOutput } from '../../lib/handlers/doorTypes';
+import { isMac } from '../../lib/keybinds';
 
 interface DoorPaneViewProps {
   blockId: string;
@@ -33,6 +34,22 @@ export function DoorPaneView(props: DoorPaneViewProps) {
 
   onMount(() => {
     containerRef?.focus();
+
+    // Chirp listener: door components emit chirp CustomEvents for navigation.
+    // Routes through onNavigate — same as BlockItem's wrapperRef chirp listener.
+    containerRef?.addEventListener('chirp', ((e: CustomEvent) => {
+      if (e.detail?.message === 'navigate' && e.detail?.target) {
+        e.stopPropagation();
+        const sourceEvent = e.detail.sourceEvent as MouseEvent | undefined;
+        const modKey = sourceEvent ? (isMac ? sourceEvent.metaKey : sourceEvent.ctrlKey) : false;
+        const optKey = sourceEvent?.altKey ?? false;
+        let splitDirection: 'horizontal' | 'vertical' | undefined;
+        if (modKey || optKey) {
+          splitDirection = sourceEvent?.shiftKey ? 'vertical' : 'horizontal';
+        }
+        props.onNavigate?.(e.detail.target, { splitDirection });
+      }
+    }) as EventListener);
   });
 
   return (
@@ -49,7 +66,6 @@ export function DoorPaneView(props: DoorPaneViewProps) {
           data={props.envelope.data}
           error={props.envelope.error}
           status="complete"
-          onNavigate={props.onNavigate}
         />
       </div>
     </div>

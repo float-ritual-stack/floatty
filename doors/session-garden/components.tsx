@@ -320,8 +320,6 @@ export function EntryBody(props: BaseComponentProps<{ markdown: string }>) {
       el = el.parentElement;
     }
     if (el?.dataset?.wikilink) {
-      e.preventDefault();
-      e.stopPropagation();
       emitChirpNavigate(el, el.dataset.wikilink, e);
     }
   };
@@ -798,6 +796,16 @@ export function DataBlock(props: BaseComponentProps<{ label?: string; content: s
 }
 
 export function ShippedItem(props: BaseComponentProps<{ content: string }>) {
+  const handleClick = (e: MouseEvent) => {
+    let el = e.target as HTMLElement | null;
+    while (el && !el.dataset?.wikilink) {
+      if (el === e.currentTarget) break;
+      el = el.parentElement;
+    }
+    if (el?.dataset?.wikilink) {
+      emitChirpNavigate(el, el.dataset.wikilink, e);
+    }
+  };
   return (
     <div style={{
       display: 'flex',
@@ -808,7 +816,7 @@ export function ShippedItem(props: BaseComponentProps<{ content: string }>) {
       padding: '2px 0',
     }}>
       <span style={{ color: V.green, 'flex-shrink': '0' }}>*</span>
-      <span style={{ color: V.t }} innerHTML={sanitize(inlineFormat(props.props.content))} />
+      <span style={{ color: V.t }} innerHTML={sanitize(inlineFormat(props.props.content))} onClick={handleClick} />
     </div>
   );
 }
@@ -818,8 +826,6 @@ export function WikilinkChip(props: BaseComponentProps<{ target: string; label?:
     <span
       ref={(el) => {
         el.addEventListener('click', (e: MouseEvent) => {
-          e.preventDefault();
-          e.stopPropagation();
           emitChirpNavigate(el, props.props.target, e);
         });
       }}
@@ -836,8 +842,6 @@ export function BacklinksFooter(props: BaseComponentProps<{ inbound: string[]; o
   // Wikilink spans use native listeners to emit chirp navigate events
   const wireLink = (el: HTMLSpanElement, target: string) => {
     el.addEventListener('click', (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
       emitChirpNavigate(el, target, e);
     });
   };
@@ -962,7 +966,16 @@ export function PatternCard(props: BaseComponentProps<{
       {/* Body */}
       <Show when={expanded()}>
         <div style={{ padding: '12px 14px' }}>
-          <div class="bbs-entry-body" innerHTML={sanitize(renderMarkdown(props.props.content))} />
+          <div class="bbs-entry-body" innerHTML={sanitize(renderMarkdown(props.props.content))} onClick={(e: MouseEvent) => {
+            let el = e.target as HTMLElement | null;
+            while (el && !el.dataset?.wikilink) {
+              if (el.classList?.contains('bbs-entry-body')) break;
+              el = el.parentElement;
+            }
+            if (el?.dataset?.wikilink) {
+              emitChirpNavigate(el, el.dataset.wikilink, e);
+            }
+          }} />
           {props.children}
           <Show when={props.props.connectsTo && props.props.connectsTo.length > 0}>
             <div style={{
@@ -976,7 +989,11 @@ export function PatternCard(props: BaseComponentProps<{
               connects to{' '}
               <For each={props.props.connectsTo!}>
                 {(target) => (
-                  <span class="bbs-wikilink" data-wikilink={target} style={{ cursor: 'pointer' }}>
+                  <span ref={(el) => {
+                    el.addEventListener('click', (e: MouseEvent) => {
+                      emitChirpNavigate(el, target, e);
+                    });
+                  }} class="bbs-wikilink" data-wikilink={target} style={{ cursor: 'pointer' }}>
                     [[{target}]]
                   </span>
                 )}

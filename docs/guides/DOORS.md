@@ -91,10 +91,18 @@ Doors auto-reload when their files change on disk. The file watcher detects modi
 
 ## Standard Library
 
-Doors have access to `__DOOR_STDLIB__` with shared utilities. Import via the shim system:
+Doors import shared utilities from `@floatty/stdlib` (the loader rewrites this to the host shim at runtime):
 ```js
-import { someUtil } from '__DOOR_STDLIB__';
+import { exec, execJSON, addNewChildren, parseMarkdownToOps } from '@floatty/stdlib';
 ```
+
+Key utilities:
+- `exec(cmd)` / `execJSON(cmd)` — shell execution via Tauri
+- `addNewChildren(parentId, ops, actions)` — create child blocks (deduplicates)
+- `parseMarkdownToOps(md)` — markdown → block ops array
+- `extractAllWikilinkTargets(str)` — parse `[[wikilinks]]` from content
+- `findPagesContainer()` / `findPageBlock(name)` — outline navigation
+- `pipe`, `sortByDesc`, `filterBy`, `take`, `groupBy` — FP utilities
 
 ## SolidJS Sharing
 
@@ -105,18 +113,39 @@ Doors share the host app's SolidJS runtime (signals, reactivity, rendering). The
 
 ## Existing Doors
 
+### View Doors (prefix trigger + persistent UI)
+
 | Door | Prefix | What it does |
 |---|---|---|
-| `daily` | `daily::` | Structured daily notes |
-| `timestamp` | `timestamp::` | Render timestamps in multiple formats |
-| `extractTo` | `extractTo::` | Extract block subtree to new location |
-| `claude-mem` | `mem::` | Claude memory viewer (sidebar iframe) |
+| `daily` | `daily::` | Daily notes viewer/navigator with date picker |
+| `dailylog` | `dailylog::` | Structured daily log with timelog entries |
+| `digest` | `digest::` | Browse session digests from `~/.float/digests/` |
+| `manifest` | `mem::` | Claude memory viewer (sidebar iframe) |
+| `portless` | `portless::` | Resolve `.localhost` subdomains to direct IP:PORT |
+| `rangle-dash` | `rd::` | Live rangle-weekly context, PRs, meeting summaries |
+| `reader` | `read::` | Render pages by name (wikilink resolver) |
+| `render` | `render::` | JSON Render — browse BBS entries, render specs inline |
+| `session-garden` | `garden::` | Session/project tree visualization |
+| `stub` | `stub::` | Minimal test door for pipeline verification |
+| `timestamp` | `ts::`, `timestamp::` | Format timestamps (ISO, Unix, date, time) |
+
+### Exec Doors (headless — mutate blocks, no persistent view)
+
+| Door | Prefix | What it does |
+|---|---|---|
+| `extractTo` | `extractto::`, `extract::` | Extract block subtree to a new page |
+| `floatctl` | `floatctl::` | CLI-in-outline — BBS board ops, schema introspection |
 
 ## Creating a New Door
 
-1. Create directory: `~/.floatty-dev/doors/my-door/`
+1. Write source as `.tsx` in `doors/<id>/<id>.tsx`
 2. Write `door.json` with id, prefixes, name
-3. Write `index.js` — compiled SolidJS (use the float-substrate toolchain or hand-write)
-4. Door auto-loads on next floatty start (or hot-reloads if already running)
+3. Compile: `node scripts/compile-door.mjs doors/<id>/<id>.tsx ~/.floatty-dev/doors/<id>/index.js`
+4. Copy `door.json` to `~/.floatty-dev/doors/<id>/`
+5. Door hot-reloads automatically (~1s)
+
+The compile pipeline: esbuild (TypeScript → JS, preserves JSX) → babel-preset-solid (JSX → DOM template calls). Bare specifiers (`solid-js`, `@floatty/stdlib`) are rewritten by the loader at runtime.
+
+To deploy to release: copy both `door.json` and `index.js` to `~/.floatty/doors/<id>/`.
 
 See `help:: handlers` for the handler registration system that doors plug into.
