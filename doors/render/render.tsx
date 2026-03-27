@@ -435,7 +435,9 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   if (!/^[a-zA-Z0-9._-]+$/.test(agentBinary)) {
     throw new Error(`Invalid agent_binary: must be a simple command name`);
   }
-  const agentCwd = ctx.settings?.agent_cwd || '~/.floatty/doors/render/agent';
+  // Expand ~ to $HOME for quoting safety (tilde doesn't expand inside double quotes)
+  const rawCwd = ctx.settings?.agent_cwd || '~/.floatty/doors/render/agent';
+  const agentCwd = rawCwd.startsWith('~/') ? `$HOME/${rawCwd.slice(2)}` : rawCwd;
 
   // Build command with session flags
   let sessionFlag = '';
