@@ -167,11 +167,14 @@ async fn main() {
         .with_state(Arc::clone(&broadcaster));
 
     // Combine routes
-    // 64MB body limit for large .ydoc restore payloads (default is 2MB)
+    // 256MB — intentionally oversized. Single-user local app, no untrusted clients.
+    // Y.Doc restore payload grows with outline size (currently ~22MB).
+    // Previous incremental bumps (2→16→64) each caused an incident.
+    // Set once, set high, never touch again.
     let app = Router::new()
         .merge(api_routes)
         .merge(ws_routes)
-        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
         .layer(cors);
 
     // Bind and serve (port from env overrides config)

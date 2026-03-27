@@ -432,6 +432,26 @@ Cross-reference exploration findings with work unit index:
 
 ---
 
+## Phase 3.5: Prior Art Recon (BEFORE writing code)
+
+If this track has a spike branch, prototype, or working reference:
+
+1. **Read the working code** — not the docs about it, the actual source files
+2. Extract: import paths, function signatures, API shapes, workarounds
+3. If the spike has deployed/compiled artifacts, read those too (they prove what actually runs)
+
+```bash
+# Check if spike branch exists
+git branch -a | grep spike
+# Check if deployed artifacts exist
+ls ~/.floatty-dev/doors/ 2>/dev/null
+```
+
+**The rule**: spike = evidence. Plan docs = intent. When they disagree, spike wins.
+Do NOT guess at APIs that the spike already solved. Read the spike, copy the contracts, rebuild cleanly.
+
+---
+
 ## Phase 4: Execute Next Unit
 
 For the identified next unit:
@@ -569,3 +589,5 @@ Then create PR with summary of delivered units.
 - Use integrated commands at the right moments (see table above)
 - Grep before building — check existing code for what you need
 - Unit tests passing ≠ feature works — verify runtime behavior in the app
+- **Spike recon before implementation** — if a spike exists, read the actual source before writing code. Do not guess APIs.
+- **Dev port only** — port 33333 / `~/.floatty-dev/`. Never touch port 8765 / `~/.floatty/` (release build the user depends on).

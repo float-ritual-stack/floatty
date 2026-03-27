@@ -154,7 +154,10 @@ function App() {
         : resolveTargetPane('');
     };
 
-    /** Build ExecutorActions from blockStore for deep link handler execution */
+    /** Build ExecutorActions for deep link handler execution.
+     *  Runs outside any pane context — paneId is empty and focusBlock is a no-op.
+     *  Navigation happens separately via the verb's ?pane param.
+     *  Handlers that need pane awareness should check paneId before using it. */
     const buildExecutorActions = (): ExecutorActions => ({
       createBlockInside: blockStore.createBlockInside,
       createBlockInsideAtTop: blockStore.createBlockInsideAtTop,
@@ -188,7 +191,10 @@ function App() {
         null
       );
       executeHandler(handler, blockId, content, buildExecutorActions(), hookStore)
-        .catch(err => console.error('[deep-link] handler failed:', err));
+        .catch(err => {
+          console.error('[deep-link] handler failed:', err);
+          blockStore.setBlockStatus(blockId, 'error');
+        });
     };
 
     const unlistenDeepLink = await listen<string>('deep-link', (event) => {

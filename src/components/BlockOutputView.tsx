@@ -42,6 +42,9 @@ function doorErrorFallback(onClear: () => void) {
 
 // Chirp throttle timestamps — module-level map replaces window[key] to prevent leak
 const chirpThrottleMap = new Map<string, number>();
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => chirpThrottleMap.clear());
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -70,6 +73,17 @@ export function BlockOutputView(props: BlockOutputViewProps) {
 
   // Clean up throttle entry on unmount
   onCleanup(() => chirpThrottleMap.delete(props.blockId));
+
+  // Shared navigation handler for DoorHost instances
+  const handleDoorNavigate = (target: string, opts?: { type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' }) => {
+    handleChirpNavigate(target, {
+      type: opts?.type,
+      sourcePaneId: props.paneId,
+      sourceBlockId: props.blockId,
+      splitDirection: opts?.splitDirection,
+      originBlockId: props.blockId,
+    });
+  };
 
   // ─── Search results keyboard navigation state ─────────────────────
   const [searchFocusedIdx, setSearchFocusedIdx] = createSignal(-1);
@@ -270,15 +284,7 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                       data={envelope.data}
                       error={envelope.error}
                       status={block()?.outputStatus}
-                      onNavigate={(target, opts) => {
-                        handleChirpNavigate(target, {
-                          type: opts?.type,
-                          sourcePaneId: props.paneId,
-                          sourceBlockId: props.blockId,
-                          splitDirection: opts?.splitDirection,
-                          originBlockId: props.blockId,
-                        });
-                      }}
+                      onNavigate={handleDoorNavigate}
                     />
                   : <DoorExecCard
                       doorId={envelope.doorId}
@@ -315,10 +321,8 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                 if (message === 'navigate' && typeof data === 'object' && data) {
                   const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' };
                   const result = handleChirpNavigate(nav.target, {
-                    type: nav.type,
-                    sourcePaneId: props.paneId,
-                    sourceBlockId: props.blockId,
-                    splitDirection: nav.splitDirection,
+                    type: nav.type, sourcePaneId: props.paneId,
+                    sourceBlockId: props.blockId, splitDirection: nav.splitDirection,
                     originBlockId: props.blockId,
                   });
                   pokeIframe?.('ack: navigate', { success: result.success, target: nav.target, error: result.error });
@@ -358,15 +362,7 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                 data={env.data}
                 error={env.error}
                 status={block()?.outputStatus}
-                onNavigate={(target, opts) => {
-                  handleChirpNavigate(target, {
-                    type: opts?.type,
-                    sourcePaneId: props.paneId,
-                    sourceBlockId: props.blockId,
-                    splitDirection: opts?.splitDirection,
-                    originBlockId: props.blockId,
-                  });
-                }}
+                onNavigate={handleDoorNavigate}
                 onChirp={(message, data) => {
                   if (isChirpWriteVerb(message)) {
                     handleChirpWrite(message, data as ChirpWriteData, props.blockId, store);
