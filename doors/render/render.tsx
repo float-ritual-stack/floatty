@@ -316,63 +316,31 @@ async function tauriShellExec(command: string): Promise<string> {
   return invoke('execute_shell_command', { command });
 }
 
-const AGENT_SYSTEM_PROMPT = `You generate JSON render specs for floatty, a dark-themed terminal outliner.
+// Dynamic prompt from catalog — includes all components, actions, state bindings, repeat fields.
+// Replaces old static AGENT_SYSTEM_PROMPT with catalog.prompt() for auto-sync with catalog changes.
+function buildAgentSystemPrompt(): string {
+  const catalogPrompt = bbsCatalog.prompt();
+  const stateIdx = catalogPrompt.indexOf('INITIAL STATE');
+  const componentSection = stateIdx > 0 ? catalogPrompt.substring(stateIdx) : catalogPrompt;
 
-OUTPUT: A single JSON object on stdout. No markdown fences, no explanation, ONLY the JSON.
-
-FORMAT:
-{"root":"<key>","elements":{"<key>":{"type":"<Component>","props":{...},"children":["<child-key>"]},...}}
-
-COMPONENTS (29 available — use the right ones for the content):
-
-Layout:
-- Stack: { gap?: number, direction?: "vertical"|"horizontal" } — flex container [children]
-- DocLayout: { sidebarWidth?: number } — two-column layout [children: sidebar + main]
-
-Sidebar:
-- NavBrand: { title: string, subtitle?: string }
-- NavSection: { label: string, accent?: "magenta"|"cyan"|"coral"|"amber" } — [children]
-- NavItem: { id: string, label: string, active?: boolean }
-- NavFooter: { content: string }
-
-TUI Data:
-- TuiPanel: { title?: string, titleColor?: string } — bordered container, title on border [children]
-- TuiStat: { label: string, value: string, color?: string } — centered metric card
-- BarChart: { title?: string, maxHeight?: number } — vertical bars [children=BarItem]
-- BarItem: { label: string, value: number, max?: number, color?: string }
-
-Content:
-- EntryHeader: { type: "synthesis"|"archaeology"|"bbs-source", title: string, date: string, author?: string, board?: string }
-- EntryBody: { markdown: string } — renders markdown with tables + [[wikilinks]]
-- Text: { content: string, size?: "sm"|"md"|"lg"|"xl", weight?: "normal"|"medium"|"bold", color?: string, mono?: boolean }
-- DataBlock: { label?: string, content: string } — monospace pre with floating label
-- ShippedItem: { content: string } — green * bullet
-- PatternCard: { title: string, type?: string, confidence?: string, content: string, connectsTo?: string[] } — expandable [children]
-
-References:
-- BacklinksFooter: { inbound: string[], outbound: string[] }
-- RefSection: { label?: string } — [children=RefCard]
-- RefCard: { id: string, type: string, title: string }
-- WikilinkChip: { target: string, label?: string }
-
-Tags:
-- TagBar: { gap?: number } — [children=TagChip]
-- TagChip: { name: string, active?: boolean }
-
-Other:
-- Card: { title?: string, subtitle?: string } — bordered card [children]
-- Metric: { label: string, value: string }
-- Button: { label: string, variant?: "primary"|"secondary"|"danger" }
-- Code: { content: string, language?: string }
-- Divider: {}
-- Ellipsis: {}
-- Breadcrumb: { label: string }
-
-RULES:
-- Every children key MUST exist in elements
-- gap is a NUMBER not a string
-- Use REAL data from the context provided, not placeholder text
-- Colors: #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber)`;
+  return [
+    'You generate JSON render specs for floatty, a dark-themed terminal outliner.',
+    '',
+    'OUTPUT: A single JSON object on stdout. No markdown fences, no explanation, ONLY the JSON.',
+    '',
+    'FORMAT:',
+    '{"root":"<key>","state":{...},"elements":{"<key>":{"type":"<Component>","props":{...},"children":["<child-key>"]},...}}',
+    '',
+    componentSection,
+    '',
+    'FLOATTY-SPECIFIC:',
+    '- Every children key MUST exist in elements',
+    '- gap is a NUMBER not a string',
+    '- Use REAL data from the context provided, not placeholder text',
+    '- Colors: #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber)',
+    '- Output a SINGLE JSON object, NOT JSONL patches',
+  ].join('\n');
+}
 
 interface AgentResult {
   spec: any;
@@ -426,7 +394,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   }
 
   const fullPrompt = [
-    ...(sessionFlag ? [] : [AGENT_SYSTEM_PROMPT, '']),
+    ...(sessionFlag ? [] : [buildAgentSystemPrompt(), '']),
     contextBlock ? `CONTEXT FROM OUTLINE:\n${contextBlock}\n---\n` : '',
     `USER REQUEST: ${userPrompt}`,
   ].join('\n');
