@@ -733,7 +733,7 @@ export const door = {
       }
 
       const userPrompt = rest;
-      if (!userPrompt) {
+      if (!userPrompt && !options.continueSession && !options.resumeSessionId) {
         setOutputWithTitle({ spec: null }, 'Usage: render:: agent [--continue|--resume <id>] <prompt>');
         return;
       }

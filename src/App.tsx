@@ -281,9 +281,11 @@ function App() {
               break;
             }
 
-            // Fire handler if requested
+            // Fire handler if requested — use existing block content (upsert may have
+            // found an existing block whose content differs from the URL's content param)
             if (url.searchParams.get('execute') === 'true') {
-              fireHandler(resultId, content);
+              const existingBlock = blockStore.blocks[resultId];
+              fireHandler(resultId, existingBlock?.content ?? content);
             }
 
             // Navigate unless explicitly disabled
