@@ -1198,6 +1198,7 @@ export function Terminal() {
             collapsible
             collapsedSize={0}
             collapseThreshold={'50px'}
+            style={{ 'max-width': '40vw' }}
           >
             <SidebarDoorContainer
               visible={sidebarVisible()}
@@ -1336,6 +1337,7 @@ export function Terminal() {
             collapsible
             collapsedSize={0}
             collapseThreshold={'50px'}
+            style={{ 'max-width': '40vw' }}
           >
             <SidebarDoorContainer
               visible={sidebarVisible()}
