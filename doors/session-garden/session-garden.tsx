@@ -15,7 +15,7 @@
  *   node scripts/compile-door-bundle.mjs doors/session-garden/session-garden.tsx ~/.floatty-dev/doors/session-garden/index.js
  */
 
-import { createSignal, createMemo, Show, batch, onMount, onCleanup } from 'solid-js';
+import { createSignal, createMemo, createEffect, on, Show, batch, onMount, onCleanup } from 'solid-js';
 import {
   Renderer,
   StateProvider,
@@ -350,6 +350,14 @@ function GardenView(props: DoorViewProps) {
   const [history, setHistory] = createSignal<string[]>([]);
   const [tagFilter, setTagFilter] = createSignal<string | null>(null);
 
+  // Resync currentId if entries change and current selection is orphaned
+  createEffect(on(() => entries().length, () => {
+    if (currentId() && !entryMap().has(currentId())) {
+      setCurrentId(entries()[0]?.id || '');
+      setHistory([]);
+    }
+  }, { defer: true }));
+
   const backLabel = createMemo(() => {
     const h = history();
     if (h.length === 0) return null;
@@ -372,27 +380,6 @@ function GardenView(props: DoorViewProps) {
       props.data?.subtitle,
       props.data?.footer,
     );
-  });
-
-  let viewRef: HTMLDivElement | undefined;
-
-  const handleGardenNavigate = ((e: CustomEvent) => {
-    const target = e.detail?.target as string;
-    if (target && props.onNavigate) {
-      props.onNavigate(target, {
-        type: 'page',
-        splitDirection: e.detail?.splitDirection,
-      });
-    }
-  }) as EventListener;
-
-  onMount(() => {
-    // injectBodyStyles() already called at registry import time
-    viewRef?.addEventListener('garden-navigate', handleGardenNavigate);
-  });
-
-  onCleanup(() => {
-    viewRef?.removeEventListener('garden-navigate', handleGardenNavigate);
   });
 
   // Action handlers — wired into the spec via on: { press: { action: ... } }

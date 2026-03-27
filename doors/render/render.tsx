@@ -15,254 +15,24 @@
  *   node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
  */
 
-import { createSignal, createResource, Show, For, onMount, onCleanup } from 'solid-js';
+import { createSignal, createResource, Show, For } from 'solid-js';
 import { z } from 'zod';
-import { schema } from '@json-render/solid/schema';
 import {
-  defineRegistry,
   Renderer,
   StateProvider,
   ActionProvider,
   VisibilityProvider,
   ValidationProvider,
   useStateStore,
-  type BaseComponentProps,
 } from '@json-render/solid';
 
-// Import shared BBS catalog + registry for AI generation
+// Single source of truth: BBS catalog for LLM prompts, BBS registry for rendering
 import { bbsCatalog } from '../session-garden/catalog';
 import { registry as bbsRegistry } from '../session-garden/registry';
 
-// ═══════════════════════════════════════════════════════════════
-// CATALOG — defines what components are available
-// ═══════════════════════════════════════════════════════════════
-
-const catalog = schema.createCatalog({
-  components: {
-    Stack: {
-      props: z.object({
-        gap: z.number().optional(),
-        direction: z.enum(['vertical', 'horizontal']).optional(),
-      }),
-      slots: ['default'],
-      description: 'Layout container, stacks children vertically or horizontally',
-    },
-    Card: {
-      props: z.object({
-        title: z.string().optional(),
-        subtitle: z.string().optional(),
-      }),
-      slots: ['default'],
-      description: 'A card container with optional title',
-    },
-    Text: {
-      props: z.object({
-        content: z.string(),
-        size: z.enum(['sm', 'md', 'lg', 'xl']).optional(),
-        weight: z.enum(['normal', 'medium', 'bold']).optional(),
-        color: z.string().optional(),
-        mono: z.boolean().optional(),
-      }),
-      slots: [],
-      description: 'Text display',
-    },
-    Metric: {
-      props: z.object({
-        label: z.string(),
-        value: z.string(),
-      }),
-      slots: [],
-      description: 'A labeled metric value',
-    },
-    Button: {
-      props: z.object({
-        label: z.string(),
-        variant: z.enum(['primary', 'secondary', 'danger']).optional(),
-      }),
-      slots: [],
-      description: 'Clickable button that emits press event',
-    },
-    Code: {
-      props: z.object({
-        content: z.string(),
-        language: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Code block display',
-    },
-    Divider: {
-      props: z.object({}),
-      slots: [],
-      description: 'Horizontal divider line',
-    },
-  },
-  actions: {
-    navigate: {
-      params: z.object({ target: z.string() }),
-      description: 'Navigate to a page or block in the outline',
-    },
-    refresh: {
-      params: z.object({}),
-      description: 'Refresh the data',
-    },
-  },
-});
-
-// ═══════════════════════════════════════════════════════════════
-// COMPONENTS — SolidJS implementations
-// ═══════════════════════════════════════════════════════════════
-
-function StackComponent(props: BaseComponentProps<{ gap?: number | string; direction?: string }>) {
-  const dir = () => props.props.direction || 'vertical';
-  const gap = () => {
-    const g = props.props.gap;
-    return typeof g === 'string' ? (parseInt(g) || 8) : (g ?? 8);
-  };
-  return (
-    <div style={{
-      display: 'flex',
-      'flex-direction': dir() === 'horizontal' ? 'row' : 'column',
-      gap: `${gap()}px`,
-    }}>
-      {props.children}
-    </div>
-  );
-}
-
-function CardComponent(props: BaseComponentProps<{ title?: string; subtitle?: string }>) {
-  return (
-    <div style={{
-      background: 'var(--color-bg-secondary, #1a1a2e)',
-      'border-radius': '8px',
-      border: '1px solid var(--color-border, #333)',
-      padding: '16px',
-    }}>
-      <Show when={props.props.title}>
-        <div style={{
-          'font-size': '14px',
-          'font-weight': '600',
-          color: 'var(--color-text-primary, #e0e0e0)',
-          'margin-bottom': props.props.subtitle ? '2px' : '12px',
-        }}>
-          {props.props.title}
-        </div>
-      </Show>
-      <Show when={props.props.subtitle}>
-        <div style={{
-          'font-size': '12px',
-          color: 'var(--color-text-secondary, #888)',
-          'margin-bottom': '12px',
-        }}>
-          {props.props.subtitle}
-        </div>
-      </Show>
-      {props.children}
-    </div>
-  );
-}
-
-function TextComponent(props: BaseComponentProps<{ content: string; size?: string; weight?: string; color?: string; mono?: boolean }>) {
-  const fontSize = () => {
-    switch (props.props.size) {
-      case 'sm': return '12px';
-      case 'lg': return '16px';
-      case 'xl': return '20px';
-      default: return '13px';
-    }
-  };
-  return (
-    <span style={{
-      'font-size': fontSize(),
-      'font-weight': props.props.weight === 'bold' ? '700' : props.props.weight === 'medium' ? '500' : '400',
-      color: props.props.color || 'var(--color-text-primary, #e0e0e0)',
-      'font-family': props.props.mono ? 'JetBrains Mono, monospace' : 'inherit',
-    }}>
-      {props.props.content}
-    </span>
-  );
-}
-
-function MetricComponent(props: BaseComponentProps<{ label: string; value: string }>) {
-  return (
-    <div style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', padding: '4px 0' }}>
-      <span style={{ 'font-size': '12px', color: 'var(--color-text-secondary, #888)' }}>
-        {props.props.label}
-      </span>
-      <span style={{ 'font-size': '14px', 'font-weight': '600', color: 'var(--color-ansi-cyan, #56b6c2)', 'font-family': 'JetBrains Mono, monospace' }}>
-        {props.props.value}
-      </span>
-    </div>
-  );
-}
-
-function ButtonComponent(props: BaseComponentProps<{ label: string; variant?: string }>) {
-  const bg = () => {
-    switch (props.props.variant) {
-      case 'primary': return 'var(--color-ansi-cyan, #56b6c2)';
-      case 'danger': return 'var(--color-ansi-red, #e06c75)';
-      default: return 'var(--color-bg-secondary, #2a2a3e)';
-    }
-  };
-  return (
-    <button
-      onClick={() => props.emit('press')}
-      style={{
-        background: bg(),
-        color: props.props.variant === 'secondary' ? 'var(--color-text-primary, #e0e0e0)' : '#fff',
-        border: props.props.variant === 'secondary' ? '1px solid var(--color-border, #444)' : 'none',
-        'border-radius': '6px',
-        padding: '6px 12px',
-        'font-size': '12px',
-        'font-family': 'JetBrains Mono, monospace',
-        cursor: 'pointer',
-      }}
-    >
-      {props.props.label}
-    </button>
-  );
-}
-
-function CodeComponent(props: BaseComponentProps<{ content: string; language?: string }>) {
-  return (
-    <pre style={{
-      background: 'var(--color-bg-tertiary, #0d0d1a)',
-      'border-radius': '6px',
-      padding: '12px',
-      'font-size': '12px',
-      'font-family': 'JetBrains Mono, monospace',
-      color: 'var(--color-text-primary, #e0e0e0)',
-      overflow: 'auto',
-      margin: '0',
-      'white-space': 'pre-wrap',
-    }}>
-      {props.props.content}
-    </pre>
-  );
-}
-
-function DividerComponent(_props: BaseComponentProps<Record<string, never>>) {
-  return <hr style={{ border: 'none', 'border-top': '1px solid var(--color-border, #333)', margin: '8px 0' }} />;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// REGISTRY
-// ═══════════════════════════════════════════════════════════════
-
-const { registry } = defineRegistry(catalog, {
-  components: {
-    Stack: StackComponent,
-    Card: CardComponent,
-    Text: TextComponent,
-    Metric: MetricComponent,
-    Button: ButtonComponent,
-    Code: CodeComponent,
-    Divider: DividerComponent,
-  },
-  actions: {
-    navigate: async () => {},
-    refresh: async () => {},
-  },
-});
+// Local catalog/registry/components REMOVED — bbsRegistry has all 24+ components
+// including Stack, Card, Text, Metric, Button, Code, Divider.
+// Single source of truth: catalog.ts → registry.ts → components.tsx
 
 // ═══════════════════════════════════════════════════════════════
 // SPEC GENERATORS
@@ -388,6 +158,18 @@ function normalizeSpec(spec: any, ctx: any): any {
     if (keys.length > 0) {
       spec.root = keys[0];
       ctx.log('[render] auto-fixed root to:', spec.root);
+    }
+  }
+  // Drop dangling child references (LLMs generate children that don't exist as elements)
+  for (const [id, el] of Object.entries(spec.elements) as [string, any][]) {
+    if (!Array.isArray(el.children)) { el.children = []; continue; }
+    const before = el.children.length;
+    el.children = el.children.filter((childId: string) => {
+      if (typeof childId !== 'string') return false;
+      return !!spec.elements[childId];
+    });
+    if (el.children.length < before) {
+      ctx.log(`[render] dropped ${before - el.children.length} dangling child refs from ${id}`);
     }
   }
   return spec;
@@ -645,6 +427,9 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   }
 
   const agentBinary = ctx.settings?.agent_binary || 'claude';
+  if (!/^[a-zA-Z0-9._-]+$/.test(agentBinary)) {
+    throw new Error(`Invalid agent_binary: must be a simple command name`);
+  }
   const agentCwd = ctx.settings?.agent_cwd || '~/.floatty/doors/render/agent';
 
   // Build command with session flags
@@ -665,7 +450,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   ].join('\n');
 
   const escapedPrompt = fullPrompt.replace(/'/g, "'\\''");
-  const command = `cd ${agentCwd} && ${agentBinary} -p${sessionFlag} --dangerously-skip-permissions --output-format text '${escapedPrompt}' 2>&1`;
+  const command = `cd "${agentCwd}" && ${agentBinary} -p${sessionFlag} --dangerously-skip-permissions --output-format text '${escapedPrompt}' 2>&1`;
   ctx.log('[render::agent] command:', agentBinary, sessionFlag || '(new session)');
 
   const raw = await tauriShellExec(command);
@@ -748,6 +533,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
 interface RenderViewData {
   spec: any;
   title?: string;
+  generatedVia?: 'demo' | 'stats' | 'prompt' | 'claude' | 'ollama' | 'agent' | 'raw-json';
   agentRaw?: string;
   agentSessionId?: string;
 }
@@ -766,6 +552,7 @@ interface DoorViewProps {
 
 function RenderView(props: DoorViewProps) {
   const spec = () => props.data?.spec;
+  const generatedVia = () => props.data?.generatedVia;
   const agentRaw = () => props.data?.agentRaw;
   const sessionId = () => props.data?.agentSessionId;
 
@@ -801,8 +588,8 @@ function RenderView(props: DoorViewProps) {
         <StateProvider initialState={spec()?.state || {}}>
           <RenderViewInner spec={spec()!} onNavigate={props.onNavigate} />
         </StateProvider>
-        {/* Agent session footer — shows session ID for --continue/--resume */}
-        <Show when={sessionId()}>
+        {/* Generation provenance + agent session footer */}
+        <Show when={generatedVia() || sessionId()}>
           <div style={{
             'margin-top': '8px',
             padding: '4px 8px',
@@ -811,10 +598,17 @@ function RenderView(props: DoorViewProps) {
             'font-family': 'JetBrains Mono, monospace',
             'border-top': '1px solid var(--color-border, #333)',
           }}>
-            session: {sessionId()!.substring(0, 8)}
-            <span style={{ color: 'var(--color-fg-muted, #444)', 'margin-left': '8px' }}>
-              → render:: agent --continue | --resume {sessionId()!.substring(0, 8)}
-            </span>
+            <Show when={generatedVia()}>
+              <span>via {generatedVia()}</span>
+            </Show>
+            <Show when={sessionId()}>
+              <span style={{ 'margin-left': generatedVia() ? '12px' : '0' }}>
+                session: {sessionId()!.substring(0, 8)}
+              </span>
+              <span style={{ color: 'var(--color-fg-muted, #444)', 'margin-left': '8px' }}>
+                → render:: agent --continue | --resume {sessionId()!.substring(0, 8)}
+              </span>
+            </Show>
           </div>
         </Show>
       </div>
@@ -823,28 +617,7 @@ function RenderView(props: DoorViewProps) {
 }
 
 function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?: any) => void }) {
-  let viewRef: HTMLDivElement | undefined;
-
-  // Bridge garden-navigate CustomEvents from session-garden components
-  // (EntryBody, BacklinksFooter, RefCard) to the outline's onNavigate
-  const handleGardenNavigate = ((e: CustomEvent) => {
-    const target = e.detail?.target as string;
-    if (target && props.onNavigate) {
-      props.onNavigate(target, {
-        type: 'page',
-        splitDirection: e.detail?.splitDirection,
-      });
-    }
-  }) as EventListener;
-
-  onMount(() => {
-    viewRef?.addEventListener('garden-navigate', handleGardenNavigate);
-  });
-
-  onCleanup(() => {
-    viewRef?.removeEventListener('garden-navigate', handleGardenNavigate);
-  });
-
+  // Action handlers for spec-level navigate bindings (on: { press: { action: 'navigate' } })
   const handlers = {
     navigate: async (params: Record<string, unknown>) => {
       const target = params.target as string;
@@ -852,17 +625,15 @@ function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?
         props.onNavigate(target, { type: 'page' });
       }
     },
-    refresh: async () => {
-      // No-op for now — could trigger re-execute
-    },
+    refresh: async () => {},
   };
 
   return (
-    <div ref={viewRef}>
+    <div>
       <ActionProvider handlers={handlers}>
         <VisibilityProvider>
           <ValidationProvider>
-            <Renderer spec={props.spec} registry={{...registry, ...bbsRegistry}} />
+            <Renderer spec={props.spec} registry={bbsRegistry} />
           </ValidationProvider>
         </VisibilityProvider>
       </ActionProvider>
@@ -916,14 +687,14 @@ export const door = {
 
     // Route: demo, stats, or raw JSON
     if (arg === 'demo' || arg === '') {
-      setOutputWithTitle({ spec: demoSpec() });
+      setOutputWithTitle({ spec: demoSpec(), generatedVia: 'demo' });
       return;
     }
 
     if (arg === 'stats') {
       try {
         const spec = await statsSpec(ctx.server.fetch);
-        setOutputWithTitle({ spec });
+        setOutputWithTitle({ spec, generatedVia: 'stats' });
       } catch (e: any) {
         ctx.log('stats fetch failed:', e.message);
         setOutputWithTitle({ spec: null }, e.message);
@@ -934,6 +705,7 @@ export const door = {
     if (arg === 'prompt') {
       const prompt = bbsCatalog.prompt();
       setOutputWithTitle({
+        generatedVia: 'prompt',
         spec: {
           root: 'main',
           elements: {
@@ -968,7 +740,7 @@ export const door = {
         try {
           ctx.log('[render::ai] using: Claude API');
           const spec = await generateSpecViaClaude(userPrompt, anthropicKey, ctx);
-          setOutputWithTitle({ spec });
+          setOutputWithTitle({ spec, generatedVia: 'claude' });
           return;
         } catch (e: any) {
           ctx.log('[render::ai] Claude API failed, falling back to ollama:', e.message);
@@ -980,7 +752,7 @@ export const door = {
       try {
         ctx.log('[render::ai] using: ollama', ctx.settings?.ollama_model || 'qwen2.5:7b');
         const spec = await generateSpecViaOllama(userPrompt, ctx);
-        setOutputWithTitle({ spec });
+        setOutputWithTitle({ spec, generatedVia: 'ollama' });
       } catch (e: any) {
         ctx.log('[render::ai] ollama also failed:', e.message);
         setOutputWithTitle({ spec: null }, `AI generation failed: ${e.message}`);
@@ -1026,6 +798,7 @@ export const door = {
         ctx.log('[render::agent] spec generated:', Object.keys(result.spec?.elements || {}).length, 'elements');
         setOutputWithTitle({
           spec: result.spec,
+          generatedVia: 'agent',
           agentRaw: result.raw,
           agentSessionId: result.sessionId,
         });
@@ -1040,7 +813,7 @@ export const door = {
     try {
       const spec = JSON.parse(arg);
       if (spec.root && spec.elements) {
-        setOutputWithTitle({ spec });
+        setOutputWithTitle({ spec, generatedVia: 'raw-json' });
       } else {
         setOutputWithTitle({ spec: null }, 'JSON must have root + elements');
       }

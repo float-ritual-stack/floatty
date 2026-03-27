@@ -11,11 +11,25 @@
 
 import { Show, For, createSignal } from 'solid-js';
 import type { BaseComponentProps } from '@json-render/solid';
+import DOMPurify from 'dompurify';
 
-// Platform-aware modifier: ⌘ on Mac, Ctrl elsewhere
-const _isMac = typeof navigator !== 'undefined' &&
-  (navigator.platform ? /Mac|iPod|iPhone|iPad/.test(navigator.platform) : false);
-const isModClick = (e: MouseEvent) => _isMac ? e.metaKey : e.ctrlKey;
+/** Sanitize HTML before innerHTML assignment — prevents XSS from markdown/content */
+const sanitize = (html: string) => DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+
+/**
+ * Dispatch a chirp CustomEvent — the door→outline communication protocol.
+ *
+ * Bubbles to BlockItem which routes through handleWikilinkClick() —
+ * the same unified path used for all [[wikilink]] clicks in the outline.
+ * Modifier keys (⌘-click, shift, etc.) are handled by BlockItem, not here.
+ */
+function emitChirpNavigate(el: HTMLElement, target: string, sourceEvent: MouseEvent): void {
+  el.dispatchEvent(new CustomEvent('chirp', {
+    bubbles: true,
+    composed: true,
+    detail: { message: 'navigate', target, sourceEvent },
+  }));
+}
 
 // ═══════════════════════════════════════════════════════════════
 // DESIGN TOKENS
@@ -246,7 +260,7 @@ export function NavFooter(props: BaseComponentProps<{ content: string }>) {
         'margin-top': 'auto',
         'font-family': V.mono,
       }}
-      innerHTML={props.props.content}
+      innerHTML={sanitize(props.props.content)}
     />
   );
 }
@@ -300,9 +314,6 @@ export function EntryHeader(props: BaseComponentProps<{
 
 export function EntryBody(props: BaseComponentProps<{ markdown: string }>) {
   const handleClick = (e: MouseEvent) => {
-    // Only navigate on ⌘-click (Mac) / Ctrl-click — normal clicks stay in the door
-    if (!isModClick(e)) return;
-
     let el = e.target as HTMLElement | null;
     while (el && !el.dataset?.wikilink) {
       if (el.classList?.contains('bbs-entry-body')) break;
@@ -311,20 +322,14 @@ export function EntryBody(props: BaseComponentProps<{ markdown: string }>) {
     if (el?.dataset?.wikilink) {
       e.preventDefault();
       e.stopPropagation();
-      el.dispatchEvent(new CustomEvent('garden-navigate', {
-        bubbles: true,
-        detail: {
-          target: el.dataset.wikilink,
-          splitDirection: e.shiftKey ? 'vertical' : undefined,
-        },
-      }));
+      emitChirpNavigate(el, el.dataset.wikilink, e);
     }
   };
 
   return (
     <div
       class="bbs-entry-body"
-      innerHTML={renderMarkdown(props.props.markdown)}
+      innerHTML={sanitize(renderMarkdown(props.props.markdown))}
       onClick={handleClick}
     />
   );
@@ -803,37 +808,24 @@ export function ShippedItem(props: BaseComponentProps<{ content: string }>) {
       padding: '2px 0',
     }}>
       <span style={{ color: V.green, 'flex-shrink': '0' }}>*</span>
-      <span style={{ color: V.t }} innerHTML={inlineFormat(props.props.content)} />
+      <span style={{ color: V.t }} innerHTML={sanitize(inlineFormat(props.props.content))} />
     </div>
   );
 }
 
 export function WikilinkChip(props: BaseComponentProps<{ target: string; label?: string }>) {
-  let ref: HTMLSpanElement | undefined;
-  const handleClick = (e: MouseEvent) => {
-    if (isModClick(e)) {
-      // ⌘-click → navigate in outline (respects linked panes)
-      e.preventDefault();
-      e.stopPropagation();
-      ref?.dispatchEvent(new CustomEvent('garden-navigate', {
-        bubbles: true,
-        detail: {
-          target: props.props.target,
-          splitDirection: e.shiftKey ? 'vertical' : undefined,
-        },
-      }));
-    } else {
-      // Normal click → door-internal action
-      props.emit('press');
-    }
-  };
   return (
     <span
-      ref={ref}
+      ref={(el) => {
+        el.addEventListener('click', (e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          emitChirpNavigate(el, props.props.target, e);
+        });
+      }}
       class="bbs-wikilink"
       data-wikilink={props.props.target}
       style={{ cursor: 'pointer' }}
-      onClick={handleClick}
     >
       [[{props.props.label || props.props.target}]]
     </span>
@@ -841,29 +833,16 @@ export function WikilinkChip(props: BaseComponentProps<{ target: string; label?:
 }
 
 export function BacklinksFooter(props: BaseComponentProps<{ inbound: string[]; outbound: string[] }>) {
-  let containerRef: HTMLDivElement | undefined;
-  const handleClick = (e: MouseEvent) => {
-    if (!isModClick(e)) return;
-    // Walk from click target up to container looking for data-wikilink
-    let el = e.target as HTMLElement | null;
-    while (el && el !== containerRef) {
-      if (el.dataset?.wikilink) {
-        e.preventDefault();
-        e.stopPropagation();
-        el.dispatchEvent(new CustomEvent('garden-navigate', {
-          bubbles: true,
-          detail: {
-            target: el.dataset.wikilink,
-            splitDirection: e.shiftKey ? 'vertical' : undefined,
-          },
-        }));
-        return;
-      }
-      el = el.parentElement;
-    }
+  // Wikilink spans use native listeners to emit chirp navigate events
+  const wireLink = (el: HTMLSpanElement, target: string) => {
+    el.addEventListener('click', (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      emitChirpNavigate(el, target, e);
+    });
   };
   return (
-    <div ref={containerRef} style={{
+    <div style={{
       'border-top': `1px dashed ${V.b}`,
       'margin-top': '12px',
       'padding-top': '8px',
@@ -873,12 +852,13 @@ export function BacklinksFooter(props: BaseComponentProps<{ inbound: string[]; o
       display: 'flex',
       'flex-wrap': 'wrap',
       gap: '4px 12px',
-    }} onClick={handleClick}>
+    }}>
       <Show when={props.props.inbound.length > 0}>
         <span style={{ color: V.tf }}>referenced by </span>
         <For each={props.props.inbound}>
           {(link) => (
-            <span class="bbs-wikilink" data-wikilink={link} style={{ cursor: 'pointer' }}>
+            <span ref={(el) => wireLink(el, link)}
+              class="bbs-wikilink" data-wikilink={link} style={{ cursor: 'pointer' }}>
               [[{link}]]
             </span>
           )}
@@ -888,7 +868,8 @@ export function BacklinksFooter(props: BaseComponentProps<{ inbound: string[]; o
         <span style={{ color: V.tf }}>links to </span>
         <For each={props.props.outbound}>
           {(link) => (
-            <span class="bbs-wikilink" data-wikilink={link} style={{ cursor: 'pointer' }}>
+            <span ref={(el) => wireLink(el, link)}
+              class="bbs-wikilink" data-wikilink={link} style={{ cursor: 'pointer' }}>
               [[{link}]]
             </span>
           )}
@@ -981,7 +962,7 @@ export function PatternCard(props: BaseComponentProps<{
       {/* Body */}
       <Show when={expanded()}>
         <div style={{ padding: '12px 14px' }}>
-          <div class="bbs-entry-body" innerHTML={renderMarkdown(props.props.content)} />
+          <div class="bbs-entry-body" innerHTML={sanitize(renderMarkdown(props.props.content))} />
           {props.children}
           <Show when={props.props.connectsTo && props.props.connectsTo.length > 0}>
             <div style={{
