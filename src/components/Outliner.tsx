@@ -1,4 +1,4 @@
-import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on } from 'solid-js';
+import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, ErrorBoundary, on } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
@@ -24,8 +24,10 @@ import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { tabStore } from '../hooks/useTabStore';
 import { layoutStore, findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { IframePaneView } from './views/IframePaneView';
+import { DoorPaneView } from './views/DoorPaneView';
 import { handleChirpNavigate } from '../lib/navigation';
 import type { EvalResult } from '../lib/evalEngine';
+import type { DoorViewOutput } from '../lib/handlers/doorTypes';
 
 interface OutlinerProps {
   paneId: string;
@@ -68,6 +70,34 @@ export function Outliner(props: OutlinerProps) {
     return b?.outputType === 'eval-result'
       && (b?.output as EvalResult | undefined)?.type === 'url';
   });
+
+  // Detect zoom into a door view block — render full-pane like iframe.
+  // selfRender doors: output on the block itself (render::)
+  // adapter doors: output on a child block (garden::)
+  // Returns the block ID that has the door envelope.
+  const doorZoomBlockId = createMemo(() => {
+    const id = zoomedRootId();
+    if (!id) return null;
+    const b = store.blocks[id];
+    if (!b) return null;
+    // Check the block itself (selfRender doors)
+    if (b.outputType === 'door') {
+      const envelope = b.output as DoorViewOutput | undefined;
+      if (envelope?.kind === 'view') return id;
+    }
+    // Check children (adapter doors)
+    if (b.childIds) {
+      for (const childId of b.childIds) {
+        const child = store.blocks[childId];
+        if (child?.outputType === 'door' && child.content === '') {
+          const envelope = child.output as DoorViewOutput | undefined;
+          if (envelope?.kind === 'view') return childId;
+        }
+      }
+    }
+    return null;
+  });
+  const isDoorZoom = () => doorZoomBlockId() !== null;
 
   // FLO-320: Initialize store AFTER Y.Doc is populated (prevents 13.8k block observer storm)
   // Must fire BEFORE the config effect below so store.rootIds is populated for applyCollapseDepth.
@@ -753,32 +783,59 @@ export function Outliner(props: OutlinerProps) {
               </Key>
             }
           >
-            {/* Zoomed: full-pane iframe OR breadcrumb + block subtree */}
+            {/* Zoomed: full-pane iframe, full-pane door, or breadcrumb + block subtree */}
             <Show when={isIframeZoom()} fallback={
-              <>
-                <Breadcrumb blockId={zoomedRootId()!} paneId={props.paneId} />
-                <BlockItem
-                  id={zoomedRootId()!}
-                  paneId={props.paneId}
-                  depth={0}
-                  focusedBlockId={focusedBlockId()}
-                  onFocus={handleFocus}
-                  onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
-                  onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
-                  isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
-                  onSelect={selection.handleSelect}
-                  selectionAnchor={selection.selectionAnchor()}
-                  getVisibleBlockIds={getVisibleBlockIds}
-                />
-                {/* LinkedReferences: show when zoomed into a page under pages:: */}
-                <Show when={isPageBlock(zoomedRootId()!)}>
-                  <LinkedReferences
-                    pageBlockId={zoomedRootId()!}
+              <Show when={isDoorZoom()} fallback={
+                <>
+                  <Breadcrumb blockId={zoomedRootId()!} paneId={props.paneId} />
+                  <BlockItem
+                    id={zoomedRootId()!}
                     paneId={props.paneId}
-                    onFocusBlock={handleFocus}
+                    depth={0}
+                    focusedBlockId={focusedBlockId()}
+                    onFocus={handleFocus}
+                    onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
+                    onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
+                    isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
+                    onSelect={selection.handleSelect}
+                    selectionAnchor={selection.selectionAnchor()}
+                    getVisibleBlockIds={getVisibleBlockIds}
                   />
-                </Show>
-              </>
+                  {/* LinkedReferences: show when zoomed into a page under pages:: */}
+                  <Show when={isPageBlock(zoomedRootId()!)}>
+                    <LinkedReferences
+                      pageBlockId={zoomedRootId()!}
+                      paneId={props.paneId}
+                      onFocusBlock={handleFocus}
+                    />
+                  </Show>
+                </>
+              }>
+                <ErrorBoundary fallback={(err) => (
+                  <div class="door-error" style={{ padding: '24px' }}>
+                    Door crashed: {err.message}
+                    <button onClick={() => paneStore.zoomTo(props.paneId, null)} style={{ 'margin-left': '12px' }}>
+                      Exit zoom
+                    </button>
+                  </div>
+                )}>
+                <DoorPaneView
+                  blockId={zoomedRootId()!}
+                  paneId={props.paneId}
+                  envelope={store.blocks[doorZoomBlockId()!]?.output as DoorViewOutput}
+                  onClose={() => paneStore.zoomTo(props.paneId, null)}
+                  onNavigate={(target, opts) => {
+                    handleChirpNavigate(target, {
+                      type: opts?.type as 'block' | 'page' | 'wikilink' | undefined,
+                      sourcePaneId: props.paneId,
+                      sourceBlockId: zoomedRootId()!,
+                      originBlockId: zoomedRootId()!,
+                      splitDirection: opts?.splitDirection as 'horizontal' | 'vertical' | undefined,
+                    });
+                  }}
+                />
+                </ErrorBoundary>
+              </Show>
             }>
               <IframePaneView
                 url={String((store.blocks[zoomedRootId()!]?.output as EvalResult)?.data ?? '')}
@@ -792,6 +849,7 @@ export function Outliner(props: OutlinerProps) {
                       type: nav.type,
                       sourcePaneId: props.paneId,
                       sourceBlockId: zoomedRootId()!,
+                      originBlockId: zoomedRootId()!,
                       splitDirection: nav.splitDirection,
                     });
                   }

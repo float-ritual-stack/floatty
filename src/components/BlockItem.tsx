@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack, createRoot } from 'solid-js';
+import { Show, ErrorBoundary, createMemo, createEffect, createSignal, onCleanup, onMount, on, untrack, createRoot } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -284,8 +284,13 @@ export function BlockItem(props: BlockItemProps) {
   // Detect output blocks that need special keyboard handling
   const isOutputBlock = createMemo(() => {
     const ot = block()?.outputType;
-    return ot?.startsWith('search-') || ot === 'door' || ot === 'img-view';
+    if (ot?.startsWith('search-') || ot === 'img-view') return true;
+    // Door output blocks: only adapter children (empty content) replace contentEditable.
+    // selfRender doors with content keep contentEditable and render output below (like artifact::).
+    if (ot === 'door' && block()?.content === '') return true;
+    return false;
   });
+
 
   // img:: auto-render — fires when content starts with img:: AND filename has a known extension.
   // Extension-gated to prevent 404 spam while the user is still typing the filename.
@@ -372,6 +377,11 @@ export function BlockItem(props: BlockItemProps) {
       const target = findFocusAfterDelete(props.id, props.paneId);
       store.deleteBlock(props.id);
       if (target) props.onFocus(target);
+      return;
+    } else if (modKey && e.key === '.') {
+      // Cmd+. toggle collapse — same as regular blocks
+      e.preventDefault();
+      paneStore.toggleCollapsed(props.paneId, props.id, block()?.collapsed || false);
       return;
     } else if (e.key === 'Escape' && block()?.outputType === 'img-view') {
       // Escape from img-view → back to edit mode (contentEditable shows, user can fix filename)
@@ -953,6 +963,26 @@ export function BlockItem(props: BlockItemProps) {
     return '•';
   };
 
+  // Chirp listener: door components emit chirp CustomEvents for wikilink navigation.
+  // Catches at block-wrapper level — covers all door rendering paths (output, inline, zoomed).
+  // Routes through handleWikilinkClick → navigateWikilink — unified path, not a new head.
+  // Door chirps: ⌘-click navigates, normal click is ignored.
+  // Never splits. Pane linking resolves via resolveSameTabLink —
+  // if pane A (door) is linked to pane B (outline), ⌘-click opens in B.
+  onMount(() => {
+    const chirpHandler = ((e: CustomEvent) => {
+      if (e.detail?.message === 'navigate' && e.detail?.target) {
+        const src = e.detail.sourceEvent as MouseEvent | undefined;
+        const modKey = src ? (isMac ? src.metaKey : src.ctrlKey) : false;
+        if (!modKey) return; // Normal click → no-op, stay in door
+        e.stopPropagation();
+        navigateWikilink(e.detail.target, props.paneId);
+      }
+    }) as EventListener;
+    wrapperRef?.addEventListener('chirp', chirpHandler);
+    onCleanup(() => wrapperRef?.removeEventListener('chirp', chirpHandler));
+  });
+
   // [[Wikilink]] click handler — delegates to navigateWikilink with mouse-event modifiers
   // Cmd+Click / Opt+Click → horizontal split, +Shift → vertical split
   const handleWikilinkClick = (target: string, e: MouseEvent) => {
@@ -1114,7 +1144,9 @@ export function BlockItem(props: BlockItemProps) {
               </Show>
 
               {/* DOOR OUTPUT VIEW — single branch for all doors */}
+              {/* Chirp events bubble to block-wrapper's chirp listener (above) */}
               <Show when={block()?.outputType === 'door'}>
+                <ErrorBoundary fallback={(err) => <div class="door-error">door crashed: {err.message}</div>}>
                 {(() => {
                   const envelope = block()!.output as DoorEnvelope;
                   if (!envelope || !envelope.kind) return null;
@@ -1124,15 +1156,6 @@ export function BlockItem(props: BlockItemProps) {
                         data={envelope.data}
                         error={envelope.error}
                         status={block()?.outputStatus}
-                        onNavigate={(target, opts) => {
-                          handleChirpNavigate(target, {
-                            type: opts?.type,
-                            sourcePaneId: props.paneId,
-                            sourceBlockId: props.id,
-                            splitDirection: opts?.splitDirection,
-                            originBlockId: props.id,
-                          });
-                        }}
                       />
                     : <DoorExecCard
                         doorId={envelope.doorId}
@@ -1144,6 +1167,7 @@ export function BlockItem(props: BlockItemProps) {
                         createdBlockIds={envelope.createdBlockIds}
                       />;
                 })()}
+                </ErrorBoundary>
               </Show>
 
               {/* IMG VIEW — local attachment from __attachments/ */}
@@ -1272,6 +1296,33 @@ export function BlockItem(props: BlockItemProps) {
                 />
               );
             })()}
+          </Show>
+
+          {/* INLINE DOOR OUTPUT: below contentEditable for selfRender doors (like artifact::) */}
+          <Show when={block()?.outputType === 'door' && block()?.content && block()?.output && !isCollapsed()}>
+            <ErrorBoundary fallback={(err) => <div class="door-error">door crashed: {err.message}</div>}>
+            {(() => {
+              const envelope = () => block()!.output as DoorEnvelope;
+              const env = envelope();
+              if (!env || !env.kind) return null;
+              return env.kind === 'view'
+                ? <DoorHost
+                    doorId={env.doorId}
+                    data={env.data}
+                    error={env.error}
+                    status={block()?.outputStatus}
+                  />
+                : <DoorExecCard
+                    doorId={env.doorId}
+                    ok={env.ok}
+                    startedAt={env.startedAt}
+                    finishedAt={env.finishedAt}
+                    summary={env.summary}
+                    error={env.error}
+                    createdBlockIds={env.createdBlockIds}
+                  />;
+            })()}
+            </ErrorBoundary>
           </Show>
 
           {/* FLO-376: Wikilink autocomplete popup */}

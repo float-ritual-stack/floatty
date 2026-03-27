@@ -1,0 +1,7 @@
+{
+  "id": "render",
+  "name": "JSON Render",
+  "prefixes": ["render::"],
+  "version": "0.1.0",
+  "selfRender": true
+}
