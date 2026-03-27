@@ -1321,7 +1321,36 @@ export function BlockItem(props: BlockItemProps) {
               const env = block()!.output as DoorEnvelope;
               if (!env || !env.kind) return null;
               return env.kind === 'view'
-                ? <DoorHost
+                ? <div ref={(el) => {
+                    // Chirp CustomEvent listener for navigation + write verbs from door components.
+                    // Door components emit chirp events (emitChirpNavigate, emitChirp) that bubble up.
+                    // DoorPaneView has this on its container; inline mode needs it here.
+                    const handler = ((e: CustomEvent) => {
+                      const msg = e.detail?.message;
+                      if (msg === 'navigate' && e.detail?.target) {
+                        e.stopPropagation();
+                        const sourceEvent = e.detail.sourceEvent as MouseEvent | undefined;
+                        const modKey = sourceEvent ? (isMac ? sourceEvent.metaKey : sourceEvent.ctrlKey) : false;
+                        const optKey = sourceEvent?.altKey ?? false;
+                        let splitDirection: 'horizontal' | 'vertical' | undefined;
+                        if (modKey || optKey) {
+                          splitDirection = sourceEvent?.shiftKey ? 'vertical' : 'horizontal';
+                        }
+                        handleChirpNavigate(e.detail.target, {
+                          type: undefined,
+                          sourcePaneId: props.paneId,
+                          sourceBlockId: props.id,
+                          splitDirection,
+                          originBlockId: props.id,
+                        });
+                      } else if (isChirpWriteVerb(msg)) {
+                        e.stopPropagation();
+                        handleChirpWrite(msg, e.detail?.data as ChirpWriteData, props.id, store);
+                      }
+                    }) as EventListener;
+                    el.addEventListener('chirp', handler);
+                  }}>
+                  <DoorHost
                     doorId={env.doorId}
                     data={env.data}
                     error={env.error}
@@ -1341,6 +1370,7 @@ export function BlockItem(props: BlockItemProps) {
                       }
                     }}
                   />
+                </div>
                 : <DoorExecCard
                     doorId={env.doorId}
                     ok={env.ok}
