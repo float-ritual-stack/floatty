@@ -382,6 +382,8 @@ function GardenView(props: DoorViewProps) {
     );
   });
 
+  let viewRef: HTMLDivElement | undefined;
+
   // Action handlers — wired into the spec via on: { press: { action: ... } }
   const actionHandlers = {
     selectEntry: async (params: Record<string, unknown>) => {
