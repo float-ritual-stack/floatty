@@ -131,15 +131,14 @@ fn remove_pid_file(pid_path: &PathBuf) {
 /// * `port` - Port to run server on
 pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
     let pid_file = paths.pid_file.clone();
-
-    // First, kill any stale server from previous crashes
-    kill_stale_server(&pid_file);
-
     let url = format!("http://127.0.0.1:{}", port);
 
-    // Check if server is already running (from previous session or standalone)
+    // Check if server is already running BEFORE killing anything.
+    // Previous behavior killed PID from stale file first, which murdered
+    // a healthy server from the previous dev session, then the replacement
+    // couldn't start fast enough within the 3s health check window.
     if wait_for_server_health(&url) {
-        tracing::info!(url = %url, "Reusing existing server");
+        tracing::info!(url = %url, "Reusing existing server (healthy)");
         let api_key = read_api_key_from_config(&paths.config)?;
         return Some(ServerState {
             info: ServerInfo { url, api_key },
@@ -147,6 +146,9 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
             pid_file,
         });
     }
+
+    // Server not responding — kill any stale process, then spawn fresh
+    kill_stale_server(&pid_file);
 
     // No server running, spawn one
     let server_binary = find_server_binary()?;
