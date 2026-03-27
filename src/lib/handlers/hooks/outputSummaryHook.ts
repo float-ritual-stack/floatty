@@ -33,19 +33,13 @@ function extractRenderSummary(output: any): string | null {
   if (!spec?.elements) return null;
 
   const parts: string[] = [];
-  const elements = spec.elements as Record<string, any>;
+  let foundTitle = false;
 
-  // Extract title from first EntryHeader
-  for (const el of Object.values(elements)) {
-    if (el.type === 'EntryHeader' && el.props?.title) {
+  for (const el of Object.values(spec.elements as Record<string, any>)) {
+    if (!foundTitle && el.type === 'EntryHeader' && el.props?.title) {
       parts.push(el.props.title);
-      break;
-    }
-  }
-
-  // Extract section headings from EntryBody markdown (## lines)
-  for (const el of Object.values(elements)) {
-    if (el.type === 'EntryBody' && el.props?.markdown) {
+      foundTitle = true;
+    } else if (el.type === 'EntryBody' && el.props?.markdown) {
       const headings = (el.props.markdown as string)
         .split('\n')
         .filter((line: string) => line.startsWith('## '))
@@ -53,17 +47,11 @@ function extractRenderSummary(output: any): string | null {
       for (const h of headings) {
         if (!parts.includes(h)) parts.push(h);
       }
-    }
-  }
-
-  // Extract PatternCard titles (findings, features, releases)
-  for (const el of Object.values(elements)) {
-    if (el.type === 'PatternCard' && el.props?.title) {
+    } else if (el.type === 'PatternCard' && el.props?.title) {
       parts.push(el.props.title);
     }
   }
 
-  // Cap at reasonable length
   if (parts.length === 0) return null;
 
   const summary = parts.slice(0, 8).join('. ');
@@ -106,7 +94,6 @@ function handleBlockEvent(envelope: EventEnvelope): void {
       if (block.metadata?.summary) {
         blockStore.updateBlockMetadata(block.id, {
           summary: undefined,
-          extractedAt: Date.now(),
         }, 'hook');
       }
       continue;

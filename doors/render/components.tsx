@@ -8,7 +8,7 @@
  * Wikilink navigation via chirp CustomEvent bubbling to BlockItem.
  */
 
-import { Show, For, createSignal } from 'solid-js';
+import { Show, For, createSignal, createMemo } from 'solid-js';
 import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
@@ -1179,11 +1179,18 @@ interface ArcEntry { time: string; label: string; project: string; }
 interface Arc { name: string; start: string; end: string; project: string; entries?: number; }
 
 const ARC_PROJECT_COLORS: Record<string, { fg: string; dim: string; med: string }> = {
-  floatty: { fg: '#00e5ff', dim: 'rgba(0,229,255,0.12)', med: 'rgba(0,229,255,0.3)' },
-  'float-hub': { fg: '#98c379', dim: 'rgba(152,195,121,0.12)', med: 'rgba(152,195,121,0.3)' },
-  'json-render': { fg: '#e040a0', dim: 'rgba(224,64,160,0.12)', med: 'rgba(224,64,160,0.3)' },
-  rangle: { fg: '#ffb300', dim: 'rgba(255,179,0,0.12)', med: 'rgba(255,179,0,0.3)' },
+  floatty: { fg: V.cy, dim: 'rgba(0,229,255,0.12)', med: 'rgba(0,229,255,0.3)' },
+  'float-hub': { fg: V.green, dim: 'rgba(152,195,121,0.12)', med: 'rgba(152,195,121,0.3)' },
+  'json-render': { fg: V.mag, dim: 'rgba(224,64,160,0.12)', med: 'rgba(224,64,160,0.3)' },
+  rangle: { fg: V.amb, dim: 'rgba(255,179,0,0.12)', med: 'rgba(255,179,0,0.3)' },
 };
+
+function entryMatchesArc(e: ArcEntry, arc: Arc): boolean {
+  const aStart = arcTimeToMinutes(arc.start);
+  const aEnd = arcTimeToMinutes(arc.end);
+  const eTime = arcTimeToMinutes(e.time);
+  return eTime >= aStart && eTime <= aEnd && (e.project === arc.project || e.project === 'float-hub');
+}
 
 function arcTimeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number);
@@ -1204,14 +1211,9 @@ export function ArcTimeline(props: BaseComponentProps<{
   const entries = () => props.props.entries ?? [];
   const arcs = () => props.props.arcs ?? [];
 
-  const orphans = () => entries().filter((e) => {
-    return !arcs().some((a) => {
-      const aStart = arcTimeToMinutes(a.start);
-      const aEnd = arcTimeToMinutes(a.end);
-      const eTime = arcTimeToMinutes(e.time);
-      return eTime >= aStart && eTime <= aEnd && (e.project === a.project || e.project === 'float-hub');
-    });
-  });
+  const orphans = () => entries().filter((e) =>
+    !arcs().some((a) => entryMatchesArc(e, a))
+  );
 
   return (
     <div style={{ padding: '0 0 16px 0' }}>
@@ -1228,13 +1230,10 @@ export function ArcTimeline(props: BaseComponentProps<{
           {(arc, i) => {
             const colors = arcColor(arc.project);
             const isExpanded = () => expandedArc() === i();
-            const arcEntries = () => entries().filter((e) => {
-              const aStart = arcTimeToMinutes(arc.start);
-              const aEnd = arcTimeToMinutes(arc.end);
-              const eTime = arcTimeToMinutes(e.time);
-              return eTime >= aStart && eTime <= aEnd && (e.project === arc.project || e.project === 'float-hub');
-            });
-            const durationH = () => ((arcTimeToMinutes(arc.end) - arcTimeToMinutes(arc.start)) / 60).toFixed(1);
+            const startMin = arcTimeToMinutes(arc.start);
+            const endMin = arcTimeToMinutes(arc.end);
+            const arcEntries = createMemo(() => entries().filter((e) => entryMatchesArc(e, arc)));
+            const durationH = () => ((endMin - startMin) / 60).toFixed(1);
             const doneCount = () => arcEntries().filter(e => e.label.includes('DONE')).length;
 
             return (
