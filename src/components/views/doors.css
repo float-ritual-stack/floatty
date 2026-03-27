@@ -16,7 +16,7 @@
   --door-success: var(--color-ansi-green, #98c379);
 
   position: relative;
-  padding: 8px 0;
+  padding: 2px 0;
   color: var(--door-fg);
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 13px;
@@ -28,7 +28,8 @@
 .door-output-toolbar {
   display: flex;
   justify-content: flex-end;
-  padding: 0 4px 4px;
+  padding: 0 4px 0;
+  min-height: 0;
 }
 
 .door-raw-toggle {

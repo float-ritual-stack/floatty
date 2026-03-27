@@ -12,6 +12,11 @@
 import { Show, For, createSignal } from 'solid-js';
 import type { BaseComponentProps } from '@json-render/solid';
 
+// Platform-aware modifier: ⌘ on Mac, Ctrl elsewhere
+const _isMac = typeof navigator !== 'undefined' &&
+  (navigator.platform ? /Mac|iPod|iPhone|iPad/.test(navigator.platform) : false);
+const isModClick = (e: MouseEvent) => _isMac ? e.metaKey : e.ctrlKey;
+
 // ═══════════════════════════════════════════════════════════════
 // DESIGN TOKENS
 // ═══════════════════════════════════════════════════════════════
@@ -295,6 +300,9 @@ export function EntryHeader(props: BaseComponentProps<{
 
 export function EntryBody(props: BaseComponentProps<{ markdown: string }>) {
   const handleClick = (e: MouseEvent) => {
+    // Only navigate on ⌘-click (Mac) / Ctrl-click — normal clicks stay in the door
+    if (!isModClick(e)) return;
+
     let el = e.target as HTMLElement | null;
     while (el && !el.dataset?.wikilink) {
       if (el.classList?.contains('bbs-entry-body')) break;
@@ -303,10 +311,12 @@ export function EntryBody(props: BaseComponentProps<{ markdown: string }>) {
     if (el?.dataset?.wikilink) {
       e.preventDefault();
       e.stopPropagation();
-      // Dispatch a custom event that bubbles up to GardenView's action handler
       el.dispatchEvent(new CustomEvent('garden-navigate', {
         bubbles: true,
-        detail: { target: el.dataset.wikilink },
+        detail: {
+          target: el.dataset.wikilink,
+          splitDirection: e.shiftKey ? 'vertical' : undefined,
+        },
       }));
     }
   };
@@ -381,8 +391,8 @@ export function TagChip(props: BaseComponentProps<{ name: string; active?: boole
 export function RefSection(props: BaseComponentProps<{ label?: string }>) {
   return (
     <div style={{
-      'margin-top': '36px',
-      'padding-top': '24px',
+      'margin-top': '12px',
+      'padding-top': '12px',
       'border-top': `1px solid ${V.b}`,
     }}>
       <div style={{
@@ -799,12 +809,31 @@ export function ShippedItem(props: BaseComponentProps<{ content: string }>) {
 }
 
 export function WikilinkChip(props: BaseComponentProps<{ target: string; label?: string }>) {
+  let ref: HTMLSpanElement | undefined;
+  const handleClick = (e: MouseEvent) => {
+    if (isModClick(e)) {
+      // ⌘-click → navigate in outline (respects linked panes)
+      e.preventDefault();
+      e.stopPropagation();
+      ref?.dispatchEvent(new CustomEvent('garden-navigate', {
+        bubbles: true,
+        detail: {
+          target: props.props.target,
+          splitDirection: e.shiftKey ? 'vertical' : undefined,
+        },
+      }));
+    } else {
+      // Normal click → door-internal action
+      props.emit('press');
+    }
+  };
   return (
     <span
+      ref={ref}
       class="bbs-wikilink"
       data-wikilink={props.props.target}
       style={{ cursor: 'pointer' }}
-      onClick={() => props.emit('press')}
+      onClick={handleClick}
     >
       [[{props.props.label || props.props.target}]]
     </span>
@@ -812,8 +841,29 @@ export function WikilinkChip(props: BaseComponentProps<{ target: string; label?:
 }
 
 export function BacklinksFooter(props: BaseComponentProps<{ inbound: string[]; outbound: string[] }>) {
+  let containerRef: HTMLDivElement | undefined;
+  const handleClick = (e: MouseEvent) => {
+    if (!isModClick(e)) return;
+    // Walk from click target up to container looking for data-wikilink
+    let el = e.target as HTMLElement | null;
+    while (el && el !== containerRef) {
+      if (el.dataset?.wikilink) {
+        e.preventDefault();
+        e.stopPropagation();
+        el.dispatchEvent(new CustomEvent('garden-navigate', {
+          bubbles: true,
+          detail: {
+            target: el.dataset.wikilink,
+            splitDirection: e.shiftKey ? 'vertical' : undefined,
+          },
+        }));
+        return;
+      }
+      el = el.parentElement;
+    }
+  };
   return (
-    <div style={{
+    <div ref={containerRef} style={{
       'border-top': `1px dashed ${V.b}`,
       'margin-top': '12px',
       'padding-top': '8px',
@@ -823,7 +873,7 @@ export function BacklinksFooter(props: BaseComponentProps<{ inbound: string[]; o
       display: 'flex',
       'flex-wrap': 'wrap',
       gap: '4px 12px',
-    }}>
+    }} onClick={handleClick}>
       <Show when={props.props.inbound.length > 0}>
         <span style={{ color: V.tf }}>referenced by </span>
         <For each={props.props.inbound}>

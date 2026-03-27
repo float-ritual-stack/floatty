@@ -97,12 +97,12 @@ export function parseRangleWeekFiles(
 
   const headlines = headlineFiles.map(f => {
     const parsed = parseFrontmatter(f.content);
-    // Extract day from filename: 2026-03-17-tuesday-headlines.md → tuesday
-    const dayMatch = f.filename.match(/\d{4}-\d{2}-\d{2}-(\w+)-headlines/);
-    const day = dayMatch?.[1] || parsed.meta.day || dateMatch?.[1] || f.filename.replace(/\W/g, '-');
     // Extract date
     const dateMatch = f.filename.match(/(\d{4}-\d{2}-\d{2})/);
     const date = dateMatch?.[1] || '';
+    // Extract day from filename: 2026-03-17-tuesday-headlines.md → tuesday
+    const dayMatch = f.filename.match(/\d{4}-\d{2}-\d{2}-(\w+)-headlines/);
+    const day = dayMatch?.[1] || parsed.meta.day || dateMatch?.[1] || f.filename.replace(/\W/g, '-');
 
     return { day, date, content: parsed.body };
   });

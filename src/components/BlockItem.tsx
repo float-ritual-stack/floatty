@@ -284,7 +284,11 @@ export function BlockItem(props: BlockItemProps) {
   // Detect output blocks that need special keyboard handling
   const isOutputBlock = createMemo(() => {
     const ot = block()?.outputType;
-    return ot?.startsWith('search-') || ot === 'door' || ot === 'img-view';
+    if (ot?.startsWith('search-') || ot === 'img-view') return true;
+    // Door output blocks: only adapter children (empty content) replace contentEditable.
+    // selfRender doors with content keep contentEditable and render output below (like artifact::).
+    if (ot === 'door' && !block()?.content) return true;
+    return false;
   });
 
 
@@ -373,6 +377,11 @@ export function BlockItem(props: BlockItemProps) {
       const target = findFocusAfterDelete(props.id, props.paneId);
       store.deleteBlock(props.id);
       if (target) props.onFocus(target);
+      return;
+    } else if (modKey && e.key === '.') {
+      // Cmd+. toggle collapse — same as regular blocks
+      e.preventDefault();
+      paneStore.toggleCollapsed(props.paneId, props.id, block()?.collapsed || false);
       return;
     } else if (e.key === 'Escape' && block()?.outputType === 'img-view') {
       // Escape from img-view → back to edit mode (contentEditable shows, user can fix filename)
@@ -1272,6 +1281,40 @@ export function BlockItem(props: BlockItemProps) {
                   onPokeReady={(poke) => { pokeIframe = poke; }}
                 />
               );
+            })()}
+          </Show>
+
+          {/* INLINE DOOR OUTPUT: below contentEditable for selfRender doors (like artifact::) */}
+          <Show when={block()?.outputType === 'door' && block()?.content && block()?.output && !isCollapsed()}>
+            {(() => {
+              const envelope = () => block()!.output as DoorEnvelope;
+              const env = envelope();
+              if (!env || !env.kind) return null;
+              return env.kind === 'view'
+                ? <DoorHost
+                    doorId={env.doorId}
+                    data={env.data}
+                    error={env.error}
+                    status={block()?.outputStatus}
+                    onNavigate={(target, opts) => {
+                      handleChirpNavigate(target, {
+                        type: opts?.type,
+                        sourcePaneId: props.paneId,
+                        sourceBlockId: props.id,
+                        splitDirection: opts?.splitDirection,
+                        originBlockId: props.id,
+                      });
+                    }}
+                  />
+                : <DoorExecCard
+                    doorId={env.doorId}
+                    ok={env.ok}
+                    startedAt={env.startedAt}
+                    finishedAt={env.finishedAt}
+                    summary={env.summary}
+                    error={env.error}
+                    createdBlockIds={env.createdBlockIds}
+                  />;
             })()}
           </Show>
 

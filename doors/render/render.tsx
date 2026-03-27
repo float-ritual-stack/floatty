@@ -15,7 +15,7 @@
  *   node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
  */
 
-import { createSignal, createResource, Show, For, onMount } from 'solid-js';
+import { createSignal, createResource, Show, For, onMount, onCleanup } from 'solid-js';
 import { z } from 'zod';
 import { schema } from '@json-render/solid/schema';
 import {
@@ -499,6 +499,40 @@ async function generateSpecViaOllama(userPrompt: string, ctx: any): Promise<any>
 }
 
 // ═══════════════════════════════════════════════════════════════
+// TITLE GENERATION (ollama — free, fast, local)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Generate a short title for a render:: block via ollama.
+ * Fire-and-forget: failures return null, never block rendering.
+ */
+async function generateTitle(content: string, ctx: any): Promise<string | null> {
+  try {
+    const ollamaUrl = ctx.settings?.ollama_endpoint || 'http://float-box:11434';
+    const ollamaModel = ctx.settings?.ollama_model || 'qwen2.5:7b';
+
+    const resp = await fetch(`${ollamaUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: ollamaModel,
+        system: 'Generate a short title (3-6 words) for this render request. Reply with ONLY the title, no quotes, no explanation.',
+        prompt: content.slice(0, 500),
+        stream: false,
+        options: { temperature: 0.3 },
+      }),
+    });
+
+    if (!resp.ok) return null;
+    const result = await resp.json();
+    const title = (result.response || '').trim().replace(/^["']|["']$/g, '');
+    return title || null;
+  } catch {
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // AGENT-BASED GENERATION (claude -p, etc.)
 // ═══════════════════════════════════════════════════════════════
 
@@ -713,6 +747,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
 
 interface RenderViewData {
   spec: any;
+  title?: string;
   agentRaw?: string;
   agentSessionId?: string;
 }
@@ -788,6 +823,28 @@ function RenderView(props: DoorViewProps) {
 }
 
 function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?: any) => void }) {
+  let viewRef: HTMLDivElement | undefined;
+
+  // Bridge garden-navigate CustomEvents from session-garden components
+  // (EntryBody, BacklinksFooter, RefCard) to the outline's onNavigate
+  const handleGardenNavigate = ((e: CustomEvent) => {
+    const target = e.detail?.target as string;
+    if (target && props.onNavigate) {
+      props.onNavigate(target, {
+        type: 'page',
+        splitDirection: e.detail?.splitDirection,
+      });
+    }
+  }) as EventListener;
+
+  onMount(() => {
+    viewRef?.addEventListener('garden-navigate', handleGardenNavigate);
+  });
+
+  onCleanup(() => {
+    viewRef?.removeEventListener('garden-navigate', handleGardenNavigate);
+  });
+
   const handlers = {
     navigate: async (params: Record<string, unknown>) => {
       const target = params.target as string;
@@ -801,13 +858,15 @@ function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?
   };
 
   return (
-    <ActionProvider handlers={handlers}>
-      <VisibilityProvider>
-        <ValidationProvider>
-          <Renderer spec={props.spec} registry={bbsRegistry} />
-        </ValidationProvider>
-      </VisibilityProvider>
-    </ActionProvider>
+    <div ref={viewRef}>
+      <ActionProvider handlers={handlers}>
+        <VisibilityProvider>
+          <ValidationProvider>
+            <Renderer spec={props.spec} registry={{...registry, ...bbsRegistry}} />
+          </ValidationProvider>
+        </VisibilityProvider>
+      </ActionProvider>
+    </div>
   );
 }
 
@@ -815,7 +874,13 @@ function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?
 // DOOR EXPORT
 // ═══════════════════════════════════════════════════════════════
 
-/** Set door output on the block itself (selfRender pattern — no child block) */
+/** Extract [title::X] from block content */
+function extractTitle(content: string): string | null {
+  const match = content.match(/\[title::([^\]]+)\]/);
+  return match ? match[1].trim() : null;
+}
+
+/** Set door output on the block itself — content stays, output renders below (like artifact::) */
 function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: string) {
   const envelope = { kind: 'view', doorId: 'render', schema: 1, data, error };
   ctx.actions.setBlockOutput(blockId, envelope, 'door');
@@ -828,28 +893,47 @@ export const door = {
 
   async execute(blockId: string, content: string, ctx: any) {
     ctx.actions.setBlockStatus(blockId, 'running');
-    const arg = content.replace(/^render::\s*/i, '').trim();
+    const raw = content.replace(/^render::\s*/i, '').trim();
+    // Strip [title::X] from arg so it doesn't confuse routing
+    const explicitTitle = extractTitle(raw);
+    const arg = raw.replace(/\[title::[^\]]*\]\s*/g, '').trim();
+
+    /** Render output, then auto-generate title if none provided */
+    const setOutputWithTitle = (data: RenderViewData, error?: string) => {
+      if (explicitTitle) data.title = explicitTitle;
+      setOutput(blockId, ctx, data, error);
+
+      // Auto-generate title via ollama if none provided (fire-and-forget)
+      if (!explicitTitle && !error && data.spec) {
+        generateTitle(content, ctx).then(title => {
+          if (title) {
+            data.title = title;
+            setOutput(blockId, ctx, data);
+          }
+        });
+      }
+    };
 
     // Route: demo, stats, or raw JSON
     if (arg === 'demo' || arg === '') {
-      setOutput(blockId, ctx, { spec: demoSpec() });
+      setOutputWithTitle({ spec: demoSpec() });
       return;
     }
 
     if (arg === 'stats') {
       try {
         const spec = await statsSpec(ctx.server.fetch);
-        setOutput(blockId, ctx, { spec });
+        setOutputWithTitle({ spec });
       } catch (e: any) {
         ctx.log('stats fetch failed:', e.message);
-        setOutput(blockId, ctx, { spec: null }, e.message);
+        setOutputWithTitle({ spec: null }, e.message);
       }
       return;
     }
 
     if (arg === 'prompt') {
       const prompt = bbsCatalog.prompt();
-      setOutput(blockId, ctx, {
+      setOutputWithTitle({
         spec: {
           root: 'main',
           elements: {
@@ -866,7 +950,7 @@ export const door = {
     if (arg.startsWith('ai ')) {
       const userPrompt = arg.slice(3).trim();
       if (!userPrompt) {
-        setOutput(blockId, ctx, { spec: null }, 'Usage: render:: ai <describe what you want>');
+        setOutputWithTitle({ spec: null }, 'Usage: render:: ai <describe what you want>');
         return;
       }
 
@@ -884,7 +968,7 @@ export const door = {
         try {
           ctx.log('[render::ai] using: Claude API');
           const spec = await generateSpecViaClaude(userPrompt, anthropicKey, ctx);
-          setOutput(blockId, ctx, { spec });
+          setOutputWithTitle({ spec });
           return;
         } catch (e: any) {
           ctx.log('[render::ai] Claude API failed, falling back to ollama:', e.message);
@@ -896,10 +980,10 @@ export const door = {
       try {
         ctx.log('[render::ai] using: ollama', ctx.settings?.ollama_model || 'qwen2.5:7b');
         const spec = await generateSpecViaOllama(userPrompt, ctx);
-        setOutput(blockId, ctx, { spec });
+        setOutputWithTitle({ spec });
       } catch (e: any) {
         ctx.log('[render::ai] ollama also failed:', e.message);
-        setOutput(blockId, ctx, { spec: null }, `AI generation failed: ${e.message}`);
+        setOutputWithTitle({ spec: null }, `AI generation failed: ${e.message}`);
       }
       return;
     }
@@ -927,7 +1011,7 @@ export const door = {
 
       const userPrompt = rest;
       if (!userPrompt) {
-        setOutput(blockId, ctx, { spec: null }, 'Usage: render:: agent [--continue|--resume <id>] <prompt>');
+        setOutputWithTitle({ spec: null }, 'Usage: render:: agent [--continue|--resume <id>] <prompt>');
         return;
       }
 
@@ -940,14 +1024,14 @@ export const door = {
         });
         const result = await generateSpecViaAgent(userPrompt, ctx, options);
         ctx.log('[render::agent] spec generated:', Object.keys(result.spec?.elements || {}).length, 'elements');
-        setOutput(blockId, ctx, {
+        setOutputWithTitle({
           spec: result.spec,
           agentRaw: result.raw,
           agentSessionId: result.sessionId,
         });
       } catch (e: any) {
         ctx.log('[render::agent] failed:', e.message);
-        setOutput(blockId, ctx, { spec: null, agentRaw: e.raw || null }, `Agent generation failed: ${e.message}`);
+        setOutputWithTitle({ spec: null, agentRaw: e.raw || null }, `Agent generation failed: ${e.message}`);
       }
       return;
     }
@@ -956,12 +1040,12 @@ export const door = {
     try {
       const spec = JSON.parse(arg);
       if (spec.root && spec.elements) {
-        setOutput(blockId, ctx, { spec });
+        setOutputWithTitle({ spec });
       } else {
-        setOutput(blockId, ctx, { spec: null }, 'JSON must have root + elements');
+        setOutputWithTitle({ spec: null }, 'JSON must have root + elements');
       }
     } catch {
-      setOutput(blockId, ctx, { spec: null }, `Unknown render command: ${arg}`);
+      setOutputWithTitle({ spec: null }, `Unknown render command: ${arg}`);
     }
   },
 

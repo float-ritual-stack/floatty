@@ -379,7 +379,10 @@ function GardenView(props: DoorViewProps) {
   const handleGardenNavigate = ((e: CustomEvent) => {
     const target = e.detail?.target as string;
     if (target && props.onNavigate) {
-      props.onNavigate(target, { type: 'page' });
+      props.onNavigate(target, {
+        type: 'page',
+        splitDirection: e.detail?.splitDirection,
+      });
     }
   }) as EventListener;
 
@@ -639,7 +642,7 @@ export const door = {
 
         // List and read headline files
         const lsOutput = await invoke('execute_shell_command', {
-          command: `ls ${basePath}/*-headlines.md 2>/dev/null`,
+          command: `ls "${basePath}"/*-headlines.md 2>/dev/null`,
         }) as string;
 
         const headlineFiles: { filename: string; content: string }[] = [];

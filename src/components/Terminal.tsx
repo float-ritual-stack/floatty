@@ -239,7 +239,8 @@ function TabBar(props: {
 export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
-  const [sidebarWidth, setSidebarWidth] = createSignal<number | string>('280px');
+  const [sidebarWidth, setSidebarWidth] = createSignal<string>('280px');
+  let resizableWrapperRef: HTMLDivElement | undefined;
   // Debounced save of sidebar width to config.toml (FLO-507)
   let sidebarSaveTimer: ReturnType<typeof setTimeout> | undefined;
   const saveSidebarWidth = (widthPx: number) => {
@@ -1161,16 +1162,19 @@ export function Terminal() {
         onNewTab={() => handleNewTab()}
         getStickyState={getTabStickyState}
       />
-      <div class="terminal-wrapper">
+      <div class="terminal-wrapper" ref={resizableWrapperRef}>
       <Resizable
         orientation="horizontal"
         style={{ display: 'flex', width: '100%', height: '100%' }}
         onSizesChange={(sizes) => {
           // Persist sidebar width across side swaps + save to config (FLO-507)
+          // sizes[] are fractions (0-1), convert to px for persistence
           const sideIdx = sidebarSide() === 'left' ? 0 : sizes.length - 1;
-          if (sidebarVisible() && sizes[sideIdx] > 0) {
-            setSidebarWidth(sizes[sideIdx]);
-            saveSidebarWidth(sizes[sideIdx]);
+          const rootWidth = resizableWrapperRef?.getBoundingClientRect().width ?? 0;
+          const sidebarPx = Math.round(sizes[sideIdx] * rootWidth);
+          if (sidebarVisible() && sidebarPx > 0) {
+            setSidebarWidth(`${sidebarPx}px`);
+            saveSidebarWidth(sidebarPx);
           }
           // Refit all visible terminals when sidebar resizes
           requestAnimationFrame(() => {
