@@ -167,11 +167,11 @@ async fn main() {
         .with_state(Arc::clone(&broadcaster));
 
     // Combine routes
-    // 16MB body limit for large .ydoc restore payloads (default is 2MB)
+    // 64MB body limit for large .ydoc restore payloads (default is 2MB)
     let app = Router::new()
         .merge(api_routes)
         .merge(ws_routes)
-        .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(cors);
 
     // Bind and serve (port from env overrides config)

@@ -44,3 +44,11 @@ src-tauri/binaries/
 # btca cache (cloned repos for context queries)
 .btca/
 btca.config.jsonc
+.todos/
+.sidecar/
+.sidecar-agent
+.sidecar-task
+.sidecar-pr
+.sidecar-start.sh
+.sidecar-base
+.td-root

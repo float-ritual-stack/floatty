@@ -95,6 +95,9 @@ cp -R "$APP_SRC" "$APP_DEST"
 xattr -cr "$APP_DEST" 2>/dev/null || true
 
 # ── Step 6: Launch ───────────────────────────────────────────────────
+# Unset dev env vars so the release app uses its own defaults (~/.floatty)
+# FLOATTY_DATA_DIR leaks from tauri:dev:fresh into the shell session
+unset FLOATTY_DATA_DIR
 echo "==> Launching..."
 open "$APP_DEST"
 

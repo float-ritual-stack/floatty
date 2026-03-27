@@ -1969,6 +1969,78 @@ function createBlockStore() {
     }, 'system');
   };
 
+  // ═══════════════════════════════════════════════════════════════
+  // DEEP LINK HELPERS (Unit 1.0)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Find first child of parentId whose content starts with prefix.
+   * Read-only — no Y.Doc transaction needed.
+   */
+  const findChildByPrefix = (parentId: string, prefix: string): string | null => {
+    if (!_doc) return null;
+    const blocksMap = _doc.getMap('blocks');
+    const parentData = blocksMap.get(parentId);
+    if (!(parentData instanceof Y.Map)) return null;
+    const childIdsArr = parentData.get('childIds');
+    const childIds = childIdsArr instanceof Y.Array
+      ? (childIdsArr.toArray() as string[])
+      : [];
+    for (const childId of childIds) {
+      const childData = blocksMap.get(childId);
+      if (!(childData instanceof Y.Map)) continue;
+      const content = (childData.get('content') as string) || '';
+      if (content.startsWith(prefix)) return childId;
+    }
+    return null;
+  };
+
+  /**
+   * Atomic find-or-create: find child matching prefix, or create with content.
+   * Single Y.Doc transaction prevents race between find and create.
+   */
+  const upsertChildByPrefix = (parentId: string, prefix: string, content: string): string | null => {
+    if (!_doc) return null;
+    let resultId: string | null = null;
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+
+      // Validate parent exists (Rule #13, #14)
+      if (!blocksMap.has(parentId)) {
+        console.warn('[BlockStore] upsert: parent missing', parentId);
+        recordParentValidationFailure();
+        return;
+      }
+      const parentData = blocksMap.get(parentId);
+      if (!(parentData instanceof Y.Map)) return;
+      const childIdsArr = parentData.get('childIds');
+      const childIds = childIdsArr instanceof Y.Array
+        ? (childIdsArr.toArray() as string[])
+        : [];
+
+      // Search for existing match
+      for (const childId of childIds) {
+        const childData = blocksMap.get(childId);
+        if (!(childData instanceof Y.Map)) continue;
+        const childContent = (childData.get('content') as string) || '';
+        if (childContent.startsWith(prefix)) {
+          resultId = childId;
+          return;
+        }
+      }
+
+      // Not found — create new child (deferred until after validation)
+      const newId = crypto.randomUUID();
+      const newBlock = createBlock(newId, content, parentId);
+      blocksMap.set(newId, blockToYMap(newBlock));
+      appendChildId(blocksMap, parentId, newId);
+      resultId = newId;
+    }, 'system');
+
+    return resultId;
+  };
+
   return {
     get blocks() { return state.blocks; },
     get rootIds() { return state.rootIds; },
@@ -2006,6 +2078,9 @@ function createBlockStore() {
     batchCreateBlocksAfter,
     batchCreateBlocksInside,
     batchCreateBlocksInsideAtTop,
+    // Deep link helpers (Unit 1.0)
+    findChildByPrefix,
+    upsertChildByPrefix,
   };
 }
 

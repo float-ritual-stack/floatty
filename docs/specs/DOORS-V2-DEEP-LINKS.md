@@ -89,6 +89,21 @@ Must read from Y.Doc inside a transaction (ydoc-patterns Rule #14).
 | `src/App.tsx` | Extend deep link handler — multi-hostname dispatcher |
 | `src/hooks/useBlockStore.ts` | Add `findChildByPrefix()` |
 
+### Failure Semantics
+
+| Scenario | Outcome |
+|----------|---------|
+| `floatty://block/<id>` — block not found | Log warning, no-op |
+| `floatty://block/<id>` — ambiguous short hash | Log warning with matches, no-op |
+| `floatty://execute` — parent missing | No-op + console error |
+| `floatty://execute` — unknown handler prefix | Create plain block, no handler fires, navigate |
+| `floatty://execute` — handler throws | Block remains, output status='error', navigate |
+| `floatty://execute` — content empty | No-op + console error |
+| `floatty://execute` — duplicate replay | Idempotent if upsert; creates duplicate if plain execute |
+| `floatty://upsert` — parent missing | No-op + console error, don't create orphans |
+| `floatty://upsert` — match finds existing | Navigate to existing, no creation |
+| `floatty://upsert` — match finds nothing | Create child, optionally execute, navigate |
+
 ### Tests
 
 - Unit: `findChildByPrefix` with exact match, partial match, no match
@@ -146,6 +161,14 @@ Chirp writes are scoped: a door can only create children of its OWN block.
 2. **Session ID searchable**: `[session::abc123]` marker in content → Tantivy indexes it
 3. **`--fork-session`** for branch drill-downs (explore alternative without polluting main session)
 4. **Expired session fallback**: `--resume` on dead session → error message, not silent fork
+
+### Session lineage (block-level trace)
+
+When a resumed session generates a follow-up child block:
+- **Child gets its OWN session marker**: `[session::new456]` (new session from the agent run)
+- **Child also gets parent reference**: `[parent-session::abc123]` (the session it resumed from)
+- **Fork gets branch marker**: `[forked-from::abc123]` when using `--fork-session`
+- This gives searchable lineage: find all blocks in a session chain via marker queries
 
 ### Drill-down flow (uses chirp upsert from Unit 1.1)
 

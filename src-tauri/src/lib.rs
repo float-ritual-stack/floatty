@@ -558,17 +558,13 @@ pub fn run() {
                     app.handle().clone(),
                 );
 
-                // Deep link handler: floatty://<action>/<target>?pane=<uuid>
+                // Deep link handler: floatty://<verb>/... (release) or floatty-dev://... (dev)
+                //
+                // Scheme isolation: release registers "floatty", dev registers "floatty-dev"
+                // (via tauri.dev.conf.json overlay). Both instances can run simultaneously.
                 //
                 // URLs are forwarded to the frontend as a "deep-link" event.
-                // The frontend resolves the target pane using the pane link store:
-                //   ?pane=<uuid>  → resolveLink(pane) → linked outliner (if any)
-                //   (no pane)     → active tab's active/last-focused outliner
-                //   (no outliner) → open in new tab
-                //
-                // Supported actions:
-                //   floatty://navigate/<page-name>           navigate to page
-                //   floatty://navigate/<page-name>?pane=<id> navigate in linked pane
+                // Verbs: navigate, block, execute, upsert (see App.tsx)
                 {
                     use tauri_plugin_deep_link::DeepLinkExt;
                     let app_handle_dl = app.handle().clone();

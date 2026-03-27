@@ -22,6 +22,18 @@ function emitChirpNavigate(el: HTMLElement, target: string, sourceEvent: MouseEv
   }));
 }
 
+/** Delegate click on .bbs-wikilink elements to chirp navigation. */
+function handleWikilinkClick(e: MouseEvent): void {
+  let el = e.target as HTMLElement | null;
+  while (el && !el.dataset?.wikilink) {
+    if (el === e.currentTarget) break;
+    el = el.parentElement;
+  }
+  if (el?.dataset?.wikilink) {
+    emitChirpNavigate(el, el.dataset.wikilink, e);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // DESIGN TOKENS
 // ═══════════════════════════════════════════════════════════════
@@ -304,22 +316,11 @@ export function EntryHeader(props: BaseComponentProps<{
 }
 
 export function EntryBody(props: BaseComponentProps<{ markdown: string }>) {
-  const handleClick = (e: MouseEvent) => {
-    let el = e.target as HTMLElement | null;
-    while (el && !el.dataset?.wikilink) {
-      if (el.classList?.contains('bbs-entry-body')) break;
-      el = el.parentElement;
-    }
-    if (el?.dataset?.wikilink) {
-      emitChirpNavigate(el, el.dataset.wikilink, e);
-    }
-  };
-
   return (
     <div
       class="bbs-entry-body"
       innerHTML={sanitize(renderMarkdown(props.props.markdown))}
-      onClick={handleClick}
+      onClick={handleWikilinkClick}
     />
   );
 }
@@ -787,16 +788,6 @@ export function DataBlock(props: BaseComponentProps<{ label?: string; content: s
 }
 
 export function ShippedItem(props: BaseComponentProps<{ content: string }>) {
-  const handleClick = (e: MouseEvent) => {
-    let el = e.target as HTMLElement | null;
-    while (el && !el.dataset?.wikilink) {
-      if (el === e.currentTarget) break;
-      el = el.parentElement;
-    }
-    if (el?.dataset?.wikilink) {
-      emitChirpNavigate(el, el.dataset.wikilink, e);
-    }
-  };
   return (
     <div style={{
       display: 'flex',
@@ -807,7 +798,7 @@ export function ShippedItem(props: BaseComponentProps<{ content: string }>) {
       padding: '2px 0',
     }}>
       <span style={{ color: V.green, 'flex-shrink': '0' }}>*</span>
-      <span style={{ color: V.t }} innerHTML={sanitize(inlineFormat(props.props.content))} onClick={handleClick} />
+      <span style={{ color: V.t }} innerHTML={sanitize(inlineFormat(props.props.content))} onClick={handleWikilinkClick} />
     </div>
   );
 }
@@ -954,16 +945,7 @@ export function PatternCard(props: BaseComponentProps<{
 
       <Show when={expanded()}>
         <div style={{ padding: '12px 14px' }}>
-          <div class="bbs-entry-body" innerHTML={sanitize(renderMarkdown(props.props.content))} onClick={(e: MouseEvent) => {
-            let el = e.target as HTMLElement | null;
-            while (el && !el.dataset?.wikilink) {
-              if (el.classList?.contains('bbs-entry-body')) break;
-              el = el.parentElement;
-            }
-            if (el?.dataset?.wikilink) {
-              emitChirpNavigate(el, el.dataset.wikilink, e);
-            }
-          }} />
+          <div class="bbs-entry-body" innerHTML={sanitize(renderMarkdown(props.props.content))} onClick={handleWikilinkClick} />
           {props.children}
           <Show when={props.props.connectsTo && props.props.connectsTo.length > 0}>
             <div style={{

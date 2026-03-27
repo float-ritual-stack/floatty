@@ -15,9 +15,10 @@ import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSynce
 import * as navigationLib from './lib/navigation';
 import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
-import { registerHandlers } from './lib/handlers';
+import { registerHandlers, registry, executeHandler, createHookBlockStore } from './lib/handlers';
 import { blockStore } from './hooks/useBlockStore';
 import { recordOrphansDetected } from './lib/syncDiagnostics';
+import type { ExecutorActions } from './lib/handlers/types';
 // Initialize logger early - intercepts console.* calls and forwards to Rust log files
 import './lib/logger';
 import './App.css';
@@ -131,40 +132,168 @@ function App() {
     });
   });
 
-  // Deep link handler: floatty://navigate/<page>?pane=<uuid>
+  // Deep link handler: floatty://<verb>/... (release) or floatty-dev://<verb>/... (dev)
+  // Scheme isolation via tauri.dev.conf.json — both builds can run simultaneously.
+  //
+  // Verbs:
+  //   navigate/<page>?pane=<uuid>           — navigate to page
+  //   block/<id>?pane=<uuid>                — navigate to block (supports short hash)
+  //   execute?content=<>&parent=<id>&pane=  — create block + fire handler
+  //   upsert?parent=<id>&content=<>&match=  — find-or-create child by prefix
   //
   // Routing priority:
-  //   1. ?pane=<uuid> present → resolveLink(pane) → linked outliner (terminal→outliner link)
+  //   1. ?pane=<uuid> present → resolveLink(pane) → linked outliner
   //   2. No pane hint → active tab's focused/first outliner pane
-  //   3. No outliner open → open page in a new tab
+  //   3. No outliner open → log and skip
   onMount(async () => {
+    /** Resolve source pane to target pane via link store + navigation lib */
+    const resolvePane = (sourcePaneId: string): string | null => {
+      const { resolveTargetPane } = navigationLib;
+      return sourcePaneId
+        ? (paneLinkStore.resolveLink(sourcePaneId) ?? resolveTargetPane(sourcePaneId))
+        : resolveTargetPane('');
+    };
+
+    /** Build ExecutorActions from blockStore for deep link handler execution */
+    const buildExecutorActions = (): ExecutorActions => ({
+      createBlockInside: blockStore.createBlockInside,
+      createBlockInsideAtTop: blockStore.createBlockInsideAtTop,
+      createBlockAfter: blockStore.createBlockAfter,
+      updateBlockContent: blockStore.updateBlockContent,
+      updateBlockContentFromExecutor: blockStore.updateBlockContentFromExecutor,
+      deleteBlock: blockStore.deleteBlock,
+      setBlockOutput: blockStore.setBlockOutput,
+      setBlockStatus: blockStore.setBlockStatus,
+      getBlock: blockStore.getBlock,
+      getParentId: (id) => blockStore.getBlock(id)?.parentId ?? undefined,
+      getChildren: (id) => blockStore.getBlock(id)?.childIds ?? [],
+      rootIds: blockStore.rootIds,
+      paneId: '',
+      focusBlock: () => {},
+      batchCreateBlocksAfter: blockStore.batchCreateBlocksAfter,
+      batchCreateBlocksInside: blockStore.batchCreateBlocksInside,
+      batchCreateBlocksInsideAtTop: blockStore.batchCreateBlocksInsideAtTop,
+      moveBlock: (blockId, targetParentId, targetIndex) =>
+        blockStore.moveBlock(blockId, targetParentId, targetIndex, { origin: 'system' }),
+    });
+
+    /** Fire handler for content if a matching prefix is registered */
+    const fireHandler = (blockId: string, content: string) => {
+      const handler = registry.findHandler(content);
+      if (!handler) return;
+      const hookStore = createHookBlockStore(
+        blockStore.getBlock,
+        blockStore.blocks,
+        blockStore.rootIds,
+        null
+      );
+      executeHandler(handler, blockId, content, buildExecutorActions(), hookStore)
+        .catch(err => console.error('[deep-link] handler failed:', err));
+    };
+
     const unlistenDeepLink = await listen<string>('deep-link', (event) => {
       try {
         const url = new URL(event.payload);
-        if (url.hostname !== 'navigate') return;
+        const verb = url.hostname;
 
-        // Decode page name from path: /Page%20Name → "Page Name"
-        const pageName = decodeURIComponent(url.pathname.replace(/^\//, ''));
-        if (!pageName) return;
+        switch (verb) {
+          case 'navigate': {
+            const target = decodeURIComponent(url.pathname.replace(/^\//, ''));
+            if (!target) break;
+            const sourcePaneId = url.searchParams.get('pane') ?? '';
+            const targetPaneId = resolvePane(sourcePaneId);
+            if (!targetPaneId) {
+              console.warn('[deep-link] no outliner pane available');
+              break;
+            }
+            console.log('[deep-link] navigate', { target, targetPaneId });
+            // handleChirpNavigate: block ID resolution, hex guard, page fallback
+            // Pane pre-resolved — resolvePane handles empty string correctly
+            navigationLib.handleChirpNavigate(target, {
+              type: undefined,
+              sourcePaneId: targetPaneId,
+            });
+            break;
+          }
 
-        // Optional source pane hint (set by pi extension via FLOATTY_PANE_ID)
-        const sourcePaneId = url.searchParams.get('pane') ?? undefined;
+          case 'block': {
+            const blockIdOrHash = decodeURIComponent(url.pathname.replace(/^\//, ''));
+            if (!blockIdOrHash) break;
+            const sourcePaneId = url.searchParams.get('pane') ?? '';
+            const targetPaneId = resolvePane(sourcePaneId);
+            if (!targetPaneId) {
+              console.warn('[deep-link] no outliner pane available');
+              break;
+            }
+            console.log('[deep-link] block', { blockIdOrHash, targetPaneId });
+            navigationLib.handleChirpNavigate(blockIdOrHash, {
+              type: 'block',
+              sourcePaneId: targetPaneId,
+            });
+            break;
+          }
 
-        console.log('[deep-link] navigate', { pageName, sourcePaneId });
+          case 'execute': {
+            // floatty://execute?content=<encoded>&parent=<id>&pane=<uuid>
+            const content = url.searchParams.get('content');
+            const parentId = url.searchParams.get('parent');
+            if (!content) {
+              console.error('[deep-link] execute: missing content param');
+              break;
+            }
+            if (!parentId) {
+              console.error('[deep-link] execute: missing parent param');
+              break;
+            }
+            console.log('[deep-link] execute', { content: content.slice(0, 40), parentId });
+            const newId = blockStore.createBlockInside(parentId);
+            if (!newId) break;
+            blockStore.updateBlockContent(newId, content);
+            fireHandler(newId, content);
 
-        // Resolve target pane using pane link store
-        const { resolveTargetPane } = navigationLib;
-        const targetPaneId = sourcePaneId
-          ? (paneLinkStore.resolveLink(sourcePaneId) ?? resolveTargetPane(sourcePaneId))
-          : resolveTargetPane('');
+            // Navigate unless explicitly disabled
+            if (url.searchParams.get('navigate') !== 'false') {
+              const sourcePaneId = url.searchParams.get('pane') ?? '';
+              const targetPaneId = resolvePane(sourcePaneId);
+              if (targetPaneId) {
+                navigationLib.navigateToBlock(newId, { paneId: targetPaneId, highlight: true });
+              }
+            }
+            break;
+          }
 
-        if (!targetPaneId) {
-          console.warn('[deep-link] no outliner pane available, opening new tab');
-          // TODO: open in new tab — for now log and skip
-          return;
+          case 'upsert': {
+            // floatty://upsert?parent=<id>&content=<encoded>&match=<prefix>&pane=<uuid>
+            const parentId = url.searchParams.get('parent');
+            const content = url.searchParams.get('content');
+            const match = url.searchParams.get('match');
+            if (!parentId || !content || !match) {
+              console.error('[deep-link] upsert: missing required params (parent, content, match)');
+              break;
+            }
+            console.log('[deep-link] upsert', { parentId, match, content: content.slice(0, 40) });
+            const resultId = blockStore.upsertChildByPrefix(parentId, match, content);
+            if (!resultId) break;
+
+            // Fire handler if requested
+            if (url.searchParams.get('execute') === 'true') {
+              fireHandler(resultId, content);
+            }
+
+            // Navigate unless explicitly disabled
+            if (url.searchParams.get('navigate') !== 'false') {
+              const sourcePaneId = url.searchParams.get('pane') ?? '';
+              const targetPaneId = resolvePane(sourcePaneId);
+              if (targetPaneId) {
+                navigationLib.navigateToBlock(resultId, { paneId: targetPaneId, highlight: true });
+              }
+            }
+            break;
+          }
+
+          default:
+            console.warn('[deep-link] unknown verb:', verb);
         }
-
-        navigationLib.navigateToPage(pageName, { paneId: targetPaneId, highlight: true });
       } catch (e) {
         console.warn('[deep-link] failed to handle event', event.payload, e);
       }

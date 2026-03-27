@@ -4,6 +4,15 @@
   "bundle": {
     "externalBin": []
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "floatty-dev"
+        ]
+      }
+    }
+  },
   "app": {
     "windows": [
       {
