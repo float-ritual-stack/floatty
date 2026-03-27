@@ -7,6 +7,7 @@ import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
 import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
+import { useContentSync } from '../hooks/useContentSync';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { navigateToBlock, navigateToPage, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
@@ -63,10 +64,6 @@ if (import.meta.hot) {
   });
 }
 
-// Debounce delay for Y.Doc updates (ms)
-// Keeps typing responsive while reducing sync overhead
-const UPDATE_DEBOUNCE_MS = 150;
-
 /** Place cursor at end of contentEditable element. Used by focus effect for 'end' cursor hint. */
 function placeCursorAtEnd(element: HTMLElement): void {
   try {
@@ -96,52 +93,6 @@ function placeCursorAtStart(element: HTMLElement): void {
   } catch (err) {
     console.debug('[BlockItem] Failed to place cursor at start:', err);
   }
-}
-
-/**
- * Creates a debounced function with flush and cancel capabilities.
- * - Immediate DOM updates happen outside this (contentEditable handles it)
- * - Only Y.Doc/store updates are debounced
- */
-function createDebouncedUpdater<Args extends unknown[]>(
-  fn: (...args: Args) => void,
-  delay: number
-): { debounced: (...args: Args) => void; flush: () => void; cancel: () => void } {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let pendingArgs: Args | null = null;
-
-  const debounced = (...args: Args) => {
-    pendingArgs = args;
-    if (timeoutId) clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => {
-      if (pendingArgs) {
-        fn(...pendingArgs);
-        pendingArgs = null;
-      }
-      timeoutId = null;
-    }, delay);
-  };
-
-  const flush = () => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
-    if (pendingArgs) {
-      fn(...pendingArgs);
-      pendingArgs = null;
-    }
-  };
-
-  const cancel = () => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
-    pendingArgs = null;
-  };
-
-  return { debounced, flush, cancel };
 }
 
 interface BlockItemProps {
@@ -222,11 +173,31 @@ export function BlockItem(props: BlockItemProps) {
   let outputFocusRef: HTMLDivElement | undefined;
   let wrapperRef: HTMLDivElement | undefined;
 
+  // Content sync hook — handles debounced Y.Doc updates, origin-aware sync,
+  // blur flush, input handling, IME composition, and dirty flag (FLO-197/FLO-256)
+  const contentSync = useContentSync({
+    getBlockId: () => props.id,
+    getBlock: () => block(),
+    getContentRef: () => contentRef,
+    store,
+    onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref),
+    onContentChange: () => {
+      const tabId = findTabIdByPaneId(props.paneId);
+      if (tabId) layoutStore.pinPane(tabId, props.paneId);
+    },
+  });
+  const {
+    displayContent, setDisplayContent,
+    isComposing, setIsComposing,
+    hasLocalChanges, setHasLocalChanges,
+    cancelContentUpdate, flushContentUpdate,
+    handleInput, handleBlurSync, updateContentFromDom,
+  } = contentSync;
+
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
   // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
   createEffect(() => {
     if (tableShowRaw() && isTableBlock()) {
-      // Wait for contentEditable to mount
       queueMicrotask(() => {
         if (contentRef) {
           const content = block()?.content ?? '';
@@ -237,19 +208,6 @@ export function BlockItem(props: BlockItemProps) {
       });
     }
   });
-
-  // Local display content - updated immediately on input for responsive overlay
-  // Store content is debounced (150ms), but overlay needs to track DOM immediately
-  const [displayContent, setDisplayContent] = createSignal(block()?.content || '');
-
-  // IME composition state - prevents debounced updates during CJK character composition
-  // Without this, incomplete characters would be synced to Y.Doc mid-composition
-  const [isComposing, setIsComposing] = createSignal(false);
-
-  // FLO-197: Dirty flag pattern - tracks uncommitted local edits
-  // Prevents content sync effect from overwriting pending debounced changes
-  // when another block's change triggers effect re-evaluation
-  const [hasLocalChanges, setHasLocalChanges] = createSignal(false);
 
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
@@ -265,20 +223,6 @@ export function BlockItem(props: BlockItemProps) {
     window.addEventListener('scroll', handler, { capture: true, passive: true });
     onCleanup(() => window.removeEventListener('scroll', handler, { capture: true }));
   }));
-
-  // Debounced Y.Doc updates - DOM stays immediate via contentEditable
-  // Flush on blur, cancel on unmount
-  // FLO-197: Clear dirty flag after store commit (enables content sync for non-local changes)
-  const { debounced: debouncedUpdateContent, flush: flushContentUpdate, cancel: cancelContentUpdate } =
-    createDebouncedUpdater((id: string, content: string) => {
-      store.updateBlockContent(id, content);
-      setHasLocalChanges(false);
-    }, UPDATE_DEBOUNCE_MS);
-
-  // Cleanup: flush pending edits on unmount (don't discard user's work)
-  onCleanup(() => {
-    flushContentUpdate();
-  });
 
   // Find wikilink at cursor position (for keyboard navigation)
   const getWikilinkAtCursor = (): string | null => {
@@ -740,115 +684,11 @@ export function BlockItem(props: BlockItemProps) {
   // Needs: track locally-modified blocks to distinguish from external
   // For now: Enter-to-execute only
 
-  // Sync content from store to DOM and displayContent signal
-  // Origin-aware gate:
-  //   - Not focused → always sync (split pane, unfocused blocks)
-  //   - Focused + user origin → skip (don't echo typing back, causes cursor jump)
-  //   - Focused + non-user origin → sync (undo, redo, remote are authoritative)
-  // NOTE: Use innerText for comparison (preserves newlines from <div>/<br> elements)
-  createEffect(() => {
-    const currentBlock = block();
-    if (!contentRef || !currentBlock) return;
-
-    const origin = untrack(() => store.lastUpdateOrigin);
-
-    // Authoritative origins bypass the hasLocalChanges guard
-    // These origins represent state that MUST sync to DOM:
-    // - 'reconnect-authority': Server state on WebSocket reconnect (server is truth)
-    // - 'gap-fill': Missing updates fetched via HTTP (server data filling gaps)
-    // - 'system': Integrity repairs (dedup, orphan quarantine)
-    // - UndoManager instance: Undo/redo operations (CRDT history is truth)
-    const isAuthoritative =
-      origin === 'reconnect-authority' ||
-      origin === 'gap-fill' ||
-      origin === 'system' ||
-      (origin && typeof origin === 'object' && 'undo' in origin);
-
-    // FLO-197: CRITICAL - Skip sync if we have uncommitted local changes
-    // UNLESS the origin is authoritative (reconnect, undo/redo)
-    // This prevents the race condition where:
-    // 1. User types in block A, debounce pending
-    // 2. Block B changes with 'remote'/'hook' origin
-    // 3. This effect re-runs (triggered by global lastUpdateOrigin)
-    // 4. Without this guard, DOM would be overwritten with stale store content
-    // FLO-256: With reconnect-authority, we WANT to overwrite - server is truth
-    if (hasLocalChanges()) {
-      if (!isAuthoritative) return;
-      // Authoritative update while local changes pending:
-      // Cancel debounce and clear dirty flag to prevent stale content from being flushed
-      cancelContentUpdate();
-      setHasLocalChanges(false);
-    }
-
-    const domContent = contentRef.innerText;
-    const storeContent = currentBlock.content;
-    const isFocusedNow = document.activeElement === contentRef;
-
-    // Check if this update is from user's own typing (should skip when focused)
-    // UndoManager sets its own instance as origin, not 'user'
-    // NOTE: origin already captured above for authoritative check
-    const isUserOrigin = origin === 'user';
-
-    // Gate: sync if not focused, OR if focused but not from user typing
-    // This gate applies to BOTH displayContent and DOM sync
-    // When focused + user origin: handleInput already updated displayContent immediately
-    const shouldSync = !isFocusedNow || !isUserOrigin;
-
-    // Warn on unexpected focused-block syncs (could cause cursor jump)
-    if (shouldSync && isFocusedNow && domContent !== storeContent) {
-      console.warn('[BlockItem] Syncing focused block (origin:', typeof origin === 'string' ? origin : typeof origin, ')');
-    }
-
-    if (shouldSync) {
-      // Sync displayContent for overlay
-      if (displayContent() !== storeContent) {
-        setDisplayContent(storeContent);
-      }
-
-      // Sync DOM - DEFENSIVE: Save/restore cursor if focused to prevent jump
-      if (domContent !== storeContent) {
-        // If focused, save cursor position before DOM manipulation
-        const savedOffset = isFocusedNow ? getAbsoluteCursorOffset(contentRef) : -1;
-
-        // DEFENSIVE: Verify ref is actually in document (ghost node detection)
-        if (!document.contains(contentRef)) {
-          console.warn('[BlockItem] Ghost node detected - skipping DOM sync', currentBlock.id);
-          return;
-        }
-
-        contentRef.innerText = storeContent;
-
-        // Restore cursor position if we were focused
-        // Clamp to new content length in case content shortened
-        if (savedOffset >= 0) {
-          const clampedOffset = Math.min(savedOffset, storeContent.length);
-          setCursorAtOffset(contentRef, clampedOffset);
-        }
-      }
-    }
-  });
-
-  // CRITICAL: Sync DOM when focus leaves (catches splits where store updated while focused)
+  // Content sync effect + blur sync are handled by useContentSync hook.
+  // Wrap blur to also dismiss autocomplete (BlockItem-specific concern).
   const handleBlur = () => {
-    // FLO-376: Dismiss autocomplete on blur
     autocomplete.dismiss();
-
-    // Flush any pending debounced content updates to Y.Doc before blur completes
-    // This ensures the store has the final content when focus leaves
-    flushContentUpdate();
-
-    const currentBlock = block();
-    if (contentRef && currentBlock) {
-      // Sync DOM to store on blur (catches remote updates that arrived while focused)
-      if (contentRef.innerText !== currentBlock.content) {
-        contentRef.innerText = currentBlock.content;
-      }
-      // CRITICAL: Also sync displayContent for overlay layer
-      // After block splits, the effect may not re-run (focus guard), so sync here
-      if (displayContent() !== currentBlock.content) {
-        setDisplayContent(currentBlock.content);
-      }
-    }
+    handleBlurSync();
   };
 
   // FLO-62, FLO-128: Smart paste with markdown structure parsing
@@ -912,51 +752,6 @@ export function BlockItem(props: BlockItemProps) {
       }
     }
     // If not handled, browser does default plain text paste
-  };
-
-  /**
-   * Core content update logic extracted for reuse by input and composition handlers.
-   * Avoids unsafe type casting between InputEvent and CompositionEvent.
-   */
-  const updateContentFromDom = (target: HTMLDivElement) => {
-    // CRITICAL: Use innerText, not textContent!
-    // textContent ignores <div> and <br> elements, losing line breaks.
-    // innerText respects visual line breaks and converts them to \n.
-    const content = target.innerText || '';
-
-    // FLO-197: Mark as dirty BEFORE any updates
-    // Prevents content sync effect from overwriting pending edits
-    setHasLocalChanges(true);
-
-    // Update display content IMMEDIATELY for responsive overlay
-    // (overlay reads from displayContent signal, not debounced store)
-    setDisplayContent(content);
-
-    // FLO-376: Check for [[ autocomplete trigger
-    if (contentRef) {
-      const offset = getAbsoluteCursorOffset(contentRef);
-      autocomplete.checkTrigger(content, offset, contentRef);
-    }
-
-    // Skip Y.Doc update during IME composition (CJK input)
-    // Incomplete characters would cause sync issues and cursor jumps
-    // The final character will sync when composition ends
-    if (isComposing()) return;
-
-    // DOM is already updated by contentEditable (immediate feedback)
-    // Debounce Y.Doc/store update to reduce sync overhead
-    // Cursor/selection remain live (not affected by this debounce)
-    debouncedUpdateContent(props.id, content);
-
-    // FLO-136: Typing pins ephemeral panes (user is engaging with content)
-    const tabId = findTabIdByPaneId(props.paneId);
-    if (tabId) {
-      layoutStore.pinPane(tabId, props.paneId);
-    }
-  };
-
-  const handleInput = (e: InputEvent) => {
-    updateContentFromDom(e.target as HTMLDivElement);
   };
 
   const bulletClass = () => {
