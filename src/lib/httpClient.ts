@@ -274,34 +274,47 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
     return initPromise;
   }
 
-  // Start initialization
+  // Start initialization — retry the ENTIRE flow (IPC + health check) since
+  // the sidecar server may still be starting when the webview mounts
   initPromise = (async () => {
-    try {
-      // Get server info from Tauri (contains URL and API key)
-      const serverInfo = await invoke('get_server_info', {});
-      const client = new HttpClient(serverInfo);
+    const delays = [500, 1000, 1500, 2000, 3000];
+    let lastError: unknown;
 
-      // Store URL and API key globally for lightweight fire-and-forget calls
-      window.__FLOATTY_SERVER_URL__ = serverInfo.url;
-      window.__FLOATTY_API_KEY__ = serverInfo.api_key;
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      try {
+        // Get server info from Tauri (contains URL and API key)
+        // This IPC call returns Err("Server not running") if sidecar hasn't spawned yet
+        const serverInfo = await invoke('get_server_info', {});
+        const client = new HttpClient(serverInfo);
 
-      // Verify connection before committing to this client
-      const healthy = await client.isHealthy();
-      if (!healthy) {
-        throw new Error('Server health check failed');
+        // Store URL and API key globally for lightweight fire-and-forget calls
+        window.__FLOATTY_SERVER_URL__ = serverInfo.url;
+        window.__FLOATTY_API_KEY__ = serverInfo.api_key;
+
+        // Verify server is actually responding
+        const healthy = await client.isHealthy();
+        if (!healthy) {
+          throw new Error('Server health check failed');
+        }
+
+        // Only set instance after successful health check
+        clientInstance = client;
+        console.log(`[httpClient] Connected to floatty-server at ${serverInfo.url}`);
+        return clientInstance;
+      } catch (err) {
+        lastError = err;
+        if (attempt < delays.length) {
+          console.log(`[httpClient] Server not ready, retrying in ${delays[attempt]}ms (attempt ${attempt + 1}/${delays.length}): ${err}`);
+          await new Promise(r => setTimeout(r, delays[attempt]));
+        }
       }
-
-      // Only set instance after successful health check
-      clientInstance = client;
-      console.log(`[httpClient] Connected to floatty-server at ${serverInfo.url}`);
-      return clientInstance;
-    } catch (err) {
-      throw err;
-    } finally {
-      // Always clear promise so next caller retries fresh (prevents stuck rejected promise)
-      initPromise = null;
     }
-  })();
+
+    throw lastError ?? new Error('Server connection failed after retries');
+  })().finally(() => {
+    // Always clear promise so next caller retries fresh (prevents stuck rejected promise)
+    initPromise = null;
+  });
 
   return initPromise;
 }
