@@ -9,6 +9,7 @@
  */
 
 import { Show, For, createSignal } from 'solid-js';
+import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
 
@@ -19,6 +20,15 @@ function emitChirpNavigate(el: HTMLElement, target: string, sourceEvent: MouseEv
     bubbles: true,
     composed: true,
     detail: { message: 'navigate', target, sourceEvent },
+  }));
+}
+
+/** Emit a generic chirp (write verbs, etc). Data shape depends on message type. */
+function emitChirp(el: HTMLElement, message: string, data?: Record<string, unknown>): void {
+  el.dispatchEvent(new CustomEvent('chirp', {
+    bubbles: true,
+    composed: true,
+    detail: { message, data },
   }));
 }
 
@@ -596,6 +606,69 @@ export function Button(props: BaseComponentProps<{ label: string; variant?: stri
     >
       {props.props.label}
     </button>
+  );
+}
+
+export function TextInput(props: BaseComponentProps<{ label?: string; placeholder?: string; value?: unknown }>) {
+  const [localValue, setLocalValue] = useBoundProp(props.props.value, props.bindings?.value);
+  return (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+      <Show when={props.props.label}>
+        <label style={{ 'font-size': '11px', color: V.td, 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.05em' }}>
+          {props.props.label}
+        </label>
+      </Show>
+      <input
+        type="text"
+        value={String(localValue ?? '')}
+        placeholder={props.props.placeholder ?? ''}
+        onInput={(e) => setLocalValue(e.currentTarget.value)}
+        style={{
+          background: V.s1,
+          color: V.t,
+          border: `1px solid ${V.b2}`,
+          'border-radius': '6px',
+          padding: '8px 12px',
+          'font-size': '13px',
+          'font-family': V.mono,
+          outline: 'none',
+        }}
+        onfocus={(e) => { (e.target as HTMLInputElement).style.borderColor = V.cy; }}
+        onblur={(e) => { (e.target as HTMLInputElement).style.borderColor = V.b2; }}
+      />
+    </div>
+  );
+}
+
+export function TextArea(props: BaseComponentProps<{ label?: string; placeholder?: string; rows?: number; value?: unknown }>) {
+  const [localValue, setLocalValue] = useBoundProp(props.props.value, props.bindings?.value);
+  return (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+      <Show when={props.props.label}>
+        <label style={{ 'font-size': '11px', color: V.td, 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.05em' }}>
+          {props.props.label}
+        </label>
+      </Show>
+      <textarea
+        value={String(localValue ?? '')}
+        placeholder={props.props.placeholder ?? ''}
+        rows={props.props.rows ?? 3}
+        onInput={(e) => setLocalValue(e.currentTarget.value)}
+        style={{
+          background: V.s1,
+          color: V.t,
+          border: `1px solid ${V.b2}`,
+          'border-radius': '6px',
+          padding: '8px 12px',
+          'font-size': '13px',
+          'font-family': V.mono,
+          outline: 'none',
+          resize: 'vertical',
+        }}
+        onfocus={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.cy; }}
+        onblur={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.b2; }}
+      />
+    </div>
   );
 }
 

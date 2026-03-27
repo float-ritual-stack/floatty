@@ -17,6 +17,7 @@ import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableT
 import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
 import { type SearchResults, type DoorEnvelope } from '../lib/handlers';
+import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../lib/chirpWriteHandler';
 import { handleStructuredPaste } from '../lib/pasteHandler';
 import { readFiles } from 'tauri-plugin-clipboard-api';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
@@ -1288,6 +1289,12 @@ export function BlockItem(props: BlockItemProps) {
                       pokeIframe?.('ack: navigate', { success: result.success, target: nav.target, error: result.error });
                       return;
                     }
+                    // Route write verbs through shared handler
+                    if (isChirpWriteVerb(message)) {
+                      const result = handleChirpWrite(message, data as ChirpWriteData, props.id, store);
+                      pokeIframe?.(`ack: ${message}`, result);
+                      return;
+                    }
                     // Default: create child block (throttled to max 10/sec to prevent runaway iframes)
                     const now = Date.now();
                     const key = `chirp_${props.id}`;
@@ -1327,6 +1334,11 @@ export function BlockItem(props: BlockItemProps) {
                         splitDirection: opts?.splitDirection,
                         originBlockId: props.id,
                       });
+                    }}
+                    onChirp={(message, data) => {
+                      if (isChirpWriteVerb(message)) {
+                        handleChirpWrite(message, data as ChirpWriteData, props.id, store);
+                      }
                     }}
                   />
                 : <DoorExecCard

@@ -33,6 +33,7 @@ interface DoorHostProps {
   status?: string;
   onNavigateOut?: (direction: 'up' | 'down') => void;
   onNavigate?: (target: string, opts?: { type?: 'page' | 'block'; splitDirection?: 'horizontal' | 'vertical' }) => void;
+  onChirp?: (message: string, data?: unknown) => void;
 }
 
 export function DoorHost(props: DoorHostProps) {
@@ -68,6 +69,7 @@ export function DoorHost(props: DoorHostProps) {
             server={getServerAccess()}
             onNavigateOut={props.onNavigateOut}
             onNavigate={props.onNavigate}
+            onChirp={props.onChirp}
           />
         </Show>
       </Show>

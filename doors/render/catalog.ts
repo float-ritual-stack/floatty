@@ -204,6 +204,27 @@ export const bbsCatalog = schema.createCatalog({
       description: 'Clickable button that emits press event',
     },
 
+    TextInput: {
+      props: z.object({
+        label: z.string().optional(),
+        placeholder: z.string().optional(),
+        value: z.union([z.string(), z.record(z.unknown())]).optional(),
+      }),
+      slots: [],
+      description: 'Single-line text input with optional label. Use $bindState for two-way state binding.',
+    },
+
+    TextArea: {
+      props: z.object({
+        label: z.string().optional(),
+        placeholder: z.string().optional(),
+        rows: z.number().optional(),
+        value: z.union([z.string(), z.record(z.unknown())]).optional(),
+      }),
+      slots: [],
+      description: 'Multi-line text area with optional label. Use $bindState for two-way state binding.',
+    },
+
     Code: {
       props: z.object({
         content: z.string(),
@@ -318,6 +339,14 @@ export const bbsCatalog = schema.createCatalog({
     navigate: {
       params: z.object({ target: z.string() }),
       description: 'Navigate to a page or block in the outline',
+    },
+    createChild: {
+      params: z.object({ content: z.string() }),
+      description: 'Create a child block under the current render:: block with the given content',
+    },
+    upsertChild: {
+      params: z.object({ content: z.string(), match: z.string() }),
+      description: 'Find or create a child block matching prefix, updating content if found',
     },
     scrollTo: {
       params: z.object({ id: z.string() }),

@@ -523,6 +523,7 @@ interface DoorViewProps {
   };
   onNavigate?: (target: string, opts?: { type?: 'page' | 'block' }) => void;
   onNavigateOut?: (direction: 'up' | 'down') => void;
+  onChirp?: (message: string, data?: unknown) => void;
 }
 
 function RenderView(props: DoorViewProps) {
@@ -561,7 +562,7 @@ function RenderView(props: DoorViewProps) {
     }>
       <div style={{ padding: '8px 0', 'font-family': 'JetBrains Mono, monospace' }}>
         <StateProvider initialState={spec()?.state || {}}>
-          <RenderViewInner spec={spec()!} onNavigate={props.onNavigate} />
+          <RenderViewInner spec={spec()!} onNavigate={props.onNavigate} onChirp={props.onChirp} />
         </StateProvider>
         <Show when={generatedVia() || sessionId()}>
           <div style={{
@@ -590,13 +591,22 @@ function RenderView(props: DoorViewProps) {
   );
 }
 
-function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?: any) => void }) {
+function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?: any) => void; onChirp?: (message: string, data?: unknown) => void }) {
   const actionHandlers = {
     navigate: async (params: Record<string, unknown>) => {
       const target = params.target as string;
       if (target && props.onNavigate) {
         props.onNavigate(target, { type: 'page' });
       }
+    },
+    createChild: async (params: Record<string, unknown>) => {
+      props.onChirp?.('create-child', { content: params.content as string });
+    },
+    upsertChild: async (params: Record<string, unknown>) => {
+      props.onChirp?.('upsert-child', {
+        content: params.content as string,
+        match: params.match as string,
+      });
     },
     refresh: async () => {},
   };

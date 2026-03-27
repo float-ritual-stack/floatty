@@ -9,9 +9,11 @@
  */
 
 import { onMount, onCleanup } from 'solid-js';
+import { useWorkspace } from '../../context/WorkspaceContext';
 import { Breadcrumb } from '../Breadcrumb';
 import { DoorHost } from './DoorHost';
 import type { DoorViewOutput } from '../../lib/handlers/doorTypes';
+import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../../lib/chirpWriteHandler';
 import { isMac } from '../../lib/keybinds';
 import './doors.css';
 
@@ -24,6 +26,7 @@ interface DoorPaneViewProps {
 }
 
 export function DoorPaneView(props: DoorPaneViewProps) {
+  const { blockStore } = useWorkspace();
   let containerRef: HTMLDivElement | undefined;
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -39,7 +42,8 @@ export function DoorPaneView(props: DoorPaneViewProps) {
     // Chirp listener: door components emit chirp CustomEvents for navigation.
     // Routes through onNavigate — same pattern as BlockItem's wrapperRef chirp listener.
     const handleChirp = ((e: CustomEvent) => {
-      if (e.detail?.message === 'navigate' && e.detail?.target) {
+      const message = e.detail?.message;
+      if (message === 'navigate' && e.detail?.target) {
         e.stopPropagation();
         const sourceEvent = e.detail.sourceEvent as MouseEvent | undefined;
         const modKey = sourceEvent ? (isMac ? sourceEvent.metaKey : sourceEvent.ctrlKey) : false;
@@ -49,6 +53,9 @@ export function DoorPaneView(props: DoorPaneViewProps) {
           splitDirection = sourceEvent?.shiftKey ? 'vertical' : 'horizontal';
         }
         props.onNavigate?.(e.detail.target, { splitDirection });
+      } else if (isChirpWriteVerb(message)) {
+        e.stopPropagation();
+        handleChirpWrite(message, e.detail?.data as ChirpWriteData, props.blockId, blockStore);
       }
     }) as EventListener;
 
@@ -71,6 +78,11 @@ export function DoorPaneView(props: DoorPaneViewProps) {
           error={props.envelope.error}
           status="complete"
           onNavigate={props.onNavigate}
+          onChirp={(message, data) => {
+            if (isChirpWriteVerb(message)) {
+              handleChirpWrite(message, data as ChirpWriteData, props.blockId, blockStore);
+            }
+          }}
         />
       </div>
     </div>
