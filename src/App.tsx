@@ -247,7 +247,10 @@ function App() {
             }
             console.log('[deep-link] execute', { content: content.slice(0, 40), parentId });
             const newId = blockStore.createBlockInside(parentId);
-            if (!newId) break;
+            if (!newId) {
+              console.error('[deep-link] execute: failed to create block inside', parentId);
+              break;
+            }
             blockStore.updateBlockContent(newId, content);
             fireHandler(newId, content);
 
@@ -273,7 +276,10 @@ function App() {
             }
             console.log('[deep-link] upsert', { parentId, match, content: content.slice(0, 40) });
             const resultId = blockStore.upsertChildByPrefix(parentId, match, content);
-            if (!resultId) break;
+            if (!resultId) {
+              console.error('[deep-link] upsert: failed to upsert child', { parentId, match });
+              break;
+            }
 
             // Fire handler if requested
             if (url.searchParams.get('execute') === 'true') {
