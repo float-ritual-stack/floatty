@@ -156,6 +156,23 @@ interface BlockItemProps {
   getVisibleBlockIds?: () => string[];
 }
 
+function doorErrorFallback(onClear: () => void) {
+  return (err: unknown) => (
+    <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d', display: 'flex', 'align-items': 'center', gap: '8px' }}>
+      <span style={{ flex: 1 }}>
+        <span style={{ 'font-weight': 'bold' }}>Door error: </span>
+        {(err as Error)?.message || String(err)}
+      </span>
+      <button
+        onClick={onClear}
+        style={{ background: '#3c3836', color: '#ebdbb2', border: '1px solid #665c54', 'border-radius': '3px', padding: '2px 8px', cursor: 'pointer', 'font-size': '11px', 'font-family': 'inherit', 'white-space': 'nowrap' }}
+      >
+        Clear
+      </button>
+    </div>
+  );
+}
+
 export function BlockItem(props: BlockItemProps) {
   const { blockStore, paneStore, pageNames, pageNameSet, stubPageNameSet, shortHashIndex } = useWorkspace();
   const store = blockStore;
@@ -1129,20 +1146,7 @@ export function BlockItem(props: BlockItemProps) {
 
               {/* DOOR OUTPUT VIEW — single branch for all doors */}
               <Show when={block()?.outputType === 'door'}>
-                <ErrorBoundary fallback={(err) => (
-                  <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d', display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                    <span style={{ flex: 1 }}>
-                      <span style={{ 'font-weight': 'bold' }}>Door error: </span>
-                      {err?.message || String(err)}
-                    </span>
-                    <button
-                      onClick={() => store.setBlockOutput(props.id, null, '')}
-                      style={{ background: '#3c3836', color: '#ebdbb2', border: '1px solid #665c54', 'border-radius': '3px', padding: '2px 8px', cursor: 'pointer', 'font-size': '11px', 'font-family': 'inherit', 'white-space': 'nowrap' }}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                )}>
+                <ErrorBoundary fallback={doorErrorFallback(() => store.setBlockOutput(props.id, null, ''))}>
                   {(() => {
                     const envelope = block()!.output as DoorEnvelope;
                     if (!envelope || !envelope.kind) return null;
@@ -1305,20 +1309,7 @@ export function BlockItem(props: BlockItemProps) {
 
           {/* INLINE DOOR OUTPUT: below contentEditable for selfRender doors (like artifact::) */}
           <Show when={block()?.outputType === 'door' && block()?.content && block()?.output && !isCollapsed()}>
-            <ErrorBoundary fallback={(err) => (
-              <div style={{ padding: '8px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace', background: '#1d2021', 'border-radius': '4px', 'border': '1px solid #cc241d', display: 'flex', 'align-items': 'center', gap: '8px' }}>
-                <span style={{ flex: 1 }}>
-                  <span style={{ 'font-weight': 'bold' }}>Door error: </span>
-                  {err?.message || String(err)}
-                </span>
-                <button
-                  onClick={() => store.setBlockOutput(props.id, null, '')}
-                  style={{ background: '#3c3836', color: '#ebdbb2', border: '1px solid #665c54', 'border-radius': '3px', padding: '2px 8px', cursor: 'pointer', 'font-size': '11px', 'font-family': 'inherit', 'white-space': 'nowrap' }}
-                >
-                  Clear
-                </button>
-              </div>
-            )}>
+            <ErrorBoundary fallback={doorErrorFallback(() => store.setBlockOutput(props.id, null, ''))}>
             {(() => {
               const env = block()!.output as DoorEnvelope;
               if (!env || !env.kind) return null;

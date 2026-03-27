@@ -450,6 +450,16 @@ function ReaderView(props: DoorViewProps) {
           {pageName()}
         </h1>
 
+        {/* Render root block content when it has content beyond a page heading */}
+        <Show when={root()!.content && !root()!.content.startsWith('# ')}>
+          <BlockRenderer
+            block={root()!}
+            blockMap={blockMap()}
+            depth={0}
+            onNavigate={handleNavigate}
+          />
+        </Show>
+
         <For each={(root()!.childIds || []).map(id => blockMap().get(id)).filter(Boolean) as BlockData[]}>
           {(child) => (
             <BlockRenderer

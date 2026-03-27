@@ -39,8 +39,7 @@
     "tauri-plugin-clipboard-api": "2.1.11",
     "tauri-pty": "^0.1.1",
     "tinykeys": "^3.0.0",
-    "yjs": "^13.6.28",
-    "zod": "^4.3.6"
+    "yjs": "^13.6.28"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
@@ -56,6 +55,7 @@
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4",
     "vite-plugin-solid": "^2.11.6",
-    "vitest": "^4.0.16"
+    "vitest": "^4.0.16",
+    "zod": "^4.3.6"
   }
 }

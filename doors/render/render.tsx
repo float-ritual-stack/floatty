@@ -399,7 +399,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
     if (searchResults.hits?.length > 0) {
       contextBlock += '\nRelevant outline blocks:\n';
       for (const hit of searchResults.hits.slice(0, 10)) {
-        contextBlock += `- [${hit.blockId?.slice(0, 8)}] ${hit.content?.slice(0, 200)}\n`;
+        contextBlock += `- [${hit.blockId?.slice(0, 8)}] ${(hit.content?.slice(0, 200) || '').replace(/\x00/g, '')}\n`;
       }
     }
   } catch (e: any) {
@@ -740,6 +740,10 @@ export const door = {
             options.resumeSessionId = sid;
           }
           rest = rest.slice(spaceIdx + 1).trim();
+        } else if (/^[0-9a-f-]+$/i.test(rest)) {
+          // standalone: --resume <id> with no following prompt
+          options.resumeSessionId = rest;
+          rest = '';
         }
       }
 
