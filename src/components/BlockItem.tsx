@@ -1320,8 +1320,7 @@ export function BlockItem(props: BlockItemProps) {
               </div>
             )}>
             {(() => {
-              const envelope = () => block()!.output as DoorEnvelope;
-              const env = envelope();
+              const env = block()!.output as DoorEnvelope;
               if (!env || !env.kind) return null;
               return env.kind === 'view'
                 ? <DoorHost
@@ -1329,6 +1328,15 @@ export function BlockItem(props: BlockItemProps) {
                     data={env.data}
                     error={env.error}
                     status={block()?.outputStatus}
+                    onNavigate={(target, opts) => {
+                      handleChirpNavigate(target, {
+                        type: opts?.type,
+                        sourcePaneId: props.paneId,
+                        sourceBlockId: props.id,
+                        splitDirection: opts?.splitDirection,
+                        originBlockId: props.id,
+                      });
+                    }}
                   />
                 : <DoorExecCard
                     doorId={env.doorId}

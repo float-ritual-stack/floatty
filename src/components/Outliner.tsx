@@ -1,4 +1,4 @@
-import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on, ErrorBoundary } from 'solid-js';
+import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
@@ -83,7 +83,6 @@ export function Outliner(props: OutlinerProps) {
     if (envelope?.kind === 'view') return id;
     return null;
   });
-  const isDoorZoom = () => doorZoomBlockId() !== null;
 
   // FLO-320: Initialize store AFTER Y.Doc is populated (prevents 13.8k block observer storm)
   // Must fire BEFORE the config effect below so store.rootIds is populated for applyCollapseDepth.
@@ -769,34 +768,52 @@ export function Outliner(props: OutlinerProps) {
               </Key>
             }
           >
-            {/* Zoomed: full-pane iframe OR full-pane door OR breadcrumb + block subtree */}
-            <Show when={isIframeZoom()} fallback={
-              <Show when={isDoorZoom()} fallback={
-                <>
-                  <Breadcrumb blockId={zoomedRootId()!} paneId={props.paneId} />
-                  <BlockItem
-                    id={zoomedRootId()!}
+            {/* Zoomed: full-pane iframe, full-pane door, or breadcrumb + block subtree */}
+            <Switch fallback={
+              <>
+                <Breadcrumb blockId={zoomedRootId()!} paneId={props.paneId} />
+                <BlockItem
+                  id={zoomedRootId()!}
+                  paneId={props.paneId}
+                  depth={0}
+                  focusedBlockId={focusedBlockId()}
+                  onFocus={handleFocus}
+                  onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
+                  onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
+                  isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
+                  onSelect={selection.handleSelect}
+                  selectionAnchor={selection.selectionAnchor()}
+                  getVisibleBlockIds={getVisibleBlockIds}
+                />
+                <Show when={isPageBlock(zoomedRootId()!)}>
+                  <LinkedReferences
+                    pageBlockId={zoomedRootId()!}
                     paneId={props.paneId}
-                    depth={0}
-                    focusedBlockId={focusedBlockId()}
-                    onFocus={handleFocus}
-                    onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
-                    onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
-                    isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
-                    onSelect={selection.handleSelect}
-                    selectionAnchor={selection.selectionAnchor()}
-                    getVisibleBlockIds={getVisibleBlockIds}
+                    onFocusBlock={handleFocus}
                   />
-                  {/* LinkedReferences: show when zoomed into a page under pages:: */}
-                  <Show when={isPageBlock(zoomedRootId()!)}>
-                    <LinkedReferences
-                      pageBlockId={zoomedRootId()!}
-                      paneId={props.paneId}
-                      onFocusBlock={handleFocus}
-                    />
-                  </Show>
-                </>
-              }>
+                </Show>
+              </>
+            }>
+              <Match when={isIframeZoom()}>
+                <IframePaneView
+                  url={String((store.blocks[zoomedRootId()!]?.output as EvalResult)?.data ?? '')}
+                  blockId={zoomedRootId()!}
+                  paneId={props.paneId}
+                  onClose={() => paneStore.zoomTo(props.paneId, null)}
+                  onChirp={(message: string, data?: unknown) => {
+                    if (message === 'navigate' && typeof data === 'object' && data) {
+                      const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' };
+                      handleChirpNavigate(nav.target, {
+                        type: nav.type,
+                        sourcePaneId: props.paneId,
+                        sourceBlockId: zoomedRootId()!,
+                        splitDirection: nav.splitDirection,
+                      });
+                    }
+                  }}
+                />
+              </Match>
+              <Match when={doorZoomBlockId()}>
                 <ErrorBoundary fallback={(err) => (
                   <div style={{ padding: '16px', color: 'var(--door-error, #e06c75)' }}>
                     <p>Door crashed: {String(err)}</p>
@@ -832,26 +849,8 @@ export function Outliner(props: OutlinerProps) {
                     }}
                   />
                 </ErrorBoundary>
-              </Show>
-            }>
-              <IframePaneView
-                url={String((store.blocks[zoomedRootId()!]?.output as EvalResult)?.data ?? '')}
-                blockId={zoomedRootId()!}
-                paneId={props.paneId}
-                onClose={() => paneStore.zoomTo(props.paneId, null)}
-                onChirp={(message: string, data?: unknown) => {
-                  if (message === 'navigate' && typeof data === 'object' && data) {
-                    const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' };
-                    handleChirpNavigate(nav.target, {
-                      type: nav.type,
-                      sourcePaneId: props.paneId,
-                      sourceBlockId: zoomedRootId()!,
-                      splitDirection: nav.splitDirection,
-                    });
-                  }
-                }}
-              />
-            </Show>
+              </Match>
+            </Switch>
           </Show>
         </Show>
       </Show>

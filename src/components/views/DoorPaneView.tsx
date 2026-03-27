@@ -8,7 +8,7 @@
  * Chirp contract: Listens for CustomEvent 'chirp' on container, routes to onNavigate.
  */
 
-import { onMount, onCleanup, ErrorBoundary } from 'solid-js';
+import { onMount, onCleanup } from 'solid-js';
 import { Breadcrumb } from '../Breadcrumb';
 import { DoorHost } from './DoorHost';
 import type { DoorViewOutput } from '../../lib/handlers/doorTypes';
@@ -65,34 +65,13 @@ export function DoorPaneView(props: DoorPaneViewProps) {
     >
       <Breadcrumb blockId={props.blockId} paneId={props.paneId} />
       <div class="door-pane-content">
-        <ErrorBoundary fallback={(err) => (
-          <div style={{ padding: '16px', color: 'var(--door-error, #e06c75)' }}>
-            <p>Door crashed: {String(err)}</p>
-            <button
-              onClick={() => props.onClose()}
-              style={{
-                'margin-top': '8px',
-                padding: '4px 12px',
-                background: '#3c3836',
-                color: '#ebdbb2',
-                border: '1px solid #665c54',
-                'border-radius': '3px',
-                cursor: 'pointer',
-              }}
-              aria-label="Exit zoom view"
-            >
-              Exit zoom
-            </button>
-          </div>
-        )}>
-          <DoorHost
-            doorId={props.envelope.doorId}
-            data={props.envelope.data}
-            error={props.envelope.error}
-            status="complete"
-            onNavigate={props.onNavigate}
-          />
-        </ErrorBoundary>
+        <DoorHost
+          doorId={props.envelope.doorId}
+          data={props.envelope.data}
+          error={props.envelope.error}
+          status="complete"
+          onNavigate={props.onNavigate}
+        />
       </div>
     </div>
   );
