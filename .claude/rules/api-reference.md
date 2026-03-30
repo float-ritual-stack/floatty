@@ -60,6 +60,22 @@ Client-side: `shortHashIndex` singleton memo in WorkspaceContext for O(1) 8-char
 | `include_breadcrumb` | bool | Parent chain per hit |
 | `include_metadata` | bool | Block metadata per hit |
 
+## Daily Note
+
+`GET /api/v1/daily/:date` — Resolve daily note page by date string (e.g., `2026-03-31`).
+
+Looks up the page named exactly `:date` in the PageNameIndex. Returns the page block in the same shape as `GET /api/v1/blocks/:id`. Defaults to `include=children` if no `include` param specified.
+
+```bash
+# Get today's daily note with children
+curl -H "Authorization: Bearer $KEY" "$URL/api/v1/daily/2026-03-31"
+
+# Get with full subtree
+curl -H "Authorization: Bearer $KEY" "$URL/api/v1/daily/2026-03-31?include=tree,token_estimate"
+```
+
+Returns 404 if no page with that name exists.
+
 ## Vocabulary Discovery
 
 | Endpoint | Returns |

@@ -195,6 +195,11 @@ impl PageNameIndex {
         self.existing.contains_key(&name.to_lowercase())
     }
 
+    /// Get the block ID for an existing page by name.
+    pub fn page_block_id(&self, name: &str) -> Option<&str> {
+        self.existing.get(&name.to_lowercase()).map(|s| s.as_str())
+    }
+
     /// Get all existing page names.
     pub fn existing_pages(&self) -> Vec<String> {
         self.existing.keys().cloned().collect()

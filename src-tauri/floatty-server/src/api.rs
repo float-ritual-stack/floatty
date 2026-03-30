@@ -564,6 +564,8 @@ pub fn create_router(
         .route("/api/v1/backup/config", get(backup_config))
         // Presence (spike for TUI follower)
         .route("/api/v1/presence", get(get_presence).post(post_presence))
+        // Daily note — resolve page by date (e.g., /api/v1/daily/2026-03-31)
+        .route("/api/v1/daily/:date", get(get_daily_note))
         // Attachments — static file serving from {data_dir}/__attachments/
         .route("/api/v1/attachments/:filename", get(get_attachment))
         .with_state(state)
@@ -1913,6 +1915,29 @@ fn read_block_dto<T: ReadTxn>(
     })
 }
 
+/// Build a BlockWithContextResponse from a block DTO and query params.
+/// Shared between get_block and get_daily_note.
+fn build_block_context_response<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+    block_dto: BlockDto,
+    ctx_query: &BlockContextQuery,
+) -> BlockWithContextResponse {
+    let includes = parse_includes(&ctx_query.include);
+    let sibling_radius = ctx_query.sibling_radius.min(50);
+    let max_depth = ctx_query.max_depth.min(100);
+
+    BlockWithContextResponse {
+        block: block_dto,
+        ancestors: includes.contains("ancestors").then(|| get_ancestors(blocks_map, txn, block_id)),
+        siblings: includes.contains("siblings").then(|| get_siblings(blocks_map, txn, block_id, sibling_radius)),
+        children: includes.contains("children").then(|| get_children_refs(blocks_map, txn, block_id)),
+        tree: includes.contains("tree").then(|| get_subtree(blocks_map, txn, block_id, max_depth)),
+        token_estimate: includes.contains("token_estimate").then(|| compute_token_estimate(blocks_map, txn, block_id, max_depth)),
+    }
+}
+
 /// GET /api/v1/blocks - All blocks as JSON (with optional filters)
 async fn get_blocks(
     State(state): State<AppState>,
@@ -2356,54 +2381,9 @@ async fn get_block(
             updated_at,
         };
 
-        // Parse include directives
-        let includes = parse_includes(&ctx_query.include);
-
-        // Cap user-controlled params to prevent abuse
-        let sibling_radius = ctx_query.sibling_radius.min(50);
-        let max_depth = ctx_query.max_depth.min(100);
-
-        // Build context fields based on include directives
-        let ancestors = if includes.contains("ancestors") {
-            Some(get_ancestors(&blocks_map, &txn, &id))
-        } else {
-            None
-        };
-
-        let siblings = if includes.contains("siblings") {
-            Some(get_siblings(&blocks_map, &txn, &id, sibling_radius))
-        } else {
-            None
-        };
-
-        let children = if includes.contains("children") {
-            Some(get_children_refs(&blocks_map, &txn, &id))
-        } else {
-            None
-        };
-
-        let tree = if includes.contains("tree") {
-            Some(get_subtree(&blocks_map, &txn, &id, max_depth))
-        } else {
-            None
-        };
-
-        let token_estimate = if includes.contains("token_estimate") {
-            Some(compute_token_estimate(&blocks_map, &txn, &id, max_depth))
-        } else {
-            None
-        };
-
-        let response = BlockWithContextResponse {
-            block: block_dto,
-            ancestors,
-            siblings,
-            children,
-            tree,
-            token_estimate,
-        };
-
-        Ok(Json(response))
+        Ok(Json(build_block_context_response(
+            &blocks_map, &txn, &id, block_dto, &ctx_query,
+        )))
     } else {
         Err(ApiError::NotFound(id))
     }
@@ -3758,6 +3738,52 @@ struct PresenceRequest {
     pane_id: Option<String>,
 }
 
+/// GET /api/v1/daily/:date — Resolve daily note page by date string.
+///
+/// Looks up a page named exactly `date` (e.g., "2026-03-31") in the PageNameIndex.
+/// Returns the page block with children by default, same shape as `GET /api/v1/blocks/:id`.
+/// Accepts optional `include` query param for additional context (ancestors, tree, etc.).
+async fn get_daily_note(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    axum::extract::Query(mut ctx_query): axum::extract::Query<BlockContextQuery>,
+) -> Result<Json<BlockWithContextResponse>, ApiError> {
+    let page_block_id = {
+        let page_index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
+        page_index.page_block_id(&date).map(String::from)
+    };
+
+    let page_id = page_block_id.ok_or_else(|| {
+        ApiError::NotFound(format!("Page not found: {}", date))
+    })?;
+
+    // Default to including children if no include param specified
+    if ctx_query.include.is_none() {
+        ctx_query.include = Some("children".to_string());
+    }
+
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let blocks_map = txn
+        .get_map("blocks")
+        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+
+    let value = blocks_map
+        .get(&txn, &page_id)
+        .ok_or_else(|| ApiError::NotFound(page_id.clone()))?;
+
+    if let yrs::Out::YMap(block_map) = value {
+        let block_dto = read_block_dto(&block_map, &txn, &page_id, &state)?;
+        Ok(Json(build_block_context_response(
+            &blocks_map, &txn, &page_id, block_dto, &ctx_query,
+        )))
+    } else {
+        Err(ApiError::NotFound(page_id))
+    }
+}
+
 /// GET /api/v1/presence — returns the last focused block, or 204 if none yet / block deleted
 async fn get_presence(
     State(state): State<AppState>,
@@ -4171,43 +4197,49 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let router = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let mut app = router.into_service();
 
         // Create a block with searchable content
-        let response = app
-            .clone()
-            .oneshot(
-                Request::post("/api/v1/blocks")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(r#"{"content": "floatty search test"}"#))
-                    .unwrap(),
-            )
+        let request = Request::post("/api/v1/blocks")
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"content": "floatty search test"}"#))
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        // Wait briefly for async indexing
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Poll for search availability — indexing is async, timing varies under parallel test load
+        let mut attempts = 0;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            attempts += 1;
 
-        // Search for the block
-        let response = app
-            .oneshot(
-                Request::get("/api/v1/search?q=floatty")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+            let response = ServiceExt::<Request<Body>>::ready(&mut app)
+                .await.unwrap()
+                .call(
+                    Request::get("/api/v1/search?q=floatty")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
 
-        // Accept search unavailable in parallel test environment
-        let status = response.status();
-        if status == StatusCode::SERVICE_UNAVAILABLE {
-            return; // Search not available, skip this test
+            let status = response.status();
+
+            if status == StatusCode::SERVICE_UNAVAILABLE {
+                if attempts >= 10 {
+                    return; // Search never became available, skip
+                }
+                continue;
+            }
+
+            assert_eq!(status, StatusCode::OK);
+            break;
         }
-
-        assert_eq!(status, StatusCode::OK);
-        // Note: Results may be empty if index commit hasn't happened yet.
-        // This is acceptable for unit tests - integration tests would wait longer.
     }
 
     #[tokio::test]
@@ -5899,5 +5931,89 @@ mod tests {
         let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
         let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.id, block.id);
+    }
+
+    // ========================================================================
+    // Daily note endpoint tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_daily_note_found() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create pages:: container + daily note page
+        let pages = create_test_block(&mut app, "pages::", None).await;
+        let daily = create_test_block(&mut app, "# 2026-03-31", Some(&pages.id)).await;
+        let child = create_test_block(&mut app, "brain boot context", Some(&daily.id)).await;
+
+        // Wait for PageNameIndex hook to process
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Fetch daily note — should return page block with children
+        let request = Request::get("/api/v1/daily/2026-03-31")
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(result["id"], daily.id);
+        assert_eq!(result["content"], "# 2026-03-31");
+
+        // Default includes children
+        let children = result["children"].as_array().expect("Should include children by default");
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0]["id"], child.id);
+    }
+
+    #[tokio::test]
+    async fn test_daily_note_not_found() {
+        let (app, _dir, _store) = test_app();
+
+        let response = app
+            .oneshot(Request::get("/api/v1/daily/2099-12-31").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_daily_note_with_tree_include() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        let pages = create_test_block(&mut app, "pages::", None).await;
+        let daily = create_test_block(&mut app, "# 2026-03-30", Some(&pages.id)).await;
+        let child = create_test_block(&mut app, "morning notes", Some(&daily.id)).await;
+        let _grandchild = create_test_block(&mut app, "detail item", Some(&child.id)).await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Request with tree include
+        let request = Request::get("/api/v1/daily/2026-03-30?include=tree,token_estimate")
+            .body(Body::empty())
+            .unwrap();
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(request)
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        // Tree should include the subtree
+        let tree = result["tree"].as_array().expect("Should include tree");
+        assert!(tree.len() >= 2, "Tree should have at least child + grandchild");
+
+        // Token estimate should be present
+        assert!(result.get("tokenEstimate").is_some());
     }
 }
