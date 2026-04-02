@@ -1,3 +1,4 @@
+// ARCHITECTURE: Protected module — see CLAUDE.md "Canonical Paths". One expansion policy, not five.
 // VIEW STATE ONLY — this module manages per-pane collapse state (usePaneStore).
 // It NEVER modifies Y.Doc block.collapsed. That's persisted CRDT state.
 //

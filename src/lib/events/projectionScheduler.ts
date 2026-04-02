@@ -1,3 +1,4 @@
+// ARCHITECTURE: Protected module — see CLAUDE.md "Canonical Paths". Search fidelity chain layer 2.
 /**
  * ProjectionScheduler - Batched async event processing for expensive operations
  *

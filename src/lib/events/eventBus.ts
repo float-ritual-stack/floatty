@@ -1,3 +1,4 @@
+// ARCHITECTURE: Protected module — see CLAUDE.md "Canonical Paths". Search fidelity chain layer 1.
 /**
  * EventBus - Synchronous pub/sub for immediate event reactions
  *

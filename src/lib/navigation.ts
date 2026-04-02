@@ -1,3 +1,4 @@
+// ARCHITECTURE: Protected module — see CLAUDE.md "Canonical Paths". All navigation routes through here.
 /**
  * Navigation API - Global navigation functions for plugins and view components
  *
