@@ -16,6 +16,9 @@ import type { BlockHandler, ExecutorActions } from './types';
 import { invoke } from '../tauriTypes';
 import type { ServerInfo } from '../httpClient';
 import { findOutputChild, formatBytes, formatRelativeTime } from './utils';
+import { createLogger } from '../logger';
+
+const logger = createLogger('backup');
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -260,7 +263,7 @@ export const backupHandler: BlockHandler = {
     }
 
     try {
-      console.log('[backup] Executing:', { command, args });
+      logger.info(`Executing: ${command}`, { args });
 
       let result: string;
       switch (command) {
@@ -308,7 +311,7 @@ export const backupHandler: BlockHandler = {
         actions.setBlockStatus(headingId, result.startsWith('error::') ? 'error' : 'complete');
       }
     } catch (err) {
-      console.error('[backup] Error:', err);
+      logger.error('Error', { err });
       actions.updateBlockContent(headingId, `## error::${command}`);
 
       // Put error in child

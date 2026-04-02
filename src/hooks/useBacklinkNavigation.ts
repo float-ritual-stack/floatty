@@ -17,6 +17,9 @@ import { paneStore } from './usePaneStore';
 import { layoutStore, findTabIdByPaneId } from './useLayoutStore';
 import { extractAllWikilinkTargets } from '../lib/wikilinkUtils';
 import type { Block } from '../lib/blockTypes';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('BacklinkNavigation');
 
 const PAGES_PREFIX = 'pages::';
 
@@ -232,14 +235,14 @@ export function navigateToPage(
     // Derive tabId from paneId for split operation
     const tabId = findTabIdByPaneId(paneId);
     if (!tabId) {
-      console.warn('[BacklinkNavigation] Could not find tabId for pane, using current pane');
+      logger.warn('Could not find tabId for pane, using current pane');
     } else {
       // Split in requested direction (FLO-136: pass ephemeral flag)
       const newPaneId = layoutStore.splitPane(tabId, splitDirection, 'outliner', ephemeral);
       if (newPaneId) {
         targetPaneId = newPaneId;
       } else {
-        console.warn('[BacklinkNavigation] Split failed, using current pane');
+        logger.warn('Split failed, using current pane');
       }
     }
   }

@@ -10,6 +10,9 @@ import { batch, createRoot, createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { blockStore } from './useBlockStore';
 import { computeExpansion } from '../lib/expansionPolicy';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('PaneStore');
 import {
   createNavigationState,
   pushNavigation as pushNavigationPure,
@@ -461,7 +464,7 @@ function createPaneStore() {
   ) => {
     // Validate zoomedRootIds structure
     if (typeof restoredZoomedRootIds !== 'object' || restoredZoomedRootIds === null) {
-      console.warn('[PaneStore] Invalid zoomedRootIds structure, skipping hydration');
+      logger.warn('Invalid zoomedRootIds structure, skipping hydration');
       return;
     }
 
@@ -470,7 +473,7 @@ function createPaneStore() {
     if (restoredCollapsed) {
       // Validate collapsed structure
       if (typeof restoredCollapsed !== 'object' || restoredCollapsed === null) {
-        console.warn('[PaneStore] Invalid collapsed structure, skipping');
+        logger.warn('Invalid collapsed structure, skipping');
         return;
       }
       setState('collapsed', restoredCollapsed);
@@ -479,7 +482,7 @@ function createPaneStore() {
     // FLO-77: Restore focused block IDs
     if (restoredFocusedBlockId) {
       if (typeof restoredFocusedBlockId !== 'object' || restoredFocusedBlockId === null) {
-        console.warn('[PaneStore] Invalid focusedBlockId structure, skipping');
+        logger.warn('Invalid focusedBlockId structure, skipping');
         return;
       }
       setState('focusedBlockId', restoredFocusedBlockId);
@@ -488,7 +491,7 @@ function createPaneStore() {
     // FLO-180: Restore navigation history (optional field, empty if missing)
     if (restoredNavigationHistory) {
       if (typeof restoredNavigationHistory !== 'object' || restoredNavigationHistory === null) {
-        console.warn('[PaneStore] Invalid navigationHistory structure, skipping');
+        logger.warn('Invalid navigationHistory structure, skipping');
         return;
       }
       setState('navigationHistory', restoredNavigationHistory);

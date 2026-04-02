@@ -4,6 +4,15 @@
  * Tests async batched event processing for expensive operations.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock the logger module so tests can verify error logging
+const mockLogger = vi.hoisted(() => ({
+  trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+}));
+vi.mock('../logger', () => ({
+  createLogger: () => mockLogger,
+}));
+
 import { ProjectionScheduler } from './projectionScheduler';
 import { Origin, EventFilters } from './types';
 import type { EventEnvelope, BlockEvent } from './types';
@@ -227,7 +236,7 @@ describe('ProjectionScheduler', () => {
     });
 
     it('logs error when projection fails', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockLogger.error.mockClear();
 
       scheduler.register('failing', async () => {
         throw new Error('Test error');
@@ -236,12 +245,10 @@ describe('ProjectionScheduler', () => {
       scheduler.enqueue(createTestEnvelope());
       await scheduler.flush();
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[ProjectionScheduler]'),
-        expect.any(Error)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('failing'),
+        expect.objectContaining({ error: expect.any(Error) })
       );
-
-      consoleSpy.mockRestore();
     });
   });
 
@@ -300,7 +307,7 @@ describe('ProjectionScheduler', () => {
 
   describe('drain loop bound', () => {
     it('terminates when handler always re-enqueues', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockLogger.error.mockClear();
 
       scheduler.register('infinite', async () => {
         // Always re-enqueue — would loop forever without bound
@@ -311,12 +318,9 @@ describe('ProjectionScheduler', () => {
 
       await scheduler.flush();
 
-      expect(consoleSpy).toHaveBeenCalledWith(
+      expect(mockLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('Drain loop exceeded'),
-        // no second arg — it's a single string message
       );
-
-      consoleSpy.mockRestore();
     });
   });
 

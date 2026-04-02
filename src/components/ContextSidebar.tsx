@@ -1,6 +1,9 @@
 import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
+import { createLogger } from '../lib/logger';
 import { invoke } from '../lib/tauriTypes';
 import { onCtxMarkersChanged } from '../lib/ctxEvents';
+
+const logger = createLogger('ContextSidebar');
 
 // Check if running in Tauri environment (Tauri 2 uses '__TAURI_INTERNALS__')
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -124,7 +127,7 @@ export function ContextSidebar(props: { visible: boolean }) {
       setError(null);
       setLoading(false);
     } catch (e) {
-      console.error('Failed to fetch markers:', e);
+      logger.error(`Failed to fetch markers: ${e}`);
       setError(String(e));
       setLoading(false);
     } finally {

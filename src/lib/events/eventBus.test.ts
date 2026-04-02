@@ -8,6 +8,14 @@ import { EventBus } from './eventBus';
 import { Origin, EventFilters } from './types';
 import type { EventEnvelope, BlockEvent } from './types';
 
+// Mock the logger module so tests can verify error logging
+const mockLogger = vi.hoisted(() => ({
+  trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+}));
+vi.mock('../logger', () => ({
+  createLogger: () => mockLogger,
+}));
+
 // Test helpers
 function createTestEnvelope(events?: Partial<BlockEvent>[]): EventEnvelope {
   // Default to one event if none provided (empty events array skips handlers)
@@ -285,7 +293,7 @@ describe('EventBus', () => {
     });
 
     it('logs error when handler throws', () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockLogger.error.mockClear();
 
       bus.subscribe(
         () => {
@@ -296,12 +304,10 @@ describe('EventBus', () => {
 
       bus.emit(createTestEnvelope());
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[EventBus]'),
-        expect.any(Error)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('test-handler'),
+        expect.objectContaining({ error: expect.any(Error) })
       );
-
-      consoleSpy.mockRestore();
     });
   });
 

@@ -11,6 +11,9 @@
  * - store.lastUpdateOrigin read via untrack() — NOT a reactive dependency
  */
 import { createSignal, createEffect, onCleanup, untrack, type Accessor, type Setter } from 'solid-js';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('ContentSync');
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 
 const UPDATE_DEBOUNCE_MS = 150;
@@ -183,7 +186,7 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
 
     // Warn on unexpected focused-block syncs (could cause cursor jump)
     if (shouldSync && isFocusedNow && domContent !== storeContent) {
-      console.warn('[BlockItem] Syncing focused block (origin:', typeof origin === 'string' ? origin : typeof origin, ')');
+      logger.warn(`Syncing focused block (origin: ${typeof origin === 'string' ? origin : typeof origin})`);
     }
 
     if (shouldSync) {
@@ -199,7 +202,7 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
 
         // DEFENSIVE: Verify ref is actually in document (ghost node detection)
         if (!document.contains(contentRef)) {
-          console.warn('[BlockItem] Ghost node detected - skipping DOM sync', currentBlock.id);
+          logger.warn(`Ghost node detected - skipping DOM sync ${currentBlock.id}`);
           return;
         }
 

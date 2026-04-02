@@ -22,6 +22,9 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { BlockHandler, ExecutorActions } from './types';
+import { createLogger } from '../logger';
+
+const logger = createLogger('send');
 
 // ═══════════════════════════════════════════════════════════════
 // TURN MARKERS
@@ -77,14 +80,14 @@ export const sendHandler: BlockHandler = {
 
     // Verify hook ran and provided context
     if (!hookContext?.messages || hookContext.messages.length === 0) {
-      console.error('[send] No hookContext.messages - is sendContextHook registered?');
+      logger.error('No hookContext.messages - is sendContextHook registered?');
       actions.updateBlockContent(blockId, 'error:: Context hook not providing messages');
       return;
     }
 
     const { messages, blockCount } = hookContext;
 
-    console.log('[send] Context from hook:', {
+    logger.debug('Context from hook', {
       blockCount,
       messageCount: messages.length,
       textLength: messages.reduce((sum, m) => sum + m.content.length, 0),
@@ -128,7 +131,7 @@ export const sendHandler: BlockHandler = {
       const effectiveConfigModel = configModel?.trim() || undefined;
       const model = inlineModel ?? effectiveConfigModel ?? 'qwen2.5:7b';
 
-      console.log('[send] Using model:', model, inlineModel ? '(inline override)' : '(from config)');
+      logger.info(`Using model: ${model} ${inlineModel ? '(inline override)' : '(from config)'}`);
 
       // Call LLM with conversation API
       // Messages come from hook - handler just sends them
@@ -139,7 +142,7 @@ export const sendHandler: BlockHandler = {
       });
 
       const duration = performance.now() - startTime;
-      console.log('[send] Complete:', {
+      logger.info('Complete', {
         duration: `${duration.toFixed(1)}ms`,
         responseLength: response.length,
         model,
@@ -149,7 +152,7 @@ export const sendHandler: BlockHandler = {
       actions.updateBlockContent(responseId, response.trim());
       actions.setBlockStatus?.(blockId, 'complete');
     } catch (err) {
-      console.error('[send] Error:', err);
+      logger.error('Error', { err });
       actions.updateBlockContent(responseId, `Error: ${String(err)}`);
       actions.setBlockStatus?.(blockId, 'error');
     }

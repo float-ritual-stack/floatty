@@ -22,7 +22,10 @@ import { navigateToPage, resolveSameTabLink } from '../lib/navigation';
 import { emitCtxMarkersChanged } from '../lib/ctxEvents';
 import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../lib/layoutTypes';
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
+import { createLogger } from '../lib/logger';
 import { terminalManager } from '../lib/terminalManager';
+
+const logger = createLogger('Terminal');
 
 // Zoom state
 let currentZoom = 1.0;
@@ -273,7 +276,7 @@ export function Terminal() {
       if (configDimOpacity >= 1) setDimEnabled(false);
       document.documentElement.style.setProperty('--unfocused-pane-opacity', dimEnabled() ? String(configDimOpacity) : '1');
     } catch (e) {
-      console.warn('[Terminal] Failed to load config:', e);
+      logger.warn('Failed to load config', { err: e });
     }
   })();
 
@@ -369,7 +372,7 @@ export function Terminal() {
       }
 
       if (attempts >= MAX_FRAME_RETRIES) {
-        console.warn(`[Terminal] fitAndFocusWhenPaneRefsReady exhausted ${MAX_FRAME_RETRIES} frames — refs still missing, proceeding best-effort`);
+        logger.warn(`fitAndFocusWhenPaneRefsReady exhausted ${MAX_FRAME_RETRIES} frames — refs still missing, proceeding best-effort`);
       }
 
       for (const paneId of paneIds) {
@@ -664,7 +667,7 @@ export function Terminal() {
   const handleSplit = (direction: 'horizontal' | 'vertical', leafType?: 'terminal' | 'outliner') => {
     const activeId = tabStore.activeTabId();
     if (!activeId) {
-      console.warn('[Terminal] Split failed: no active tab');
+      logger.warn('Split failed: no active tab');
       return;
     }
 
@@ -683,7 +686,7 @@ export function Terminal() {
       });
     } else {
       // Split failed - log for debugging (user sees no visual change, which is feedback enough)
-      console.warn('[Terminal] Split operation failed for tab:', activeId);
+      logger.warn(`Split operation failed for tab: ${activeId}`);
     }
   };
 
@@ -708,7 +711,7 @@ export function Terminal() {
   const handleCloseTab = async (id: string) => {
     // Get all pane IDs in this tab's layout
     const paneIds = getAllPaneIds(id);
-    console.log(`[Terminal] handleCloseTab(${id}) - found ${paneIds.length} panes:`, paneIds);
+    logger.info(`handleCloseTab(${id}) - found ${paneIds.length} panes: ${paneIds.join(', ')}`);
     const failedDisposals: string[] = [];
 
     // Dispose each terminal
@@ -716,13 +719,13 @@ export function Terminal() {
       try {
         await terminalManager.dispose(paneId);
       } catch (e) {
-        console.error(`[Terminal] Failed to dispose pane ${paneId}:`, e);
+        logger.error(`Failed to dispose pane ${paneId}`, { err: e });
         failedDisposals.push(paneId);
       }
     }
 
     if (failedDisposals.length > 0) {
-      console.warn(`[Terminal] ${failedDisposals.length} panes failed to dispose for tab ${id}`);
+      logger.warn(`${failedDisposals.length} panes failed to dispose for tab ${id}`);
     }
 
     // Close tab FIRST, then remove layout
@@ -764,7 +767,7 @@ export function Terminal() {
 
       // Debug: log all keyboard events with modifiers to trace sporadic failures
       if (e.metaKey || e.ctrlKey) {
-        console.log('[Keybind] key:', e.key, 'meta:', e.metaKey, 'ctrl:', e.ctrlKey, 'shift:', e.shiftKey, 'action:', action);
+        logger.debug(`key: ${e.key}, meta: ${e.metaKey}, ctrl: ${e.ctrlKey}, shift: ${e.shiftKey}, action: ${action}`);
       }
 
       // Cmd+L — link active terminal pane to an outliner pane.
@@ -797,7 +800,7 @@ export function Terminal() {
 
       // Debug: warn if activeId is missing when needed
       if ((action === 'closeTab' || action === 'closeSplit') && !activeId) {
-        console.warn('[Keybind] action', action, 'but activeId is null!');
+        logger.warn(`action ${action} but activeId is null!`);
       }
 
       switch (action) {
@@ -807,7 +810,7 @@ export function Terminal() {
         case 'closeTab':
           if (activeId) {
             handleCloseTab(activeId).catch(e =>
-              console.error('[Terminal] closeTab shortcut failed:', e)
+              logger.error('closeTab shortcut failed', { err: e })
             );
           }
           break;
@@ -860,7 +863,7 @@ export function Terminal() {
         case 'closeSplit':
           if (activeId) {
             handleClosePane(activeId).catch(e =>
-              console.error('[Terminal] closeSplit shortcut failed:', e)
+              logger.error('closeSplit shortcut failed', { err: e })
             );
           }
           break;
@@ -882,22 +885,22 @@ export function Terminal() {
         }
         case 'zoomIn': {
           currentZoom = Math.min(ZOOM_MAX, currentZoom + ZOOM_STEP);
-          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(err => logger.error('Failed to set zoom', { err }));
           break;
         }
         case 'zoomOut': {
           currentZoom = Math.max(ZOOM_MIN, currentZoom - ZOOM_STEP);
-          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(err => logger.error('Failed to set zoom', { err }));
           break;
         }
         case 'zoomReset': {
           currentZoom = 1.0;
-          getCurrentWebviewWindow().setZoom(currentZoom).catch(console.error);
+          getCurrentWebviewWindow().setZoom(currentZoom).catch(err => logger.error('Failed to set zoom', { err }));
           break;
         }
         case 'togglePanel': {
           invoke('toggle_test_panel').catch((err) => {
-            console.error('[Terminal] Failed to toggle panel:', err);
+            logger.error('Failed to toggle panel', { err });
           });
           break;
         }
@@ -909,7 +912,7 @@ export function Terminal() {
           typedInvoke('toggle_diagnostics', {}).then((newValue) => {
             themeStore.setDiagnostics(newValue);
           }).catch((err) => {
-            console.error('[Terminal] Failed to toggle diagnostics:', err);
+            logger.error('Failed to toggle diagnostics', { err });
           });
           break;
         }
@@ -1004,7 +1007,7 @@ export function Terminal() {
       // Find which tab this pane belongs to
       const tab = tabStore.tabs.find(t => getAllPaneIds(t.id).includes(paneId));
       if (!tab) {
-        console.warn(`[Terminal] PTY exit for orphaned pane: ${paneId}`);
+        logger.warn(`PTY exit for orphaned pane: ${paneId}`);
         return;
       }
 
@@ -1019,7 +1022,7 @@ export function Terminal() {
         layoutStore.closePane(tab.id, paneId);
       }
     } catch (e) {
-      console.error(`[Terminal] Failed to handle PTY exit for ${paneId}:`, e);
+      logger.error(`Failed to handle PTY exit for ${paneId}`, { err: e });
     }
   };
 
@@ -1116,7 +1119,7 @@ export function Terminal() {
         // Only create timer if not already tracking
         if (!ephemeralTimers.has(info.paneId)) {
           const timer = setTimeout(() => {
-            console.debug(`[Terminal] Auto-pinning ephemeral pane ${info.paneId} after ${EPHEMERAL_TIMEOUT_MS}ms`);
+            logger.debug(`Auto-pinning ephemeral pane ${info.paneId} after ${EPHEMERAL_TIMEOUT_MS}ms`);
             pinPane(info.tabId, info.paneId);
             ephemeralTimers.delete(info.paneId);
           }, EPHEMERAL_TIMEOUT_MS);
@@ -1258,7 +1261,7 @@ export function Terminal() {
                   isBeingDragged={draggingTabId() === info().tabId && draggingPaneId() === info().paneId}
                   onPtySpawn={(pid) => handlePtySpawn(info().paneId, pid)}
                   onPtyExit={() => handlePtyExit(info().paneId).catch(e =>
-                    console.error(`[Terminal] Unhandled error in handlePtyExit:`, e)
+                    logger.error('Unhandled error in handlePtyExit', { err: e })
                   )}
                   onTitleChange={(title) => handleTitleChange(info().paneId, title)}
                   onSemanticStateChange={(state) => {

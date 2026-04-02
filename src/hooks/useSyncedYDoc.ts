@@ -32,6 +32,10 @@ import {
   recordPhantomChildrenRemoved,
   recordCrossParentFixes,
 } from '../lib/syncDiagnostics';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('useSyncedYDoc');
+const wsLogger = createLogger('WS');
 
 // ═══════════════════════════════════════════════════════════════
 // SYNC STATUS (singleton signals for UI visibility)
@@ -96,7 +100,7 @@ export async function forceSyncNow(): Promise<void> {
   if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
 
   if (!isClientInitialized()) {
-    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot force sync');
+    logger.warn('HTTP client not initialized, cannot force sync');
     return;
   }
 
@@ -119,9 +123,9 @@ export async function forceSyncNow(): Promise<void> {
     }
     setPendingCount(0);
     clearBackup(); // All synced - clear crash backup
-    console.log('[useSyncedYDoc] Force sync completed successfully');
+    logger.info('Force sync completed successfully');
   } catch (err) {
-    console.error('[useSyncedYDoc] Force sync failed:', err);
+    logger.error('Force sync failed', { err });
     // Restore unsent updates
     sharedPendingUpdates = [...updates.slice(sentCount), ...sharedPendingUpdates];
     setPendingCount(sharedPendingUpdates.length);
@@ -358,7 +362,7 @@ export function deduplicateChildIds(): number {
     if (orphanBlockIds.length > 0) {
       parts.push(`${orphanBlockIds.length} orphan blocks deleted`);
     }
-    console.warn(`[useSyncedYDoc] Tree integrity: fixed ${totalRemoved} issues (${parts.join(', ')})`);
+    logger.warn(`Tree integrity: fixed ${totalRemoved} issues (${parts.join(', ')})`);
 
     // Record diagnostics — use category-specific counts (not totalRemoved which double-counts)
     const withinArrayDedups = blockDups.reduce((sum, d) => sum + d.indicesToRemove.length, 0) + rootIndicesToRemove.length;
@@ -385,11 +389,11 @@ export function deduplicateChildIds(): number {
  */
 export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
   if (!isClientInitialized()) {
-    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot trigger resync');
+    logger.warn('HTTP client not initialized, cannot trigger resync');
     return { pushedBytes: 0 };
   }
 
-  console.log('[useSyncedYDoc] Triggering bidirectional resync');
+  logger.info('Triggering bidirectional resync');
   recordFullResync();
   const httpClient = getHttpClient();
   let pushedBytes = 0;
@@ -402,14 +406,14 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
 
       // Empty diff is ~2 bytes (just header)
       if (localDiff.length > 2) {
-        console.log(`[useSyncedYDoc] Pushing local-only diff to server: ${localDiff.length} bytes`);
+        logger.debug(`Pushing local-only diff to server: ${localDiff.length} bytes`);
         const txId = generateTxId();
         await httpClient.applyUpdate(localDiff, txId);
         pushedBytes = localDiff.length;
       }
     } catch (pushErr) {
       // Push failure is non-fatal — we still pull server state
-      console.error('[useSyncedYDoc] Failed to push local diff (continuing with pull):', pushErr);
+      logger.error('Failed to push local diff (continuing with pull)', { err: pushErr });
     }
 
     // Step 2: Pull server state to local (existing behavior)
@@ -426,14 +430,14 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
       if (latestSeq !== null) {
         seqTracker.seedFromFullSync(latestSeq);
       }
-      console.log(`[useSyncedYDoc] Bidirectional resync complete: pushed ${pushedBytes} bytes, pulled ${serverState.length} bytes, seq: ${latestSeq}`);
+      logger.info(`Bidirectional resync complete: pushed ${pushedBytes} bytes, pulled ${serverState.length} bytes, seq: ${latestSeq}`);
     } else {
-      console.log('[useSyncedYDoc] Server state empty, nothing to pull');
+      logger.info('Server state empty, nothing to pull');
     }
     setLastSyncError(null);
     return { pushedBytes };
   } catch (err) {
-    console.error('[useSyncedYDoc] Full resync failed:', err);
+    logger.error('Full resync failed', { err });
     setLastSyncError(`Resync failed: ${String(err)}`);
     throw err;
   }
@@ -492,7 +496,7 @@ async function flushUpdatesModule() {
   if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
 
   if (!isClientInitialized()) {
-    console.warn('[useSyncedYDoc] HTTP client not initialized, skipping flush');
+    logger.warn('HTTP client not initialized, skipping flush');
     return;
   }
 
@@ -520,7 +524,7 @@ async function flushUpdatesModule() {
     setPendingCount(sharedPendingUpdates.length);
   } catch (err) {
     sharedRetryCount++;
-    console.error(`Failed to sync to server (attempt ${sharedRetryCount}/${MAX_RETRIES}):`, err);
+    logger.error(`Failed to sync to server (attempt ${sharedRetryCount}/${MAX_RETRIES})`, { err });
     sharedPendingUpdates = [...updates.slice(sentCount), ...sharedPendingUpdates];
     setPendingCount(sharedPendingUpdates.length);
 
@@ -560,7 +564,7 @@ function attachHandler() {
       queueUpdateModule(update);
     };
     sharedDoc.on('update', moduleUpdateHandler);
-    console.log('[useSyncedYDoc] Attached singleton update handler');
+    logger.info('Attached singleton update handler');
   }
 }
 
@@ -573,7 +577,7 @@ function detachHandler() {
   if (handlerRefCount === 0 && moduleUpdateHandler) {
     sharedDoc.off('update', moduleUpdateHandler);
     moduleUpdateHandler = null;
-    console.log('[useSyncedYDoc] Detached singleton update handler');
+    logger.info('Detached singleton update handler');
 
     // Also clean up sync timer since no consumers remain
     if (sharedSyncTimer) {
@@ -678,7 +682,7 @@ function scheduleContiguousSeqPersist(seq: number): void {
   contiguousSeqPersistTimer = setTimeout(() => {
     contiguousSeqPersistTimer = null;
     saveLastContiguousSeqIDB(seq).catch((err: unknown) => {
-      console.warn('[useSyncedYDoc] Failed to persist lastContiguousSeq:', err);
+      logger.warn('Failed to persist lastContiguousSeq', { err });
     });
   }, CONTIGUOUS_SEQ_PERSIST_DEBOUNCE_MS);
 }
@@ -750,13 +754,13 @@ function scheduleEchoGapFetch(fromSeq: number, toSeq: number): void {
     // Check if gap was filled by intervening messages (hook broadcasts)
     const contiguous = seqTracker.lastContiguousSeq;
     if (contiguous !== null && contiguous >= pendingEchoGap.toSeq - 1) {
-      console.debug('[WS] Echo gap resolved by hook broadcasts, skipping fetch');
+      wsLogger.debug('Echo gap resolved by hook broadcasts, skipping fetch');
       pendingEchoGap = null;
       return;
     }
 
     // Gap still open — genuine missed update, fetch it
-    console.warn(`[WS] Echo gap persisted after debounce, fetching: ${pendingEchoGap.fromSeq} → ${pendingEchoGap.toSeq}`);
+    wsLogger.warn(`Echo gap persisted after debounce, fetching: ${pendingEchoGap.fromSeq} → ${pendingEchoGap.toSeq}`);
     recordEchoGapFill();
     queueGapFetch(pendingEchoGap.fromSeq, pendingEchoGap.toSeq);
     pendingEchoGap = null;
@@ -773,7 +777,7 @@ function applyWsMessage(msg: WsMessage) {
   // Echo prevention: skip APPLICATION if this is our own update
   // But still run gap detection - the seq may reveal missed updates from others
   if (msg.txId && recentTxIds.has(msg.txId)) {
-    console.log('[WS] Skipping own update application (txId:', msg.txId, ')');
+    wsLogger.debug(`Skipping own update application (txId: ${msg.txId})`);
     recentTxIds.delete(msg.txId);
 
     // Gap detection for echoed messages via tracker
@@ -782,7 +786,7 @@ function applyWsMessage(msg: WsMessage) {
     if (msg.seq !== undefined) {
       const gap = seqTracker.observeEcho(msg.seq);
       if (gap) {
-        console.debug(`[WS] Echo gap (${gap.fromSeq} → ${gap.toSeq}), deferring fetch 200ms for hook broadcasts`);
+        wsLogger.debug(`Echo gap (${gap.fromSeq} → ${gap.toSeq}), deferring fetch 200ms for hook broadcasts`);
         scheduleEchoGapFetch(gap.fromSeq, gap.toSeq);
       }
     }
@@ -794,7 +798,7 @@ function applyWsMessage(msg: WsMessage) {
   if (msg.seq !== undefined && !msg.data) {
     const gap = seqTracker.observeHeartbeat(msg.seq);
     if (gap) {
-      console.warn(`[WS] Gap detected (heartbeat): ${gap.fromSeq} → ${gap.toSeq} (missing up to ${gap.toSeq - gap.fromSeq} updates)`);
+      wsLogger.warn(`Gap detected (heartbeat): ${gap.fromSeq} → ${gap.toSeq} (missing up to ${gap.toSeq - gap.fromSeq} updates)`);
       queueGapFetch(gap.fromSeq, gap.toSeq);
     }
     return;
@@ -804,7 +808,7 @@ function applyWsMessage(msg: WsMessage) {
   // These replace the entire Y.Doc state, so pre-restore seq tracking is stale.
   // Reset before applying to avoid false gap detection against old seq values.
   if (msg.seq === undefined && msg.data) {
-    console.log('[WS] Restore broadcast detected (data without seq), resetting seq tracking');
+    wsLogger.info('Restore broadcast detected (data without seq), resetting seq tracking');
     seqTracker.resetForRestore();
   }
 
@@ -813,7 +817,7 @@ function applyWsMessage(msg: WsMessage) {
     const gap = seqTracker.observeSeq(msg.seq);
     if (gap) {
       // Gap detected! We missed seq(s) between gap.fromSeq and gap.toSeq
-      console.warn(`[WS] Gap detected: ${gap.fromSeq} → ${gap.toSeq} (missing ${gap.toSeq - gap.fromSeq - 1} updates)`);
+      wsLogger.warn(`Gap detected: ${gap.fromSeq} → ${gap.toSeq} (missing ${gap.toSeq - gap.fromSeq - 1} updates)`);
 
       // NOTE: We apply this message immediately even though earlier seq(s) are missing.
       // This is safe because Y.Doc CRDT merge is commutative — application order doesn't
@@ -838,7 +842,7 @@ function queueGapFetch(fromSeq: number, toSeq: number): void {
   if (seqTracker.isFetching) {
     // Queue the gap - will be processed after current fetch
     seqTracker.queueGap(fromSeq, toSeq);
-    console.log(`[WS] Queued gap fetch (${fromSeq} → ${toSeq}), queue size: ${seqTracker.pendingGapQueue.length}`);
+    wsLogger.debug(`Queued gap fetch (${fromSeq} → ${toSeq}), queue size: ${seqTracker.pendingGapQueue.length}`);
     return;
   }
 
@@ -846,7 +850,7 @@ function queueGapFetch(fromSeq: number, toSeq: number): void {
   // Note: fetchMissingUpdates has internal try/catch, but add .catch() for any
   // unexpected throws (e.g., dynamic import failure) to prevent unhandled rejection
   fetchMissingUpdates(fromSeq, toSeq).catch((err) =>
-    console.error('[WS] Unhandled error in gap fetch:', err)
+    wsLogger.error('Unhandled error in gap fetch', { err })
   );
 }
 
@@ -862,9 +866,9 @@ function processNextQueuedGap(): void {
     return;
   }
 
-  console.log(`[WS] Processing consolidated queued gap: ${consolidated.fromSeq} → ${consolidated.toSeq} (contiguous: ${seqTracker.lastContiguousSeq})`);
+  wsLogger.debug(`Processing consolidated queued gap: ${consolidated.fromSeq} → ${consolidated.toSeq} (contiguous: ${seqTracker.lastContiguousSeq})`);
   fetchMissingUpdates(consolidated.fromSeq, consolidated.toSeq).catch((err) =>
-    console.error('[WS] Unhandled error in queued gap fetch:', err)
+    wsLogger.error('Unhandled error in queued gap fetch', { err })
   );
 }
 
@@ -876,7 +880,7 @@ function processNextQueuedGap(): void {
 async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void> {
   // Guard against concurrent fetches (shouldn't happen with queue, but be safe)
   if (!seqTracker.markFetchStarted()) {
-    console.warn('[WS] Unexpected concurrent fetch attempt, queueing');
+    wsLogger.warn('Unexpected concurrent fetch attempt, queueing');
     seqTracker.queueGap(fromSeq, toSeq);
     return;
   }
@@ -885,7 +889,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
 
   // Large gap - full resync is faster
   if (gapSize > GAP_THRESHOLD_FOR_FULL_RESYNC) {
-    console.log(`[WS] Gap too large (${gapSize} updates), triggering full resync`);
+    wsLogger.info(`Gap too large (${gapSize} updates), triggering full resync`);
     seqTracker.resetForRestore(); // Clear queue and reset seq tracking
     seqTracker.markFetchDone();
     await triggerFullResync();
@@ -895,7 +899,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
   try {
     const { getHttpClient, isClientInitialized } = await import('../lib/httpClient');
     if (!isClientInitialized()) {
-      console.warn('[WS] HTTP client not initialized, cannot fetch missing updates');
+      wsLogger.warn('HTTP client not initialized, cannot fetch missing updates');
       return;
     }
 
@@ -905,7 +909,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
 
     if (!result.ok) {
       // 410 Gone - updates were compacted, need full resync
-      console.warn('[WS] Updates compacted (through seq', result.compactedThrough, '), triggering full resync');
+      wsLogger.warn(`Updates compacted (through seq ${result.compactedThrough}), triggering full resync`);
       seqTracker.resetForRestore(); // Clear queue and reset seq tracking
       await triggerFullResync();
       return;
@@ -913,7 +917,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
 
     // Apply the missing updates
     const { updates, latestSeq } = result.response;
-    console.log(`[WS] Fetched ${updates.length} missing updates (seq ${fromSeq} → ${latestSeq ?? 'unknown'})`);
+    wsLogger.info(`Fetched ${updates.length} missing updates (seq ${fromSeq} → ${latestSeq ?? 'unknown'})`);
 
     try {
       isApplyingRemoteGlobal = true;
@@ -927,7 +931,7 @@ async function fetchMissingUpdates(fromSeq: number, toSeq: number): Promise<void
       isApplyingRemoteGlobal = false;
     }
   } catch (err) {
-    console.error('[WS] Failed to fetch missing updates:', err);
+    wsLogger.error('Failed to fetch missing updates', { err });
     // Fall back to full resync on any error
     seqTracker.resetForRestore(); // Clear queue and reset seq tracking
     await triggerFullResync();
@@ -959,9 +963,9 @@ function scheduleBackup() {
     try {
       const state = Y.encodeStateAsUpdate(sharedDoc);
       await saveBackupIDB(state);
-      console.log('[useSyncedYDoc] Backed up Y.Doc to IndexedDB:', state.length, 'bytes');
+      logger.debug(`Backed up Y.Doc to IndexedDB: ${state.length} bytes`);
     } catch (err) {
-      console.error('[useSyncedYDoc] Failed to backup Y.Doc:', err);
+      logger.error('Failed to backup Y.Doc', { err });
     }
   }, BACKUP_DEBOUNCE_MS);
 }
@@ -972,10 +976,10 @@ function scheduleBackup() {
 function clearBackup() {
   clearBackupIDB()
     .then(() => {
-      console.log('[useSyncedYDoc] Cleared IndexedDB backup (synced)');
+      logger.debug('Cleared IndexedDB backup (synced)');
     })
     .catch(err => {
-      console.warn('[useSyncedYDoc] Failed to clear backup:', err);
+      logger.warn('Failed to clear backup', { err });
     });
 }
 
@@ -1004,17 +1008,17 @@ export async function getLocalBackup(): Promise<Uint8Array | null> {
     // Fallback to localStorage (legacy migration)
     const lsBackup = localStorage.getItem(YDOC_BACKUP_KEY);
     if (lsBackup) {
-      console.log('[useSyncedYDoc] Found legacy localStorage backup, migrating to IndexedDB');
+      logger.debug('Found legacy localStorage backup, migrating to IndexedDB');
       const bytes = base64ToBytes(lsBackup);
       await saveBackupIDB(bytes);
       localStorage.removeItem(YDOC_BACKUP_KEY);
-      console.log('[useSyncedYDoc] Migration complete');
+      logger.debug('Migration complete');
       return bytes;
     }
 
     return null;
   } catch (err) {
-    console.warn('[useSyncedYDoc] Failed to read backup:', err);
+    logger.warn('Failed to read backup', { err });
     return null;
   }
 }
@@ -1039,31 +1043,31 @@ async function validateSyncedState(doc: Y.Doc): Promise<void> {
     if (blockCount === 0) {
       const hadBackup = await hasBackupIDB();
       if (hadBackup) {
-        console.warn('[FLO-247] ⚠️ Server returned empty but IndexedDB backup exists!');
-        console.warn('[FLO-247] This could indicate server wipe. Check ctx_markers.db in your FLOATTY_DATA_DIR');
+        logger.warn('Server returned empty but IndexedDB backup exists!');
+        logger.warn('This could indicate server wipe. Check ctx_markers.db in your FLOATTY_DATA_DIR');
         return;
       }
     }
 
     // Suspicious: Very few blocks (might be test data)
     if (blockCount > 0 && blockCount < 10) {
-      console.warn(`[FLO-247] ⚠️ Very few blocks (${blockCount}) - might be test data`);
+      logger.warn(`Very few blocks (${blockCount}) - might be test data`);
     }
 
     // Suspicious: No roots but blocks exist (orphaned blocks)
     if (rootCount === 0 && blockCount > 0) {
-      console.warn(`[FLO-247] ⚠️ ${blockCount} blocks exist but no root IDs!`);
+      logger.warn(`${blockCount} blocks exist but no root IDs!`);
       return;
     }
 
     // Suspicious: More roots than expected (usually 2-3)
     if (rootCount > 20) {
-      console.warn(`[FLO-247] ⚠️ Unusually many root blocks (${rootCount})`);
+      logger.warn(`Unusually many root blocks (${rootCount})`);
     }
 
-    console.log(`[FLO-247] ✓ State looks healthy: ${blockCount} blocks, ${rootCount} roots`);
+    logger.info(`State looks healthy: ${blockCount} blocks, ${rootCount} roots`);
   } catch (err) {
-    console.warn('[FLO-247] Sanity check failed:', err);
+    logger.warn('Sanity check failed', { err });
   }
 }
 
@@ -1078,7 +1082,7 @@ async function forceFlushOnReconnect() {
   if (sharedIsFlushing || sharedPendingUpdates.length === 0) return;
 
   if (!isClientInitialized()) {
-    console.warn('[useSyncedYDoc] HTTP client not initialized, cannot flush');
+    logger.warn('HTTP client not initialized, cannot flush');
     return;
   }
 
@@ -1095,9 +1099,9 @@ async function forceFlushOnReconnect() {
     }
     sharedRetryCount = 0;
     setPendingCount(sharedPendingUpdates.length);
-    console.log('[WS] Successfully flushed pending updates on reconnect');
+    wsLogger.info('Successfully flushed pending updates on reconnect');
   } catch (err) {
-    console.error('[WS] Failed to flush pending updates on reconnect:', err);
+    wsLogger.error('Failed to flush pending updates on reconnect', { err });
     // Restore updates for retry
     sharedPendingUpdates = [...updates, ...sharedPendingUpdates];
     setPendingCount(sharedPendingUpdates.length);
@@ -1121,19 +1125,19 @@ function connectWebSocket() {
   // Get server URL from httpClient config
   const serverUrl = window.__FLOATTY_SERVER_URL__;
   if (!serverUrl) {
-    console.warn('[WS] Server URL not set, skipping WebSocket');
+    wsLogger.warn('Server URL not set, skipping WebSocket');
     return;
   }
 
   // Convert http://localhost:8765 to ws://localhost:8765/ws
   const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
-  console.log('[WS] Connecting to', wsUrl);
+  wsLogger.info(`Connecting to ${wsUrl}`);
 
   try {
     sharedWebSocket = new WebSocket(wsUrl);
 
     sharedWebSocket.onopen = () => {
-      console.log('[WS] Connected');
+      wsLogger.info('Connected');
       // Reset retry count on successful connection
       wsRetryCount = 0;
 
@@ -1164,7 +1168,7 @@ function connectWebSocket() {
           try {
             // 1. Flush local pending updates first
             if (sharedPendingUpdates.length > 0) {
-              console.log('[WS] Flushing', sharedPendingUpdates.length, 'pending updates on reconnect');
+              wsLogger.debug(`Flushing ${sharedPendingUpdates.length} pending updates on reconnect`);
               if (sharedSyncTimer) {
                 clearTimeout(sharedSyncTimer);
                 sharedSyncTimer = null;
@@ -1183,7 +1187,7 @@ function connectWebSocket() {
             const MAX_RECONNECT_PAGES = 50;
             let syncedIncrementally = false;
             if (seqTracker.lastSeenSeq !== null) {
-              console.log('[WS] Attempting incremental reconnect sync (since seq:', seqTracker.lastSeenSeq, ')');
+              wsLogger.debug(`Attempting incremental reconnect sync (since seq: ${seqTracker.lastSeenSeq})`);
               let currentSeq = seqTracker.lastSeenSeq;
               let totalApplied = 0;
               let pageCount = 0;
@@ -1195,7 +1199,7 @@ function connectWebSocket() {
 
                 if (!result.ok) {
                   // 410 Gone - updates were compacted, need full resync
-                  console.warn('[WS] Incremental sync unavailable (compacted through', result.compactedThrough, '), falling back to full sync');
+                  wsLogger.warn(`Incremental sync unavailable (compacted through ${result.compactedThrough}), falling back to full sync`);
                   break;
                 }
 
@@ -1204,16 +1208,16 @@ function connectWebSocket() {
                 if (updates.length === 0) {
                   // No more updates to fetch
                   if (totalApplied > 0) {
-                    console.log(`[WS] Incremental sync complete: applied ${totalApplied} updates total`);
+                    wsLogger.info(`Incremental sync complete: applied ${totalApplied} updates total`);
                   } else {
-                    console.log('[WS] Incremental sync: no new updates (already up to date)');
+                    wsLogger.debug('Incremental sync: no new updates (already up to date)');
                   }
                   syncedIncrementally = true;
                   break;
                 }
 
                 // Apply this page of updates
-                console.log(`[WS] Incremental sync: applying ${updates.length} updates (seq ${currentSeq} → ${updates[updates.length - 1].seq})`);
+                wsLogger.debug(`Incremental sync: applying ${updates.length} updates (seq ${currentSeq} → ${updates[updates.length - 1].seq})`);
                 try {
                   isApplyingRemoteGlobal = true;
                   for (const entry of updates) {
@@ -1230,7 +1234,7 @@ function connectWebSocket() {
 
                 // Check if we've caught up (latestSeq matches what we just applied)
                 if (latestSeq !== null && currentSeq >= latestSeq) {
-                  console.log(`[WS] Incremental sync complete: applied ${totalApplied} updates, caught up to seq ${latestSeq}`);
+                  wsLogger.info(`Incremental sync complete: applied ${totalApplied} updates, caught up to seq ${latestSeq}`);
                   syncedIncrementally = true;
                   break;
                 }
@@ -1240,7 +1244,7 @@ function connectWebSocket() {
 
               // Hit page ceiling without catching up - fall back to full sync
               if (pageCount >= MAX_RECONNECT_PAGES && !syncedIncrementally) {
-                console.warn(`[WS] Incremental sync exceeded ${MAX_RECONNECT_PAGES} pages (${totalApplied} updates), falling back to full sync`);
+                wsLogger.warn(`Incremental sync exceeded ${MAX_RECONNECT_PAGES} pages (${totalApplied} updates), falling back to full sync`);
               }
             }
 
@@ -1248,7 +1252,7 @@ function connectWebSocket() {
             if (!syncedIncrementally) {
               const { state: serverState, latestSeq } = await httpClient.getState();
               if (serverState && serverState.length > 2) {
-                console.log('[WS] Full state sync after reconnect:', serverState.length, 'bytes');
+                wsLogger.info(`Full state sync after reconnect: ${serverState.length} bytes`);
                 // FLO-256: Wrap in isApplyingRemoteGlobal to prevent update observer from echoing
                 try {
                   isApplyingRemoteGlobal = true;
@@ -1261,13 +1265,13 @@ function connectWebSocket() {
               // Full state means all seqs up to latestSeq are covered + clears gap queue
               if (latestSeq !== null) {
                 seqTracker.seedFromFullSync(latestSeq);
-                console.log('[WS] Seq tracking re-seeded to:', latestSeq);
+                wsLogger.debug(`Seq tracking re-seeded to: ${latestSeq}`);
               }
             }
 
             // FLO-152: Guard against stale IIFE from previous connection
             if (thisConnectionId !== wsConnectionId) {
-              console.log('[WS] Stale connection IIFE, ignoring');
+              wsLogger.debug('Stale connection IIFE, ignoring');
               return;
             }
 
@@ -1280,17 +1284,17 @@ function connectWebSocket() {
 
               if (shouldStartOverflowRecovery(wsBufferOverflowLatched, wsOverflowRecoveryInFlight)) {
                 wsOverflowRecoveryInFlight = true;
-                console.warn('[WS] Reconnect buffer overflow latched, triggering forced recovery sync');
+                wsLogger.warn('Reconnect buffer overflow latched, triggering forced recovery sync');
                 try {
                   await triggerFullResync();
                 } catch (resyncErr) {
-                  console.error('[WS] Forced overflow recovery failed:', resyncErr);
+                  wsLogger.error('Forced overflow recovery failed', { err: resyncErr });
                   setLastSyncError(`Overflow recovery failed: ${String(resyncErr)}`);
                 } finally {
                   wsOverflowRecoveryInFlight = false;
                 }
               } else {
-                console.warn('[WS] Overflow recovery already running, skipping duplicate trigger');
+                wsLogger.warn('Overflow recovery already running, skipping duplicate trigger');
               }
 
               wsBufferOverflowLatched = false;
@@ -1298,16 +1302,16 @@ function connectWebSocket() {
             }
 
             // FLO-152: NOW safe to process messages - replay buffered ones
-            console.log('[WS] Reconnect sync complete, replaying', wsMessageBuffer.length, 'buffered messages');
+            wsLogger.info(`Reconnect sync complete, replaying ${wsMessageBuffer.length} buffered messages`);
             for (const msg of wsMessageBuffer) {
               applyWsMessage(msg);
             }
             wsMessageBuffer = [];
           } catch (err) {
-            console.error('[WS] Reconnect sync failed:', err);
+            wsLogger.error('Reconnect sync failed', { err });
             // FLO-152: Guard against stale IIFE from previous connection
             if (thisConnectionId !== wsConnectionId) {
-              console.log('[WS] Stale connection IIFE error path, ignoring');
+              wsLogger.debug('Stale connection IIFE error path, ignoring');
               return;
             }
             // Even on failure, start accepting messages (better than blocking forever)
@@ -1318,17 +1322,17 @@ function connectWebSocket() {
             if (wsBufferOverflowLatched) {
               if (shouldStartOverflowRecovery(wsBufferOverflowLatched, wsOverflowRecoveryInFlight)) {
                 wsOverflowRecoveryInFlight = true;
-                console.warn('[WS] Reconnect failed with overflow latched, forcing recovery sync');
+                wsLogger.warn('Reconnect failed with overflow latched, forcing recovery sync');
                 try {
                   await triggerFullResync();
                 } catch (resyncErr) {
-                  console.error('[WS] Forced overflow recovery after reconnect failure failed:', resyncErr);
+                  wsLogger.error('Forced overflow recovery after reconnect failure failed', { err: resyncErr });
                   setLastSyncError(`Overflow recovery failed: ${String(resyncErr)}`);
                 } finally {
                   wsOverflowRecoveryInFlight = false;
                 }
               } else {
-                console.warn('[WS] Overflow recovery already running after reconnect failure');
+                wsLogger.warn('Overflow recovery already running after reconnect failure');
               }
 
               wsBufferOverflowLatched = false;
@@ -1346,7 +1350,7 @@ function connectWebSocket() {
         wsReadyForMessages = true;
         wsMessageBuffer = [];
         wsBufferOverflowLatched = false;
-        console.log('[WS] First connection — accepting messages immediately (no redundant fetch)');
+        wsLogger.debug('First connection — accepting messages immediately (no redundant fetch)');
       }
     };
 
@@ -1367,18 +1371,18 @@ function connectWebSocket() {
             if (bufferAction === 'buffer') {
               wsMessageBuffer.push(msg);
               if (msg.seq !== undefined) {
-                console.log('[WS] Buffered message during reconnect sync (seq:', msg.seq, ', total:', wsMessageBuffer.length, ')');
+                wsLogger.debug(`Buffered message during reconnect sync (seq: ${msg.seq}, total: ${wsMessageBuffer.length})`);
               } else {
-                console.log('[WS] Buffered message during reconnect sync (total:', wsMessageBuffer.length, ')');
+                wsLogger.debug(`Buffered message during reconnect sync (total: ${wsMessageBuffer.length})`);
               }
             } else if (bufferAction === 'overflow-first') {
               wsBufferOverflowLatched = true;
               wsMessageBuffer = [];
               setSyncStatus('drift');
               setLastSyncError(`WebSocket reconnect buffer overflowed (${WS_MESSAGE_BUFFER_MAX} messages); forcing recovery sync`);
-              console.error('[WS] Message buffer overflow during reconnect sync, replay disabled until forced recovery');
+              wsLogger.error('Message buffer overflow during reconnect sync, replay disabled until forced recovery');
             } else {
-              console.warn('[WS] Message dropped while overflow recovery is latched');
+              wsLogger.warn('Message dropped while overflow recovery is latched');
             }
             return;
           }
@@ -1386,13 +1390,13 @@ function connectWebSocket() {
           // Ready for messages - apply directly
           applyWsMessage(msg);
         } catch (err) {
-          console.error('[WS] Failed to parse message:', err);
+          wsLogger.error('Failed to parse message', { err });
         }
       }
     };
 
     sharedWebSocket.onclose = (event) => {
-      console.log('[WS] Disconnected, code:', event.code);
+      wsLogger.info(`Disconnected, code: ${event.code}`);
       sharedWebSocket = null;
       // Reconnect with exponential backoff
       if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
@@ -1401,12 +1405,12 @@ function connectWebSocket() {
         WS_MAX_RECONNECT_DELAY
       );
       wsRetryCount++;
-      console.log(`[WS] Reconnecting in ${backoffDelay}ms (attempt ${wsRetryCount})`);
+      wsLogger.debug(`Reconnecting in ${backoffDelay}ms (attempt ${wsRetryCount})`);
       wsReconnectTimer = window.setTimeout(connectWebSocket, backoffDelay);
     };
 
     sharedWebSocket.onerror = (error) => {
-      console.error('[WS] Error:', error);
+      wsLogger.error('Error', { err: error });
       // Update sync status so UI can show error state
       // Note: WebSocket error events don't contain useful details - the actual
       // diagnostic info comes through onclose. Set generic message here.
@@ -1415,7 +1419,7 @@ function connectWebSocket() {
       // onclose will fire next and handle reconnection
     };
   } catch (err) {
-    console.error('[WS] Failed to connect:', err);
+    wsLogger.error('Failed to connect', { err });
     setSyncStatus('error');
     setLastSyncError(`WebSocket connection failed: ${err}`);
     // Schedule reconnect — onclose won't fire since the socket never opened
@@ -1425,7 +1429,7 @@ function connectWebSocket() {
       WS_MAX_RECONNECT_DELAY
     );
     wsRetryCount++;
-    console.log(`[WS] Reconnecting in ${backoffDelay}ms (attempt ${wsRetryCount})`);
+    wsLogger.debug(`Reconnecting in ${backoffDelay}ms (attempt ${wsRetryCount})`);
     wsReconnectTimer = window.setTimeout(connectWebSocket, backoffDelay);
   }
 }
@@ -1508,7 +1512,7 @@ export function useSyncedYDoc(
             const config = await invoke<AggregatorConfig>('get_ctx_config', {});
             initBackupNamespace(config.workspace_name || 'default');
           } catch (configErr) {
-            console.warn('[useSyncedYDoc] Failed to load config for namespace, using unknown:', configErr);
+            logger.warn('Failed to load config for namespace, using unknown', { err: configErr });
             initBackupNamespace('unknown');
           }
 
@@ -1522,10 +1526,10 @@ export function useSyncedYDoc(
             if (persistedSeq !== null) {
               // Seed tracker with persisted contiguous seq (sets both values)
               seqTracker.seedFromFullSync(persistedSeq);
-              console.log('[useSyncedYDoc] Loaded persisted lastContiguousSeq:', persistedSeq);
+              logger.debug(`Loaded persisted lastContiguousSeq: ${persistedSeq}`);
             }
           } catch (seqErr) {
-            console.warn('[useSyncedYDoc] Failed to load lastContiguousSeq:', seqErr);
+            logger.warn('Failed to load lastContiguousSeq', { err: seqErr });
           }
 
           // Ensure HTTP client is initialized
@@ -1539,7 +1543,7 @@ export function useSyncedYDoc(
           const localBackup = await getLocalBackup();
 
           if (localBackup) {
-            console.log('[useSyncedYDoc] Found backup, attempting reconciliation...');
+            logger.debug('Found backup, attempting reconciliation...');
 
             // Track whether local changes were successfully pushed
             let hadLocalChanges = false;
@@ -1556,7 +1560,7 @@ export function useSyncedYDoc(
               // If diff is substantial (empty diff is ~2 bytes), push our changes first
               hadLocalChanges = localDiff.length > 2;
               if (hadLocalChanges) {
-                console.log('[useSyncedYDoc] Pushing local changes to server:', localDiff.length, 'bytes');
+                logger.debug(`Pushing local changes to server: ${localDiff.length} bytes`);
                 await httpClient.applyUpdate(localDiff);
                 localChangesPushed = true;
               }
@@ -1577,10 +1581,10 @@ export function useSyncedYDoc(
                 seqTracker.seedFromFullSync(latestSeq);
               }
 
-              console.log('[useSyncedYDoc] Reconciliation complete, seq:', latestSeq, ', clearing backup');
+              logger.info(`Reconciliation complete, seq: ${latestSeq}, clearing backup`);
               clearBackup();
             } catch (reconcileErr) {
-              console.error('[useSyncedYDoc] Reconciliation failed, falling back to server state:', reconcileErr);
+              logger.error('Reconciliation failed, falling back to server state', { err: reconcileErr });
 
               // Try to load server state as fallback
               try {
@@ -1598,17 +1602,17 @@ export function useSyncedYDoc(
                   }
                 }
               } catch (stateErr) {
-                console.error('[useSyncedYDoc] Failed to load server state:', stateErr);
+                logger.error('Failed to load server state', { err: stateErr });
               }
 
               // CRITICAL: Only clear backup if we successfully pushed local changes,
               // or if there were no local changes to begin with.
               // If push failed, preserve backup to retry next time.
               if (!hadLocalChanges || localChangesPushed) {
-                console.warn('[useSyncedYDoc] Clearing backup (no local changes or already pushed)');
+                logger.warn('Clearing backup (no local changes or already pushed)');
                 clearBackup();
               } else {
-                console.warn('[useSyncedYDoc] PRESERVING backup - local changes failed to push, will retry next startup');
+                logger.warn('PRESERVING backup - local changes failed to push, will retry next startup');
                 // Don't clear - user's local changes are still in IndexedDB
               }
             }
@@ -1626,7 +1630,7 @@ export function useSyncedYDoc(
               // Seed seq tracking via tracker (full state = all seqs covered)
               if (latestSeq !== null) {
                 seqTracker.seedFromFullSync(latestSeq);
-                console.log('[useSyncedYDoc] Initial load complete, seq:', latestSeq);
+                logger.info(`Initial load complete, seq: ${latestSeq}`);
               }
             }
           }
@@ -1654,16 +1658,16 @@ export function useSyncedYDoc(
 
           // FLO-247: Startup sanity check - detect suspicious state
           validateSyncedState(doc).catch(err => {
-            console.warn('[FLO-247] Startup sanity check error:', err);
+            logger.warn('Startup sanity check error', { err });
           });
 
           // FLO-280: Dedup childIds on startup (catches pre-existing duplicates)
           const startupDeduped = deduplicateChildIds();
           if (startupDeduped > 0) {
-            console.warn(`[useSyncedYDoc] Startup dedup removed ${startupDeduped} duplicate childIds`);
+            logger.warn(`Startup dedup removed ${startupDeduped} duplicate childIds`);
           }
         } catch (err) {
-          console.error('Failed to load initial state from server:', err);
+          logger.error('Failed to load initial state from server', { err });
           sharedDocError = String(err);
         }
       })();
@@ -1676,7 +1680,7 @@ export function useSyncedYDoc(
     // Attach singleton handler (ref-counted - only first caller actually attaches)
     attachHandler();
     loadInitialState().catch(err => {
-      console.error('[useSyncedYDoc] loadInitialState failed:', err);
+      logger.error('loadInitialState failed', { err });
       setSyncStatus('error');
     });
 
@@ -1735,7 +1739,7 @@ export function useSyncedYDoc(
  * Preserves Y.Doc data but closes connections and resets flags.
  */
 function cleanupForHMR(): void {
-  console.log('[useSyncedYDoc] HMR cleanup triggered');
+  logger.info('HMR cleanup triggered');
 
   // Close WebSocket cleanly (prevent reconnect attempt)
   if (sharedWebSocket) {

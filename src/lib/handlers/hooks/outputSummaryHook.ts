@@ -18,6 +18,9 @@ import {
   EventFilters,
 } from '../../events';
 import { blockStore } from '../../../hooks/useBlockStore';
+import { createLogger } from '../../logger';
+
+const logger = createLogger('outputSummaryHook');
 
 // ═══════════════════════════════════════════════════════════════
 // SUMMARY EXTRACTION
@@ -105,7 +108,7 @@ function handleBlockEvent(envelope: EventEnvelope): void {
     if (summary === (block.metadata?.summary ?? null)) continue;
 
     if (summary) {
-      console.log('[outputSummaryHook] Extracted summary:', {
+      logger.debug('Extracted summary', {
         blockId: block.id,
         summary: summary.slice(0, 80),
       });
@@ -126,7 +129,7 @@ let _subscriptionId: string | null = null;
 
 export function registerOutputSummaryHook(): void {
   if (_subscriptionId) {
-    console.log('[outputSummaryHook] Already registered');
+    logger.debug('Already registered');
     return;
   }
 
@@ -136,14 +139,14 @@ export function registerOutputSummaryHook(): void {
     name: 'output-summary-extractor',
   });
 
-  console.log('[outputSummaryHook] Registered with EventBus');
+  logger.info('Registered with EventBus');
 }
 
 export function unregisterOutputSummaryHook(): void {
   if (_subscriptionId) {
     blockEventBus.unsubscribe(_subscriptionId);
     _subscriptionId = null;
-    console.log('[outputSummaryHook] Unregistered from EventBus');
+    logger.debug('Unregistered from EventBus');
   }
 }
 

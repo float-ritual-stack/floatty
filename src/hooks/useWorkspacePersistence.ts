@@ -17,6 +17,9 @@
 
 import { invoke } from '../lib/tauriTypes';
 import { createSignal } from 'solid-js';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('WorkspacePersistence');
 import { tabStore, type Tab } from './useTabStore';
 import { layoutStore } from './useLayoutStore';
 import { paneStore } from './usePaneStore';
@@ -81,7 +84,7 @@ export function createWorkspacePersistence() {
       );
 
       if (!stored) {
-        console.log('[WorkspacePersistence] No saved state found, using defaults');
+        logger.info('No saved state found, using defaults');
         setIsLoaded(true);
         return false;
       }
@@ -96,14 +99,14 @@ export function createWorkspacePersistence() {
 
       // Version check (future: migration logic)
       if (state.version !== SCHEMA_VERSION) {
-        console.warn(`[WorkspacePersistence] Schema version mismatch (${state.version} vs ${SCHEMA_VERSION}), using defaults`);
+        logger.warn(`Schema version mismatch (${state.version} vs ${SCHEMA_VERSION}), using defaults`);
         setIsLoaded(true);
         return false;
       }
 
       // Validate minimal structure
       if (!state.tabs || state.tabs.length === 0) {
-        console.warn('[WorkspacePersistence] Invalid state: no tabs, using defaults');
+        logger.warn('Invalid state: no tabs, using defaults');
         setIsLoaded(true);
         return false;
       }
@@ -120,7 +123,7 @@ export function createWorkspacePersistence() {
       const tabIds = new Set(state.tabs.map((t) => t.id));
       let activeTabId = state.activeTabId;
       if (activeTabId && !tabIds.has(activeTabId)) {
-        console.warn(`[WorkspacePersistence] activeTabId '${activeTabId}' not found in tabs, falling back to first tab`);
+        logger.warn(`activeTabId '${activeTabId}' not found in tabs, falling back to first tab`);
         activeTabId = state.tabs[0].id;
       }
 
@@ -152,12 +155,12 @@ export function createWorkspacePersistence() {
         nextSaveSeq = hydratedSaveSeq;
       }
 
-      console.log(`[WorkspacePersistence] Restored workspace: ${state.tabs.length} tabs`);
+      logger.info(`Restored workspace: ${state.tabs.length} tabs`);
       setIsLoaded(true);
       return true;
 
     } catch (err) {
-      console.error('[WorkspacePersistence] Failed to load workspace:', err);
+      logger.error('Failed to load workspace', { err });
       setLoadError(String(err));
       setIsLoaded(true);
       return false;
@@ -198,13 +201,13 @@ export function createWorkspacePersistence() {
       const accepted = await invoke<boolean>('save_workspace_state', { key: WORKSPACE_KEY, stateJson, saveSeq });
 
       if (!accepted) {
-        console.error(`[WorkspacePersistence] Save rejected: stale seq ${saveSeq}`);
+        logger.error(`Save rejected: stale seq ${saveSeq}`);
       } else {
-        console.debug('[WorkspacePersistence] Saved workspace state');
+        logger.debug('Saved workspace state');
       }
 
     } catch (err) {
-      console.error('[WorkspacePersistence] Failed to save workspace:', err);
+      logger.error('Failed to save workspace', { err });
     }
   }
 

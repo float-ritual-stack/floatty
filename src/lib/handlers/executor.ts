@@ -16,6 +16,9 @@
 import type { BlockHandler, ExecutorActions } from './types';
 import type { HookBlockStore, HookContext, HookResult } from '../hooks/types';
 import { hookRegistry } from '../hooks/hookRegistry';
+import { createLogger } from '../logger';
+
+const logger = createLogger('executor');
 
 // ═══════════════════════════════════════════════════════════════
 // EXECUTOR
@@ -43,7 +46,7 @@ export async function executeHandler(
   // 1. Get block for context
   const block = store.getBlock(blockId);
   if (!block) {
-    console.warn('[executor] Block not found:', blockId);
+    logger.warn(`Block not found: ${blockId}`);
     return;
   }
 
@@ -60,13 +63,13 @@ export async function executeHandler(
   try {
     hookResult = await hookRegistry.run('execute:before', beforeCtx);
   } catch (err) {
-    console.error('[executor] execute:before hooks failed:', err);
+    logger.error('execute:before hooks failed', { err });
     // Continue with execution even if hooks fail
   }
 
   // 4. Check for abort
   if (hookResult.abort) {
-    console.log('[executor] Execution aborted by hook:', hookResult.reason);
+    logger.info(`Execution aborted by hook: ${hookResult.reason}`);
     if (actions.updateBlockContent) {
       actions.updateBlockContent(blockId, `blocked:: ${hookResult.reason ?? 'Blocked by hook'}`);
     }
@@ -91,7 +94,7 @@ export async function executeHandler(
   try {
     await handler.execute(blockId, finalContent, extendedActions);
   } catch (err) {
-    console.error('[executor] Handler execution failed:', err);
+    logger.error('Handler execution failed', { err });
 
     // 8. Run execute:after with error
     const afterCtx: HookContext = {
@@ -105,7 +108,7 @@ export async function executeHandler(
     try {
       await hookRegistry.run('execute:after', afterCtx);
     } catch (afterErr) {
-      console.error('[executor] execute:after hooks failed:', afterErr);
+      logger.error('execute:after hooks failed', { err: afterErr });
     }
 
     throw err; // Re-throw to let caller handle
@@ -122,7 +125,7 @@ export async function executeHandler(
   try {
     await hookRegistry.run('execute:after', afterCtx);
   } catch (err) {
-    console.error('[executor] execute:after hooks failed:', err);
+    logger.error('execute:after hooks failed', { err });
     // Don't throw - execution already succeeded
   }
 }

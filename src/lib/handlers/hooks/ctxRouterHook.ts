@@ -19,6 +19,9 @@ import {
 import { hasCtxPatterns, parseAllInlineTokens } from '../../inlineParser';
 import type { Marker } from '../../../generated/Marker';
 import { blockStore } from '../../../hooks/useBlockStore';
+import { createLogger } from '../../logger';
+
+const logger = createLogger('ctxRouterHook');
 
 // ═══════════════════════════════════════════════════════════════
 // MARKER EXTRACTION
@@ -90,7 +93,7 @@ function handleBlockEvent(envelope: EventEnvelope): void {
 
     // Store markers in block metadata (empty array clears stale markers)
     if (markers.length > 0) {
-      console.log('[ctxRouterHook] Extracted markers:', {
+      logger.debug('Extracted markers', {
         blockId: block.id,
         markers: markers.map(m => `${m.markerType}::${m.value ?? ''}`),
       });
@@ -127,7 +130,7 @@ let _subscriptionId: string | null = null;
  */
 export function registerCtxRouterHook(): void {
   if (_subscriptionId) {
-    console.log('[ctxRouterHook] Already registered');
+    logger.debug('Already registered');
     return;
   }
 
@@ -140,7 +143,7 @@ export function registerCtxRouterHook(): void {
     name: 'ctx-router',
   });
 
-  console.log('[ctxRouterHook] Registered with EventBus');
+  logger.info('Registered with EventBus');
 }
 
 /**
@@ -150,7 +153,7 @@ export function unregisterCtxRouterHook(): void {
   if (_subscriptionId) {
     blockEventBus.unsubscribe(_subscriptionId);
     _subscriptionId = null;
-    console.log('[ctxRouterHook] Unregistered from EventBus');
+    logger.debug('Unregistered from EventBus');
   }
 }
 

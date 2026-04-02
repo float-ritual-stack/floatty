@@ -14,6 +14,9 @@ import { blockStore } from '../hooks/useBlockStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { collectLeaves, type PaneLeaf } from './layoutTypes';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE, type Block } from './blockTypes';
+import { createLogger } from './logger';
+
+const logger = createLogger('navigation');
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -75,7 +78,7 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   const { paneId, splitDirection, highlight, originBlockId } = options;
 
   if (!paneId) {
-    console.warn('[navigation] navigateToBlock: no paneId provided');
+    logger.warn('navigateToBlock: no paneId provided');
     return { success: false, targetPaneId: null, error: 'No paneId provided' };
   }
 
@@ -85,14 +88,14 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
     // Find tab for this pane to do split
     const tabId = findTabIdByPaneId(paneId);
     if (!tabId) {
-      console.warn('[navigation] Could not find tabId for pane, using current pane');
+      logger.warn('Could not find tabId for pane, using current pane');
     } else {
       // Split in requested direction
       const newPaneId = layoutStore.splitPane(tabId, splitDirection, 'outliner');
       if (newPaneId) {
         targetPaneId = newPaneId;
       } else {
-        console.warn('[navigation] Split failed, using current pane');
+        logger.warn('Split failed, using current pane');
       }
     }
   }
@@ -139,7 +142,7 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
   const { paneId, splitDirection, highlight, originBlockId, ephemeral } = options;
 
   if (!paneId) {
-    console.warn('[navigation] navigateToPage: no paneId provided');
+    logger.warn('navigateToPage: no paneId provided');
     return { success: false, targetPaneId: null, error: 'No paneId provided' };
   }
 
@@ -190,7 +193,7 @@ export function scrollToBlock(blockId: string): void {
   if (element) {
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
   } else {
-    console.warn('[navigation] scrollToBlock: element not found', { blockId });
+    logger.warn('scrollToBlock: element not found', { blockId });
   }
 }
 
@@ -237,7 +240,7 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
     // Existence check: block must actually be in this outline
     const block = blockStore.getBlock(effectiveId);
     if (!block) {
-      console.warn('[navigation] chirp navigate: block not in outline', {
+      logger.warn('chirp navigate: block not in outline', {
         target: effectiveId,
         blockCount: blockIds.length,
       });
@@ -254,7 +257,7 @@ export function handleChirpNavigate(target: string, opts: ChirpNavigateOptions):
 
   // Guard: hex prefix that didn't resolve → never create page for block ID lookalikes
   if (BLOCK_ID_PREFIX_RE.test(target)) {
-    console.warn('[navigation] chirp navigate: block ID prefix did not resolve', {
+    logger.warn('chirp navigate: block ID prefix did not resolve', {
       target,
       blockCount: blockIds.length,
     });
@@ -384,7 +387,7 @@ function scrollAndHighlightWithRetry(blockId: string, paneId: string, initialDel
         setTimeout(tryScrollAndHighlight, 16);
       });
     } else {
-      console.warn('[navigation] scrollAndHighlightWithRetry: block not found after max attempts', { blockId, paneId });
+      logger.warn('scrollAndHighlightWithRetry: block not found after max attempts', { blockId, paneId });
       // Clean up token on exhaustion
       if (pendingRetryTokenByPaneId.get(paneId) === token) {
         pendingRetryTokenByPaneId.delete(paneId);

@@ -19,6 +19,8 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
 import { readText, readImageBase64, readFiles, writeText as clipboardWriteText } from 'tauri-plugin-clipboard-api';
+import { createLogger } from './logger';
+import { defaultTheme, toXtermTheme } from './themes';
 
 // Batched clipboard info from Rust (image/text detection via arboard)
 // File detection handled separately by tauri-plugin-clipboard-api's readFiles()
@@ -39,12 +41,12 @@ const tauriClipboardProvider: IClipboardProvider = {
     try {
       await clipboardWriteText(text);
     } catch (e) {
-      console.warn('[ClipboardProvider] Failed to write to clipboard:', e);
+      logger.warn('Failed to write to clipboard', { err: e });
     }
   },
 };
 
-import { defaultTheme, toXtermTheme } from './themes';
+const logger = createLogger('TerminalManager');
 
 // Terminal font config from ~/.floatty/config.toml
 interface TerminalConfig {
@@ -150,7 +152,7 @@ class TerminalManager {
       try {
         instance.webglAddon.dispose();
       } catch (e) {
-        console.warn(`[TerminalManager] WebGL dispose failed for ${id}:`, e);
+        logger.warn(`WebGL dispose failed for ${id}`, { err: e });
       }
       instance.webglAddon = null;
     }
@@ -160,7 +162,7 @@ class TerminalManager {
     try {
       const webglAddon = new WebglAddon();
       webglAddon.onContextLoss(() => {
-        console.warn(`[TerminalManager] WebGL context lost for ${id}, falling back to canvas`);
+        logger.warn(`WebGL context lost for ${id}, falling back to canvas`);
         webglAddon.dispose();
         const inst = this.instances.get(id);
         // Only null if this is still the active addon (a newer one may have replaced it)
@@ -169,7 +171,7 @@ class TerminalManager {
       instance.term.loadAddon(webglAddon);
       instance.webglAddon = webglAddon;
     } catch (e) {
-      console.warn(`[TerminalManager] WebGL recreation failed for ${id}:`, e);
+      logger.warn(`WebGL recreation failed for ${id}`, { err: e });
       instance.webglAddon = null;
     }
   }
@@ -188,7 +190,7 @@ class TerminalManager {
       restored++;
     }
     if (restored > 0) {
-      console.log(`[TerminalManager] Visibility restored, recreated WebGL for ${restored} terminal(s)`);
+      logger.info(`Visibility restored, recreated WebGL for ${restored} terminal(s)`);
     }
   }
 
@@ -206,9 +208,9 @@ class TerminalManager {
         line_height: fullConfig.line_height ?? defaultConfig.line_height,
       };
       this.configLoaded = true;
-      console.log('[TerminalManager] Loaded config:', this.config);
+      logger.debug('Loaded config', this.config as Record<string, unknown>);
     } catch (err) {
-      console.warn('[TerminalManager] Failed to load config, using defaults:', err);
+      logger.warn('Failed to load config, using defaults', { err });
     }
   }
 
@@ -225,7 +227,7 @@ class TerminalManager {
     if (instance) {
       // Already exists - check if container changed (happens on layout tree changes)
       if (instance.container !== container) {
-        console.log(`[TerminalManager] Re-parenting terminal ${id} to new container`);
+        logger.info(`Re-parenting terminal ${id} to new container`);
 
         // Save scroll state before re-parenting (FLO-88)
         const buffer = instance.term.buffer.active;
@@ -237,7 +239,7 @@ class TerminalManager {
           try {
             instance.webglAddon.dispose();
           } catch (e) {
-            console.warn(`[TerminalManager] WebGL dispose failed for ${id}:`, e);
+            logger.warn(`WebGL dispose failed for ${id}`, { err: e });
           }
           instance.webglAddon = null;
         }
@@ -262,17 +264,17 @@ class TerminalManager {
             cols: instance.term.cols,
             rows: instance.term.rows,
           }).catch((e) => {
-            console.error(`[TerminalManager] Resize failed for ${id}:`, e);
+            logger.error(`Resize failed for ${id}`, { err: e });
             // PTY may have died - don't write error to terminal here, it's noisy during normal exit
           });
         }
       } else {
-        console.log(`[TerminalManager] Terminal ${id} already attached to same container`);
+        logger.debug(`Terminal ${id} already attached to same container`);
       }
       return instance;
     }
 
-    console.log(`[TerminalManager] Creating new terminal ${id}`);
+    logger.info(`Creating new terminal ${id}`);
 
     // Create new terminal with config values
     const term = new XTerm({
@@ -301,25 +303,25 @@ class TerminalManager {
     try {
       term.loadAddon(new LigaturesAddon());
     } catch (e) {
-      console.warn(`[TerminalManager] Ligatures addon failed for ${id}:`, e);
+      logger.warn(`Ligatures addon failed for ${id}`, { err: e });
     }
 
     // OSC 52 clipboard support (tmux copy → system clipboard)
     try {
       term.loadAddon(new ClipboardAddon(undefined, tauriClipboardProvider));
     } catch (e) {
-      console.warn(`[TerminalManager] Clipboard addon failed for ${id}:`, e);
+      logger.warn(`Clipboard addon failed for ${id}`, { err: e });
     }
 
     // Clickable URLs in terminal output (custom handler for Tauri — window.open() is dead in webview)
     try {
       term.loadAddon(new WebLinksAddon((_event, uri) => {
         invoke('open_url', { url: uri }).catch((e) => {
-          console.warn('[WebLinks] Failed to open URL:', e);
+          logger.warn('Failed to open URL', { err: e });
         });
       }));
     } catch (e) {
-      console.warn(`[TerminalManager] WebLinks addon failed for ${id}:`, e);
+      logger.warn(`WebLinks addon failed for ${id}`, { err: e });
     }
 
     // [[wikilinks]] and [[blockref|alias]] — clickable in terminal output.
@@ -358,7 +360,7 @@ class TerminalManager {
                   sourcePaneId: id,
                   type: 'wikilink',
                 });
-              }).catch(console.error);
+              }).catch(err => logger.error('Navigation failed', { err }));
             },
           });
         }
@@ -396,14 +398,14 @@ class TerminalManager {
     // OSC 133 handler - Semantic Prompts (FLO-54)
     // Sequences: A=prompt start, B=command start, C=command exec, D;code=command done
     term.parser.registerOscHandler(133, (data: string) => {
-      console.log(`[TerminalManager] OSC 133 received: "${data}"`);
+      logger.debug(`OSC 133 received: "${data}"`);
       const inst = this.instances.get(id);
       if (!inst) return true;
 
       // Mark hooks as active on first OSC 133 received
       if (!inst.semanticState.hooksActive) {
         inst.semanticState.hooksActive = true;
-        console.log(`[TerminalManager] OSC 133 hooks detected for ${id}`);
+        logger.info(`OSC 133 hooks detected for ${id}`);
       }
 
       const code = data.charAt(0);
@@ -425,7 +427,7 @@ class TerminalManager {
           // detaches or exits, the outer shell resumes and D fires for the tmux command.
           // lastCommand still holds the tmux command that started the session.
           if (inst.semanticState.tmuxSession && /^tmux\s/.test(inst.semanticState.lastCommand)) {
-            console.log(`[TerminalManager] Clearing tmux session (user returned to outer shell)`);
+            logger.info('Clearing tmux session (user returned to outer shell)');
             inst.semanticState.tmuxSession = undefined;
           }
           this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
@@ -437,7 +439,7 @@ class TerminalManager {
 
     // OSC 1337 handler - iTerm2 custom sequences (CurrentDir)
     term.parser.registerOscHandler(1337, (data: string) => {
-      console.log(`[TerminalManager] OSC 1337 received: "${data}"`);
+      logger.debug(`OSC 1337 received: "${data}"`);
       const inst = this.instances.get(id);
       if (!inst) return true;
 
@@ -452,7 +454,7 @@ class TerminalManager {
         inst.semanticState.cwd = value;
         inst.semanticState.hooksActive = true;
         this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
-        console.log(`[TerminalManager] cwd updated: ${value}`);
+        logger.debug(`cwd updated: ${value}`);
       } else if (key === 'Command') {
         // Unescape semicolons that were escaped in shell hooks
         const cmd = value.replace(/\\;/g, ';');
@@ -471,9 +473,9 @@ class TerminalManager {
           // shell injection when interpolated into spawn args (persisted in SQLite)
           if (/^[a-zA-Z0-9_.-]+$/.test(sessionName)) {
             inst.semanticState.tmuxSession = sessionName;
-            console.log(`[TerminalManager] tmux session from command: ${sessionName}`);
+            logger.info(`tmux session from command: ${sessionName}`);
           } else {
-            console.warn(`[TerminalManager] Rejected tmux session name (invalid chars): ${sessionName}`);
+            logger.warn(`Rejected tmux session name (invalid chars): ${sessionName}`);
           }
         }
 
@@ -482,13 +484,13 @@ class TerminalManager {
         // Direct emission (e.g. if tmux allow-passthrough is enabled)
         if (!value) {
           inst.semanticState.tmuxSession = undefined;
-          console.log(`[TerminalManager] tmux session (direct): (cleared)`);
+          logger.info('tmux session (direct): (cleared)');
         } else if (/^[a-zA-Z0-9_.-]+$/.test(value)) {
           inst.semanticState.tmuxSession = value;
-          console.log(`[TerminalManager] tmux session (direct): ${value}`);
+          logger.info(`tmux session (direct): ${value}`);
         } else {
           inst.semanticState.tmuxSession = undefined;
-          console.warn(`[TerminalManager] Rejected TmuxSession OSC value (invalid chars): ${value}`);
+          logger.warn(`Rejected TmuxSession OSC value (invalid chars): ${value}`);
         }
         this.callbacks.get(id)?.onSemanticStateChange?.(inst.semanticState);
       }
@@ -524,7 +526,7 @@ class TerminalManager {
             ? ['-c', `unset TMUX; PATH=/opt/homebrew/bin:/usr/local/bin:$PATH tmux attach-session -t ${tmuxSession} 2>/dev/null; exec ${shell} -l`]
             : ['-l'];  // login shell (PTY provides TTY for interactive mode)
 
-        console.log(`[TerminalManager] spawnPty ${id}: tmuxSession=${tmuxSession ?? '(none)'}, args=${JSON.stringify(args)}`);
+        logger.info(`spawnPty ${id}: tmuxSession=${tmuxSession ?? '(none)'}, args=${JSON.stringify(args)}`);
 
         // Text buffer for ctx:: detection
         let textBuffer = '';
@@ -576,7 +578,7 @@ class TerminalManager {
         const setStickyBottom = (value: boolean, source: string) => {
           const inst = this.instances.get(id);
           if (!inst || inst.stickyBottom === value) return;
-          console.log(`[FLO-220] stickyBottom: ${inst.stickyBottom} → ${value} (${source})`);
+          logger.debug(`stickyBottom: ${inst.stickyBottom} → ${value} (${source})`);
           inst.stickyBottom = value;
           // Emit event for UI indicator
           this.callbacks.get(id)?.onStickyChange?.(value);
@@ -611,12 +613,12 @@ class TerminalManager {
         }
         const onExit = new Channel<PtyExitEvent>();
         onExit.onmessage = (event: PtyExitEvent) => {
-          console.log(`[TerminalManager] PTY ${id} exited with code ${event.exit_code}`);
+          logger.info(`PTY ${id} exited with code ${event.exit_code}`);
 
           // Check if this exit was triggered by dispose() (keyboard-initiated close)
           // In that case, skip onPtyExit callback - dispose() already handled cleanup
           if (this.disposing.has(id)) {
-            console.debug(`[TerminalManager] Skipping onPtyExit for ${id} - disposal in progress`);
+            logger.debug(`Skipping onPtyExit for ${id} - disposal in progress`);
             return;
           }
 
@@ -660,8 +662,8 @@ class TerminalManager {
           // Must block ALL event types to prevent xterm sending regular \r
           if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
             if (event.type === 'keydown') {
-              console.log('[TerminalManager] Sending ESC+CR for multiline');
-              invoke('plugin:pty|write', { pid, data: '\x1b\r' }).catch(console.error);
+              logger.debug('Sending ESC+CR for multiline');
+              invoke('plugin:pty|write', { pid, data: '\x1b\r' }).catch(err => logger.error('ESC+CR write failed', { err }));
             }
             return false;
           }
@@ -686,7 +688,7 @@ class TerminalManager {
                     const files = await readFiles();
                     if (files && files.length > 0) {
                       const formatted = files.map(p => p.includes(' ') ? `"${p}"` : p).join(' ');
-                      invoke('plugin:pty|write', { pid, data: formatted }).catch(console.error);
+                      invoke('plugin:pty|write', { pid, data: formatted }).catch(err => logger.error('File paste write failed', { err }));
                       return;
                     }
                   } catch {
@@ -700,16 +702,16 @@ class TerminalManager {
                     // Image in clipboard - save to temp file, paste path
                     const base64 = await readImageBase64();
                     if (base64) {
-                      console.log('[TerminalManager] Pasting image:', base64.length, 'bytes base64');
+                      logger.info(`Pasting image: ${base64.length} bytes base64`);
                       const tempPath = await invoke<string>('save_clipboard_image', { base64 });
                       // Quote path for shell safety (spaces, parens, etc.)
                       const quotedPath = tempPath.includes(' ') ? `"${tempPath.replace(/"/g, '\\"')}"` : tempPath;
                       invoke('plugin:pty|write', { pid, data: quotedPath }).catch((err) => {
-                        console.error('[TerminalManager] Image paste write failed:', err);
+                        logger.error('Image paste write failed', { err });
                         term.write('\r\n\x1b[33m[Paste failed: could not write image path]\x1b[0m');
                       });
                     } else {
-                      console.warn('[TerminalManager] Image paste: readImageBase64 returned empty');
+                      logger.warn('Image paste: readImageBase64 returned empty');
                       term.write('\r\n\x1b[33m[Paste failed: could not read image from clipboard]\x1b[0m');
                     }
                   } else if (info.has_text) {
@@ -719,13 +721,13 @@ class TerminalManager {
                       const data = term.modes.bracketedPasteMode
                         ? `\x1b[200~${text}\x1b[201~`
                         : text;
-                      invoke('plugin:pty|write', { pid, data }).catch(console.error);
+                      invoke('plugin:pty|write', { pid, data }).catch(err => logger.error('Text paste write failed', { err }));
                     }
                   } else {
-                    console.warn('[TerminalManager] Clipboard empty or unsupported format:', info);
+                    logger.warn(`Clipboard empty or unsupported format: ${JSON.stringify(info)}`);
                   }
                 } catch (err) {
-                  console.error('[TerminalManager] Clipboard paste failed:', err);
+                  logger.error('Clipboard paste failed', { err });
                   term.write(`\r\n\x1b[33m[Paste failed: ${String(err)}]\x1b[0m`);
                 }
               })();
@@ -749,7 +751,7 @@ class TerminalManager {
 
         term.onData((data: string) => {
           invoke('plugin:pty|write', { pid, data }).catch((e) => {
-            console.error(`[TerminalManager] PTY write failed for ${id}:`, e);
+            logger.error(`PTY write failed for ${id}`, { err: e });
             // PTY may have died - notify user
             const inst = this.instances.get(id);
             if (inst && !inst.exitedNaturally) {
@@ -763,14 +765,14 @@ class TerminalManager {
         term.onResize(({ cols, rows }) => {
           invoke('plugin:pty|resize', { pid, cols, rows }).catch((e) => {
             // Resize failures are common during exit - only log, don't notify user
-            console.warn(`[TerminalManager] PTY resize failed for ${id}:`, e);
+            logger.warn(`PTY resize failed for ${id}`, { err: e });
           });
         });
       } else {
         // Non-Tauri environment (browser dev mode)
         const isDev = import.meta.env?.DEV ?? false;
         if (isDev) {
-          console.warn('[TerminalManager] Browser dev mode: PTY not available, using echo mock.');
+          logger.warn('Browser dev mode: PTY not available, using echo mock.');
           term.write('\r\n\x1b[33m[Dev Mode: PTY unavailable. Echo mode active.]\x1b[0m\r\n');
           instance.ptyPid = -999; // Sentinel value for mock mode
           this.callbacks.get(id)?.onPtySpawn?.(-999);
@@ -780,7 +782,7 @@ class TerminalManager {
         } else {
           // Production without Tauri - this is a fatal misconfiguration
           const errorMsg = 'Tauri environment not detected. This app requires the desktop runtime.';
-          console.error(`[TerminalManager] FATAL: ${errorMsg}`);
+          logger.error(`FATAL: ${errorMsg}`);
           term.write(`\r\n\x1b[31m[Error: ${errorMsg}]\x1b[0m\r\n`);
           term.write('\r\n\x1b[31m[Press Cmd+W to close this pane]\x1b[0m\r\n');
           instance.ptyPid = -1; // Sentinel for spawn failure
@@ -789,7 +791,7 @@ class TerminalManager {
       }
 
     } catch (e) {
-      console.error(`[TerminalManager] PTY spawn failed for ${id}:`, e);
+      logger.error(`PTY spawn failed for ${id}`, { err: e });
       term.write(`\r\n\x1b[31m[PTY Spawn Error: ${e}]\x1b[0m\r\n`);
       term.write('\r\n\x1b[33m[Press Cmd+W to close this pane, or wait for auto-recovery...]\x1b[0m\r\n');
       instance.ptyPid = -1; // Sentinel for spawn failure
@@ -798,7 +800,7 @@ class TerminalManager {
       try {
         this.callbacks.get(id)?.onPtyExit?.(-1);
       } catch (callbackErr) {
-        console.error(`[TerminalManager] onPtyExit callback threw during spawn failure:`, callbackErr);
+        logger.error('onPtyExit callback threw during spawn failure', { err: callbackErr });
       }
     }
   }
@@ -971,16 +973,16 @@ class TerminalManager {
     // Guard against double-disposal race: if dispose() called twice rapidly,
     // both could pass instances.get() before either sets disposing flag
     if (this.disposing.has(id)) {
-      console.log(`[TerminalManager] dispose(${id}) - already disposing, skipping`);
+      logger.debug(`dispose(${id}) - already disposing, skipping`);
       return;
     }
 
     const instance = this.instances.get(id);
     if (!instance) {
-      console.log(`[TerminalManager] dispose(${id}) - no instance found`);
+      logger.debug(`dispose(${id}) - no instance found`);
       return;
     }
-    console.log(`[TerminalManager] dispose(${id}) - ptyPid=${instance.ptyPid}, exitedNaturally=${instance.exitedNaturally}`);
+    logger.info(`dispose(${id}) - ptyPid=${instance.ptyPid}, exitedNaturally=${instance.exitedNaturally}`);
 
     // Clear any pending restoration timeout to prevent post-disposal access (FLO-88)
     if (this.restorationTimeout) {
@@ -1001,16 +1003,16 @@ class TerminalManager {
           try {
             await invoke('plugin:pty|dispose', { pid: instance.ptyPid });
           } catch (e) {
-            console.warn(`[TerminalManager] PTY dispose failed for ${id}:`, e);
+            logger.warn(`PTY dispose failed for ${id}`, { err: e });
           }
         } else {
           // PTY still running - kill it (onExit callback will fire but check disposing flag)
-          console.log(`[TerminalManager] About to invoke plugin:pty|kill for ${id} (pid=${instance.ptyPid})`);
+          logger.debug(`About to invoke plugin:pty|kill for ${id} (pid=${instance.ptyPid})`);
           try {
             await invoke('plugin:pty|kill', { pid: instance.ptyPid });
-            console.log(`[TerminalManager] plugin:pty|kill completed successfully for ${id}`);
+            logger.info(`plugin:pty|kill completed successfully for ${id}`);
           } catch (e) {
-            console.error(`[TerminalManager] PTY kill failed for ${id} (pid=${instance.ptyPid}):`, e);
+            logger.error(`PTY kill failed for ${id} (pid=${instance.ptyPid})`, { err: e });
           }
         }
       }
@@ -1025,7 +1027,7 @@ class TerminalManager {
         try {
           instance.webglAddon.dispose();
         } catch (e) {
-          console.warn(`[TerminalManager] WebGL dispose failed during cleanup for ${id}:`, e);
+          logger.warn(`WebGL dispose failed during cleanup for ${id}`, { err: e });
         }
       }
 
@@ -1100,7 +1102,7 @@ class TerminalManager {
 
     // Skip WebGL for picker terminals - we already have many terminals and
     // WebGL contexts are limited. Canvas renderer is fine for short-lived pickers.
-    console.log('[TerminalManager] Picker using canvas renderer (skipping WebGL)');
+    logger.debug('Picker using canvas renderer (skipping WebGL)');
 
     // Wait for CSS layout to stabilize before fitting
     // The picker-block uses display:none → display:flex via :has() selector
@@ -1109,7 +1111,7 @@ class TerminalManager {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           fitAddon.fit();
-          console.log('[TerminalManager] Picker fit after layout:', { cols: term.cols, rows: term.rows });
+          logger.debug(`Picker fit after layout: cols=${term.cols}, rows=${term.rows}`);
           resolve();
         });
       });
@@ -1122,7 +1124,7 @@ class TerminalManager {
       if (resizeTimeout) clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(() => {
         fitAddon.fit();
-        console.log('[TerminalManager] Picker resized:', { cols: term.cols, rows: term.rows });
+        logger.debug(`Picker resized: cols=${term.cols}, rows=${term.rows}`);
       }, 50);
     });
     resizeObserver.observe(container);
@@ -1133,15 +1135,15 @@ class TerminalManager {
     // Solution: multiple focus attempts at staggered intervals
     const focusTerminal = (attempt: number) => {
       if (document.activeElement === term.textarea) {
-        console.log(`[TerminalManager] Picker already focused (attempt ${attempt})`);
+        logger.debug(`Picker already focused (attempt ${attempt})`);
         return;
       }
       if (term.textarea) {
         term.textarea.focus();
-        console.log(`[TerminalManager] Picker textarea.focus() (attempt ${attempt})`);
+        logger.debug(`Picker textarea.focus() (attempt ${attempt})`);
       } else {
         term.focus();
-        console.log(`[TerminalManager] Picker term.focus() fallback (attempt ${attempt})`);
+        logger.debug(`Picker term.focus() fallback (attempt ${attempt})`);
       }
     };
 
@@ -1150,10 +1152,7 @@ class TerminalManager {
       // Without this, "## work notes" gets focus before tv picker
       e.stopPropagation();
 
-      console.log('[TerminalManager] Picker mousedown:', {
-        target: (e.target as HTMLElement)?.className,
-        activeElement: document.activeElement?.tagName,
-      });
+      logger.debug(`Picker mousedown: target=${(e.target as HTMLElement)?.className}, activeElement=${document.activeElement?.tagName}`);
 
       // Multiple focus attempts to win the race with xterm's handlers
       focusTerminal(1);                    // Immediate
@@ -1202,7 +1201,7 @@ class TerminalManager {
       }
       const onExitChannel = new Channel<PtyExitEvent>();
       onExitChannel.onmessage = (event: PtyExitEvent) => {
-        console.log(`[TerminalManager] Picker ${id} exited with code ${event.exit_code}, output: ${event.output?.slice(0, 100) ?? '(none)'}`);
+        logger.info(`Picker ${id} exited`, { exitCode: event.exit_code, hasOutput: !!event.output });
 
         // Cleanup
         resizeObserver.disconnect();
@@ -1218,7 +1217,7 @@ class TerminalManager {
       // capture_output: true tells Rust to buffer output and extract selection
       const args = os === 'windows' ? ['-Command', command] : ['-c', command];
 
-      console.log('[TerminalManager] Spawning picker PTY:', { shell, args, cols: term.cols, rows: 18, cwd, captureOutput: true });
+      logger.info(`Spawning picker PTY: shell=${shell}, cols=${term.cols}, rows=18, cwd=${cwd}`);
 
       // Track spawned pid for resize handler (set up before spawn so we don't miss events)
       let spawnedPid: number | null = null;
@@ -1226,9 +1225,9 @@ class TerminalManager {
       // Set up resize handler BEFORE spawn to catch any resize events
       term.onResize(({ cols, rows }) => {
         if (spawnedPid !== null) {
-          console.log('[TerminalManager] Picker resize:', { pid: spawnedPid, cols, rows });
+          logger.debug(`Picker resize: pid=${spawnedPid}, cols=${cols}, rows=${rows}`);
           invoke('plugin:pty|resize', { pid: spawnedPid, cols, rows }).catch((err) => {
-            console.error('[TerminalManager] Picker resize failed:', err);
+            logger.error('Picker resize failed', { err });
           });
         }
       });
@@ -1250,17 +1249,17 @@ class TerminalManager {
         onExit: onExitChannel,
         captureOutput: true, // Enable Rust-side output capture
       }).then((pid) => {
-        console.log('[TerminalManager] Picker PTY spawned with pid:', pid);
+        logger.info(`Picker PTY spawned with pid: ${pid}`);
         spawnedPid = pid;  // Enable resize handler
 
         // Wire up input from xterm to PTY
         term.onData((data: string) => {
-          invoke('plugin:pty|write', { pid, data }).catch(console.error);
+          invoke('plugin:pty|write', { pid, data }).catch(err => logger.error('Picker write failed', { err }));
         });
 
         term.focus();
       }).catch((err) => {
-        console.error(`[TerminalManager] Picker spawn failed for ${id}:`, err);
+        logger.error(`Picker spawn failed for ${id}`, { err });
         term.dispose();
         resolve({ exitCode: -1 });
       });
@@ -1294,7 +1293,7 @@ class TerminalManager {
     brightWhite: string;
   }) {
     for (const [id, instance] of this.instances) {
-      console.log(`[TerminalManager] Updating theme for terminal ${id}`);
+      logger.debug(`Updating theme for terminal ${id}`);
       instance.term.options.theme = theme;
     }
   }
@@ -1309,7 +1308,7 @@ export const terminalManager = new TerminalManager();
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    console.log('[terminalManager] HMR cleanup');
+    logger.info('HMR cleanup');
     // Remove visibilitychange listener
     if (terminalManager['visibilityHandler']) {
       document.removeEventListener('visibilitychange', terminalManager['visibilityHandler']);

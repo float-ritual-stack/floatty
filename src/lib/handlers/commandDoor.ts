@@ -13,6 +13,7 @@ import { parseMarkdownTree } from '../markdownParser';
 import { resolveTvVariables, hasTvVariables } from '../tvResolver';
 import type { BlockHandler, ExecutorActions } from './types';
 import { extractContent, insertParsedBlocks } from './utils';
+import { createLogger } from '../logger';
 
 // ═══════════════════════════════════════════════════════════════
 // DOOR CONFIGURATION
@@ -42,6 +43,7 @@ export interface CommandDoorConfig {
  */
 export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
   const { prefixes, backendCommand, paramName, outputPrefix, pendingMessage, logPrefix } = config;
+  const logger = createLogger(logPrefix);
 
   return {
     prefixes,
@@ -63,7 +65,7 @@ export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
 
           resolvedFromTv = extracted !== original;
         } catch (err) {
-          console.error(`[${logPrefix}] TV resolution failed:`, err);
+          logger.error('TV resolution failed', { err });
           // Show error block instead of executing with unresolved variables
           const errorId = actions.createBlockInsideAtTop?.(blockId) ?? actions.createBlockInside(blockId);
           actions.updateBlockContent(errorId, `error::TV resolution failed: ${String(err)}`);
@@ -88,7 +90,7 @@ export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
         const rawOutput = await invoke<string>(backendCommand, { [paramName]: extracted });
         const duration = performance.now() - startTime;
         const cleanOutput = rawOutput.trimEnd();
-        console.log(`[${logPrefix}] Complete:`, { duration: `${duration.toFixed(1)}ms`, outputBytes: cleanOutput.length });
+        logger.info('Complete', { duration: `${duration.toFixed(1)}ms`, outputBytes: cleanOutput.length });
 
         // Parse markdown structure if present
         if (cleanOutput) {
@@ -118,7 +120,7 @@ export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
           actions.updateBlockContent(outputId, `${outputPrefix}(empty)`);
         }
       } catch (err) {
-        console.error(`[${logPrefix}] Error:`, err);
+        logger.error('Error', { err });
         actions.updateBlockContent(outputId, `error::${String(err)}`);
       }
     }

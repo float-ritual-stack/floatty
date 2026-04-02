@@ -4,7 +4,10 @@
  * Handles: execute_block
  */
 
+import { createLogger } from '../../lib/logger';
 import { registry, executeHandler, createHookBlockStore } from '../../lib/handlers';
+
+const logger = createLogger('useExecutionAction');
 import type { BlockStoreInterface, PaneStoreInterface } from '../../context/WorkspaceContext';
 import type { Block } from '../../lib/blockTypes';
 
@@ -61,7 +64,7 @@ export function useExecutionAction(deps: ExecutionActionDeps) {
       moveBlock: (blockId, targetParentId, targetIndex) =>
         deps.blockStore.moveBlock(blockId, targetParentId, targetIndex, { origin: 'user' }),
     }, hookStore).catch(err => {
-      console.error('[useExecutionAction] Handler execution failed:', err);
+      logger.error('Handler execution failed', { err });
     });
   };
 

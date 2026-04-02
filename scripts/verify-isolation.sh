@@ -40,8 +40,8 @@ echo ""
 
 echo "2. Server Ports (from config)"
 echo "   ──────────────────────────"
-DEV_PORT=$(grep server_port ~/.floatty-dev/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
-REL_PORT=$(grep server_port ~/.floatty/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
+DEV_PORT=$(grep '^server_port' ~/.floatty-dev/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
+REL_PORT=$(grep '^server_port' ~/.floatty/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
 DEV_PORT=${DEV_PORT:-33333}  # default
 REL_PORT=${REL_PORT:-8765}   # default
 echo "   Dev:     $DEV_PORT"
@@ -102,8 +102,8 @@ echo ""
 
 echo "6. Server Health Check"
 echo "   ────────────────────"
-DEV_KEY=$(grep api_key ~/.floatty-dev/config.toml 2>/dev/null | cut -d'"' -f2)
-REL_KEY=$(grep api_key ~/.floatty/config.toml 2>/dev/null | cut -d'"' -f2)
+DEV_KEY=$(grep '^api_key' ~/.floatty-dev/config.toml 2>/dev/null | cut -d'"' -f2)
+REL_KEY=$(grep '^api_key' ~/.floatty/config.toml 2>/dev/null | cut -d'"' -f2)
 
 if [ -n "$DEV_KEY" ]; then
   DEV_HEALTH=$(curl -s -H "Authorization: Bearer $DEV_KEY" "http://127.0.0.1:$DEV_PORT/api/v1/health" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4)

@@ -13,7 +13,10 @@
  *   useExecutionAction    — execute_block (sh::, ai::, daily::, …)
  */
 
+import { createLogger } from '../lib/logger';
 import { getActionForEvent } from '../lib/keybinds';
+
+const logger = createLogger('useBlockInput');
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
@@ -538,7 +541,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
             moveBlock: (blockId, targetParentId, targetIndex) =>
               store.moveBlock(blockId, targetParentId, targetIndex, { origin: 'user' }),
           }, hookStore).catch(err => {
-            console.error('[useBlockInput] Handler execution failed:', err);
+            logger.error('Handler execution failed', { err });
           });
         }
         return;

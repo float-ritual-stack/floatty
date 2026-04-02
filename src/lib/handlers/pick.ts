@@ -15,6 +15,9 @@ import { navigateToBlock, resolveSameTabLink } from '../navigation';
 import { terminalManager } from '../terminalManager';
 import { invoke } from '../tauriTypes';
 import type { ServerInfo } from '../httpClient';
+import { createLogger } from '../logger';
+
+const logger = createLogger('pick');
 
 // ═══════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -73,7 +76,7 @@ async function spawnSearchPicker(
           setTimeout(() => trySpawn(attempts + 1), 50);
           return;
         }
-        console.error('[pick] Picker container not found');
+        logger.error('Picker container not found');
         resolve('');
         return;
       }
@@ -104,7 +107,7 @@ async function spawnSearchPicker(
           resolve('');
         }
       } catch (err) {
-        console.error('[pick] Picker failed:', err);
+        logger.error('Picker failed', { err });
         resolve('');
       }
     };
@@ -124,11 +127,11 @@ export const pickHandler: BlockHandler = {
     const query = extractQuery(content);
 
     if (!query) {
-      console.log('[pick] No query specified');
+      logger.debug('No query specified');
       return;
     }
 
-    console.log('[pick] Executing:', { query });
+    logger.info(`Executing: ${query}`);
 
     if (actions.setBlockStatus) {
       actions.setBlockStatus(blockId, 'running');
@@ -142,7 +145,7 @@ export const pickHandler: BlockHandler = {
       const selectedBlockId = await spawnSearchPicker(pickerId, query, actions.paneId);
 
       if (selectedBlockId) {
-        console.log('[pick] Navigating to:', selectedBlockId);
+        logger.info(`Navigating to: ${selectedBlockId}`);
         navigateToBlock(selectedBlockId, {
           paneId: resolveSameTabLink(actions.paneId),
           highlight: true,
@@ -152,13 +155,13 @@ export const pickHandler: BlockHandler = {
           actions.setBlockStatus(blockId, 'complete');
         }
       } else {
-        console.log('[pick] Picker cancelled');
+        logger.debug('Picker cancelled');
         if (actions.setBlockStatus) {
           actions.setBlockStatus(blockId, 'idle');
         }
       }
     } catch (err) {
-      console.error('[pick] Error:', err);
+      logger.error('Error', { err });
       if (actions.setBlockStatus) {
         actions.setBlockStatus(blockId, 'error');
       }

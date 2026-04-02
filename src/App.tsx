@@ -20,8 +20,11 @@ import { blockStore } from './hooks/useBlockStore';
 import { recordOrphansDetected } from './lib/syncDiagnostics';
 import type { ExecutorActions } from './lib/handlers/types';
 // Initialize logger early - intercepts console.* calls and forwards to Rust log files
-import './lib/logger';
+import { createLogger } from './lib/logger';
 import './App.css';
+
+const logger = createLogger('App');
+const deepLinkLogger = createLogger('deep-link');
 
 // Type for Tauri drag-drop event payload
 interface DragDropPayload {
@@ -52,10 +55,10 @@ function App() {
   onMount(async () => {
     try {
       await initHttpClient();
-      console.log('[App] HTTP client connected to floatty-server');
+      logger.info('HTTP client connected to floatty-server');
       setServerConnected(true);
     } catch (err) {
-      console.error('[App] Failed to connect to floatty-server:', err);
+      logger.error(`Failed to connect to floatty-server: ${err}`);
       setServerError(String(err));
     }
   });
@@ -92,7 +95,7 @@ function App() {
             await persistence.loadWorkspace();
             setWorkspaceLoaded(true);
           } catch (err) {
-            console.error('[App] Failed to load workspace:', err);
+            logger.error(`Failed to load workspace: ${err}`);
             setWorkspaceError(String(err));
             // Still mark loaded so app isn't permanently stuck, but error is visible
             setWorkspaceLoaded(true);
@@ -115,7 +118,7 @@ function App() {
       // Get active terminal's PTY PID
       const activeTab = tabStore.getActiveTab();
       if (!activeTab || !activeTab.ptyPid) {
-        console.warn('[App] No active terminal for drag-drop');
+        logger.warn('No active terminal for drag-drop');
         return;
       }
 
@@ -124,11 +127,11 @@ function App() {
         p.includes(' ') ? `"${p}"` : p
       ).join(' ');
 
-      console.log(`[App] Drag-drop: pasting ${paths.length} path(s) to terminal`);
+      logger.info(`Drag-drop: pasting ${paths.length} path(s) to terminal`);
       invoke('plugin:pty|write', {
         pid: activeTab.ptyPid,
         data: formattedPaths
-      }).catch(console.error);
+      }).catch(err => logger.error(`PTY write failed: ${err}`));
     });
   });
 
@@ -192,7 +195,7 @@ function App() {
       );
       executeHandler(handler, blockId, content, buildExecutorActions(), hookStore)
         .catch(err => {
-          console.error('[deep-link] handler failed:', err);
+          deepLinkLogger.error(`handler failed: ${err}`);
           blockStore.setBlockStatus(blockId, 'error');
         });
     };
@@ -209,10 +212,10 @@ function App() {
             const sourcePaneId = url.searchParams.get('pane') ?? '';
             const targetPaneId = resolvePane(sourcePaneId);
             if (!targetPaneId) {
-              console.warn('[deep-link] no outliner pane available');
+              deepLinkLogger.warn('no outliner pane available');
               break;
             }
-            console.log('[deep-link] navigate', { target, targetPaneId });
+            deepLinkLogger.info('navigate', { target, targetPaneId });
             // handleChirpNavigate: block ID resolution, hex guard, page fallback
             // Pane pre-resolved — resolvePane handles empty string correctly
             navigationLib.handleChirpNavigate(target, {
@@ -228,10 +231,10 @@ function App() {
             const sourcePaneId = url.searchParams.get('pane') ?? '';
             const targetPaneId = resolvePane(sourcePaneId);
             if (!targetPaneId) {
-              console.warn('[deep-link] no outliner pane available');
+              deepLinkLogger.warn('no outliner pane available');
               break;
             }
-            console.log('[deep-link] block', { blockIdOrHash, targetPaneId });
+            deepLinkLogger.info('block', { blockIdOrHash, targetPaneId });
             navigationLib.handleChirpNavigate(blockIdOrHash, {
               type: 'block',
               sourcePaneId: targetPaneId,
@@ -244,17 +247,17 @@ function App() {
             const content = url.searchParams.get('content');
             const parentId = url.searchParams.get('parent');
             if (!content) {
-              console.error('[deep-link] execute: missing content param');
+              deepLinkLogger.error('execute: missing content param');
               break;
             }
             if (!parentId) {
-              console.error('[deep-link] execute: missing parent param');
+              deepLinkLogger.error('execute: missing parent param');
               break;
             }
-            console.log('[deep-link] execute', { content: content.slice(0, 40), parentId });
+            deepLinkLogger.info('execute', { parentId, contentLength: content.length });
             const newId = blockStore.createBlockInside(parentId);
             if (!newId) {
-              console.error('[deep-link] execute: failed to create block inside', parentId);
+              deepLinkLogger.error(`execute: failed to create block inside ${parentId}`);
               break;
             }
             blockStore.updateBlockContent(newId, content);
@@ -277,13 +280,13 @@ function App() {
             const content = url.searchParams.get('content');
             const match = url.searchParams.get('match');
             if (!parentId || !content || !match) {
-              console.error('[deep-link] upsert: missing required params (parent, content, match)');
+              deepLinkLogger.error('upsert: missing required params (parent, content, match)');
               break;
             }
-            console.log('[deep-link] upsert', { parentId, match, content: content.slice(0, 40) });
+            deepLinkLogger.info('upsert', { parentId, match, content: content.slice(0, 40) });
             const resultId = blockStore.upsertChildByPrefix(parentId, match, content);
             if (!resultId) {
-              console.error('[deep-link] upsert: failed to upsert child', { parentId, match });
+              deepLinkLogger.error('upsert: failed to upsert child', { parentId, match });
               break;
             }
 
@@ -306,10 +309,10 @@ function App() {
           }
 
           default:
-            console.warn('[deep-link] unknown verb:', verb);
+            deepLinkLogger.warn(`unknown verb: ${verb}`);
         }
       } catch (e) {
-        console.warn('[deep-link] failed to handle event', event.payload, e);
+        deepLinkLogger.warn(`failed to handle event ${event.payload}: ${e}`);
       }
     });
     onCleanup(() => unlistenDeepLink());
@@ -321,7 +324,7 @@ function App() {
       const orphans = event.payload;
       if (!orphans || orphans.length === 0) return;
 
-      console.warn(`[App] Orphan detector found ${orphans.length} orphaned blocks`);
+      logger.warn(`Orphan detector found ${orphans.length} orphaned blocks`);
       recordOrphansDetected(orphans.length);
       const orphanIds = orphans.map(o => o.blockId);
       blockStore.quarantineOrphans(orphanIds);
@@ -358,20 +361,20 @@ function App() {
   onMount(async () => {
     const currentWindow = getCurrentWindow();
     const unlisten = await currentWindow.onCloseRequested(async (event) => {
-      console.log('[App] onCloseRequested triggered');
+      logger.info('onCloseRequested triggered');
       event.preventDefault(); // Block default close
 
       // Check for pending Y.Doc updates - prevent data loss
       const pending = hasPendingUpdates();
-      console.log('[App] hasPendingUpdates:', pending);
+      logger.info(`hasPendingUpdates: ${pending}`);
       if (pending) {
         const syncStatus = getSyncStatus();
-        console.log('[App] syncStatus:', syncStatus);
+        logger.info(`syncStatus: ${syncStatus}`);
         const message = syncStatus === 'error'
           ? 'Sync is failing. Changes are saved locally but won\'t appear on other devices until sync recovers.'
           : 'Changes haven\'t synced to the server yet. They\'re safe locally, but wait to ensure they reach other devices.';
 
-        console.log('[App] About to show confirm dialog...');
+        logger.info('About to show confirm dialog...');
         // Use Tauri native dialog (window.confirm fails silently in Tauri webview)
         const proceed = await confirm(message, {
           title: 'Unsynced Changes',
@@ -379,7 +382,7 @@ function App() {
           okLabel: 'Close Anyway',
           cancelLabel: 'Wait',
         });
-        console.log('[App] User response:', proceed);
+        logger.info(`User response: ${proceed}`);
         if (!proceed) {
           return; // User cancelled close
         }
@@ -387,16 +390,16 @@ function App() {
         // If not in error state, try one final sync (with timeout)
         if (syncStatus !== 'error') {
           try {
-            console.log('[App] Attempting final sync before close...');
+            logger.info('Attempting final sync before close...');
             // 3 second timeout - don't hang forever if server is dead
             const syncPromise = forceSyncNow();
             const timeoutPromise = new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error('Sync timeout')), 3000)
             );
             await Promise.race([syncPromise, timeoutPromise]);
-            console.log('[App] Final sync completed');
+            logger.info('Final sync completed');
           } catch (err) {
-            console.error('[App] Final sync failed:', err);
+            logger.error(`Final sync failed: ${err}`);
             // Ask user again since sync failed
             const closeAnyway = await confirm(
               'Couldn\'t sync before closing. Changes are safe locally and will sync when the server is back.',
@@ -417,16 +420,16 @@ function App() {
       // Kill all PTY processes to prevent zombies
       try {
         const count = await invoke<number>('plugin:pty|kill_all');
-        console.log(`[App] Killed ${count} PTY sessions on close`);
+        logger.info(`Killed ${count} PTY sessions on close`);
       } catch (e) {
-        console.warn('[App] Failed to kill PTY sessions:', e);
+        logger.warn(`Failed to kill PTY sessions: ${e}`);
       }
 
       // Save workspace (best effort - don't block close if it fails)
       try {
         await persistence.saveWorkspace();
       } catch (e) {
-        console.warn('[App] Failed to save workspace on close:', e);
+        logger.warn(`Failed to save workspace on close: ${e}`);
       }
 
       // Always destroy - don't let anything block the close

@@ -4,6 +4,15 @@
  * Tests hook system aligned with FLOATTY_HOOK_SYSTEM.md.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock the logger module so tests can verify error/warn logging
+const mockLogger = vi.hoisted(() => ({
+  trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+}));
+vi.mock('../logger', () => ({
+  createLogger: () => mockLogger,
+}));
+
 import { HookRegistry } from './hookRegistry';
 import { HookFilters } from './types';
 import type { Hook, HookContext } from './types';
@@ -357,7 +366,7 @@ describe('HookRegistry', () => {
     });
 
     it('logs error when hook throws', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockLogger.error.mockClear();
 
       registry.register(
         createTestHook({
@@ -370,12 +379,10 @@ describe('HookRegistry', () => {
 
       await registry.run('block:create', createTestContext());
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[HookRegistry]'),
-        expect.any(Error)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('thrower'),
+        expect.objectContaining({ error: expect.any(Error) })
       );
-
-      consoleSpy.mockRestore();
     });
   });
 
@@ -391,7 +398,7 @@ describe('HookRegistry', () => {
     });
 
     it('warns for async hooks in sync context', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockLogger.warn.mockClear();
 
       registry.register(
         createTestHook({
@@ -402,11 +409,9 @@ describe('HookRegistry', () => {
 
       registry.runSync('block:create', createTestContext());
 
-      expect(consoleSpy).toHaveBeenCalledWith(
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining('Async hook')
       );
-
-      consoleSpy.mockRestore();
     });
   });
 

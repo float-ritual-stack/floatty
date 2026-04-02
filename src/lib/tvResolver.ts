@@ -11,6 +11,9 @@
 
 import { terminalManager } from './terminalManager';
 import type { ExecutorActions } from './handlers';
+import { createLogger } from './logger';
+
+const logger = createLogger('tvResolver');
 
 // Pattern to detect $tv(channel) in command strings
 const TV_PATTERN = /\$tv\(([^)]+)\)/g;
@@ -121,12 +124,12 @@ async function spawnTvPicker(pickerId: string, channel: string, paneId?: string)
           setTimeout(() => trySpawn(attempts + 1), 50);
           return;
         }
-        console.error('[tvResolver] Picker container not found after retries for', pickerId);
+        logger.error(`Picker container not found after retries for ${pickerId}`);
         resolve('');
         return;
       }
 
-      console.log('[tvResolver] Found picker container, spawning tv...');
+      logger.info('Found picker container, spawning tv...');
 
       // Mark picker as active (CSS uses this for height - prevents black box on undo)
       container.classList.add('picker-terminal--active');
@@ -148,15 +151,15 @@ async function spawnTvPicker(pickerId: string, channel: string, paneId?: string)
 
         if (result.exitCode === 0 && result.output) {
           // Selection already extracted and cleaned by Rust
-          console.log('[tvResolver] Selection from Rust:', result.output);
+          logger.info(`Selection from Rust: ${result.output}`);
           resolve(result.output);
         } else {
           // User cancelled (Escape) or tv failed
-          console.log('[tvResolver] tv exited with code', result.exitCode, 'output:', result.output ?? '(none)');
+          logger.info(`tv exited with code ${result.exitCode}, output: ${result.output ?? '(none)'}`);
           resolve('');
         }
       } catch (err) {
-        console.error('[tvResolver] TV picker failed:', err);
+        logger.error('TV picker failed', { err });
         resolve('');
       }
     };
@@ -181,7 +184,7 @@ function buildTvCommand(channel: string): string {
   // Validate channel to prevent command injection
   // Only allow alphanumeric, hyphen, underscore
   if (!SAFE_CHANNEL_PATTERN.test(ch)) {
-    console.warn(`[tvResolver] Invalid channel name "${ch}", falling back to 'files'`);
+    logger.warn(`Invalid channel name "${ch}", falling back to 'files'`);
     ch = 'files';
   }
 

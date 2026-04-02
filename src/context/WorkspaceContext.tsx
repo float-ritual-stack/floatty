@@ -15,6 +15,7 @@
  *   ));
  */
 import { createContext, useContext, createMemo, onMount, onCleanup } from 'solid-js';
+import { createLogger } from '../lib/logger';
 import type { JSX, Accessor } from 'solid-js';
 import { blockStore as realBlockStore, setAutoExecuteHandler, type BatchBlockOp } from '../hooks/useBlockStore';
 export type { BatchBlockOp } from '../hooks/useBlockStore';
@@ -121,6 +122,8 @@ export interface WorkspaceContextValue {
   shortHashIndex: Accessor<ReadonlyMap<string, string>>;
 }
 
+const logger = createLogger('AutoExecute');
+
 const WorkspaceContext = createContext<WorkspaceContextValue>();
 
 // ═══════════════════════════════════════════════════════════════
@@ -199,7 +202,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // Wire up auto-execute handler for externally-created blocks (API/CRDT sync)
   onMount(() => {
     setAutoExecuteHandler((blockId: string, content: string) => {
-      console.log('[AutoExecute] External block detected:', blockId, content);
+      logger.info('External block detected', { blockId, contentLength: content.length });
 
       const handler = registry.findHandler(content);
       if (handler) {
@@ -234,7 +237,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           moveBlock: (blockId, targetParentId, targetIndex) =>
             store.moveBlock(blockId, targetParentId, targetIndex, { origin: 'user' }),
         }, hookStore).catch(err => {
-          console.error('[AutoExecute] Handler execution failed:', err);
+          logger.error(`Handler execution failed: ${err}`);
         });
       }
       // Future: handle other auto-executable types (web::, query::, etc.)

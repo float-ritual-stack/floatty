@@ -15,6 +15,9 @@ import type { BlockHandler, ExecutorActions } from './types';
 import { invoke, type AggregatorConfig } from '../tauriTypes';
 import { getSyncStatus, getPendingCount, getLastSyncError } from '../../hooks/useSyncedYDoc';
 import { findOutputChild } from './utils';
+import { createLogger } from '../logger';
+
+const logger = createLogger('info');
 
 // ═══════════════════════════════════════════════════════════════
 // PURE COMMAND FUNCTIONS
@@ -152,7 +155,7 @@ export const infoHandler: BlockHandler = {
         actions.setBlockStatus(headingId, 'complete');
       }
     } catch (err) {
-      console.error('[info] Error:', err);
+      logger.error('Error', { err });
       actions.updateBlockContent(headingId, '## error::info');
 
       // Reuse existing child for error message (idempotent on repeated failures)

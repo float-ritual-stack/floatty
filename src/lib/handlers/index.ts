@@ -24,6 +24,9 @@ import { registerOutputSummaryHook } from './hooks/outputSummaryHook';
 import { loadDoors, cleanupDoorDeps } from './doorLoader';
 import { doorRegistry } from './doorRegistry';
 import { registerFuncIndexHook } from './funcRegistry';
+import { createLogger } from '../logger';
+
+const logger = createLogger('handlers');
 
 // Re-export registry and types for convenience
 export { registry } from './registry';
@@ -56,7 +59,7 @@ let handlersRegistered = false;
  */
 export function registerHandlers(): void {
   if (handlersRegistered) {
-    console.log('[handlers] Already registered, skipping');
+    logger.debug('Already registered, skipping');
     return;
   }
   handlersRegistered = true;
@@ -83,12 +86,12 @@ export function registerHandlers(): void {
   registerOutputSummaryHook();
   registerFuncIndexHook();
 
-  console.log('[handlers] Registered handlers:', registry.getRegisteredPrefixes().join(', '));
-  console.log('[handlers] Registered hooks:', hookRegistry.getHookIds().join(', '));
+  logger.info(`Registered handlers: ${registry.getRegisteredPrefixes().join(', ')}`);
+  logger.info(`Registered hooks: ${hookRegistry.getHookIds().join(', ')}`);
 
   // Load userland doors (async, fire-and-forget)
   // Built-in handlers are available immediately; doors load in background.
-  loadDoors().catch(err => console.error('[handlers] Door loading failed:', err));
+  loadDoors().catch(err => logger.error('Door loading failed', { err }));
 }
 
 /**
@@ -105,7 +108,7 @@ export function isExecutableBlock(content: string): boolean {
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    console.log('[handlers] HMR cleanup - resetting registration');
+    logger.debug('HMR cleanup - resetting registration');
     handlersRegistered = false;
     registry.clear();
     hookRegistry.clear();
