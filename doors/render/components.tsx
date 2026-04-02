@@ -784,9 +784,17 @@ export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?:
 }
 
 export function BarItemComponent(props: BaseComponentProps<{ label: string; value: number; max?: number; color?: string }>) {
+  const numValue = () => {
+    const v = props.props.value;
+    if (typeof v === 'number') return v;
+    const parsed = parseFloat(String(v));
+    return isNaN(parsed) ? 0 : parsed;
+  };
   const pct = () => {
-    const max = props.props.max || 100;
-    return Math.min(100, (props.props.value / max) * 100);
+    const rawMax = props.props.max != null ? parseFloat(String(props.props.max)) : 0;
+    const max = (rawMax > 0 ? rawMax : null) || Math.max(numValue(), 1);
+    const result = (numValue() / max) * 100;
+    return isNaN(result) ? 0 : Math.min(100, result);
   };
   return (
     <div style={{
@@ -796,12 +804,22 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
       flex: '1',
       'min-width': '28px',
     }}>
+      <Show when={numValue() > 0}>
+        <span style={{
+          'font-size': '9px',
+          color: props.props.color || V.cy,
+          'font-family': V.mono,
+          'margin-bottom': '2px',
+        }}>
+          {numValue() % 1 === 0 ? numValue() : numValue().toFixed(1)}
+        </span>
+      </Show>
       <div style={{
         width: '100%',
         background: props.props.color || V.cy,
         height: `${pct()}%`,
-        'min-height': props.props.value > 0 ? '2px' : '0',
-        opacity: props.props.value > 0 ? '0.7' : '0.15',
+        'min-height': numValue() > 0 ? '4px' : '0',
+        opacity: numValue() > 0 ? '0.7' : '0.15',
         transition: 'height 0.2s',
       }} />
       <span style={{
@@ -1031,15 +1049,18 @@ export function PatternCard(props: BaseComponentProps<{
             }}>
               connects to{' '}
               <For each={props.props.connectsTo!}>
-                {(target) => (
-                  <span ref={(el) => {
-                    el.addEventListener('click', (e: MouseEvent) => {
-                      emitChirpNavigate(el, target, e);
-                    });
-                  }} class="bbs-wikilink" data-wikilink={target} style={{ cursor: 'pointer' }}>
-                    [[{target}]]
-                  </span>
-                )}
+                {(raw) => {
+                  const target = raw.replace(/^\[+|\]+$/g, '');
+                  return (
+                    <span ref={(el) => {
+                      el.addEventListener('click', (e: MouseEvent) => {
+                        emitChirpNavigate(el, target, e);
+                      });
+                    }} class="bbs-wikilink" data-wikilink={target} style={{ cursor: 'pointer' }}>
+                      [[{target}]]
+                    </span>
+                  );
+                }}
               </For>
             </div>
           </Show>
