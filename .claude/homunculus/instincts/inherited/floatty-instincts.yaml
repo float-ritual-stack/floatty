@@ -1,0 +1,809 @@
+# Instincts generated from https://github.com/float-ritual-stack/floatty
+# Generated: 2026-04-02T03:39:29.708Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: floatty-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, feat, chore, refactor, docs
+
+## Evidence
+
+- 200 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix: address PR #190 review feedback, feat(api): add GET /api/v1/daily/:date endpoint
+
+---
+id: floatty-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Commit Length
+
+## Action
+
+Write moderate-length commit messages (~59 characters)
+
+## Evidence
+
+- Average commit message length: 59 chars
+- Based on 200 commits
+
+---
+id: floatty-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: floatty-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: floatty-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: floatty-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: assets, components, context, generated, hooks
+
+---
+id: floatty-test-colocate
+trigger: "when writing tests"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Colocate
+
+## Action
+
+Place test file next to the source file (e.g., Button.test.tsx next to Button.tsx)
+
+## Evidence
+
+- Colocated test pattern detected
+- Tests live alongside source files
+
+---
+id: floatty-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Framework
+
+## Action
+
+Use vitest as the test framework
+
+## Evidence
+
+- Test framework detected: vitest
+- File pattern: *.test.ts
+
+---
+id: floatty-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: floatty-test-mocking
+trigger: "when mocking dependencies in tests"
+confidence: 0.75
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Mocking
+
+## Action
+
+Use vi.mock for mocking
+
+## Evidence
+
+- Mocking pattern detected: vi.mock
+- Consistent across test files
+
+---
+id: floatty-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~13x per month
+- Files: src/components/*, src/lib/*, src/lib/handlers/*
+
+---
+id: floatty-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~7x per month
+- Files: src/**/*
+
+---
+id: floatty-workflow-add-or-update-api-endpoint
+trigger: "when doing add or update api endpoint"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Add Or Update Api Endpoint
+
+## Action
+
+Follow the add-or-update-api-endpoint workflow:
+1. Edit or add endpoint handler in src-tauri/floatty-server/src/api.rs
+2. Update .claude/rules/api-reference.md with new endpoint documentation
+3. Optionally update or create supporting logic in src-tauri/floatty-core/src/hooks/
+4. Optionally fix or improve related tests
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src-tauri/floatty-server/src/api.rs, .claude/rules/api-reference.md, src-tauri/floatty-core/src/hooks/
+
+---
+id: floatty-workflow-release-version-bump
+trigger: "when doing release version bump"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Release Version Bump
+
+## Action
+
+Follow the release-version-bump workflow:
+1. Update CHANGELOG.md with new version notes
+2. Update package.json version
+3. Update src-tauri/Cargo.toml and/or src-tauri/Cargo.lock
+4. Update src-tauri/tauri.conf.json
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: CHANGELOG.md, package.json, src-tauri/Cargo.toml
+
+---
+id: floatty-workflow-door-component-development
+trigger: "when doing door component development"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Door Component Development
+
+## Action
+
+Follow the door-component-development workflow:
+1. Edit or add new component in doors/render/components.tsx
+2. Update doors/render/catalog.ts to register the component and its schema
+3. Update doors/render/registry.ts to wire up the component
+4. Optionally update doors/render/render.tsx for routing or agent prompt
+5. Optionally update or create supporting documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: doors/render/components.tsx, doors/render/catalog.ts, doors/render/registry.ts
+
+---
+id: floatty-workflow-door-code-review-fix
+trigger: "when doing door code review fix"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Door Code Review Fix
+
+## Action
+
+Follow the door-code-review-fix workflow:
+1. Edit affected door files (doors/render/, doors/manifest/, doors/reader/)
+2. Edit related shared components (src/components/BlockItem.tsx, etc.)
+3. Edit package.json if dependencies/devDependencies are involved
+4. Optionally update or add documentation/specs
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: doors/render/, doors/manifest/, doors/reader/
+
+---
+id: floatty-workflow-component-extraction-refactor
+trigger: "when doing component extraction refactor"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Component Extraction Refactor
+
+## Action
+
+Follow the component-extraction-refactor workflow:
+1. Move logic/UI from a large file (e.g., src/components/BlockItem.tsx) into a new file (e.g., src/hooks/useContentSync.ts or src/components/BlockOutputView.tsx)
+2. Update imports in the original file to use the new module
+3. Repeat for additional extractions as needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/components/BlockItem.tsx, src/components/BlockOutputView.tsx, src/hooks/useContentSync.ts
+
+---
+id: floatty-workflow-artifact-handler-enhancement
+trigger: "when doing artifact handler enhancement"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Artifact Handler Enhancement
+
+## Action
+
+Follow the artifact-handler-enhancement workflow:
+1. Edit src/lib/handlers/artifactTransform.ts and/or artifactHandler.ts
+2. Update or add tests in src/lib/handlers/artifactTransform.test.ts
+3. Optionally update related UI or error display logic
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/lib/handlers/artifactTransform.ts, src/lib/handlers/artifactTransform.test.ts, src/lib/handlers/artifactHandler.ts
+
+---
+id: floatty-workflow-expand-collapse-navigation-refactor
+trigger: "when doing expand collapse navigation refactor"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Expand Collapse Navigation Refactor
+
+## Action
+
+Follow the expand-collapse-navigation-refactor workflow:
+1. Move or refactor navigation utilities (e.g., findTabIdByPaneId)
+2. Remove dead or unused code related to expansion/collapse
+3. Update or add architecture documentation in docs/architecture/ or .claude/rules/
+4. Update imports in affected files
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/hooks/useTreeCollapse.ts, src/hooks/useBlockInput.ts, src/hooks/useLayoutStore.ts
+
+---
+id: floatty-instinct-naming-files
+trigger: "When creating or renaming a file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Naming Files
+
+## Action
+
+Use camelCase for file names
+
+## Evidence
+
+- Pattern in namingConventions.files
+- Examples in src/components/BlockItem.tsx, src/hooks/useContentSync.ts
+
+---
+id: floatty-instinct-naming-functions
+trigger: "When defining a function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Naming Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in namingConventions.functions
+- Examples in src/hooks/useDoorChirpListener.ts
+
+---
+id: floatty-instinct-naming-classes
+trigger: "When defining a class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Naming Classes
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Pattern in namingConventions.classes
+- Examples in src/components/BlockItem.tsx
+
+---
+id: floatty-instinct-naming-constants
+trigger: "When defining a constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Naming Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in namingConventions.constants
+- Examples in src/lib/navigation.ts
+
+---
+id: floatty-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle
+- Examples in src/components/BlockItem.tsx
+
+---
+id: floatty-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle
+- Examples in src/hooks/useContentSync.ts
+
+---
+id: floatty-instinct-test-file-pattern
+trigger: "When creating a test file"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Test File Pattern
+
+## Action
+
+Name the file with the pattern *.test.ts
+
+## Evidence
+
+- Pattern in testing.filePattern
+- Examples in src/lib/handlers/artifactTransform.test.ts
+
+---
+id: floatty-instinct-test-framework
+trigger: "When writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Test Framework
+
+## Action
+
+Use the Vitest testing framework
+
+## Evidence
+
+- Pattern in testing.framework
+- Examples in src/lib/handlers/artifactTransform.test.ts
+
+---
+id: floatty-instinct-test-mocking
+trigger: "When mocking modules in tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Test Mocking
+
+## Action
+
+Use vi.mock for mocking
+
+## Evidence
+
+- Pattern in testing.mockingStyle
+- Examples in src/lib/handlers/artifactTransform.test.ts
+
+---
+id: floatty-instinct-test-type
+trigger: "When writing tests"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Test Type
+
+## Action
+
+Write unit tests
+
+## Evidence
+
+- Pattern in testing.testTypes
+- Examples in test(doors-v2): Unit 1.0 — findChildByPrefix + upsertChildByPrefix tests
+
+---
+id: floatty-instinct-commit-format
+trigger: "When writing a commit message"
+confidence: 0.95
+domain: git
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Commit Format
+
+## Action
+
+Use Conventional Commits format with type prefix (fix, feat, chore, refactor, docs, test), optional scope, and concise message
+
+## Evidence
+
+- Pattern in commits.prefixes
+- Examples in fix: address PR #190 review feedback, feat(api): add GET /api/v1/daily/:date endpoint
+
+---
+id: floatty-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Commit Length
+
+## Action
+
+Keep the commit message under 60 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength
+- Examples in commit history
+
+---
+id: floatty-instinct-add-api-endpoint
+trigger: "When someone wants to add or update an API endpoint"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Add Api Endpoint
+
+## Action
+
+Edit src-tauri/floatty-server/src/api.rs, update .claude/rules/api-reference.md, and optionally update src-tauri/floatty-core/src/hooks/ and related tests
+
+## Evidence
+
+- Workflow: add-or-update-api-endpoint
+- Examples in commits and files: src-tauri/floatty-server/src/api.rs, .claude/rules/api-reference.md
+
+---
+id: floatty-instinct-release-version-bump
+trigger: "When someone wants to release a new version"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Release Version Bump
+
+## Action
+
+Update CHANGELOG.md, package.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock, and src-tauri/tauri.conf.json
+
+## Evidence
+
+- Workflow: release-version-bump
+- Examples in files: CHANGELOG.md, package.json, src-tauri/Cargo.toml
+
+---
+id: floatty-instinct-door-component-development
+trigger: "When someone wants to add, update, or refactor a door component"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Door Component Development
+
+## Action
+
+Edit doors/render/components.tsx, update doors/render/catalog.ts and doors/render/registry.ts, and optionally update doors/render/render.tsx and documentation
+
+## Evidence
+
+- Workflow: door-component-development
+- Examples in files: doors/render/components.tsx, doors/render/catalog.ts
+
+---
+id: floatty-instinct-door-code-review-fix
+trigger: "When someone wants to address code review feedback for doors"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Door Code Review Fix
+
+## Action
+
+Edit affected door files, related shared components, package.json (if needed), and optionally update documentation/specs
+
+## Evidence
+
+- Workflow: door-code-review-fix
+- Examples in files: doors/render/, src/components/BlockItem.tsx
+
+---
+id: floatty-instinct-component-extraction-refactor
+trigger: "When someone wants to refactor a large component to improve code structure"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Component Extraction Refactor
+
+## Action
+
+Extract logic/UI from a large file into a new hook or component, and update imports in the original file
+
+## Evidence
+
+- Workflow: component-extraction-refactor
+- Examples in files: src/components/BlockItem.tsx, src/hooks/useContentSync.ts
+
+---
+id: floatty-instinct-artifact-handler-enhancement
+trigger: "When someone wants to improve artifact rendering or robustness"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Artifact Handler Enhancement
+
+## Action
+
+Edit src/lib/handlers/artifactTransform.ts and/or artifactHandler.ts, update or add tests in artifactTransform.test.ts, and optionally update related UI or error display logic
+
+## Evidence
+
+- Workflow: artifact-handler-enhancement
+- Examples in files: src/lib/handlers/artifactTransform.ts, src/lib/handlers/artifactTransform.test.ts
+
+---
+id: floatty-instinct-expand-collapse-navigation-refactor
+trigger: "When someone wants to improve or document expand/collapse navigation"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Instinct Expand Collapse Navigation Refactor
+
+## Action
+
+Move or refactor navigation utilities, remove dead code, update architecture documentation, and update imports in affected files
+
+## Evidence
+
+- Workflow: expand-collapse-navigation-refactor
+- Examples in files: src/hooks/useTreeCollapse.ts, docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md
+
