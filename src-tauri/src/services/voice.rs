@@ -4,26 +4,34 @@
 //! so they remain durable outside the outline while still being browsable through the
 //! existing attachments HTTP route.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
 
 const SESSION_PREFIX: &str = "voice-session-";
 const TRANSCRIPT_PREFIX: &str = "voice-transcript-";
 const JSON_SUFFIX: &str = ".json";
 const MARKDOWN_SUFFIX: &str = ".md";
+static SESSION_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 
 #[derive(Debug)]
 pub enum VoiceError {
     Io(std::io::Error),
     Json(serde_json::Error),
     InvalidMode(String),
+    InvalidStatus(String),
+    InvalidSessionId(String),
+    InvalidTimestamp { field: &'static str, value: String },
+    InvalidStatusTransition { from: String, to: String },
     NotFound(String),
     EmptyTranscript,
+    SessionNotWritable { session_id: String, status: String },
 }
 
 impl fmt::Display for VoiceError {
@@ -32,8 +40,22 @@ impl fmt::Display for VoiceError {
             Self::Io(err) => write!(f, "voice session I/O failed: {err}"),
             Self::Json(err) => write!(f, "voice session JSON failed: {err}"),
             Self::InvalidMode(mode) => write!(f, "unsupported voice mode: {mode}"),
+            Self::InvalidStatus(status) => write!(f, "unsupported voice status: {status}"),
+            Self::InvalidSessionId(session_id) => {
+                write!(f, "invalid voice session id: {session_id}")
+            }
+            Self::InvalidTimestamp { field, value } => {
+                write!(f, "invalid {field} timestamp: {value}")
+            }
+            Self::InvalidStatusTransition { from, to } => {
+                write!(f, "cannot transition voice session from {from} to {to}")
+            }
             Self::NotFound(id) => write!(f, "voice session not found: {id}"),
             Self::EmptyTranscript => write!(f, "transcript text cannot be empty"),
+            Self::SessionNotWritable { session_id, status } => write!(
+                f,
+                "voice session {session_id} is {status}; resume it before appending transcript"
+            ),
         }
     }
 }
@@ -102,6 +124,42 @@ pub enum VoiceSessionStatus {
     Active,
     Paused,
     Complete,
+}
+
+impl VoiceSessionStatus {
+    pub fn parse(raw: &str) -> Result<Self, VoiceError> {
+        match raw.trim().to_lowercase().as_str() {
+            "active" => Ok(Self::Active),
+            "paused" | "pause" => Ok(Self::Paused),
+            "complete" | "completed" | "done" => Ok(Self::Complete),
+            other => Err(VoiceError::InvalidStatus(other.to_string())),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Complete => "complete",
+        }
+    }
+
+    fn can_transition_to(self, next: Self) -> bool {
+        matches!(
+            (self, next),
+            (Self::Active, Self::Active)
+                | (Self::Active, Self::Paused)
+                | (Self::Active, Self::Complete)
+                | (Self::Paused, Self::Paused)
+                | (Self::Paused, Self::Active)
+                | (Self::Paused, Self::Complete)
+                | (Self::Complete, Self::Complete)
+        )
+    }
+
+    fn is_writable(self) -> bool {
+        matches!(self, Self::Active)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -202,6 +260,13 @@ pub struct AppendVoiceTranscriptInput {
     pub kind: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateVoiceSessionStatusInput {
+    pub session_id: String,
+    pub status: String,
+}
+
 fn attachments_dir(config_path: &Path) -> PathBuf {
     config_path
         .parent()
@@ -231,8 +296,116 @@ fn ensure_attachments_dir(config_path: &Path) -> Result<PathBuf, VoiceError> {
     Ok(dir)
 }
 
+fn session_locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    SESSION_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn session_lock(session_id: &str) -> Arc<Mutex<()>> {
+    let mut locks = session_locks()
+        .lock()
+        .expect("voice session lock registry poisoned");
+    locks
+        .entry(session_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+fn validate_session_id(session_id: &str) -> Result<(), VoiceError> {
+    Uuid::parse_str(session_id)
+        .map(|_| ())
+        .map_err(|_| VoiceError::InvalidSessionId(session_id.to_string()))
+}
+
+fn normalize_timestamp(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<Option<String>, VoiceError> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            DateTime::parse_from_rfc3339(value)
+                .map(|timestamp| timestamp.to_rfc3339())
+                .map_err(|_| VoiceError::InvalidTimestamp {
+                    field,
+                    value: value.to_string(),
+                })
+        })
+        .transpose()
+}
+
+fn yaml_quoted(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+fn sanitize_markdown_single_line(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut pending_space = false;
+
+    for ch in value.trim().chars() {
+        let replacement = if ch.is_control() {
+            Some(' ')
+        } else if matches!(ch, '\n' | '\r' | '\t') {
+            Some(' ')
+        } else {
+            None
+        };
+
+        if let Some(space) = replacement {
+            if !pending_space && !out.is_empty() {
+                out.push(space);
+                pending_space = true;
+            }
+            continue;
+        }
+
+        out.push(ch);
+        pending_space = false;
+    }
+
+    if out.is_empty() {
+        "untitled".to_string()
+    } else {
+        out
+    }
+}
+
+fn sanitize_marker_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut pending_dash = false;
+
+    for ch in value.trim().chars() {
+        if ch.is_whitespace() || ch.is_control() {
+            if !pending_dash && !out.is_empty() {
+                out.push('-');
+                pending_dash = true;
+            }
+            continue;
+        }
+
+        let safe = match ch {
+            '[' | ']' | '{' | '}' | '<' | '>' | '`' => '-',
+            _ => ch,
+        };
+
+        if safe == '-' && (pending_dash || out.is_empty()) {
+            continue;
+        }
+
+        out.push(safe);
+        pending_dash = safe == '-';
+    }
+
+    if out.is_empty() {
+        "unknown".to_string()
+    } else {
+        out
+    }
+}
+
 fn render_session_header(session: &VoiceSession) -> String {
     let source_block = session.source_block_id.as_deref().unwrap_or("");
+    let safe_title = sanitize_markdown_single_line(&session.title);
     format!(
         concat!(
             "---\n",
@@ -244,21 +417,21 @@ fn render_session_header(session: &VoiceSession) -> String {
             "updatedAt: {updated_at}\n",
             "sourceBlockId: {source_block}\n",
             "---\n\n",
-            "# {title}\n\n",
-            "- [voice::session] [session::{id}] [mode::{mode}] [status::{status}]\n\n",
+            "# {safe_title}\n\n",
+            "- [voice::session] [session::{session_id}] [mode::{mode_tag}] [status::{status_tag}]\n\n",
             "## Transcript\n"
         ),
-        id = session.id,
-        title = session.title,
-        mode = session.mode.as_str(),
-        status = match session.status {
-            VoiceSessionStatus::Active => "active",
-            VoiceSessionStatus::Paused => "paused",
-            VoiceSessionStatus::Complete => "complete",
-        },
-        created_at = session.created_at,
-        updated_at = session.updated_at,
-        source_block = source_block,
+        id = yaml_quoted(&session.id),
+        title = yaml_quoted(&session.title),
+        mode = yaml_quoted(session.mode.as_str()),
+        status = yaml_quoted(session.status.as_str()),
+        created_at = yaml_quoted(&session.created_at),
+        updated_at = yaml_quoted(&session.updated_at),
+        source_block = yaml_quoted(source_block),
+        safe_title = safe_title,
+        session_id = session.id,
+        mode_tag = session.mode.as_str(),
+        status_tag = session.status.as_str(),
     )
 }
 
@@ -267,24 +440,24 @@ fn render_transcript_chunk(
     chunk_index: usize,
     now: &str,
 ) -> String {
-    let kind = input.kind.as_deref().unwrap_or("transcript");
+    let kind = sanitize_marker_value(input.kind.as_deref().unwrap_or("transcript"));
     let speaker_tag = input
         .speaker
         .as_deref()
         .filter(|speaker| !speaker.trim().is_empty())
-        .map(|speaker| format!(" [speaker::{speaker}]"))
+        .map(|speaker| format!(" [speaker::{}]", sanitize_marker_value(speaker)))
         .unwrap_or_default();
     let started_tag = input
         .started_at
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .map(|value| format!(" [started::{value}]"))
+        .map(|value| format!(" [started::{}]", sanitize_marker_value(value)))
         .unwrap_or_default();
     let ended_tag = input
         .ended_at
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .map(|value| format!(" [ended::{value}]"))
+        .map(|value| format!(" [ended::{}]", sanitize_marker_value(value)))
         .unwrap_or_default();
 
     format!(
@@ -295,7 +468,9 @@ fn render_transcript_chunk(
 
 fn write_session_json(path: &Path, session: &VoiceSession) -> Result<(), VoiceError> {
     let json = serde_json::to_string_pretty(session)?;
-    fs::write(path, json)?;
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, json)?;
+    fs::rename(temp_path, path)?;
     Ok(())
 }
 
@@ -367,6 +542,7 @@ pub fn create_voice_session(
 }
 
 pub fn get_voice_session(config_path: &Path, session_id: &str) -> Result<VoiceSession, VoiceError> {
+    validate_session_id(session_id)?;
     read_session_json(&metadata_path(config_path, session_id))
 }
 
@@ -410,26 +586,40 @@ pub fn list_voice_sessions(
 
 pub fn append_voice_transcript(
     config_path: &Path,
-    input: AppendVoiceTranscriptInput,
+    mut input: AppendVoiceTranscriptInput,
 ) -> Result<VoiceSession, VoiceError> {
     if input.text.trim().is_empty() {
         return Err(VoiceError::EmptyTranscript);
     }
 
     ensure_attachments_dir(config_path)?;
+    validate_session_id(&input.session_id)?;
+    input.started_at = normalize_timestamp(input.started_at.as_deref(), "started_at")?;
+    input.ended_at = normalize_timestamp(input.ended_at.as_deref(), "ended_at")?;
+
+    let lock = session_lock(&input.session_id);
+    let _guard = lock.lock().expect("voice session mutex poisoned");
 
     let metadata_path = metadata_path(config_path, &input.session_id);
     let transcript_path = transcript_path(config_path, &input.session_id);
     let mut session = read_session_json(&metadata_path)?;
 
+    if !session.status.is_writable() {
+        return Err(VoiceError::SessionNotWritable {
+            session_id: session.id.clone(),
+            status: session.status.as_str().to_string(),
+        });
+    }
+
     let now = Utc::now().to_rfc3339();
     let next_chunk_index = session.transcript_chunks + 1;
     let rendered_chunk = render_transcript_chunk(&input, next_chunk_index, &now);
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&transcript_path)?;
+    if !transcript_path.exists() {
+        return Err(VoiceError::NotFound(input.session_id.clone()));
+    }
+
+    let mut file = OpenOptions::new().append(true).open(&transcript_path)?;
     file.write_all(rendered_chunk.as_bytes())?;
 
     session.updated_at = now;
@@ -442,9 +632,41 @@ pub fn append_voice_transcript(
     Ok(session)
 }
 
+pub fn update_voice_session_status(
+    config_path: &Path,
+    input: UpdateVoiceSessionStatusInput,
+) -> Result<VoiceSession, VoiceError> {
+    ensure_attachments_dir(config_path)?;
+    validate_session_id(&input.session_id)?;
+
+    let lock = session_lock(&input.session_id);
+    let _guard = lock.lock().expect("voice session mutex poisoned");
+
+    let metadata_path = metadata_path(config_path, &input.session_id);
+    let mut session = read_session_json(&metadata_path)?;
+    let next_status = VoiceSessionStatus::parse(&input.status)?;
+
+    if !session.status.can_transition_to(next_status) {
+        return Err(VoiceError::InvalidStatusTransition {
+            from: session.status.as_str().to_string(),
+            to: next_status.as_str().to_string(),
+        });
+    }
+
+    if session.status != next_status {
+        session.status = next_status;
+        session.updated_at = Utc::now().to_rfc3339();
+        write_session_json(&metadata_path, &session)?;
+    }
+
+    Ok(session)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::thread;
     use tempfile::tempdir;
 
     fn test_config_path() -> (tempfile::TempDir, PathBuf) {
@@ -509,5 +731,284 @@ mod tests {
         let transcript = fs::read_to_string(&updated.transcript_path).expect("transcript");
         assert!(transcript.contains("[speaker::evan]"));
         assert!(transcript.contains("Decision: ship the durable transcript layer."));
+    }
+
+    #[test]
+    fn append_voice_transcript_validates_timestamps() {
+        let (_dir, config_path) = test_config_path();
+        let session = create_voice_session(
+            &config_path,
+            CreateVoiceSessionInput {
+                mode: Some("group".into()),
+                title: Some("Weekly sync".into()),
+                source_block_id: None,
+            },
+        )
+        .expect("create session");
+
+        let err = append_voice_transcript(
+            &config_path,
+            AppendVoiceTranscriptInput {
+                session_id: session.id,
+                text: "Malformed timestamp".into(),
+                speaker: None,
+                started_at: Some("not-a-timestamp".into()),
+                ended_at: None,
+                kind: Some("transcript".into()),
+            },
+        )
+        .expect_err("invalid timestamps should be rejected");
+
+        assert!(matches!(
+            err,
+            VoiceError::InvalidTimestamp { field, .. } if field == "started_at"
+        ));
+    }
+
+    #[test]
+    fn append_voice_transcript_requires_active_session() {
+        let (_dir, config_path) = test_config_path();
+        let session = create_voice_session(
+            &config_path,
+            CreateVoiceSessionInput {
+                mode: Some("solo".into()),
+                title: Some("Solo session".into()),
+                source_block_id: None,
+            },
+        )
+        .expect("create session");
+
+        let paused = update_voice_session_status(
+            &config_path,
+            UpdateVoiceSessionStatusInput {
+                session_id: session.id.clone(),
+                status: "paused".into(),
+            },
+        )
+        .expect("pause session");
+        assert_eq!(paused.status, VoiceSessionStatus::Paused);
+
+        let err = append_voice_transcript(
+            &config_path,
+            AppendVoiceTranscriptInput {
+                session_id: session.id.clone(),
+                text: "This should be rejected".into(),
+                speaker: None,
+                started_at: None,
+                ended_at: None,
+                kind: None,
+            },
+        )
+        .expect_err("append should fail for paused sessions");
+
+        assert!(matches!(
+            err,
+            VoiceError::SessionNotWritable {
+                status,
+                ..
+            } if status == "paused"
+        ));
+    }
+
+    #[test]
+    fn update_voice_session_status_enforces_lifecycle() {
+        let (_dir, config_path) = test_config_path();
+        let session = create_voice_session(
+            &config_path,
+            CreateVoiceSessionInput {
+                mode: Some("group".into()),
+                title: Some("Weekly sync".into()),
+                source_block_id: None,
+            },
+        )
+        .expect("create session");
+
+        let paused = update_voice_session_status(
+            &config_path,
+            UpdateVoiceSessionStatusInput {
+                session_id: session.id.clone(),
+                status: "paused".into(),
+            },
+        )
+        .expect("pause session");
+        assert_eq!(paused.status, VoiceSessionStatus::Paused);
+
+        let resumed = update_voice_session_status(
+            &config_path,
+            UpdateVoiceSessionStatusInput {
+                session_id: session.id.clone(),
+                status: "active".into(),
+            },
+        )
+        .expect("resume session");
+        assert_eq!(resumed.status, VoiceSessionStatus::Active);
+
+        let completed = update_voice_session_status(
+            &config_path,
+            UpdateVoiceSessionStatusInput {
+                session_id: session.id.clone(),
+                status: "complete".into(),
+            },
+        )
+        .expect("complete session");
+        assert_eq!(completed.status, VoiceSessionStatus::Complete);
+
+        let err = update_voice_session_status(
+            &config_path,
+            UpdateVoiceSessionStatusInput {
+                session_id: session.id,
+                status: "active".into(),
+            },
+        )
+        .expect_err("completed sessions should not resume");
+
+        assert!(matches!(
+            err,
+            VoiceError::InvalidStatusTransition { from, to }
+            if from == "complete" && to == "active"
+        ));
+    }
+
+    #[test]
+    fn voice_session_rejects_invalid_session_ids() {
+        let (_dir, config_path) = test_config_path();
+
+        let err = get_voice_session(&config_path, "../not-a-uuid")
+            .expect_err("invalid session ids should fail");
+
+        assert!(matches!(err, VoiceError::InvalidSessionId(_)));
+    }
+
+    #[test]
+    fn append_voice_transcript_fails_if_transcript_file_is_missing() {
+        let (_dir, config_path) = test_config_path();
+        let session = create_voice_session(
+            &config_path,
+            CreateVoiceSessionInput {
+                mode: Some("solo".into()),
+                title: Some("Transcript missing".into()),
+                source_block_id: None,
+            },
+        )
+        .expect("create session");
+
+        fs::remove_file(&session.transcript_path).expect("remove transcript");
+
+        let err = append_voice_transcript(
+            &config_path,
+            AppendVoiceTranscriptInput {
+                session_id: session.id,
+                text: "Should not recreate transcript".into(),
+                speaker: None,
+                started_at: None,
+                ended_at: None,
+                kind: None,
+            },
+        )
+        .expect_err("missing transcript should fail");
+
+        assert!(matches!(err, VoiceError::NotFound(_)));
+    }
+
+    #[test]
+    fn append_voice_transcript_serializes_concurrent_appends() {
+        let (_dir, config_path) = test_config_path();
+        let session = create_voice_session(
+            &config_path,
+            CreateVoiceSessionInput {
+                mode: Some("solo".into()),
+                title: Some("Concurrent appends".into()),
+                source_block_id: None,
+            },
+        )
+        .expect("create session");
+
+        let config_path = Arc::new(config_path);
+        let session_id = session.id.clone();
+        let mut threads = Vec::new();
+
+        for idx in 0..4 {
+            let config_path = Arc::clone(&config_path);
+            let session_id = session_id.clone();
+            threads.push(thread::spawn(move || {
+                append_voice_transcript(
+                    &config_path,
+                    AppendVoiceTranscriptInput {
+                        session_id,
+                        text: format!("Chunk {idx}"),
+                        speaker: None,
+                        started_at: None,
+                        ended_at: None,
+                        kind: Some("transcript".into()),
+                    },
+                )
+            }));
+        }
+
+        for handle in threads {
+            handle
+                .join()
+                .expect("thread join")
+                .expect("append transcript");
+        }
+
+        let final_session = get_voice_session(&config_path, &session.id).expect("final session");
+        assert_eq!(final_session.transcript_chunks, 4);
+        assert_eq!(final_session.transcript_lines, 4);
+
+        let transcript = fs::read_to_string(&final_session.transcript_path).expect("transcript");
+        assert_eq!(transcript.matches("\n### Chunk ").count(), 4);
+        for chunk_number in 1..=4 {
+            assert_eq!(
+                transcript
+                    .matches(&format!("### Chunk {chunk_number} @"))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn renderers_sanitize_embedded_metadata() {
+        let session = VoiceSession {
+            id: Uuid::new_v4().to_string(),
+            title: "Bad\nTitle".into(),
+            mode: VoiceSessionMode::Solo,
+            status: VoiceSessionStatus::Active,
+            source_block_id: Some("block]\n123".into()),
+            transcript_attachment_name: "voice-transcript.md".into(),
+            metadata_attachment_name: "voice-session.json".into(),
+            transcript_path: "/tmp/voice-transcript.md".into(),
+            metadata_path: "/tmp/voice-session.json".into(),
+            audio_attachment_name: None,
+            audio_path: None,
+            created_at: "2026-04-01T13:02:00Z".into(),
+            updated_at: "2026-04-01T13:02:00Z".into(),
+            transcript_chunks: 0,
+            transcript_lines: 0,
+            transcript_words: 0,
+            projection: VoiceProjection::default(),
+        };
+
+        let header = render_session_header(&session);
+        assert!(header.contains("title: \"Bad\\nTitle\""));
+        assert!(header.contains("# Bad Title"));
+        assert!(header.contains("sourceBlockId: \"block]\\n123\""));
+
+        let chunk = render_transcript_chunk(
+            &AppendVoiceTranscriptInput {
+                session_id: session.id,
+                text: "Hello".into(),
+                speaker: Some("evan]\ncase".into()),
+                started_at: Some("2026-04-01T13:02:00Z".into()),
+                ended_at: Some("2026-04-01T13:03:00Z".into()),
+                kind: Some("raw dump".into()),
+            },
+            1,
+            "2026-04-01T13:03:00Z",
+        );
+
+        assert!(chunk.contains("[chunk::raw-dump]"));
+        assert!(chunk.contains("[speaker::evan-case]"));
     }
 }

@@ -19,7 +19,7 @@ use commands::{
     get_theme, get_voice_session, get_workspace_state, install_shell_hooks, list_door_files,
     list_voice_sessions, open_url, read_door_file, read_help_file, save_clipboard_image,
     save_workspace_state, set_ctx_config, set_theme, toggle_diagnostics,
-    uninstall_shell_hooks,
+    uninstall_shell_hooks, update_voice_session_status,
 };
 use config::{AggregatorConfig, ServerInfo};
 use paths::DataPaths;
@@ -430,6 +430,7 @@ pub fn run() {
                     get_voice_session,
                     list_voice_sessions,
                     append_voice_transcript,
+                    update_voice_session_status,
                     check_orphans_now,
                     list_door_files,
                     read_door_file,
@@ -468,6 +469,7 @@ pub fn run() {
                     get_voice_session,
                     list_voice_sessions,
                     append_voice_transcript,
+                    update_voice_session_status,
                     check_orphans_now,
                     list_door_files,
                     read_door_file,

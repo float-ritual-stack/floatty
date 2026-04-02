@@ -27,5 +27,6 @@ pub use help::read_help_file;
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
 pub use voice::{
     append_voice_transcript, create_voice_session, get_voice_session, list_voice_sessions,
+    update_voice_session_status,
 };
 pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};

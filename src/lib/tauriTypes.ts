@@ -298,7 +298,7 @@ interface TauriCommands {
   // VOICE SESSIONS
   // ─────────────────────────────────────────────────────────────
   create_voice_session: {
-    args: { mode?: string; title?: string; sourceBlockId?: string | null };
+    args: { mode?: VoiceSessionMode | null; title?: string; sourceBlockId?: string | null };
     returns: VoiceSession;
   };
   get_voice_session: {
@@ -317,6 +317,13 @@ interface TauriCommands {
       startedAt?: string | null;
       endedAt?: string | null;
       kind?: string | null;
+    };
+    returns: VoiceSession;
+  };
+  update_voice_session_status: {
+    args: {
+      sessionId: string;
+      status: VoiceSessionStatus;
     };
     returns: VoiceSession;
   };

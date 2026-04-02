@@ -3,7 +3,7 @@ use crate::services::voice;
 use crate::AppState;
 use tauri::State;
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn create_voice_session(
     state: State<'_, AppState>,
     mode: Option<String>,
@@ -21,7 +21,7 @@ pub async fn create_voice_session(
     .map_err(|err| err.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_voice_session(
     state: State<'_, AppState>,
     session_id: String,
@@ -29,7 +29,7 @@ pub async fn get_voice_session(
     voice::get_voice_session(&state.config_path, &session_id).map_err(|err| err.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn list_voice_sessions(
     state: State<'_, AppState>,
     limit: Option<usize>,
@@ -37,7 +37,7 @@ pub async fn list_voice_sessions(
     voice::list_voice_sessions(&state.config_path, limit).map_err(|err| err.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn append_voice_transcript(
     state: State<'_, AppState>,
     session_id: String,
@@ -57,6 +57,19 @@ pub async fn append_voice_transcript(
             ended_at,
             kind,
         },
+    )
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn update_voice_session_status(
+    state: State<'_, AppState>,
+    session_id: String,
+    status: String,
+) -> Result<voice::VoiceSession, String> {
+    voice::update_voice_session_status(
+        &state.config_path,
+        voice::UpdateVoiceSessionStatusInput { session_id, status },
     )
     .map_err(|err| err.to_string())
 }

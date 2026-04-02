@@ -40,7 +40,7 @@ const MODE_ALIASES: Record<string, VoiceSession['mode']> = {
   passive: 'dump',
 };
 
-function parseVoiceCommand(content: string): { mode: string; title?: string } {
+function parseVoiceCommand(content: string): { mode: VoiceSession['mode']; title?: string } {
   const trimmed = content.trim();
   const prefixEnd = trimmed.toLowerCase().indexOf(VOICE_PREFIX) + VOICE_PREFIX.length;
   const rest = trimmed.slice(prefixEnd).trim();
@@ -62,12 +62,26 @@ function attachmentUrl(serverInfo: ServerInfo, filename: string): string {
   return `${serverInfo.url}/api/v1/attachments/${encodeURIComponent(filename)}`;
 }
 
-function createOutputPayload(session: VoiceSession, serverInfo: ServerInfo): VoiceSessionOutput {
+export function createVoiceSessionOutput(
+  session: VoiceSession,
+  serverInfo: ServerInfo,
+): VoiceSessionOutput {
   return {
     ...session,
     transcriptUrl: attachmentUrl(serverInfo, session.transcriptAttachmentName),
     metadataUrl: attachmentUrl(serverInfo, session.metadataAttachmentName),
   };
+}
+
+export function renderVoiceSessionMarker(session: Pick<
+  VoiceSessionOutput,
+  'id' | 'mode' | 'status' | 'transcriptAttachmentName' | 'metadataAttachmentName'
+>): string {
+  return (
+    `- [voice::session] [session::${session.id}] [mode::${session.mode}] ` +
+    `[status::${session.status}] [transcript::${session.transcriptAttachmentName}] ` +
+    `[metadata::${session.metadataAttachmentName}]`
+  );
 }
 
 function buildProjectionTemplate(session: VoiceSessionOutput): BatchBlockOp[] {
@@ -136,12 +150,7 @@ function buildProjectionTemplate(session: VoiceSessionOutput): BatchBlockOp[] {
 
   return [
     { content: `# ${session.title}` },
-    {
-      content:
-        `- [voice::session] [session::${session.id}] [mode::${session.mode}] ` +
-        `[status::${session.status}] [transcript::${session.transcriptAttachmentName}] ` +
-        `[metadata::${session.metadataAttachmentName}]`,
-    },
+    { content: renderVoiceSessionMarker(session) },
     summarySection,
     {
       content: '## Evidence',
@@ -186,7 +195,7 @@ export const voiceHandler: BlockHandler = {
         invoke<ServerInfo>('get_server_info', {}),
       ]);
 
-      const output = createOutputPayload(session, serverInfo);
+      const output = createVoiceSessionOutput(session, serverInfo);
       const template = buildProjectionTemplate(output);
 
       if (actions.batchCreateBlocksInside) {

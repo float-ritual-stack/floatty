@@ -1,7 +1,7 @@
 import { Show, createSignal } from 'solid-js';
 import { blockStore } from '../../hooks/useBlockStore';
 import { invoke, type VoiceSession } from '../../lib/tauriTypes';
-import type { VoiceSessionOutput } from '../../lib/handlers/voice';
+import { renderVoiceSessionMarker, type VoiceSessionOutput } from '../../lib/handlers/voice';
 
 interface VoiceSessionViewProps {
   data: VoiceSessionOutput;
@@ -17,6 +17,28 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
   const [speaker, setSpeaker] = createSignal('');
   const [error, setError] = createSignal<string | null>(null);
   const [isSaving, setIsSaving] = createSignal(false);
+  const [isChangingStatus, setIsChangingStatus] = createSignal(false);
+
+  const isActive = () => props.data.status === 'active';
+  const isMutating = () => isSaving() || isChangingStatus();
+
+  const syncProjectedStatus = (session: VoiceSessionOutput) => {
+    const outputBlock = blockStore.getBlock(props.blockId);
+    const markerBlockId = outputBlock?.childIds?.[1];
+    if (!markerBlockId) return;
+    blockStore.updateBlockContent(markerBlockId, renderVoiceSessionMarker(session));
+  };
+
+  const applySessionUpdate = (session: VoiceSession) => {
+    const nextOutput: VoiceSessionOutput = {
+      ...session,
+      transcriptUrl: props.data.transcriptUrl,
+      metadataUrl: props.data.metadataUrl,
+    };
+
+    blockStore.setBlockOutput(props.blockId, nextOutput, 'voice-session', 'complete');
+    syncProjectedStatus(nextOutput);
+  };
 
   const openUrl = async (url: string) => {
     try {
@@ -28,7 +50,7 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
 
   const appendTranscript = async () => {
     const text = draft().trim();
-    if (!text || isSaving()) return;
+    if (!text || isMutating() || !isActive()) return;
 
     setError(null);
     setIsSaving(true);
@@ -42,17 +64,7 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
         kind: 'transcript',
       });
 
-      blockStore.setBlockOutput(
-        props.blockId,
-        {
-          ...next,
-          transcriptUrl: props.data.transcriptUrl,
-          metadataUrl: props.data.metadataUrl,
-        },
-        'voice-session',
-        'complete',
-      );
-
+      applySessionUpdate(next);
       setDraft('');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -61,6 +73,29 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
       return;
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const updateStatus = async (status: VoiceSessionOutput['status']) => {
+    if (isMutating() || props.data.status === status) return;
+
+    setError(null);
+    setIsChangingStatus(true);
+    blockStore.setBlockStatus(props.blockId, 'running');
+
+    try {
+      const next = await invoke<VoiceSession>('update_voice_session_status', {
+        sessionId: props.data.id,
+        status,
+      });
+      applySessionUpdate(next);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      blockStore.setBlockStatus(props.blockId, 'error');
+      return;
+    } finally {
+      setIsChangingStatus(false);
     }
   };
 
@@ -128,6 +163,73 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
         <span>{statLabel(props.data.transcriptWords, 'word', 'words')}</span>
       </div>
 
+      <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
+        <Show when={props.data.status === 'active'}>
+          <button
+            type="button"
+            onClick={() => void updateStatus('paused')}
+            disabled={isMutating()}
+            style={{
+              padding: '6px 10px',
+              'border-radius': '6px',
+              border: '1px solid rgba(250, 204, 21, 0.25)',
+              background: 'rgba(113, 63, 18, 0.4)',
+              color: '#fde68a',
+              cursor: isMutating() ? 'wait' : 'pointer',
+              opacity: isMutating() ? 0.7 : 1,
+            }}
+          >
+            Pause
+          </button>
+        </Show>
+        <Show when={props.data.status === 'paused'}>
+          <button
+            type="button"
+            onClick={() => void updateStatus('active')}
+            disabled={isMutating()}
+            style={{
+              padding: '6px 10px',
+              'border-radius': '6px',
+              border: '1px solid rgba(74, 222, 128, 0.25)',
+              background: 'rgba(20, 83, 45, 0.55)',
+              color: '#dcfce7',
+              cursor: isMutating() ? 'wait' : 'pointer',
+              opacity: isMutating() ? 0.7 : 1,
+            }}
+          >
+            Resume
+          </button>
+        </Show>
+        <Show when={props.data.status !== 'complete'}>
+          <button
+            type="button"
+            onClick={() => void updateStatus('complete')}
+            disabled={isMutating()}
+            style={{
+              padding: '6px 10px',
+              'border-radius': '6px',
+              border: '1px solid rgba(244, 114, 182, 0.25)',
+              background: 'rgba(80, 7, 36, 0.35)',
+              color: '#fbcfe8',
+              cursor: isMutating() ? 'wait' : 'pointer',
+              opacity: isMutating() ? 0.7 : 1,
+            }}
+          >
+            Complete
+          </button>
+        </Show>
+        <Show when={props.data.status === 'paused'}>
+          <span style={{ color: 'var(--color-muted, #a1a1aa)', 'font-size': '12px' }}>
+            Session is paused. Resume to append more transcript.
+          </span>
+        </Show>
+        <Show when={props.data.status === 'complete'}>
+          <span style={{ color: 'var(--color-muted, #a1a1aa)', 'font-size': '12px' }}>
+            Session is complete. Transcript appends are locked.
+          </span>
+        </Show>
+      </div>
+
       <div style={{ display: 'grid', gap: '8px' }}>
         <label style={{ display: 'grid', gap: '6px' }}>
           <span style={{ 'font-size': '12px', color: 'var(--color-muted, #a1a1aa)' }}>Speaker (optional)</span>
@@ -135,6 +237,7 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
             value={speaker()}
             onInput={(event) => setSpeaker(event.currentTarget.value)}
             placeholder="me"
+            disabled={!isActive() || isMutating()}
             style={{
               padding: '7px 9px',
               'border-radius': '6px',
@@ -151,6 +254,7 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
             onInput={(event) => setDraft(event.currentTarget.value)}
             rows={5}
             placeholder="Paste or type a transcript chunk here. This appends to the durable transcript file, not the outline."
+            disabled={!isActive() || isMutating()}
             style={{
               padding: '9px 10px',
               'border-radius': '6px',
@@ -171,15 +275,15 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
         <button
           type="button"
           onClick={() => void appendTranscript()}
-          disabled={isSaving() || !draft().trim()}
+          disabled={isMutating() || !draft().trim() || !isActive()}
           style={{
             padding: '7px 12px',
             'border-radius': '6px',
             border: '1px solid rgba(74, 222, 128, 0.25)',
             background: isSaving() ? 'rgba(34, 197, 94, 0.12)' : 'rgba(20, 83, 45, 0.55)',
             color: '#dcfce7',
-            cursor: isSaving() ? 'wait' : 'pointer',
-            opacity: isSaving() || !draft().trim() ? 0.7 : 1,
+            cursor: isMutating() ? 'wait' : 'pointer',
+            opacity: isMutating() || !draft().trim() || !isActive() ? 0.7 : 1,
           }}
         >
           {isSaving() ? 'Appending…' : 'Append to transcript'}
