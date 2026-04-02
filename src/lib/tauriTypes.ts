@@ -125,6 +125,62 @@ export interface AggregatorConfig {
   data_dir: string;
 }
 
+export type VoiceSessionMode =
+  | 'quick-note'
+  | 'solo'
+  | 'one-on-one'
+  | 'group'
+  | 'dump';
+
+export type VoiceSessionStatus = 'active' | 'paused' | 'complete';
+
+export interface VoiceEvidenceAnchor {
+  chunkIndex: number;
+  lineStart: number;
+  lineEnd: number;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  speaker?: string | null;
+}
+
+export interface VoiceProjectionItem {
+  id: string;
+  text: string;
+  done: boolean;
+  evidence?: VoiceEvidenceAnchor[];
+}
+
+export interface VoiceProjection {
+  summary?: string | null;
+  keyPoints?: string[];
+  decisions?: VoiceProjectionItem[];
+  actionItems?: VoiceProjectionItem[];
+  followUps?: VoiceProjectionItem[];
+  openQuestions?: VoiceProjectionItem[];
+  candidateIdeas?: VoiceProjectionItem[];
+  thoughtThreads?: VoiceProjectionItem[];
+}
+
+export interface VoiceSession {
+  id: string;
+  title: string;
+  mode: VoiceSessionMode;
+  status: VoiceSessionStatus;
+  sourceBlockId?: string | null;
+  transcriptAttachmentName: string;
+  metadataAttachmentName: string;
+  transcriptPath: string;
+  metadataPath: string;
+  audioAttachmentName?: string | null;
+  audioPath?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  transcriptChunks: number;
+  transcriptLines: number;
+  transcriptWords: number;
+  projection: VoiceProjection;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // COMMAND TYPE MAP
 // ═══════════════════════════════════════════════════════════════
@@ -239,11 +295,42 @@ interface TauriCommands {
   };
 
   // ─────────────────────────────────────────────────────────────
+  // VOICE SESSIONS
+  // ─────────────────────────────────────────────────────────────
+  create_voice_session: {
+    args: { mode?: string; title?: string; sourceBlockId?: string | null };
+    returns: VoiceSession;
+  };
+  get_voice_session: {
+    args: { sessionId: string };
+    returns: VoiceSession;
+  };
+  list_voice_sessions: {
+    args: { limit?: number };
+    returns: VoiceSession[];
+  };
+  append_voice_transcript: {
+    args: {
+      sessionId: string;
+      text: string;
+      speaker?: string | null;
+      startedAt?: string | null;
+      endedAt?: string | null;
+      kind?: string | null;
+    };
+    returns: VoiceSession;
+  };
+
+  // ─────────────────────────────────────────────────────────────
   // MISC
   // ─────────────────────────────────────────────────────────────
   save_clipboard_image: {
     args: { base64: string };
     returns: string; // file path
+  };
+  open_url: {
+    args: { url: string };
+    returns: void;
   };
 }
 

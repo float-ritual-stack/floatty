@@ -15,10 +15,12 @@ import { navigateToBlock, handleChirpNavigate, resolveSameTabLink } from '../lib
 import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../lib/chirpWriteHandler';
 import { isMac } from '../lib/keybinds';
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
+import { VoiceSessionView } from './views/VoiceSessionView';
 import { DoorHost, DoorExecCard } from './views/DoorHost';
 import { ImgView } from './views/ImgView';
 import { EvalOutput } from './EvalOutput';
 import type { SearchResults, DoorEnvelope } from '../lib/handlers';
+import type { VoiceSessionOutput } from '../lib/handlers/voice';
 import type { EvalResult } from '../lib/evalEngine';
 
 // ─── Error fallback ─────────────────────────────────────────────────────
@@ -270,6 +272,13 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                 <SearchErrorView data={block()!.output as { error: string; query?: string }} />
               </Show>
             </div>
+          </Show>
+
+          <Show when={block()?.outputType === 'voice-session'}>
+            <VoiceSessionView
+              data={block()!.output as VoiceSessionOutput}
+              blockId={props.blockId}
+            />
           </Show>
 
           {/* DOOR OUTPUT VIEW — single branch for all doors */}

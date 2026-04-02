@@ -4,4 +4,4 @@
  * Block types determine rendering and execution behavior.
  * Derived from content prefix - NOT stored in the database.
  */
-export type BlockType = "text" | "sh" | "ai" | "ctx" | "dispatch" | "web" | "output" | "error" | "picker" | "ran" | "daily" | "h1" | "h2" | "h3" | "bullet" | "todo" | "quote" | "filter" | "search" | "backup" | "info" | "artifact";
+export type BlockType = "text" | "sh" | "ai" | "ctx" | "dispatch" | "web" | "output" | "error" | "picker" | "ran" | "voice" | "daily" | "h1" | "h2" | "h3" | "bullet" | "todo" | "quote" | "filter" | "search" | "backup" | "info" | "artifact";

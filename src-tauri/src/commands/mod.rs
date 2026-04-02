@@ -12,6 +12,7 @@ pub mod doors;
 pub mod execution;
 pub mod help;
 pub mod hooks;
+pub mod voice;
 pub mod workspace;
 
 // Re-export command functions for registration
@@ -24,4 +25,7 @@ pub use execution::{execute_ai_command, execute_ai_conversation, execute_shell_c
 pub use doors::{list_door_files, read_door_file};
 pub use help::read_help_file;
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
+pub use voice::{
+    append_voice_transcript, create_voice_session, get_voice_session, list_voice_sessions,
+};
 pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};

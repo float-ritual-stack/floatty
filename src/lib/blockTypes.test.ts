@@ -72,6 +72,11 @@ describe('parseBlockType', () => {
       expect(parseBlockType('error:: something went wrong')).toBe('error');
       expect(parseBlockType('ERROR::stack trace')).toBe('error');
     });
+
+    it('detects voice:: trigger', () => {
+      expect(parseBlockType('voice:: solo Thinking out loud')).toBe('voice');
+      expect(parseBlockType('VOICE:: quick-note')).toBe('voice');
+    });
   });
 
   describe('markdown headings', () => {

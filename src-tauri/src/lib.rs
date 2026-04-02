@@ -13,11 +13,12 @@ mod services;
 mod sync_test;
 
 use commands::{
-    check_hooks_installed, clear_ctx_markers, clear_workspace, execute_ai_command,
-    execute_ai_conversation, execute_shell_command, get_clipboard_info, get_ctx_config,
-    get_ctx_counts, get_ctx_markers, get_send_model, get_theme, get_workspace_state,
-    install_shell_hooks, list_door_files, open_url, read_door_file, read_help_file,
-    save_clipboard_image, save_workspace_state, set_ctx_config, set_theme, toggle_diagnostics,
+    append_voice_transcript, check_hooks_installed, clear_ctx_markers, clear_workspace,
+    create_voice_session, execute_ai_command, execute_ai_conversation, execute_shell_command,
+    get_clipboard_info, get_ctx_config, get_ctx_counts, get_ctx_markers, get_send_model,
+    get_theme, get_voice_session, get_workspace_state, install_shell_hooks, list_door_files,
+    list_voice_sessions, open_url, read_door_file, read_help_file, save_clipboard_image,
+    save_workspace_state, set_ctx_config, set_theme, toggle_diagnostics,
     uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
@@ -160,20 +161,20 @@ fn setup_logging(log_dir: &std::path::Path) {
         eprintln!("Failed to create log directory: {}", e);
         return;
     }
-    
+
     // File appender: ~/.floatty/logs/floatty-{date}.jsonl
     let file_appender = match RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .filename_prefix("floatty")
         .filename_suffix("jsonl")
         .build(log_dir) {
-            Ok(appender) => appender,
-            Err(e) => {
-                eprintln!("Failed to create log appender: {}", e);
-                return;
-            }
-        };
-    
+        Ok(appender) => appender,
+        Err(e) => {
+            eprintln!("Failed to create log appender: {}", e);
+            return;
+        }
+    };
+
     // Structured JSON logs to file (always enabled)
     let file_layer = fmt::layer()
         .json()
@@ -183,7 +184,7 @@ fn setup_logging(log_dir: &std::path::Path) {
         .with_thread_names(true)
         .with_file(true)
         .with_line_number(true);
-    
+
     // Human-readable logs to stdout (dev only)
     let stdout_layer = if cfg!(debug_assertions) {
         Some(fmt::layer()
@@ -195,12 +196,12 @@ fn setup_logging(log_dir: &std::path::Path) {
     } else {
         None
     };
-    
+
     // ENV filter: RUST_LOG=debug or default to info
     let filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
         .unwrap();
-    
+
     // Initialize tracing subscriber
     tracing_subscriber::registry()
         .with(filter)
@@ -425,6 +426,10 @@ pub fn run() {
                     read_help_file,
                     toggle_diagnostics,
                     open_url,
+                    create_voice_session,
+                    get_voice_session,
+                    list_voice_sessions,
+                    append_voice_transcript,
                     check_orphans_now,
                     list_door_files,
                     read_door_file,
@@ -459,6 +464,10 @@ pub fn run() {
                     read_help_file,
                     toggle_diagnostics,
                     open_url,
+                    create_voice_session,
+                    get_voice_session,
+                    list_voice_sessions,
+                    append_voice_transcript,
                     check_orphans_now,
                     list_door_files,
                     read_door_file,

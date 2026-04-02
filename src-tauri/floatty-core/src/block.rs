@@ -37,6 +37,8 @@ pub enum BlockType {
     Picker,
     /// Resolved command after $tv() substitution: prefix `ran::`
     Ran,
+    /// Voice session launcher: prefix `voice::`
+    Voice,
     /// Daily note view: prefix `daily::` (e.g., `daily::2026-01-03`)
     Daily,
     /// Heading level 1: `# `
@@ -79,6 +81,7 @@ impl BlockType {
             BlockType::Error => "error",
             BlockType::Picker => "picker",
             BlockType::Ran => "ran",
+            BlockType::Voice => "voice",
             BlockType::Daily => "daily",
             BlockType::H1 => "h1",
             BlockType::H2 => "h2",
@@ -176,6 +179,9 @@ pub fn parse_block_type(content: &str) -> BlockType {
     }
     if lower.starts_with("ran::") {
         return BlockType::Ran;
+    }
+    if lower.starts_with("voice::") {
+        return BlockType::Voice;
     }
     if lower.starts_with("daily::") {
         return BlockType::Daily;
@@ -309,6 +315,7 @@ mod tests {
         assert_eq!(parse_block_type("error:: failed"), BlockType::Error);
         assert_eq!(parse_block_type("picker:: choose"), BlockType::Picker);
         assert_eq!(parse_block_type("ran:: ls -la"), BlockType::Ran);
+        assert_eq!(parse_block_type("voice:: solo session"), BlockType::Voice);
     }
 
     #[test]
@@ -320,14 +327,26 @@ mod tests {
         assert_eq!(parse_block_type("- Bullet"), BlockType::Bullet);
         assert_eq!(parse_block_type("- [ ] Todo unchecked"), BlockType::Todo);
         assert_eq!(parse_block_type("- [x] Todo checked"), BlockType::Todo);
-        assert_eq!(parse_block_type("- [X] Todo checked upper"), BlockType::Todo);
+        assert_eq!(
+            parse_block_type("- [X] Todo checked upper"),
+            BlockType::Todo
+        );
     }
 
     #[test]
     fn test_parse_block_type_artifact() {
-        assert_eq!(parse_block_type("artifact:: ~/file.jsx"), BlockType::Artifact);
-        assert_eq!(parse_block_type("Artifact:: ~/file.jsx"), BlockType::Artifact);
-        assert_eq!(parse_block_type("  artifact:: foo.tsx"), BlockType::Artifact);
+        assert_eq!(
+            parse_block_type("artifact:: ~/file.jsx"),
+            BlockType::Artifact
+        );
+        assert_eq!(
+            parse_block_type("Artifact:: ~/file.jsx"),
+            BlockType::Artifact
+        );
+        assert_eq!(
+            parse_block_type("  artifact:: foo.tsx"),
+            BlockType::Artifact
+        );
     }
 
     #[test]

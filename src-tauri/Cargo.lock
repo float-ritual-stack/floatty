@@ -1554,7 +1554,7 @@ dependencies = [
 
 [[package]]
 name = "float-pty"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -1593,6 +1593,7 @@ dependencies = [
  "tracing-subscriber",
  "ts-rs",
  "url",
+ "uuid",
  "vergen-gix",
  "walkdir",
  "yrs",
@@ -1622,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "floatty-server"
-version = "0.9.8"
+version = "0.10.0"
 dependencies = [
  "axum",
  "base64 0.22.1",

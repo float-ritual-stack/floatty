@@ -240,7 +240,7 @@ export function BlockItem(props: BlockItemProps) {
   // Detect output blocks that need special keyboard handling
   const isOutputBlock = createMemo(() => {
     const ot = block()?.outputType;
-    if (ot?.startsWith('search-') || ot === 'img-view') return true;
+    if (ot?.startsWith('search-') || ot === 'img-view' || ot === 'voice-session') return true;
     // Door output: only adapter children (empty content) replace contentEditable.
     // selfRender doors with content keep contentEditable and render output below (like artifact::).
     if (ot === 'door' && block()?.content === '') return true;
