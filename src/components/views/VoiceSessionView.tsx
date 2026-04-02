@@ -1,11 +1,12 @@
 import { Show, createSignal } from 'solid-js';
-import { blockStore } from '../../hooks/useBlockStore';
 import { invoke, type VoiceSession } from '../../lib/tauriTypes';
-import { renderVoiceSessionMarker, type VoiceSessionOutput } from '../../lib/handlers/voice';
+import type { VoiceSessionOutput } from '../../lib/handlers/voice';
 
 interface VoiceSessionViewProps {
   data: VoiceSessionOutput;
-  blockId: string;
+  setSessionOutput: (output: VoiceSessionOutput) => void;
+  setSessionStatus: (status: 'idle' | 'running' | 'complete' | 'error') => void;
+  syncProjectionMarker: (session: VoiceSessionOutput) => void;
 }
 
 function statLabel(value: number, singular: string, plural: string): string {
@@ -22,13 +23,6 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
   const isActive = () => props.data.status === 'active';
   const isMutating = () => isSaving() || isChangingStatus();
 
-  const syncProjectedStatus = (session: VoiceSessionOutput) => {
-    const outputBlock = blockStore.getBlock(props.blockId);
-    const markerBlockId = outputBlock?.childIds?.[1];
-    if (!markerBlockId) return;
-    blockStore.updateBlockContent(markerBlockId, renderVoiceSessionMarker(session));
-  };
-
   const applySessionUpdate = (session: VoiceSession) => {
     const nextOutput: VoiceSessionOutput = {
       ...session,
@@ -36,8 +30,8 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
       metadataUrl: props.data.metadataUrl,
     };
 
-    blockStore.setBlockOutput(props.blockId, nextOutput, 'voice-session', 'complete');
-    syncProjectedStatus(nextOutput);
+    props.setSessionOutput(nextOutput);
+    props.syncProjectionMarker(nextOutput);
   };
 
   const openUrl = async (url: string) => {
@@ -54,7 +48,7 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
 
     setError(null);
     setIsSaving(true);
-    blockStore.setBlockStatus(props.blockId, 'running');
+    props.setSessionStatus('running');
 
     try {
       const next = await invoke<VoiceSession>('append_voice_transcript', {
@@ -69,7 +63,7 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      blockStore.setBlockStatus(props.blockId, 'error');
+      props.setSessionStatus('error');
       return;
     } finally {
       setIsSaving(false);
@@ -81,7 +75,7 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
 
     setError(null);
     setIsChangingStatus(true);
-    blockStore.setBlockStatus(props.blockId, 'running');
+    props.setSessionStatus('running');
 
     try {
       const next = await invoke<VoiceSession>('update_voice_session_status', {
@@ -92,7 +86,7 @@ export function VoiceSessionView(props: VoiceSessionViewProps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      blockStore.setBlockStatus(props.blockId, 'error');
+      props.setSessionStatus('error');
       return;
     } finally {
       setIsChangingStatus(false);

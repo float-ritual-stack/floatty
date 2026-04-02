@@ -11,7 +11,7 @@ pub async fn create_voice_session(
     source_block_id: Option<String>,
 ) -> Result<voice::VoiceSession, String> {
     voice::create_voice_session(
-        &state.config_path,
+        &state.attachments_path,
         voice::CreateVoiceSessionInput {
             mode,
             title,
@@ -26,7 +26,7 @@ pub async fn get_voice_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<voice::VoiceSession, String> {
-    voice::get_voice_session(&state.config_path, &session_id).map_err(|err| err.to_string())
+    voice::get_voice_session(&state.attachments_path, &session_id).map_err(|err| err.to_string())
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -34,7 +34,7 @@ pub async fn list_voice_sessions(
     state: State<'_, AppState>,
     limit: Option<usize>,
 ) -> Result<Vec<voice::VoiceSession>, String> {
-    voice::list_voice_sessions(&state.config_path, limit).map_err(|err| err.to_string())
+    voice::list_voice_sessions(&state.attachments_path, limit).map_err(|err| err.to_string())
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -48,7 +48,7 @@ pub async fn append_voice_transcript(
     kind: Option<String>,
 ) -> Result<voice::VoiceSession, String> {
     voice::append_voice_transcript(
-        &state.config_path,
+        &state.attachments_path,
         voice::AppendVoiceTranscriptInput {
             session_id,
             text,
@@ -68,7 +68,7 @@ pub async fn update_voice_session_status(
     status: String,
 ) -> Result<voice::VoiceSession, String> {
     voice::update_voice_session_status(
-        &state.config_path,
+        &state.attachments_path,
         voice::UpdateVoiceSessionStatusInput { session_id, status },
     )
     .map_err(|err| err.to_string())

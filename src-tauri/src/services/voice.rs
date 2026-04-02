@@ -267,11 +267,8 @@ pub struct UpdateVoiceSessionStatusInput {
     pub status: String,
 }
 
-fn attachments_dir(config_path: &Path) -> PathBuf {
-    config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("__attachments")
+fn attachments_dir(attachments_path: &Path) -> PathBuf {
+    attachments_path.to_path_buf()
 }
 
 fn metadata_filename(session_id: &str) -> String {
@@ -282,16 +279,16 @@ fn transcript_filename(session_id: &str) -> String {
     format!("{TRANSCRIPT_PREFIX}{session_id}{MARKDOWN_SUFFIX}")
 }
 
-fn metadata_path(config_path: &Path, session_id: &str) -> PathBuf {
-    attachments_dir(config_path).join(metadata_filename(session_id))
+fn metadata_path(attachments_path: &Path, session_id: &str) -> PathBuf {
+    attachments_dir(attachments_path).join(metadata_filename(session_id))
 }
 
-fn transcript_path(config_path: &Path, session_id: &str) -> PathBuf {
-    attachments_dir(config_path).join(transcript_filename(session_id))
+fn transcript_path(attachments_path: &Path, session_id: &str) -> PathBuf {
+    attachments_dir(attachments_path).join(transcript_filename(session_id))
 }
 
-fn ensure_attachments_dir(config_path: &Path) -> Result<PathBuf, VoiceError> {
-    let dir = attachments_dir(config_path);
+fn ensure_attachments_dir(attachments_path: &Path) -> Result<PathBuf, VoiceError> {
+    let dir = attachments_dir(attachments_path);
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -466,6 +463,78 @@ fn render_transcript_chunk(
     )
 }
 
+fn transcript_stats(transcript_path: &Path) -> Result<(usize, usize, usize), VoiceError> {
+    if !transcript_path.exists() {
+        return Err(VoiceError::NotFound(
+            transcript_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+        ));
+    }
+
+    let transcript = fs::read_to_string(transcript_path)?;
+    let mut chunks = 0;
+    let mut lines = 0;
+    let mut words = 0;
+    let mut saw_chunk = false;
+    let mut skip_leading_blank = false;
+
+    let mut lines_iter = transcript.lines().peekable();
+    while let Some(line) = lines_iter.next() {
+        if line.starts_with("### Chunk ") {
+            chunks += 1;
+            saw_chunk = true;
+            skip_leading_blank = true;
+            continue;
+        }
+
+        if !saw_chunk {
+            continue;
+        }
+
+        if skip_leading_blank && line.is_empty() {
+            skip_leading_blank = false;
+            continue;
+        }
+
+        skip_leading_blank = false;
+        if line.is_empty()
+            && lines_iter
+                .peek()
+                .map(|next| next.starts_with("### Chunk "))
+                .unwrap_or(true)
+        {
+            continue;
+        }
+        lines += 1;
+        words += line.split_whitespace().count();
+    }
+
+    Ok((chunks, lines, words))
+}
+
+fn reconcile_session_stats(
+    attachments_path: &Path,
+    session: &mut VoiceSession,
+) -> Result<bool, VoiceError> {
+    let transcript_path = transcript_path(attachments_path, &session.id);
+    let (chunks, lines, words) = transcript_stats(&transcript_path)?;
+    let changed = session.transcript_chunks != chunks
+        || session.transcript_lines != lines
+        || session.transcript_words != words;
+
+    if changed {
+        session.transcript_chunks = chunks;
+        session.transcript_lines = lines;
+        session.transcript_words = words;
+        session.updated_at = Utc::now().to_rfc3339();
+    }
+
+    Ok(changed)
+}
+
 fn write_session_json(path: &Path, session: &VoiceSession) -> Result<(), VoiceError> {
     let json = serde_json::to_string_pretty(session)?;
     let temp_path = path.with_extension("json.tmp");
@@ -488,10 +557,10 @@ fn read_session_json(path: &Path) -> Result<VoiceSession, VoiceError> {
 }
 
 pub fn create_voice_session(
-    config_path: &Path,
+    attachments_path: &Path,
     input: CreateVoiceSessionInput,
 ) -> Result<VoiceSession, VoiceError> {
-    ensure_attachments_dir(config_path)?;
+    ensure_attachments_dir(attachments_path)?;
 
     let mode = VoiceSessionMode::parse(input.mode.as_deref())?;
     let now = Utc::now().to_rfc3339();
@@ -512,8 +581,8 @@ pub fn create_voice_session(
 
     let transcript_attachment_name = transcript_filename(&id);
     let metadata_attachment_name = metadata_filename(&id);
-    let transcript_path = transcript_path(config_path, &id);
-    let metadata_path = metadata_path(config_path, &id);
+    let transcript_path = transcript_path(attachments_path, &id);
+    let metadata_path = metadata_path(attachments_path, &id);
 
     let session = VoiceSession {
         id,
@@ -543,14 +612,23 @@ pub fn create_voice_session(
 
 pub fn get_voice_session(config_path: &Path, session_id: &str) -> Result<VoiceSession, VoiceError> {
     validate_session_id(session_id)?;
-    read_session_json(&metadata_path(config_path, session_id))
+    let lock = session_lock(session_id);
+    let _guard = lock.lock().expect("voice session mutex poisoned");
+
+    let metadata_path = metadata_path(config_path, session_id);
+    let mut session = read_session_json(&metadata_path)?;
+    if reconcile_session_stats(config_path, &mut session)? {
+        write_session_json(&metadata_path, &session)?;
+    }
+
+    Ok(session)
 }
 
 pub fn list_voice_sessions(
-    config_path: &Path,
+    attachments_path: &Path,
     limit: Option<usize>,
 ) -> Result<Vec<VoiceSession>, VoiceError> {
-    let dir = attachments_dir(config_path);
+    let dir = attachments_dir(attachments_path);
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -585,14 +663,14 @@ pub fn list_voice_sessions(
 }
 
 pub fn append_voice_transcript(
-    config_path: &Path,
+    attachments_path: &Path,
     mut input: AppendVoiceTranscriptInput,
 ) -> Result<VoiceSession, VoiceError> {
     if input.text.trim().is_empty() {
         return Err(VoiceError::EmptyTranscript);
     }
 
-    ensure_attachments_dir(config_path)?;
+    ensure_attachments_dir(attachments_path)?;
     validate_session_id(&input.session_id)?;
     input.started_at = normalize_timestamp(input.started_at.as_deref(), "started_at")?;
     input.ended_at = normalize_timestamp(input.ended_at.as_deref(), "ended_at")?;
@@ -600,9 +678,10 @@ pub fn append_voice_transcript(
     let lock = session_lock(&input.session_id);
     let _guard = lock.lock().expect("voice session mutex poisoned");
 
-    let metadata_path = metadata_path(config_path, &input.session_id);
-    let transcript_path = transcript_path(config_path, &input.session_id);
+    let metadata_path = metadata_path(attachments_path, &input.session_id);
+    let transcript_path = transcript_path(attachments_path, &input.session_id);
     let mut session = read_session_json(&metadata_path)?;
+    let _ = reconcile_session_stats(attachments_path, &mut session)?;
 
     if !session.status.is_writable() {
         return Err(VoiceError::SessionNotWritable {
@@ -622,10 +701,10 @@ pub fn append_voice_transcript(
     let mut file = OpenOptions::new().append(true).open(&transcript_path)?;
     file.write_all(rendered_chunk.as_bytes())?;
 
-    session.updated_at = now;
     session.transcript_chunks = next_chunk_index;
     session.transcript_lines += input.text.lines().count();
     session.transcript_words += input.text.split_whitespace().count();
+    session.updated_at = now;
 
     write_session_json(&metadata_path, &session)?;
 
@@ -633,17 +712,18 @@ pub fn append_voice_transcript(
 }
 
 pub fn update_voice_session_status(
-    config_path: &Path,
+    attachments_path: &Path,
     input: UpdateVoiceSessionStatusInput,
 ) -> Result<VoiceSession, VoiceError> {
-    ensure_attachments_dir(config_path)?;
+    ensure_attachments_dir(attachments_path)?;
     validate_session_id(&input.session_id)?;
 
     let lock = session_lock(&input.session_id);
     let _guard = lock.lock().expect("voice session mutex poisoned");
 
-    let metadata_path = metadata_path(config_path, &input.session_id);
+    let metadata_path = metadata_path(attachments_path, &input.session_id);
     let mut session = read_session_json(&metadata_path)?;
+    let _ = reconcile_session_stats(attachments_path, &mut session)?;
     let next_status = VoiceSessionStatus::parse(&input.status)?;
 
     if !session.status.can_transition_to(next_status) {

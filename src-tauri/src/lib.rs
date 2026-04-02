@@ -15,24 +15,24 @@ mod sync_test;
 use commands::{
     append_voice_transcript, check_hooks_installed, clear_ctx_markers, clear_workspace,
     create_voice_session, execute_ai_command, execute_ai_conversation, execute_shell_command,
-    get_clipboard_info, get_ctx_config, get_ctx_counts, get_ctx_markers, get_send_model,
-    get_theme, get_voice_session, get_workspace_state, install_shell_hooks, list_door_files,
+    get_clipboard_info, get_ctx_config, get_ctx_counts, get_ctx_markers, get_send_model, get_theme,
+    get_voice_session, get_workspace_state, install_shell_hooks, list_door_files,
     list_voice_sessions, open_url, read_door_file, read_help_file, save_clipboard_image,
-    save_workspace_state, set_ctx_config, set_theme, toggle_diagnostics,
-    uninstall_shell_hooks, update_voice_session_status,
+    save_workspace_state, set_ctx_config, set_theme, toggle_diagnostics, uninstall_shell_hooks,
+    update_voice_session_status,
 };
 use config::{AggregatorConfig, ServerInfo};
-use paths::DataPaths;
-use server::{spawn_server, ServerState};
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::FloattyDb;
 use floatty_core::YDocStore;
+use paths::DataPaths;
+use server::{spawn_server, ServerState};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Inner state when ctx:: system is available
 struct AppStateInner {
@@ -53,6 +53,8 @@ pub struct AppState {
     server: Option<ServerState>,
     /// Resolved config path — all config reads/writes go through this
     pub config_path: PathBuf,
+    /// Durable attachment storage path
+    pub attachments_path: PathBuf,
 }
 
 /// Get server info for HTTP client initialization
@@ -61,7 +63,9 @@ pub struct AppState {
 /// Called once on app startup to initialize the HTTP client.
 #[tauri::command]
 fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
-    state.server.as_ref()
+    state
+        .server
+        .as_ref()
         .map(|s| s.info.clone())
         .ok_or_else(|| "Server not running".to_string())
 }
@@ -122,7 +126,10 @@ async fn run_orphan_check(server_url: &str, api_key: &str, app_handle: &tauri::A
     let orphans = orphan_detector::find_orphans(&data.blocks, &data.root_ids);
 
     if orphans.is_empty() {
-        tracing::debug!(block_count = data.blocks.len(), "Orphan check: no orphans found");
+        tracing::debug!(
+            block_count = data.blocks.len(),
+            "Orphan check: no orphans found"
+        );
         return;
     }
 
@@ -140,8 +147,13 @@ async fn run_orphan_check(server_url: &str, api_key: &str, app_handle: &tauri::A
 
 /// Manual trigger for orphan detection (for testing/debugging).
 #[tauri::command]
-async fn check_orphans_now(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<String, String> {
-    let server = state.server.as_ref()
+async fn check_orphans_now(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    let server = state
+        .server
+        .as_ref()
         .ok_or_else(|| "Server not running".to_string())?;
 
     run_orphan_check(&server.info.url, &server.info.api_key, &app_handle).await;
@@ -167,7 +179,8 @@ fn setup_logging(log_dir: &std::path::Path) {
         .rotation(Rotation::DAILY)
         .filename_prefix("floatty")
         .filename_suffix("jsonl")
-        .build(log_dir) {
+        .build(log_dir)
+    {
         Ok(appender) => appender,
         Err(e) => {
             eprintln!("Failed to create log appender: {}", e);
@@ -187,12 +200,14 @@ fn setup_logging(log_dir: &std::path::Path) {
 
     // Human-readable logs to stdout (dev only)
     let stdout_layer = if cfg!(debug_assertions) {
-        Some(fmt::layer()
-            .with_writer(std::io::stdout)
-            .with_target(true)
-            .with_level(true)
-            .with_ansi(true)
-            .pretty())
+        Some(
+            fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_target(true)
+                .with_level(true)
+                .with_ansi(true)
+                .pretty(),
+        )
     } else {
         None
     };
@@ -259,7 +274,8 @@ pub fn run() {
             const MAX_MIGRATION_ATTEMPTS: u32 = 3;
 
             let has_updates = db.get_ydoc_update_count(YDOC_KEY).unwrap_or(0) > 0;
-            let migration_attempts: u32 = db.get_system_state("ydoc_migration_attempts")
+            let migration_attempts: u32 = db
+                .get_system_state("ydoc_migration_attempts")
                 .ok()
                 .flatten()
                 .and_then(|bytes| String::from_utf8(bytes).ok())
@@ -280,9 +296,14 @@ pub fn run() {
                                 e, migration_attempts + 1, MAX_MIGRATION_ATTEMPTS
                             );
                             let new_attempts = migration_attempts + 1;
-                            let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
+                            let _ = db.set_system_state(
+                                "ydoc_migration_attempts",
+                                new_attempts.to_string().as_bytes(),
+                            );
                         } else {
-                            log::info!("Successfully migrated Y.Doc from legacy to append-only format");
+                            log::info!(
+                                "Successfully migrated Y.Doc from legacy to append-only format"
+                            );
                             // Clear legacy entry to prevent re-migration after schema upgrades
                             let _ = db.set_system_state("ydoc", b"");
                             let _ = db.set_system_state("ydoc_migration_attempts", b"0");
@@ -346,7 +367,9 @@ pub fn run() {
                 }
                 Err(e) => {
                     log::error!("Failed to create ctx:: parser: {}", e);
-                    log::error!("ctx:: sidebar will show errors. Check Ollama/network configuration.");
+                    log::error!(
+                        "ctx:: sidebar will show errors. Check Ollama/network configuration."
+                    );
                     None
                 }
             }
@@ -370,7 +393,12 @@ pub fn run() {
     let server_url_for_orphan = server_state.as_ref().map(|s| s.info.url.clone());
     let server_api_key_for_orphan = server_state.as_ref().map(|s| s.info.api_key.clone());
 
-    let state = AppState { inner, server: server_state, config_path: paths.config.clone() };
+    let state = AppState {
+        inner,
+        server: server_state,
+        config_path: paths.config.clone(),
+        attachments_path: paths.attachments.clone(),
+    };
 
     // Build app with platform-specific plugins and commands
     let mut builder = tauri::Builder::default()

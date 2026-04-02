@@ -20,7 +20,7 @@ import { DoorHost, DoorExecCard } from './views/DoorHost';
 import { ImgView } from './views/ImgView';
 import { EvalOutput } from './EvalOutput';
 import type { SearchResults, DoorEnvelope } from '../lib/handlers';
-import type { VoiceSessionOutput } from '../lib/handlers/voice';
+import { renderVoiceSessionMarker, type VoiceSessionOutput } from '../lib/handlers/voice';
 import type { EvalResult } from '../lib/evalEngine';
 
 // ─── Error fallback ─────────────────────────────────────────────────────
@@ -118,6 +118,11 @@ export function BlockOutputView(props: BlockOutputViewProps) {
 
   // ─── Keyboard handler for output blocks ───────────────────────────
   const handleOutputBlockKeyDown = (e: KeyboardEvent) => {
+    const target = e.target;
+    if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable]')) {
+      return;
+    }
+
     props.cancelContentUpdate();
     const idx = searchFocusedIdx();
     const modKey = isMac ? e.metaKey : e.ctrlKey;
@@ -277,7 +282,14 @@ export function BlockOutputView(props: BlockOutputViewProps) {
           <Show when={block()?.outputType === 'voice-session'}>
             <VoiceSessionView
               data={block()!.output as VoiceSessionOutput}
-              blockId={props.blockId}
+              setSessionOutput={(output) => store.setBlockOutput(props.blockId, output, 'voice-session', 'complete')}
+              setSessionStatus={(status) => store.setBlockStatus(props.blockId, status)}
+              syncProjectionMarker={(session) => {
+                const outputBlock = store.blocks[props.blockId];
+                const markerBlockId = outputBlock?.childIds?.[1];
+                if (!markerBlockId) return;
+                store.updateBlockContent(markerBlockId, renderVoiceSessionMarker(session));
+              }}
             />
           </Show>
 
