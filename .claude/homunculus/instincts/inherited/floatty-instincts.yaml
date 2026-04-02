@@ -1,0 +1,763 @@
+# Instincts generated from https://github.com/float-ritual-stack/floatty
+# Generated: 2026-04-02T04:06:14.737Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: floatty-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, feat, chore, refactor, docs
+
+## Evidence
+
+- 200 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix: address voice session PR feedback, chore: release v0.10.0
+
+---
+id: floatty-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Commit Length
+
+## Action
+
+Write moderate-length commit messages (~59 characters)
+
+## Evidence
+
+- Average commit message length: 59 chars
+- Based on 200 commits
+
+---
+id: floatty-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: floatty-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: floatty-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: floatty-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: assets, components, context, generated, hooks
+
+---
+id: floatty-test-colocate
+trigger: "when writing tests"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Colocate
+
+## Action
+
+Place test file next to the source file (e.g., Button.test.tsx next to Button.tsx)
+
+## Evidence
+
+- Colocated test pattern detected
+- Tests live alongside source files
+
+---
+id: floatty-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Framework
+
+## Action
+
+Use vitest as the test framework
+
+## Evidence
+
+- Test framework detected: vitest
+- File pattern: *.test.ts
+
+---
+id: floatty-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: floatty-test-mocking
+trigger: "when mocking dependencies in tests"
+confidence: 0.75
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Test Mocking
+
+## Action
+
+Use vi.mock for mocking
+
+## Evidence
+
+- Mocking pattern detected: vi.mock
+- Consistent across test files
+
+---
+id: floatty-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~12x per month
+- Files: src/components/*, src/lib/*, src/lib/handlers/*
+
+---
+id: floatty-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~7x per month
+- Files: src/**/*
+
+---
+id: floatty-workflow-component-extraction-refactor
+trigger: "when doing component extraction refactor"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Component Extraction Refactor
+
+## Action
+
+Follow the component-extraction-refactor workflow:
+1. Identify reusable logic or UI in an existing component file (e.g., BlockItem.tsx).
+2. Create a new file (e.g., useContentSync.ts, useDoorChirpListener.ts, BlockOutputView.tsx) in the appropriate directory (src/hooks/ or src/components/).
+3. Move the relevant code from the original component to the new file.
+4. Update the original component to import and use the new hook/component.
+5. Test to ensure all functionality remains intact.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/components/BlockItem.tsx, src/components/views/DoorPaneView.tsx, src/components/BlockOutputView.tsx
+
+---
+id: floatty-workflow-add-or-update-door-component
+trigger: "when doing add or update door component"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Add Or Update Door Component
+
+## Action
+
+Follow the add-or-update-door-component workflow:
+1. Add or update component implementation in doors/render/components.tsx.
+2. Update doors/render/catalog.ts to define schema and catalog entry.
+3. Update doors/render/registry.ts for registry wiring.
+4. Optionally update doors/render/render.tsx for routing or rendering logic.
+5. Test new or updated component.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: doors/render/catalog.ts, doors/render/components.tsx, doors/render/registry.ts
+
+---
+id: floatty-workflow-release-version-bump
+trigger: "when doing release version bump"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Release Version Bump
+
+## Action
+
+Follow the release-version-bump workflow:
+1. Update version number in package.json.
+2. Update version in src-tauri/Cargo.toml and src-tauri/tauri.conf.json.
+3. Update CHANGELOG.md with release notes.
+4. Optionally update src-tauri/Cargo.lock.
+5. Commit with a chore: release message.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: package.json, CHANGELOG.md, src-tauri/Cargo.toml
+
+---
+id: floatty-workflow-code-review-feedback-fix
+trigger: "when doing code review feedback fix"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Code Review Feedback Fix
+
+## Action
+
+Follow the code-review-feedback-fix workflow:
+1. Review feedback from PR or code review.
+2. Make necessary changes in the relevant files (often multiple, across src/, doors/, package.json, etc.).
+3. Commit with a fix: address review feedback message.
+4. Ensure all tests pass.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: src/components/BlockItem.tsx, doors/render/render.tsx, package.json
+
+---
+id: floatty-workflow-add-or-update-artifact-handler
+trigger: "when doing add or update artifact handler"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Add Or Update Artifact Handler
+
+## Action
+
+Follow the add-or-update-artifact-handler workflow:
+1. Update src/lib/handlers/artifactTransform.ts and/or artifactHandler.ts with new logic.
+2. Add or update tests in artifactTransform.test.ts.
+3. Commit with a feat(artifact): or fix(artifact): message.
+4. Test artifact rendering in the app.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/lib/handlers/artifactTransform.ts, src/lib/handlers/artifactTransform.test.ts, src/lib/handlers/artifactHandler.ts
+
+---
+id: floatty-workflow-persist-ui-state-to-config-or-localstorage
+trigger: "when doing persist ui state to config or localstorage"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/float-ritual-stack/floatty
+---
+
+# Floatty Workflow Persist Ui State To Config Or Localstorage
+
+## Action
+
+Follow the persist-ui-state-to-config-or-localstorage workflow:
+1. Update UI component (e.g., Terminal.tsx) to read/write state from config or localStorage.
+2. Update src-tauri/src/config.rs or src/lib/tauriTypes.ts if persisting to config.
+3. Test persistence across reloads.
+4. Commit with a fix: or feat: message.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/components/Terminal.tsx, src-tauri/src/config.rs, src/lib/tauriTypes.ts
+
+---
+id: floatty-camelcase-files
+trigger: "When naming a new file in src/"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Camelcase Files
+
+## Action
+
+Use camelCase for the file name.
+
+## Evidence
+
+- Pattern in src/components/BlockItem.tsx
+- Pattern in src/hooks/useContentSync.ts
+
+---
+id: floatty-camelcase-functions
+trigger: "When naming a function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Camelcase Functions
+
+## Action
+
+Use camelCase for function names.
+
+## Evidence
+
+- Pattern in src/lib/navigation.ts
+- Pattern in src/hooks/useBacklinkNavigation.ts
+
+---
+id: floatty-pascalcase-classes
+trigger: "When defining a class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Pascalcase Classes
+
+## Action
+
+Use PascalCase for class names.
+
+## Evidence
+
+- Pattern in src/components/BlockItem.tsx
+
+---
+id: floatty-screaming-snake-constants
+trigger: "When declaring a constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Screaming Snake Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names.
+
+## Evidence
+
+- Pattern in src/lib/navigation.ts
+
+---
+id: floatty-relative-imports
+trigger: "When importing modules within the repo"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Relative Imports
+
+## Action
+
+Use relative import paths.
+
+## Evidence
+
+- Pattern in src/components/BlockItem.tsx
+- Pattern in src/hooks/useContentSync.ts
+
+---
+id: floatty-named-exports
+trigger: "When exporting functions or components"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Named Exports
+
+## Action
+
+Use named exports.
+
+## Evidence
+
+- Pattern in src/components/BlockItem.tsx
+- Pattern in src/hooks/useContentSync.ts
+
+---
+id: floatty-vitest-unit-pattern
+trigger: "When writing a test file"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Vitest Unit Pattern
+
+## Action
+
+Name it with the pattern *.test.ts and use vitest as the test framework.
+
+## Evidence
+
+- Pattern in src/lib/handlers/artifactTransform.test.ts
+- Pattern in vitest.config.ts
+
+---
+id: floatty-vi-mock-style
+trigger: "When mocking dependencies in tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Vi Mock Style
+
+## Action
+
+Use vi.mock for mocking.
+
+## Evidence
+
+- Pattern in src/lib/handlers/artifactTransform.test.ts
+
+---
+id: floatty-unit-tests-default
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Unit Tests Default
+
+## Action
+
+Write unit tests by default.
+
+## Evidence
+
+- Pattern in src/lib/handlers/artifactTransform.test.ts
+- testTypes: unit
+
+---
+id: floatty-no-coverage-config
+trigger: "When configuring tests"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty No Coverage Config
+
+## Action
+
+Do not add code coverage configuration.
+
+## Evidence
+
+- coverageConfig: false in testing config
+
+---
+id: floatty-conventional-commits
+trigger: "When writing a commit message"
+confidence: 0.95
+domain: git
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Conventional Commits
+
+## Action
+
+Use conventional commit prefixes: fix, feat, chore, refactor, docs.
+
+## Evidence
+
+- Seen in commit 'fix: address voice session PR feedback'
+- Pattern in commit examples
+
+---
+id: floatty-commit-average-length
+trigger: "When writing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Commit Average Length
+
+## Action
+
+Keep the commit message concise (average length ~59 characters).
+
+## Evidence
+
+- averageLength: 59 in commit analysis
+
+---
+id: floatty-component-extraction-refactor
+trigger: "When a component grows too large or contains reusable logic/UI that should be separated."
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Component Extraction Refactor
+
+## Action
+
+Extract shared logic/UI into a new file (hook or component), update imports, and test.
+
+## Evidence
+
+- Workflow: component-extraction-refactor
+- Example in src/components/BlockItem.tsx and src/hooks/useContentSync.ts
+
+---
+id: floatty-add-or-update-door-component
+trigger: "When a new UI component is needed in the render:: door system, or when updating the catalog with new features."
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Add Or Update Door Component
+
+## Action
+
+Implement or update the component, update catalog/registry, and test.
+
+## Evidence
+
+- Workflow: add-or-update-door-component
+- Example in doors/render/components.tsx
+
+---
+id: floatty-release-version-bump
+trigger: "When preparing a new release for deployment or distribution."
+confidence: 0.98
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Release Version Bump
+
+## Action
+
+Update version numbers, changelog, and config files; commit with chore: release message.
+
+## Evidence
+
+- Workflow: release-version-bump
+- Example in package.json, CHANGELOG.md
+
+---
+id: floatty-code-review-feedback-fix
+trigger: "When code review or PR feedback is received that requires changes."
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Code Review Feedback Fix
+
+## Action
+
+Make targeted fixes across relevant files and commit with fix: address review feedback.
+
+## Evidence
+
+- Workflow: code-review-feedback-fix
+- Seen in commit 'fix: address voice session PR feedback'
+
+---
+id: floatty-add-or-update-artifact-handler
+trigger: "When improving artifact rendering or adding support for new artifact types/dependencies."
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Add Or Update Artifact Handler
+
+## Action
+
+Update artifact handler logic and tests, then test in the app.
+
+## Evidence
+
+- Workflow: add-or-update-artifact-handler
+- Pattern in src/lib/handlers/artifactTransform.ts
+
+---
+id: floatty-persist-ui-state
+trigger: "When a UI state should be remembered between app restarts or browser reloads."
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: float-ritual-stack/floatty
+---
+
+# Floatty Persist Ui State
+
+## Action
+
+Persist UI state to config files or localStorage and test persistence.
+
+## Evidence
+
+- Workflow: persist-ui-state-to-config-or-localstorage
+- Pattern in src/components/Terminal.tsx
+
