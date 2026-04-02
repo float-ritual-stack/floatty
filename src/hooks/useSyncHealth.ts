@@ -22,6 +22,9 @@ import { createEffect, onCleanup, createSignal } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import { getSharedDoc, triggerFullResync, setSyncStatusExternal, hasPendingUpdates, deduplicateChildIds } from './useSyncedYDoc';
 import { logDiagnosticsSummary, getSyncDiagnosticsSummary } from '../lib/syncDiagnostics';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('SyncHealth');
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -123,26 +126,24 @@ async function performHealthCheck(): Promise<void> {
     if (serverHealth.blockCount !== localBlockCount) {
       const newCount = consecutiveMismatches() + 1;
       setConsecutiveMismatches(newCount);
-      console.warn(
-        `[SyncHealth] Block count mismatch detected (${newCount}/${MISMATCH_THRESHOLD})`,
-        `\n  Server: ${serverHealth.blockCount} blocks`,
-        `\n  Local:  ${localBlockCount} blocks`
+      logger.warn(
+        `Block count mismatch detected (${newCount}/${MISMATCH_THRESHOLD}) | Server: ${serverHealth.blockCount} blocks | Local: ${localBlockCount} blocks`
       );
 
       if (newCount >= MISMATCH_THRESHOLD) {
-        console.warn('[SyncHealth] Persistent drift detected, triggering bidirectional resync');
+        logger.warn('Persistent drift detected, triggering bidirectional resync');
         setIsResyncing(true);
 
         try {
           const { pushedBytes } = await triggerFullResync();
           if (pushedBytes > 0) {
-            console.log(`[SyncHealth] Pushed ${pushedBytes} bytes of local-only data to server`);
+            logger.info(`Pushed ${pushedBytes} bytes of local-only data to server`);
           }
 
           // Post-resync dedup: clean up any duplicate childIds from CRDT merge
           const deduped = deduplicateChildIds();
           if (deduped > 0) {
-            console.warn(`[SyncHealth] Post-resync dedup removed ${deduped} duplicates`);
+            logger.warn(`Post-resync dedup removed ${deduped} duplicates`);
           }
 
           // Post-resync verification: re-check block counts
@@ -154,7 +155,7 @@ async function performHealthCheck(): Promise<void> {
             if (!hasPendingUpdates()) {
               setSyncStatusExternal('synced', null);
             }
-            console.log('[SyncHealth] Resync complete, drift resolved');
+            logger.info('Resync complete, drift resolved');
           } else {
             // Still mismatched after resync — show drift state, don't fake green
             const delta = postLocalCount - postServerHealth.blockCount;
@@ -162,11 +163,8 @@ async function performHealthCheck(): Promise<void> {
             const direction = delta > 0
               ? `local has ${absDelta} extra block${absDelta !== 1 ? 's' : ''}`
               : `server has ${absDelta} extra block${absDelta !== 1 ? 's' : ''}`;
-            console.warn(
-              `[SyncHealth] Drift persists after resync!`,
-              `\n  Server: ${postServerHealth.blockCount} blocks`,
-              `\n  Local:  ${postLocalCount} blocks`,
-              `\n  Delta:  ${delta}`
+            logger.warn(
+              `Drift persists after resync! Server: ${postServerHealth.blockCount} blocks | Local: ${postLocalCount} blocks | Delta: ${delta}`
             );
             setSyncStatusExternal(
               'drift',
@@ -175,7 +173,7 @@ async function performHealthCheck(): Promise<void> {
             // Don't reset counter — will retry next check
           }
         } catch (err) {
-          console.error('[SyncHealth] Resync failed:', err);
+          logger.error('Resync failed', { err });
           // Don't reset counter - will retry on next check
         } finally {
           setIsResyncing(false);
@@ -184,13 +182,13 @@ async function performHealthCheck(): Promise<void> {
     } else {
       // Block counts match - reset counter
       if (consecutiveMismatches() > 0) {
-        console.log('[SyncHealth] Block counts match, clearing mismatch counter');
+        logger.info('Block counts match, clearing mismatch counter');
       }
       setConsecutiveMismatches(0);
-      console.log(`[SyncHealth] OK ${localBlockCount} blocks in sync | ${getSyncDiagnosticsSummary()}`);
+      logger.info(`OK ${localBlockCount} blocks in sync | ${getSyncDiagnosticsSummary()}`);
     }
   } catch (err) {
-    console.error('[SyncHealth] Health check failed:', err);
+    logger.error('Health check failed', { err });
     // Network error - don't count as mismatch, just skip
   }
 }
@@ -228,7 +226,7 @@ export function useSyncHealth(): void {
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    console.log('[useSyncHealth] HMR cleanup');
+    logger.debug('HMR cleanup');
     if (healthCheckInterval) {
       clearInterval(healthCheckInterval);
       healthCheckInterval = null;

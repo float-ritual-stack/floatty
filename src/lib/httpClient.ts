@@ -7,6 +7,9 @@
 
 import { invoke } from './tauriTypes';
 import { base64ToBytes, bytesToBase64 } from './encoding';
+import { createLogger } from './logger';
+
+const logger = createLogger('httpClient');
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -177,13 +180,13 @@ class HttpClient implements FloattyHttpClient {
         method: 'GET',
       });
       if (!response.ok) {
-        console.warn(`[httpClient] Health check returned ${response.status} ${response.statusText}`);
+        logger.warn(`Health check returned ${response.status} ${response.statusText}`);
       }
       return response.ok;
     } catch (err) {
       // Log specific error for debugging - helps distinguish between
       // "server not started yet" vs "server URL wrong" vs "network issue"
-      console.error('[httpClient] Health check failed:', err);
+      logger.error('Health check failed', { err });
       return false;
     }
   }
@@ -237,9 +240,7 @@ class HttpClient implements FloattyHttpClient {
     // 410 Gone - client requested updates that have been compacted
     if (response.status === 410) {
       const data: UpdatesCompactedError = await response.json();
-      console.warn(
-        `[httpClient] Updates compacted: requested since ${data.requestedSince}, compacted through ${data.compactedThrough}`
-      );
+      logger.warn(`Updates compacted: requested since ${data.requestedSince}, compacted through ${data.compactedThrough}`);
       return { ok: false, compactedThrough: data.compactedThrough };
     }
 
@@ -299,12 +300,12 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
 
         // Only set instance after successful health check
         clientInstance = client;
-        console.log(`[httpClient] Connected to floatty-server at ${serverInfo.url}`);
+        logger.info(`Connected to floatty-server at ${serverInfo.url}`);
         return clientInstance;
       } catch (err) {
         lastError = err;
         if (attempt < delays.length) {
-          console.log(`[httpClient] Server not ready, retrying in ${delays[attempt]}ms (attempt ${attempt + 1}/${delays.length}): ${err}`);
+          logger.info(`Server not ready, retrying in ${delays[attempt]}ms (attempt ${attempt + 1}/${delays.length}): ${err}`);
           await new Promise(r => setTimeout(r, delays[attempt]));
         }
       }
@@ -342,7 +343,7 @@ export function isClientInitialized(): boolean {
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    console.log('[httpClient] HMR cleanup');
+    logger.debug('HMR cleanup');
     clientInstance = null;
     initPromise = null;
   });

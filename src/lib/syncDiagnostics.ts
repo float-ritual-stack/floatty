@@ -10,6 +10,10 @@
  * counters make the root cause identifiable.
  */
 
+import { createLogger } from './logger';
+
+const logger = createLogger('SyncDiagnostics');
+
 export interface SyncDiagnostics {
   /** Number of orphaned blocks detected and quarantined */
   orphansDetected: number;
@@ -156,8 +160,8 @@ export function logDiagnosticsSummary(): void {
   const uptime = Math.round((Date.now() - d.sessionStartedAt) / 1000);
   const totalIssues = d.orphansDetected + d.dedupRepairs + d.phantomChildrenRemoved + d.crossParentFixes + d.parentValidationFailures + d.childIdsTypeMismatches;
 
-  console.log(
-    `[SyncDiagnostics] Session ${uptime}s | ` +
+  logger.info(
+    `Session ${uptime}s | ` +
     `resyncs:${d.fullResyncs} gapFills:${d.gapFills} echoGaps:${d.echoGapFills} ` +
     `orphans:${d.orphansDetected} dedups:${d.dedupRepairs} ` +
     `phantoms:${d.phantomChildrenRemoved} crossParent:${d.crossParentFixes} ` +
