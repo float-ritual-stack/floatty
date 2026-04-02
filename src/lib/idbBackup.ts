@@ -7,6 +7,10 @@
  * - Binary storage: no base64 overhead
  */
 
+import { createLogger } from './logger';
+
+const logger = createLogger('idbBackup');
+
 const STORE_NAME = 'ydoc';
 const DB_VERSION = 1;
 
@@ -36,7 +40,7 @@ export function initBackupNamespace(workspaceName: string): void {
     if (oldPromise) {
       oldPromise.then(db => db.close()).catch(() => {});
     }
-    console.log(`[idbBackup] Namespace set to: ${dbName}`);
+    logger.info(`Namespace set to: ${dbName}`);
   }
 }
 
@@ -45,7 +49,7 @@ function getDB(): Promise<IDBDatabase> {
     dbPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(dbName, DB_VERSION);
       request.onerror = () => {
-        console.error('[idbBackup] Failed to open database:', request.error);
+        logger.error('Failed to open database', { err: request.error });
         reject(request.error);
       };
       request.onsuccess = () => resolve(request.result);
@@ -69,7 +73,7 @@ export async function saveBackup(state: Uint8Array): Promise<void> {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).put(state, 'current');
     tx.oncomplete = () => {
-      console.log(`[idbBackup] Saved backup: ${state.length} bytes to ${dbName}`);
+      logger.info(`Saved backup: ${state.length} bytes to ${dbName}`);
       resolve();
     };
     tx.onerror = () => reject(tx.error);
@@ -87,7 +91,7 @@ export async function getBackup(): Promise<Uint8Array | null> {
     request.onsuccess = () => {
       const result = request.result ?? null;
       if (result) {
-        console.log(`[idbBackup] Loaded backup: ${result.length} bytes from ${dbName}`);
+        logger.info(`Loaded backup: ${result.length} bytes from ${dbName}`);
       }
       resolve(result);
     };

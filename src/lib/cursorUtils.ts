@@ -19,6 +19,10 @@
  * isCursorAtContentStart: getAbsoluteCursorOffset() === 0
  */
 
+import { createLogger } from './logger';
+
+const logger = createLogger('cursorUtils');
+
 /**
  * Detect presentational <br> that browsers insert to prevent empty <div> from collapsing.
  * These are NOT content characters — the div boundary already counts as 1 newline.
@@ -279,8 +283,7 @@ export function setCursorAtOffset(element: HTMLElement, offset: number): void {
     selection.addRange(range);
   } else {
     // Fallback: put cursor at end — offset walk failed to find position
-    console.debug('[setCursorAtOffset] Walk failed for offset', offset,
-      'in element with', element.childNodes.length, 'children. Falling back to end.');
+    logger.debug(`Walk failed for offset ${offset} in element with ${element.childNodes.length} children. Falling back to end.`);
     range.selectNodeContents(element);
     range.collapse(false);
     selection.removeAllRanges();

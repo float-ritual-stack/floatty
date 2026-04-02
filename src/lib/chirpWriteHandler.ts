@@ -9,6 +9,10 @@
  * Parent is always the emitting block (scoped writes).
  */
 
+import { createLogger } from './logger';
+
+const logger = createLogger('chirp-write');
+
 export interface ChirpWriteData {
   content?: string;
   match?: string;
@@ -40,16 +44,16 @@ export function handleChirpWrite(
     case 'create-child': {
       const content = data?.content;
       if (!content) {
-        console.warn('[chirp-write] create-child: missing content');
+        logger.warn('create-child: missing content');
         return { success: false };
       }
       const newId = store.createBlockInside(parentBlockId);
       if (!newId) {
-        console.warn('[chirp-write] create-child: failed to create block inside', parentBlockId);
+        logger.warn(`create-child: failed to create block inside ${parentBlockId}`);
         return { success: false };
       }
       store.updateBlockContent(newId, content);
-      console.log('[chirp-write] create-child', { parentBlockId, content: content.slice(0, 40), newId });
+      logger.info('create-child', { parentBlockId, content: content.slice(0, 40), newId });
       return { success: true, blockId: newId };
     }
 
@@ -57,15 +61,15 @@ export function handleChirpWrite(
       const content = data?.content;
       const match = data?.match;
       if (!content || !match) {
-        console.warn('[chirp-write] upsert-child: missing content or match');
+        logger.warn('upsert-child: missing content or match');
         return { success: false };
       }
       const resultId = store.upsertChildByPrefix(parentBlockId, match, content);
       if (!resultId) {
-        console.warn('[chirp-write] upsert-child: failed', { parentBlockId, match });
+        logger.warn('upsert-child: failed', { parentBlockId, match });
         return { success: false };
       }
-      console.log('[chirp-write] upsert-child', { parentBlockId, match, resultId });
+      logger.info('upsert-child', { parentBlockId, match, resultId });
       return { success: true, blockId: resultId };
     }
 

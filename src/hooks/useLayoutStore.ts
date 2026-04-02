@@ -32,6 +32,9 @@ import {
   moveLeafToRoot,
 } from '../lib/layoutTypes';
 import { paneStore } from './usePaneStore';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('LayoutStore');
 
 interface LayoutState {
   // Record of tabId -> TabLayout (using Record instead of Map for SolidJS reactivity)
@@ -84,7 +87,7 @@ function createLayoutStore() {
   ): string | null => {
     const layout = state.layouts[tabId];
     if (!layout) {
-      console.warn(`[LayoutStore] splitPane: no layout for tab ${tabId}`);
+      logger.warn(`splitPane: no layout for tab ${tabId}`);
       return null;
     }
 
@@ -106,7 +109,7 @@ function createLayoutStore() {
 
     const activePane = findNode(currentLayout.root, currentLayout.activePaneId);
     if (!activePane || activePane.type !== 'leaf') {
-      console.warn(`[LayoutStore] splitPane: active pane not found or not a leaf for tab ${tabId}`);
+      logger.warn(`splitPane: active pane not found or not a leaf for tab ${tabId}`);
       return null;
     }
 
@@ -185,7 +188,7 @@ function createLayoutStore() {
   const closePane = (tabId: string, paneId: string): string | null => {
     const layout = state.layouts[tabId];
     if (!layout) {
-      console.warn(`[LayoutStore] closePane: no layout for tab ${tabId}`);
+      logger.warn(`closePane: no layout for tab ${tabId}`);
       return null;
     }
 
@@ -193,13 +196,13 @@ function createLayoutStore() {
     const paneIds = collectPaneIds(layout.root);
     if (!paneIds.includes(paneId)) {
       // Pane already removed - this is expected with race between keyboard and PTY exit
-      console.debug(`[LayoutStore] closePane: pane ${paneId} not in tree (already closed)`);
+      logger.debug(`closePane: pane ${paneId} not in tree (already closed)`);
       return layout.activePaneId;
     }
 
     // Can't close the last pane
     if (paneIds.length <= 1) {
-      console.debug(`[LayoutStore] closePane: can't close last pane in tab ${tabId}`);
+      logger.debug(`closePane: can't close last pane in tab ${tabId}`);
       return null;
     }
 
@@ -213,7 +216,7 @@ function createLayoutStore() {
     const parent = findParent(layout.root, paneId);
     if (!parent) {
       // This shouldn't happen if pane is in tree, but be defensive
-      console.warn(`[LayoutStore] closePane: parent not found for pane ${paneId}`);
+      logger.warn(`closePane: parent not found for pane ${paneId}`);
       return null;
     }
 
@@ -422,7 +425,7 @@ function createLayoutStore() {
     });
     bumpPersistenceVersion();
 
-    console.debug(`[LayoutStore] pinPane: pinned ${paneId} (was ${direction} ephemeral)`);
+    logger.debug(`pinPane: pinned ${paneId} (was ${direction} ephemeral)`);
     return true;
   };
 

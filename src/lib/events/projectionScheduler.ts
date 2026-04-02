@@ -38,6 +38,9 @@ import type {
   AsyncEventHandler,
   EventFilter,
 } from './types';
+import { createLogger } from '../logger';
+
+const logger = createLogger('ProjectionScheduler');
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -199,10 +202,7 @@ export class ProjectionScheduler {
       let pass = 0;
       while (this.queue.length > 0) {
         if (++pass > MAX_DRAIN_PASSES) {
-          console.error(
-            `[ProjectionScheduler] Drain loop exceeded ${MAX_DRAIN_PASSES} passes, ` +
-            `${this.queue.length} events still queued. Breaking to prevent infinite loop.`
-          );
+          logger.error(`Drain loop exceeded ${MAX_DRAIN_PASSES} passes, ${this.queue.length} events still queued. Breaking to prevent infinite loop.`);
           break;
         }
         const batch = this.queue;
@@ -221,10 +221,7 @@ export class ProjectionScheduler {
               await projection.handler(merged);
             } catch (error) {
               // Log but don't propagate - one projection failing shouldn't break others
-              console.error(
-                `[ProjectionScheduler] Projection "${projection.name}" failed:`,
-                error
-              );
+              logger.error(`Projection "${projection.name}" failed`, { error });
             }
           }
         );

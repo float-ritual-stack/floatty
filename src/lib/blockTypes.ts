@@ -12,6 +12,9 @@ export type { Marker } from '../generated/Marker';
 
 import type { BlockType } from '../generated/BlockType';
 import type { BlockMetadata } from '../generated/BlockMetadata';
+import { createLogger } from './logger';
+
+const logger = createLogger('blockTypes');
 
 /**
  * Block interface for the outliner.
@@ -108,7 +111,7 @@ export function resolveBlockIdPrefix(
     if (noDash.length === 1) return noDash[0];
   }
   if (matches.length !== 1) {
-    console.warn('[resolveBlockIdPrefix]', { prefix, matchCount: matches.length, total: blockIds.length });
+    logger.warn('resolveBlockIdPrefix', { prefix, matchCount: matches.length, total: blockIds.length });
   }
   return null; // ambiguous or no match
 }

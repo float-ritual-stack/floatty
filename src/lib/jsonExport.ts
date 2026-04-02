@@ -18,6 +18,9 @@
 
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { createLogger } from './logger';
+
+const logger = createLogger('jsonExport');
 
 export interface ExportedBlock {
   content: string;
@@ -62,15 +65,15 @@ export async function downloadJSON(json: string, filename?: string): Promise<voi
     });
 
     if (!filePath) {
-      console.log('[jsonExport] User cancelled save dialog');
+      logger.info('User cancelled save dialog');
       return;
     }
 
     // Write file via Tauri fs
     await writeTextFile(filePath, json);
-    console.log('[jsonExport] Saved to:', filePath);
+    logger.info(`Saved to: ${filePath}`);
   } catch (err) {
-    console.error('[jsonExport] Failed to export:', err);
+    logger.error('Failed to export', { err });
     throw err;
   }
 }

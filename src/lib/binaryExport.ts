@@ -15,6 +15,9 @@
 import * as Y from 'yjs';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
+import { createLogger } from './logger';
+
+const logger = createLogger('binaryExport');
 
 /**
  * Export Y.Doc state as Uint8Array for direct restore.
@@ -68,13 +71,13 @@ export async function downloadBinary(doc: Y.Doc, filename?: string): Promise<voi
   });
 
   if (!filePath) {
-    console.log('[binaryExport] User cancelled save dialog');
+    logger.info('User cancelled save dialog');
     return;
   }
 
   // Write file via Tauri fs
   await writeFile(filePath, state);
-  console.log(`[binaryExport] Saved ${state.length} bytes to:`, filePath);
+  logger.info(`Saved ${state.length} bytes to: ${filePath}`);
 }
 
 /**

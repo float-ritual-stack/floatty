@@ -11,6 +11,9 @@ import { createSignal } from 'solid-js';
 import { findPagesContainer, getPageTitle } from './useBacklinkNavigation';
 import type { BlockStoreInterface } from '../context/WorkspaceContext';
 import { fuzzyFilter } from '../lib/fuzzyFilter';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('wikilinkAutocomplete');
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -171,7 +174,7 @@ export function useWikilinkAutocomplete(pageNames: () => string[]) {
     const selection = window.getSelection();
     if (!selection || !selection.rangeCount) {
       if (state()) {
-        console.debug('[useWikilinkAutocomplete] Dismissing: no selection or range');
+        logger.debug('Dismissing: no selection or range');
         setState(null);
       }
       return;

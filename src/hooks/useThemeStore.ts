@@ -7,6 +7,9 @@
 
 import { createSignal, createRoot } from 'solid-js';
 import { invoke } from '../lib/tauriTypes';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('ThemeStore');
 import {
   getTheme,
   themeNames,
@@ -47,7 +50,7 @@ function createThemeStore() {
    */
   const setTheme = async (themeName: string) => {
     if (!themeNames.includes(themeName)) {
-      console.warn(`[ThemeStore] Unknown theme: ${themeName}, using default`);
+      logger.warn(`Unknown theme: ${themeName}, using default`);
       themeName = 'default';
     }
 
@@ -59,7 +62,7 @@ function createThemeStore() {
     try {
       await invoke('set_theme', { theme: themeName });
     } catch (err) {
-      console.error('[ThemeStore] Failed to save theme preference:', err);
+      logger.error('Failed to save theme preference', { err });
     }
   };
 
@@ -82,7 +85,7 @@ function createThemeStore() {
         setCurrentThemeName(savedTheme);
       }
     } catch (err) {
-      console.warn('[ThemeStore] Failed to load theme from config:', err);
+      logger.warn('Failed to load theme from config', { err });
     }
 
     // Apply current theme (default or loaded)
