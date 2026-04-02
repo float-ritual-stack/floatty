@@ -175,6 +175,32 @@ See @.claude/rules/config-and-logging.md for config fields, logging, sync health
 
 1. **xterm decorations** - `term.registerDecoration()` crashed with renderer errors. Removed.
 
+## Canonical Paths (Use The Architecture)
+
+Before implementing any common pattern, **grep the codebase for existing implementations**. If infrastructure exists, use it.
+
+| Pattern | Use This | Not This |
+|---------|----------|----------|
+| Logging | `createLogger('Target')` from `lib/logger.ts` | `console.log/warn/error` (ESLint enforced) |
+| Navigation | `navigateToBlock/navigateToPage` from `lib/navigation.ts` | Direct `zoomTo()` or hook exports |
+| Block tree queries | `lib/blockContext.ts` helpers | Inline `getBlock → childIds → getBlock` traversals |
+| Block type detection | `blockTypes.ts` `parseBlockType()` | Inline `content.startsWith('sh::')` checks |
+| Events/reactions | `EventBus` from `lib/events/` | `window.dispatchEvent` or custom emitters |
+| Typed IPC | `invoke<T>()` via `lib/tauriTypes.ts` | Raw `invoke()` from `@tauri-apps/api/core` |
+| Inline formatting | `inlineParser.ts` | Regex-based markdown/wikilink parsing |
+| Expansion/collapse | `expansionPolicy.ts` `computeExpansion()` | Direct `setCollapsed()` calls |
+| Y.Array mutations | Surgical helpers (`insertChildId`, `removeChildId`) | `delete(0, length)` then `push()` |
+
+### Protected Architecture
+
+These modules are load-bearing infrastructure. Do not delete, bypass, or reimplement:
+
+- **`logger.ts`** — console interception + Rust log bridge. All logging flows through here.
+- **`navigation.ts`** — single navigation funnel. All nav (wikilinks, search, backlinks, chirp) routes through here.
+- **`expansionPolicy.ts`** — unified expand/collapse logic. One policy, not five.
+- **`EventBus`** + **`ProjectionScheduler`** — search fidelity chain (layers 1-2). Deleting these starves the Tantivy index.
+- **Y.Doc surgical helpers** in `useBlockStore.ts` — `insertChildId`, `removeChildId`, etc. Never delete-all-then-push.
+
 ## Pattern References
 
 - See @.claude/rules/solidjs-patterns.md — SolidJS reactivity patterns (CRITICAL)

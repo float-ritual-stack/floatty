@@ -1,3 +1,4 @@
+// ARCHITECTURE: Protected module — see CLAUDE.md "Canonical Paths". Do not bypass or delete.
 /**
  * Logger - Forwards JS logs to Rust (written to ~/.floatty/logs/)
  *
