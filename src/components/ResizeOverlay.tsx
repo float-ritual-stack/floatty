@@ -7,6 +7,7 @@
  */
 
 import { createSignal, Show, createMemo, createEffect, on, onMount, onCleanup } from 'solid-js';
+import { createLogger } from '../lib/logger';
 import { Key } from '@solid-primitives/keyed';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { terminalManager } from '../lib/terminalManager';
@@ -20,6 +21,8 @@ const MAX_SPLIT_RATIO = 0.9;         // Maximum pane size (90%)
 const RESIZE_THROTTLE_MS = 50;       // Throttle resize events during drag
 const RESIZE_DRAG_TICK_EVENT = 'floatty:resize-drag-tick';
 // Note: Hit area expansion (4px padding) is handled via CSS ::before pseudo-element
+
+const logger = createLogger('ResizeOverlay');
 
 interface ResizeOverlayProps {
   tabId: string;
@@ -114,7 +117,7 @@ function ResizeHitArea(props: {
         return false;
       }
 
-      console.warn(`[ResizeOverlay] Could not find split container for ${props.splitId} after ${maxRetries} retries`);
+      logger.warn(`Could not find split container for ${props.splitId} after ${maxRetries} retries`);
       return false;
     };
 

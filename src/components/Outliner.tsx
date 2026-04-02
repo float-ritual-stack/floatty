@@ -18,6 +18,9 @@ import { getHttpClient, isClientInitialized } from '../lib/httpClient';
 import { computeExpansion } from '../lib/expansionPolicy';
 import { downloadBinary } from '../lib/binaryExport';
 import { validateForExport, type ValidationWarning } from '../lib/validation';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('Outliner');
 import { ExportValidation } from './ExportValidation';
 import { themeStore } from '../hooks/useThemeStore';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
@@ -105,7 +108,7 @@ export function Outliner(props: OutlinerProps) {
       if (depth <= 0) return;
 
       const roots = zoomedRootId() ? [zoomedRootId()!] : store.rootIds;
-      console.log(`[FLO-197] Applying initial_collapse_depth ${depth} to ${roots.length} roots`);
+      logger.info(`[FLO-197] Applying initial_collapse_depth ${depth} to ${roots.length} roots`);
 
       const forceCollapseDeeper = (id: string, currentDepth: number) => {
         const block = store.blocks[id];
@@ -142,7 +145,7 @@ export function Outliner(props: OutlinerProps) {
       themeStore.setConfigPath(`${config.data_dir}/config.toml`);
       return config;
     }).catch((err: unknown) => {
-      console.warn('[Outliner] Failed to load config:', err);
+      logger.warn(`Failed to load config: ${err}`);
       return null;
     });
 
@@ -305,9 +308,9 @@ export function Outliner(props: OutlinerProps) {
 
     try {
       await navigator.clipboard.writeText(markdown);
-      console.log(`[FLO-102] Exported ${allIds.length} blocks to clipboard`);
+      logger.info(`[FLO-102] Exported ${allIds.length} blocks to clipboard`);
     } catch (err) {
-      console.error('[FLO-102] Failed to write to clipboard:', err);
+      logger.error(`[FLO-102] Failed to write to clipboard: ${err}`);
     }
   };
 
@@ -328,7 +331,7 @@ export function Outliner(props: OutlinerProps) {
 
       if (validation.warnings.length > 0) {
         // FLO-349: Show warnings panel, let user decide
-        console.log(`[FLO-349] Export has ${validation.warnings.length} warnings`);
+        logger.info(`[FLO-349] Export has ${validation.warnings.length} warnings`);
         setExportWarnings(validation.warnings);
         setPendingExportData({ json, parsed: data });
         return;
@@ -336,9 +339,9 @@ export function Outliner(props: OutlinerProps) {
 
       // No warnings — export directly
       await downloadJSON(json);
-      console.log(`[FLO-247] Exported ${data.blockCount} blocks to JSON`);
+      logger.info(`[FLO-247] Exported ${data.blockCount} blocks to JSON`);
     } catch (err) {
-      console.error('[FLO-247] JSON export failed:', err);
+      logger.error(`[FLO-247] JSON export failed: ${err}`);
       alert(`JSON export failed: ${err}`);
     }
   };
@@ -351,9 +354,9 @@ export function Outliner(props: OutlinerProps) {
 
     try {
       await downloadJSON(pending.json);
-      console.log(`[FLO-349] Exported ${pending.parsed.blockCount} blocks to JSON (with warnings)`);
+      logger.info(`[FLO-349] Exported ${pending.parsed.blockCount} blocks to JSON (with warnings)`);
     } catch (err) {
-      console.error('[FLO-349] JSON export failed:', err);
+      logger.error(`[FLO-349] JSON export failed: ${err}`);
       alert(`JSON export failed: ${err}`);
     }
   };
@@ -361,7 +364,7 @@ export function Outliner(props: OutlinerProps) {
   const handleExportCancel = () => {
     setExportWarnings(null);
     setPendingExportData(null);
-    console.log('[FLO-349] Export cancelled by user');
+    logger.info('[FLO-349] Export cancelled by user');
   };
 
   const exportToBinary = async () => {
@@ -370,15 +373,15 @@ export function Outliner(props: OutlinerProps) {
 
     try {
       await downloadBinary(doc);
-      console.log('[FLO-247] Exported Y.Doc binary');
+      logger.info('[FLO-247] Exported Y.Doc binary');
     } catch (err) {
-      console.error('[FLO-247] Binary export failed:', err);
+      logger.error(`[FLO-247] Binary export failed: ${err}`);
       alert(`Binary export failed: ${err}`);
     }
   };
 
   onMount(() => {
-    console.log('Outliner mounted for pane:', props.paneId);
+    logger.debug(`Mounted for pane: ${props.paneId}`);
     // FLO-320: initFromYDoc moved to createEffect gated on isLoaded()
     // This ensures the Y.Doc is populated before store init, avoiding the observer storm.
 
@@ -428,7 +431,7 @@ export function Outliner(props: OutlinerProps) {
             range.compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
           return startsAtOrBefore && endsAtOrAfter;
         } catch (err) {
-          console.debug('[isElementFullySelected] Range comparison failed:', err);
+          logger.debug(`isElementFullySelected range comparison failed: ${err}`);
           return false;
         }
       };
@@ -587,7 +590,7 @@ export function Outliner(props: OutlinerProps) {
           const blockExists = (id: string) => !!store.getBlock(id);
           const entry = paneStore.goBack(props.paneId, blockExists);
           if (entry) {
-            console.log('[FLO-180] Navigated back to:', entry.zoomedRootId ?? 'roots', 'focus:', entry.focusedBlockId);
+            logger.info(`[FLO-180] Navigated back to: ${entry.zoomedRootId ?? 'roots'} focus: ${entry.focusedBlockId}`);
             // FLO-211: Restore focus after DOM updates
             requestAnimationFrame(() => {
               if (entry.focusedBlockId && blockExists(entry.focusedBlockId)) {
@@ -605,7 +608,7 @@ export function Outliner(props: OutlinerProps) {
           const blockExists = (id: string) => !!store.getBlock(id);
           const entry = paneStore.goForward(props.paneId, blockExists);
           if (entry) {
-            console.log('[FLO-180] Navigated forward to:', entry.zoomedRootId ?? 'roots', 'focus:', entry.focusedBlockId);
+            logger.info(`[FLO-180] Navigated forward to: ${entry.zoomedRootId ?? 'roots'} focus: ${entry.focusedBlockId}`);
             // FLO-211: Restore focus after DOM updates
             requestAnimationFrame(() => {
               if (entry.focusedBlockId && blockExists(entry.focusedBlockId)) {

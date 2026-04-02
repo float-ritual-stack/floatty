@@ -23,6 +23,9 @@ import { readFiles } from 'tauri-plugin-clipboard-api';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { BlockOutputView } from './BlockOutputView';
 import { invoke } from '@tauri-apps/api/core';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('BlockItem');
 
 // Module-level child render limit from config (0 = no limit, renders all children).
 // Loaded once from config.toml. HMR-safe via dispose cleanup.
@@ -48,7 +51,7 @@ function loadChildRenderLimit(): void {
   invoke('get_ctx_config').then((config: { child_render_limit?: number }) => {
     setChildRenderLimitSignal(config.child_render_limit ?? 0);
   }).catch((err) => {
-    console.warn('[BlockItem] Failed to load config for child_render_limit:', err);
+    logger.warn(`Failed to load config for child_render_limit: ${err}`);
   });
 }
 
@@ -70,7 +73,7 @@ function placeCursorAtEnd(element: HTMLElement): void {
     sel.removeAllRanges();
     sel.addRange(range);
   } catch (err) {
-    console.debug('[BlockItem] Failed to place cursor at end:', err);
+    logger.debug(`Failed to place cursor at end: ${err}`);
   }
 }
 
@@ -86,7 +89,7 @@ function placeCursorAtStart(element: HTMLElement): void {
     sel.removeAllRanges();
     sel.addRange(range);
   } catch (err) {
-    console.debug('[BlockItem] Failed to place cursor at start:', err);
+    logger.debug(`Failed to place cursor at start: ${err}`);
   }
 }
 
@@ -286,7 +289,7 @@ export function BlockItem(props: BlockItemProps) {
     const resolvedBlockId = resolveBlockIdPrefix(target, blockIds, shortHashIndex());
     if (resolvedBlockId) {
       if (!store.getBlock(resolvedBlockId)) {
-        console.warn('[BlockItem] Wikilink block ID not in outline', { target: resolvedBlockId });
+        logger.warn('Wikilink block ID not in outline', { target: resolvedBlockId });
         return { success: false };
       }
       navigateToBlock(resolvedBlockId, {
@@ -300,7 +303,7 @@ export function BlockItem(props: BlockItemProps) {
 
     // Guard: hex prefix that didn't resolve → never create a page for block ID lookalikes
     if (BLOCK_ID_PREFIX_RE.test(target)) {
-      console.warn('[BlockItem] Block ID prefix did not resolve, not creating page', {
+      logger.warn('Block ID prefix did not resolve, not creating page', {
         target,
         blockCount: Object.keys(store.blocks).length,
       });
@@ -314,7 +317,7 @@ export function BlockItem(props: BlockItemProps) {
     });
 
     if (!result.success) {
-      console.warn('[BlockItem] Wikilink navigation failed:', result.error);
+      logger.warn(`Wikilink navigation failed: ${result.error}`);
       return { success: false };
     }
 
@@ -384,14 +387,14 @@ export function BlockItem(props: BlockItemProps) {
 
     // Validate: cursor must be after [[ trigger, and [[ must still exist at expected position
     if (cursorOffset < startOffset + 2 || cursorOffset > content.length) {
-      console.debug('[BlockItem] Autocomplete aborted: cursor offset out of range', {
+      logger.debug('Autocomplete aborted: cursor offset out of range', {
         cursorOffset, startOffset, contentLength: content.length,
       });
       autocomplete.dismiss();
       return;
     }
     if (content.slice(startOffset, startOffset + 2) !== '[[') {
-      console.debug('[BlockItem] Autocomplete aborted: [[ trigger moved (concurrent edit?)');
+      logger.debug('Autocomplete aborted: [[ trigger moved (concurrent edit?)');
       autocomplete.dismiss();
       return;
     }
@@ -557,7 +560,7 @@ export function BlockItem(props: BlockItemProps) {
         }
       }).catch((err) => {
         // readFiles() throws on non-file clipboard (expected for image/screenshot paste)
-        console.debug('[BlockItem] readFiles probe:', err);
+        logger.debug(`readFiles probe: ${err}`);
       });
       return;
     }
