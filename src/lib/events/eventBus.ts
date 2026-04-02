@@ -42,6 +42,9 @@ import type {
   SyncEventHandler,
   EventFilter,
 } from './types';
+import { createLogger } from '../logger';
+
+const logger = createLogger('EventBus');
 
 // ═══════════════════════════════════════════════════════════════
 // SUBSCRIPTION TYPES
@@ -163,10 +166,7 @@ export class EventBus {
         subscription.handler(filteredEnvelope);
       } catch (error) {
         // Log but don't propagate - one handler failing shouldn't break others
-        console.error(
-          `[EventBus] Handler ${subscription.name || subscription.id} threw:`,
-          error
-        );
+        logger.error(`Handler ${subscription.name || subscription.id} threw`, { error });
       }
     }
   }

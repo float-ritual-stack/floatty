@@ -44,6 +44,9 @@ import type {
   HookContext,
   HookResult,
 } from './types';
+import { createLogger } from '../logger';
+
+const logger = createLogger('HookRegistry');
 
 // ═══════════════════════════════════════════════════════════════
 // HOOK REGISTRY
@@ -61,7 +64,7 @@ export class HookRegistry {
   register(hook: Hook): void {
     if (this.hooks.has(hook.id)) {
       // Idempotent on HMR — module-level guards reset but singleton registry persists
-      console.debug(`[HookRegistry] Hook "${hook.id}" already registered, skipping`);
+      logger.debug(`Hook "${hook.id}" already registered, skipping`);
       return;
     }
 
@@ -159,7 +162,7 @@ export class HookRegistry {
         }
       } catch (error) {
         // Log but don't propagate - one hook failing shouldn't break others
-        console.error(`[HookRegistry] Hook "${hook.id}" threw:`, error);
+        logger.error(`Hook "${hook.id}" threw`, { error });
       }
     }
 
@@ -192,9 +195,7 @@ export class HookRegistry {
 
         // Skip if result is a Promise (async hook)
         if (result instanceof Promise) {
-          console.warn(
-            `[HookRegistry] Async hook "${hook.id}" called in sync context - result ignored`
-          );
+          logger.warn(`Async hook "${hook.id}" called in sync context - result ignored`);
           continue;
         }
 
@@ -218,7 +219,7 @@ export class HookRegistry {
           };
         }
       } catch (error) {
-        console.error(`[HookRegistry] Hook "${hook.id}" threw:`, error);
+        logger.error(`Hook "${hook.id}" threw`, { error });
       }
     }
 
