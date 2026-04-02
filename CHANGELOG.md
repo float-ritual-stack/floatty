@@ -6,6 +6,20 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.1] - 2026-04-02
+
+### Improvements
+
+- **Structured logging (FLO-555)** — migrated 423 console.* calls across 48 files to `createLogger()` API. All frontend logs now flow through logger.ts with proper level semantics (trace/debug/info/warn/error), structured `js_target` fields in Rust log output, and ESLint `no-console` rule preventing regression (#197)
+- **Log hygiene** — removed user-authored content from log payloads (deep-link content, external block content, picker output) — metadata only
+
+### Bug Fixes
+
+- **render:: door** — stripped extra brackets from `connectsTo` values, fixed BarItem scaling (#193)
+- **Config grep safety** — anchored `grep '^api_key'` and `grep '^server_port'` across 9 files to prevent matching `anthropic_api_key`
+
+---
+
 ## [0.10.0] - 2026-03-27
 
 ### Features
