@@ -2,9 +2,15 @@
  * Logger - Forwards JS logs to Rust (written to ~/.floatty/logs/)
  *
  * Usage:
- *   import { log } from './logger';
+ *   import { log, createLogger } from './logger';
+ *
+ *   // Direct (one-off calls):
  *   log.info('TerminalManager', 'Picker spawned');
- *   log.debug('KeyNav', 'Key pressed', { key: 'Enter' });
+ *
+ *   // Scoped (files with many calls):
+ *   const logger = createLogger('TerminalManager');
+ *   logger.info('Picker spawned');
+ *   logger.debug('Resize', { cols: 80 });
  *
  * Also intercepts console.log/warn/error when INTERCEPT_CONSOLE is true.
  */
@@ -76,6 +82,22 @@ export const log = {
     logToRust('error', target, formatted);
   },
 };
+
+export type { LogData };
+
+/**
+ * Scoped logger factory — creates a logger with a fixed target.
+ * Use for files with many log calls to avoid repeating the target string.
+ */
+export function createLogger(target: string) {
+  return {
+    trace: (message: string, data?: LogData) => log.trace(target, message, data),
+    debug: (message: string, data?: LogData) => log.debug(target, message, data),
+    info: (message: string, data?: LogData) => log.info(target, message, data),
+    warn: (message: string, data?: LogData) => log.warn(target, message, data),
+    error: (message: string, data?: LogData) => log.error(target, message, data),
+  };
+}
 
 /**
  * Intercept console.* calls and forward to Rust
