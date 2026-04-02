@@ -205,7 +205,7 @@ curl -s "http://localhost:8765/api/v1/blocks/$OUTPUT_ID" \
 
 ```bash
 # API key is in ~/.floatty/config.toml
-grep api_key ~/.floatty/config.toml
+grep '^api_key' ~/.floatty/config.toml
 ```
 
 ---

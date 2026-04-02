@@ -3,8 +3,8 @@
 Auth required. Config: `~/.floatty-dev/config.toml` (dev) or `~/.floatty/config.toml` (prod).
 
 ```bash
-KEY=$(grep api_key ~/.floatty-dev/config.toml | cut -d'"' -f2)
-PORT=$(grep server_port ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
+KEY=$(grep '^api_key' ~/.floatty-dev/config.toml | cut -d'"' -f2)
+PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 ```
 
 ## Block CRUD

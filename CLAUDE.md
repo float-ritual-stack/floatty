@@ -94,8 +94,8 @@ Server requires auth. See @.claude/rules/api-reference.md for all endpoints.
 
 Quick reference:
 ```bash
-KEY=$(grep api_key ~/.floatty-dev/config.toml | cut -d'"' -f2)
-PORT=$(grep server_port ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
+KEY=$(grep '^api_key' ~/.floatty-dev/config.toml | cut -d'"' -f2)
+PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/blocks" | jq '.blocks | length'
 ```
 

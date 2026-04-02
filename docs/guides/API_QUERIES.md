@@ -6,7 +6,7 @@ Practical examples for querying block data via the REST API.
 
 ```bash
 # Extract auth from config (dev or release)
-KEY=$(grep api_key ~/.floatty/config.toml | cut -d'"' -f2)
+KEY=$(grep '^api_key' ~/.floatty/config.toml | cut -d'"' -f2)
 PORT=$(grep server_port ~/.floatty/config.toml | cut -d= -f2 | tr -d ' ')
 
 # For dev builds, use ~/.floatty-dev/config.toml instead

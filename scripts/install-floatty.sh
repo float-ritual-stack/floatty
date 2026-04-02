@@ -50,7 +50,7 @@ open "$APP_DEST"
 
 # 6. Wait for server to come up
 echo -n "Waiting for server"
-KEY=$(grep api_key ~/.floatty/config.toml 2>/dev/null | cut -d'"' -f2)
+KEY=$(grep '^api_key' ~/.floatty/config.toml 2>/dev/null | cut -d'"' -f2)
 PORT=$(grep server_port ~/.floatty/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
 for i in $(seq 1 15); do
   sleep 1
