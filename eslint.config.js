@@ -15,5 +15,14 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      'no-console': ['error'],
+    },
+  },
+  {
+    files: ['**/*.test.{ts,tsx}', 'src/lib/logger.ts', 'scripts/**', 'doors/**', '.pi/**'],
+    rules: {
+      'no-console': 'off',
+    },
   },
 ])

@@ -4,6 +4,15 @@
  * Tests the hook lifecycle integration for handler execution.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock the logger module so tests can verify error logging
+const mockLogger = vi.hoisted(() => ({
+  trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+}));
+vi.mock('../logger', () => ({
+  createLogger: () => mockLogger,
+}));
+
 import { executeHandler, createHookBlockStore } from './executor';
 import { hookRegistry } from '../hooks/hookRegistry';
 import type { BlockHandler, ExecutorActions } from './types';
@@ -310,7 +319,7 @@ describe('executeHandler', () => {
 
   describe('error isolation', () => {
     it('continues execution when execute:before hook throws', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockLogger.error.mockClear();
 
       hookRegistry.register({
         id: 'throwing-hook',
@@ -331,13 +340,11 @@ describe('executeHandler', () => {
 
       // Handler should still execute despite hook failure
       expect(handler.execute).toHaveBeenCalled();
-      expect(consoleSpy).toHaveBeenCalled();
-
-      consoleSpy.mockRestore();
+      expect(mockLogger.error).toHaveBeenCalled();
     });
 
     it('does not throw when execute:after hook throws', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockLogger.error.mockClear();
 
       hookRegistry.register({
         id: 'throwing-after',
@@ -359,8 +366,7 @@ describe('executeHandler', () => {
         executeHandler(handler, 'b1', 'test::', actions, store)
       ).resolves.not.toThrow();
 
-      expect(consoleSpy).toHaveBeenCalled();
-      consoleSpy.mockRestore();
+      expect(mockLogger.error).toHaveBeenCalled();
     });
   });
 
