@@ -19,6 +19,9 @@ import {
 } from '../lib/events';
 import { stopUndoCaptureBoundary } from './useSyncedYDoc';
 import { recordParentValidationFailure, recordChildIdsTypeMismatch } from '../lib/syncDiagnostics';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('BlockStore');
 
 // ═══════════════════════════════════════════════════════════════
 // BATCH BLOCK CREATION TYPES (FLO-322)
@@ -266,7 +269,7 @@ function swapChildIds(blocksMap: Y.Map<unknown>, parentId: string, indexA: numbe
  * This catches silent data loss during initialization race conditions.
  */
 function warnDocNotReady(operation: string): void {
-  console.warn(`[BlockStore] ${operation} skipped: Y.Doc not initialized. User edit may be lost.`);
+  logger.warn(`${operation} skipped: Y.Doc not initialized. User edit may be lost.`);
 }
 
 function toBlock(value: unknown): Block | null {
@@ -501,7 +504,7 @@ function createBlockStore() {
                       try {
                         _autoExecuteHandler!(key, content);
                       } catch (err) {
-                        console.error(`[useBlockStore] Auto-execute handler error for block ${key}:`, err);
+                        logger.error(`Auto-execute handler error for block ${key}`, { err });
                       }
                     }, 0);
                   }
@@ -611,7 +614,7 @@ function createBlockStore() {
 
     // Observe Root IDs (Full sync for simplicity on list changes)
     _rootIdsObserver = () => {
-      console.log('[BlockStore] Root IDs updated:', rootIdsArr.length);
+      logger.debug('Root IDs updated', { count: rootIdsArr.length });
       setState('rootIds', rootIdsArr.toArray());
     };
     rootIdsArr.observe(_rootIdsObserver);
@@ -689,7 +692,7 @@ function createBlockStore() {
 
     // Pre-flight: validate parent still exists if parentId is set
     if (beforeBlock.parentId && !state.blocks[beforeBlock.parentId]) {
-      console.warn(`[BlockStore] createBlockBefore: parent ${beforeBlock.parentId} no longer exists for ${beforeId}`);
+      logger.warn(`createBlockBefore: parent ${beforeBlock.parentId} no longer exists for ${beforeId}`);
       recordParentValidationFailure();
       return '';
     }
@@ -703,14 +706,14 @@ function createBlockStore() {
 
       if (beforeBlock.parentId) {
         if (!blocksMap.has(beforeBlock.parentId)) {
-          console.warn('[BlockStore] createBlockBefore: parent missing in Y.Doc', beforeBlock.parentId);
+          logger.warn(`createBlockBefore: parent missing in Y.Doc ${beforeBlock.parentId}`);
           return;
         }
         const parentData = blocksMap.get(beforeBlock.parentId);
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const beforeIndex = childIds.indexOf(beforeId);
         if (beforeIndex < 0) {
-          console.warn('[BlockStore] createBlockBefore: beforeId not in parent childIds', beforeId);
+          logger.warn(`createBlockBefore: beforeId not in parent childIds ${beforeId}`);
           return;
         }
         blocksMap.set(newId, blockToYMap(newBlock));
@@ -720,7 +723,7 @@ function createBlockStore() {
         const arr = rootIds.toArray();
         const beforeIndex = arr.indexOf(beforeId);
         if (beforeIndex < 0) {
-          console.warn('[BlockStore] createBlockBefore: beforeId not in rootIds', beforeId);
+          logger.warn(`createBlockBefore: beforeId not in rootIds ${beforeId}`);
           return;
         }
         blocksMap.set(newId, blockToYMap(newBlock));
@@ -740,7 +743,7 @@ function createBlockStore() {
 
     // Pre-flight: validate parent still exists if parentId is set
     if (afterBlock.parentId && !state.blocks[afterBlock.parentId]) {
-      console.warn(`[BlockStore] createBlockAfter: parent ${afterBlock.parentId} no longer exists for ${afterId}`);
+      logger.warn(`createBlockAfter: parent ${afterBlock.parentId} no longer exists for ${afterId}`);
       recordParentValidationFailure();
       return '';
     }
@@ -754,14 +757,14 @@ function createBlockStore() {
 
       if (afterBlock.parentId) {
         if (!blocksMap.has(afterBlock.parentId)) {
-          console.warn('[BlockStore] createBlockAfter: parent missing in Y.Doc', afterBlock.parentId);
+          logger.warn(`createBlockAfter: parent missing in Y.Doc ${afterBlock.parentId}`);
           return;
         }
         const parentData = blocksMap.get(afterBlock.parentId);
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const afterIndex = childIds.indexOf(afterId);
         if (afterIndex < 0) {
-          console.warn('[BlockStore] createBlockAfter: afterId not in parent childIds', afterId);
+          logger.warn(`createBlockAfter: afterId not in parent childIds ${afterId}`);
           return;
         }
         blocksMap.set(newId, blockToYMap(newBlock));
@@ -771,7 +774,7 @@ function createBlockStore() {
         const arr = rootIds.toArray();
         const afterIndex = arr.indexOf(afterId);
         if (afterIndex < 0) {
-          console.warn('[BlockStore] createBlockAfter: afterId not in rootIds', afterId);
+          logger.warn(`createBlockAfter: afterId not in rootIds ${afterId}`);
           return;
         }
         blocksMap.set(newId, blockToYMap(newBlock));
@@ -796,7 +799,7 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       if (!blocksMap.has(parentId)) {
-        console.warn('[BlockStore] createBlockInside: parent missing in Y.Doc', parentId);
+        logger.warn(`createBlockInside: parent missing in Y.Doc ${parentId}`);
         recordParentValidationFailure();
         return;
       }
@@ -822,7 +825,7 @@ function createBlockStore() {
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
       if (!blocksMap.has(parentId)) {
-        console.warn('[BlockStore] createBlockInsideAtTop: parent missing in Y.Doc', parentId);
+        logger.warn(`createBlockInsideAtTop: parent missing in Y.Doc ${parentId}`);
         recordParentValidationFailure();
         return;
       }
@@ -1076,14 +1079,14 @@ function createBlockStore() {
       // Validate insertion target BEFORE modifying any content
       if (block.parentId) {
         if (!blocksMap.has(block.parentId)) {
-          console.warn('[BlockStore] splitBlock: parent missing in Y.Doc', block.parentId);
+          logger.warn(`splitBlock: parent missing in Y.Doc ${block.parentId}`);
           return;
         }
         const parentData = blocksMap.get(block.parentId);
         const childIds = (getValue(parentData, 'childIds') as string[]) || [];
         const afterIndex = childIds.indexOf(id);
         if (afterIndex < 0) {
-          console.warn('[BlockStore] splitBlock: block not in parent childIds', id);
+          logger.warn(`splitBlock: block not in parent childIds ${id}`);
           return;
         }
 
@@ -1145,7 +1148,7 @@ function createBlockStore() {
 
       // Validate this block still exists in Y.Doc before modifying
       if (!blocksMap.has(id)) {
-        console.warn('[BlockStore] splitBlockToFirstChild: block missing in Y.Doc', id);
+        logger.warn(`splitBlockToFirstChild: block missing in Y.Doc ${id}`);
         return;
       }
 
@@ -1186,7 +1189,7 @@ function createBlockStore() {
             }
           } else if (childArr !== undefined) {
             // childIds exists but is not a Y.Array — corrupted block structure
-            console.warn('[BlockStore] deleteBlock: childIds is not Y.Array for block', currentId);
+            logger.warn(`deleteBlock: childIds is not Y.Array for block ${currentId}`);
             recordChildIdsTypeMismatch();
           }
         }
@@ -1250,7 +1253,7 @@ function createBlockStore() {
                 stack.push(childId);
               }
             } else if (childArr !== undefined) {
-              console.warn('[BlockStore] deleteBlocks: childIds is not Y.Array for block', currentId);
+              logger.warn(`deleteBlocks: childIds is not Y.Array for block ${currentId}`);
               recordChildIdsTypeMismatch();
             }
           }
@@ -1286,7 +1289,7 @@ function createBlockStore() {
   const clearWorkspace = () => {
     if (!_doc) { warnDocNotReady('clearWorkspace'); return; }
 
-    console.log('[BlockStore] Clearing workspace locally...');
+    logger.info('Clearing workspace locally...');
 
     _doc.transact(() => {
       // Clear rootIds array
@@ -1308,7 +1311,7 @@ function createBlockStore() {
       rootIds.push([newId]);
     }, 'user');
 
-    console.log('[BlockStore] Workspace cleared with fresh block.');
+    logger.info('Workspace cleared with fresh block.');
   };
 
   const isDescendant = (sourceId: string, targetId: string): boolean => {
@@ -1407,7 +1410,7 @@ function createBlockStore() {
         setValueOnYMap(blocksMap, blockId, 'updatedAt', Date.now());
       }, opts.origin ?? 'user-drag');
     } catch (error) {
-      console.error('[BlockStore] moveBlock failed:', error);
+      logger.error('moveBlock failed', { error });
       _pendingMoveEvent = null;
       return false;
     } finally {
@@ -1938,7 +1941,7 @@ function createBlockStore() {
     const containerId = crypto.randomUUID();
     const containerBlock = createBlock(containerId, containerContent, null);
 
-    console.warn(`[BlockStore] Quarantining ${validIds.length} orphaned blocks into "${containerContent}"`);
+    logger.warn(`Quarantining ${validIds.length} orphaned blocks into "${containerContent}"`);
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
@@ -2008,7 +2011,7 @@ function createBlockStore() {
 
       // Validate parent exists (Rule #13, #14)
       if (!blocksMap.has(parentId)) {
-        console.warn('[BlockStore] upsert: parent missing', parentId);
+        logger.warn(`upsert: parent missing ${parentId}`);
         recordParentValidationFailure();
         return;
       }
@@ -2095,7 +2098,7 @@ if (import.meta.hot) {
   import.meta.hot.dispose((data) => {
     // Save store instance for next module load
     data.blockStore = blockStore;
-    console.log('[BlockStore] HMR dispose - preserving store');
+    logger.debug('HMR dispose - preserving store');
   });
 }
 
