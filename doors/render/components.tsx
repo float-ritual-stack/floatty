@@ -791,7 +791,8 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
     return isNaN(parsed) ? 0 : parsed;
   };
   const pct = () => {
-    const max = props.props.max || Math.max(numValue(), 1);
+    const rawMax = props.props.max != null ? parseFloat(String(props.props.max)) : 0;
+    const max = (rawMax > 0 ? rawMax : null) || Math.max(numValue(), 1);
     const result = (numValue() / max) * 100;
     return isNaN(result) ? 0 : Math.min(100, result);
   };
@@ -1060,7 +1061,6 @@ export function PatternCard(props: BaseComponentProps<{
                     </span>
                   );
                 }}
-                )}
               </For>
             </div>
           </Show>
