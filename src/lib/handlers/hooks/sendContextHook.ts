@@ -19,6 +19,9 @@
 
 import type { Hook, HookContext, HookResult } from '../../hooks/types';
 import type { Block } from '../../blockTypes';
+import { createLogger } from '../../logger';
+
+const logger = createLogger('sendContextHook');
 
 // ═══════════════════════════════════════════════════════════════
 // TURN MARKERS
@@ -147,7 +150,7 @@ export const sendContextHook: Hook = {
       return { abort: true, reason: 'No user content to send' };
     }
 
-    console.log('[sendContextHook] Built conversation:', {
+    logger.debug('Built conversation', {
       turns: messages.length,
       scoped: store.zoomedRootId ? `zoomed:${store.zoomedRootId}` : 'full-doc',
       preview: messages.map(m => `${m.role}: ${m.content.slice(0, 30)}...`),

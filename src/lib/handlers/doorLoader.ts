@@ -27,6 +27,9 @@ import type {
   DoorInfo,
   DoorLoadResult,
 } from './doorTypes';
+import { createLogger } from '../logger';
+
+const logger = createLogger('doors');
 
 // Host SolidJS modules — these are the SAME instances the app uses.
 // Doors must share the same reactive runtime (two copies = signals don't propagate).
@@ -85,7 +88,7 @@ function ensureDoorDeps(): { solidJs: string; solidJsWeb: string; stdlib: string
     stdlib: URL.createObjectURL(new Blob([stdlibShim], { type: 'application/javascript' })),
   };
 
-  console.log('[doors] Import shims ready (solid-js, solid-js/web, @floatty/stdlib)');
+  logger.info('Import shims ready (solid-js, solid-js/web, @floatty/stdlib)');
   return shimUrls;
 }
 
@@ -190,7 +193,7 @@ function buildSelfRenderHandler(
       try {
         await door.execute(blockId, content, ctx);
       } catch (err) {
-        console.error(`[door:${meta.id}] selfRender execution error:`, err);
+        logger.error(`door:${meta.id} selfRender execution error`, { err });
       }
     },
   };
@@ -210,27 +213,27 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
     const config = await invoke('get_ctx_config', {}) as AggregatorConfig;
     pluginSettings = (config.plugins ?? {}) as Record<string, Record<string, unknown>>;
   } catch (err) {
-    console.warn('[doors] Failed to load config for plugin settings:', err);
+    logger.warn('Failed to load config for plugin settings', { err });
   }
 
   let doorInfos: DoorInfo[];
   try {
     doorInfos = await invoke('list_door_files', {});
   } catch (err) {
-    console.error('[doors] Failed to list doors:', err);
+    logger.error('Failed to list doors', { err });
     return [];
   }
 
   if (doorInfos.length === 0) {
-    console.log('[doors] No doors found on disk');
+    logger.info('No doors found on disk');
     return [];
   }
 
-  console.log(`[doors] Found ${doorInfos.length} door(s): ${doorInfos.map(d => d.id).join(', ')}`);
+  logger.info(`Found ${doorInfos.length} door(s): ${doorInfos.map(d => d.id).join(', ')}`);
 
   const settled = await Promise.allSettled(doorInfos.map(async (info): Promise<DoorLoadResult> => {
     if (!info.hasEntry) {
-      console.warn(`[doors] ${info.id}: no index.js found, skipping`);
+      logger.warn(`${info.id}: no index.js found, skipping`);
       return { doorId: info.id, ok: false, error: 'No index.js' };
     }
 
@@ -256,8 +259,8 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
 
     // Warn on id mismatch
     if (meta.id !== info.id) {
-      console.warn(
-        `[doors] ${info.id}: meta.id is '${meta.id}' (differs from directory name '${info.id}'). Using meta.id as registry key.`
+      logger.warn(
+        `${info.id}: meta.id is '${meta.id}' (differs from directory name '${info.id}'). Using meta.id as registry key.`
       );
     }
 
@@ -278,7 +281,7 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
       registry.register(handler);
     }
 
-    console.log(`[doors] Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')}${meta.selfRender ? ', selfRender' : ''}${meta.sidebarEligible ? ', sidebar' : ''})`);
+    logger.info(`Loaded: ${meta.id} (${door.kind}, prefixes: ${door.prefixes.join(', ')}${meta.selfRender ? ', selfRender' : ''}${meta.sidebarEligible ? ', sidebar' : ''})`);
     return { doorId: meta.id, ok: true };
   }));
 
@@ -286,13 +289,13 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
     if (outcome.status === 'fulfilled') {
       results.push(outcome.value);
     } else {
-      console.error(`[doors] Failed to load door:`, outcome.reason);
+      logger.error(`Failed to load door: ${outcome.reason}`);
       results.push({ doorId: 'unknown', ok: false, error: String(outcome.reason) });
     }
   }
 
   const loaded = results.filter(r => r.ok);
-  console.log(`[doors] Loaded ${loaded.length}/${doorInfos.length} doors: [${loaded.map(r => r.doorId).join(', ')}]`);
+  logger.info(`Loaded ${loaded.length}/${doorInfos.length} doors: [${loaded.map(r => r.doorId).join(', ')}]`);
 
   // Start hot-reload listener
   listenForDoorChanges(pluginSettings);
@@ -355,9 +358,9 @@ async function reloadDoor(
       registry.register(handler);
     }
 
-    console.log(`[doors] Hot-reloaded: ${meta.id} (prefixes: ${door.prefixes.join(', ')}${meta.selfRender ? ', selfRender' : ''})`);
+    logger.info(`Hot-reloaded: ${meta.id} (prefixes: ${door.prefixes.join(', ')}${meta.selfRender ? ', selfRender' : ''})`);
   } catch (err) {
-    console.error(`[doors] Hot-reload failed for ${doorId}, keeping old version:`, err);
+    logger.error(`Hot-reload failed for ${doorId}, keeping old version`, { err });
   }
 }
 
@@ -371,7 +374,7 @@ function unregisterDoor(doorId: string): void {
     registry.unregisterByPrefixes(oldPrefixes);
   }
   doorRegistry.unregister(doorId);
-  console.log(`[doors] Unregistered removed door: ${doorId}`);
+  logger.info(`Unregistered removed door: ${doorId}`);
 }
 
 /**
@@ -391,7 +394,7 @@ function listenForDoorChanges(
       await reloadDoor(doorId, settings);
     }
   }).catch((err) => {
-    console.error('[doors] Failed to set up hot-reload listener:', err);
+    logger.error('Failed to set up hot-reload listener', { err });
   });
 }
 

@@ -16,6 +16,7 @@ import type {
 } from './doorTypes';
 import { createDoorContext } from './doorSandbox';
 import { findOutputChild } from './utils';
+import { createLogger } from '../logger';
 
 /**
  * Create a BlockHandler from a Door + DoorMeta.
@@ -105,7 +106,7 @@ export function doorToBlockHandler(
           actions.setBlockStatus?.(outputId, 'complete');
         }
       } catch (err) {
-        console.error(`[door:${meta.id}] Execution error:`, err);
+        createLogger(`door:${meta.id}`).error('Execution error', { err });
 
         const envelope: DoorViewOutput | DoorExecOutput = door.kind === 'view'
           ? {

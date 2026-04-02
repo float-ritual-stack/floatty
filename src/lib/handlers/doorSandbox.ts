@@ -16,6 +16,7 @@ import type {
 } from './doorTypes';
 import type { ExecutorActions } from './types';
 import type { BatchBlockOp } from '../../hooks/useBlockStore';
+import { createLogger } from '../logger';
 
 // ═══════════════════════════════════════════════════════════════
 // SERVER ACCESS (Tier 1)
@@ -186,7 +187,7 @@ export function createDoorContext(
     blockId: opts.blockId,
     content: opts.content,
     doorId: opts.meta.id,
-    log: (...args: unknown[]) => console.log(`[door:${opts.meta.id}]`, ...args),
+    log: (...args: unknown[]) => createLogger(`door:${opts.meta.id}`).info(args.map(String).join(' ')),
 
     // Tier 2 stubs (v1 — throw on access)
     fs: TIER_2_FS,

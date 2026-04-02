@@ -17,6 +17,9 @@ import {
 } from '../../events';
 import { hasWikilinkPatterns, parseAllInlineTokens } from '../../inlineParser';
 import { blockStore } from '../../../hooks/useBlockStore';
+import { createLogger } from '../../logger';
+
+const logger = createLogger('outlinksHook');
 
 // ═══════════════════════════════════════════════════════════════
 // OUTLINK EXTRACTION
@@ -68,7 +71,7 @@ function handleBlockEvent(envelope: EventEnvelope): void {
 
     // Store outlinks in block metadata (empty array clears stale outlinks)
     if (outlinks.length > 0) {
-      console.log('[outlinksHook] Extracted outlinks:', {
+      logger.debug('Extracted outlinks', {
         blockId: block.id,
         outlinks,
       });
@@ -102,7 +105,7 @@ let _subscriptionId: string | null = null;
  */
 export function registerOutlinksHook(): void {
   if (_subscriptionId) {
-    console.log('[outlinksHook] Already registered');
+    logger.debug('Already registered');
     return;
   }
 
@@ -115,7 +118,7 @@ export function registerOutlinksHook(): void {
     name: 'outlinks-extractor',
   });
 
-  console.log('[outlinksHook] Registered with EventBus');
+  logger.info('Registered with EventBus');
 }
 
 /**
@@ -125,7 +128,7 @@ export function unregisterOutlinksHook(): void {
   if (_subscriptionId) {
     blockEventBus.unsubscribe(_subscriptionId);
     _subscriptionId = null;
-    console.log('[outlinksHook] Unregistered from EventBus');
+    logger.debug('Unregistered from EventBus');
   }
 }
 

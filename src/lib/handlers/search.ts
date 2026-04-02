@@ -12,6 +12,9 @@
 import type { BlockHandler, ExecutorActions } from './types';
 import { invoke } from '../tauriTypes';
 import type { ServerInfo } from '../httpClient';
+import { createLogger } from '../logger';
+
+const logger = createLogger('search');
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -99,7 +102,7 @@ export const searchHandler: BlockHandler = {
     }
 
     try {
-      console.log('[search] Executing:', { query });
+      logger.info(`Executing: ${query}`);
 
       // Get server info for auth
       const serverInfo = await invoke<ServerInfo>('get_server_info', {});
@@ -128,7 +131,7 @@ export const searchHandler: BlockHandler = {
       const hits: SearchHit[] = (data.hits || [])
         .filter((hit: { blockId: string }) => {
           if (seenIds.has(hit.blockId)) {
-            console.warn('[search] Duplicate blockId filtered:', hit.blockId);
+            logger.warn(`Duplicate blockId filtered: ${hit.blockId}`);
             return false;
           }
           seenIds.add(hit.blockId);
@@ -148,7 +151,7 @@ export const searchHandler: BlockHandler = {
         searchTimeMs: duration,
       };
 
-      console.log('[search] Complete:', {
+      logger.info('Complete', {
         duration: `${duration.toFixed(1)}ms`,
         hits: results.hits.length,
       });
@@ -166,7 +169,7 @@ export const searchHandler: BlockHandler = {
       } else {
         try { msg = JSON.stringify(err); } catch { msg = String(err); }
       }
-      console.error('[search] Error:', msg);
+      logger.error(`Error: ${msg}`);
       actions.updateBlockContent(outputId, `error::${msg}`);
       if (actions.setBlockOutput && actions.setBlockStatus) {
         actions.setBlockOutput(outputId, { error: msg, query }, 'search-error');

@@ -18,6 +18,9 @@ import {
   CONVERSATION_ROOT_PREFIXES,
 } from './parser';
 import { extractContent } from '../utils';
+import { createLogger } from '../../logger';
+
+const logger = createLogger('conversation');
 
 // ═══════════════════════════════════════════════════════════════
 // HANDLER
@@ -45,9 +48,7 @@ export const conversationHandler: BlockHandler = {
 
     // If we don't have tree navigation, fall back to single-turn
     if (!getBlock || !getParentId || !getChildren) {
-      console.warn(
-        '[conversation] Missing tree navigation, falling back to single-turn'
-      );
+      logger.warn('Missing tree navigation, falling back to single-turn');
       return executeSingleTurn(blockId, content, actions);
     }
 
@@ -126,7 +127,7 @@ async function executeConversationTurn(
   try {
     messages = buildConversation(blockId, getBlock, getParentId, config);
   } catch (err) {
-    console.error('[conversation] Failed to build conversation:', err);
+    logger.error('Failed to build conversation', { err });
     return executeSingleTurn(blockId, content, actions);
   }
 
@@ -135,7 +136,7 @@ async function executeConversationTurn(
     return executeSingleTurn(blockId, content, actions);
   }
 
-  console.log('[conversation] Built messages:', {
+  logger.debug('Built messages', {
     count: messages.length,
     model: config.model,
     hasSystem: !!systemPrompt,
@@ -158,7 +159,7 @@ async function executeConversationTurn(
     });
 
     const duration = performance.now() - startTime;
-    console.log('[conversation] Complete:', {
+    logger.info('Complete', {
       duration: `${duration.toFixed(1)}ms`,
       responseLength: response.length,
     });
@@ -172,7 +173,7 @@ async function executeConversationTurn(
     // Leave empty - user will type here
     actions.updateBlockContent(nextId, '');
   } catch (err) {
-    console.error('[conversation] Error:', err);
+    logger.error('Error', { err });
     actions.updateBlockContent(responseId, `error:: ${String(err)}`);
     actions.setBlockStatus?.(responseId, 'error');
   }
@@ -207,7 +208,7 @@ async function executeSingleTurn(
     });
 
     const duration = performance.now() - startTime;
-    console.log('[conversation] Single-turn complete:', {
+    logger.info('Single-turn complete', {
       duration: `${duration.toFixed(1)}ms`,
       responseLength: response.length,
     });
@@ -220,7 +221,7 @@ async function executeSingleTurn(
     const nextId = actions.createBlockInside(responseId);
     actions.updateBlockContent(nextId, '');
   } catch (err) {
-    console.error('[conversation] Single-turn error:', err);
+    logger.error('Single-turn error', { err });
     actions.updateBlockContent(responseId, `error:: ${String(err)}`);
     actions.setBlockStatus?.(responseId, 'error');
   }
