@@ -68,10 +68,10 @@ Looks up the page named exactly `:date` in the PageNameIndex. Returns the page b
 
 ```bash
 # Get today's daily note with children
-curl -H "Authorization: Bearer $KEY" "$URL/api/v1/daily/2026-03-31"
+curl -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/daily/2026-03-31"
 
 # Get with full subtree
-curl -H "Authorization: Bearer $KEY" "$URL/api/v1/daily/2026-03-31?include=tree,token_estimate"
+curl -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/daily/2026-03-31?include=tree,token_estimate"
 ```
 
 Returns 404 if no page with that name exists.

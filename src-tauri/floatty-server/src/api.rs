@@ -4231,13 +4231,24 @@ mod tests {
             let status = response.status();
 
             if status == StatusCode::SERVICE_UNAVAILABLE {
-                if attempts >= 10 {
-                    return; // Search never became available, skip
+                if attempts >= 20 {
+                    return; // Search infra not available in this test env, skip
                 }
                 continue;
             }
 
             assert_eq!(status, StatusCode::OK);
+
+            // When search IS available, verify it actually returns the created block
+            let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+            let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let hits = result["hits"].as_array();
+            if hits.map_or(true, |h| h.is_empty()) && attempts < 20 {
+                continue; // Index commit hasn't happened yet, retry
+            }
+            if let Some(h) = hits {
+                assert!(!h.is_empty(), "search returned 200 but no hits after indexing");
+            }
             break;
         }
     }
@@ -5947,21 +5958,24 @@ mod tests {
         let daily = create_test_block(&mut app, "# 2026-03-31", Some(&pages.id)).await;
         let child = create_test_block(&mut app, "brain boot context", Some(&daily.id)).await;
 
-        // Wait for PageNameIndex hook to process
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        // Fetch daily note — should return page block with children
-        let request = Request::get("/api/v1/daily/2026-03-31")
-            .body(Body::empty())
-            .unwrap();
-        let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
-            .call(request)
-            .await.unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
-        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        // Poll for PageNameIndex hook to process (async, timing varies under parallel test load)
+        let mut response_bytes = Vec::new();
+        for attempt in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            let request = Request::get("/api/v1/daily/2026-03-31")
+                .body(Body::empty())
+                .unwrap();
+            let response = ServiceExt::<Request<Body>>::ready(&mut app)
+                .await.unwrap()
+                .call(request)
+                .await.unwrap();
+            if response.status() == StatusCode::OK {
+                response_bytes = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+                break;
+            }
+            assert!(attempt < 19, "PageNameIndex never indexed the daily note page");
+        }
+        let result: serde_json::Value = serde_json::from_slice(&response_bytes).unwrap();
 
         assert_eq!(result["id"], daily.id);
         assert_eq!(result["content"], "# 2026-03-31");
@@ -5994,20 +6008,25 @@ mod tests {
         let child = create_test_block(&mut app, "morning notes", Some(&daily.id)).await;
         let _grandchild = create_test_block(&mut app, "detail item", Some(&child.id)).await;
 
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Poll for PageNameIndex hook to process
+        let mut response_bytes = Vec::new();
+        for attempt in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            let request = Request::get("/api/v1/daily/2026-03-30?include=tree,token_estimate")
+                .body(Body::empty())
+                .unwrap();
+            let response = ServiceExt::<Request<Body>>::ready(&mut app)
+                .await.unwrap()
+                .call(request)
+                .await.unwrap();
+            if response.status() == StatusCode::OK {
+                response_bytes = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+                break;
+            }
+            assert!(attempt < 19, "PageNameIndex never indexed the daily note page");
+        }
 
-        // Request with tree include
-        let request = Request::get("/api/v1/daily/2026-03-30?include=tree,token_estimate")
-            .body(Body::empty())
-            .unwrap();
-        let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
-            .call(request)
-            .await.unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
-        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&response_bytes).unwrap();
 
         // Tree should include the subtree
         let tree = result["tree"].as_array().expect("Should include tree");
