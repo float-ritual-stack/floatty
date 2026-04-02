@@ -11,7 +11,7 @@ APP_DEST="/Applications/float-pty.app"
 BINARIES_DIR="$PROJECT_ROOT/src-tauri/binaries"
 TARGET_TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2)
 
-PORT=$(grep server_port ~/.floatty/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
+PORT=$(grep '^server_port' ~/.floatty/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
 PORT=${PORT:-8765}
 
 nuke_floatty() {

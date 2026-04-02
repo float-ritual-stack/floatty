@@ -202,7 +202,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // Wire up auto-execute handler for externally-created blocks (API/CRDT sync)
   onMount(() => {
     setAutoExecuteHandler((blockId: string, content: string) => {
-      logger.info(`External block detected: ${blockId} ${content}`);
+      logger.info('External block detected', { blockId, contentLength: content.length });
 
       const handler = registry.findHandler(content);
       if (handler) {

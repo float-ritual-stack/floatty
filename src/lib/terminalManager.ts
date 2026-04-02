@@ -19,6 +19,8 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
 import { readText, readImageBase64, readFiles, writeText as clipboardWriteText } from 'tauri-plugin-clipboard-api';
+import { createLogger } from './logger';
+import { defaultTheme, toXtermTheme } from './themes';
 
 // Batched clipboard info from Rust (image/text detection via arboard)
 // File detection handled separately by tauri-plugin-clipboard-api's readFiles()
@@ -43,9 +45,6 @@ const tauriClipboardProvider: IClipboardProvider = {
     }
   },
 };
-
-import { createLogger } from './logger';
-import { defaultTheme, toXtermTheme } from './themes';
 
 const logger = createLogger('TerminalManager');
 
@@ -1202,7 +1201,7 @@ class TerminalManager {
       }
       const onExitChannel = new Channel<PtyExitEvent>();
       onExitChannel.onmessage = (event: PtyExitEvent) => {
-        logger.info(`Picker ${id} exited with code ${event.exit_code}, output: ${event.output?.slice(0, 100) ?? '(none)'}`);
+        logger.info(`Picker ${id} exited`, { exitCode: event.exit_code, hasOutput: !!event.output });
 
         // Cleanup
         resizeObserver.disconnect();

@@ -123,7 +123,7 @@ For scripts/automation:
 Example:
 ```bash
 KEY=$(grep '^api_key' ~/.floatty-dev/config.toml | cut -d'"' -f2)
-PORT=$(grep server_port ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
+PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 curl -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/backup/status"
 ```
 

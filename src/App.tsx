@@ -254,7 +254,7 @@ function App() {
               deepLinkLogger.error('execute: missing parent param');
               break;
             }
-            deepLinkLogger.info('execute', { content: content.slice(0, 40), parentId });
+            deepLinkLogger.info('execute', { parentId, contentLength: content.length });
             const newId = blockStore.createBlockInside(parentId);
             if (!newId) {
               deepLinkLogger.error(`execute: failed to create block inside ${parentId}`);

@@ -40,8 +40,8 @@ echo ""
 
 echo "2. Server Ports (from config)"
 echo "   ──────────────────────────"
-DEV_PORT=$(grep server_port ~/.floatty-dev/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
-REL_PORT=$(grep server_port ~/.floatty/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
+DEV_PORT=$(grep '^server_port' ~/.floatty-dev/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
+REL_PORT=$(grep '^server_port' ~/.floatty/config.toml 2>/dev/null | cut -d= -f2 | tr -d ' ')
 DEV_PORT=${DEV_PORT:-33333}  # default
 REL_PORT=${REL_PORT:-8765}   # default
 echo "   Dev:     $DEV_PORT"
