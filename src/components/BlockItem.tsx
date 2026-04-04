@@ -150,6 +150,7 @@ export function BlockItem(props: BlockItemProps) {
   // FLO-58: Lift showRaw state to persist across TableView remounts
   // (remounts happen when raw editing temporarily breaks table syntax)
   const [tableShowRaw, setTableShowRaw] = createSignal(false);
+
   let contentRef: HTMLDivElement | undefined;
   let outputFocusRef: HTMLDivElement | undefined;
   let wrapperRef: HTMLDivElement | undefined;
@@ -175,6 +176,21 @@ export function BlockItem(props: BlockItemProps) {
     cancelContentUpdate, flushContentUpdate,
     handleInput, handleBlurSync, updateContentFromDom,
   } = contentSync;
+
+  // render:: title toggle: show generated title instead of full prompt (Unit 1.3a)
+  // Display-only — does NOT change isOutputBlock, focus, collapse, zoom, or navigation.
+  const [renderShowTitle, setRenderShowTitle] = createSignal(true);
+
+  const effectiveDisplayContent = createMemo(() => {
+    if (!renderShowTitle()) return displayContent();
+    const b = block();
+    if (b?.outputType !== 'door' || !b?.output) return displayContent();
+    if (!b?.content?.toLowerCase().startsWith('render::')) return displayContent();
+    const title = (b.output as { data?: { title?: string } })?.data?.title;
+    if (!title) return displayContent();
+    if (title.toLowerCase().startsWith('render::')) return title;
+    return `render:: ${title}`;
+  });
 
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
   // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
@@ -605,23 +621,6 @@ export function BlockItem(props: BlockItemProps) {
     return b.outputType === 'eval-result' || (b.outputType === 'door' && b.content !== '');
   });
 
-  // render:: title overlay: show short title instead of full prompt when available
-  const renderTitle = createMemo(() => {
-    const b = block();
-    if (!b || b.outputType !== 'door') return null;
-    if (!b.content.toLowerCase().startsWith('render::')) return null;
-    const output = b.output as { data?: { title?: string } } | null;
-    return output?.data?.title || null;
-  });
-
-  const effectiveDisplayContent = createMemo(() => {
-    const title = renderTitle();
-    if (title && !isFocused()) {
-      return `render:: ${title}`;
-    }
-    return displayContent();
-  });
-
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
     if (hasChildren || hasCollapsibleOutput()) {
@@ -774,6 +773,16 @@ export function BlockItem(props: BlockItemProps) {
                 pageNameSet={pageNameSet()}
                 stubPageNameSet={stubPageNameSet()}
               />
+              {/* render:: title toggle — switch between generated title and full prompt */}
+              <Show when={block()?.outputType === 'door' && (block()?.output as { data?: { title?: string } })?.data?.title && block()?.content?.toLowerCase().startsWith('render::')}>
+                <button
+                  class="table-raw-toggle"
+                  onClick={() => setRenderShowTitle(v => !v)}
+                  title={renderShowTitle() ? 'Show full prompt' : 'Show title'}
+                >
+                  {renderShowTitle() ? '⊞' : '⊟'}
+                </button>
+              </Show>
             </Show>
 
             {/* TABLE RAW MODE: wrap in container with toggle button at top-right */}
