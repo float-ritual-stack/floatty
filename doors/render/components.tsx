@@ -756,7 +756,26 @@ export function TuiStat(props: BaseComponentProps<{ label: string; value: string
   );
 }
 
-export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?: number }>) {
+export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?: number; max?: number }>) {
+  let barsRef: HTMLDivElement | undefined;
+
+  // After mount, compute max from children's data-value attrs and set CSS var
+  const computeMax = () => {
+    if (!barsRef) return;
+    if (props.props.max != null && props.props.max > 0) {
+      barsRef.style.setProperty('--bar-chart-max', String(props.props.max));
+      return;
+    }
+    const values = Array.from(barsRef.querySelectorAll('[data-bar-value]'))
+      .map(el => parseFloat((el as HTMLElement).dataset.barValue ?? '0'))
+      .filter(v => !isNaN(v));
+    const max = values.length > 0 ? Math.max(...values) : 1;
+    barsRef.style.setProperty('--bar-chart-max', String(max));
+  };
+
+  // Use requestAnimationFrame to ensure children have rendered
+  setTimeout(computeMax, 0);
+
   return (
     <div>
       <Show when={props.props.title}>
@@ -771,7 +790,7 @@ export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?:
           {props.props.title}
         </div>
       </Show>
-      <div style={{
+      <div ref={barsRef} style={{
         display: 'flex',
         'align-items': 'flex-end',
         gap: '4px',
@@ -784,20 +803,33 @@ export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?:
 }
 
 export function BarItemComponent(props: BaseComponentProps<{ label: string; value: number; max?: number; color?: string }>) {
+  let containerRef: HTMLDivElement | undefined;
+  let barRef: HTMLDivElement | undefined;
   const numValue = () => {
     const v = props.props.value;
     if (typeof v === 'number') return v;
     const parsed = parseFloat(String(v));
     return isNaN(parsed) ? 0 : parsed;
   };
-  const pct = () => {
+  const computeHeight = () => {
+    if (!containerRef || !barRef) return;
     const rawMax = props.props.max != null ? parseFloat(String(props.props.max)) : 0;
-    const max = (rawMax > 0 ? rawMax : null) || Math.max(numValue(), 1);
-    const result = (numValue() / max) * 100;
-    return isNaN(result) ? 0 : Math.min(100, result);
+    let max = rawMax > 0 ? rawMax : null;
+    if (!max) {
+      const parentMax = containerRef.parentElement?.style.getPropertyValue('--bar-chart-max');
+      if (parentMax) {
+        const parsed = parseFloat(parentMax);
+        if (parsed > 0) max = parsed;
+      }
+    }
+    if (!max) max = Math.max(numValue(), 1);
+    const pct = Math.min(100, (numValue() / max) * 100);
+    barRef.style.height = `${pct}%`;
   };
+  // Re-compute after parent BarChart sets --bar-chart-max (setTimeout 0 + 16ms)
+  setTimeout(computeHeight, 16);
   return (
-    <div style={{
+    <div ref={containerRef} data-bar-value={numValue()} style={{
       display: 'flex',
       'flex-direction': 'column',
       'align-items': 'center',
@@ -814,13 +846,13 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
           {numValue() % 1 === 0 ? numValue() : numValue().toFixed(1)}
         </span>
       </Show>
-      <div style={{
+      <div ref={barRef} style={{
         width: '100%',
         background: props.props.color || V.cy,
-        height: `${pct()}%`,
+        height: '0%',
         'min-height': numValue() > 0 ? '4px' : '0',
         opacity: numValue() > 0 ? '0.7' : '0.15',
-        transition: 'height 0.2s',
+        transition: 'height 0.3s ease',
       }} />
       <span style={{
         'font-size': '9px',
@@ -1754,6 +1786,283 @@ export function ContextStream(props: BaseComponentProps<{
       <div style={{ 'margin-top': '12px', 'font-family': V.mono, 'font-size': '10px', color: '#444' }}>
         {filtered().length} captures · {new Set(filtered().map(c => c.project)).size} projects · {new Set(filtered().map(c => c.mode)).size} modes
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMPOSITES
+// ═══════════════════════════════════════════════════════════════
+
+const MODE_COLORS: Record<string, string> = {
+  work: V.cy, float: V.mag, life: V.green, pebble: V.amb, rent: V.cor, spike: V.cor,
+};
+
+export function ModeTag(props: BaseComponentProps<{
+  mode: string;
+  count?: number;
+  size?: 'sm' | 'md';
+}>) {
+  const sm = () => (props.props.size ?? 'sm') === 'sm';
+  const color = () => MODE_COLORS[props.props.mode] ?? V.td;
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: sm() ? '2px 6px' : '3px 8px',
+      'font-size': sm() ? '9px' : '10px',
+      'font-family': V.mono,
+      'text-transform': 'uppercase',
+      'letter-spacing': '0.06em',
+      color: color(),
+      background: `${color()}18`,
+      'border-radius': '3px',
+    }}>
+      {props.props.mode}
+      <Show when={props.props.count != null}>
+        <span style={{ opacity: 0.7 }}>{` (${props.props.count})`}</span>
+      </Show>
+    </span>
+  );
+}
+
+export function QuoteBlock(props: BaseComponentProps<{
+  text: string;
+  attribution?: string;
+  type?: 'quote' | 'insight' | 'note';
+}>) {
+  const borderColor = () => {
+    const t = props.props.type ?? 'quote';
+    return t === 'insight' ? V.cy : t === 'note' ? V.amb : V.td;
+  };
+  return (
+    <div style={{
+      'border-left': `3px solid ${borderColor()}`,
+      'padding-left': '14px',
+      margin: '8px 0',
+    }}>
+      <div
+        style={{ 'font-family': V.serif, 'font-size': '12px', color: V.t, 'font-style': 'italic', 'line-height': '1.6' }}
+        innerHTML={sanitize(inlineFormat(props.props.text))}
+      />
+      <Show when={props.props.attribution}>
+        <div style={{ 'font-family': V.mono, 'font-size': '9px', color: V.tf, 'margin-top': '6px' }}>
+          — {props.props.attribution}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+export function TimeEntry(props: BaseComponentProps<{
+  time: string;
+  title: string;
+  body?: string;
+  tags?: string[];
+  color?: string;
+}>) {
+  const dotColor = () => props.props.color ?? V.cy;
+  const tags = () => props.props.tags ?? [];
+  return (
+    <div style={{ display: 'flex', gap: '10px', padding: '4px 0', 'align-items': 'flex-start' }}>
+      <div style={{ 'min-width': '42px', 'font-family': V.mono, 'font-size': '10px', color: V.td, 'padding-top': '2px' }}>
+        {props.props.time}
+      </div>
+      <div style={{
+        width: '6px', height: '6px', 'border-radius': '50%', background: dotColor(),
+        'flex-shrink': 0, 'margin-top': '5px',
+      }} />
+      <div style={{ flex: 1 }}>
+        <div style={{ 'font-size': '12px', color: V.t }}>{props.props.title}</div>
+        <Show when={props.props.body}>
+          <div
+            style={{ 'font-family': V.serif, 'font-size': '11px', color: V.td, 'margin-top': '3px', 'line-height': '1.5' }}
+            innerHTML={sanitize(inlineFormat(props.props.body!))}
+          />
+        </Show>
+        <Show when={tags().length > 0}>
+          <div style={{ display: 'flex', gap: '4px', 'margin-top': '4px', 'flex-wrap': 'wrap' }}>
+            <For each={tags()}>
+              {(tag) => (
+                <span style={{
+                  'font-size': '9px', 'font-family': V.mono, 'text-transform': 'uppercase',
+                  color: V.tf, 'letter-spacing': '0.04em',
+                }}>{tag}</span>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+export function StatsBar(props: BaseComponentProps<{
+  stats: Array<{ label: string; value: string; color?: string }>;
+  layout?: 'row' | 'grid';
+}>) {
+  const stats = () => props.props.stats ?? [];
+  const isGrid = () => props.props.layout === 'grid';
+  return (
+    <div style={{
+      display: isGrid() ? 'grid' : 'flex',
+      ...(isGrid()
+        ? { 'grid-template-columns': 'repeat(auto-fit, minmax(80px, 1fr))', gap: '12px' }
+        : { gap: '20px', 'flex-wrap': 'wrap' }),
+    }}>
+      <For each={stats()}>
+        {(stat) => (
+          <div style={{ 'text-align': isGrid() ? 'center' : 'left' }}>
+            <div style={{ 'font-size': '9px', 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.08em', color: V.td }}>
+              {stat.label}
+            </div>
+            <div style={{ 'font-size': '14px', 'font-weight': 'bold', color: stat.color ?? V.cy, 'font-family': V.mono }}>
+              {stat.value}
+            </div>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
+export function MetadataHeader(props: BaseComponentProps<{
+  title: string;
+  subtitle?: string;
+  date?: string;
+  stats?: Array<{ label: string; value: string }>;
+}>) {
+  const stats = () => props.props.stats ?? [];
+  return (
+    <div style={{ 'margin-bottom': '12px' }}>
+      <div style={{ 'font-size': '16px', 'font-weight': 'bold', color: V.t, 'font-family': V.serif }}>{props.props.title}</div>
+      <Show when={props.props.subtitle}>
+        <div style={{ 'font-size': '11px', color: V.td, 'margin-top': '2px' }}>{props.props.subtitle}</div>
+      </Show>
+      <div style={{ display: 'flex', gap: '12px', 'margin-top': '6px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
+        <Show when={props.props.date}>
+          <span style={{ 'font-size': '10px', 'font-family': V.mono, color: V.tf }}>{props.props.date}</span>
+        </Show>
+        <Show when={stats().length > 0}>
+          <span style={{ 'font-size': '10px', 'font-family': V.mono, color: V.td }}>
+            {stats().map(s => `${s.label}: ${s.value}`).join(' · ')}
+          </span>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+export function CollapsibleSection(props: BaseComponentProps<{
+  title: string;
+  expanded?: boolean;
+  color?: string;
+  count?: number;
+}>) {
+  const [expanded, setExpanded] = createSignal(props.props.expanded !== false);
+  const color = () => props.props.color ?? V.cy;
+  return (
+    <div style={{ 'border-left': `2px solid ${expanded() ? color() : V.b}`, 'margin-bottom': '4px', transition: 'border-color 0.2s ease' }}>
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: 'flex', 'align-items': 'center', gap: '6px', padding: '6px 10px',
+          cursor: 'pointer', 'user-select': 'none',
+        }}
+      >
+        <span style={{ 'font-size': '9px', color: color(), transition: 'transform 0.15s ease', transform: expanded() ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+        <span style={{ 'font-size': '11px', 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.08em', color: expanded() ? V.t : V.td }}>
+          {props.props.title}
+        </span>
+        <Show when={props.props.count != null}>
+          <span style={{ 'font-size': '9px', 'font-family': V.mono, color: V.tf }}>({props.props.count})</span>
+        </Show>
+      </div>
+      <Show when={expanded()}>
+        <div style={{ 'padding-left': '22px', 'padding-bottom': '6px' }}>
+          {props.children}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+export function FilterButtons(props: BaseComponentProps<{
+  filters: Array<{ id: string; label: string; count?: number }>;
+  active: string;
+}>) {
+  const [active, setActive] = useBoundProp(props.props.active, props.bindings?.active);
+  const filters = () => props.props.filters ?? [];
+  return (
+    <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
+      <For each={filters()}>
+        {(filter) => {
+          const isActive = () => active() === filter.id;
+          return (
+            <button
+              onClick={(e) => {
+                setActive(filter.id);
+                const el = e.currentTarget as HTMLElement;
+                emitChirp(el, 'press', { id: filter.id });
+              }}
+              style={{
+                padding: '4px 10px', 'border-radius': '3px', border: 'none',
+                'font-size': '10px', 'font-family': V.mono, cursor: 'pointer',
+                background: isActive() ? 'rgba(255,255,255,0.1)' : 'transparent',
+                color: isActive() ? '#e6edf3' : V.tf,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {filter.label}
+              <Show when={filter.count != null}>
+                <span style={{ opacity: 0.6 }}>{` (${filter.count})`}</span>
+              </Show>
+            </button>
+          );
+        }}
+      </For>
+    </div>
+  );
+}
+
+export function TabNav(props: BaseComponentProps<{
+  tabs: Array<{ id: string; label: string }>;
+  active: string;
+  variant?: 'horizontal' | 'pills';
+}>) {
+  const [active, setActive] = useBoundProp(props.props.active, props.bindings?.active);
+  const tabs = () => props.props.tabs ?? [];
+  const isPills = () => props.props.variant === 'pills';
+  return (
+    <div style={{
+      display: 'flex', gap: isPills() ? '6px' : '0',
+      'border-bottom': isPills() ? 'none' : `1px solid ${V.b}`,
+    }}>
+      <For each={tabs()}>
+        {(tab) => {
+          const isActive = () => active() === tab.id;
+          return (
+            <button
+              onClick={(e) => {
+                setActive(tab.id);
+                const el = e.currentTarget as HTMLElement;
+                emitChirp(el, 'press', { id: tab.id });
+              }}
+              style={{
+                padding: isPills() ? '4px 10px' : '6px 14px',
+                border: 'none',
+                'border-bottom': isPills() ? 'none' : `2px solid ${isActive() ? V.cy : 'transparent'}`,
+                'border-radius': isPills() ? '3px' : '0',
+                background: isPills() && isActive() ? 'rgba(255,255,255,0.08)' : 'transparent',
+                'font-size': '10px', 'font-family': V.mono, cursor: 'pointer',
+                color: isActive() ? V.t : V.td,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {tab.label}
+            </button>
+          );
+        }}
+      </For>
     </div>
   );
 }
