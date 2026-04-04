@@ -833,7 +833,9 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
       display: 'flex',
       'flex-direction': 'column',
       'align-items': 'center',
+      'justify-content': 'flex-end',
       flex: '1',
+      height: '100%',
       'min-width': '28px',
     }}>
       <Show when={numValue() > 0}>
