@@ -3757,8 +3757,8 @@ async fn get_daily_note(
         ApiError::NotFound(format!("Page not found: {}", date))
     })?;
 
-    // Default to including children if no include param specified
-    if ctx_query.include.is_none() {
+    // Default to including children if no include param specified (or empty string)
+    if ctx_query.include.as_deref().map_or(true, |s| s.trim().is_empty()) {
         ctx_query.include = Some("children".to_string());
     }
 
