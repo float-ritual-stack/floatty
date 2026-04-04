@@ -2,7 +2,7 @@
  * render:: door catalog — Zod schema catalog for @json-render/solid
  *
  * Defines the component vocabulary that LLMs and specs target.
- * 29 components + 7 actions. Single source of truth for both
+ * 37 components + 7 actions. Single source of truth for both
  * prompt generation (catalog.prompt()) and runtime rendering.
  */
 
@@ -258,9 +258,10 @@ export const bbsCatalog = schema.createCatalog({
       props: z.object({
         title: z.string().optional(),
         maxHeight: z.number().optional(),
+        max: z.number().optional(),
       }),
       slots: ['default'],
-      description: 'Normalized vertical bar chart. Children are BarItem components.',
+      description: 'Normalized vertical bar chart. Children are BarItem components. Set max to the largest value so bars scale proportionally (otherwise each bar renders at 100%).',
     },
 
     BarItem: {
@@ -271,7 +272,7 @@ export const bbsCatalog = schema.createCatalog({
         color: z.string().optional(),
       }),
       slots: [],
-      description: 'Single bar in a BarChart. Height scaled to max value.',
+      description: 'Single bar in a BarChart. Height = value/max * 100%. Inherits max from parent BarChart if not set on individual item.',
     },
 
     // ─── Content Blocks ─────────────────────────────────────
@@ -379,6 +380,100 @@ export const bbsCatalog = schema.createCatalog({
       }),
       slots: [],
       description: 'Filterable timeline of ctx:: captures with project color coding, mode badges, and context-switch markers. Click to expand entries. Project filter chips at top. Good for daily dashboards, session archaeology views.',
+    },
+
+    // ─── Composites ──────────────────────────────────────
+    ModeTag: {
+      props: z.object({
+        mode: z.enum(['work', 'float', 'life', 'pebble', 'rent', 'spike']),
+        count: z.number().optional(),
+        size: z.enum(['sm', 'md']).optional(),
+      }),
+      slots: [],
+      description: 'Colored mode badge. work=cyan, float=magenta, life=green, pebble=amber, rent=coral, spike=coral.',
+    },
+
+    QuoteBlock: {
+      props: z.object({
+        text: z.string(),
+        attribution: z.string().optional(),
+        type: z.enum(['quote', 'insight', 'note']).optional(),
+      }),
+      slots: [],
+      description: 'Styled quote block with left border accent and optional attribution line. quote=gray, insight=cyan, note=amber.',
+    },
+
+    TimeEntry: {
+      props: z.object({
+        time: z.string(),
+        title: z.string(),
+        body: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        color: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Timeline entry row: time dot on left spine, title + optional body + tags on right. Good for timelogs, session entries, daily notes.',
+    },
+
+    StatsBar: {
+      props: z.object({
+        stats: z.array(z.object({
+          label: z.string(),
+          value: z.string(),
+          color: z.string().optional(),
+        })),
+        layout: z.enum(['row', 'grid']).optional(),
+      }),
+      slots: [],
+      description: 'Horizontal row (or grid) of labeled stat values with optional per-stat colors. Good for dashboards, summaries.',
+    },
+
+    MetadataHeader: {
+      props: z.object({
+        title: z.string(),
+        subtitle: z.string().optional(),
+        date: z.string().optional(),
+        stats: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
+      }),
+      slots: [],
+      description: 'Document header with title, optional subtitle, date, and inline stats row.',
+    },
+
+    CollapsibleSection: {
+      props: z.object({
+        title: z.string(),
+        expanded: z.boolean().optional(),
+        color: z.string().optional(),
+        count: z.number().optional(),
+      }),
+      slots: ['default'],
+      description: 'Collapsible section with colored title bar and item count. Click header to toggle. Good for grouping entries, day sections, category lists.',
+    },
+
+    FilterButtons: {
+      props: z.object({
+        filters: z.array(z.object({
+          id: z.string(),
+          label: z.string(),
+          count: z.number().optional(),
+        })),
+        active: z.union([z.string(), z.record(z.unknown())]),
+      }),
+      slots: [],
+      description: 'Horizontal row of filter buttons. Active button is highlighted. Use $bindState on active to sync with spec state for visibility switching.',
+    },
+
+    TabNav: {
+      props: z.object({
+        tabs: z.array(z.object({
+          id: z.string(),
+          label: z.string(),
+        })),
+        active: z.union([z.string(), z.record(z.unknown())]),
+        variant: z.enum(['horizontal', 'pills']).optional(),
+      }),
+      slots: [],
+      description: 'Horizontal tab bar. "horizontal" uses underline, "pills" uses pill background. Use $bindState on active to sync with spec state for view switching.',
     },
   },
 
