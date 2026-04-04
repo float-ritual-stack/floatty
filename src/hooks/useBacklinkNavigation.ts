@@ -47,7 +47,7 @@ export function findPagesContainer(): Block | null {
 
   for (const rootId of rootIds) {
     const block = blocks[rootId];
-    if (block && block.content.toLowerCase().startsWith(PAGES_PREFIX.toLowerCase())) {
+    if (block && block.content.trim().toLowerCase() === PAGES_PREFIX) {
       return block;
     }
   }
