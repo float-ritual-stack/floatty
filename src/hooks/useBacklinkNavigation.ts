@@ -279,15 +279,3 @@ export function navigateToPage(
   };
 }
 
-/**
- * Hook-style export for use in components.
- * Returns navigation functions bound to the stores.
- */
-export function useBacklinkNavigation() {
-  return {
-    findPagesContainer,
-    findPage,
-    findBacklinks,
-    navigateToPage,
-  };
-}
