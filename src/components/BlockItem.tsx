@@ -185,6 +185,8 @@ export function BlockItem(props: BlockItemProps) {
     if (!renderShowTitle()) return displayContent();
     const b = block();
     if (b?.outputType !== 'door' || !b?.output) return displayContent();
+    // Inline prefix check — render:: has no BlockType enum (it's a door, not a core type).
+    // If BlockType::Render is added in the future, use block().type === 'render' instead.
     if (!b?.content?.toLowerCase().startsWith('render::')) return displayContent();
     const title = (b.output as { data?: { title?: string } })?.data?.title;
     if (!title) return displayContent();
