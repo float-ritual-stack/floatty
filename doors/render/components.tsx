@@ -757,6 +757,25 @@ export function TuiStat(props: BaseComponentProps<{ label: string; value: string
 }
 
 export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?: number; max?: number }>) {
+  let barsRef: HTMLDivElement | undefined;
+
+  // After mount, compute max from children's data-value attrs and set CSS var
+  const computeMax = () => {
+    if (!barsRef) return;
+    if (props.props.max != null && props.props.max > 0) {
+      barsRef.style.setProperty('--bar-chart-max', String(props.props.max));
+      return;
+    }
+    const values = Array.from(barsRef.querySelectorAll('[data-bar-value]'))
+      .map(el => parseFloat((el as HTMLElement).dataset.barValue ?? '0'))
+      .filter(v => !isNaN(v));
+    const max = values.length > 0 ? Math.max(...values) : 1;
+    barsRef.style.setProperty('--bar-chart-max', String(max));
+  };
+
+  // Use requestAnimationFrame to ensure children have rendered
+  setTimeout(computeMax, 0);
+
   return (
     <div>
       <Show when={props.props.title}>
@@ -771,13 +790,12 @@ export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?:
           {props.props.title}
         </div>
       </Show>
-      <div style={{
+      <div ref={barsRef} style={{
         display: 'flex',
         'align-items': 'flex-end',
         gap: '4px',
         height: `${props.props.maxHeight || 120}px`,
-        '--bar-chart-max': props.props.max != null ? String(props.props.max) : undefined,
-      } as Record<string, string | undefined>}>
+      }}>
         {props.children}
       </div>
     </div>
@@ -786,29 +804,32 @@ export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?:
 
 export function BarItemComponent(props: BaseComponentProps<{ label: string; value: number; max?: number; color?: string }>) {
   let containerRef: HTMLDivElement | undefined;
+  let barRef: HTMLDivElement | undefined;
   const numValue = () => {
     const v = props.props.value;
     if (typeof v === 'number') return v;
     const parsed = parseFloat(String(v));
     return isNaN(parsed) ? 0 : parsed;
   };
-  const pct = () => {
-    // Priority: explicit max prop > parent BarChart max (CSS var) > self-scale
+  const computeHeight = () => {
+    if (!containerRef || !barRef) return;
     const rawMax = props.props.max != null ? parseFloat(String(props.props.max)) : 0;
     let max = rawMax > 0 ? rawMax : null;
-    if (!max && containerRef) {
-      const parentMax = getComputedStyle(containerRef).getPropertyValue('--bar-chart-max');
+    if (!max) {
+      const parentMax = containerRef.parentElement?.style.getPropertyValue('--bar-chart-max');
       if (parentMax) {
         const parsed = parseFloat(parentMax);
         if (parsed > 0) max = parsed;
       }
     }
     if (!max) max = Math.max(numValue(), 1);
-    const result = (numValue() / max) * 100;
-    return isNaN(result) ? 0 : Math.min(100, result);
+    const pct = Math.min(100, (numValue() / max) * 100);
+    barRef.style.height = `${pct}%`;
   };
+  // Re-compute after parent BarChart sets --bar-chart-max (setTimeout 0 + 16ms)
+  setTimeout(computeHeight, 16);
   return (
-    <div ref={containerRef} style={{
+    <div ref={containerRef} data-bar-value={numValue()} style={{
       display: 'flex',
       'flex-direction': 'column',
       'align-items': 'center',
@@ -825,13 +846,13 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
           {numValue() % 1 === 0 ? numValue() : numValue().toFixed(1)}
         </span>
       </Show>
-      <div style={{
+      <div ref={barRef} style={{
         width: '100%',
         background: props.props.color || V.cy,
-        height: `${pct()}%`,
+        height: '0%',
         'min-height': numValue() > 0 ? '4px' : '0',
         opacity: numValue() > 0 ? '0.7' : '0.15',
-        transition: 'height 0.2s',
+        transition: 'height 0.3s ease',
       }} />
       <span style={{
         'font-size': '9px',
