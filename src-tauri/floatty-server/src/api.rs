@@ -2067,6 +2067,14 @@ async fn get_blocks(
                 // O(1) lookup from pre-computed inheritance index
                 let inherited_markers = lookup_inherited(&inheritance_guard, &block_id);
 
+                // Read outputType (small string). Skip output blob in bulk listing (can be large).
+                let output_type = block_map
+                    .get(&txn, "outputType")
+                    .and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    });
+
                 blocks.push(BlockDto {
                     id: block_id,
                     content,
@@ -2078,8 +2086,8 @@ async fn get_blocks(
                     inherited_markers,
                     created_at,
                     updated_at,
-                    output_type: None,
-                    output: None,
+                    output_type,
+                    output: None, // Omitted in bulk listing — use single-block GET for full output
                 });
             }
         }
@@ -2389,6 +2397,17 @@ async fn get_block(
             lookup_inherited(&index, &id)
         };
 
+        let output_type = block_map
+            .get(&txn, "outputType")
+            .and_then(|v| match v {
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            });
+
+        let output = block_map
+            .get(&txn, "output")
+            .map(|v| yrs_out_to_json(v, &txn));
+
         let block_dto = BlockDto {
             id: id.clone(),
             content,
@@ -2400,8 +2419,8 @@ async fn get_block(
             inherited_markers,
             created_at,
             updated_at,
-            output_type: None,
-            output: None,
+            output_type,
+            output,
         };
 
         Ok(Json(build_block_context_response(
@@ -3009,7 +3028,7 @@ async fn update_block(
         inherited_markers: None, // Computed on read
         created_at,
         updated_at: now as i64,
-        output_type: None,
+        output_type: None, // PATCH doesn't modify output — use GET for full block
         output: None,
     }))
 }

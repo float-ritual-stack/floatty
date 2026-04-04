@@ -181,13 +181,18 @@ export function BlockItem(props: BlockItemProps) {
   // Display-only — does NOT change isOutputBlock, focus, collapse, zoom, or navigation.
   const [renderShowTitle, setRenderShowTitle] = createSignal(true);
 
-  const effectiveDisplayContent = createMemo(() => {
-    if (!renderShowTitle()) return displayContent();
+  // Does this render:: block have a generated title available?
+  const renderTitle = createMemo(() => {
     const b = block();
-    if (b?.outputType !== 'door' || !b?.output) return displayContent();
-    if (!b?.content?.toLowerCase().startsWith('render::')) return displayContent();
-    const title = (b.output as { data?: { title?: string } })?.data?.title;
-    if (!title) return displayContent();
+    if (b?.outputType !== 'door' || !b?.output) return null;
+    // Inline prefix check — render:: has no BlockType enum (it's a door, not a core type).
+    if (!b?.content?.toLowerCase().startsWith('render::')) return null;
+    return (b.output as { data?: { title?: string } })?.data?.title || null;
+  });
+
+  const effectiveDisplayContent = createMemo(() => {
+    const title = renderTitle();
+    if (!renderShowTitle() || !title) return displayContent();
     if (title.toLowerCase().startsWith('render::')) return title;
     return `render:: ${title}`;
   });
@@ -774,7 +779,7 @@ export function BlockItem(props: BlockItemProps) {
                 stubPageNameSet={stubPageNameSet()}
               />
               {/* render:: title toggle — switch between generated title and full prompt */}
-              <Show when={block()?.outputType === 'door' && (block()?.output as { data?: { title?: string } })?.data?.title && block()?.content?.toLowerCase().startsWith('render::')}>
+              <Show when={renderTitle()}>
                 <button
                   class="table-raw-toggle"
                   onClick={() => setRenderShowTitle(v => !v)}
