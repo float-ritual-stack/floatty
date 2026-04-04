@@ -605,6 +605,23 @@ export function BlockItem(props: BlockItemProps) {
     return b.outputType === 'eval-result' || (b.outputType === 'door' && b.content !== '');
   });
 
+  // render:: title overlay: show short title instead of full prompt when available
+  const renderTitle = createMemo(() => {
+    const b = block();
+    if (!b || b.outputType !== 'door') return null;
+    if (!b.content.toLowerCase().startsWith('render::')) return null;
+    const output = b.output as { data?: { title?: string } } | null;
+    return output?.data?.title || null;
+  });
+
+  const effectiveDisplayContent = createMemo(() => {
+    const title = renderTitle();
+    if (title && !isFocused()) {
+      return `render:: ${title}`;
+    }
+    return displayContent();
+  });
+
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
     if (hasChildren || hasCollapsibleOutput()) {
@@ -750,7 +767,7 @@ export function BlockItem(props: BlockItemProps) {
             {/* Skip for table raw mode - just show contentEditable directly */}
             <Show when={!tableShowRaw()}>
               <BlockDisplay
-                content={displayContent()}
+                content={effectiveDisplayContent()}
                 onWikilinkClick={handleWikilinkClick}
                 blockId={props.id}
                 onUpdateContent={(content) => store.updateBlockContent(props.id, content)}
