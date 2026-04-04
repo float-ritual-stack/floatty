@@ -32,7 +32,12 @@ const logger = createLogger('outputSummaryHook');
  * and key component types used.
  */
 function extractRenderSummary(output: any): string | null {
-  const spec = output?.spec;
+  // Door envelope: { kind, doorId, schema, data: { spec, title, ... } }
+  // Prefer data.title (set by render agent or Ollama title generation)
+  const data = output?.data;
+  if (data?.title) return data.title;
+
+  const spec = data?.spec ?? output?.spec;
   if (!spec?.elements) return null;
 
   const parts: string[] = [];
@@ -40,6 +45,9 @@ function extractRenderSummary(output: any): string | null {
 
   for (const el of Object.values(spec.elements as Record<string, any>)) {
     if (!foundTitle && el.type === 'EntryHeader' && el.props?.title) {
+      parts.push(el.props.title);
+      foundTitle = true;
+    } else if (!foundTitle && el.type === 'MetadataHeader' && el.props?.title) {
       parts.push(el.props.title);
       foundTitle = true;
     } else if (el.type === 'EntryBody' && el.props?.markdown) {

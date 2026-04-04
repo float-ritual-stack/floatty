@@ -261,7 +261,7 @@ export const bbsCatalog = schema.createCatalog({
         max: z.number().optional(),
       }),
       slots: ['default'],
-      description: 'Normalized vertical bar chart. Children are BarItem components. Set max to the largest value so bars scale proportionally (otherwise each bar renders at 100%).',
+      description: 'Normalized vertical bar chart. Children are BarItem components. Auto-scales from children values. IMPORTANT: only compare similar-magnitude values — if one value is 10x the rest, the small bars become invisible. For skewed data, exclude outliers or use StatsBar instead.',
     },
 
     BarItem: {

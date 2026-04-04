@@ -264,6 +264,12 @@ pub struct BlockDto {
     pub created_at: i64,
     /// Timestamp when block was last updated (ms since epoch)
     pub updated_at: i64,
+    /// Block output type (e.g., "door", "eval-result", "search-results")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_type: Option<String>,
+    /// Block output data (door envelope, eval result, etc.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<serde_json::Value>,
 }
 
 /// A marker inherited from an ancestor block.
@@ -1894,6 +1900,17 @@ fn read_block_dto<T: ReadTxn>(
     let created_at = extract_timestamp(block_map.get(txn, "createdAt"));
     let updated_at = extract_timestamp(block_map.get(txn, "updatedAt"));
 
+    let output_type = block_map
+        .get(txn, "outputType")
+        .and_then(|v| match v {
+            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+            _ => None,
+        });
+
+    let output = block_map
+        .get(txn, "output")
+        .map(|v| yrs_out_to_json(v, txn));
+
     let block_type = floatty_core::parse_block_type(&content);
 
     let inherited_markers = {
@@ -1912,6 +1929,8 @@ fn read_block_dto<T: ReadTxn>(
         inherited_markers,
         created_at,
         updated_at,
+        output_type,
+        output,
     })
 }
 
@@ -2048,6 +2067,14 @@ async fn get_blocks(
                 // O(1) lookup from pre-computed inheritance index
                 let inherited_markers = lookup_inherited(&inheritance_guard, &block_id);
 
+                // Read outputType (small string). Skip output blob in bulk listing (can be large).
+                let output_type = block_map
+                    .get(&txn, "outputType")
+                    .and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    });
+
                 blocks.push(BlockDto {
                     id: block_id,
                     content,
@@ -2059,6 +2086,8 @@ async fn get_blocks(
                     inherited_markers,
                     created_at,
                     updated_at,
+                    output_type,
+                    output: None, // Omitted in bulk listing — use single-block GET for full output
                 });
             }
         }
@@ -2368,6 +2397,17 @@ async fn get_block(
             lookup_inherited(&index, &id)
         };
 
+        let output_type = block_map
+            .get(&txn, "outputType")
+            .and_then(|v| match v {
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            });
+
+        let output = block_map
+            .get(&txn, "output")
+            .map(|v| yrs_out_to_json(v, &txn));
+
         let block_dto = BlockDto {
             id: id.clone(),
             content,
@@ -2379,6 +2419,8 @@ async fn get_block(
             inherited_markers,
             created_at,
             updated_at,
+            output_type,
+            output,
         };
 
         Ok(Json(build_block_context_response(
@@ -2585,6 +2627,8 @@ async fn create_block(
             inherited_markers: None, // Computed on read
             created_at: now as i64,
             updated_at: now as i64,
+            output_type: None,
+            output: None,
         }),
     ))
 }
@@ -2984,6 +3028,8 @@ async fn update_block(
         inherited_markers: None, // Computed on read
         created_at,
         updated_at: now as i64,
+        output_type: None, // PATCH doesn't modify output — use GET for full block
+        output: None,
     }))
 }
 
