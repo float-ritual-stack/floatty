@@ -1843,7 +1843,7 @@ async fn resolve_block_prefix(
             let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, &full_id)
         };
-        let block_dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers);
+        let block_dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
         Ok(Json(ResolveResponse {
             id: full_id,
             block: block_dto,
@@ -1862,6 +1862,7 @@ fn read_block_dto<T: ReadTxn>(
     txn: &T,
     id: &str,
     inherited_markers: Option<Vec<InheritedMarkerDto>>,
+    include_output: bool,
 ) -> BlockDto {
     let content = block_map
         .get(txn, "content")
@@ -1914,9 +1915,13 @@ fn read_block_dto<T: ReadTxn>(
             _ => None,
         });
 
-    let output = block_map
-        .get(txn, "output")
-        .map(|v| yrs_out_to_json(v, txn));
+    let output = if include_output {
+        block_map
+            .get(txn, "output")
+            .map(|v| yrs_out_to_json(v, txn))
+    } else {
+        None
+    };
 
     let block_type = floatty_core::parse_block_type(&content);
 
@@ -1989,7 +1994,7 @@ async fn get_blocks(
             if let yrs::Out::YMap(block_map) = value {
                 let block_id = key.to_string();
                 let inherited_markers = lookup_inherited(&inheritance_guard, &block_id);
-                let mut dto = read_block_dto(&block_map, &txn, &block_id, inherited_markers);
+                let dto = read_block_dto(&block_map, &txn, &block_id, inherited_markers, false);
 
                 // Apply query filters
                 if let Some(since) = query.since {
@@ -2015,8 +2020,6 @@ async fn get_blocks(
                     if !has_marker { continue; }
                 }
 
-                // Omit output blob in bulk listing (can be large) — use single-block GET for full output
-                dto.output = None;
                 blocks.push(dto);
             }
         }
@@ -2275,7 +2278,7 @@ async fn get_block(
             let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, &id)
         };
-        let block_dto = read_block_dto(&block_map, &txn, &id, inherited_markers);
+        let block_dto = read_block_dto(&block_map, &txn, &id, inherited_markers, true);
 
         Ok(Json(build_block_context_response(
             &blocks_map, &txn, &id, block_dto, &ctx_query,
@@ -3679,7 +3682,7 @@ async fn get_daily_note(
             let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, &page_id)
         };
-        let block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers);
+        let block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
         Ok(Json(build_block_context_response(
             &blocks_map, &txn, &page_id, block_dto, &ctx_query,
         )))
