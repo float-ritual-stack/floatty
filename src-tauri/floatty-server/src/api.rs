@@ -1839,7 +1839,11 @@ async fn resolve_block_prefix(
         .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
 
     if let yrs::Out::YMap(block_map) = value {
-        let block_dto = read_block_dto(&block_map, &txn, &full_id, &state)?;
+        let inherited_markers = {
+            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+            lookup_inherited(&index, &full_id)
+        };
+        let block_dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers);
         Ok(Json(ResolveResponse {
             id: full_id,
             block: block_dto,
@@ -1849,13 +1853,16 @@ async fn resolve_block_prefix(
     }
 }
 
-/// Extract a BlockDto from a Y.Map block (shared between get_block and resolve_block_prefix)
+/// Read a BlockDto from a Y.Map block entry.
+///
+/// Callers provide pre-computed `inherited_markers` so bulk endpoints can
+/// acquire the inheritance index lock once instead of per-block.
 fn read_block_dto<T: ReadTxn>(
     block_map: &yrs::MapRef,
     txn: &T,
     id: &str,
-    state: &AppState,
-) -> Result<BlockDto, ApiError> {
+    inherited_markers: Option<Vec<InheritedMarkerDto>>,
+) -> BlockDto {
     let content = block_map
         .get(txn, "content")
         .and_then(|v| match v {
@@ -1913,12 +1920,7 @@ fn read_block_dto<T: ReadTxn>(
 
     let block_type = floatty_core::parse_block_type(&content);
 
-    let inherited_markers = {
-        let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
-        lookup_inherited(&index, id)
-    };
-
-    Ok(BlockDto {
+    BlockDto {
         id: id.to_string(),
         content,
         parent_id,
@@ -1931,7 +1933,7 @@ fn read_block_dto<T: ReadTxn>(
         updated_at,
         output_type,
         output,
-    })
+    }
 }
 
 /// Build a BlockWithContextResponse from a block DTO and query params.
@@ -1984,111 +1986,38 @@ async fn get_blocks(
     // Get all blocks from the map
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
-            // Handle nested Y.Map (new format)
             if let yrs::Out::YMap(block_map) = value {
                 let block_id = key.to_string();
+                let inherited_markers = lookup_inherited(&inheritance_guard, &block_id);
+                let mut dto = read_block_dto(&block_map, &txn, &block_id, inherited_markers);
 
-                let content = block_map
-                    .get(&txn, "content")
-                    .and_then(|v| match v {
-                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-
-                let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
-                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                    yrs::Out::Any(yrs::Any::Null) => None,
-                    _ => None,
-                });
-
-                let child_ids = block_map
-                    .get(&txn, "childIds")
-                    .and_then(|v| match v {
-                        yrs::Out::YArray(arr) => Some(
-                            arr.iter(&txn)
-                                .filter_map(|v| match v {
-                                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                                    _ => None,
-                                })
-                                .collect(),
-                        ),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-
-                let collapsed = block_map
-                    .get(&txn, "collapsed")
-                    .and_then(|v| match v {
-                        yrs::Out::Any(yrs::Any::Bool(b)) => Some(b),
-                        _ => None,
-                    })
-                    .unwrap_or(false);
-
-                // Extract metadata if present (handles both Y.Map and legacy JSON string)
-                let metadata = block_map
-                    .get(&txn, "metadata")
-                    .and_then(|v| extract_metadata_from_yrs(v, &txn));
-
-                // Extract timestamps
-                let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
-                let updated_at = extract_timestamp(block_map.get(&txn, "updatedAt"));
-
-                let block_type = floatty_core::parse_block_type(&content);
-
-                // Apply query filters before pushing
+                // Apply query filters
                 if let Some(since) = query.since {
-                    if created_at < since {
-                        continue;
-                    }
+                    if dto.created_at < since { continue; }
                 }
                 if let Some(until) = query.until {
-                    if created_at >= until {
-                        continue;
-                    }
+                    if dto.created_at >= until { continue; }
                 }
                 if let Some(ref mt) = query.marker_type {
-                    let has_marker = metadata.as_ref().and_then(|m| m.get("markers")).and_then(|arr| arr.as_array()).map(|markers| {
-                        markers.iter().any(|marker| {
-                            let type_match = marker.get("markerType").and_then(|v| v.as_str()) == Some(mt.as_str());
-                            if let Some(ref mv) = query.marker_value {
-                                type_match && marker.get("value").and_then(|v| v.as_str()) == Some(mv.as_str())
-                            } else {
-                                type_match
-                            }
-                        })
-                    }).unwrap_or(false);
-
-                    if !has_marker {
-                        continue;
-                    }
+                    let has_marker = dto.metadata.as_ref()
+                        .and_then(|m| m.get("markers"))
+                        .and_then(|arr| arr.as_array())
+                        .map(|markers| {
+                            markers.iter().any(|marker| {
+                                let type_match = marker.get("markerType").and_then(|v| v.as_str()) == Some(mt.as_str());
+                                if let Some(ref mv) = query.marker_value {
+                                    type_match && marker.get("value").and_then(|v| v.as_str()) == Some(mv.as_str())
+                                } else {
+                                    type_match
+                                }
+                            })
+                        }).unwrap_or(false);
+                    if !has_marker { continue; }
                 }
 
-                // O(1) lookup from pre-computed inheritance index
-                let inherited_markers = lookup_inherited(&inheritance_guard, &block_id);
-
-                // Read outputType (small string). Skip output blob in bulk listing (can be large).
-                let output_type = block_map
-                    .get(&txn, "outputType")
-                    .and_then(|v| match v {
-                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                        _ => None,
-                    });
-
-                blocks.push(BlockDto {
-                    id: block_id,
-                    content,
-                    parent_id,
-                    child_ids,
-                    collapsed,
-                    block_type: format!("{:?}", block_type).to_lowercase(),
-                    metadata,
-                    inherited_markers,
-                    created_at,
-                    updated_at,
-                    output_type,
-                    output: None, // Omitted in bulk listing — use single-block GET for full output
-                });
+                // Omit output blob in bulk listing (can be large) — use single-block GET for full output
+                dto.output = None;
+                blocks.push(dto);
             }
         }
     }
@@ -2341,87 +2270,12 @@ async fn get_block(
         .get(&txn, &id)
         .ok_or_else(|| ApiError::NotFound(id.clone()))?;
 
-    // Handle nested Y.Map (new format)
     if let yrs::Out::YMap(block_map) = value {
-        let content = block_map
-            .get(&txn, "content")
-            .and_then(|v| match v {
-                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                _ => None,
-            })
-            .unwrap_or_default();
-
-        let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
-            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-            yrs::Out::Any(yrs::Any::Null) => None,
-            _ => None,
-        });
-
-        let child_ids = block_map
-            .get(&txn, "childIds")
-            .and_then(|v| match v {
-                yrs::Out::YArray(arr) => Some(
-                    arr.iter(&txn)
-                        .filter_map(|v| match v {
-                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                            _ => None,
-                        })
-                        .collect(),
-                ),
-                _ => None,
-            })
-            .unwrap_or_default();
-
-        let collapsed = block_map
-            .get(&txn, "collapsed")
-            .and_then(|v| match v {
-                yrs::Out::Any(yrs::Any::Bool(b)) => Some(b),
-                _ => None,
-            })
-            .unwrap_or(false);
-
-        // Extract metadata if present (handles both Y.Map and legacy JSON string)
-        let metadata = block_map
-            .get(&txn, "metadata")
-            .and_then(|v| extract_metadata_from_yrs(v, &txn));
-
-        // Extract timestamps
-        let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
-        let updated_at = extract_timestamp(block_map.get(&txn, "updatedAt"));
-
-        let block_type = floatty_core::parse_block_type(&content);
-
-        // O(1) lookup from pre-computed inheritance index
         let inherited_markers = {
             let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, &id)
         };
-
-        let output_type = block_map
-            .get(&txn, "outputType")
-            .and_then(|v| match v {
-                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                _ => None,
-            });
-
-        let output = block_map
-            .get(&txn, "output")
-            .map(|v| yrs_out_to_json(v, &txn));
-
-        let block_dto = BlockDto {
-            id: id.clone(),
-            content,
-            parent_id,
-            child_ids,
-            collapsed,
-            block_type: format!("{:?}", block_type).to_lowercase(),
-            metadata,
-            inherited_markers,
-            created_at,
-            updated_at,
-            output_type,
-            output,
-        };
+        let block_dto = read_block_dto(&block_map, &txn, &id, inherited_markers);
 
         Ok(Json(build_block_context_response(
             &blocks_map, &txn, &id, block_dto, &ctx_query,
@@ -3821,7 +3675,11 @@ async fn get_daily_note(
         .ok_or_else(|| ApiError::NotFound(page_id.clone()))?;
 
     if let yrs::Out::YMap(block_map) = value {
-        let block_dto = read_block_dto(&block_map, &txn, &page_id, &state)?;
+        let inherited_markers = {
+            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+            lookup_inherited(&index, &page_id)
+        };
+        let block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers);
         Ok(Json(build_block_context_response(
             &blocks_map, &txn, &page_id, block_dto, &ctx_query,
         )))
