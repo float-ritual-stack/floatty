@@ -2740,8 +2740,8 @@ body.block-dragging * {
   width: 100%;
 }
 
-/* Raw mode toggle button - matches .md-table-toggle position */
-.table-raw-toggle {
+/* Block display mode toggle (table raw/rich, render:: title/prompt) */
+.block-mode-toggle {
   position: absolute;
   top: 0;
   right: 0;
@@ -2759,7 +2759,7 @@ body.block-dragging * {
   z-index: 1;
 }
 
-.table-raw-toggle:hover {
+.block-mode-toggle:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--color-accent) 30%, transparent);
 }

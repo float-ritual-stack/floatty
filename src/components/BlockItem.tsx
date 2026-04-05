@@ -15,6 +15,7 @@ import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE } from '../lib/blockTypes';
+import { isOutputBlock, hasCollapsibleOutput, resolveImgFilename } from '../lib/blockItemHelpers';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
 import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
@@ -150,6 +151,7 @@ export function BlockItem(props: BlockItemProps) {
   // FLO-58: Lift showRaw state to persist across TableView remounts
   // (remounts happen when raw editing temporarily breaks table syntax)
   const [tableShowRaw, setTableShowRaw] = createSignal(false);
+
   let contentRef: HTMLDivElement | undefined;
   let outputFocusRef: HTMLDivElement | undefined;
   let wrapperRef: HTMLDivElement | undefined;
@@ -175,6 +177,26 @@ export function BlockItem(props: BlockItemProps) {
     cancelContentUpdate, flushContentUpdate,
     handleInput, handleBlurSync, updateContentFromDom,
   } = contentSync;
+
+  // render:: title toggle: show generated title instead of full prompt (Unit 1.3a)
+  // Display-only — does NOT change isOutputBlock, focus, collapse, zoom, or navigation.
+  const [renderShowTitle, setRenderShowTitle] = createSignal(true);
+
+  // Does this render:: block have a generated title available?
+  const renderTitle = createMemo(() => {
+    const b = block();
+    if (b?.outputType !== 'door' || !b?.output) return null;
+    // Inline prefix check — render:: has no BlockType enum (it's a door, not a core type).
+    if (!b?.content?.toLowerCase().startsWith('render::')) return null;
+    return (b.output as { data?: { title?: string } })?.data?.title || null;
+  });
+
+  const effectiveDisplayContent = createMemo(() => {
+    const title = renderTitle();
+    if (!renderShowTitle() || !title) return displayContent();
+    if (title.toLowerCase().startsWith('render::')) return title;
+    return `render:: ${title}`;
+  });
 
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
   // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
@@ -241,29 +263,14 @@ export function BlockItem(props: BlockItemProps) {
   };
 
   // Detect output blocks that need special keyboard handling
-  const isOutputBlock = createMemo(() => {
-    const ot = block()?.outputType;
-    if (ot?.startsWith('search-') || ot === 'img-view') return true;
-    // Door output: only adapter children (empty content) replace contentEditable.
-    // selfRender doors with content keep contentEditable and render output below (like artifact::).
-    if (ot === 'door' && block()?.content === '') return true;
-    return false;
-  });
+  const isOutputBlockMemo = createMemo(() => isOutputBlock(block()));
 
   // img:: auto-render — fires when content starts with img:: AND filename has a known extension.
-  // Extension-gated to prevent 404 spam while the user is still typing the filename.
-  // Also strips to basename so pasted absolute paths work (e.g. /Users/evan/.floatty/__attachments/photo.jpg).
+  // Parsing extracted to lib/blockItemHelpers.ts (resolveImgFilename).
   createEffect(on(() => block()?.content, (content) => {
     if (!content) return;
-    const lower = content.toLowerCase();
-    if (!lower.startsWith('img::')) return;
-    const rawPath = content.slice(5).trim();
-    if (!rawPath) return;
-    // Strip to basename — handles pasted full paths
-    const filename = rawPath.replace(/.*[/\\]/g, '');
+    const filename = resolveImgFilename(content);
     if (!filename) return;
-    // Only trigger when filename has a recognized extension (prevents 404 while mid-typing)
-    if (!/\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|pdf|html|htm)$/i.test(filename)) return;
     // Guard: only write if output is stale (prevents loop)
     const current = block();
     if (current?.outputType === 'img-view' && (current?.output as { filename?: string })?.filename === filename) return;
@@ -463,7 +470,7 @@ export function BlockItem(props: BlockItemProps) {
     // Cancel any pending focus from previous effect run
     if (prevFrameId) cancelAnimationFrame(prevFrameId);
 
-    if (isFocused() && contentRef && !isOutputBlock()) {
+    if (isFocused() && contentRef && !isOutputBlockMemo()) {
       // Consume cursor hint synchronously (before RAF) so it's not stale
       const cursorHint = paneStore.consumeFocusCursorHint(props.paneId);
 
@@ -599,15 +606,11 @@ export function BlockItem(props: BlockItemProps) {
     return `block-content-${type}`;
   };
 
-  const hasCollapsibleOutput = createMemo(() => {
-    const b = block();
-    if (!b?.output) return false;
-    return b.outputType === 'eval-result' || (b.outputType === 'door' && b.content !== '');
-  });
+  const hasCollapsibleOutputMemo = createMemo(() => hasCollapsibleOutput(block()));
 
   const bulletChar = () => {
     const hasChildren = block()?.childIds && block()!.childIds.length > 0;
-    if (hasChildren || hasCollapsibleOutput()) {
+    if (hasChildren || hasCollapsibleOutputMemo()) {
       return isCollapsed() ? '▸' : '▾';
     }
     return '•';
@@ -647,7 +650,7 @@ export function BlockItem(props: BlockItemProps) {
           'block-drag-source': drag.activeDragId() === props.id,
           'block-drop-target': drag.dropTargetId() === props.id,
           'block-drop-invalid': drag.dropTargetId() === props.id && !drag.isValidDrop(),
-          'has-collapsed-children': isCollapsed() && ((block()?.childIds?.length ?? 0) > 0 || hasCollapsibleOutput()),
+          'has-collapsed-children': isCollapsed() && ((block()?.childIds?.length ?? 0) > 0 || hasCollapsibleOutputMemo()),
         }}
         // FLO-278: Removed onMouseDown scroll preservation - was causing race condition
         // with focus routing's scroll lock. CSS class-based scroll lock now handles this.
@@ -745,25 +748,35 @@ export function BlockItem(props: BlockItemProps) {
 
           {/* REGULAR BLOCK: display + edit layers (hidden for special block types) */}
           {/* FLO-58: Also show for table blocks in raw mode - use contentEditable for raw markdown editing */}
-          <Show when={block()?.type !== 'picker' && (!isTableBlock() || tableShowRaw()) && !isOutputBlock()}>
+          <Show when={block()?.type !== 'picker' && (!isTableBlock() || tableShowRaw()) && !isOutputBlockMemo()}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
             {/* Skip for table raw mode - just show contentEditable directly */}
             <Show when={!tableShowRaw()}>
               <BlockDisplay
-                content={displayContent()}
+                content={effectiveDisplayContent()}
                 onWikilinkClick={handleWikilinkClick}
                 blockId={props.id}
                 onUpdateContent={(content) => store.updateBlockContent(props.id, content)}
                 pageNameSet={pageNameSet()}
                 stubPageNameSet={stubPageNameSet()}
               />
+              {/* render:: title toggle — switch between generated title and full prompt */}
+              <Show when={renderTitle()}>
+                <button
+                  class="block-mode-toggle"
+                  onClick={() => setRenderShowTitle(v => !v)}
+                  title={renderShowTitle() ? 'Show full prompt' : 'Show title'}
+                >
+                  {renderShowTitle() ? '⊞' : '⊟'}
+                </button>
+              </Show>
             </Show>
 
             {/* TABLE RAW MODE: wrap in container with toggle button at top-right */}
             <Show when={tableShowRaw()}>
               <div class="table-raw-container">
                 <button
-                  class="table-raw-toggle"
+                  class="block-mode-toggle"
                   onClick={() => setTableShowRaw(false)}
                   title="Switch to table view"
                 >
@@ -825,7 +838,7 @@ export function BlockItem(props: BlockItemProps) {
             paneId={props.paneId}
             isFocused={isFocused}
             isCollapsed={isCollapsed}
-            isOutputBlock={isOutputBlock}
+            isOutputBlock={isOutputBlockMemo}
             onFocus={props.onFocus}
             cancelContentUpdate={cancelContentUpdate}
             isBlockSelected={props.isBlockSelected}
