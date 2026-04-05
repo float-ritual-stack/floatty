@@ -6,6 +6,35 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.2] - 2026-04-05
+
+### Features
+
+- **render:: title display** (FLO-548) — render:: blocks show generated title instead of full prompt. Toggle button (⊞/⊟) switches between views. Title comes from render agent output (`data.title`) (#204)
+- **GET /api/v1/daily/:date** — resolve daily note page by date string, returns block with children/tree (#190)
+- **8 composite render:: components** — StatusPanel, ComparisonGrid, InboxDigest, SprintBoard, KnowledgeCard, ProjectTracker, TimelineView, ContextDashboard (FLO-548) (#203)
+
+### Improvements
+
+- **Bulk blocks endpoint perf** — `GET /api/v1/blocks` skips expensive output blob materialization (`yrs_out_to_json`) via `include_output` flag on `read_block_dto`. Output available on single-block endpoints (#204)
+- **BlockDto deduplication** — consolidated 3 copies of inline Y.Doc field extraction into single `read_block_dto` helper (#204)
+- **Display mode helpers extracted** — `isOutputBlock`, `hasCollapsibleOutput`, `resolveImgFilename` moved from BlockItem.tsx to `lib/blockItemHelpers.ts` with 26 contract tests encoding mutual-exclusivity invariant (#204)
+- **Generated bindings deduplicated** (FLO-561) — 3 directories → 1 (`src/generated/`), ts-gen outputs directly to active copy (#201)
+- **Dead code removal** (FLO-556) — removed unused `useBacklinkNavigation()` wrapper (#200)
+
+### Bug Fixes
+
+- **findPagesContainer matching** (FLO-557) — aligned matching logic between page search and container resolution (#202)
+- **BarItem scaling** — percentage bars now resolve correctly against container height (#204)
+- **outputSummaryHook** — reads envelope shape correctly (`data.spec` not `output.spec`), prefers `data.title` (#204)
+- **CSS class rename** — `table-raw-toggle` → `block-mode-toggle` (shared by table and render:: toggles)
+
+### Documentation
+
+- Added Canonical Paths + Protected Architecture sections to CLAUDE.md (FLO-554) (#199)
+
+---
+
 ## [0.10.1] - 2026-04-02
 
 ### Improvements
