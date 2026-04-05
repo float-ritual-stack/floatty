@@ -763,7 +763,7 @@ export function BlockItem(props: BlockItemProps) {
               {/* render:: title toggle — switch between generated title and full prompt */}
               <Show when={renderTitle()}>
                 <button
-                  class="table-raw-toggle"
+                  class="block-mode-toggle"
                   onClick={() => setRenderShowTitle(v => !v)}
                   title={renderShowTitle() ? 'Show full prompt' : 'Show title'}
                 >
@@ -776,7 +776,7 @@ export function BlockItem(props: BlockItemProps) {
             <Show when={tableShowRaw()}>
               <div class="table-raw-container">
                 <button
-                  class="table-raw-toggle"
+                  class="block-mode-toggle"
                   onClick={() => setTableShowRaw(false)}
                   title="Switch to table view"
                 >
