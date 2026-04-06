@@ -166,15 +166,10 @@ export function BlockItem(props: BlockItemProps) {
     return `render:: ${title}`;
   });
 
-  // render:: title height sync: set the edit layer's innerText to match the displayed content
-  // so it drives the correct wrapper height. Fires for both title→raw and raw→title toggles.
+  // FLO-569: title mode state — height collapse deferred (needs table-block pattern: hide
+  // contentEditable, use separate focusable div). For now, title text displays correctly
+  // via BlockDisplay overlay but height stays at full prompt height.
   const isRenderTitleMode = createMemo(() => !!renderTitle() && renderShowTitle());
-
-  createEffect(() => {
-    const content = effectiveDisplayContent();
-    if (!renderTitle() || !contentRef) return;
-    contentRef.innerText = content;
-  });
 
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
   // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
@@ -793,12 +788,6 @@ export function BlockItem(props: BlockItemProps) {
                 spellcheck={false}
                 autocapitalize="off"
                 autocorrect="off"
-                onBeforeInput={() => {
-                  if (isRenderTitleMode()) {
-                    setRenderShowTitle(false);
-                    if (contentRef) contentRef.innerText = block()?.content ?? '';
-                  }
-                }}
                 onInput={handleInput}
                 onKeyDown={handleKeyDownWithAutocomplete}
                 onPaste={handlePaste}

@@ -6,6 +6,20 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.4] - 2026-04-05
+
+### Improvements
+
+- **render:: agent title generation** (FLO-569) — Claude agent now includes a `title` field directly in JSON response, eliminating the Ollama title round-trip. Garbage titles (JSON blobs, >120 chars) are rejected with fallback to spec header (#208)
+- **Development Workflow** section added to CLAUDE.md — study existing patterns before fixing UI
+
+### Bug Fixes
+
+- **Terminal columns desync after alt-tab** (FLO-568) — `handleVisibilityRestore` now calls `fitAddon.fit()` + PTY resize notify after WebGL recreation (#207)
+- **render:: title mode height** (FLO-569) — block height now matches the displayed content in both directions (title↔raw toggle). Auto-switches to raw on edit (#208)
+
+---
+
 ## [0.10.3] - 2026-04-05
 
 ### Improvements
