@@ -192,6 +192,23 @@ class TerminalManager {
     }
     if (restored > 0) {
       logger.info(`Visibility restored, recreated WebGL for ${restored} terminal(s)`);
+      // Re-fit after DOM has painted — column count may be stale from hidden state (FLO-568)
+      requestAnimationFrame(() => {
+        for (const [id, instance] of this.instances) {
+          if (this.disposing.has(id)) continue;
+          if (!instance.container) continue;
+          instance.fitAddon.fit();
+          if (instance.ptyPid !== null && instance.ptyPid > 0) {
+            invoke('plugin:pty|resize', {
+              pid: instance.ptyPid,
+              cols: instance.term.cols,
+              rows: instance.term.rows,
+            }).catch((e) => {
+              logger.warn(`Resize notify failed for ${id} after visibility restore`, { err: e });
+            });
+          }
+        }
+      });
     }
   }
 
