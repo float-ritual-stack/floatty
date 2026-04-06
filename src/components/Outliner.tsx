@@ -11,7 +11,7 @@ import { Breadcrumb } from './Breadcrumb';
 import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
-import { invoke, type AggregatorConfig } from '../lib/tauriTypes';
+import { useConfig } from '../context/ConfigContext';
 import { downloadJSON } from '../lib/jsonExport';
 import type { ExportedOutline } from '../lib/jsonExport';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
@@ -42,6 +42,7 @@ interface OutlinerProps {
 export function Outliner(props: OutlinerProps) {
   const { doc, isLoaded, undo, redo, clearUndoStack } = useSyncedYDoc();
   const { blockStore, paneStore } = useWorkspace();
+  const appConfig = useConfig();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete, getAncestors } = useBlockOperations();
 
@@ -59,8 +60,7 @@ export function Outliner(props: OutlinerProps) {
   // For initial load, ready after async config load completes
   const [configReady, setConfigReady] = createSignal(false);
 
-  // Phase 0.5: Cache config for homebase keybind (Cmd+Shift+0)
-  const [cachedConfig, setCachedConfig] = createSignal<AggregatorConfig | null>(null);
+  // Config accessible via useConfig() (ConfigContext)
 
   // Get current zoomed root for this pane (null = show all roots)
   const zoomedRootId = () => paneStore.getZoomedRootId(props.paneId);
@@ -97,60 +97,37 @@ export function Outliner(props: OutlinerProps) {
     onCleanup(dispose);
   });
 
+  // Force-collapse blocks deeper than threshold (shared by init paths)
+  const applyCollapseDepth = (depth: number) => {
+    if (depth <= 0) return;
+    const roots = zoomedRootId() ? [zoomedRootId()!] : store.rootIds;
+    logger.info(`[FLO-197] Applying initial_collapse_depth ${depth} to ${roots.length} roots`);
+    const forceCollapseDeeper = (id: string, currentDepth: number) => {
+      const block = store.blocks[id];
+      if (!block || block.childIds.length === 0) return;
+      if (currentDepth >= depth) {
+        paneStore.setCollapsed(props.paneId, id, true);
+        return;
+      }
+      for (const childId of block.childIds) forceCollapseDeeper(childId, currentDepth + 1);
+    };
+    batch(() => { for (const rootId of roots) forceCollapseDeeper(rootId, 1); });
+  };
+
+  const applyThemeConfig = (c: NonNullable<ReturnType<typeof appConfig>>) => {
+    themeStore.setDiagnostics(c.show_diagnostics);
+    themeStore.setServerPort(c.server_port);
+    themeStore.setIsDevBuild(c.is_dev_build);
+    themeStore.setConfigPath(`${c.data_dir}/config.toml`);
+  };
+
   // FLO-197/P5: Apply collapse depth BEFORE first render
-  // This effect runs when isLoaded() becomes true, applies collapse, THEN enables rendering
+  // Split pane case uses prop directly (sync). Initial load waits for config.
   createEffect(() => {
     if (!isLoaded()) return;
-    if (configReady()) return; // Already processed
-
-    // Helper to force-collapse blocks deeper than threshold
-    const applyCollapseDepth = (depth: number) => {
-      if (depth <= 0) return;
-
-      const roots = zoomedRootId() ? [zoomedRootId()!] : store.rootIds;
-      logger.info(`[FLO-197] Applying initial_collapse_depth ${depth} to ${roots.length} roots`);
-
-      const forceCollapseDeeper = (id: string, currentDepth: number) => {
-        const block = store.blocks[id];
-        if (!block || block.childIds.length === 0) return;
-
-        // Force-collapse blocks AT and DEEPER than threshold.
-        // depth=1 collapses root blocks themselves (only 7 indicators visible).
-        // depth=2 collapses root children (roots visible, children collapsed).
-        // Matches collapseToDepth semantics: currentDepth >= depth.
-        if (currentDepth >= depth) {
-          paneStore.setCollapsed(props.paneId, id, true);
-          return; // No need to recurse — children are hidden anyway
-        }
-
-        for (const childId of block.childIds) {
-          forceCollapseDeeper(childId, currentDepth + 1);
-        }
-      };
-
-      batch(() => {
-        for (const rootId of roots) {
-          forceCollapseDeeper(rootId, 1);
-        }
-      });
-    };
-
-    // Load config (always needed for homebase keybind Cmd+Shift+0)
-    const configPromise = invoke('get_ctx_config', {}).then((config: AggregatorConfig) => {
-      setCachedConfig(config);  // Cache for homebase keybind
-      // Apply diagnostics visibility from config
-      themeStore.setDiagnostics(config.show_diagnostics);
-      themeStore.setServerPort(config.server_port);
-      themeStore.setIsDevBuild(config.is_dev_build);
-      themeStore.setConfigPath(`${config.data_dir}/config.toml`);
-      return config;
-    }).catch((err: unknown) => {
-      logger.warn(`Failed to load config: ${err}`);
-      return null;
-    });
+    if (configReady()) return;
 
     // Split pane case: use prop directly (sync, fast)
-    // Check !== undefined to treat 0 as valid override (disabled, but don't fall back to config)
     if (props.initialCollapseDepth !== undefined) {
       if (props.initialCollapseDepth > 0) {
         applyCollapseDepth(props.initialCollapseDepth);
@@ -159,14 +136,27 @@ export function Outliner(props: OutlinerProps) {
       return;
     }
 
-    // Initial load case: use config for initial_collapse_depth (async)
-    configPromise.then((config) => {
-      if (config?.initial_collapse_depth && config.initial_collapse_depth > 0) {
-        applyCollapseDepth(config.initial_collapse_depth);
+    // Initial load: apply config if already cached
+    const c = appConfig();
+    if (c) {
+      applyThemeConfig(c);
+      if (c.initial_collapse_depth && c.initial_collapse_depth > 0) {
+        applyCollapseDepth(c.initial_collapse_depth);
       }
       setConfigReady(true);
-    });
+    }
   });
+
+  // Reactive fallback: config arrived after isLoaded effect ran
+  createEffect(on(appConfig, (c) => {
+    if (!c || configReady()) return;
+    if (!isLoaded() || props.initialCollapseDepth !== undefined) return;
+    applyThemeConfig(c);
+    if (c.initial_collapse_depth && c.initial_collapse_depth > 0) {
+      applyCollapseDepth(c.initial_collapse_depth);
+    }
+    setConfigReady(true);
+  }));
 
   // Container ref for tinykeys and collapse focus management
   let containerRef: HTMLDivElement | undefined;
@@ -545,7 +535,7 @@ export function Outliner(props: OutlinerProps) {
         // Phase 0.5: Reset after progressive expansion session
         '$mod+Shift+0': (e) => {
           e.preventDefault();
-          const depth = cachedConfig()?.initial_collapse_depth ?? 2;
+          const depth = appConfig()?.initial_collapse_depth ?? 2;
           collapse.collapseToDepth(null, depth);  // null = all roots
           collapse.ensureVisibleFocus();
         },

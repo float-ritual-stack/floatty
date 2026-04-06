@@ -5,6 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { Terminal } from './components/Terminal';
 import { WorkspaceProvider } from './context/WorkspaceContext';
+import { ConfigProvider } from './context/ConfigContext';
 import { themeStore } from './hooks/useThemeStore';
 import { tabStore } from './hooks/useTabStore';
 import { layoutStore } from './hooks/useLayoutStore';
@@ -490,16 +491,18 @@ function App() {
         </div>
       }
     >
-      <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
-        <Show when={workspaceError()}>
-          <div class="workspace-error-banner" style="background: var(--color-ansi-yellow, #b58900); color: #000; padding: 4px 12px; font-size: 12px;">
-            ⚠ Workspace layout failed to load: {workspaceError()} — using defaults
-          </div>
+      <ConfigProvider>
+        <Show when={workspaceLoaded()} fallback={<div class="loading">Loading...</div>}>
+          <Show when={workspaceError()}>
+            <div class="workspace-error-banner" style="background: var(--color-ansi-yellow, #b58900); color: #000; padding: 4px 12px; font-size: 12px;">
+              ⚠ Workspace layout failed to load: {workspaceError()} — using defaults
+            </div>
+          </Show>
+          <WorkspaceProvider>
+            <Terminal />
+          </WorkspaceProvider>
         </Show>
-        <WorkspaceProvider>
-          <Terminal />
-        </WorkspaceProvider>
-      </Show>
+      </ConfigProvider>
     </Show>
   );
 }

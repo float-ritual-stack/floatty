@@ -14,7 +14,8 @@
  * from window globals. Rewrite door JS before Blob import.
  */
 
-import { invoke, type AggregatorConfig } from '../tauriTypes';
+import { invoke } from '../tauriTypes';
+import { getConfig } from '../../context/ConfigContext';
 import { listen } from '@tauri-apps/api/event';
 import { registry } from './registry';
 import { doorRegistry } from './doorRegistry';
@@ -207,14 +208,9 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   const results: DoorLoadResult[] = [];
   const deps = ensureDoorDeps();
 
-  // Fetch config once for plugin settings
-  let pluginSettings: Record<string, Record<string, unknown>> = {};
-  try {
-    const config = await invoke('get_ctx_config', {}) as AggregatorConfig;
-    pluginSettings = (config.plugins ?? {}) as Record<string, Record<string, unknown>>;
-  } catch (err) {
-    logger.warn('Failed to load config for plugin settings', { err });
-  }
+  // Read plugin settings fresh from config (not frozen — config may arrive after initial load)
+  const getPluginSettings = (doorId: string): Record<string, unknown> =>
+    ((getConfig()?.plugins ?? {}) as Record<string, Record<string, unknown>>)[doorId] ?? {};
 
   let doorInfos: DoorInfo[];
   try {
@@ -265,7 +261,7 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
     }
 
     // Per-door settings from config.toml [plugins.<id>]
-    const settings = pluginSettings[meta.id] ?? {};
+    const settings = getPluginSettings(meta.id);
 
     // Register view in DoorRegistry (if view door)
     if (door.kind === 'view' && door.view) {
@@ -298,7 +294,7 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   logger.info(`Loaded ${loaded.length}/${doorInfos.length} doors: [${loaded.map(r => r.doorId).join(', ')}]`);
 
   // Start hot-reload listener
-  listenForDoorChanges(pluginSettings);
+  listenForDoorChanges(getPluginSettings);
 
   return results;
 }
@@ -382,7 +378,7 @@ function unregisterDoor(doorId: string): void {
  * Called once after initial loadDoors().
  */
 function listenForDoorChanges(
-  pluginSettings: Record<string, Record<string, unknown>>,
+  getPluginSettings: (doorId: string) => Record<string, unknown>,
 ): void {
   listen<DoorChangedEvent>('door-changed', async (event) => {
     const { doorId, removed } = event.payload;
@@ -390,8 +386,7 @@ function listenForDoorChanges(
     if (removed) {
       unregisterDoor(doorId);
     } else {
-      const settings = pluginSettings[doorId] ?? {};
-      await reloadDoor(doorId, settings);
+      await reloadDoor(doorId, getPluginSettings(doorId));
     }
   }).catch((err) => {
     logger.error('Failed to set up hot-reload listener', { err });

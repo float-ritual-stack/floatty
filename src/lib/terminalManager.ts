@@ -16,6 +16,7 @@ import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke, Channel } from '@tauri-apps/api/core';
+import { getConfig, configReady } from '../context/ConfigContext';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
 import { readText, readImageBase64, readFiles, writeText as clipboardWriteText } from 'tauri-plugin-clipboard-api';
@@ -195,23 +196,29 @@ class TerminalManager {
   }
 
   /**
-   * Load terminal config from Tauri backend
+   * Load terminal config from ConfigContext cache or await IPC completion
    */
   async loadConfig(): Promise<void> {
     if (this.configLoaded) return;
-    try {
-      const fullConfig = await invoke<TerminalConfig & Record<string, unknown>>('get_ctx_config');
+    // Try cache first, await IPC if not ready
+    let fullConfig = getConfig();
+    if (!fullConfig) {
+      try {
+        fullConfig = await configReady;
+      } catch (err) {
+        logger.warn('Config IPC failed, using defaults', { err });
+      }
+    }
+    if (fullConfig) {
       this.config = {
         font_size: fullConfig.font_size ?? defaultConfig.font_size,
         font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
         font_weight_bold: fullConfig.font_weight_bold ?? defaultConfig.font_weight_bold,
         line_height: fullConfig.line_height ?? defaultConfig.line_height,
       };
-      this.configLoaded = true;
-      logger.debug('Loaded config', this.config as Record<string, unknown>);
-    } catch (err) {
-      logger.warn('Failed to load config, using defaults', { err });
     }
+    this.configLoaded = true;
+    logger.debug('Loaded config', this.config as Record<string, unknown>);
   }
 
   /**

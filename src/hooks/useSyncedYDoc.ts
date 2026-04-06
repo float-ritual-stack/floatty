@@ -21,8 +21,7 @@ import {
   saveLastContiguousSeq as saveLastContiguousSeqIDB,
   getLastContiguousSeq as getLastContiguousSeqIDB,
 } from '../lib/idbBackup';
-import { invoke } from '@tauri-apps/api/core';
-import type { AggregatorConfig } from '../lib/tauriTypes';
+import { configReady } from '../context/ConfigContext';
 import { SyncSequenceTracker } from '../lib/syncSequenceTracker';
 import {
   recordFullResync,
@@ -1508,13 +1507,14 @@ export function useSyncedYDoc(
         try {
           // CRITICAL: Initialize IndexedDB namespace BEFORE any backup operations
           // This isolates dev/release and different workspaces (FLO-247)
+          let workspaceName = 'default';
           try {
-            const config = await invoke<AggregatorConfig>('get_ctx_config', {});
-            initBackupNamespace(config.workspace_name || 'default');
-          } catch (configErr) {
-            logger.warn('Failed to load config for namespace, using unknown', { err: configErr });
-            initBackupNamespace('unknown');
+            const config = await configReady;
+            workspaceName = config.workspace_name || 'default';
+          } catch (err) {
+            logger.warn('Config IPC failed for namespace, using default', { err });
           }
+          initBackupNamespace(workspaceName);
 
           // Load persisted lastContiguousSeq for incremental sync after browser refresh
           // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:
