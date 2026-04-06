@@ -9,7 +9,7 @@
  * - Terminals NEVER unmount during layout changes
  */
 
-import { createEffect, onMount, onCleanup } from 'solid-js';
+import { createEffect, on, onMount, onCleanup } from 'solid-js';
 import { terminalManager } from '../lib/terminalManager';
 import { type PaneHandle } from '../lib/layoutTypes';
 import '@xterm/xterm/css/xterm.css';
@@ -129,8 +129,13 @@ export function TerminalPane(props: TerminalPaneProps) {
 
     }
 
-    // Initial position
-    updatePosition();
+    // Initial position — skip when hidden (background tab).
+    // fitAddon.fit() on a display:none container clamps to 2×1 cols,
+    // corrupting tmux line wrapping. The visibility effect handles
+    // fit-on-show when the tab becomes active.
+    if (props.isVisible ?? true) {
+      updatePosition();
+    }
 
     // Watch for placeholder size/position changes
     const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
@@ -169,28 +174,48 @@ export function TerminalPane(props: TerminalPaneProps) {
     });
   });
 
-  // Update position when visibility changes (tab switch)
-  createEffect(() => {
-    const isVisible = props.isVisible ?? true;
-    const isActive = props.isActive ?? true;
+  // Bypass debounce on tab-switch: column count goes stale while hidden.
+  let hasBeenHidden = !(props.isVisible ?? true);
 
-    let rafId: number | undefined;
-    if (isVisible) {
-      // Delay to let layout settle after tab switch
-      rafId = requestAnimationFrame(() => {
-        updatePosition();
-        if (isActive) {
-          terminalManager.focus(props.id);
+  // Refit + reposition when visibility changes (tab switch).
+  // Scoped to isVisible via on() so isActive changes don't re-trigger.
+  createEffect(on(
+    () => props.isVisible ?? true,
+    (isVisible) => {
+      let rafId: number | undefined;
+      if (isVisible) {
+        const isTabSwitch = hasBeenHidden;
+        if (isTabSwitch && terminalHostRef) {
+          // Hide terminal content before browser paints stale column layout.
+          // Applied to inner host (not outer container) to avoid fighting
+          // the reactive display style. Revealed after fit in the rAF.
+          terminalHostRef.style.visibility = 'hidden';
+        }
+        rafId = requestAnimationFrame(() => {
+          updateGeometry();
+          if (isTabSwitch) {
+            terminalManager.fit(props.id);
+            if (terminalHostRef) {
+              terminalHostRef.style.visibility = '';
+            }
+          } else {
+            scheduleFit();
+          }
+          if (props.isActive ?? true) {
+            terminalManager.focus(props.id);
+          }
+        });
+      } else {
+        hasBeenHidden = true;
+      }
+
+      onCleanup(() => {
+        if (rafId !== undefined) {
+          cancelAnimationFrame(rafId);
         }
       });
     }
-
-    onCleanup(() => {
-      if (rafId !== undefined) {
-        cancelAnimationFrame(rafId);
-      }
-    });
-  });
+  ));
 
   return (
     <div

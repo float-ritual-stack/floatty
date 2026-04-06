@@ -275,22 +275,28 @@ class TerminalManager {
         // Re-add WebGL addon after re-opening
         this.recreateWebGL(id, instance);
 
-        instance.fitAddon.fit();
+        // Only fit + resize PTY if container is actually visible.
+        // Hidden tabs (display:none) produce tiny dims from fitAddon (e.g. 11×5
+        // from padding/border artifacts), corrupting tmux line wrapping.
+        // Visibility effect handles fit-on-show.
+        const positioned = container.closest('.terminal-pane-positioned') as HTMLElement | null;
+        const isContainerVisible = positioned ? getComputedStyle(positioned).display !== 'none' : true;
+        if (isContainerVisible) {
+          instance.fitAddon.fit();
+          if (instance.ptyPid !== null && instance.ptyPid > 0) {
+            invoke('plugin:pty|resize', {
+              pid: instance.ptyPid,
+              cols: instance.term.cols,
+              rows: instance.term.rows,
+            }).catch((e) => {
+              logger.error(`Resize failed for ${id}`, { err: e });
+            });
+          }
+        }
 
         // Restore scroll position if user was NOT at bottom (FLO-88)
         if (!wasAtBottom) {
           instance.term.scrollToLine(savedViewportY);
-        }
-        // Notify PTY of new size
-        if (instance.ptyPid !== null && instance.ptyPid > 0) {
-          invoke('plugin:pty|resize', {
-            pid: instance.ptyPid,
-            cols: instance.term.cols,
-            rows: instance.term.rows,
-          }).catch((e) => {
-            logger.error(`Resize failed for ${id}`, { err: e });
-            // PTY may have died - don't write error to terminal here, it's noisy during normal exit
-          });
         }
       } else {
         logger.debug(`Terminal ${id} already attached to same container`);
@@ -393,7 +399,13 @@ class TerminalManager {
       },
     });
 
-    fitAddon.fit();
+    // Only fit if container is visible (same guard as reattach path).
+    // Hidden tabs keep xterm's default 80×24 — correct enough for PTY spawn.
+    const positioned = container.closest('.terminal-pane-positioned') as HTMLElement | null;
+    const isNewContainerVisible = positioned ? getComputedStyle(positioned).display !== 'none' : true;
+    if (isNewContainerVisible) {
+      fitAddon.fit();
+    }
 
     instance = {
       term,
