@@ -203,14 +203,20 @@ class TerminalManager {
     // Try cache first, await IPC if not ready
     let fullConfig = getConfig();
     if (!fullConfig) {
-      fullConfig = await configReady;
+      try {
+        fullConfig = await configReady;
+      } catch (err) {
+        logger.warn('Config IPC failed, using defaults', { err });
+      }
     }
-    this.config = {
-      font_size: fullConfig.font_size ?? defaultConfig.font_size,
-      font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
-      font_weight_bold: fullConfig.font_weight_bold ?? defaultConfig.font_weight_bold,
-      line_height: fullConfig.line_height ?? defaultConfig.line_height,
-    };
+    if (fullConfig) {
+      this.config = {
+        font_size: fullConfig.font_size ?? defaultConfig.font_size,
+        font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
+        font_weight_bold: fullConfig.font_weight_bold ?? defaultConfig.font_weight_bold,
+        line_height: fullConfig.line_height ?? defaultConfig.line_height,
+      };
+    }
     this.configLoaded = true;
     logger.debug('Loaded config', this.config as Record<string, unknown>);
   }

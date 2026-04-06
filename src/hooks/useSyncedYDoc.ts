@@ -1507,8 +1507,14 @@ export function useSyncedYDoc(
         try {
           // CRITICAL: Initialize IndexedDB namespace BEFORE any backup operations
           // This isolates dev/release and different workspaces (FLO-247)
-          const config = await configReady;
-          initBackupNamespace(config.workspace_name || 'default');
+          let workspaceName = 'default';
+          try {
+            const config = await configReady;
+            workspaceName = config.workspace_name || 'default';
+          } catch (err) {
+            logger.warn('Config IPC failed for namespace, using default', { err });
+          }
+          initBackupNamespace(workspaceName);
 
           // Load persisted lastContiguousSeq for incremental sync after browser refresh
           // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:

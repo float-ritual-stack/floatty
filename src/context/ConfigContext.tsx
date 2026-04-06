@@ -24,15 +24,16 @@ const logger = createLogger('ConfigContext');
 
 let _configCache: AggregatorConfig | null = null;
 let _configReadyResolve: ((c: AggregatorConfig) => void) | undefined;
+let _configReadyReject: ((err: unknown) => void) | undefined;
 
 /** Synchronous config access for non-component code. Returns null before IPC resolves. */
 export function getConfig(): AggregatorConfig | null {
   return _configCache;
 }
 
-/** Async config access — resolves when IPC completes. For code that must wait. */
+/** Async config access — resolves when IPC completes, rejects on failure. */
 export const configReady: Promise<AggregatorConfig> = new Promise(
-  (resolve) => { _configReadyResolve = resolve; }
+  (resolve, reject) => { _configReadyResolve = resolve; _configReadyReject = reject; }
 );
 
 // ═══════════════════════════════════════════════════════════════
@@ -62,6 +63,7 @@ export function ConfigProvider(props: ConfigProviderProps) {
       _configReadyResolve?.(c);
     }).catch((err) => {
       logger.warn(`Failed to load config: ${err}`);
+      _configReadyReject?.(err);
     });
   }
 
