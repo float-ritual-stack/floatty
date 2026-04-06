@@ -12,7 +12,8 @@
  */
 
 import type { BlockHandler, ExecutorActions } from './types';
-import { invoke, type AggregatorConfig } from '../tauriTypes';
+import type { AggregatorConfig } from '../tauriTypes';
+import { getConfig } from '../../context/ConfigContext';
 import { getSyncStatus, getPendingCount, getLastSyncError } from '../../hooks/useSyncedYDoc';
 import { findOutputChild } from './utils';
 import { createLogger } from '../logger';
@@ -118,7 +119,11 @@ export const infoHandler: BlockHandler = {
     }
 
     try {
-      const config: AggregatorConfig = await invoke('get_ctx_config', {});
+      const config = getConfig();
+      if (!config) {
+        actions.updateBlockContent(headingId, '## Config unavailable');
+        return;
+      }
 
       const showBuild = !topic || topic === 'build';
       const showConfig = !topic || topic === 'config';

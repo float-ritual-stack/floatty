@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack, createRoot } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
@@ -23,45 +23,10 @@ import { handleStructuredPaste } from '../lib/pasteHandler';
 import { readFiles } from 'tauri-plugin-clipboard-api';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { BlockOutputView } from './BlockOutputView';
-import { invoke } from '@tauri-apps/api/core';
+import { useConfig } from '../context/ConfigContext';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('BlockItem');
-
-// Module-level child render limit from config (0 = no limit, renders all children).
-// Loaded once from config.toml. HMR-safe via dispose cleanup.
-let _childRenderLimitLoaded = false;
-let _disposeRoot: (() => void) | undefined;
-let childRenderLimitSignal: () => number;
-let setChildRenderLimitSignal: (v: number) => void;
-
-function initChildRenderLimitSignal(): void {
-  _disposeRoot?.();
-  createRoot((dispose) => {
-    const [get, set] = createSignal(0);
-    childRenderLimitSignal = get;
-    setChildRenderLimitSignal = set;
-    _disposeRoot = dispose;
-  });
-}
-initChildRenderLimitSignal();
-
-function loadChildRenderLimit(): void {
-  if (_childRenderLimitLoaded) return;
-  _childRenderLimitLoaded = true;
-  invoke('get_ctx_config').then((config: { child_render_limit?: number }) => {
-    setChildRenderLimitSignal(config.child_render_limit ?? 0);
-  }).catch((err) => {
-    logger.warn(`Failed to load config for child_render_limit: ${err}`);
-  });
-}
-
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    _childRenderLimitLoaded = false;
-    _disposeRoot?.();
-  });
-}
 
 /** Place cursor at end of contentEditable element. Used by focus effect for 'end' cursor hint. */
 function placeCursorAtEnd(element: HTMLElement): void {
@@ -109,6 +74,7 @@ interface BlockItemProps {
 
 export function BlockItem(props: BlockItemProps) {
   const { blockStore, paneStore, pageNames, pageNameSet, stubPageNameSet, shortHashIndex } = useWorkspace();
+  const config = useConfig();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
   const drag = useBlockDrag();
@@ -133,9 +99,7 @@ export function BlockItem(props: BlockItemProps) {
     return paneStore.isCollapsed(props.paneId, props.id, defaultCollapsed);
   });
   // Render limit for large child lists (config-driven, 0 = no limit).
-  // With expansion policy keeping children collapsed, rendering all is lightweight.
-  loadChildRenderLimit();
-  const configLimit = childRenderLimitSignal;
+  const configLimit = createMemo(() => config()?.child_render_limit ?? 0);
   const [childLimit, setChildLimit] = createSignal(0);
   createEffect(on(configLimit, (limit) => { if (limit > 0) setChildLimit(limit); }));
   createEffect(on(isCollapsed, (collapsed) => { const l = configLimit(); if (collapsed && l > 0) setChildLimit(l); }));

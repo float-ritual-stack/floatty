@@ -5,6 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { Terminal } from './components/Terminal';
 import { WorkspaceProvider } from './context/WorkspaceContext';
+import { ConfigProvider } from './context/ConfigContext';
 import { themeStore } from './hooks/useThemeStore';
 import { tabStore } from './hooks/useTabStore';
 import { layoutStore } from './hooks/useLayoutStore';
@@ -496,9 +497,11 @@ function App() {
             ⚠ Workspace layout failed to load: {workspaceError()} — using defaults
           </div>
         </Show>
-        <WorkspaceProvider>
-          <Terminal />
-        </WorkspaceProvider>
+        <ConfigProvider>
+          <WorkspaceProvider>
+            <Terminal />
+          </WorkspaceProvider>
+        </ConfigProvider>
       </Show>
     </Show>
   );

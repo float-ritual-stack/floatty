@@ -16,6 +16,7 @@ import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke, Channel } from '@tauri-apps/api/core';
+import { getConfig } from '../context/ConfigContext';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
 import { readText, readImageBase64, readFiles, writeText as clipboardWriteText } from 'tauri-plugin-clipboard-api';
@@ -195,12 +196,12 @@ class TerminalManager {
   }
 
   /**
-   * Load terminal config from Tauri backend
+   * Load terminal config from ConfigContext cache (sync) or use defaults
    */
-  async loadConfig(): Promise<void> {
+  loadConfig(): void {
     if (this.configLoaded) return;
-    try {
-      const fullConfig = await invoke<TerminalConfig & Record<string, unknown>>('get_ctx_config');
+    const fullConfig = getConfig();
+    if (fullConfig) {
       this.config = {
         font_size: fullConfig.font_size ?? defaultConfig.font_size,
         font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
@@ -209,8 +210,8 @@ class TerminalManager {
       };
       this.configLoaded = true;
       logger.debug('Loaded config', this.config as Record<string, unknown>);
-    } catch (err) {
-      logger.warn('Failed to load config, using defaults', { err });
+    } else {
+      logger.debug('Config not yet available, using defaults (will retry on next attach)');
     }
   }
 
@@ -220,7 +221,7 @@ class TerminalManager {
    */
   async attach(id: string, container: HTMLElement, cwd?: string, tmuxSession?: string): Promise<TerminalInstance> {
     // Ensure config is loaded before creating any terminal
-    await this.loadConfig();
+    this.loadConfig();
 
     let instance = this.instances.get(id);
 

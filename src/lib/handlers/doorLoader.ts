@@ -14,7 +14,8 @@
  * from window globals. Rewrite door JS before Blob import.
  */
 
-import { invoke, type AggregatorConfig } from '../tauriTypes';
+import { invoke } from '../tauriTypes';
+import { getConfig } from '../../context/ConfigContext';
 import { listen } from '@tauri-apps/api/event';
 import { registry } from './registry';
 import { doorRegistry } from './doorRegistry';
@@ -207,14 +208,13 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   const results: DoorLoadResult[] = [];
   const deps = ensureDoorDeps();
 
-  // Fetch config once for plugin settings
-  let pluginSettings: Record<string, Record<string, unknown>> = {};
-  try {
-    const config = await invoke('get_ctx_config', {}) as AggregatorConfig;
-    pluginSettings = (config.plugins ?? {}) as Record<string, Record<string, unknown>>;
-  } catch (err) {
-    logger.warn('Failed to load config for plugin settings', { err });
+  // Read plugin settings from ConfigContext cache
+  const configSnapshot = getConfig();
+  if (!configSnapshot) {
+    logger.debug('Config not yet available for plugin settings, doors will load without plugin config');
   }
+  const pluginSettings: Record<string, Record<string, unknown>> =
+    (configSnapshot?.plugins ?? {}) as Record<string, Record<string, unknown>>;
 
   let doorInfos: DoorInfo[];
   try {

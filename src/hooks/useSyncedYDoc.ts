@@ -21,8 +21,7 @@ import {
   saveLastContiguousSeq as saveLastContiguousSeqIDB,
   getLastContiguousSeq as getLastContiguousSeqIDB,
 } from '../lib/idbBackup';
-import { invoke } from '@tauri-apps/api/core';
-import type { AggregatorConfig } from '../lib/tauriTypes';
+import { getConfig } from '../context/ConfigContext';
 import { SyncSequenceTracker } from '../lib/syncSequenceTracker';
 import {
   recordFullResync,
@@ -1508,13 +1507,19 @@ export function useSyncedYDoc(
         try {
           // CRITICAL: Initialize IndexedDB namespace BEFORE any backup operations
           // This isolates dev/release and different workspaces (FLO-247)
-          try {
-            const config = await invoke<AggregatorConfig>('get_ctx_config', {});
-            initBackupNamespace(config.workspace_name || 'default');
-          } catch (configErr) {
-            logger.warn('Failed to load config for namespace, using unknown', { err: configErr });
-            initBackupNamespace('unknown');
+          // Wait briefly for ConfigProvider IPC to complete — wrong namespace = orphaned backups
+          let configWorkspace = getConfig()?.workspace_name;
+          if (!configWorkspace) {
+            for (let i = 0; i < 10; i++) {
+              await new Promise(r => setTimeout(r, 50));
+              configWorkspace = getConfig()?.workspace_name;
+              if (configWorkspace) break;
+            }
+            if (!configWorkspace) {
+              logger.warn('Config not available after 500ms, using "default" namespace');
+            }
           }
+          initBackupNamespace(configWorkspace || 'default');
 
           // Load persisted lastContiguousSeq for incremental sync after browser refresh
           // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:

@@ -14,7 +14,11 @@ import {
   createMockBlockStore,
   createMockPaneStore,
 } from '../context/WorkspaceContext';
+import { ConfigProvider } from '../context/ConfigContext';
+import type { AggregatorConfig } from '../lib/tauriTypes';
 import type { Block } from '../lib/blockTypes';
+
+const mockConfig = { child_render_limit: 0 } as AggregatorConfig;
 
 // Helper: create a minimal test block
 function createTestBlock(id: string, content: string, overrides: Partial<Block> = {}): Block {
@@ -43,7 +47,7 @@ describe('BlockItem', () => {
     const mockPaneStore = createMockPaneStore();
 
     render(() => (
-      <WorkspaceProvider blockStore={mockBlockStore} paneStore={mockPaneStore}>
+      <ConfigProvider config={mockConfig}><WorkspaceProvider blockStore={mockBlockStore} paneStore={mockPaneStore}>
         <BlockItem
           id="block-1"
           paneId="pane-1"
@@ -51,7 +55,7 @@ describe('BlockItem', () => {
           focusedBlockId={null}
           onFocus={() => {}}
         />
-      </WorkspaceProvider>
+      </WorkspaceProvider></ConfigProvider>
     ));
 
     // The block content should appear in the DOM
@@ -68,7 +72,7 @@ describe('BlockItem', () => {
     });
 
     render(() => (
-      <WorkspaceProvider blockStore={mockBlockStore} paneStore={createMockPaneStore()}>
+      <ConfigProvider config={mockConfig}><WorkspaceProvider blockStore={mockBlockStore} paneStore={createMockPaneStore()}>
         <BlockItem
           id="block-2"
           paneId="pane-1"
@@ -76,7 +80,7 @@ describe('BlockItem', () => {
           focusedBlockId={null}
           onFocus={onFocus}
         />
-      </WorkspaceProvider>
+      </WorkspaceProvider></ConfigProvider>
     ));
 
     // Click the block
@@ -103,7 +107,7 @@ describe('BlockItem', () => {
     });
 
     render(() => (
-      <WorkspaceProvider blockStore={mockBlockStore} paneStore={createMockPaneStore()}>
+      <ConfigProvider config={mockConfig}><WorkspaceProvider blockStore={mockBlockStore} paneStore={createMockPaneStore()}>
         <BlockItem
           id="parent"
           paneId="pane-1"
@@ -111,7 +115,7 @@ describe('BlockItem', () => {
           focusedBlockId={null}
           onFocus={() => {}}
         />
-      </WorkspaceProvider>
+      </WorkspaceProvider></ConfigProvider>
     ));
 
     // Should show expand arrow (▾) for parent with children

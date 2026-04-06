@@ -1,8 +1,9 @@
-import { createSignal, createEffect, createMemo, onCleanup, For, Show } from 'solid-js';
+import { createSignal, createEffect, createMemo, onCleanup, on, For, Show } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { invoke } from '@tauri-apps/api/core';
 import { invoke as typedInvoke } from '../lib/tauriTypes';
+import { useConfig } from '../context/ConfigContext';
 import { PaneLayout } from './PaneLayout';
 import { TerminalPane } from './TerminalPane';
 import { OutlinerPane } from './OutlinerPane';
@@ -240,6 +241,7 @@ function TabBar(props: {
 }
 
 export function Terminal() {
+  const appConfig = useConfig();
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
   // Sidebar width — persisted in localStorage (not config.toml, which serializes
@@ -264,21 +266,19 @@ export function Terminal() {
 
   // Pane dimming state — config value cached for toggle
   let configDimOpacity = 0.4;
+  let dimInitialized = false;
   const [dimEnabled, setDimEnabled] = createSignal(true);
 
-  // Load config once on mount
-  (async () => {
-    try {
-      const config = await invoke<{ split_collapse_depth?: number; unfocused_pane_opacity?: number }>('get_ctx_config');
-      setSplitCollapseDepth(config.split_collapse_depth ?? 0);
-      configDimOpacity = Math.max(0, Math.min(1, config.unfocused_pane_opacity ?? 0.4));
-      // Disable dimming if config set to 1.0
-      if (configDimOpacity >= 1) setDimEnabled(false);
-      document.documentElement.style.setProperty('--unfocused-pane-opacity', dimEnabled() ? String(configDimOpacity) : '1');
-    } catch (e) {
-      logger.warn('Failed to load config', { err: e });
-    }
-  })();
+  // Apply config when available (reactive via ConfigContext)
+  createEffect(on(appConfig, (c) => {
+    if (!c) return;
+    setSplitCollapseDepth(c.split_collapse_depth ?? 0);
+    configDimOpacity = Math.max(0, Math.min(1, c.unfocused_pane_opacity ?? 0.4));
+    // Only force-disable on first load if config says 1.0 — don't reset user toggle on theme changes
+    if (!dimInitialized && configDimOpacity >= 1) setDimEnabled(false);
+    dimInitialized = true;
+    document.documentElement.style.setProperty('--unfocused-pane-opacity', dimEnabled() ? String(configDimOpacity) : '1');
+  }));
 
   function toggleDimming() {
     const next = !dimEnabled();
