@@ -529,6 +529,13 @@ export function BlockItem(props: BlockItemProps) {
       requestAnimationFrame(() => renderTitleRef?.focus({ preventScroll: true }));
     };
 
+    // Cmd+Enter → zoom into block
+    if (e.key === 'Enter' && modKey) {
+      e.preventDefault();
+      paneStore.zoomTo(props.paneId, props.id);
+      return;
+    }
+
     // Shift+Enter → create new sibling BEFORE (matches "Enter at start" behavior:
     // new empty block appears above, render:: block stays in place)
     if (e.key === 'Enter' && e.shiftKey && !modKey) {
