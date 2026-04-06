@@ -24,6 +24,7 @@ import { readFiles } from 'tauri-plugin-clipboard-api';
 import { FilterBlockDisplay } from './views/FilterBlockDisplay';
 import { BlockOutputView } from './BlockOutputView';
 import { useConfig } from '../context/ConfigContext';
+import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('BlockItem');
@@ -118,6 +119,7 @@ export function BlockItem(props: BlockItemProps) {
 
   let contentRef: HTMLDivElement | undefined;
   let outputFocusRef: HTMLDivElement | undefined;
+  let renderTitleRef: HTMLDivElement | undefined;
   let wrapperRef: HTMLDivElement | undefined;
   const [inlineDoorRef, setInlineDoorRef] = createSignal<HTMLElement | undefined>(undefined);
 
@@ -166,9 +168,8 @@ export function BlockItem(props: BlockItemProps) {
     return `render:: ${title}`;
   });
 
-  // FLO-569: title mode state — height collapse deferred (needs table-block pattern: hide
-  // contentEditable, use separate focusable div). For now, title text displays correctly
-  // via BlockDisplay overlay but height stays at full prompt height.
+  // FLO-569: title mode — true when render:: block has valid title and is in collapsed view.
+  // When true: contentEditable hidden, render-title-wrapper drives height to title size.
   const isRenderTitleMode = createMemo(() => !!renderTitle() && renderShowTitle());
 
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
@@ -443,7 +444,7 @@ export function BlockItem(props: BlockItemProps) {
     // Cancel any pending focus from previous effect run
     if (prevFrameId) cancelAnimationFrame(prevFrameId);
 
-    if (isFocused() && contentRef && !isOutputBlockMemo()) {
+    if (isFocused() && contentRef && !isOutputBlockMemo() && !isRenderTitleMode()) {
       // Consume cursor hint synchronously (before RAF) so it's not stale
       const cursorHint = paneStore.consumeFocusCursorHint(props.paneId);
 
@@ -491,6 +492,143 @@ export function BlockItem(props: BlockItemProps) {
   });
 
   // Focus routing for output blocks is handled by BlockOutputView.
+
+  // ─── Focus routing for render:: title mode (FLO-569) ──────────────
+  createEffect(() => {
+    if (isFocused() && isRenderTitleMode() && renderTitleRef) {
+      requestAnimationFrame(() => {
+        renderTitleRef?.focus({ preventScroll: true });
+        renderTitleRef?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      });
+    }
+  });
+
+  // ─── Keyboard handler for render:: title mode (FLO-569) ──────────
+  // Dedicated handler — can't reuse handleKeyDown because it reads cursor
+  // state from contentEditable which is hidden in title mode.
+  const handleRenderTitleKeyDown = (e: KeyboardEvent) => {
+    cancelContentUpdate();
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+    const refocusAfterMove = () => {
+      requestAnimationFrame(() => renderTitleRef?.focus({ preventScroll: true }));
+    };
+
+    // Shift+Enter → create new sibling BEFORE (matches "Enter at start" behavior:
+    // new empty block appears above, render:: block stays in place)
+    if (e.key === 'Enter' && e.shiftKey && !modKey) {
+      e.preventDefault();
+      const newId = store.createBlockBefore(props.id);
+      if (newId) props.onFocus(newId);
+      return;
+    }
+
+    // Enter → execute handler (same path as useBlockInput execute_block)
+    if (e.key === 'Enter' && !e.shiftKey && !modKey) {
+      e.preventDefault();
+      const b = block();
+      if (!b) return;
+      const handler = registry.findHandler(b.content);
+      if (handler) {
+        const hookStore = createHookBlockStore(
+          store.getBlock, store.blocks, store.rootIds,
+          paneStore.getZoomedRootId(props.paneId)
+        );
+        executeHandler(handler, props.id, b.content, {
+          createBlockInside: store.createBlockInside,
+          createBlockInsideAtTop: store.createBlockInsideAtTop,
+          createBlockAfter: store.createBlockAfter,
+          updateBlockContent: store.updateBlockContent,
+          updateBlockContentFromExecutor: store.updateBlockContentFromExecutor,
+          deleteBlock: store.deleteBlock,
+          setBlockOutput: store.setBlockOutput,
+          setBlockStatus: store.setBlockStatus,
+          getBlock: store.getBlock,
+          getParentId: (id) => store.getBlock(id)?.parentId ?? undefined,
+          getChildren: (id) => store.getBlock(id)?.childIds ?? [],
+          rootIds: store.rootIds,
+          paneId: props.paneId,
+          focusBlock: props.onFocus,
+          batchCreateBlocksAfter: store.batchCreateBlocksAfter,
+          batchCreateBlocksInside: store.batchCreateBlocksInside,
+          batchCreateBlocksInsideAtTop: store.batchCreateBlocksInsideAtTop,
+          moveBlock: (blockId, targetParentId, targetIndex) =>
+            store.moveBlock(blockId, targetParentId, targetIndex, { origin: 'user' }),
+        }, hookStore).catch(err => {
+          logger.error('Handler execution failed (render title)', { err });
+        });
+      }
+      return;
+    }
+
+    // Cmd+. → toggle collapse
+    if (modKey && e.key === '.') {
+      e.preventDefault();
+      const b = block();
+      if (b && (b.childIds?.length > 0 || b.outputType)) {
+        paneStore.toggleCollapsed(props.paneId, props.id, b.collapsed || false);
+      }
+      return;
+    }
+
+    // Cmd+Arrow → move block
+    if (modKey && e.key === 'ArrowUp') {
+      e.preventDefault();
+      store.moveBlockUp(props.id);
+      refocusAfterMove();
+      return;
+    }
+    if (modKey && e.key === 'ArrowDown') {
+      e.preventDefault();
+      store.moveBlockDown(props.id);
+      refocusAfterMove();
+      return;
+    }
+
+    // Tab/Shift+Tab → indent/outdent
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        store.outdentBlock(props.id);
+      } else {
+        store.indentBlock(props.id);
+      }
+      refocusAfterMove();
+      return;
+    }
+
+    // Backspace/Delete → delete block (same guard as output blocks)
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault();
+      const hasChildren = !!block()?.childIds?.length;
+      const isSelected = props.isBlockSelected?.(props.id) ?? false;
+      if (hasChildren && !isSelected) return;
+      const target = findFocusAfterDelete(props.id, props.paneId);
+      store.deleteBlock(props.id);
+      if (target) props.onFocus(target);
+      return;
+    }
+
+    // ArrowUp/Down → navigate between blocks
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = findPrevVisibleBlock(props.id, props.paneId);
+      if (prev) {
+        paneStore.setFocusCursorHint(props.paneId, 'end');
+        props.onFocus(prev);
+      }
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = findNextVisibleBlock(props.id, props.paneId);
+      if (next) {
+        paneStore.setFocusCursorHint(props.paneId, 'start');
+        props.onFocus(next);
+      }
+      return;
+    }
+  };
 
   // TODO: AUTO-EXECUTE for external blocks (API/CRDT sync)
   // Pattern documented in docs/BLOCK_TYPE_PATTERNS.md
@@ -719,9 +857,37 @@ export function BlockItem(props: BlockItemProps) {
 
           {/* Output blocks (search, door, img, eval, inline door, filter) — rendered by BlockOutputView */}
 
+          {/* RENDER TITLE MODE (FLO-569): collapsed height display with dedicated focus */}
+          {/* contentEditable is hidden — this wrapper drives height to title size */}
+          <Show when={isRenderTitleMode()}>
+            <div
+              ref={renderTitleRef}
+              tabIndex={0}
+              class="block-content-wrapper render-title-wrapper"
+              onKeyDown={handleRenderTitleKeyDown}
+              onFocus={() => props.onFocus(props.id)}
+            >
+              <BlockDisplay
+                content={effectiveDisplayContent()}
+                onWikilinkClick={handleWikilinkClick}
+                blockId={props.id}
+                pageNameSet={pageNameSet()}
+                stubPageNameSet={stubPageNameSet()}
+              />
+              <button
+                class="block-mode-toggle"
+                onClick={() => setRenderShowTitle(false)}
+                title="Show full prompt"
+              >
+                ⊞
+              </button>
+            </div>
+          </Show>
+
           {/* REGULAR BLOCK: display + edit layers (hidden for special block types) */}
           {/* FLO-58: Also show for table blocks in raw mode - use contentEditable for raw markdown editing */}
-          <Show when={block()?.type !== 'picker' && (!isTableBlock() || tableShowRaw()) && !isOutputBlockMemo()}>
+          {/* FLO-569: Also hidden when in render:: title mode (title wrapper above handles display) */}
+          <Show when={block()?.type !== 'picker' && (!isTableBlock() || tableShowRaw()) && !isOutputBlockMemo() && !isRenderTitleMode()}>
             {/* DISPLAY LAYER: styled inline tokens (pointer-events: none) */}
             {/* Skip for table raw mode - just show contentEditable directly */}
             <Show when={!tableShowRaw()}>

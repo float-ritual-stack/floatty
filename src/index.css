@@ -2764,6 +2764,23 @@ body.block-dragging * {
   background: color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 
+/* FLO-569: render:: title mode — BlockDisplay drives height instead of overlaying */
+.render-title-wrapper {
+  position: relative;
+  outline: none;
+}
+
+.render-title-wrapper .block-display {
+  position: relative;
+  inset: unset;
+  pointer-events: auto;
+}
+
+.block-item:not(.block-selected):focus-within .render-title-wrapper {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    FLO-58: Table Column Resize Handles
    ═══════════════════════════════════════════════════════════════ */

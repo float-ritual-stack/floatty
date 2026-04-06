@@ -204,6 +204,17 @@ export function determineKeyAction(
     return { type: 'none' };
   }
 
+  // Shift+Enter on executable blocks at start → create sibling before (FLO-571)
+  // Same as Enter-at-start behavior, but for blocks where Enter executes a handler.
+  // Without this, there's no way to insert a block before an executable block from keyboard.
+  if (key === 'Enter' && shiftKey) {
+    const handler = registry.findHandler(block.content);
+    if (handler && cursorOffset === 0) {
+      return { type: 'create_block_before', newId: '' };
+    }
+    // Non-executable blocks or cursor not at start: fall through to browser default (newline)
+  }
+
   if (key === 'Enter' && !shiftKey) {
     const content = block.content;
     const handler = registry.findHandler(content);
