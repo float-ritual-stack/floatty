@@ -6,6 +6,14 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.7] - 2026-04-06
+
+### Bug Fixes
+
+- Render door footer now shows full session UUID instead of truncated 8-char prefix, making `--resume` command directly copyable
+
+---
+
 ## [0.10.6] - 2026-04-06
 
 ### Bug Fixes
