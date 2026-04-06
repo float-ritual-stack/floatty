@@ -785,14 +785,15 @@ export function BlockItem(props: BlockItemProps) {
             <Show when={!tableShowRaw()}>
               <div
                 ref={contentRef}
-                contentEditable={!isRenderTitleMode()}
+                contentEditable
                 class="block-content block-edit"
                 spellcheck={false}
                 autocapitalize="off"
                 autocorrect="off"
+                onBeforeInput={(e) => { if (isRenderTitleMode()) e.preventDefault(); }}
                 onInput={handleInput}
                 onKeyDown={handleKeyDownWithAutocomplete}
-                onPaste={handlePaste}
+                onPaste={(e) => { if (isRenderTitleMode()) { e.preventDefault(); return; } handlePaste(e); }}
                 onFocus={() => {
                   props.onFocus(props.id);
                 }}
