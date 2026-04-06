@@ -5,8 +5,9 @@
  * This is the payoff of the entire refactor - we can test complex
  * keyboard interactions by calling determineKeyAction directly.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { determineKeyAction, type KeyboardAction } from './useBlockInput';
+import { registerHandlers } from '../lib/handlers';
 import type { Block } from '../lib/blockTypes';
 
 // Type-safe assertion helper for discriminated unions
@@ -64,6 +65,9 @@ function createDeps(overrides: Partial<{
 }
 
 describe('determineKeyAction', () => {
+  // Register handlers so registry.findHandler works for sh::, render::, etc.
+  beforeAll(() => registerHandlers());
+
   describe('navigation', () => {
     it('navigates up when ArrowUp at cursor start', () => {
       const result = determineKeyAction('ArrowUp', false, null, createDeps({
@@ -344,6 +348,39 @@ describe('determineKeyAction', () => {
       }));
 
       expect(result.type).toBe('split_block');
+    });
+
+    // FLO-571: Shift+Enter on executable blocks at cursor start
+    it('Shift+Enter at start of executable block creates block before', () => {
+      const result = determineKeyAction('Enter', true, null, createDeps({
+        cursorOffset: 0,
+        cursorAtStart: true,
+        block: createBlock({ content: 'sh:: echo hello' }),
+        content: 'sh:: echo hello',
+      }));
+
+      expect(result.type).toBe('create_block_before');
+    });
+
+    it('Shift+Enter at non-zero offset on executable block returns none (browser default)', () => {
+      const result = determineKeyAction('Enter', true, null, createDeps({
+        cursorOffset: 5,
+        block: createBlock({ content: 'sh:: echo hello' }),
+        content: 'sh:: echo hello',
+      }));
+
+      expect(result.type).toBe('none');
+    });
+
+    it('Shift+Enter at start of non-executable block returns none (browser default)', () => {
+      const result = determineKeyAction('Enter', true, null, createDeps({
+        cursorOffset: 0,
+        cursorAtStart: true,
+        block: createBlock({ content: 'just regular text' }),
+        content: 'just regular text',
+      }));
+
+      expect(result.type).toBe('none');
     });
   });
 

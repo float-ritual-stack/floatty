@@ -168,7 +168,7 @@ export function BlockItem(props: BlockItemProps) {
     return `render:: ${title}`;
   });
 
-  // FLO-569: title mode — true when render:: block has valid title and is in collapsed view.
+  // FLO-569: title mode — true when render:: block has valid title and title display is enabled.
   // When true: contentEditable hidden, render-title-wrapper drives height to title size.
   const isRenderTitleMode = createMemo(() => !!renderTitle() && renderShowTitle());
 
@@ -612,7 +612,16 @@ export function BlockItem(props: BlockItemProps) {
       return;
     }
 
-    // Backspace/Delete → delete block (same guard as output blocks)
+    // Cmd+Backspace → force delete block + subtree (no children guard)
+    if ((e.key === 'Backspace' || e.key === 'Delete') && modKey) {
+      e.preventDefault();
+      const target = findFocusAfterDelete(props.id, props.paneId);
+      store.deleteBlock(props.id);
+      if (target) props.onFocus(target);
+      return;
+    }
+
+    // Backspace/Delete → delete block (guarded: only if no children or block selected)
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
       const hasChildren = !!block()?.childIds?.length;
