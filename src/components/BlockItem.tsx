@@ -164,7 +164,6 @@ export function BlockItem(props: BlockItemProps) {
 
   // render:: title height sync: set the edit layer's innerText to match the displayed content
   // so it drives the correct wrapper height. Title mode = short title, raw mode = full prompt.
-  // Also makes contentEditable read-only in title mode to prevent typing from overwriting the prompt.
   const isRenderTitleMode = createMemo(() => !!renderTitle() && renderShowTitle());
 
   createEffect(() => {
@@ -790,10 +789,15 @@ export function BlockItem(props: BlockItemProps) {
                 spellcheck={false}
                 autocapitalize="off"
                 autocorrect="off"
-                onBeforeInput={(e) => { if (isRenderTitleMode()) e.preventDefault(); }}
+                onBeforeInput={() => {
+                  if (isRenderTitleMode()) {
+                    setRenderShowTitle(false);
+                    if (contentRef) contentRef.innerText = block()?.content ?? '';
+                  }
+                }}
                 onInput={handleInput}
                 onKeyDown={handleKeyDownWithAutocomplete}
-                onPaste={(e) => { if (isRenderTitleMode()) { e.preventDefault(); return; } handlePaste(e); }}
+                onPaste={handlePaste}
                 onFocus={() => {
                   props.onFocus(props.id);
                 }}
