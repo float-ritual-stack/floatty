@@ -333,9 +333,10 @@ function buildAgentSystemPrompt(): string {
     'You generate JSON render specs for floatty, a dark-themed terminal outliner.',
     '',
     'OUTPUT: A single JSON object on stdout. No markdown fences, no explanation, ONLY the JSON.',
+    'Include a top-level "title" field (3-6 word human-readable summary) alongside root/state/elements.',
     '',
     'FORMAT:',
-    '{"root":"<key>","state":{...},"elements":{"<key>":{"type":"<Component>","props":{...},"children":["<child-key>"]},...}}',
+    '{"root":"<key>","title":"<3-6 word title>","state":{...},"elements":{"<key>":{"type":"<Component>","props":{...},"children":["<child-key>"]},...}}',
     '',
     componentSection,
     '',
@@ -361,6 +362,7 @@ interface AgentResult {
   spec: any;
   raw: string;
   sessionId?: string;
+  title?: string;
 }
 
 interface AgentOptions {
@@ -450,6 +452,10 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
     throw err;
   }
 
+  // Extract agent-generated title before normalizeSpec strips it
+  const agentTitle = typeof spec.title === 'string' ? spec.title.trim() : undefined;
+  delete spec.title;
+
   try {
     normalizeSpec(spec, ctx);
   } catch (e: any) {
@@ -482,7 +488,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
     } catch { /* ignore */ }
   }
 
-  return { spec, raw, sessionId };
+  return { spec, raw, sessionId, title: agentTitle };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -762,6 +768,7 @@ export const door = {
           generatedVia: 'agent',
           agentRaw: result.raw,
           agentSessionId: result.sessionId,
+          title: result.title,
         });
       } catch (e: any) {
         ctx.log('[render::agent] failed:', e.message);

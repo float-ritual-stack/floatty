@@ -146,13 +146,17 @@ export function BlockItem(props: BlockItemProps) {
   // Display-only — does NOT change isOutputBlock, focus, collapse, zoom, or navigation.
   const [renderShowTitle, setRenderShowTitle] = createSignal(true);
 
-  // Does this render:: block have a generated title available?
+  // Does this render:: block have a valid generated title?
   const renderTitle = createMemo(() => {
     const b = block();
     if (b?.outputType !== 'door' || !b?.output) return null;
-    // Inline prefix check — render:: has no BlockType enum (it's a door, not a core type).
     if (!b?.content?.toLowerCase().startsWith('render::')) return null;
-    return (b.output as { data?: { title?: string } })?.data?.title || null;
+    const title = (b.output as { data?: { title?: string } })?.data?.title;
+    if (!title || typeof title !== 'string') return null;
+    const trimmed = title.trim();
+    // Reject garbage: JSON blobs, excessive length
+    if (trimmed.length > 120 || trimmed.startsWith('{') || trimmed.startsWith('[')) return null;
+    return trimmed;
   });
 
   const effectiveDisplayContent = createMemo(() => {
@@ -163,12 +167,12 @@ export function BlockItem(props: BlockItemProps) {
   });
 
   // render:: title height sync: set the edit layer's innerText to match the displayed content
-  // so it drives the correct wrapper height. Title mode = short title, raw mode = full prompt.
+  // so it drives the correct wrapper height. Fires for both title→raw and raw→title toggles.
   const isRenderTitleMode = createMemo(() => !!renderTitle() && renderShowTitle());
 
   createEffect(() => {
     const content = effectiveDisplayContent();
-    if (!isRenderTitleMode() || !contentRef) return;
+    if (!renderTitle() || !contentRef) return;
     contentRef.innerText = content;
   });
 
