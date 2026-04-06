@@ -6,6 +6,18 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.5] - 2026-04-06
+
+### Bug Fixes
+
+- **render:: title mode height collapse** (FLO-569) — Block height now matches title, not full prompt. ContentEditable hidden in title mode, replaced with focusable wrapper following table block pattern (#209)
+- **render:: raw toggle sync** — Content populates immediately on title→raw toggle via queueMicrotask (same pattern as table blocks)
+- **Shift+Enter on executable blocks** (FLO-571) — Creates sibling before when cursor at position 0. Applies to all handler blocks (`sh::`, `render::`, `ai::`, etc.) (#209)
+- **Cmd+Enter zoom in title mode** — Zoom into render:: title blocks now works (was unhandled in dedicated keyboard handler)
+- **Cmd+Backspace in title mode** — Force-deletes render:: title blocks with children, matching regular block behavior
+
+---
+
 ## [0.10.4] - 2026-04-05
 
 ### Improvements
