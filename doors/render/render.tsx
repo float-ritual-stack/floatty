@@ -568,10 +568,10 @@ function RenderView(props: DoorViewProps) {
             </Show>
             <Show when={sessionId()}>
               <span style={{ 'margin-left': generatedVia() ? '12px' : '0' }}>
-                session: {sessionId()!.substring(0, 8)}
+                session: {sessionId()!}
               </span>
               <span style={{ color: 'var(--color-fg-muted, #444)', 'margin-left': '8px' }}>
-                → render:: agent --continue | --resume {sessionId()!.substring(0, 8)}
+                → render:: agent --continue | --resume {sessionId()!}
               </span>
             </Show>
           </div>
