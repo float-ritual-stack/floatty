@@ -122,6 +122,7 @@ export const infoHandler: BlockHandler = {
       const config = getConfig();
       if (!config) {
         actions.updateBlockContent(headingId, '## Config unavailable');
+        if (actions.setBlockStatus) actions.setBlockStatus(headingId, 'idle');
         return;
       }
 

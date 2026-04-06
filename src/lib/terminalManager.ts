@@ -16,7 +16,7 @@ import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke, Channel } from '@tauri-apps/api/core';
-import { getConfig } from '../context/ConfigContext';
+import { getConfig, configReady } from '../context/ConfigContext';
 import { platform } from '@tauri-apps/plugin-os';
 import { homeDir } from '@tauri-apps/api/path';
 import { readText, readImageBase64, readFiles, writeText as clipboardWriteText } from 'tauri-plugin-clipboard-api';
@@ -196,23 +196,23 @@ class TerminalManager {
   }
 
   /**
-   * Load terminal config from ConfigContext cache (sync) or use defaults
+   * Load terminal config from ConfigContext cache or await IPC completion
    */
-  loadConfig(): void {
+  async loadConfig(): Promise<void> {
     if (this.configLoaded) return;
-    const fullConfig = getConfig();
-    if (fullConfig) {
-      this.config = {
-        font_size: fullConfig.font_size ?? defaultConfig.font_size,
-        font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
-        font_weight_bold: fullConfig.font_weight_bold ?? defaultConfig.font_weight_bold,
-        line_height: fullConfig.line_height ?? defaultConfig.line_height,
-      };
-      this.configLoaded = true;
-      logger.debug('Loaded config', this.config as Record<string, unknown>);
-    } else {
-      logger.debug('Config not yet available, using defaults (will retry on next attach)');
+    // Try cache first, await IPC if not ready
+    let fullConfig = getConfig();
+    if (!fullConfig) {
+      fullConfig = await configReady;
     }
+    this.config = {
+      font_size: fullConfig.font_size ?? defaultConfig.font_size,
+      font_weight: fullConfig.font_weight ?? defaultConfig.font_weight,
+      font_weight_bold: fullConfig.font_weight_bold ?? defaultConfig.font_weight_bold,
+      line_height: fullConfig.line_height ?? defaultConfig.line_height,
+    };
+    this.configLoaded = true;
+    logger.debug('Loaded config', this.config as Record<string, unknown>);
   }
 
   /**
@@ -221,7 +221,7 @@ class TerminalManager {
    */
   async attach(id: string, container: HTMLElement, cwd?: string, tmuxSession?: string): Promise<TerminalInstance> {
     // Ensure config is loaded before creating any terminal
-    this.loadConfig();
+    await this.loadConfig();
 
     let instance = this.instances.get(id);
 

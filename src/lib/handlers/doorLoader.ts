@@ -208,13 +208,9 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   const results: DoorLoadResult[] = [];
   const deps = ensureDoorDeps();
 
-  // Read plugin settings from ConfigContext cache
-  const configSnapshot = getConfig();
-  if (!configSnapshot) {
-    logger.debug('Config not yet available for plugin settings, doors will load without plugin config');
-  }
-  const pluginSettings: Record<string, Record<string, unknown>> =
-    (configSnapshot?.plugins ?? {}) as Record<string, Record<string, unknown>>;
+  // Read plugin settings fresh from config (not frozen — config may arrive after initial load)
+  const getPluginSettings = (doorId: string): Record<string, unknown> =>
+    ((getConfig()?.plugins ?? {}) as Record<string, Record<string, unknown>>)[doorId] ?? {};
 
   let doorInfos: DoorInfo[];
   try {
@@ -265,7 +261,7 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
     }
 
     // Per-door settings from config.toml [plugins.<id>]
-    const settings = pluginSettings[meta.id] ?? {};
+    const settings = getPluginSettings(meta.id);
 
     // Register view in DoorRegistry (if view door)
     if (door.kind === 'view' && door.view) {
@@ -298,7 +294,7 @@ export async function loadDoors(): Promise<DoorLoadResult[]> {
   logger.info(`Loaded ${loaded.length}/${doorInfos.length} doors: [${loaded.map(r => r.doorId).join(', ')}]`);
 
   // Start hot-reload listener
-  listenForDoorChanges(pluginSettings);
+  listenForDoorChanges(getPluginSettings);
 
   return results;
 }
@@ -382,7 +378,7 @@ function unregisterDoor(doorId: string): void {
  * Called once after initial loadDoors().
  */
 function listenForDoorChanges(
-  pluginSettings: Record<string, Record<string, unknown>>,
+  getPluginSettings: (doorId: string) => Record<string, unknown>,
 ): void {
   listen<DoorChangedEvent>('door-changed', async (event) => {
     const { doorId, removed } = event.payload;
@@ -390,8 +386,7 @@ function listenForDoorChanges(
     if (removed) {
       unregisterDoor(doorId);
     } else {
-      const settings = pluginSettings[doorId] ?? {};
-      await reloadDoor(doorId, settings);
+      await reloadDoor(doorId, getPluginSettings(doorId));
     }
   }).catch((err) => {
     logger.error('Failed to set up hot-reload listener', { err });
