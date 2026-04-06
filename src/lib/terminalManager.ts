@@ -198,6 +198,15 @@ class TerminalManager {
           if (this.disposing.has(id)) continue;
           if (!instance.container) continue;
           instance.fitAddon.fit();
+          if (instance.ptyPid !== null && instance.ptyPid > 0) {
+            invoke('plugin:pty|resize', {
+              pid: instance.ptyPid,
+              cols: instance.term.cols,
+              rows: instance.term.rows,
+            }).catch((e) => {
+              logger.warn(`Resize notify failed for ${id} after visibility restore`, { err: e });
+            });
+          }
         }
       });
     }
