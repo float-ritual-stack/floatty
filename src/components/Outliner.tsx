@@ -621,16 +621,46 @@ export function Outliner(props: OutlinerProps) {
             });
           }
         },
-        // Double-tap Cmd → copy focused block ID as [[wikilink]] to clipboard
-        'Meta Meta': (e) => {
-          e.preventDefault();
-          const id = focusedBlockId();
-          if (id) {
-            navigator.clipboard.writeText(`[[${id.slice(0, 8)}]]`);
-          }
-        },
       });
       onCleanup(unsubscribe);
+
+      // Double-tap bare Cmd → copy [[wikilink]] to clipboard (FLO-465)
+      // Custom detection: tinykeys' 'Meta Meta' fires during fast Cmd+key sequences
+      // because 1000ms window catches Cmd+C → Cmd+V as two Meta presses.
+      // Fix: track bare taps (Meta↓ → Meta↑ with no other key between), 300ms window.
+      let lastBareMetaUp = 0;
+      let metaDownWithoutOtherKey = false;
+
+      const handleDoubleTapMeta = (e: KeyboardEvent) => {
+        if (e.type === 'keydown') {
+          if (e.key === 'Meta') {
+            metaDownWithoutOtherKey = true;
+          } else if (metaDownWithoutOtherKey) {
+            metaDownWithoutOtherKey = false;
+          }
+        } else if (e.type === 'keyup' && e.key === 'Meta') {
+          if (metaDownWithoutOtherKey) {
+            const now = Date.now();
+            if (now - lastBareMetaUp < 300) {
+              const id = focusedBlockId();
+              if (id) {
+                navigator.clipboard.writeText(`[[${id.slice(0, 8)}]]`);
+              }
+              lastBareMetaUp = 0;
+            } else {
+              lastBareMetaUp = now;
+            }
+          }
+          metaDownWithoutOtherKey = false;
+        }
+      };
+
+      containerRef.addEventListener('keydown', handleDoubleTapMeta);
+      containerRef.addEventListener('keyup', handleDoubleTapMeta);
+      onCleanup(() => {
+        containerRef?.removeEventListener('keydown', handleDoubleTapMeta);
+        containerRef?.removeEventListener('keyup', handleDoubleTapMeta);
+      });
     }
   });
 
