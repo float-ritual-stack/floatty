@@ -382,6 +382,18 @@ describe('determineKeyAction', () => {
 
       expect(result.type).toBe('none');
     });
+
+    it('Shift+Enter at offset 0 with cursorAtStart false still creates block before', () => {
+      // Logic uses cursorOffset === 0, not cursorAtStart — guard against regression
+      const result = determineKeyAction('Enter', true, null, createDeps({
+        cursorOffset: 0,
+        cursorAtStart: false,
+        block: createBlock({ content: 'sh:: echo hello' }),
+        content: 'sh:: echo hello',
+      }));
+
+      expect(result.type).toBe('create_block_before');
+    });
   });
 
   describe('Tab key behavior', () => {
