@@ -646,7 +646,7 @@ export function Outliner(props: OutlinerProps) {
               if (id) {
                 navigator.clipboard.writeText(`[[${id.slice(0, 8)}]]`);
               }
-              lastBareMetaUp = 0;
+              lastBareMetaUp = 0; // Reset so a 3rd tap starts a fresh 300ms window
             } else {
               lastBareMetaUp = now;
             }
@@ -658,8 +658,8 @@ export function Outliner(props: OutlinerProps) {
       containerRef.addEventListener('keydown', handleDoubleTapMeta);
       containerRef.addEventListener('keyup', handleDoubleTapMeta);
       onCleanup(() => {
-        containerRef?.removeEventListener('keydown', handleDoubleTapMeta);
-        containerRef?.removeEventListener('keyup', handleDoubleTapMeta);
+        containerRef.removeEventListener('keydown', handleDoubleTapMeta);
+        containerRef.removeEventListener('keyup', handleDoubleTapMeta);
       });
     }
   });
