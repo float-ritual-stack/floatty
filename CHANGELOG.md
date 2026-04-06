@@ -6,6 +6,14 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.6] - 2026-04-06
+
+### Bug Fixes
+
+- **Terminal text smushing on tab switch** — Hidden tabs no longer get resized to garbage dimensions (11×5) by fitAddon. Visibility restore uses immediate fit with a visibility gate to prevent stale-frame flash
+
+---
+
 ## [0.10.5] - 2026-04-06
 
 ### Bug Fixes
