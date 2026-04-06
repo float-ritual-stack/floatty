@@ -187,6 +187,21 @@ export function BlockItem(props: BlockItemProps) {
     }
   });
 
+  // FLO-569: Same pattern — when exiting render title mode (clicking ⊞ to show raw),
+  // contentEditable remounts but useContentSync won't re-run (contentRef isn't reactive)
+  createEffect(() => {
+    if (!renderShowTitle() && renderTitle()) {
+      queueMicrotask(() => {
+        if (contentRef) {
+          const content = block()?.content ?? '';
+          contentRef.innerText = content;
+          setDisplayContent(content);
+          contentRef.focus();
+        }
+      });
+    }
+  });
+
   // Cursor abstraction - enables mocking in tests
   const cursor = useCursor(() => contentRef);
 
