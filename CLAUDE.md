@@ -201,6 +201,10 @@ These modules are load-bearing infrastructure. Do not delete, bypass, or reimple
 - **`EventBus`** + **`ProjectionScheduler`** — search fidelity chain (layers 1-2). Deleting these starves the Tantivy index.
 - **Y.Doc surgical helpers** in `useBlockStore.ts` — `insertChildId`, `removeChildId`, etc. Never delete-all-then-push.
 
+## Development Workflow
+
+When asked to build or fix UI components, ALWAYS study the existing implementation pattern first (read the source of a working similar component) before writing code. Do not guess at fixes iteratively — understand the two-layer display architecture, the content sync lifecycle, and the blur/focus event flow before proposing changes. A quick fix that doesn't account for the full lifecycle creates a doom spiral of follow-up patches.
+
 ## Pattern References
 
 - See @.claude/rules/solidjs-patterns.md — SolidJS reactivity patterns (CRITICAL)

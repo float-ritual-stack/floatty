@@ -34,8 +34,11 @@ const logger = createLogger('outputSummaryHook');
 function extractRenderSummary(output: any): string | null {
   // Door envelope: { kind, doorId, schema, data: { spec, title, ... } }
   // Prefer data.title (set by render agent or Ollama title generation)
+  // Skip if title looks like a JSON blob or is unreasonably long — agent sometimes echoes spec back
   const data = output?.data;
-  if (data?.title) return data.title;
+  if (data?.title && typeof data.title === 'string' && data.title.length < 120 && !data.title.trimStart().startsWith('{')) {
+    return data.title;
+  }
 
   const spec = data?.spec ?? output?.spec;
   if (!spec?.elements) return null;
