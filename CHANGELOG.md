@@ -6,6 +6,18 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.3] - 2026-04-05
+
+### Improvements
+
+- **Centralized config loading** (FLO-559) — replaced 7 independent `get_ctx_config` IPC calls with single `ConfigContext` provider. Three access layers: `useConfig()` (reactive), `getConfig()` (sync), `configReady` (async). Graceful degradation on IPC failure (#205)
+
+### Bug Fixes
+
+- **Double-tap Cmd too aggressive** (FLO-465) — fast Cmd+C → Cmd+V sequences no longer trigger the double-tap wikilink copy. Switched from tinykeys `'Meta Meta'` (1000ms window) to custom bare-tap detection (300ms window, rejects sequences with other keys between) (#206)
+
+---
+
 ## [0.10.2] - 2026-04-05
 
 ### Features
