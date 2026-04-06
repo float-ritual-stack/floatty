@@ -162,6 +162,16 @@ export function BlockItem(props: BlockItemProps) {
     return `render:: ${title}`;
   });
 
+  // render:: title height sync: set the edit layer's innerText to match the displayed content
+  // so it drives the correct wrapper height. Title mode = short title, raw mode = full prompt.
+  createEffect(on(
+    () => ({ content: effectiveDisplayContent(), showTitle: renderShowTitle(), hasTitle: renderTitle() }),
+    ({ content, hasTitle }) => {
+      if (!hasTitle || !contentRef) return;
+      contentRef.innerText = content;
+    }
+  ));
+
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
   // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
   createEffect(() => {
