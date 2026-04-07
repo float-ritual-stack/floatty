@@ -117,7 +117,7 @@ impl OutlineManager {
     pub fn list_outlines(&self) -> Result<Vec<OutlineInfo>, OutlineError> {
         let mut outlines = Vec::new();
 
-        // Always include "default"
+        // Include "default" if its DB file exists (fresh installs may not have it yet)
         if self.default_db_path.exists() {
             match OutlineInfo::from_path("default", &self.default_db_path) {
                 Ok(info) => outlines.push(info),

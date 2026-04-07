@@ -4115,7 +4115,7 @@ async fn outline_create_block(
         let empty: Vec<yrs::Any> = vec![];
         block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
 
-        // Add to parent's childIds or rootIds, honoring afterId
+        // Add to parent's childIds or rootIds, honoring afterId (reject if invalid)
         if let Some(ref parent_id) = req.parent_id {
             if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id.as_str()) {
                 if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
@@ -4126,9 +4126,12 @@ async fn outline_create_block(
                                 _ => None,
                             })
                             .collect();
-                        child_vec.iter().position(|x| x == after_id)
-                            .map(|idx| idx + 1)
-                            .unwrap_or(child_ids.len(&txn) as usize)
+                        match child_vec.iter().position(|x| x == after_id) {
+                            Some(idx) => idx + 1,
+                            None => return Err(ApiError::InvalidRequest(
+                                format!("afterId '{}' is not a sibling under parent '{}'", after_id, parent_id)
+                            )),
+                        }
                     } else {
                         child_ids.len(&txn) as usize
                     };
@@ -4144,9 +4147,12 @@ async fn outline_create_block(
                         _ => None,
                     })
                     .collect();
-                root_vec.iter().position(|x| x == after_id)
-                    .map(|idx| idx + 1)
-                    .unwrap_or(root_ids.len(&txn) as usize)
+                match root_vec.iter().position(|x| x == after_id) {
+                    Some(idx) => idx + 1,
+                    None => return Err(ApiError::InvalidRequest(
+                        format!("afterId '{}' is not in root list", after_id)
+                    )),
+                }
             } else {
                 root_ids.len(&txn) as usize
             };
