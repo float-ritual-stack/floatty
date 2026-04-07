@@ -89,6 +89,7 @@ export function flattenSpecToMarkdown(output: any): string | null {
 
   const elements = spec.elements as Record<string, any>;
   const lines: string[] = [];
+  const visiting = new Set<string>();
 
   // Title from data envelope
   if (data?.title && typeof data.title === 'string' && !data.title.trimStart().startsWith('{')) {
@@ -96,8 +97,10 @@ export function flattenSpecToMarkdown(output: any): string | null {
   }
 
   function walk(key: string): void {
+    if (visiting.has(key)) return;
+    visiting.add(key);
     const el = elements[key];
-    if (!el) return;
+    if (!el) { visiting.delete(key); return; }
 
     const p = el.props || {};
 
@@ -119,7 +122,7 @@ export function flattenSpecToMarkdown(output: any): string | null {
       case 'PatternCard':
         lines.push(`### ${p.title || 'Pattern'}${p.type ? ` [${p.type}]` : ''}${p.confidence ? ` (${p.confidence})` : ''}`);
         if (p.content) lines.push('', p.content);
-        if (p.connectsTo?.length) lines.push('', `connects to: ${p.connectsTo.map((c: string) => `[[${c}]]`).join(', ')}`);
+        if (Array.isArray(p.connectsTo) && p.connectsTo.length) lines.push('', `connects to: ${p.connectsTo.map((c: string) => `[[${c}]]`).join(', ')}`);
         lines.push('');
         break;
       case 'QuoteBlock':
@@ -133,7 +136,7 @@ export function flattenSpecToMarkdown(output: any): string | null {
         lines.push(`- **${p.label}**: ${p.value}`);
         break;
       case 'StatsBar':
-        if (p.stats?.length) {
+        if (Array.isArray(p.stats) && p.stats.length) {
           for (const s of p.stats) lines.push(`- **${s.label}**: ${s.value}`);
           lines.push('');
         }
@@ -142,9 +145,9 @@ export function flattenSpecToMarkdown(output: any): string | null {
         lines.push(`- [[${p.target}]]${p.label ? ` ${p.label}` : ''}`);
         break;
       case 'BacklinksFooter':
-        if (p.inbound?.length) lines.push(`inbound: ${p.inbound.map((r: string) => `[[${r}]]`).join(', ')}`);
-        if (p.outbound?.length) lines.push(`outbound: ${p.outbound.map((r: string) => `[[${r}]]`).join(', ')}`);
-        lines.push('');
+        if (Array.isArray(p.inbound) && p.inbound.length) lines.push(`inbound: ${p.inbound.map((r: string) => `[[${r}]]`).join(', ')}`);
+        if (Array.isArray(p.outbound) && p.outbound.length) lines.push(`outbound: ${p.outbound.map((r: string) => `[[${r}]]`).join(', ')}`);
+        if ((Array.isArray(p.inbound) && p.inbound.length) || (Array.isArray(p.outbound) && p.outbound.length)) lines.push('');
         break;
       case 'Code':
         if (p.content) lines.push('```', p.content, '```', '');
@@ -171,6 +174,8 @@ export function flattenSpecToMarkdown(output: any): string | null {
         walk(childKey);
       }
     }
+
+    visiting.delete(key);
   }
 
   walk(spec.root);

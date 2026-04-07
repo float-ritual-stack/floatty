@@ -81,7 +81,7 @@ export const echoCopyHandler: BlockHandler = {
       return;
     }
 
-    const targetBlock = actions.getBlock?.(resolvedId) as {
+    const targetBlock = (actions.getBlock?.(resolvedId) ?? blockStore.blocks[resolvedId]) as {
       metadata?: { renderedMarkdown?: string; summary?: string };
       output?: unknown;
       outputType?: string;

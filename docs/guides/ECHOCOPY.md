@@ -4,7 +4,7 @@ Extracts the readable content from a render door output block and creates it as 
 
 ## Usage
 
-```
+```text
 echoCopy:: [[c229bfa9]]        # short hash (8+ hex chars)
 echoCopy:: [[My Page]]          # page name
 echoCopy:: c229bfa9de12...      # bare UUID or prefix
@@ -54,7 +54,7 @@ No LLM call. No network request. Pure local read + parse.
 
 ## Example
 
-```
+```text
 render:: ai Tell me about the HTTM pattern
   → [interactive view with tabs, pattern cards, quotes]
 
@@ -69,4 +69,4 @@ echoCopy:: [[a1b2c3d4]]
 
 ## Re-execution
 
-Running echoCopy on the same block again creates duplicate children. Use Cmd+Z to undo if needed.
+Running echoCopy on the same block again creates duplicate children. Use ⌘Z to undo if needed.
