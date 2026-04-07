@@ -34,7 +34,6 @@ use chrono::{DateTime, Utc};
 use floatty_core::{events::BlockChange, HookSystem, InheritanceIndex, Origin, OutlineInfo, OutlineName, PageNameIndex, SearchFilters, SearchService, YDocStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
-use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -1775,29 +1774,6 @@ async fn resolve_block_prefix(
     }
 }
 
-/// Build a BlockWithContextResponse from a block DTO and query params.
-/// Shared between get_block and get_daily_note.
-fn build_block_context_response<T: ReadTxn>(
-    blocks_map: &yrs::MapRef,
-    txn: &T,
-    block_id: &str,
-    block_dto: BlockDto,
-    ctx_query: &BlockContextQuery,
-) -> BlockWithContextResponse {
-    let includes = parse_includes(&ctx_query.include);
-    let sibling_radius = ctx_query.sibling_radius.min(50);
-    let max_depth = ctx_query.max_depth.min(100);
-
-    BlockWithContextResponse {
-        block: block_dto,
-        ancestors: includes.contains("ancestors").then(|| get_ancestors(blocks_map, txn, block_id)),
-        siblings: includes.contains("siblings").then(|| get_siblings(blocks_map, txn, block_id, sibling_radius)),
-        children: includes.contains("children").then(|| get_children_refs(blocks_map, txn, block_id)),
-        tree: includes.contains("tree").then(|| get_subtree(blocks_map, txn, block_id, max_depth)),
-        token_estimate: includes.contains("token_estimate").then(|| compute_token_estimate(blocks_map, txn, block_id, max_depth)),
-    }
-}
-
 /// GET /api/v1/blocks - All blocks as JSON (with optional filters)
 async fn get_blocks(
     State(state): State<AppState>,
@@ -1811,264 +1787,19 @@ async fn get_blocks(
     Ok(Json(result))
 }
 
-// ============================================================================
-// Block Context Helpers (FLO-338)
-// ============================================================================
-
-/// Read a block's content from a Y.Map within a transaction.
-fn read_block_content<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Option<String> {
-    let block_map = match blocks_map.get(txn, block_id)? {
-        yrs::Out::YMap(map) => map,
-        _ => return None,
-    };
-    block_map
-        .get(txn, "content")
-        .and_then(|v| match v {
-            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-            _ => None,
-        })
-}
-
-/// Read a block's parentId from Y.Doc.
-fn read_block_parent_id<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Option<String> {
-    let block_map = match blocks_map.get(txn, block_id)? {
-        yrs::Out::YMap(map) => map,
-        _ => return None,
-    };
-    block_map.get(txn, "parentId").and_then(|v| match v {
-        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-        _ => None,
-    })
-}
-
-/// Read a block's childIds from Y.Doc.
-fn read_block_child_ids<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<String> {
-    let block_map = match blocks_map.get(txn, block_id) {
-        Some(yrs::Out::YMap(map)) => map,
-        _ => return Vec::new(),
-    };
-    block_map
-        .get(txn, "childIds")
-        .and_then(|v| match v {
-            yrs::Out::YArray(arr) => Some(
-                arr.iter(txn)
-                    .filter_map(|v| match v {
-                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                        _ => None,
-                    })
-                    .collect(),
-            ),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
-/// Walk the parent chain up to root, returning ancestor BlockRefs (nearest first).
-/// Max 10 ancestors to prevent runaway.
-fn get_ancestors<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<BlockRef> {
-    let mut ancestors = Vec::new();
-    let mut current_id = block_id.to_string();
-    for _ in 0..10 {
-        match read_block_parent_id(blocks_map, txn, &current_id) {
-            Some(pid) => {
-                let content = read_block_content(blocks_map, txn, &pid).unwrap_or_default();
-                ancestors.push(BlockRef { id: pid.clone(), content });
-                current_id = pid;
-            }
-            None => break,
-        }
-    }
-    ancestors
-}
-
-/// Get siblings before/after a block within its parent's childIds.
-fn get_siblings<T: ReadTxn>(
-    blocks_map: &yrs::MapRef,
-    txn: &T,
-    block_id: &str,
-    radius: usize,
-) -> SiblingContext {
-    let empty = SiblingContext { before: vec![], after: vec![] };
-
-    let parent_id = match read_block_parent_id(blocks_map, txn, block_id) {
-        Some(id) => id,
-        None => return empty,
-    };
-    let sibling_ids = read_block_child_ids(blocks_map, txn, &parent_id);
-
-    let pos = match sibling_ids.iter().position(|id| id == block_id) {
-        Some(p) => p,
-        None => return empty,
-    };
-
-    let before_start = pos.saturating_sub(radius);
-    let before: Vec<BlockRef> = sibling_ids[before_start..pos]
-        .iter()
-        .map(|id| BlockRef {
-            id: id.clone(),
-            content: read_block_content(blocks_map, txn, id).unwrap_or_default(),
-        })
-        .collect();
-
-    let after_end = pos.saturating_add(1).saturating_add(radius).min(sibling_ids.len());
-    let after: Vec<BlockRef> = sibling_ids[(pos + 1)..after_end]
-        .iter()
-        .map(|id| BlockRef {
-            id: id.clone(),
-            content: read_block_content(blocks_map, txn, id).unwrap_or_default(),
-        })
-        .collect();
-
-    SiblingContext { before, after }
-}
-
-/// Get direct children as BlockRefs.
-fn get_children_refs<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<BlockRef> {
-    read_block_child_ids(blocks_map, txn, block_id)
-        .iter()
-        .map(|id| BlockRef {
-            id: id.clone(),
-            content: read_block_content(blocks_map, txn, id).unwrap_or_default(),
-        })
-        .collect()
-}
-
-/// DFS traversal of subtree, returning TreeNodes with depth.
-/// Respects max_depth and caps total nodes at 1000.
-fn get_subtree<T: ReadTxn>(
-    blocks_map: &yrs::MapRef,
-    txn: &T,
-    root_id: &str,
-    max_depth: usize,
-) -> Vec<TreeNode> {
-    let mut result = Vec::new();
-    let mut stack: Vec<(String, usize)> = Vec::new();
-
-    // Start with root's children at depth 1
-    let root_children = read_block_child_ids(blocks_map, txn, root_id);
-    for child_id in root_children.into_iter().rev() {
-        stack.push((child_id, 1));
-    }
-
-    while let Some((id, depth)) = stack.pop() {
-        if result.len() >= 1000 { break; }
-
-        let content = read_block_content(blocks_map, txn, &id).unwrap_or_default();
-        let child_ids = read_block_child_ids(blocks_map, txn, &id);
-
-        // Push children for further traversal if within depth limit
-        if depth < max_depth {
-            for child_id in child_ids.iter().rev() {
-                stack.push((child_id.clone(), depth + 1));
-            }
-        }
-
-        result.push(TreeNode {
-            id: id.clone(),
-            content,
-            depth,
-            child_ids,
-        });
-    }
-
-    result
-}
-
-/// Compute a rough token estimate for a subtree.
-fn compute_token_estimate<T: ReadTxn>(
-    blocks_map: &yrs::MapRef,
-    txn: &T,
-    root_id: &str,
-    max_depth: usize,
-) -> TokenEstimate {
-    let mut total_chars = 0usize;
-    let mut block_count = 0usize;
-    let mut deepest = 0usize;
-    let mut stack: Vec<(String, usize)> = Vec::new();
-
-    // Include root content
-    if let Some(content) = read_block_content(blocks_map, txn, root_id) {
-        total_chars += content.chars().count();
-    }
-    block_count += 1;
-
-    let root_children = read_block_child_ids(blocks_map, txn, root_id);
-    for child_id in root_children.into_iter().rev() {
-        stack.push((child_id, 1));
-    }
-
-    while let Some((id, depth)) = stack.pop() {
-        if block_count >= 5000 { break; } // Safety cap
-
-        if let Some(content) = read_block_content(blocks_map, txn, &id) {
-            total_chars += content.chars().count();
-        }
-        block_count += 1;
-        if depth > deepest { deepest = depth; }
-
-        if depth < max_depth {
-            let child_ids = read_block_child_ids(blocks_map, txn, &id);
-            for child_id in child_ids.into_iter().rev() {
-                stack.push((child_id, depth + 1));
-            }
-        }
-    }
-
-    TokenEstimate {
-        total_chars,
-        block_count,
-        max_depth: deepest,
-    }
-}
-
-/// Parse include directives from comma-separated string.
-fn parse_includes(include: &Option<String>) -> HashSet<String> {
-    include
-        .as_ref()
-        .map(|s| s.split(',').map(|p| p.trim().to_lowercase()).collect())
-        .unwrap_or_default()
-}
-
 /// GET /api/v1/blocks/:id - Single block with optional context
-///
-/// Query parameters:
-/// - `include` (optional): Comma-separated context to include:
-///   ancestors, siblings, children, tree, token_estimate
-/// - `sibling_radius` (optional, default 2): How many siblings before/after
-/// - `max_depth` (optional, default 50): Max depth for tree traversal
 async fn get_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
     axum::extract::Query(ctx_query): axum::extract::Query<BlockContextQuery>,
 ) -> Result<Json<BlockWithContextResponse>, ApiError> {
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
-
-    let blocks_map = txn
-        .get_map("blocks")
-        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
-
-    // Resolve short-hash prefix to full block ID
-    let id = resolve_block_id(&id, &blocks_map, &txn)?;
-
-    let value = blocks_map
-        .get(&txn, &id)
-        .ok_or_else(|| ApiError::NotFound(id.clone()))?;
-
-    if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, &id)
-        };
-        let block_dto = read_block_dto(&block_map, &txn, &id, inherited_markers, true);
-
-        Ok(Json(build_block_context_response(
-            &blocks_map, &txn, &id, block_dto, &ctx_query,
-        )))
-    } else {
-        Err(ApiError::NotFound(id))
-    }
+    let result = crate::block_service::get_block(
+        &state.store,
+        &state.inheritance_index,
+        &id,
+        &ctx_query,
+    )?;
+    Ok(Json(result))
 }
 
 /// POST /api/v1/blocks - Create block
@@ -2673,42 +2404,6 @@ async fn update_block(
     }))
 }
 
-/// Collect a block and all its descendants via stack-based traversal.
-/// Returns Vec of (id, content) pairs for hook event emission.
-fn collect_descendants(
-    blocks: &yrs::MapRef,
-    txn: &yrs::TransactionMut<'_>,
-    root_id: &str,
-) -> Vec<(String, String)> {
-    let mut result = Vec::new();
-    let mut stack = vec![root_id.to_string()];
-
-    while let Some(current_id) = stack.pop() {
-        if let Some(yrs::Out::YMap(block_map)) = blocks.get(txn, &current_id) {
-            let content = block_map
-                .get(txn, "content")
-                .and_then(|v| match v {
-                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                    _ => None,
-                })
-                .unwrap_or_default();
-
-            // Push children onto stack for traversal
-            if let Some(yrs::Out::YArray(child_ids)) = block_map.get(txn, "childIds") {
-                for value in child_ids.iter(txn) {
-                    if let yrs::Out::Any(yrs::Any::String(s)) = value {
-                        stack.push(s.to_string());
-                    }
-                }
-            }
-
-            result.push((current_id, content));
-        }
-    }
-
-    result
-}
-
 /// DELETE /api/v1/blocks/:id - Delete block and entire subtree
 async fn delete_block(
     State(state): State<AppState>,
@@ -2737,7 +2432,7 @@ async fn delete_block(
         };
 
         // Collect all descendants (block + children + grandchildren...)
-        let to_delete = collect_descendants(&blocks, &txn, &id);
+        let to_delete = crate::block_service::collect_descendants(&blocks, &txn, &id);
 
         // Remove from parent's childIds if this block has a parent
         if let Some(ref pid) = parent_id {
@@ -3084,7 +2779,7 @@ async fn search_blocks(
 
                     // Breadcrumb: walk parent chain, collect content strings (max 5)
                     let breadcrumb = if want_breadcrumb {
-                        let ancestors = get_ancestors(bmap, &txn, &h.block_id);
+                        let ancestors = crate::block_service::get_ancestors(bmap, &txn, &h.block_id);
                         let crumbs: Vec<String> = ancestors
                             .into_iter()
                             .take(5)
@@ -3475,7 +3170,7 @@ async fn get_daily_note(
             lookup_inherited(&index, &page_id)
         };
         let block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
-        Ok(Json(build_block_context_response(
+        Ok(Json(crate::block_service::build_block_context_response(
             &blocks_map, &txn, &page_id, block_dto, &ctx_query,
         )))
     } else {
