@@ -173,27 +173,14 @@ impl OutlineManager {
         OutlineInfo::from_path(name.as_str(), &db_path).map_err(OutlineError::Io)
     }
 
-    /// Delete an outline. Removes from cache and deletes the file.
+    /// Delete an outline. Deletes files first, then removes from cache.
     pub fn delete_outline(&self, name: &OutlineName) -> Result<(), OutlineError> {
         let db_path = self.outline_path(name);
         if !db_path.exists() {
             return Err(OutlineError::NotFound(name.to_string()));
         }
 
-        // Remove from cache first (prevents new requests from getting the store)
-        {
-            let mut stores = self.stores.write().map_err(|_| {
-                OutlineError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "lock poisoned",
-                ))
-            })?;
-            stores.remove(name.as_str());
-        }
-        // Note: in-flight requests may still hold Arc<YDocStore>.
-        // Phase 1 accepts this race. Phase 2 adds draining state.
-
-        // Delete the SQLite file (and WAL/SHM if present)
+        // Delete files first — if this fails, cache stays consistent
         std::fs::remove_file(&db_path)?;
         let wal = db_path.with_extension("sqlite-wal");
         let shm = db_path.with_extension("sqlite-shm");
@@ -206,6 +193,17 @@ impl OutlineManager {
             if let Err(e) = std::fs::remove_file(&shm) {
                 warn!("Failed to remove SHM file {:?}: {}", shm, e);
             }
+        }
+
+        // Remove from cache after successful file deletion
+        {
+            let mut stores = self.stores.write().map_err(|_| {
+                OutlineError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "lock poisoned",
+                ))
+            })?;
+            stores.remove(name.as_str());
         }
 
         info!("Deleted outline '{}' at {:?}", name, db_path);

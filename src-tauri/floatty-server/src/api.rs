@@ -4059,6 +4059,11 @@ async fn outline_create_block(
     Json(req): Json<CreateBlockRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     reject_default_mutation(&name)?;
+    if req.after_id.is_some() && req.at_index.is_some() {
+        return Err(ApiError::InvalidRequest(
+            "Cannot specify both afterId and atIndex".into(),
+        ));
+    }
     let store = resolve_outline(&state, &name)?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = SystemTime::now()
@@ -4140,6 +4145,8 @@ async fn outline_create_block(
                         format!("afterId '{}' is not a sibling under parent '{}'", after_id, parent_id)
                     )),
                 }
+            } else if let Some(at_index) = req.at_index {
+                at_index.min(child_ids.len(&txn) as usize)
             } else {
                 child_ids.len(&txn) as usize
             };
@@ -4159,6 +4166,8 @@ async fn outline_create_block(
                         format!("afterId '{}' is not in root list", after_id)
                     )),
                 }
+            } else if let Some(at_index) = req.at_index {
+                at_index.min(root_ids.len(&txn) as usize)
             } else {
                 root_ids.len(&txn) as usize
             };
@@ -4216,6 +4225,12 @@ async fn outline_update_block(
     Json(req): Json<UpdateBlockRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     reject_default_mutation(&name)?;
+    // Phase 1: only content updates supported on outline routes
+    if req.parent_id.is_some() || req.metadata.is_some() || req.after_id.is_some() || req.at_index.is_some() {
+        return Err(ApiError::InvalidRequest(
+            "Per-outline PATCH currently supports content updates only".into(),
+        ));
+    }
     let store = resolve_outline(&state, &name)?;
     let doc = store.doc();
 
