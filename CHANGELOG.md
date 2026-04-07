@@ -6,6 +6,20 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.8] - 2026-04-07
+
+### Features
+
+- Search hits now include `blockType` field (derived from content prefix)
+- Topology nodes include `bid` (block UUID) for page blocks
+
+### Bug Fixes
+
+- Fixed `pages::` container detection — config blocks with "pages::" content no longer hijack the container ID, restoring topology block counts (`b` field)
+- Used `as_str()` instead of `{:?}` debug format for block type serialization
+
+---
+
 ## [0.10.7] - 2026-04-06
 
 ### Bug Fixes
