@@ -417,10 +417,10 @@ impl PageNameIndexHook {
             }
         } else if !was_container && is_container {
             // Became a container — only if root block (no parent)
-            let block = store.get_block(id);
-            let is_root = block.as_ref().map_or(true, |b| b.parent_id.is_none());
-            if is_root {
-                index.set_pages_container_id(Some(id.to_string()));
+            if let Some(block) = store.get_block(id) {
+                if block.parent_id.is_none() {
+                    index.set_pages_container_id(Some(id.to_string()));
+                }
             }
         }
 
