@@ -138,6 +138,33 @@ function handleBlockEvent(envelope: EventEnvelope): void {
 
 let _subscriptionId: string | null = null;
 
+/**
+ * Backfill summaries for existing blocks that have output but no summary.
+ * Runs once at startup — no re-rendering needed.
+ */
+function backfillExistingSummaries(): void {
+  const blocks = blockStore.blocks;
+  let count = 0;
+
+  for (const block of Object.values(blocks)) {
+    if (!block.outputType || !block.output) continue;
+    if (block.metadata?.summary) continue;  // Already has summary
+
+    const summary = extractSummary(block.output, block.outputType);
+    if (summary) {
+      blockStore.updateBlockMetadata(block.id, {
+        summary,
+        extractedAt: Date.now(),
+      }, 'hook');
+      count++;
+    }
+  }
+
+  if (count > 0) {
+    logger.info(`Backfilled summaries for ${count} blocks`);
+  }
+}
+
 export function registerOutputSummaryHook(): void {
   if (_subscriptionId) {
     logger.debug('Already registered');
@@ -149,6 +176,9 @@ export function registerOutputSummaryHook(): void {
     priority: 60,  // After ctx/outlinks hooks (50)
     name: 'output-summary-extractor',
   });
+
+  // Backfill existing blocks that predate the hook
+  setTimeout(backfillExistingSummaries, 2000);
 
   logger.info('Registered with EventBus');
 }
