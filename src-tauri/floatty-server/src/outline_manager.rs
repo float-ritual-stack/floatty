@@ -151,12 +151,6 @@ impl OutlineManager {
         std::fs::create_dir_all(&self.outlines_dir)?;
 
         let db_path = self.outline_path(name);
-        if db_path.exists() {
-            return Err(OutlineError::AlreadyExists(name.to_string()));
-        }
-
-        // Open creates the SQLite file and schema
-        let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
 
         let mut stores = self.stores.write().map_err(|_| {
             OutlineError::Io(std::io::Error::new(
@@ -164,9 +158,18 @@ impl OutlineManager {
                 "lock poisoned",
             ))
         })?;
+
+        // Check both cache and filesystem inside lock (TOCTOU prevention)
+        if stores.contains_key(name.as_str()) || db_path.exists() {
+            return Err(OutlineError::AlreadyExists(name.to_string()));
+        }
+
+        // Open creates the SQLite file and schema
+        let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
         stores.insert(name.as_str().to_string(), store);
 
         info!("Created outline '{}' at {:?}", name, db_path);
+        drop(stores); // Release lock before filesystem stat
         OutlineInfo::from_path(name.as_str(), &db_path).map_err(OutlineError::Io)
     }
 
@@ -195,10 +198,14 @@ impl OutlineManager {
         let wal = db_path.with_extension("sqlite-wal");
         let shm = db_path.with_extension("sqlite-shm");
         if wal.exists() {
-            let _ = std::fs::remove_file(&wal);
+            if let Err(e) = std::fs::remove_file(&wal) {
+                warn!("Failed to remove WAL file {:?}: {}", wal, e);
+            }
         }
         if shm.exists() {
-            let _ = std::fs::remove_file(&shm);
+            if let Err(e) = std::fs::remove_file(&shm) {
+                warn!("Failed to remove SHM file {:?}: {}", shm, e);
+            }
         }
 
         info!("Deleted outline '{}' at {:?}", name, db_path);

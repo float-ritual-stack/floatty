@@ -3823,6 +3823,17 @@ async fn delete_outline_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Reject mutation requests for the "default" outline via outline routes.
+/// Default outline should use legacy routes which have full hook/broadcaster support.
+fn reject_default_mutation(name: &str) -> Result<(), ApiError> {
+    if name == "default" {
+        return Err(ApiError::InvalidRequest(
+            "Use legacy routes (/api/v1/blocks, /api/v1/update) for the default outline".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Resolve an outline store from the manager, mapping errors to ApiError.
 fn resolve_outline(state: &AppState, name: &str) -> Result<Arc<YDocStore>, ApiError> {
     state.outline_manager.get_or_default(name).map_err(|e| {
@@ -3904,6 +3915,7 @@ async fn outline_apply_update(
     Path(name): Path<String>,
     Json(req): Json<UpdateRequest>,
 ) -> Result<StatusCode, ApiError> {
+    reject_default_mutation(&name)?;
     let store = resolve_outline(&state, &name)?;
     let update_bytes = BASE64
         .decode(&req.update)
@@ -3970,6 +3982,41 @@ async fn outline_export_binary(
 }
 
 /// GET /api/v1/outlines/:name/export/json
+/// Read all blocks and root IDs from a Y.Doc transaction as raw JSON.
+/// Shared by outline_export_json and outline_get_blocks.
+fn read_all_blocks_json<T: ReadTxn>(txn: &T) -> serde_json::Value {
+    let blocks_map = match txn.get_map("blocks") {
+        Some(m) => m,
+        None => return serde_json::json!({"blocks": [], "rootIds": []}),
+    };
+
+    let mut blocks = Vec::new();
+    for (id, value) in blocks_map.iter(txn) {
+        if let yrs::Out::YMap(block_map) = value {
+            let mut block = serde_json::Map::new();
+            block.insert("id".into(), serde_json::Value::String(id.to_string()));
+            for (key, val) in block_map.iter(txn) {
+                block.insert(key.to_string(), yrs_out_to_json(val, txn));
+            }
+            blocks.push(serde_json::Value::Object(block));
+        }
+    }
+
+    let root_ids: Vec<String> = txn
+        .get_array("rootIds")
+        .map(|arr| {
+            arr.iter(txn)
+                .filter_map(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    serde_json::json!({ "blocks": blocks, "rootIds": root_ids })
+}
+
 async fn outline_export_json(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -3979,45 +4026,7 @@ async fn outline_export_json(
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
 
-    let blocks_map = match txn.get_map("blocks") {
-        Some(m) => m,
-        None => {
-            return Ok((
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "application/json")],
-                serde_json::to_string_pretty(&serde_json::json!({"blocks": [], "rootIds": []})).unwrap(),
-            ))
-        }
-    };
-
-    let mut blocks = Vec::new();
-    for (id, value) in blocks_map.iter(&txn) {
-        if let yrs::Out::YMap(block_map) = value {
-            let mut block = serde_json::Map::new();
-            block.insert("id".into(), serde_json::Value::String(id.to_string()));
-            for (key, val) in block_map.iter(&txn) {
-                block.insert(key.to_string(), yrs_out_to_json(val, &txn));
-            }
-            blocks.push(serde_json::Value::Object(block));
-        }
-    }
-
-    let root_ids: Vec<String> = txn
-        .get_array("rootBlockIds")
-        .map(|arr| {
-            arr.iter(&txn)
-                .filter_map(|v| match v {
-                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let export = serde_json::json!({
-        "blocks": blocks,
-        "rootIds": root_ids,
-    });
+    let export = read_all_blocks_json(&txn);
 
     Ok((
         StatusCode::OK,
@@ -4040,39 +4049,7 @@ async fn outline_get_blocks(
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
 
-    let blocks_map = match txn.get_map("blocks") {
-        Some(m) => m,
-        None => return Ok(Json(serde_json::json!({"blocks": [], "rootIds": []}))),
-    };
-
-    let mut blocks = Vec::new();
-    for (id, value) in blocks_map.iter(&txn) {
-        if let yrs::Out::YMap(block_map) = value {
-            let mut block = serde_json::Map::new();
-            block.insert("id".into(), serde_json::Value::String(id.to_string()));
-            for (key, val) in block_map.iter(&txn) {
-                block.insert(key.to_string(), yrs_out_to_json(val, &txn));
-            }
-            blocks.push(serde_json::Value::Object(block));
-        }
-    }
-
-    let root_ids: Vec<String> = txn
-        .get_array("rootBlockIds")
-        .map(|arr| {
-            arr.iter(&txn)
-                .filter_map(|v| match v {
-                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({
-        "blocks": blocks,
-        "rootIds": root_ids,
-    })))
+    Ok(Json(read_all_blocks_json(&txn)))
 }
 
 /// POST /api/v1/outlines/:name/blocks
@@ -4081,6 +4058,7 @@ async fn outline_create_block(
     Path(name): Path<String>,
     Json(req): Json<CreateBlockRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    reject_default_mutation(&name)?;
     let store = resolve_outline(&state, &name)?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = SystemTime::now()
@@ -4117,42 +4095,69 @@ async fn outline_create_block(
             }
         }
 
-        // Create block Y.Map
-        let block_map = MapPrelim::from([
-            ("content".to_string(), yrs::Any::String(req.content.clone().into())),
-            ("createdAt".to_string(), yrs::Any::BigInt(now)),
-            ("updatedAt".to_string(), yrs::Any::BigInt(now)),
-        ]);
-        blocks.insert(&mut txn, id.clone(), block_map);
+        // Create block Y.Map (aligned with legacy block shape)
+        let parent_id_value: yrs::Any = match &req.parent_id {
+            Some(p) => yrs::Any::String(p.clone().into()),
+            None => yrs::Any::Null,
+        };
+        let block_map = blocks.insert(
+            &mut txn,
+            id.as_str(),
+            MapPrelim::from([
+                ("id".to_owned(), yrs::any!(id.clone())),
+                ("content".to_owned(), yrs::any!(req.content.clone())),
+                ("parentId".to_owned(), parent_id_value),
+                ("collapsed".to_owned(), yrs::any!(false)),
+                ("createdAt".to_owned(), yrs::any!(now as f64)),
+                ("updatedAt".to_owned(), yrs::any!(now as f64)),
+            ]),
+        );
+        let empty: Vec<yrs::Any> = vec![];
+        block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
 
-        // Set parentId and add to parent's childIds (or rootBlockIds)
-        let block_map_ref = blocks.get(&txn, &id).unwrap();
-        if let yrs::Out::YMap(map) = block_map_ref {
-            // Insert childIds as Y.Array
-            map.insert(&mut txn, "childIds", ArrayPrelim::default());
-
-            if let Some(ref parent_id) = req.parent_id {
-                map.insert(&mut txn, "parentId", yrs::Any::String(parent_id.clone().into()));
-                // Add to parent's childIds
-                if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id.as_str()) {
-                    if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
-                        let len = child_ids.len(&txn);
-                        child_ids.insert(&mut txn, len, yrs::Any::String(id.clone().into()));
-                    }
+        // Add to parent's childIds or rootIds, honoring afterId
+        if let Some(ref parent_id) = req.parent_id {
+            if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id.as_str()) {
+                if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+                    let insert_idx = if let Some(ref after_id) = req.after_id {
+                        let child_vec: Vec<String> = child_ids.iter(&txn)
+                            .filter_map(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                _ => None,
+                            })
+                            .collect();
+                        child_vec.iter().position(|x| x == after_id)
+                            .map(|idx| idx + 1)
+                            .unwrap_or(child_ids.len(&txn) as usize)
+                    } else {
+                        child_ids.len(&txn) as usize
+                    };
+                    child_ids.insert(&mut txn, insert_idx as u32, id.as_str());
                 }
-            } else {
-                // Add to rootBlockIds
-                let roots = txn.get_or_insert_array("rootBlockIds");
-                let len = roots.len(&txn);
-                roots.insert(&mut txn, len, yrs::Any::String(id.clone().into()));
             }
+        } else {
+            let root_ids = txn.get_or_insert_array("rootIds");
+            let insert_idx = if let Some(ref after_id) = req.after_id {
+                let root_vec: Vec<String> = root_ids.iter(&txn)
+                    .filter_map(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                root_vec.iter().position(|x| x == after_id)
+                    .map(|idx| idx + 1)
+                    .unwrap_or(root_ids.len(&txn) as usize)
+            } else {
+                root_ids.len(&txn) as usize
+            };
+            root_ids.insert(&mut txn, insert_idx as u32, id.as_str());
         }
 
         txn.encode_update_v1()
     };
+    drop(doc_guard); // Release lock before persistence
 
-    // Persist the update
-    store.apply_update(&update)?;
+    store.persist_update(&update)?;
 
     Ok((
         StatusCode::CREATED,
@@ -4198,80 +4203,139 @@ async fn outline_update_block(
     Path((name, id)): Path<(String, String)>,
     Json(req): Json<UpdateBlockRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    reject_default_mutation(&name)?;
     let store = resolve_outline(&state, &name)?;
     let doc = store.doc();
-    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
 
-    let block_id = {
-        let txn = doc_guard.transact();
-        let blocks_map = txn.get_map("blocks")
-            .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
-        resolve_block_id(&id, &blocks_map, &txn)?
-    };
+    let (block_id, update) = {
+        let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
 
-    let update = {
-        let mut txn = doc_guard.transact_mut();
-        let blocks = txn.get_or_insert_map("blocks");
+        let block_id = {
+            let txn = doc_guard.transact();
+            let blocks_map = txn.get_map("blocks")
+                .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
+            resolve_block_id(&id, &blocks_map, &txn)?
+        };
 
-        match blocks.get(&txn, &block_id) {
-            Some(yrs::Out::YMap(map)) => {
-                if let Some(ref content) = req.content {
-                    map.insert(&mut txn, "content", yrs::Any::String(content.clone().into()));
+        let update = {
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+
+            match blocks.get(&txn, &block_id) {
+                Some(yrs::Out::YMap(map)) => {
+                    if let Some(ref content) = req.content {
+                        map.insert(&mut txn, "content", yrs::Any::String(content.clone().into()));
+                    }
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as f64;
+                    map.insert(&mut txn, "updatedAt", yrs::Any::Number(now));
                 }
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as i64;
-                map.insert(&mut txn, "updatedAt", yrs::Any::BigInt(now));
+                _ => return Err(ApiError::NotFound(format!("block '{}' not found", id))),
             }
-            _ => return Err(ApiError::NotFound(format!("block '{}' not found", id))),
-        }
 
-        txn.encode_update_v1()
-    };
+            txn.encode_update_v1()
+        };
 
-    store.apply_update(&update)?;
+        (block_id, update)
+    }; // doc_guard dropped here
+
+    store.persist_update(&update)?;
     Ok(Json(serde_json::json!({ "id": block_id })))
 }
 
-/// DELETE /api/v1/outlines/:name/blocks/:id
+/// DELETE /api/v1/outlines/:name/blocks/:id — deletes block, its subtree, and cleans parent refs.
 async fn outline_delete_block(
     State(state): State<AppState>,
     Path((name, id)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
+    reject_default_mutation(&name)?;
     let store = resolve_outline(&state, &name)?;
     let doc = store.doc();
-    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
-
-    let block_id = {
-        let txn = doc_guard.transact();
-        let blocks_map = txn.get_map("blocks")
-            .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
-        resolve_block_id(&id, &blocks_map, &txn)?
-    };
 
     let update = {
-        let mut txn = doc_guard.transact_mut();
-        let blocks = txn.get_or_insert_map("blocks");
-        blocks.remove(&mut txn, &block_id);
+        let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
 
-        // Remove from rootBlockIds if present
-        if let Some(roots) = txn.get_array("rootBlockIds") {
-            let root_txn_ref = &txn;
-            for (idx, val) in roots.iter(root_txn_ref).enumerate() {
-                if let yrs::Out::Any(yrs::Any::String(s)) = val {
-                    if s.as_ref() == block_id {
-                        roots.remove(&mut txn, idx as u32);
-                        break;
+        let block_id = {
+            let txn = doc_guard.transact();
+            let blocks_map = txn.get_map("blocks")
+                .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
+            resolve_block_id(&id, &blocks_map, &txn)?
+        };
+
+        let update = {
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+
+            // Collect descendants to delete (DFS)
+            let mut to_delete = vec![block_id.clone()];
+            let mut i = 0;
+            while i < to_delete.len() {
+                let bid = to_delete[i].clone();
+                if let Some(yrs::Out::YMap(map)) = blocks.get(&txn, &bid) {
+                    if let Some(yrs::Out::YArray(child_ids)) = map.get(&txn, "childIds") {
+                        for val in child_ids.iter(&txn) {
+                            if let yrs::Out::Any(yrs::Any::String(s)) = val {
+                                to_delete.push(s.to_string());
+                            }
+                        }
                     }
                 }
+                i += 1;
             }
-        }
 
-        txn.encode_update_v1()
-    };
+            // Read parent before deleting
+            let parent_id: Option<String> = blocks.get(&txn, &block_id)
+                .and_then(|v| match v {
+                    yrs::Out::YMap(map) => map.get(&txn, "parentId").and_then(|p| match p {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    }),
+                    _ => None,
+                });
 
-    store.apply_update(&update)?;
+            // Remove all blocks in subtree
+            for bid in &to_delete {
+                blocks.remove(&mut txn, bid);
+            }
+
+            // Remove from parent's childIds
+            if let Some(ref pid) = parent_id {
+                if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, pid.as_str()) {
+                    if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+                        let child_vec: Vec<String> = child_ids.iter(&txn)
+                            .filter_map(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                _ => None,
+                            })
+                            .collect();
+                        if let Some(idx) = child_vec.iter().position(|x| x == &block_id) {
+                            child_ids.remove(&mut txn, idx as u32);
+                        }
+                    }
+                }
+            } else {
+                // Remove from rootIds
+                let root_ids = txn.get_or_insert_array("rootIds");
+                let root_vec: Vec<String> = root_ids.iter(&txn)
+                    .filter_map(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                if let Some(idx) = root_vec.iter().position(|x| x == &block_id) {
+                    root_ids.remove(&mut txn, idx as u32);
+                }
+            }
+
+            txn.encode_update_v1()
+        };
+
+        update
+    }; // doc_guard dropped here
+
+    store.persist_update(&update)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -4291,7 +4355,7 @@ async fn outline_get_stats(
         .unwrap_or(0);
 
     let root_count = txn
-        .get_array("rootBlockIds")
+        .get_array("rootIds")
         .map(|a| a.len(&txn) as usize)
         .unwrap_or(0);
 
