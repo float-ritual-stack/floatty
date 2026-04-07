@@ -128,6 +128,12 @@ pub struct BlockMetadata {
     /// Makes rich door content discoverable via search without exposing full spec.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+
+    /// Full markdown projection of a render door's spec elements.
+    /// Populated by frontend outputSummaryHook alongside summary.
+    /// Used by echoCopy:: handler to materialize render output as outline blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_markdown: Option<String>,
 }
 
 impl BlockMetadata {
@@ -138,7 +144,7 @@ impl BlockMetadata {
 
     /// Check if metadata is empty (no markers, no outlinks, not a stub).
     pub fn is_empty(&self) -> bool {
-        self.markers.is_empty() && self.outlinks.is_empty() && !self.is_stub && self.summary.is_none()
+        self.markers.is_empty() && self.outlinks.is_empty() && !self.is_stub && self.summary.is_none() && self.rendered_markdown.is_none()
     }
 
     /// Add a marker.

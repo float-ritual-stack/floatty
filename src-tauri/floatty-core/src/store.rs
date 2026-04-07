@@ -179,12 +179,22 @@ fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
         None => yrs::Any::Null,
     };
 
-    // Build the metadata map with fixed-size array
+    // Build the metadata map — optional fields use Null when absent
+    let summary: yrs::Any = match &metadata.summary {
+        Some(s) => any!(s.clone()),
+        None => yrs::Any::Null,
+    };
+    let rendered_markdown: yrs::Any = match &metadata.rendered_markdown {
+        Some(rm) => any!(rm.clone()),
+        None => yrs::Any::Null,
+    };
     MapPrelim::from([
         ("markers".to_owned(), yrs::Any::Array(markers_array.into())),
         ("outlinks".to_owned(), yrs::Any::Array(outlinks_array.into())),
         ("isStub".to_owned(), any!(metadata.is_stub)),
         ("extractedAt".to_owned(), extracted_at),
+        ("summary".to_owned(), summary),
+        ("renderedMarkdown".to_owned(), rendered_markdown),
     ])
 }
 

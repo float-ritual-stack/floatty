@@ -30,10 +30,18 @@ isStub: boolean,
 /**
  * Timestamp of last metadata extraction.
  * Used to skip re-extraction if content unchanged.
+ * Accepts both i64 and f64 on deserialization (yrs stores as f64 in legacy data).
  */
-extractedAt: number | null,
+extractedAt: number | null, 
 /**
  * Short summary extracted from block output (render doors, etc.).
  * Populated by frontend outputSummaryHook when a door produces structured output.
+ * Makes rich door content discoverable via search without exposing full spec.
  */
-summary?: string | null, };
+summary: string | null, 
+/**
+ * Full markdown projection of a render door's spec elements.
+ * Populated by frontend outputSummaryHook alongside summary.
+ * Used by echoCopy:: handler to materialize render output as outline blocks.
+ */
+renderedMarkdown: string | null, };

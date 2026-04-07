@@ -122,6 +122,7 @@ impl MetadataExtractionHook {
             is_stub: false,
             extracted_at: Some(chrono::Utc::now().timestamp()),
             summary: None,
+            rendered_markdown: None,
         };
 
         if metadata.is_empty() {
