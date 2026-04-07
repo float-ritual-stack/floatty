@@ -888,6 +888,9 @@ pub struct TopologyNode {
     /// 1 if ref-only (referenced but not in pages::)
     #[serde(rename = "ref")]
     pub is_ref: u8,
+    /// Block UUID of the page (if exists, not ref-only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bid: Option<String>,
 }
 
 /// Topology response matching extract-topology.py contract.
@@ -1504,6 +1507,7 @@ async fn get_topology(
             rc: src.len(),
             orp: if orphan_set.contains(name) { 1 } else { 0 },
             is_ref: if ref_only_set.contains(name) { 1 } else { 0 },
+            bid: page_name_to_id.get(&name.to_lowercase()).cloned(),
         });
         node_ids.insert(truncated_id);
     }
@@ -3172,6 +3176,9 @@ pub struct BlockSearchHit {
     /// Highlighted snippet from Tantivy (HTML with <b> tags around matched terms)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
+    /// Block type (text, h1, h2, h3, ctx, sh, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_type: Option<String>,
 }
 
 /// Full-text search response
@@ -3273,7 +3280,7 @@ async fn search_blocks(
 
         hits.into_iter()
             .map(|h| {
-                let (content, breadcrumb, metadata) = if let Some(ref bmap) = blocks_map {
+                let (content, breadcrumb, metadata, block_type) = if let Some(ref bmap) = blocks_map {
                     // Look up content
                     let content = bmap
                         .get(&txn, &h.block_id)
@@ -3322,9 +3329,14 @@ async fn search_blocks(
                         None
                     };
 
-                    (content, breadcrumb, metadata)
+                    // Block type derived from content
+                    let block_type = content.as_ref().map(|c| {
+                        format!("{:?}", floatty_core::parse_block_type(c)).to_lowercase()
+                    });
+
+                    (content, breadcrumb, metadata, block_type)
                 } else {
-                    (None, None, None)
+                    (None, None, None, None)
                 };
 
                 BlockSearchHit {
@@ -3334,6 +3346,7 @@ async fn search_blocks(
                     breadcrumb,
                     metadata,
                     snippet: h.snippet,
+                    block_type,
                 }
             })
             .collect()
