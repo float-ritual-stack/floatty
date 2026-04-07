@@ -26,15 +26,20 @@ const logger = createLogger('outputSummaryHook');
 // SUMMARY EXTRACTION
 // ═══════════════════════════════════════════════════════════════
 
+/** Unwrap door output envelope to get data + spec. */
+function unwrapDoorOutput(output: any): { data: any; spec: any } {
+  const data = output?.data;
+  const spec = data?.spec ?? output?.spec;
+  return { data, spec };
+}
+
 /**
  * Extract a short summary from render door output.
  * Pulls title from EntryHeader, section headings from EntryBody markdown,
  * and key component types used.
  */
 function extractRenderSummary(output: any): string | null {
-  // Door envelope: { kind, doorId, schema, data: { spec, title, ... } }
-  const data = output?.data;
-  const spec = data?.spec ?? output?.spec;
+  const { data, spec } = unwrapDoorOutput(output);
 
   const parts: string[] = [];
 
@@ -79,8 +84,7 @@ function extractRenderSummary(output: any): string | null {
  * extracting text content from each component type.
  */
 export function flattenSpecToMarkdown(output: any): string | null {
-  const data = output?.data;
-  const spec = data?.spec ?? output?.spec;
+  const { data, spec } = unwrapDoorOutput(output);
   if (!spec?.elements || !spec?.root) return null;
 
   const elements = spec.elements as Record<string, any>;

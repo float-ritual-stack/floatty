@@ -17,8 +17,9 @@ import type { BlockHandler, ExecutorActions } from './types';
 import { blockStore } from '../../hooks/useBlockStore';
 import { resolveBlockIdPrefix } from '../blockTypes';
 import { parseMarkdownTree } from '../markdownParser';
-import { insertParsedBlocks } from './utils';
+import { extractContent, insertParsedBlocks } from './utils';
 import { flattenSpecToMarkdown } from './hooks/outputSummaryHook';
+import { parseBracketedWikilink } from '../doorStdlib';
 import { findPage } from '../../hooks/useBacklinkNavigation';
 import { createLogger } from '../logger';
 
@@ -29,12 +30,12 @@ const logger = createLogger('echoCopy');
  * Supports [[wikilink]] form and bare hex prefix.
  */
 function extractBlockRef(content: string): string | null {
-  const after = content.replace(/^echoCopy::\s*/i, '').trim();
+  const after = extractContent(content, ['echoCopy::']);
   if (!after) return null;
 
-  // [[wikilink]] form
-  const wikiMatch = after.match(/^\[\[([^\]]+)\]\]/);
-  if (wikiMatch) return wikiMatch[1];
+  // [[wikilink]] form — bracket-counting parser handles nested [[inner]]
+  const wiki = parseBracketedWikilink(after, 0);
+  if (wiki) return wiki.target;
 
   // Bare hex prefix (6+ chars)
   if (/^[0-9a-f]{6,}/i.test(after)) return after.split(/\s/)[0];

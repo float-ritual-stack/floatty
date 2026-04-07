@@ -658,6 +658,12 @@ export const door = {
           if (title && executionNonces.get(blockId) === thisExecution) {
             setOutput(blockId, ctx, { ...out, title });
           }
+        }).finally(() => {
+          // Clean up nonce after title generation completes (or is skipped)
+          // to prevent unbounded Map growth over long sessions
+          if (executionNonces.get(blockId) === thisExecution) {
+            executionNonces.delete(blockId);
+          }
         });
       }
     };
