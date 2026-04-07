@@ -74,13 +74,124 @@ function extractRenderSummary(output: any): string | null {
 }
 
 /**
+ * Flatten a render spec into a markdown projection.
+ * Walks the element tree in document order (following children refs),
+ * extracting text content from each component type.
+ */
+function flattenSpecToMarkdown(output: any): string | null {
+  const data = output?.data;
+  const spec = data?.spec ?? output?.spec;
+  if (!spec?.elements || !spec?.root) return null;
+
+  const elements = spec.elements as Record<string, any>;
+  const lines: string[] = [];
+
+  // Title from data envelope
+  if (data?.title && typeof data.title === 'string' && !data.title.trimStart().startsWith('{')) {
+    lines.push(`# ${data.title}`, '');
+  }
+
+  function walk(key: string, depth: number): void {
+    const el = elements[key];
+    if (!el) return;
+
+    const p = el.props || {};
+
+    switch (el.type) {
+      case 'EntryHeader':
+        lines.push(`## ${p.title || ''}${p.date ? ` (${p.date})` : ''}${p.author ? ` — ${p.author}` : ''}`);
+        lines.push('');
+        break;
+      case 'MetadataHeader':
+        lines.push(`## ${p.title || ''}`);
+        lines.push('');
+        break;
+      case 'EntryBody':
+        if (p.markdown) lines.push(p.markdown, '');
+        break;
+      case 'Text':
+        if (p.content) lines.push(p.content);
+        break;
+      case 'PatternCard':
+        lines.push(`### ${p.title || 'Pattern'}${p.type ? ` [${p.type}]` : ''}${p.confidence ? ` (${p.confidence})` : ''}`);
+        if (p.content) lines.push('', p.content);
+        if (p.connectsTo?.length) lines.push('', `connects to: ${p.connectsTo.map((c: string) => `[[${c}]]`).join(', ')}`);
+        lines.push('');
+        break;
+      case 'QuoteBlock':
+        lines.push(`> ${p.text || ''}${p.attribution ? `\n> — ${p.attribution}` : ''}`);
+        lines.push('');
+        break;
+      case 'TuiStat':
+        lines.push(`- **${p.label}**: ${p.value}`);
+        break;
+      case 'Metric':
+        lines.push(`- **${p.label}**: ${p.value}`);
+        break;
+      case 'StatsBar':
+        if (p.stats?.length) {
+          for (const s of p.stats) lines.push(`- **${s.label}**: ${s.value}`);
+          lines.push('');
+        }
+        break;
+      case 'WikilinkChip':
+        lines.push(`- [[${p.target}]]${p.label ? ` ${p.label}` : ''}`);
+        break;
+      case 'BacklinksFooter':
+        if (p.inbound?.length) lines.push(`inbound: ${p.inbound.map((r: string) => `[[${r}]]`).join(', ')}`);
+        if (p.outbound?.length) lines.push(`outbound: ${p.outbound.map((r: string) => `[[${r}]]`).join(', ')}`);
+        lines.push('');
+        break;
+      case 'Code':
+        if (p.content) lines.push('```', p.content, '```', '');
+        break;
+      case 'NavBrand':
+        // Skip nav chrome
+        break;
+      case 'NavSection':
+      case 'NavItem':
+      case 'NavFooter':
+        // Skip nav chrome
+        break;
+      case 'Divider':
+        lines.push('---', '');
+        break;
+      // Layout containers — just recurse children
+      default:
+        break;
+    }
+
+    // Recurse children
+    if (Array.isArray(el.children)) {
+      for (const childKey of el.children) {
+        walk(childKey, depth + 1);
+      }
+    }
+  }
+
+  walk(spec.root, 0);
+
+  const result = lines.join('\n').trim();
+  return result.length > 0 ? result : null;
+}
+
+/**
  * Extract summary from any block output based on outputType.
  */
 function extractSummary(output: any, outputType: string): string | null {
   if (outputType === 'door') {
     return extractRenderSummary(output);
   }
-  // Future: handle search-results, eval-result, etc.
+  return null;
+}
+
+/**
+ * Extract rendered markdown from any block output based on outputType.
+ */
+function extractRenderedMarkdown(output: any, outputType: string): string | null {
+  if (outputType === 'door') {
+    return flattenSpecToMarkdown(output);
+  }
   return null;
 }
 
@@ -105,19 +216,23 @@ function handleBlockEvent(envelope: EventEnvelope): void {
     const output = block.output;
 
     if (!outputType || !output) {
-      // Output was cleared — remove summary if it existed
-      if (block.metadata?.summary) {
+      // Output was cleared — remove summary + rendered if they existed
+      if (block.metadata?.summary || block.metadata?.renderedMarkdown) {
         blockStore.updateBlockMetadata(block.id, {
           summary: undefined,
+          renderedMarkdown: undefined,
         }, 'hook');
       }
       continue;
     }
 
     const summary = extractSummary(output, outputType);
+    const rendered = extractRenderedMarkdown(output, outputType);
 
-    // Skip if summary unchanged
-    if (summary === (block.metadata?.summary ?? null)) continue;
+    const summaryChanged = summary !== (block.metadata?.summary ?? null);
+    const renderedChanged = rendered !== (block.metadata?.renderedMarkdown ?? null);
+
+    if (!summaryChanged && !renderedChanged) continue;
 
     if (summary) {
       logger.debug('Extracted summary', {
@@ -128,6 +243,7 @@ function handleBlockEvent(envelope: EventEnvelope): void {
 
     blockStore.updateBlockMetadata(block.id, {
       summary: summary ?? undefined,
+      renderedMarkdown: rendered ?? undefined,
       extractedAt: Date.now(),
     }, 'hook');
   }
@@ -149,14 +265,24 @@ function backfillExistingSummaries(): void {
 
   for (const block of Object.values(blocks)) {
     if (!block.outputType || !block.output) continue;
-    if (block.metadata?.summary) continue;  // Already has summary
+    const hasSummary = !!block.metadata?.summary;
+    const hasRendered = !!block.metadata?.renderedMarkdown;
+    if (hasSummary && hasRendered) continue;
 
-    const summary = extractSummary(block.output, block.outputType);
-    if (summary) {
-      blockStore.updateBlockMetadata(block.id, {
-        summary,
-        extractedAt: Date.now(),
-      }, 'hook');
+    const updates: Record<string, unknown> = { extractedAt: Date.now() };
+    let changed = false;
+
+    if (!hasSummary) {
+      const summary = extractSummary(block.output, block.outputType);
+      if (summary) { updates.summary = summary; changed = true; }
+    }
+    if (!hasRendered) {
+      const rendered = extractRenderedMarkdown(block.output, block.outputType);
+      if (rendered) { updates.renderedMarkdown = rendered; changed = true; }
+    }
+
+    if (changed) {
+      blockStore.updateBlockMetadata(block.id, updates, 'hook');
       count++;
     }
   }
