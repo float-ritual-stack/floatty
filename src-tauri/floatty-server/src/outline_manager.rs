@@ -54,13 +54,15 @@ impl OutlineContext {
     pub fn flush(&self) {
         if let Some(hs) = self.hook_system.get() {
             if let Some(writer) = hs.writer_handle() {
-                let _ = writer.try_send_commit();
+                if let Err(e) = writer.try_send_commit() {
+                    warn!("Flush failed for outline '{}': {:?}", self.name, e);
+                }
             }
         }
     }
 
     /// Create a context for the default outline with pre-initialized hooks.
-    fn new_default(store: Arc<YDocStore>, hook_system: Arc<HookSystem>, broadcaster: Arc<WsBroadcaster>, search_index_path: Option<PathBuf>) -> Self {
+    pub fn new_default(store: Arc<YDocStore>, hook_system: Arc<HookSystem>, broadcaster: Arc<WsBroadcaster>, search_index_path: Option<PathBuf>) -> Self {
         let lock = OnceLock::new();
         let _ = lock.set(hook_system);
         Self {
@@ -100,22 +102,9 @@ pub struct OutlineManager {
 
 impl OutlineManager {
     /// Create a new manager with a pre-initialized default context.
-    pub fn new_with_default(
-        data_dir: &Path,
-        default_store: Arc<YDocStore>,
-        hook_system: Arc<HookSystem>,
-        broadcaster: Arc<WsBroadcaster>,
-    ) -> Self {
+    pub fn new_with_default(data_dir: &Path, default_context: Arc<OutlineContext>) -> Self {
         let outlines_dir = data_dir.join("outlines");
         let default_db_path = data_dir.join("ctx_markers.db");
-        let search_index_path = data_dir.join("search_index");
-
-        let default_context = Arc::new(OutlineContext::new_default(
-            default_store,
-            hook_system,
-            broadcaster,
-            Some(search_index_path),
-        ));
 
         let mut contexts = HashMap::new();
         contexts.insert("default".to_string(), Arc::clone(&default_context));
@@ -180,7 +169,7 @@ impl OutlineManager {
         }
 
         let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
-        let search_path = self.outlines_dir.join(format!("{}.tantivy", name));
+        let search_path = self.search_index_path(&name);
         let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
         contexts.insert(name.as_str().to_string(), Arc::clone(&ctx));
 
@@ -252,7 +241,7 @@ impl OutlineManager {
         }
 
         let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
-        let search_path = self.outlines_dir.join(format!("{}.tantivy", name));
+        let search_path = self.search_index_path(&name);
         let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
         contexts.insert(name.as_str().to_string(), ctx);
 
@@ -261,11 +250,18 @@ impl OutlineManager {
         OutlineInfo::from_path(name.as_str(), &db_path).map_err(OutlineError::Io)
     }
 
-    /// Delete an outline. Deletes files first, then removes from cache.
+    /// Delete an outline. Flushes pending writes, deletes files, then removes from cache.
     pub fn delete_outline(&self, name: &OutlineName) -> Result<(), OutlineError> {
         let db_path = self.outline_path(name);
         if !db_path.exists() {
             return Err(OutlineError::NotFound(name.to_string()));
+        }
+
+        // Flush pending search writes before deletion
+        if let Ok(contexts) = self.contexts.read() {
+            if let Some(ctx) = contexts.get(name.as_str()) {
+                ctx.flush();
+            }
         }
 
         std::fs::remove_file(&db_path)?;
@@ -298,6 +294,10 @@ impl OutlineManager {
 
     fn outline_path(&self, name: &OutlineName) -> PathBuf {
         self.outlines_dir.join(format!("{}.sqlite", name))
+    }
+
+    fn search_index_path(&self, name: &OutlineName) -> PathBuf {
+        self.outlines_dir.join(format!("{}.tantivy", name))
     }
 }
 

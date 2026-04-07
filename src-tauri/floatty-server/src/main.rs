@@ -145,12 +145,14 @@ async fn main() {
     };
 
     // Create outline manager for multi-outline support
-    let outline_manager = Arc::new(OutlineManager::new_with_default(
-        &floatty_server::config::data_dir(),
+    let data_dir = floatty_server::config::data_dir();
+    let default_context = Arc::new(floatty_server::OutlineContext::new_default(
         Arc::clone(&store),
         Arc::clone(&hook_system),
         Arc::clone(&broadcaster),
+        Some(data_dir.join("search_index")),
     ));
+    let outline_manager = Arc::new(OutlineManager::new_with_default(&data_dir, default_context));
     tracing::info!("Outline manager initialized");
 
     // CORS layer - allow requests from Tauri webview (localhost origins)

@@ -4414,7 +4414,10 @@ mod tests {
     use tower::{Service, ServiceExt};
 
     fn test_outline_manager(dir: &std::path::Path, store: &Arc<YDocStore>, hook_system: &Arc<floatty_core::HookSystem>, broadcaster: &Arc<crate::WsBroadcaster>) -> Arc<crate::OutlineManager> {
-        Arc::new(crate::OutlineManager::new_with_default(dir, Arc::clone(store), Arc::clone(hook_system), Arc::clone(broadcaster)))
+        let ctx = Arc::new(crate::OutlineContext::new_default(
+            Arc::clone(store), Arc::clone(hook_system), Arc::clone(broadcaster), None,
+        ));
+        Arc::new(crate::OutlineManager::new_with_default(dir, ctx))
     }
 
     fn test_app() -> (Router, tempfile::TempDir, Arc<YDocStore>) {
@@ -4423,12 +4426,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let outline_manager = Arc::new(crate::OutlineManager::new_with_default(
-            dir.path(),
-            Arc::clone(&store),
-            Arc::clone(&hook_system),
-            Arc::clone(&broadcaster),
-        ));
+        let outline_manager = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let router = create_router(Arc::clone(&store), broadcaster, hook_system, None, outline_manager);
         (router, dir, store)
     }

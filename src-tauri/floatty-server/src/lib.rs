@@ -23,5 +23,5 @@ pub use api::create_router;
 pub use auth::ApiKeyAuth;
 pub use backup::{BackupDaemon, BackupInfo, DaemonStatus};
 pub use config::{BackupConfig, ServerConfig};
-pub use outline_manager::OutlineManager;
+pub use outline_manager::{OutlineContext, OutlineManager};
 pub use ws::{start_heartbeat, WsBroadcaster};
