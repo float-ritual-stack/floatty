@@ -103,13 +103,9 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     TabNav,
   },
   actions: {
-    selectEntry: async () => {},
-    filterTag: async () => {},
-    goBack: async () => {},
     navigate: async () => {},
     createChild: async () => {},
     upsertChild: async () => {},
-    scrollTo: async () => {},
   },
 });
 

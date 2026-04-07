@@ -2,7 +2,7 @@
  * render:: door catalog — Zod schema catalog for @json-render/solid
  *
  * Defines the component vocabulary that LLMs and specs target.
- * 37 components + 7 actions. Single source of truth for both
+ * 44 components + 3 actions. Single source of truth for both
  * prompt generation (catalog.prompt()) and runtime rendering.
  */
 
@@ -24,9 +24,7 @@ export const bbsCatalog = schema.createCatalog({
   components: {
     // ─── Layout ───────────────────────────────────────────
     DocLayout: {
-      props: z.object({
-        sidebarWidth: z.number().optional(),
-      }),
+      props: z.object({}),
       slots: ['sidebar', 'main'],
       description: 'Two-column layout: fixed sidebar + scrollable main content area',
     },
@@ -478,18 +476,6 @@ export const bbsCatalog = schema.createCatalog({
   },
 
   actions: {
-    selectEntry: {
-      params: z.object({ id: z.string() }),
-      description: 'Navigate to an entry by ID',
-    },
-    filterTag: {
-      params: z.object({ tag: z.string() }),
-      description: 'Filter entries by tag',
-    },
-    goBack: {
-      params: z.object({}),
-      description: 'Navigate back in history',
-    },
     navigate: {
       params: z.object({ target: z.string() }),
       description: 'Navigate to a page or block in the outline',
@@ -501,10 +487,6 @@ export const bbsCatalog = schema.createCatalog({
     upsertChild: {
       params: z.object({ content: z.string(), match: z.string().optional(), prefix: z.string().optional() }),
       description: 'Find or create a child block by prefix match ("match" or "prefix" param). Updates content if found, creates if not.',
-    },
-    scrollTo: {
-      params: z.object({ id: z.string() }),
-      description: 'Smooth scroll to a section by ID',
     },
   },
 });

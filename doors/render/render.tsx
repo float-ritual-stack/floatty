@@ -112,15 +112,7 @@ const RENDER_TOOL_SCHEMA = {
         additionalProperties: {
           type: 'object' as const,
           properties: {
-            type: { type: 'string' as const, enum: [
-              'DocLayout', 'NavBrand', 'NavSection', 'NavItem', 'NavFooter',
-              'EntryHeader', 'EntryBody', 'Ellipsis',
-              'TagBar', 'TagChip', 'RefSection', 'RefCard', 'Breadcrumb',
-              'Stack', 'Text', 'Divider',
-              'TuiPanel', 'TuiStat', 'BarChart', 'BarItem',
-              'DataBlock', 'ShippedItem', 'WikilinkChip', 'BacklinksFooter', 'PatternCard',
-              'Card', 'Metric', 'Button', 'Code',
-            ] },
+            type: { type: 'string' as const, enum: bbsCatalog.componentNames },
             props: { type: 'object' as const },
             children: { type: 'array' as const, items: { type: 'string' as const } },
           },
@@ -431,8 +423,12 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   }
 
   let jsonStr = raw.trim();
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) jsonStr = fenceMatch[1].trim();
+
+  // Prefer the last fenced JSON block (agent may emit explanation before the spec)
+  const fenceMatches = [...jsonStr.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  if (fenceMatches.length > 0) {
+    jsonStr = fenceMatches[fenceMatches.length - 1][1].trim();
+  }
 
   const start = jsonStr.indexOf('{');
   const end = jsonStr.lastIndexOf('}');
@@ -629,11 +625,14 @@ function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: stri
   ctx.actions.setBlockStatus(blockId, error ? 'error' : 'complete');
 }
 
+let executionNonce = 0;
+
 export const door = {
   kind: 'view' as const,
   prefixes: ['render::'],
 
   async execute(blockId: string, content: string, ctx: any) {
+    const thisExecution = ++executionNonce;
     ctx.actions.setBlockStatus(blockId, 'running');
     const raw = content.replace(/^render::\s*/i, '').trim();
     const explicitTitle = extractTitle(raw);
@@ -646,7 +645,7 @@ export const door = {
 
       if (!explicitTitle && !out.title && !error && out.spec) {
         generateTitle(content, ctx).then(title => {
-          if (title) {
+          if (title && executionNonce === thisExecution) {
             setOutput(blockId, ctx, { ...out, title });
           }
         });

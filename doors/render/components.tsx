@@ -8,7 +8,7 @@
  * Wikilink navigation via chirp CustomEvent bubbling to BlockItem.
  */
 
-import { Show, For, createSignal, createMemo } from 'solid-js';
+import { Show, For, createSignal, createMemo, onMount } from 'solid-js';
 import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
@@ -161,7 +161,7 @@ function renderMarkdown(text: string): string {
 // LAYOUT
 // ═══════════════════════════════════════════════════════════════
 
-export function DocLayout(props: BaseComponentProps<{ sidebarWidth?: number }>) {
+export function DocLayout(props: BaseComponentProps<Record<string, never>>) {
   return (
     <div style={{
       display: 'flex',
@@ -633,8 +633,8 @@ export function TextInput(props: BaseComponentProps<{ label?: string; placeholde
           'font-family': V.mono,
           outline: 'none',
         }}
-        onfocus={(e) => { (e.target as HTMLInputElement).style.borderColor = V.cy; }}
-        onblur={(e) => { (e.target as HTMLInputElement).style.borderColor = V.b2; }}
+        onFocus={(e) => { (e.target as HTMLInputElement).style.borderColor = V.cy; }}
+        onBlur={(e) => { (e.target as HTMLInputElement).style.borderColor = V.b2; }}
       />
     </div>
   );
@@ -665,8 +665,8 @@ export function TextArea(props: BaseComponentProps<{ label?: string; placeholder
           outline: 'none',
           resize: 'vertical',
         }}
-        onfocus={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.cy; }}
-        onblur={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.b2; }}
+        onFocus={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.cy; }}
+        onBlur={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.b2; }}
       />
     </div>
   );
@@ -773,8 +773,7 @@ export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?:
     barsRef.style.setProperty('--bar-chart-max', String(max));
   };
 
-  // Use requestAnimationFrame to ensure children have rendered
-  setTimeout(computeMax, 0);
+  onMount(computeMax);
 
   return (
     <div>
@@ -826,8 +825,8 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
     const pct = Math.min(100, (numValue() / max) * 100);
     barRef.style.height = `${pct}%`;
   };
-  // Re-compute after parent BarChart sets --bar-chart-max (setTimeout 0 + 16ms)
-  setTimeout(computeHeight, 16);
+  // Compute after parent BarChart sets --bar-chart-max via onMount
+  onMount(computeHeight);
   return (
     <div ref={containerRef} data-bar-value={numValue()} style={{
       display: 'flex',
