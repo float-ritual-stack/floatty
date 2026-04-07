@@ -9,7 +9,8 @@ use std::sync::LazyLock;
 use std::time::SystemTime;
 use thiserror::Error;
 
-/// Regex: lowercase alphanumeric + hyphens, 1-63 chars, starts with alphanumeric, no trailing hyphen.
+/// Regex: lowercase alphanumeric + hyphens, 1-63 chars, starts with alphanumeric.
+/// Note: trailing hyphen is rejected by a separate ends_with('-') check in OutlineName::new().
 static NAME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9-]{0,62}$").unwrap());
 

@@ -101,10 +101,8 @@ impl HookSystem {
         registry.register(page_name_index_hook.clone());
 
         // Initialize search infrastructure (skip if no path provided)
-        let (index_manager, writer_handle, commit_handle) =
-            match search_index_path.map(|path| {
-                Self::initialize_search_at(&registry, Arc::clone(&inheritance_index), path)
-            }).unwrap_or(Err(SearchError::NoIndexDir)) {
+        let (index_manager, writer_handle, commit_handle) = if let Some(path) = search_index_path {
+            match Self::initialize_search_at(&registry, Arc::clone(&inheritance_index), path) {
                 Ok((im, wh, ch)) => (Some(im), Some(wh), Some(ch)),
                 Err(e) => {
                     warn!(
@@ -113,7 +111,11 @@ impl HookSystem {
                     );
                     (None, None, None)
                 }
-            };
+            }
+        } else {
+            info!("Search index path not configured, skipping search initialization");
+            (None, None, None)
+        };
 
         let hook_count = registry.len();
         info!("Registered {} hooks", hook_count);
