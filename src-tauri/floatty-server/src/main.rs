@@ -144,10 +144,12 @@ async fn main() {
         None
     };
 
-    // Create outline manager for multi-outline support (Phase 1)
+    // Create outline manager for multi-outline support
     let outline_manager = Arc::new(OutlineManager::new_with_default(
         &floatty_server::config::data_dir(),
         Arc::clone(&store),
+        Arc::clone(&hook_system),
+        Arc::clone(&broadcaster),
     ));
     tracing::info!("Outline manager initialized");
 

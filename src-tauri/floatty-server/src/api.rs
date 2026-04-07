@@ -4413,8 +4413,8 @@ mod tests {
     use tempfile::tempdir;
     use tower::{Service, ServiceExt};
 
-    fn test_outline_manager(dir: &std::path::Path, store: &Arc<YDocStore>) -> Arc<crate::OutlineManager> {
-        Arc::new(crate::OutlineManager::new_with_default(dir, Arc::clone(store)))
+    fn test_outline_manager(dir: &std::path::Path, store: &Arc<YDocStore>, hook_system: &Arc<floatty_core::HookSystem>, broadcaster: &Arc<crate::WsBroadcaster>) -> Arc<crate::OutlineManager> {
+        Arc::new(crate::OutlineManager::new_with_default(dir, Arc::clone(store), Arc::clone(hook_system), Arc::clone(broadcaster)))
     }
 
     fn test_app() -> (Router, tempfile::TempDir, Arc<YDocStore>) {
@@ -4426,6 +4426,8 @@ mod tests {
         let outline_manager = Arc::new(crate::OutlineManager::new_with_default(
             dir.path(),
             Arc::clone(&store),
+            Arc::clone(&hook_system),
+            Arc::clone(&broadcaster),
         ));
         let router = create_router(Arc::clone(&store), broadcaster, hook_system, None, outline_manager);
         (router, dir, store)
@@ -4546,7 +4548,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create parent
@@ -4627,7 +4629,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create block
@@ -4787,7 +4789,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let router = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
         let mut app = router.into_service();
 
@@ -4851,7 +4853,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create parent A
@@ -4950,7 +4952,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create parent
@@ -5033,7 +5035,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create two root blocks
@@ -5152,7 +5154,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create parent -> child hierarchy
@@ -5205,7 +5207,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create a block first
@@ -5250,7 +5252,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create a block first
@@ -5305,7 +5307,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create some updates via API (creates blocks which generate Y.Doc updates)
@@ -5357,7 +5359,7 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store);
+        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
         let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create initial updates

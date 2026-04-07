@@ -11,86 +11,167 @@
 //! - No rename. Deferred to Phase 2.
 //! - macOS/Linux only — Windows-reserved names not checked.
 
+use floatty_core::hooks::HookSystem;
 use floatty_core::outline::{OutlineError, OutlineInfo, OutlineName};
 use floatty_core::YDocStore;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, OnceLock, RwLock};
 use tracing::{info, warn};
+
+use crate::WsBroadcaster;
 
 /// Maximum number of loaded outlines before logging a warning.
 const MAX_LOADED_WARNING: usize = 20;
 
-/// Manages a cache of YDocStore instances, one per outline.
+/// Per-outline runtime context: store + lazy hooks + broadcaster.
+///
+/// For "default": hooks are pre-initialized from main.rs.
+/// For non-default: hooks initialize lazily on first mutation via OnceLock.
+pub struct OutlineContext {
+    pub name: String,
+    pub store: Arc<YDocStore>,
+    hook_system: OnceLock<Arc<HookSystem>>,
+    pub broadcaster: Arc<WsBroadcaster>,
+    pub active_connections: AtomicUsize,
+    search_index_path: Option<PathBuf>,
+}
+
+impl OutlineContext {
+    /// Get or initialize the hook system. First call triggers cold-start rehydration.
+    pub fn hook_system(&self) -> &Arc<HookSystem> {
+        self.hook_system.get_or_init(|| {
+            info!("Initializing hook system for outline '{}'", self.name);
+            Arc::new(HookSystem::initialize_at(
+                Arc::clone(&self.store),
+                self.search_index_path.clone(),
+            ))
+        })
+    }
+
+    /// Best-effort flush before eviction. No-op if hooks never initialized.
+    pub fn flush(&self) {
+        if let Some(hs) = self.hook_system.get() {
+            if let Some(writer) = hs.writer_handle() {
+                let _ = writer.try_send_commit();
+            }
+        }
+    }
+
+    /// Create a context for the default outline with pre-initialized hooks.
+    fn new_default(store: Arc<YDocStore>, hook_system: Arc<HookSystem>, broadcaster: Arc<WsBroadcaster>, search_index_path: Option<PathBuf>) -> Self {
+        let lock = OnceLock::new();
+        let _ = lock.set(hook_system);
+        Self {
+            name: "default".to_string(),
+            store,
+            hook_system: lock,
+            broadcaster,
+            active_connections: AtomicUsize::new(0),
+            search_index_path,
+        }
+    }
+
+    /// Create a context for a non-default outline with lazy hooks.
+    fn new_outline(name: &str, store: Arc<YDocStore>, search_index_path: Option<PathBuf>) -> Self {
+        Self {
+            name: name.to_string(),
+            store,
+            hook_system: OnceLock::new(),
+            broadcaster: Arc::new(WsBroadcaster::new(256)),
+            active_connections: AtomicUsize::new(0),
+            search_index_path,
+        }
+    }
+}
+
+/// Manages a cache of OutlineContext instances, one per outline.
 pub struct OutlineManager {
-    /// Cached stores keyed by outline name. "default" is pre-populated.
-    stores: RwLock<HashMap<String, Arc<YDocStore>>>,
+    /// Cached contexts keyed by outline name. "default" is pre-populated.
+    contexts: RwLock<HashMap<String, Arc<OutlineContext>>>,
     /// Directory for outline `.sqlite` files.
     outlines_dir: PathBuf,
-    /// The legacy default store, shared with AppState.store.
-    default_store: Arc<YDocStore>,
+    /// The default context (shared with legacy routes).
+    default_context: Arc<OutlineContext>,
     /// Path to legacy default DB (for OutlineInfo).
     default_db_path: PathBuf,
 }
 
 impl OutlineManager {
-    /// Create a new manager. The default_store is the same Arc used by legacy routes.
-    pub fn new_with_default(data_dir: &Path, default_store: Arc<YDocStore>) -> Self {
+    /// Create a new manager with a pre-initialized default context.
+    pub fn new_with_default(
+        data_dir: &Path,
+        default_store: Arc<YDocStore>,
+        hook_system: Arc<HookSystem>,
+        broadcaster: Arc<WsBroadcaster>,
+    ) -> Self {
         let outlines_dir = data_dir.join("outlines");
         let default_db_path = data_dir.join("ctx_markers.db");
+        let search_index_path = data_dir.join("search_index");
 
-        let mut stores = HashMap::new();
-        stores.insert("default".to_string(), Arc::clone(&default_store));
+        let default_context = Arc::new(OutlineContext::new_default(
+            default_store,
+            hook_system,
+            broadcaster,
+            Some(search_index_path),
+        ));
+
+        let mut contexts = HashMap::new();
+        contexts.insert("default".to_string(), Arc::clone(&default_context));
 
         Self {
-            stores: RwLock::new(stores),
+            contexts: RwLock::new(contexts),
             outlines_dir,
-            default_store,
+            default_context,
             default_db_path,
         }
     }
 
-    /// Get the store for the default outline.
-    pub fn default_store(&self) -> Arc<YDocStore> {
-        Arc::clone(&self.default_store)
+    /// Get the default context (convenience for legacy routes).
+    pub fn default_context(&self) -> Arc<OutlineContext> {
+        Arc::clone(&self.default_context)
     }
 
-    /// Resolve a store by name. "default" returns the legacy store.
-    /// Non-default outlines are lazily opened on first access.
-    pub fn get_or_default(&self, name: &str) -> Result<Arc<YDocStore>, OutlineError> {
+    /// Get the default store (convenience for code that only needs YDocStore).
+    pub fn default_store(&self) -> Arc<YDocStore> {
+        Arc::clone(&self.default_context.store)
+    }
+
+    /// Resolve a context by name. "default" returns the legacy context.
+    pub fn get_context(&self, name: &str) -> Result<Arc<OutlineContext>, OutlineError> {
         if name == "default" {
-            return Ok(self.default_store());
+            return Ok(self.default_context());
         }
         let validated = OutlineName::new(name)?;
-        self.get_store(&validated)
+        self.get_outline_context(&validated)
     }
 
-    /// Get or open a store for a validated outline name.
-    pub fn get_store(&self, name: &OutlineName) -> Result<Arc<YDocStore>, OutlineError> {
+    /// Get or open a context for a validated outline name.
+    fn get_outline_context(&self, name: &OutlineName) -> Result<Arc<OutlineContext>, OutlineError> {
         // Fast path: read lock cache hit
         {
-            let stores = self.stores.read().map_err(|_| {
+            let contexts = self.contexts.read().map_err(|_| {
                 OutlineError::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "lock poisoned",
                 ))
             })?;
-            if let Some(store) = stores.get(name.as_str()) {
-                return Ok(Arc::clone(store));
+            if let Some(ctx) = contexts.get(name.as_str()) {
+                return Ok(Arc::clone(ctx));
             }
         }
 
         // Slow path: write lock, double-check, open
-        let mut stores = self.stores.write().map_err(|_| {
+        let mut contexts = self.contexts.write().map_err(|_| {
             OutlineError::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "lock poisoned",
             ))
         })?;
 
-        // Double-check after acquiring write lock
-        if let Some(store) = stores.get(name.as_str()) {
-            return Ok(Arc::clone(store));
+        if let Some(ctx) = contexts.get(name.as_str()) {
+            return Ok(Arc::clone(ctx));
         }
 
         let db_path = self.outline_path(name);
@@ -99,9 +180,11 @@ impl OutlineManager {
         }
 
         let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
-        stores.insert(name.as_str().to_string(), Arc::clone(&store));
+        let search_path = self.outlines_dir.join(format!("{}.tantivy", name));
+        let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
+        contexts.insert(name.as_str().to_string(), Arc::clone(&ctx));
 
-        let count = stores.len();
+        let count = contexts.len();
         if count > MAX_LOADED_WARNING {
             warn!(
                 "OutlineManager: {} outlines loaded (exceeds {} warning threshold)",
@@ -110,7 +193,12 @@ impl OutlineManager {
         }
         info!("Opened outline '{}' from {:?}", name, db_path);
 
-        Ok(store)
+        Ok(ctx)
+    }
+
+    /// Backward-compat: resolve a store by name (for Phase 1 sync handlers).
+    pub fn get_or_default(&self, name: &str) -> Result<Arc<YDocStore>, OutlineError> {
+        Ok(Arc::clone(&self.get_context(name)?.store))
     }
 
     /// List all available outlines.
@@ -152,24 +240,24 @@ impl OutlineManager {
 
         let db_path = self.outline_path(name);
 
-        let mut stores = self.stores.write().map_err(|_| {
+        let mut contexts = self.contexts.write().map_err(|_| {
             OutlineError::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "lock poisoned",
             ))
         })?;
 
-        // Check both cache and filesystem inside lock (TOCTOU prevention)
-        if stores.contains_key(name.as_str()) || db_path.exists() {
+        if contexts.contains_key(name.as_str()) || db_path.exists() {
             return Err(OutlineError::AlreadyExists(name.to_string()));
         }
 
-        // Open creates the SQLite file and schema
         let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
-        stores.insert(name.as_str().to_string(), store);
+        let search_path = self.outlines_dir.join(format!("{}.tantivy", name));
+        let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
+        contexts.insert(name.as_str().to_string(), ctx);
 
         info!("Created outline '{}' at {:?}", name, db_path);
-        drop(stores); // Release lock before filesystem stat
+        drop(contexts);
         OutlineInfo::from_path(name.as_str(), &db_path).map_err(OutlineError::Io)
     }
 
@@ -180,7 +268,6 @@ impl OutlineManager {
             return Err(OutlineError::NotFound(name.to_string()));
         }
 
-        // Delete files first — if this fails, cache stays consistent
         std::fs::remove_file(&db_path)?;
         let wal = db_path.with_extension("sqlite-wal");
         let shm = db_path.with_extension("sqlite-shm");
@@ -195,15 +282,14 @@ impl OutlineManager {
             }
         }
 
-        // Remove from cache after successful file deletion
         {
-            let mut stores = self.stores.write().map_err(|_| {
+            let mut contexts = self.contexts.write().map_err(|_| {
                 OutlineError::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "lock poisoned",
                 ))
             })?;
-            stores.remove(name.as_str());
+            contexts.remove(name.as_str());
         }
 
         info!("Deleted outline '{}' at {:?}", name, db_path);
@@ -219,17 +305,39 @@ impl OutlineManager {
 mod tests {
     use super::*;
 
-    fn setup() -> (tempfile::TempDir, Arc<YDocStore>) {
+    /// Test helper: creates OutlineManager with minimal default context (no Tokio runtime needed).
+    fn setup_mgr() -> (tempfile::TempDir, OutlineManager) {
         let dir = tempfile::TempDir::new().unwrap();
         let db_path = dir.path().join("ctx_markers.db");
         let store = Arc::new(YDocStore::open(&db_path, "default").unwrap());
-        (dir, store)
+        let broadcaster = Arc::new(WsBroadcaster::new(64));
+
+        // Create default context WITHOUT HookSystem (avoids Tokio runtime requirement).
+        // Manager lifecycle tests only need store + cache behavior, not hooks.
+        let default_context = Arc::new(OutlineContext {
+            name: "default".to_string(),
+            store,
+            hook_system: OnceLock::new(), // Not initialized — tests don't trigger hooks
+            broadcaster,
+            active_connections: AtomicUsize::new(0),
+            search_index_path: None,
+        });
+
+        let mut contexts = HashMap::new();
+        contexts.insert("default".to_string(), Arc::clone(&default_context));
+
+        let mgr = OutlineManager {
+            contexts: RwLock::new(contexts),
+            outlines_dir: dir.path().join("outlines"),
+            default_context,
+            default_db_path: db_path,
+        };
+        (dir, mgr)
     }
 
     #[test]
     fn list_shows_default() {
-        let (dir, store) = setup();
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
+        let (_dir, mgr) = setup_mgr();
         let list = mgr.list_outlines().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "default");
@@ -237,10 +345,8 @@ mod tests {
 
     #[test]
     fn create_and_list() {
-        let (dir, store) = setup();
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
+        let (_dir, mgr) = setup_mgr();
         let name = OutlineName::new("travel-plans").unwrap();
-
         mgr.create_outline(&name).unwrap();
 
         let list = mgr.list_outlines().unwrap();
@@ -251,81 +357,67 @@ mod tests {
 
     #[test]
     fn create_duplicate_fails() {
-        let (dir, store) = setup();
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
+        let (_dir, mgr) = setup_mgr();
         let name = OutlineName::new("test").unwrap();
-
         mgr.create_outline(&name).unwrap();
         let result = mgr.create_outline(&name);
         assert!(matches!(result, Err(OutlineError::AlreadyExists(_))));
     }
 
     #[test]
-    fn get_store_cached() {
-        let (dir, store) = setup();
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
+    fn get_context_cached() {
+        let (_dir, mgr) = setup_mgr();
         let name = OutlineName::new("cached-test").unwrap();
-
         mgr.create_outline(&name).unwrap();
 
-        let s1 = mgr.get_store(&name).unwrap();
-        let s2 = mgr.get_store(&name).unwrap();
-        assert!(Arc::ptr_eq(&s1, &s2));
+        let c1 = mgr.get_outline_context(&name).unwrap();
+        let c2 = mgr.get_outline_context(&name).unwrap();
+        assert!(Arc::ptr_eq(&c1, &c2));
     }
 
     #[test]
-    fn get_or_default_returns_default() {
-        let (dir, store) = setup();
-        let default_ptr = Arc::as_ptr(&store);
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
-
-        let resolved = mgr.get_or_default("default").unwrap();
-        assert_eq!(Arc::as_ptr(&resolved), default_ptr);
+    fn get_context_default() {
+        let (_dir, mgr) = setup_mgr();
+        let ctx = mgr.get_context("default").unwrap();
+        assert_eq!(ctx.name, "default");
+        // Same Arc as default_context
+        assert!(Arc::ptr_eq(&ctx, &mgr.default_context()));
     }
 
     #[test]
     fn get_nonexistent_fails() {
-        let (dir, store) = setup();
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
+        let (_dir, mgr) = setup_mgr();
         let name = OutlineName::new("nope").unwrap();
-
-        let result = mgr.get_store(&name);
+        let result = mgr.get_outline_context(&name);
         assert!(matches!(result, Err(OutlineError::NotFound(_))));
     }
 
     #[test]
     fn delete_removes_file_and_cache() {
-        let (dir, store) = setup();
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
+        let (dir, mgr) = setup_mgr();
         let name = OutlineName::new("to-delete").unwrap();
-
         mgr.create_outline(&name).unwrap();
         assert!(dir.path().join("outlines/to-delete.sqlite").exists());
 
         mgr.delete_outline(&name).unwrap();
         assert!(!dir.path().join("outlines/to-delete.sqlite").exists());
 
-        // Should be gone from cache
-        let result = mgr.get_store(&name);
+        let result = mgr.get_outline_context(&name);
         assert!(matches!(result, Err(OutlineError::NotFound(_))));
     }
 
     #[test]
     fn delete_nonexistent_fails() {
-        let (dir, store) = setup();
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
+        let (_dir, mgr) = setup_mgr();
         let name = OutlineName::new("ghost").unwrap();
-
         let result = mgr.delete_outline(&name);
         assert!(matches!(result, Err(OutlineError::NotFound(_))));
     }
 
     #[test]
     fn recreate_after_delete() {
-        let (dir, store) = setup();
-        let mgr = OutlineManager::new_with_default(dir.path(), store);
+        let (_dir, mgr) = setup_mgr();
         let name = OutlineName::new("phoenix").unwrap();
-
         mgr.create_outline(&name).unwrap();
         mgr.delete_outline(&name).unwrap();
         mgr.create_outline(&name).unwrap();
