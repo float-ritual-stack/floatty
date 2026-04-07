@@ -31,7 +31,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{DateTime, Utc};
-use floatty_core::{events::BlockChange, HookSystem, InheritanceIndex, Origin, PageNameIndex, SearchFilters, SearchService, YDocStore};
+use floatty_core::{events::BlockChange, HookSystem, InheritanceIndex, Origin, OutlineInfo, OutlineName, PageNameIndex, SearchFilters, SearchService, YDocStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashSet;
@@ -40,6 +40,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
+use crate::OutlineManager;
 use crate::WsBroadcaster;
 
 /// Extract metadata from Y.Doc block, handling multiple formats:
@@ -126,6 +127,8 @@ pub struct AppState {
     pub hook_system: Arc<HookSystem>,
     /// Backup daemon (optional - only present if backups enabled)
     pub backup_daemon: Option<Arc<BackupDaemon>>,
+    /// Multi-outline manager (Phase 1: server-side only)
+    pub outline_manager: Arc<OutlineManager>,
 }
 
 /// Health check response
@@ -525,10 +528,11 @@ pub fn create_router(
     broadcaster: Arc<WsBroadcaster>,
     hook_system: Arc<HookSystem>,
     backup_daemon: Option<Arc<BackupDaemon>>,
+    outline_manager: Arc<OutlineManager>,
 ) -> Router {
     let page_name_index = hook_system.page_name_index();
     let inheritance_index = hook_system.inheritance_index();
-    let state = AppState { store, broadcaster, page_name_index, inheritance_index, hook_system, backup_daemon };
+    let state = AppState { store, broadcaster, page_name_index, inheritance_index, hook_system, backup_daemon, outline_manager };
 
     Router::new()
         // Core sync endpoints
@@ -574,6 +578,24 @@ pub fn create_router(
         .route("/api/v1/daily/:date", get(get_daily_note))
         // Attachments — static file serving from {data_dir}/__attachments/
         .route("/api/v1/attachments/:filename", get(get_attachment))
+        // Outline management (Phase 1: multi-outline)
+        .route("/api/v1/outlines", get(list_outlines).post(create_outline_handler))
+        .route("/api/v1/outlines/:name", delete(delete_outline_handler))
+        // Per-outline sync endpoints
+        .route("/api/v1/outlines/:name/state", get(outline_get_state))
+        .route("/api/v1/outlines/:name/state-vector", get(outline_get_state_vector))
+        .route("/api/v1/outlines/:name/state/hash", get(outline_get_state_hash))
+        .route("/api/v1/outlines/:name/update", post(outline_apply_update))
+        .route("/api/v1/outlines/:name/updates", get(outline_get_updates_since))
+        .route("/api/v1/outlines/:name/export/binary", get(outline_export_binary))
+        .route("/api/v1/outlines/:name/export/json", get(outline_export_json))
+        // Per-outline block CRUD
+        .route("/api/v1/outlines/:name/blocks", get(outline_get_blocks).post(outline_create_block))
+        .route("/api/v1/outlines/:name/blocks/:id", get(outline_get_block).patch(outline_update_block).delete(outline_delete_block))
+        .route("/api/v1/outlines/:name/stats", get(outline_get_stats))
+        // 501 stubs for features requiring per-outline hooks/search (Phase 2)
+        .route("/api/v1/outlines/:name/search", get(outline_search_not_impl))
+        .route("/api/v1/outlines/:name/pages/search", get(outline_search_not_impl))
         .with_state(state)
 }
 
@@ -3741,6 +3763,554 @@ async fn post_presence(
     StatusCode::OK
 }
 
+// =========================================================================
+// Outline management endpoints (Phase 1: multi-outline)
+// =========================================================================
+
+/// Request body for creating an outline.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateOutlineRequest {
+    name: String,
+}
+
+/// GET /api/v1/outlines — list all available outlines
+async fn list_outlines(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<OutlineInfo>>, ApiError> {
+    let outlines = state.outline_manager.list_outlines().map_err(|e| {
+        ApiError::InvalidRequest(format!("Failed to list outlines: {}", e))
+    })?;
+    Ok(Json(outlines))
+}
+
+/// POST /api/v1/outlines — create a new outline
+async fn create_outline_handler(
+    State(state): State<AppState>,
+    Json(req): Json<CreateOutlineRequest>,
+) -> Result<(StatusCode, Json<OutlineInfo>), ApiError> {
+    let name = OutlineName::new(&req.name).map_err(|e| {
+        ApiError::InvalidRequest(format!("{}", e))
+    })?;
+    let info = state.outline_manager.create_outline(&name).map_err(|e| {
+        match &e {
+            floatty_core::OutlineError::AlreadyExists(_) | floatty_core::OutlineError::InvalidName(_) | floatty_core::OutlineError::ReservedName => {
+                ApiError::InvalidRequest(format!("{}", e))
+            }
+            _ => ApiError::InvalidRequest(format!("Failed to create outline: {}", e)),
+        }
+    })?;
+    Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// DELETE /api/v1/outlines/:name — delete an outline (refuses "default")
+async fn delete_outline_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    if name == "default" {
+        return Err(ApiError::InvalidRequest("Cannot delete the default outline".into()));
+    }
+    let validated = OutlineName::new(&name).map_err(|e| {
+        ApiError::InvalidRequest(format!("{}", e))
+    })?;
+    state.outline_manager.delete_outline(&validated).map_err(|e| {
+        match &e {
+            floatty_core::OutlineError::NotFound(_) => ApiError::NotFound(format!("{}", e)),
+            _ => ApiError::InvalidRequest(format!("Failed to delete outline: {}", e)),
+        }
+    })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Resolve an outline store from the manager, mapping errors to ApiError.
+fn resolve_outline(state: &AppState, name: &str) -> Result<Arc<YDocStore>, ApiError> {
+    state.outline_manager.get_or_default(name).map_err(|e| {
+        match &e {
+            floatty_core::OutlineError::NotFound(_) => ApiError::NotFound(format!("outline '{}' not found", name)),
+            floatty_core::OutlineError::InvalidName(_) | floatty_core::OutlineError::ReservedName => {
+                ApiError::InvalidRequest(format!("{}", e))
+            }
+            _ => ApiError::InvalidRequest(format!("Failed to resolve outline: {}", e)),
+        }
+    })
+}
+
+// =========================================================================
+// Per-outline sync endpoints (Phase 1: no broadcaster, no hooks)
+// =========================================================================
+
+/// GET /api/v1/outlines/:name/state
+async fn outline_get_state(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<StateResponse>, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let update = store.get_full_state()?;
+    let latest_seq = store.get_latest_seq()?;
+    Ok(Json(StateResponse {
+        state: BASE64.encode(update),
+        latest_seq,
+    }))
+}
+
+/// GET /api/v1/outlines/:name/state-vector
+async fn outline_get_state_vector(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<StateVectorResponse>, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let sv = store.get_state_vector()?;
+    Ok(Json(StateVectorResponse {
+        state_vector: BASE64.encode(sv),
+    }))
+}
+
+/// GET /api/v1/outlines/:name/state/hash
+async fn outline_get_state_hash(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<StateHashResponse>, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let full_state = store.get_full_state()?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&full_state);
+    let hash = format!("{:x}", hasher.finalize());
+
+    let doc = store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+    let block_count = txn
+        .get_map("blocks")
+        .map(|m| m.len(&txn) as usize)
+        .unwrap_or(0);
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    Ok(Json(StateHashResponse {
+        hash,
+        block_count,
+        timestamp,
+    }))
+}
+
+/// POST /api/v1/outlines/:name/update — apply Y.Doc update (no WS broadcast in Phase 1)
+async fn outline_apply_update(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateRequest>,
+) -> Result<StatusCode, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let update_bytes = BASE64
+        .decode(&req.update)
+        .map_err(|e| ApiError::InvalidBase64(e.to_string()))?;
+
+    store.apply_update(&update_bytes)?;
+    // Phase 1: no broadcaster for non-default outlines
+    Ok(StatusCode::OK)
+}
+
+/// GET /api/v1/outlines/:name/updates
+async fn outline_get_updates_since(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<UpdatesQuery>,
+) -> Result<Json<UpdatesResponse>, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let limit = query.limit.min(1000);
+
+    let compacted_through = store.get_compacted_through()?;
+    if let Some(ct) = compacted_through {
+        if query.since < ct {
+            return Err(ApiError::UpdatesCompacted {
+                requested: query.since,
+                compacted_through: ct,
+            });
+        }
+    }
+
+    let updates = store.get_updates_since(query.since, limit)?;
+    let latest_seq = store.get_latest_seq()?;
+
+    Ok(Json(UpdatesResponse {
+        updates: updates
+            .into_iter()
+            .map(|(seq, data, created_at)| UpdateEntry {
+                seq,
+                data: BASE64.encode(data),
+                created_at,
+            })
+            .collect(),
+        compacted_through,
+        latest_seq,
+    }))
+}
+
+/// GET /api/v1/outlines/:name/export/binary
+async fn outline_export_binary(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let ydoc_state = store.get_full_state()?;
+    let disposition = format!("attachment; filename=\"{}.ydoc\"", name);
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        ydoc_state,
+    ))
+}
+
+/// GET /api/v1/outlines/:name/export/json
+async fn outline_export_json(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let doc = store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let blocks_map = match txn.get_map("blocks") {
+        Some(m) => m,
+        None => {
+            return Ok((
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                serde_json::to_string_pretty(&serde_json::json!({"blocks": [], "rootIds": []})).unwrap(),
+            ))
+        }
+    };
+
+    let mut blocks = Vec::new();
+    for (id, value) in blocks_map.iter(&txn) {
+        if let yrs::Out::YMap(block_map) = value {
+            let mut block = serde_json::Map::new();
+            block.insert("id".into(), serde_json::Value::String(id.to_string()));
+            for (key, val) in block_map.iter(&txn) {
+                block.insert(key.to_string(), yrs_out_to_json(val, &txn));
+            }
+            blocks.push(serde_json::Value::Object(block));
+        }
+    }
+
+    let root_ids: Vec<String> = txn
+        .get_array("rootBlockIds")
+        .map(|arr| {
+            arr.iter(&txn)
+                .filter_map(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let export = serde_json::json!({
+        "blocks": blocks,
+        "rootIds": root_ids,
+    });
+
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string_pretty(&export).unwrap(),
+    ))
+}
+
+// =========================================================================
+// Per-outline block CRUD (Phase 1: no hooks, no inheritance, no search)
+// =========================================================================
+
+/// GET /api/v1/outlines/:name/blocks
+async fn outline_get_blocks(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let doc = store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let blocks_map = match txn.get_map("blocks") {
+        Some(m) => m,
+        None => return Ok(Json(serde_json::json!({"blocks": [], "rootIds": []}))),
+    };
+
+    let mut blocks = Vec::new();
+    for (id, value) in blocks_map.iter(&txn) {
+        if let yrs::Out::YMap(block_map) = value {
+            let mut block = serde_json::Map::new();
+            block.insert("id".into(), serde_json::Value::String(id.to_string()));
+            for (key, val) in block_map.iter(&txn) {
+                block.insert(key.to_string(), yrs_out_to_json(val, &txn));
+            }
+            blocks.push(serde_json::Value::Object(block));
+        }
+    }
+
+    let root_ids: Vec<String> = txn
+        .get_array("rootBlockIds")
+        .map(|arr| {
+            arr.iter(&txn)
+                .filter_map(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "blocks": blocks,
+        "rootIds": root_ids,
+    })))
+}
+
+/// POST /api/v1/outlines/:name/blocks
+async fn outline_create_block(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<CreateBlockRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    let doc = store.doc();
+    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+
+    // Resolve short-hash prefixes
+    let mut req = req;
+    {
+        let txn = doc_guard.transact();
+        if let Some(blocks_map) = txn.get_map("blocks") {
+            if let Some(ref pid) = req.parent_id {
+                req.parent_id = Some(resolve_block_id(pid, &blocks_map, &txn)?);
+            }
+            if let Some(ref aid) = req.after_id {
+                req.after_id = Some(resolve_block_id(aid, &blocks_map, &txn)?);
+            }
+        }
+    }
+
+    let update = {
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+
+        // Validate parent
+        if let Some(ref parent_id) = req.parent_id {
+            match blocks.get(&txn, parent_id.as_str()) {
+                Some(yrs::Out::YMap(_)) => {}
+                _ => return Err(ApiError::NotFound(format!("Parent block not found: {}", parent_id))),
+            }
+        }
+
+        // Create block Y.Map
+        let block_map = MapPrelim::from([
+            ("content".to_string(), yrs::Any::String(req.content.clone().into())),
+            ("createdAt".to_string(), yrs::Any::BigInt(now)),
+            ("updatedAt".to_string(), yrs::Any::BigInt(now)),
+        ]);
+        blocks.insert(&mut txn, id.clone(), block_map);
+
+        // Set parentId and add to parent's childIds (or rootBlockIds)
+        let block_map_ref = blocks.get(&txn, &id).unwrap();
+        if let yrs::Out::YMap(map) = block_map_ref {
+            // Insert childIds as Y.Array
+            map.insert(&mut txn, "childIds", ArrayPrelim::default());
+
+            if let Some(ref parent_id) = req.parent_id {
+                map.insert(&mut txn, "parentId", yrs::Any::String(parent_id.clone().into()));
+                // Add to parent's childIds
+                if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id.as_str()) {
+                    if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+                        let len = child_ids.len(&txn);
+                        child_ids.insert(&mut txn, len, yrs::Any::String(id.clone().into()));
+                    }
+                }
+            } else {
+                // Add to rootBlockIds
+                let roots = txn.get_or_insert_array("rootBlockIds");
+                let len = roots.len(&txn);
+                roots.insert(&mut txn, len, yrs::Any::String(id.clone().into()));
+            }
+        }
+
+        txn.encode_update_v1()
+    };
+
+    // Persist the update
+    store.apply_update(&update)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": id,
+            "content": req.content,
+        })),
+    ))
+}
+
+/// GET /api/v1/outlines/:name/blocks/:id
+async fn outline_get_block(
+    State(state): State<AppState>,
+    Path((name, id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let doc = store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let blocks_map = txn
+        .get_map("blocks")
+        .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
+
+    let block_id = resolve_block_id(&id, &blocks_map, &txn)?;
+
+    match blocks_map.get(&txn, &block_id) {
+        Some(yrs::Out::YMap(map)) => {
+            let mut block = serde_json::Map::new();
+            block.insert("id".into(), serde_json::Value::String(block_id));
+            for (key, val) in map.iter(&txn) {
+                block.insert(key.to_string(), yrs_out_to_json(val, &txn));
+            }
+            Ok(Json(serde_json::Value::Object(block)))
+        }
+        _ => Err(ApiError::NotFound(format!("block '{}' not found", id))),
+    }
+}
+
+/// PATCH /api/v1/outlines/:name/blocks/:id
+async fn outline_update_block(
+    State(state): State<AppState>,
+    Path((name, id)): Path<(String, String)>,
+    Json(req): Json<UpdateBlockRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let doc = store.doc();
+    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+
+    let block_id = {
+        let txn = doc_guard.transact();
+        let blocks_map = txn.get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
+        resolve_block_id(&id, &blocks_map, &txn)?
+    };
+
+    let update = {
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+
+        match blocks.get(&txn, &block_id) {
+            Some(yrs::Out::YMap(map)) => {
+                if let Some(ref content) = req.content {
+                    map.insert(&mut txn, "content", yrs::Any::String(content.clone().into()));
+                }
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                map.insert(&mut txn, "updatedAt", yrs::Any::BigInt(now));
+            }
+            _ => return Err(ApiError::NotFound(format!("block '{}' not found", id))),
+        }
+
+        txn.encode_update_v1()
+    };
+
+    store.apply_update(&update)?;
+    Ok(Json(serde_json::json!({ "id": block_id })))
+}
+
+/// DELETE /api/v1/outlines/:name/blocks/:id
+async fn outline_delete_block(
+    State(state): State<AppState>,
+    Path((name, id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let doc = store.doc();
+    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+
+    let block_id = {
+        let txn = doc_guard.transact();
+        let blocks_map = txn.get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
+        resolve_block_id(&id, &blocks_map, &txn)?
+    };
+
+    let update = {
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        blocks.remove(&mut txn, &block_id);
+
+        // Remove from rootBlockIds if present
+        if let Some(roots) = txn.get_array("rootBlockIds") {
+            let root_txn_ref = &txn;
+            for (idx, val) in roots.iter(root_txn_ref).enumerate() {
+                if let yrs::Out::Any(yrs::Any::String(s)) = val {
+                    if s.as_ref() == block_id {
+                        roots.remove(&mut txn, idx as u32);
+                        break;
+                    }
+                }
+            }
+        }
+
+        txn.encode_update_v1()
+    };
+
+    store.apply_update(&update)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /api/v1/outlines/:name/stats
+async fn outline_get_stats(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let store = resolve_outline(&state, &name)?;
+    let doc = store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let block_count = txn
+        .get_map("blocks")
+        .map(|m| m.len(&txn) as usize)
+        .unwrap_or(0);
+
+    let root_count = txn
+        .get_array("rootBlockIds")
+        .map(|a| a.len(&txn) as usize)
+        .unwrap_or(0);
+
+    Ok(Json(serde_json::json!({
+        "blockCount": block_count,
+        "rootCount": root_count,
+    })))
+}
+
+/// 501 stub for search on non-default outlines
+async fn outline_search_not_impl() -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse {
+            error: "search not available for non-default outlines".into(),
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3752,14 +4322,21 @@ mod tests {
     use tempfile::tempdir;
     use tower::{Service, ServiceExt};
 
+    fn test_outline_manager(dir: &std::path::Path, store: &Arc<YDocStore>) -> Arc<crate::OutlineManager> {
+        Arc::new(crate::OutlineManager::new_with_default(dir, Arc::clone(store)))
+    }
+
     fn test_app() -> (Router, tempfile::TempDir, Arc<YDocStore>) {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        // Pass None for backup_daemon in tests
-        let router = create_router(Arc::clone(&store), broadcaster, hook_system, None);
+        let outline_manager = Arc::new(crate::OutlineManager::new_with_default(
+            dir.path(),
+            Arc::clone(&store),
+        ));
+        let router = create_router(Arc::clone(&store), broadcaster, hook_system, None, outline_manager);
         (router, dir, store)
     }
 
@@ -3878,7 +4455,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create parent
         let response = app
@@ -3958,7 +4536,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create block
         let response = app
@@ -4117,7 +4696,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let router = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let router = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
         let mut app = router.into_service();
 
         // Create a block with searchable content
@@ -4180,7 +4760,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create parent A
         let response = app
@@ -4278,7 +4859,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create parent
         let response = app
@@ -4360,7 +4942,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create two root blocks
         let response = app
@@ -4478,7 +5061,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create parent -> child hierarchy
         let response = app
@@ -4530,7 +5114,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create a block first
         let _response = app
@@ -4574,7 +5159,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create a block first
         let _response = app
@@ -4628,7 +5214,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create some updates via API (creates blocks which generate Y.Doc updates)
         for i in 0..5 {
@@ -4679,7 +5266,8 @@ mod tests {
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None);
+        let om = test_outline_manager(dir.path(), &store);
+        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
 
         // Create initial updates
         for i in 0..3 {

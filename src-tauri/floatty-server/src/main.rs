@@ -13,7 +13,7 @@ use floatty_server::{
     api, auth,
     backup::{self, BackupDaemon},
     config::{BackupConfig, ServerConfig},
-    start_heartbeat, ws, WsBroadcaster,
+    start_heartbeat, ws, OutlineManager, WsBroadcaster,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -144,6 +144,13 @@ async fn main() {
         None
     };
 
+    // Create outline manager for multi-outline support (Phase 1)
+    let outline_manager = Arc::new(OutlineManager::new_with_default(
+        &floatty_server::config::data_dir(),
+        Arc::clone(&store),
+    ));
+    tracing::info!("Outline manager initialized");
+
     // CORS layer - allow requests from Tauri webview (localhost origins)
     let cors = CorsLayer::new()
         .allow_origin(Any) // Tauri uses tauri://localhost or http://localhost
@@ -154,11 +161,11 @@ async fn main() {
     let api_routes = if config.auth_enabled {
         let auth_state = auth::ApiKeyAuth::new(api_key.clone());
         tracing::info!("API authentication enabled");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone())
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone(), Arc::clone(&outline_manager))
             .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
     } else {
         tracing::warn!("API authentication DISABLED (auth_enabled = false in config)");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone())
+        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone(), Arc::clone(&outline_manager))
     };
 
     // WebSocket route (auth via query param since WS can't use headers easily)
