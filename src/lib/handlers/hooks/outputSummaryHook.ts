@@ -78,7 +78,7 @@ function extractRenderSummary(output: any): string | null {
  * Walks the element tree in document order (following children refs),
  * extracting text content from each component type.
  */
-function flattenSpecToMarkdown(output: any): string | null {
+export function flattenSpecToMarkdown(output: any): string | null {
   const data = output?.data;
   const spec = data?.spec ?? output?.spec;
   if (!spec?.elements || !spec?.root) return null;

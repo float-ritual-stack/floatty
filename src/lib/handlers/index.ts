@@ -16,6 +16,7 @@ import { backupHandler } from './backup';
 import { infoHandler } from './info';
 import { evalHandler } from './eval';
 import { artifactHandler } from './artifactHandler';
+import { echoCopyHandler } from './echoCopy';
 import { hookRegistry } from '../hooks';
 import { sendContextHook } from './hooks/sendContextHook';
 import { registerCtxRouterHook } from './hooks/ctxRouterHook';
@@ -75,6 +76,7 @@ export function registerHandlers(): void {
   registry.register(infoHandler);
   registry.register(evalHandler);
   registry.register(artifactHandler);
+  registry.register(echoCopyHandler);
 
   // Register hooks - THE ARCHITECTURE IN ACTION
   // Hooks assemble context, handlers consume it
