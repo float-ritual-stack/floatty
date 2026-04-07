@@ -8,7 +8,7 @@
  * Wikilink navigation via chirp CustomEvent bubbling to BlockItem.
  */
 
-import { Show, For, createSignal, createMemo } from 'solid-js';
+import { Show, For, createSignal, createMemo, onMount } from 'solid-js';
 import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
@@ -161,7 +161,7 @@ function renderMarkdown(text: string): string {
 // LAYOUT
 // ═══════════════════════════════════════════════════════════════
 
-export function DocLayout(props: BaseComponentProps<{ sidebarWidth?: number }>) {
+export function DocLayout(props: BaseComponentProps<Record<string, never>>) {
   return (
     <div style={{
       display: 'flex',
@@ -633,8 +633,8 @@ export function TextInput(props: BaseComponentProps<{ label?: string; placeholde
           'font-family': V.mono,
           outline: 'none',
         }}
-        onfocus={(e) => { (e.target as HTMLInputElement).style.borderColor = V.cy; }}
-        onblur={(e) => { (e.target as HTMLInputElement).style.borderColor = V.b2; }}
+        onFocus={(e) => { (e.target as HTMLInputElement).style.borderColor = V.cy; }}
+        onBlur={(e) => { (e.target as HTMLInputElement).style.borderColor = V.b2; }}
       />
     </div>
   );
@@ -665,8 +665,8 @@ export function TextArea(props: BaseComponentProps<{ label?: string; placeholder
           outline: 'none',
           resize: 'vertical',
         }}
-        onfocus={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.cy; }}
-        onblur={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.b2; }}
+        onFocus={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.cy; }}
+        onBlur={(e) => { (e.target as HTMLTextAreaElement).style.borderColor = V.b2; }}
       />
     </div>
   );
@@ -759,22 +759,34 @@ export function TuiStat(props: BaseComponentProps<{ label: string; value: string
 export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?: number; max?: number }>) {
   let barsRef: HTMLDivElement | undefined;
 
-  // After mount, compute max from children's data-value attrs and set CSS var
-  const computeMax = () => {
+  // Compute max from children's data-value attrs, set CSS var, then resize bars.
+  // SolidJS onMount fires children-first, then parent — so BarItem.onMount runs
+  // before BarChart.onMount. We use rAF to defer past all synchronous onMount
+  // calls, then compute max and explicitly set bar heights (BarItem.onMount may
+  // have already run with stale/missing max, so we recompute from parent).
+  const computeMaxAndResizeBars = () => {
     if (!barsRef) return;
+    let max: number;
     if (props.props.max != null && props.props.max > 0) {
-      barsRef.style.setProperty('--bar-chart-max', String(props.props.max));
-      return;
+      max = props.props.max;
+    } else {
+      const values = Array.from(barsRef.querySelectorAll('[data-bar-value]'))
+        .map(el => parseFloat((el as HTMLElement).dataset.barValue ?? '0'))
+        .filter(v => !isNaN(v));
+      max = values.length > 0 ? Math.max(...values) : 1;
     }
-    const values = Array.from(barsRef.querySelectorAll('[data-bar-value]'))
-      .map(el => parseFloat((el as HTMLElement).dataset.barValue ?? '0'))
-      .filter(v => !isNaN(v));
-    const max = values.length > 0 ? Math.max(...values) : 1;
     barsRef.style.setProperty('--bar-chart-max', String(max));
+    // Resize all child bars now that max is known
+    barsRef.querySelectorAll<HTMLElement>('[data-bar-ref]').forEach(bar => {
+      const value = parseFloat(bar.dataset.barRef ?? '0');
+      if (!isNaN(value)) {
+        const pct = Math.min(100, (value / max) * 100);
+        bar.style.height = `${pct}%`;
+      }
+    });
   };
 
-  // Use requestAnimationFrame to ensure children have rendered
-  setTimeout(computeMax, 0);
+  onMount(() => requestAnimationFrame(computeMaxAndResizeBars));
 
   return (
     <div>
@@ -826,8 +838,8 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
     const pct = Math.min(100, (numValue() / max) * 100);
     barRef.style.height = `${pct}%`;
   };
-  // Re-compute after parent BarChart sets --bar-chart-max (setTimeout 0 + 16ms)
-  setTimeout(computeHeight, 16);
+  // Compute after parent BarChart sets --bar-chart-max via onMount
+  onMount(computeHeight);
   return (
     <div ref={containerRef} data-bar-value={numValue()} style={{
       display: 'flex',
@@ -848,7 +860,7 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
           {numValue() % 1 === 0 ? numValue() : numValue().toFixed(1)}
         </span>
       </Show>
-      <div ref={barRef} style={{
+      <div ref={barRef} data-bar-ref={numValue()} style={{
         width: '100%',
         background: props.props.color || V.cy,
         height: '0%',

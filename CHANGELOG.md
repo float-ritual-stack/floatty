@@ -6,6 +6,20 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.9] - 2026-04-07
+
+### Bug Fixes
+
+- **render door**: RENDER_TOOL_SCHEMA now derives component enum from catalog (44 components, was hardcoded to 29 — Claude path had 15 fewer components than ollama/agent)
+- **render door**: Removed 4 dead catalog actions (selectEntry, filterTag, goBack, scrollTo) that silently no-oped on click
+- **render door**: Removed unused DocLayout.sidebarWidth prop (schema advertised control that didn't exist)
+- **render door**: Replaced `setTimeout` sizing hacks in BarChart/BarItem with `onMount` lifecycle
+- **render door**: Fixed `onfocus`/`onblur` → `onFocus`/`onBlur` casing in TextInput/TextArea (SolidJS event delegation)
+- **render door**: Guarded async title generation with execution nonce to prevent stale overwrites on rapid re-execution
+- **render door**: Agent JSON extraction now takes the last fenced block instead of first (handles agent explanation text before spec)
+
+---
+
 ## [0.10.8] - 2026-04-07
 
 ### Features

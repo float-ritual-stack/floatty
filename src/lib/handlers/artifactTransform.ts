@@ -87,9 +87,14 @@ export function buildImportMap(source: string): Record<string, string> {
     const subpath = specifier.startsWith('@')
       ? specifier.slice(basePkg.length)  // e.g. @scope/pkg/sub → /sub
       : specifier.slice(basePkg.length); // e.g. react-dom/client → /client
+    // For non-react packages that depend on react, add ?external=react,react-dom
+    // so esm.sh defers to the import map's React instead of bundling a duplicate.
+    const isReactPkg = basePkg === 'react' || basePkg === 'react-dom';
+    const external = isReactPkg ? '' : '?external=react,react-dom';
+
     importMap[specifier] = subpath
-      ? `https://esm.sh/${basePkg}@${version}${subpath}`
-      : `https://esm.sh/${specifier}@${version}`;
+      ? `https://esm.sh/${basePkg}@${version}${subpath}${external}`
+      : `https://esm.sh/${specifier}@${version}${external}`;
   }
 
   // Always include react + react-dom (JSX output needs React.createElement)

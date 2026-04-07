@@ -112,15 +112,7 @@ const RENDER_TOOL_SCHEMA = {
         additionalProperties: {
           type: 'object' as const,
           properties: {
-            type: { type: 'string' as const, enum: [
-              'DocLayout', 'NavBrand', 'NavSection', 'NavItem', 'NavFooter',
-              'EntryHeader', 'EntryBody', 'Ellipsis',
-              'TagBar', 'TagChip', 'RefSection', 'RefCard', 'Breadcrumb',
-              'Stack', 'Text', 'Divider',
-              'TuiPanel', 'TuiStat', 'BarChart', 'BarItem',
-              'DataBlock', 'ShippedItem', 'WikilinkChip', 'BacklinksFooter', 'PatternCard',
-              'Card', 'Metric', 'Button', 'Code',
-            ] },
+            type: { type: 'string' as const, enum: bbsCatalog.componentNames },
             props: { type: 'object' as const },
             children: { type: 'array' as const, items: { type: 'string' as const } },
           },
@@ -431,8 +423,20 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   }
 
   let jsonStr = raw.trim();
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) jsonStr = fenceMatch[1].trim();
+
+  // Prefer the last fenced JSON block (agent typically explains before emitting spec).
+  // Assumption: the spec object is the LAST JSON block. If agents start emitting
+  // summary/metadata JSON after the spec, this heuristic breaks.
+  // Only matches blocks starting with '{' (objects, not arrays).
+  const fenceMatches = [...jsonStr.matchAll(/```([^\n`]*)\n?([\s\S]*?)```/g)];
+  for (let i = fenceMatches.length - 1; i >= 0; i--) {
+    const lang = fenceMatches[i][1].trim().toLowerCase();
+    const candidate = fenceMatches[i][2].trim();
+    if (lang && lang !== 'json') continue;
+    if (!candidate.startsWith('{')) continue;
+    jsonStr = candidate;
+    break;
+  }
 
   const start = jsonStr.indexOf('{');
   const end = jsonStr.lastIndexOf('}');
@@ -629,11 +633,16 @@ function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: stri
   ctx.actions.setBlockStatus(blockId, error ? 'error' : 'complete');
 }
 
+const executionNonces = new Map<string, number>();
+
 export const door = {
   kind: 'view' as const,
   prefixes: ['render::'],
 
   async execute(blockId: string, content: string, ctx: any) {
+    const nonce = (executionNonces.get(blockId) ?? 0) + 1;
+    executionNonces.set(blockId, nonce);
+    const thisExecution = nonce;
     ctx.actions.setBlockStatus(blockId, 'running');
     const raw = content.replace(/^render::\s*/i, '').trim();
     const explicitTitle = extractTitle(raw);
@@ -646,8 +655,14 @@ export const door = {
 
       if (!explicitTitle && !out.title && !error && out.spec) {
         generateTitle(content, ctx).then(title => {
-          if (title) {
+          if (title && executionNonces.get(blockId) === thisExecution) {
             setOutput(blockId, ctx, { ...out, title });
+          }
+        }).finally(() => {
+          // Clean up nonce after title generation completes (or is skipped)
+          // to prevent unbounded Map growth over long sessions
+          if (executionNonces.get(blockId) === thisExecution) {
+            executionNonces.delete(blockId);
           }
         });
       }

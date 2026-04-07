@@ -26,43 +26,49 @@ const logger = createLogger('outputSummaryHook');
 // SUMMARY EXTRACTION
 // ═══════════════════════════════════════════════════════════════
 
+/** Unwrap door output envelope to get data + spec. */
+function unwrapDoorOutput(output: any): { data: any; spec: any } {
+  const data = output?.data;
+  const spec = data?.spec ?? output?.spec;
+  return { data, spec };
+}
+
 /**
  * Extract a short summary from render door output.
  * Pulls title from EntryHeader, section headings from EntryBody markdown,
  * and key component types used.
  */
 function extractRenderSummary(output: any): string | null {
-  // Door envelope: { kind, doorId, schema, data: { spec, title, ... } }
-  // Prefer data.title (set by render agent or Ollama title generation)
-  // Skip if title looks like a JSON blob or is unreasonably long — agent sometimes echoes spec back
-  const data = output?.data;
-  if (data?.title && typeof data.title === 'string' && data.title.length < 120 && !data.title.trimStart().startsWith('{')) {
-    return data.title;
-  }
-
-  const spec = data?.spec ?? output?.spec;
-  if (!spec?.elements) return null;
+  const { data, spec } = unwrapDoorOutput(output);
 
   const parts: string[] = [];
-  let foundTitle = false;
 
-  for (const el of Object.values(spec.elements as Record<string, any>)) {
-    if (!foundTitle && el.type === 'EntryHeader' && el.props?.title) {
-      parts.push(el.props.title);
-      foundTitle = true;
-    } else if (!foundTitle && el.type === 'MetadataHeader' && el.props?.title) {
-      parts.push(el.props.title);
-      foundTitle = true;
-    } else if (el.type === 'EntryBody' && el.props?.markdown) {
-      const headings = (el.props.markdown as string)
-        .split('\n')
-        .filter((line: string) => line.startsWith('## '))
-        .map((line: string) => line.replace(/^##\s+/, '').trim());
-      for (const h of headings) {
-        if (!parts.includes(h)) parts.push(h);
+  // Use data.title as lead if it's clean (not a JSON blob or too long)
+  if (data?.title && typeof data.title === 'string' && data.title.length < 120 && !data.title.trimStart().startsWith('{')) {
+    parts.push(data.title);
+  }
+
+  // Scan spec elements for section structure
+  if (spec?.elements) {
+    for (const el of Object.values(spec.elements as Record<string, any>)) {
+      if (el.type === 'EntryHeader' && el.props?.title) {
+        const t = el.props.title;
+        if (!parts.includes(t)) parts.push(t);
+      } else if (el.type === 'MetadataHeader' && el.props?.title) {
+        const t = el.props.title;
+        if (!parts.includes(t)) parts.push(t);
+      } else if (el.type === 'EntryBody' && el.props?.markdown) {
+        const headings = (el.props.markdown as string)
+          .split('\n')
+          .filter((line: string) => line.startsWith('## '))
+          .map((line: string) => line.replace(/^##\s+/, '').trim());
+        for (const h of headings) {
+          if (!parts.includes(h)) parts.push(h);
+        }
+      } else if (el.type === 'PatternCard' && el.props?.title) {
+        const t = el.props.title;
+        if (!parts.includes(t)) parts.push(t);
       }
-    } else if (el.type === 'PatternCard' && el.props?.title) {
-      parts.push(el.props.title);
     }
   }
 
@@ -73,13 +79,128 @@ function extractRenderSummary(output: any): string | null {
 }
 
 /**
+ * Flatten a render spec into a markdown projection.
+ * Walks the element tree in document order (following children refs),
+ * extracting text content from each component type.
+ */
+export function flattenSpecToMarkdown(output: any): string | null {
+  const { data, spec } = unwrapDoorOutput(output);
+  if (!spec?.elements || !spec?.root) return null;
+
+  const elements = spec.elements as Record<string, any>;
+  const lines: string[] = [];
+  const visiting = new Set<string>();
+
+  // Title from data envelope
+  if (data?.title && typeof data.title === 'string' && !data.title.trimStart().startsWith('{')) {
+    lines.push(`# ${data.title}`, '');
+  }
+
+  function walk(key: string): void {
+    if (visiting.has(key)) return;
+    visiting.add(key);
+    const el = elements[key];
+    if (!el) { visiting.delete(key); return; }
+
+    const p = el.props || {};
+
+    switch (el.type) {
+      case 'EntryHeader':
+        lines.push(`## ${p.title || ''}${p.date ? ` (${p.date})` : ''}${p.author ? ` — ${p.author}` : ''}`);
+        lines.push('');
+        break;
+      case 'MetadataHeader':
+        lines.push(`## ${p.title || ''}`);
+        lines.push('');
+        break;
+      case 'EntryBody':
+        if (p.markdown) lines.push(p.markdown, '');
+        break;
+      case 'Text':
+        if (p.content) lines.push(p.content);
+        break;
+      case 'PatternCard':
+        lines.push(`### ${p.title || 'Pattern'}${p.type ? ` [${p.type}]` : ''}${p.confidence ? ` (${p.confidence})` : ''}`);
+        if (p.content) lines.push('', p.content);
+        if (Array.isArray(p.connectsTo) && p.connectsTo.length) lines.push('', `connects to: ${p.connectsTo.map((c: string) => `[[${c}]]`).join(', ')}`);
+        lines.push('');
+        break;
+      case 'QuoteBlock':
+        lines.push(`> ${p.text || ''}${p.attribution ? `\n> — ${p.attribution}` : ''}`);
+        lines.push('');
+        break;
+      case 'TuiStat':
+        lines.push(`- **${p.label}**: ${p.value}`);
+        break;
+      case 'Metric':
+        lines.push(`- **${p.label}**: ${p.value}`);
+        break;
+      case 'StatsBar':
+        if (Array.isArray(p.stats) && p.stats.length) {
+          for (const s of p.stats) lines.push(`- **${s.label}**: ${s.value}`);
+          lines.push('');
+        }
+        break;
+      case 'WikilinkChip':
+        lines.push(`- [[${p.target}]]${p.label ? ` ${p.label}` : ''}`);
+        break;
+      case 'BacklinksFooter':
+        if (Array.isArray(p.inbound) && p.inbound.length) lines.push(`inbound: ${p.inbound.map((r: string) => `[[${r}]]`).join(', ')}`);
+        if (Array.isArray(p.outbound) && p.outbound.length) lines.push(`outbound: ${p.outbound.map((r: string) => `[[${r}]]`).join(', ')}`);
+        if ((Array.isArray(p.inbound) && p.inbound.length) || (Array.isArray(p.outbound) && p.outbound.length)) lines.push('');
+        break;
+      case 'Code':
+        if (p.content) lines.push('```', p.content, '```', '');
+        break;
+      case 'NavBrand':
+        // Skip nav chrome
+        break;
+      case 'NavSection':
+      case 'NavItem':
+      case 'NavFooter':
+        // Skip nav chrome
+        break;
+      case 'Divider':
+        lines.push('---', '');
+        break;
+      // Layout containers — just recurse children
+      default:
+        break;
+    }
+
+    // Recurse children
+    if (Array.isArray(el.children)) {
+      for (const childKey of el.children) {
+        walk(childKey);
+      }
+    }
+
+    visiting.delete(key);
+  }
+
+  walk(spec.root);
+
+  const result = lines.join('\n').trim();
+  return result.length > 0 ? result : null;
+}
+
+/**
  * Extract summary from any block output based on outputType.
  */
 function extractSummary(output: any, outputType: string): string | null {
   if (outputType === 'door') {
     return extractRenderSummary(output);
   }
-  // Future: handle search-results, eval-result, etc.
+  return null;
+}
+
+/**
+ * Extract rendered markdown from any block output based on outputType.
+ */
+function extractRenderedMarkdown(output: any, outputType: string): string | null {
+  if (outputType === 'door') {
+    return flattenSpecToMarkdown(output);
+  }
   return null;
 }
 
@@ -104,19 +225,23 @@ function handleBlockEvent(envelope: EventEnvelope): void {
     const output = block.output;
 
     if (!outputType || !output) {
-      // Output was cleared — remove summary if it existed
-      if (block.metadata?.summary) {
+      // Output was cleared — remove summary + rendered if they existed
+      if (block.metadata?.summary || block.metadata?.renderedMarkdown) {
         blockStore.updateBlockMetadata(block.id, {
           summary: undefined,
+          renderedMarkdown: undefined,
         }, 'hook');
       }
       continue;
     }
 
     const summary = extractSummary(output, outputType);
+    const rendered = extractRenderedMarkdown(output, outputType);
 
-    // Skip if summary unchanged
-    if (summary === (block.metadata?.summary ?? null)) continue;
+    const summaryChanged = summary !== (block.metadata?.summary ?? null);
+    const renderedChanged = rendered !== (block.metadata?.renderedMarkdown ?? null);
+
+    if (!summaryChanged && !renderedChanged) continue;
 
     if (summary) {
       logger.debug('Extracted summary', {
@@ -127,6 +252,7 @@ function handleBlockEvent(envelope: EventEnvelope): void {
 
     blockStore.updateBlockMetadata(block.id, {
       summary: summary ?? undefined,
+      renderedMarkdown: rendered ?? undefined,
       extractedAt: Date.now(),
     }, 'hook');
   }
@@ -137,6 +263,44 @@ function handleBlockEvent(envelope: EventEnvelope): void {
 // ═══════════════════════════════════════════════════════════════
 
 let _subscriptionId: string | null = null;
+let _backfillTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Backfill summaries for existing blocks that have output but no summary.
+ * Runs once at startup — no re-rendering needed.
+ */
+function backfillExistingSummaries(): void {
+  const blocks = blockStore.blocks;
+  let count = 0;
+
+  for (const block of Object.values(blocks)) {
+    if (!block.outputType || !block.output) continue;
+    const hasSummary = !!block.metadata?.summary;
+    const hasRendered = !!block.metadata?.renderedMarkdown;
+    if (hasSummary && hasRendered) continue;
+
+    const updates: Record<string, unknown> = { extractedAt: Date.now() };
+    let changed = false;
+
+    if (!hasSummary) {
+      const summary = extractSummary(block.output, block.outputType);
+      if (summary) { updates.summary = summary; changed = true; }
+    }
+    if (!hasRendered) {
+      const rendered = extractRenderedMarkdown(block.output, block.outputType);
+      if (rendered) { updates.renderedMarkdown = rendered; changed = true; }
+    }
+
+    if (changed) {
+      blockStore.updateBlockMetadata(block.id, updates, 'hook');
+      count++;
+    }
+  }
+
+  if (count > 0) {
+    logger.info(`Backfilled summaries for ${count} blocks`);
+  }
+}
 
 export function registerOutputSummaryHook(): void {
   if (_subscriptionId) {
@@ -150,10 +314,17 @@ export function registerOutputSummaryHook(): void {
     name: 'output-summary-extractor',
   });
 
+  // Backfill existing blocks that predate the hook
+  _backfillTimer = setTimeout(backfillExistingSummaries, 2000);
+
   logger.info('Registered with EventBus');
 }
 
 export function unregisterOutputSummaryHook(): void {
+  if (_backfillTimer) {
+    clearTimeout(_backfillTimer);
+    _backfillTimer = null;
+  }
   if (_subscriptionId) {
     blockEventBus.unsubscribe(_subscriptionId);
     _subscriptionId = null;

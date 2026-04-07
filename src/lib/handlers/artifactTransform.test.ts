@@ -103,10 +103,11 @@ describe('buildImportMap', () => {
     expect(map['react']).toContain('esm.sh/react@18');
   });
 
-  it('extracts d3 with default version', () => {
+  it('extracts d3 with default version and external react', () => {
     const source = `import * as d3 from 'd3';`;
     const map = buildImportMap(source);
     expect(map['d3']).toContain('esm.sh/d3@7');
+    expect(map['d3']).toContain('?external=react,react-dom');
   });
 
   it('extracts three.js', () => {
@@ -121,10 +122,17 @@ describe('buildImportMap', () => {
     expect(map['tone']).toContain('esm.sh/tone@15');
   });
 
-  it('uses latest for unknown packages', () => {
+  it('uses latest for unknown packages with external react', () => {
     const source = `import confetti from 'canvas-confetti';`;
     const map = buildImportMap(source);
     expect(map['canvas-confetti']).toContain('esm.sh/canvas-confetti@latest');
+    expect(map['canvas-confetti']).toContain('?external=react,react-dom');
+  });
+
+  it('does not add external param to react packages', () => {
+    const source = `import React from 'react';`;
+    const map = buildImportMap(source);
+    expect(map['react']).not.toContain('?external');
   });
 
   it('always includes react and react-dom', () => {
