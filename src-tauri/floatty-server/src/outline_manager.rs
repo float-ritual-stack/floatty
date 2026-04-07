@@ -39,11 +39,11 @@ pub struct OutlineContext {
 }
 
 impl OutlineContext {
-    /// Get or initialize the hook system. First call triggers cold-start rehydration.
+    /// Initialize hook system if not yet initialized. First call triggers cold-start rehydration.
     ///
-    /// Uses `std::panic::catch_unwind` to prevent OnceLock poisoning if init fails.
-    /// Returns the existing hook system or a freshly initialized one.
-    pub fn hook_system(&self) -> &Arc<HookSystem> {
+    /// Use this for operations that NEED hooks (writes, reads needing inheritance/search).
+    /// Uses `catch_unwind` to prevent OnceLock poisoning if init panics.
+    pub fn ensure_hook_system(&self) -> &Arc<HookSystem> {
         self.hook_system.get_or_init(|| {
             info!("Initializing hook system for outline '{}'", self.name);
             let store = Arc::clone(&self.store);
@@ -54,16 +54,22 @@ impl OutlineContext {
                 Ok(hs) => Arc::new(hs),
                 Err(e) => {
                     warn!("HookSystem init panicked for '{}': {:?}", self.name, e);
-                    // Return a minimal hook system without search
                     Arc::new(HookSystem::initialize_at(Arc::clone(&self.store), None))
                 }
             }
         })
     }
 
+    /// Check if hook system is already initialized without triggering bootstrap.
+    ///
+    /// Use this for cheap paths (flush, eviction checks) that shouldn't accidentally cold-start.
+    pub fn hook_system_if_initialized(&self) -> Option<&Arc<HookSystem>> {
+        self.hook_system.get()
+    }
+
     /// Best-effort flush before eviction. No-op if hooks never initialized.
     pub fn flush(&self) {
-        if let Some(hs) = self.hook_system.get() {
+        if let Some(hs) = self.hook_system_if_initialized() {
             if let Some(writer) = hs.writer_handle() {
                 if let Err(e) = writer.try_send_commit() {
                     warn!("Flush failed for outline '{}': {:?}", self.name, e);
