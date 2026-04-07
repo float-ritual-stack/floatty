@@ -24,7 +24,7 @@ export const bbsCatalog = schema.createCatalog({
   components: {
     // ─── Layout ───────────────────────────────────────────
     DocLayout: {
-      props: z.object({}),
+      props: z.strictObject({}),
       slots: ['sidebar', 'main'],
       description: 'Two-column layout: fixed sidebar + scrollable main content area',
     },

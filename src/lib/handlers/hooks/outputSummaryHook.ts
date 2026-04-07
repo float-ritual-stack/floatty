@@ -254,6 +254,7 @@ function handleBlockEvent(envelope: EventEnvelope): void {
 // ═══════════════════════════════════════════════════════════════
 
 let _subscriptionId: string | null = null;
+let _backfillTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Backfill summaries for existing blocks that have output but no summary.
@@ -305,12 +306,16 @@ export function registerOutputSummaryHook(): void {
   });
 
   // Backfill existing blocks that predate the hook
-  setTimeout(backfillExistingSummaries, 2000);
+  _backfillTimer = setTimeout(backfillExistingSummaries, 2000);
 
   logger.info('Registered with EventBus');
 }
 
 export function unregisterOutputSummaryHook(): void {
+  if (_backfillTimer) {
+    clearTimeout(_backfillTimer);
+    _backfillTimer = null;
+  }
   if (_subscriptionId) {
     blockEventBus.unsubscribe(_subscriptionId);
     _subscriptionId = null;

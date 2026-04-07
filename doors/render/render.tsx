@@ -425,9 +425,14 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   let jsonStr = raw.trim();
 
   // Prefer the last fenced JSON block (agent may emit explanation before the spec)
-  const fenceMatches = [...jsonStr.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-  if (fenceMatches.length > 0) {
-    jsonStr = fenceMatches[fenceMatches.length - 1][1].trim();
+  const fenceMatches = [...jsonStr.matchAll(/```([^\n`]*)\n?([\s\S]*?)```/g)];
+  for (let i = fenceMatches.length - 1; i >= 0; i--) {
+    const lang = fenceMatches[i][1].trim().toLowerCase();
+    const candidate = fenceMatches[i][2].trim();
+    if (lang && lang !== 'json') continue;
+    if (!candidate.startsWith('{')) continue;
+    jsonStr = candidate;
+    break;
   }
 
   const start = jsonStr.indexOf('{');
@@ -625,14 +630,16 @@ function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: stri
   ctx.actions.setBlockStatus(blockId, error ? 'error' : 'complete');
 }
 
-let executionNonce = 0;
+const executionNonces = new Map<string, number>();
 
 export const door = {
   kind: 'view' as const,
   prefixes: ['render::'],
 
   async execute(blockId: string, content: string, ctx: any) {
-    const thisExecution = ++executionNonce;
+    const nonce = (executionNonces.get(blockId) ?? 0) + 1;
+    executionNonces.set(blockId, nonce);
+    const thisExecution = nonce;
     ctx.actions.setBlockStatus(blockId, 'running');
     const raw = content.replace(/^render::\s*/i, '').trim();
     const explicitTitle = extractTitle(raw);
@@ -645,7 +652,7 @@ export const door = {
 
       if (!explicitTitle && !out.title && !error && out.spec) {
         generateTitle(content, ctx).then(title => {
-          if (title && executionNonce === thisExecution) {
+          if (title && executionNonces.get(blockId) === thisExecution) {
             setOutput(blockId, ctx, { ...out, title });
           }
         });
