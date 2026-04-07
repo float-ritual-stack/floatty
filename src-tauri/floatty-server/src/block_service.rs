@@ -8,11 +8,13 @@
 //! a legacy route or an outline route. Route-specific behavior belongs in handlers.
 
 use crate::api::{self, ApiError, BlockDto, BlockRef, BlocksResponse, InheritedMarkerDto, SiblingContext, TokenEstimate, TreeNode};
+use crate::WsBroadcaster;
+use floatty_core::events::BlockChange;
 use floatty_core::hooks::InheritanceIndex;
-use floatty_core::YDocStore;
+use floatty_core::{HookSystem, Origin, YDocStore};
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
-use yrs::{Array, Map, ReadTxn, Transact};
+use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
 // =========================================================================
 // Helpers (pub(crate) — used by api.rs handlers during incremental migration)
@@ -610,4 +612,209 @@ pub(crate) fn get_block(
     } else {
         Err(ApiError::NotFound(id))
     }
+}
+
+// =========================================================================
+// Write operations
+// =========================================================================
+
+/// Create a new block. Handles validation, Y.Doc mutation, persistence,
+/// broadcast, and hook emission.
+pub(crate) fn create_block(
+    store: &Arc<YDocStore>,
+    broadcaster: &Arc<WsBroadcaster>,
+    hook_system: &Arc<HookSystem>,
+    mut req: api::CreateBlockRequest,
+) -> Result<BlockDto, ApiError> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    let doc = store.doc();
+    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+
+    // Resolve short-hash prefixes in body fields (if blocks map exists)
+    {
+        let txn = doc_guard.transact();
+        if let Some(blocks_map) = txn.get_map("blocks") {
+            if let Some(ref parent_id) = req.parent_id {
+                let resolved = resolve_body_field(parent_id, "parentId", &blocks_map, &txn)?;
+                req.parent_id = Some(resolved);
+            }
+            if let Some(ref after_id) = req.after_id {
+                let resolved = resolve_body_field(after_id, "afterId", &blocks_map, &txn)?;
+                req.after_id = Some(resolved);
+            }
+        }
+    }
+
+    let update = {
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+
+        // Validate parent exists before creating block
+        if let Some(ref parent_id) = req.parent_id {
+            match blocks.get(&txn, parent_id) {
+                Some(yrs::Out::YMap(_)) => {} // Parent exists, continue
+                _ => {
+                    return Err(ApiError::NotFound(format!(
+                        "Parent block not found: {}",
+                        parent_id
+                    )));
+                }
+            }
+        }
+
+        // Validate positional insertion parameters
+        // 1. Check mutual exclusivity
+        if req.after_id.is_some() && req.at_index.is_some() {
+            return Err(ApiError::InvalidRequest(
+                "Cannot specify both afterId and atIndex".to_string()
+            ));
+        }
+
+        // 2. Validate afterId if present
+        if let Some(ref after_id) = req.after_id {
+            match blocks.get(&txn, after_id) {
+                Some(yrs::Out::YMap(after_map)) => {
+                    // Check afterId block shares same parent
+                    let after_parent = after_map.get(&txn, "parentId")
+                        .and_then(|v| match v {
+                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            _ => None,
+                        });
+
+                    let expected_parent = req.parent_id.as_ref().map(|s| s.as_str());
+                    let actual_parent = after_parent.as_ref().map(|s| s.as_str());
+
+                    if actual_parent != expected_parent {
+                        return Err(ApiError::InvalidRequest(format!(
+                            "Block {} is not a sibling (different parent)",
+                            after_id
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(ApiError::NotFound(format!(
+                        "afterId block not found: {}",
+                        after_id
+                    )));
+                }
+            }
+        }
+
+        // Create nested Y.Map for block with Y.Array for childIds
+        let parent_id_value: yrs::Any = match &req.parent_id {
+            Some(p) => yrs::Any::String(p.clone().into()),
+            None => yrs::Any::Null,
+        };
+        let block_map = blocks.insert(
+            &mut txn,
+            id.as_str(),
+            MapPrelim::from([
+                ("id".to_owned(), yrs::any!(id.clone())),
+                ("content".to_owned(), yrs::any!(req.content.clone())),
+                ("parentId".to_owned(), parent_id_value),
+                ("collapsed".to_owned(), yrs::any!(false)),
+                ("createdAt".to_owned(), yrs::any!(now as f64)),
+                ("updatedAt".to_owned(), yrs::any!(now as f64)),
+            ]),
+        );
+        // Insert childIds as nested Y.Array (empty)
+        let empty: Vec<yrs::Any> = vec![];
+        block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
+
+        // Update parent's childIds or add to rootIds
+        if let Some(ref parent_id) = req.parent_id {
+            // Add to parent's childIds array (already validated parent exists above)
+            if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id) {
+                if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+
+                    // Determine insertion index
+                    let insert_idx = if let Some(ref after_id) = req.after_id {
+                        // Find position of afterId sibling, insert after it
+                        let child_ids_vec: Vec<String> = child_ids
+                            .iter(&txn)
+                            .filter_map(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                _ => None,
+                            })
+                            .collect();
+
+                        child_ids_vec.iter()
+                            .position(|x| x == after_id)
+                            .map(|idx| idx + 1)
+                            .unwrap_or(child_ids.len(&txn) as usize)  // Fallback: append
+                    } else if let Some(at_index) = req.at_index {
+                        // Clamp to valid range (0..=length)
+                        at_index.min(child_ids.len(&txn) as usize)
+                    } else {
+                        // Default: append to end (backward compatible)
+                        child_ids.len(&txn) as usize
+                    };
+
+                    // Use Y.Array insert() - surgical, 1 CRDT op (FLO-280 pattern)
+                    child_ids.insert(&mut txn, insert_idx as u32, id.as_str());
+                }
+            }
+        } else {
+            // No parent - add to rootIds
+            let root_ids = txn.get_or_insert_array("rootIds");
+
+            let insert_idx = if let Some(ref after_id) = req.after_id {
+                let root_vec: Vec<String> = root_ids
+                    .iter(&txn)
+                    .filter_map(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+
+                root_vec.iter()
+                    .position(|x| x == after_id)
+                    .map(|idx| idx + 1)
+                    .unwrap_or(root_ids.len(&txn) as usize)
+            } else if let Some(at_index) = req.at_index {
+                at_index.min(root_ids.len(&txn) as usize)
+            } else {
+                root_ids.len(&txn) as usize
+            };
+
+            root_ids.insert(&mut txn, insert_idx as u32, id.as_str());
+        }
+
+        txn.encode_update_v1()
+    };
+    drop(doc_guard);
+
+    // Persist and broadcast to WebSocket clients
+    let seq = store.persist_update(&update)?;
+    broadcaster.broadcast(update, None, Some(seq));
+
+    // Emit to hook system for metadata extraction
+    let _ = hook_system.emit_change(BlockChange::Created {
+        id: id.clone(),
+        content: req.content.clone(),
+        parent_id: req.parent_id.clone(),
+        origin: Origin::User,
+    });
+
+    let block_type = floatty_core::parse_block_type(&req.content);
+
+    Ok(BlockDto {
+        id,
+        content: req.content,
+        parent_id: req.parent_id,
+        child_ids: vec![],
+        collapsed: false,
+        block_type: format!("{:?}", block_type).to_lowercase(),
+        metadata: None, // Hooks will populate async
+        inherited_markers: None, // Computed on read
+        created_at: now as i64,
+        updated_at: now as i64,
+        output_type: None,
+        output: None,
+    })
 }
