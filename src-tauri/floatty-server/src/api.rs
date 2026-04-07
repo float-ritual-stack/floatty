@@ -4117,27 +4117,33 @@ async fn outline_create_block(
 
         // Add to parent's childIds or rootIds, honoring afterId (reject if invalid)
         if let Some(ref parent_id) = req.parent_id {
-            if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id.as_str()) {
-                if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
-                    let insert_idx = if let Some(ref after_id) = req.after_id {
-                        let child_vec: Vec<String> = child_ids.iter(&txn)
-                            .filter_map(|v| match v {
-                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                                _ => None,
-                            })
-                            .collect();
-                        match child_vec.iter().position(|x| x == after_id) {
-                            Some(idx) => idx + 1,
-                            None => return Err(ApiError::InvalidRequest(
-                                format!("afterId '{}' is not a sibling under parent '{}'", after_id, parent_id)
-                            )),
-                        }
-                    } else {
-                        child_ids.len(&txn) as usize
-                    };
-                    child_ids.insert(&mut txn, insert_idx as u32, id.as_str());
+            let parent_map = match blocks.get(&txn, parent_id.as_str()) {
+                Some(yrs::Out::YMap(m)) => m,
+                _ => return Err(ApiError::NotFound(format!("Parent block not found: {}", parent_id))),
+            };
+            let child_ids = match parent_map.get(&txn, "childIds") {
+                Some(yrs::Out::YArray(arr)) => arr,
+                _ => return Err(ApiError::InvalidRequest(format!(
+                    "Parent '{}' has no childIds array (corrupt block)", parent_id
+                ))),
+            };
+            let insert_idx = if let Some(ref after_id) = req.after_id {
+                let child_vec: Vec<String> = child_ids.iter(&txn)
+                    .filter_map(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                match child_vec.iter().position(|x| x == after_id) {
+                    Some(idx) => idx + 1,
+                    None => return Err(ApiError::InvalidRequest(
+                        format!("afterId '{}' is not a sibling under parent '{}'", after_id, parent_id)
+                    )),
                 }
-            }
+            } else {
+                child_ids.len(&txn) as usize
+            };
+            child_ids.insert(&mut txn, insert_idx as u32, id.as_str());
         } else {
             let root_ids = txn.get_or_insert_array("rootIds");
             let insert_idx = if let Some(ref after_id) = req.after_id {
