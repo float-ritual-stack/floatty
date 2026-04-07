@@ -33,36 +33,37 @@ const logger = createLogger('outputSummaryHook');
  */
 function extractRenderSummary(output: any): string | null {
   // Door envelope: { kind, doorId, schema, data: { spec, title, ... } }
-  // Prefer data.title (set by render agent or Ollama title generation)
-  // Skip if title looks like a JSON blob or is unreasonably long — agent sometimes echoes spec back
   const data = output?.data;
-  if (data?.title && typeof data.title === 'string' && data.title.length < 120 && !data.title.trimStart().startsWith('{')) {
-    return data.title;
-  }
-
   const spec = data?.spec ?? output?.spec;
-  if (!spec?.elements) return null;
 
   const parts: string[] = [];
-  let foundTitle = false;
 
-  for (const el of Object.values(spec.elements as Record<string, any>)) {
-    if (!foundTitle && el.type === 'EntryHeader' && el.props?.title) {
-      parts.push(el.props.title);
-      foundTitle = true;
-    } else if (!foundTitle && el.type === 'MetadataHeader' && el.props?.title) {
-      parts.push(el.props.title);
-      foundTitle = true;
-    } else if (el.type === 'EntryBody' && el.props?.markdown) {
-      const headings = (el.props.markdown as string)
-        .split('\n')
-        .filter((line: string) => line.startsWith('## '))
-        .map((line: string) => line.replace(/^##\s+/, '').trim());
-      for (const h of headings) {
-        if (!parts.includes(h)) parts.push(h);
+  // Use data.title as lead if it's clean (not a JSON blob or too long)
+  if (data?.title && typeof data.title === 'string' && data.title.length < 120 && !data.title.trimStart().startsWith('{')) {
+    parts.push(data.title);
+  }
+
+  // Scan spec elements for section structure
+  if (spec?.elements) {
+    for (const el of Object.values(spec.elements as Record<string, any>)) {
+      if (el.type === 'EntryHeader' && el.props?.title) {
+        const t = el.props.title;
+        if (!parts.includes(t)) parts.push(t);
+      } else if (el.type === 'MetadataHeader' && el.props?.title) {
+        const t = el.props.title;
+        if (!parts.includes(t)) parts.push(t);
+      } else if (el.type === 'EntryBody' && el.props?.markdown) {
+        const headings = (el.props.markdown as string)
+          .split('\n')
+          .filter((line: string) => line.startsWith('## '))
+          .map((line: string) => line.replace(/^##\s+/, '').trim());
+        for (const h of headings) {
+          if (!parts.includes(h)) parts.push(h);
+        }
+      } else if (el.type === 'PatternCard' && el.props?.title) {
+        const t = el.props.title;
+        if (!parts.includes(t)) parts.push(t);
       }
-    } else if (el.type === 'PatternCard' && el.props?.title) {
-      parts.push(el.props.title);
     }
   }
 
