@@ -376,8 +376,8 @@ impl PageNameIndexHook {
     fn handle_block_created(&self, id: &str, content: &str, parent_id: Option<&str>, store: &YDocStore) {
         let mut index = self.index.write().expect("lock poisoned");
 
-        // Check if this is the pages:: container
-        if Self::is_pages_container(content) {
+        // Check if this is the pages:: container (must be a root block — no parent)
+        if Self::is_pages_container(content) && parent_id.is_none() {
             index.set_pages_container_id(Some(id.to_string()));
             debug!("Found pages:: container: {}", id);
             return;
@@ -416,8 +416,12 @@ impl PageNameIndexHook {
                 index.set_pages_container_id(None);
             }
         } else if !was_container && is_container {
-            // Became a container
-            index.set_pages_container_id(Some(id.to_string()));
+            // Became a container — only if root block (no parent)
+            if let Some(block) = store.get_block(id) {
+                if block.parent_id.is_none() {
+                    index.set_pages_container_id(Some(id.to_string()));
+                }
+            }
         }
 
         // If this block is a page (child of pages::), update its name
