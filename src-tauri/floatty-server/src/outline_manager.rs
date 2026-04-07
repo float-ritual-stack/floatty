@@ -40,13 +40,24 @@ pub struct OutlineContext {
 
 impl OutlineContext {
     /// Get or initialize the hook system. First call triggers cold-start rehydration.
+    ///
+    /// Uses `std::panic::catch_unwind` to prevent OnceLock poisoning if init fails.
+    /// Returns the existing hook system or a freshly initialized one.
     pub fn hook_system(&self) -> &Arc<HookSystem> {
         self.hook_system.get_or_init(|| {
             info!("Initializing hook system for outline '{}'", self.name);
-            Arc::new(HookSystem::initialize_at(
-                Arc::clone(&self.store),
-                self.search_index_path.clone(),
-            ))
+            let store = Arc::clone(&self.store);
+            let path = self.search_index_path.clone();
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                HookSystem::initialize_at(store, path)
+            })) {
+                Ok(hs) => Arc::new(hs),
+                Err(e) => {
+                    warn!("HookSystem init panicked for '{}': {:?}", self.name, e);
+                    // Return a minimal hook system without search
+                    Arc::new(HookSystem::initialize_at(Arc::clone(&self.store), None))
+                }
+            }
         })
     }
 
@@ -275,6 +286,14 @@ impl OutlineManager {
         if shm.exists() {
             if let Err(e) = std::fs::remove_file(&shm) {
                 warn!("Failed to remove SHM file {:?}: {}", shm, e);
+            }
+        }
+
+        // Remove Tantivy index directory if present
+        let tantivy_dir = self.search_index_path(name);
+        if tantivy_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&tantivy_dir) {
+                warn!("Failed to remove Tantivy index {:?}: {}", tantivy_dir, e);
             }
         }
 

@@ -479,6 +479,12 @@ pub enum ApiError {
 
     #[error("Ambiguous prefix: {0} matches")]
     Ambiguous(usize),
+
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 impl IntoResponse for ApiError {
@@ -491,7 +497,8 @@ impl IntoResponse for ApiError {
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::UpdatesCompacted { .. } => StatusCode::GONE,
             ApiError::MissingConfirmationHeader => StatusCode::BAD_REQUEST,
-            ApiError::Ambiguous(_) => StatusCode::CONFLICT,
+            ApiError::Ambiguous(_) | ApiError::Conflict(_) => StatusCode::CONFLICT,
+            ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
         // For UpdatesCompacted, return structured JSON with compaction info
@@ -3779,7 +3786,7 @@ async fn list_outlines(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<OutlineInfo>>, ApiError> {
     let outlines = state.outline_manager.list_outlines().map_err(|e| {
-        ApiError::InvalidRequest(format!("Failed to list outlines: {}", e))
+        ApiError::Internal(format!("Failed to list outlines: {}", e))
     })?;
     Ok(Json(outlines))
 }
@@ -3794,10 +3801,11 @@ async fn create_outline_handler(
     })?;
     let info = state.outline_manager.create_outline(&name).map_err(|e| {
         match &e {
-            floatty_core::OutlineError::AlreadyExists(_) | floatty_core::OutlineError::InvalidName(_) | floatty_core::OutlineError::ReservedName => {
+            floatty_core::OutlineError::AlreadyExists(_) => ApiError::Conflict(format!("{}", e)),
+            floatty_core::OutlineError::InvalidName(_) | floatty_core::OutlineError::ReservedName => {
                 ApiError::InvalidRequest(format!("{}", e))
             }
-            _ => ApiError::InvalidRequest(format!("Failed to create outline: {}", e)),
+            _ => ApiError::Internal(format!("Failed to create outline: {}", e)),
         }
     })?;
     Ok((StatusCode::CREATED, Json(info)))
@@ -3817,7 +3825,7 @@ async fn delete_outline_handler(
     state.outline_manager.delete_outline(&validated).map_err(|e| {
         match &e {
             floatty_core::OutlineError::NotFound(_) => ApiError::NotFound(format!("{}", e)),
-            _ => ApiError::InvalidRequest(format!("Failed to delete outline: {}", e)),
+            _ => ApiError::Internal(format!("Failed to delete outline: {}", e)),
         }
     })?;
     Ok(StatusCode::NO_CONTENT)
@@ -3842,7 +3850,7 @@ fn resolve_outline(state: &AppState, name: &str) -> Result<Arc<YDocStore>, ApiEr
             floatty_core::OutlineError::InvalidName(_) | floatty_core::OutlineError::ReservedName => {
                 ApiError::InvalidRequest(format!("{}", e))
             }
-            _ => ApiError::InvalidRequest(format!("Failed to resolve outline: {}", e)),
+            _ => ApiError::Internal(format!("Failed to resolve outline: {}", e)),
         }
     })
 }
