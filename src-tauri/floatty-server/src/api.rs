@@ -3331,7 +3331,7 @@ async fn search_blocks(
 
                     // Block type derived from content
                     let block_type = content.as_ref().map(|c| {
-                        format!("{:?}", floatty_core::parse_block_type(c)).to_lowercase()
+                        floatty_core::parse_block_type(c).as_str().to_string()
                     });
 
                     (content, breadcrumb, metadata, block_type)
