@@ -6,6 +6,27 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.10.10] - 2026-04-07
+
+### Features
+
+- **echoCopy:: handler** (FLO-582): Materializes render door output as plain markdown blocks in the outline — `echoCopy:: [[blockRef]]` resolves short-hash, page name, or UUID refs, reads `renderedMarkdown` metadata, parses to block tree, creates as children
+- **outputSummaryHook**: Added `renderedMarkdown` projection — flattens door spec elements to markdown, stored in block metadata
+- Backfill output summaries for pre-hook render blocks at startup (no re-render needed)
+
+### Bug Fixes
+
+- **Rust metadata**: Added `rendered_markdown` field to `BlockMetadata` struct — prevents silent field loss during Rust-side metadata round-trips; also added `summary` serialization to `metadata_to_ymap`
+- **render door**: Made spec flattener resilient to malformed payloads — cycle guard, `Array.isArray()` checks on props
+- **echoCopy**: Falls back to `blockStore.blocks` when `actions.getBlock` is undefined
+- **esm.sh imports**: Added `?external=react,react-dom` to non-React packages to prevent duplicate React instances
+
+### Documentation
+
+- Added echoCopy:: guide and help:: topic
+
+---
+
 ## [0.10.9] - 2026-04-07
 
 ### Bug Fixes
