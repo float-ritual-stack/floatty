@@ -7,9 +7,11 @@
 //! **No route-awareness.** BlockService doesn't know whether the caller is
 //! a legacy route or an outline route. Route-specific behavior belongs in handlers.
 
-use crate::api::{self, ApiError, BlockDto, InheritedMarkerDto};
+use crate::api::{self, ApiError, BlockDto, BlocksResponse, InheritedMarkerDto};
 use floatty_core::hooks::InheritanceIndex;
-use yrs::{Array, Map, ReadTxn};
+use floatty_core::YDocStore;
+use std::sync::{Arc, RwLock};
+use yrs::{Array, Map, ReadTxn, Transact};
 
 // =========================================================================
 // Helpers (pub(crate) — used by api.rs handlers during incremental migration)
@@ -211,4 +213,74 @@ pub(crate) fn read_block_dto<T: ReadTxn>(
         output_type,
         output,
     }
+}
+
+// =========================================================================
+// Read operations
+// =========================================================================
+
+/// Get all blocks with optional filters. Returns BlocksResponse with typed DTOs.
+pub(crate) fn get_blocks(
+    store: &Arc<YDocStore>,
+    inheritance_index: Option<&RwLock<InheritanceIndex>>,
+    query: &api::BlocksQuery,
+) -> Result<BlocksResponse, ApiError> {
+    let doc = store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let mut blocks = Vec::new();
+    let mut root_ids = Vec::new();
+
+    if let Some(root_ids_arr) = txn.get_array("rootIds") {
+        for value in root_ids_arr.iter(&txn) {
+            if let yrs::Out::Any(yrs::Any::String(id)) = value {
+                root_ids.push(id.to_string());
+            }
+        }
+    }
+
+    // Acquire inheritance index once for all blocks (if available)
+    let inheritance_guard = inheritance_index
+        .and_then(|idx| idx.read().ok());
+
+    if let Some(blocks_map) = txn.get_map("blocks") {
+        for (key, value) in blocks_map.iter(&txn) {
+            if let yrs::Out::YMap(block_map) = value {
+                let block_id = key.to_string();
+                let inherited_markers = inheritance_guard
+                    .as_ref()
+                    .and_then(|guard| lookup_inherited(guard, &block_id));
+                let dto = read_block_dto(&block_map, &txn, &block_id, inherited_markers, false);
+
+                // Apply query filters
+                if let Some(since) = query.since {
+                    if dto.created_at < since { continue; }
+                }
+                if let Some(until) = query.until {
+                    if dto.created_at >= until { continue; }
+                }
+                if let Some(ref mt) = query.marker_type {
+                    let has_marker = dto.metadata.as_ref()
+                        .and_then(|m| m.get("markers"))
+                        .and_then(|arr| arr.as_array())
+                        .map(|markers| {
+                            markers.iter().any(|marker| {
+                                let type_match = marker.get("markerType").and_then(|v| v.as_str()) == Some(mt.as_str());
+                                if let Some(ref mv) = query.marker_value {
+                                    type_match && marker.get("value").and_then(|v| v.as_str()) == Some(mv.as_str())
+                                } else {
+                                    type_match
+                                }
+                            })
+                        }).unwrap_or(false);
+                    if !has_marker { continue; }
+                }
+
+                blocks.push(dto);
+            }
+        }
+    }
+
+    Ok(BlocksResponse { blocks, root_ids })
 }
