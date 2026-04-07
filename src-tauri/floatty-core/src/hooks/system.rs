@@ -66,20 +66,26 @@ pub struct HookSystem {
 }
 
 impl HookSystem {
-    /// Initialize the hook system with default hooks.
+    /// Initialize with default search index path.
+    pub fn initialize(store: Arc<YDocStore>) -> Self {
+        let index_path = IndexManager::index_path().ok();
+        Self::initialize_at(store, index_path)
+    }
+
+    /// Initialize with a custom search index path (for per-outline indexes).
+    ///
+    /// Pass `None` for search_index_path to skip search initialization.
     ///
     /// This:
     /// 1. Creates HookRegistry
     /// 2. Registers MetadataExtractionHook, PageNameIndexHook
-    /// 3. Optionally creates search infrastructure (IndexManager, WriterHandle)
+    /// 3. Optionally creates search infrastructure at the given path
     /// 4. Registers TantivyIndexHook if search is available
     /// 5. Creates ChangeEmitter
     /// 6. Spawns dispatch task (emitter → registry)
     /// 7. Spawns periodic commit task for search index
     /// 8. Rehydrates existing blocks (cold start)
-    ///
-    /// Returns the HookSystem which should be kept alive for server lifetime.
-    pub fn initialize(store: Arc<YDocStore>) -> Self {
+    pub fn initialize_at(store: Arc<YDocStore>, search_index_path: Option<std::path::PathBuf>) -> Self {
         info!("Initializing hook system...");
 
         // Create registry
@@ -94,9 +100,9 @@ impl HookSystem {
         registry.register(inheritance_index_hook);
         registry.register(page_name_index_hook.clone());
 
-        // Initialize search infrastructure
-        let (index_manager, writer_handle, commit_handle) =
-            match Self::initialize_search(&registry, Arc::clone(&inheritance_index)) {
+        // Initialize search infrastructure (skip if no path provided)
+        let (index_manager, writer_handle, commit_handle) = if let Some(path) = search_index_path {
+            match Self::initialize_search_at(&registry, Arc::clone(&inheritance_index), path) {
                 Ok((im, wh, ch)) => (Some(im), Some(wh), Some(ch)),
                 Err(e) => {
                     warn!(
@@ -105,7 +111,11 @@ impl HookSystem {
                     );
                     (None, None, None)
                 }
-            };
+            }
+        } else {
+            info!("Search index path not configured, skipping search initialization");
+            (None, None, None)
+        };
 
         let hook_count = registry.len();
         info!("Registered {} hooks", hook_count);
@@ -137,17 +147,16 @@ impl HookSystem {
         }
     }
 
-    /// Initialize search infrastructure: IndexManager, WriterHandle, and TantivyIndexHook.
-    fn initialize_search(
+    /// Initialize search infrastructure at a specific index path.
+    fn initialize_search_at(
         registry: &Arc<HookRegistry>,
         inheritance_index: Arc<RwLock<InheritanceIndex>>,
+        index_path: std::path::PathBuf,
     ) -> Result<(Arc<IndexManager>, WriterHandle, tokio::task::JoinHandle<()>), SearchError> {
-        info!("Initializing search infrastructure...");
+        info!("Initializing search infrastructure at {:?}...", index_path);
 
         // Nuke existing index for clean rebuild from Y.Doc (FLO-186)
         // Search index is derived state — Y.Doc is source of truth.
-        // Stale entries (ghost IDs, pre-data-loss cruft) persist otherwise.
-        let index_path = IndexManager::index_path()?;
         if index_path.exists() {
             info!("Nuking search index at {:?} for clean rebuild", index_path);
             if let Err(e) = std::fs::remove_dir_all(&index_path) {
@@ -155,8 +164,8 @@ impl HookSystem {
             }
         }
 
-        // Create fresh index (directory was just removed)
-        let index_manager = Arc::new(IndexManager::open_or_create()?);
+        // Create fresh index at the specified path
+        let index_manager = Arc::new(IndexManager::open_or_create_at(index_path)?);
 
         // Spawn the writer actor
         let writer_handle = TantivyWriter::spawn(&index_manager)?;
@@ -200,9 +209,13 @@ impl HookSystem {
     /// Get the search index manager for queries.
     ///
     /// Returns None if search initialization failed.
-    /// Used by Unit 3.4 SearchService.
     pub fn index_manager(&self) -> Option<Arc<IndexManager>> {
         self.index_manager.clone()
+    }
+
+    /// Get the writer handle for flush operations (e.g., before eviction).
+    pub fn writer_handle(&self) -> Option<&WriterHandle> {
+        self.writer_handle.as_ref()
     }
 
     /// Get a reference to the emitter (for external emission).
