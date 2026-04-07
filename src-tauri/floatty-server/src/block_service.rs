@@ -1196,3 +1196,98 @@ pub(crate) fn update_block(
         output: None,
     })
 }
+
+/// Delete a block and its entire subtree. Handles persistence, broadcast,
+/// and hook emission for each deleted block.
+pub(crate) fn delete_block(
+    store: &Arc<YDocStore>,
+    broadcaster: &Arc<WsBroadcaster>,
+    hook_system: &Arc<HookSystem>,
+    id: &str,
+) -> Result<(), ApiError> {
+    let doc = store.doc();
+    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+
+    let (update, deleted_blocks) = {
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+
+        // Resolve short-hash prefix to full block ID
+        let id = resolve_block_id(id, &blocks, &txn)?;
+
+        // Get block's parentId before deleting
+        let parent_id: Option<String> = match blocks.get(&txn, &id) {
+            Some(yrs::Out::YMap(block_map)) => {
+                block_map.get(&txn, "parentId").and_then(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                })
+            }
+            Some(_) => return Err(ApiError::NotFound(id)),
+            None => return Err(ApiError::NotFound(id)),
+        };
+
+        // Collect all descendants (block + children + grandchildren...)
+        let to_delete = collect_descendants(&blocks, &txn, &id);
+
+        // Remove from parent's childIds if this block has a parent
+        if let Some(ref pid) = parent_id {
+            if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, pid) {
+                if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
+                    let mut remove_idx: Option<u32> = None;
+                    for (i, value) in child_ids.iter(&txn).enumerate() {
+                        if let yrs::Out::Any(yrs::Any::String(s)) = value {
+                            if s.as_ref() == id {
+                                remove_idx = Some(i as u32);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(idx) = remove_idx {
+                        child_ids.remove(&mut txn, idx);
+                    }
+                }
+            }
+        }
+
+        // Delete all collected blocks from the map
+        for (del_id, _) in &to_delete {
+            blocks.remove(&mut txn, del_id);
+        }
+
+        // Remove from rootIds if present (only if no parent)
+        if parent_id.is_none() {
+            let root_ids = txn.get_or_insert_array("rootIds");
+            let mut remove_index: Option<u32> = None;
+            for (i, value) in root_ids.iter(&txn).enumerate() {
+                if let yrs::Out::Any(yrs::Any::String(s)) = value {
+                    if s.as_ref() == id {
+                        remove_index = Some(i as u32);
+                        break;
+                    }
+                }
+            }
+            if let Some(idx) = remove_index {
+                root_ids.remove(&mut txn, idx);
+            }
+        }
+
+        (txn.encode_update_v1(), to_delete)
+    };
+    drop(doc_guard);
+
+    // Persist and broadcast to WebSocket clients
+    let seq = store.persist_update(&update)?;
+    broadcaster.broadcast(update, None, Some(seq));
+
+    // Emit BlockChange::Deleted for EACH deleted block (hooks depend on complete coverage)
+    for (del_id, del_content) in &deleted_blocks {
+        let _ = hook_system.emit_change(BlockChange::Deleted {
+            id: del_id.clone(),
+            content: del_content.clone(),
+            origin: Origin::User,
+        });
+    }
+
+    Ok(())
+}
