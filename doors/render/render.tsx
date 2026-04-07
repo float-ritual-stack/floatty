@@ -424,7 +424,10 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
 
   let jsonStr = raw.trim();
 
-  // Prefer the last fenced JSON block (agent may emit explanation before the spec)
+  // Prefer the last fenced JSON block (agent typically explains before emitting spec).
+  // Assumption: the spec object is the LAST JSON block. If agents start emitting
+  // summary/metadata JSON after the spec, this heuristic breaks.
+  // Only matches blocks starting with '{' (objects, not arrays).
   const fenceMatches = [...jsonStr.matchAll(/```([^\n`]*)\n?([\s\S]*?)```/g)];
   for (let i = fenceMatches.length - 1; i >= 0; i--) {
     const lang = fenceMatches[i][1].trim().toLowerCase();

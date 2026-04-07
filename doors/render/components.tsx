@@ -759,21 +759,34 @@ export function TuiStat(props: BaseComponentProps<{ label: string; value: string
 export function BarChart(props: BaseComponentProps<{ title?: string; maxHeight?: number; max?: number }>) {
   let barsRef: HTMLDivElement | undefined;
 
-  // After mount, compute max from children's data-value attrs and set CSS var
-  const computeMax = () => {
+  // Compute max from children's data-value attrs, set CSS var, then resize bars.
+  // SolidJS onMount fires children-first, then parent — so BarItem.onMount runs
+  // before BarChart.onMount. We use rAF to defer past all synchronous onMount
+  // calls, then compute max and explicitly set bar heights (BarItem.onMount may
+  // have already run with stale/missing max, so we recompute from parent).
+  const computeMaxAndResizeBars = () => {
     if (!barsRef) return;
+    let max: number;
     if (props.props.max != null && props.props.max > 0) {
-      barsRef.style.setProperty('--bar-chart-max', String(props.props.max));
-      return;
+      max = props.props.max;
+    } else {
+      const values = Array.from(barsRef.querySelectorAll('[data-bar-value]'))
+        .map(el => parseFloat((el as HTMLElement).dataset.barValue ?? '0'))
+        .filter(v => !isNaN(v));
+      max = values.length > 0 ? Math.max(...values) : 1;
     }
-    const values = Array.from(barsRef.querySelectorAll('[data-bar-value]'))
-      .map(el => parseFloat((el as HTMLElement).dataset.barValue ?? '0'))
-      .filter(v => !isNaN(v));
-    const max = values.length > 0 ? Math.max(...values) : 1;
     barsRef.style.setProperty('--bar-chart-max', String(max));
+    // Resize all child bars now that max is known
+    barsRef.querySelectorAll<HTMLElement>('[data-bar-ref]').forEach(bar => {
+      const value = parseFloat(bar.dataset.barRef ?? '0');
+      if (!isNaN(value)) {
+        const pct = Math.min(100, (value / max) * 100);
+        bar.style.height = `${pct}%`;
+      }
+    });
   };
 
-  onMount(computeMax);
+  onMount(() => requestAnimationFrame(computeMaxAndResizeBars));
 
   return (
     <div>
@@ -847,7 +860,7 @@ export function BarItemComponent(props: BaseComponentProps<{ label: string; valu
           {numValue() % 1 === 0 ? numValue() : numValue().toFixed(1)}
         </span>
       </Show>
-      <div ref={barRef} style={{
+      <div ref={barRef} data-bar-ref={numValue()} style={{
         width: '100%',
         background: props.props.color || V.cy,
         height: '0%',

@@ -91,7 +91,7 @@ export function flattenSpecToMarkdown(output: any): string | null {
     lines.push(`# ${data.title}`, '');
   }
 
-  function walk(key: string, depth: number): void {
+  function walk(key: string): void {
     const el = elements[key];
     if (!el) return;
 
@@ -164,12 +164,12 @@ export function flattenSpecToMarkdown(output: any): string | null {
     // Recurse children
     if (Array.isArray(el.children)) {
       for (const childKey of el.children) {
-        walk(childKey, depth + 1);
+        walk(childKey);
       }
     }
   }
 
-  walk(spec.root, 0);
+  walk(spec.root);
 
   const result = lines.join('\n').trim();
   return result.length > 0 ? result : null;
