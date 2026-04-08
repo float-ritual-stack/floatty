@@ -372,6 +372,7 @@ function createBlockStore() {
    */
   /** Reset store for outline switching. Detaches old observers, clears state. */
   const resetForOutlineSwitch = () => {
+    console.log('[blockStore] resetForOutlineSwitch called, isInit:', state.isInitialized, 'blocks:', Object.keys(state.blocks).length);
     if (_doc && _blocksObserver) {
       try { _doc.getMap('blocks').unobserveDeep(_blocksObserver); } catch {}
     }
@@ -382,11 +383,10 @@ function createBlockStore() {
     _blocksObserver = null;
     _rootIdsObserver = null;
     _isInitializing = false;
-    batch(() => {
-      setState('blocks', {});
-      setState('rootIds', []);
-      setState('isInitialized', false);
-    });
+    setState('blocks', {});
+    setState('rootIds', []);
+    setState('isInitialized', false);
+    console.log('[blockStore] After setState, isInit:', state.isInitialized, 'blocks:', Object.keys(state.blocks).length, 'roots:', state.rootIds.length);
   };
 
   const initFromYDoc = (doc: Y.Doc): (() => void) => {
