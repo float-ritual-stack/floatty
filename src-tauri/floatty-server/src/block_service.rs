@@ -537,8 +537,10 @@ pub(crate) fn get_blocks(
     }
 
     // Acquire inheritance index once for all blocks (if available)
-    let inheritance_guard = inheritance_index
-        .and_then(|idx| idx.read().ok());
+    let inheritance_guard = match inheritance_index {
+        Some(idx) => Some(idx.read().map_err(|_| ApiError::LockPoisoned)?),
+        None => None,
+    };
 
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
@@ -747,10 +749,12 @@ pub(crate) fn create_block(
                             })
                             .collect();
 
-                        child_ids_vec.iter()
-                            .position(|x| x == after_id)
-                            .map(|idx| idx + 1)
-                            .unwrap_or(child_ids.len(&txn) as usize)  // Fallback: append
+                        match child_ids_vec.iter().position(|x| x == after_id) {
+                            Some(idx) => idx + 1,
+                            None => return Err(ApiError::InvalidRequest(format!(
+                                "afterId '{}' not found in parent's childIds", after_id
+                            ))),
+                        }
                     } else if let Some(at_index) = req.at_index {
                         // Clamp to valid range (0..=length)
                         at_index.min(child_ids.len(&txn) as usize)
@@ -776,10 +780,12 @@ pub(crate) fn create_block(
                     })
                     .collect();
 
-                root_vec.iter()
-                    .position(|x| x == after_id)
-                    .map(|idx| idx + 1)
-                    .unwrap_or(root_ids.len(&txn) as usize)
+                match root_vec.iter().position(|x| x == after_id) {
+                    Some(idx) => idx + 1,
+                    None => return Err(ApiError::InvalidRequest(format!(
+                        "afterId '{}' not found in rootIds", after_id
+                    ))),
+                }
             } else if let Some(at_index) = req.at_index {
                 at_index.min(root_ids.len(&txn) as usize)
             } else {
@@ -911,10 +917,8 @@ pub(crate) fn update_block(
                 })
                 .unwrap_or_default();
 
-            let existing_metadata = block_map.get(&txn, "metadata").and_then(|v| match v {
-                yrs::Out::Any(yrs::Any::String(s)) => serde_json::from_str(s.as_ref()).ok(),
-                _ => None,
-            });
+            let existing_metadata = block_map.get(&txn, "metadata")
+                .and_then(|v| api::extract_metadata_from_yrs(v, &txn));
 
             // Extract created_at (doesn't change on update)
             let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
@@ -979,12 +983,20 @@ pub(crate) fn update_block(
 
                 // Walk ancestor chain to prevent cycles (can't parent under a descendant)
                 let mut cursor = Some(new_parent_id.clone());
+                let mut depth = 0;
+                const MAX_ANCESTOR_DEPTH: usize = 1000;
                 while let Some(pid) = cursor {
                     if pid == id {
                         return Err(ApiError::InvalidParent(format!(
                             "Cannot reparent block {} under its own descendant",
                             id
                         )));
+                    }
+                    depth += 1;
+                    if depth > MAX_ANCESTOR_DEPTH {
+                        return Err(ApiError::InvalidParent(
+                            "Ancestor chain exceeds depth limit — possible data corruption".to_string()
+                        ));
                     }
                     cursor = blocks
                         .get(&txn, &pid)
@@ -1169,6 +1181,16 @@ pub(crate) fn update_block(
             id: id.clone(),
             old_content,
             new_content: final_content.clone(),
+            origin: Origin::User,
+        });
+    }
+
+    // Emit MetadataChanged if metadata was explicitly updated via PATCH
+    if req.metadata.is_some() {
+        let _ = hook_system.emit_change(BlockChange::MetadataChanged {
+            id: id.clone(),
+            old_metadata: None, // Previous metadata not tracked in this path
+            new_metadata: req.metadata.clone(),
             origin: Origin::User,
         });
     }
