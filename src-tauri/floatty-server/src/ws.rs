@@ -48,7 +48,7 @@ use axum::{
     },
     response::Response,
 };
-use crate::OutlineManager;
+use crate::{OutlineContext, OutlineManager};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use floatty_core::YDocStore;
 use futures_util::{SinkExt, StreamExt};
@@ -248,28 +248,38 @@ pub async fn ws_handler(
 ) -> Response {
     let outline_name = query.outline.unwrap_or_else(|| "default".to_string());
 
-    let broadcaster = if outline_name == "default" {
-        Arc::clone(&ws_state.default_broadcaster)
+    let (broadcaster, outline_ctx) = if outline_name == "default" {
+        (Arc::clone(&ws_state.default_broadcaster), None)
     } else {
         match ws_state.outline_manager.get_context(&outline_name) {
             Ok(ctx) => {
                 ctx.ensure_hook_system(); // Wire callbacks if needed
-                Arc::clone(&ctx.broadcaster)
+                let bc = Arc::clone(&ctx.broadcaster);
+                (bc, Some(ctx))
             }
             Err(e) => {
                 tracing::warn!("WS connect for unknown outline '{}': {}", outline_name, e);
-                // Fall back to default rather than rejecting — WS upgrade can't return errors cleanly
-                Arc::clone(&ws_state.default_broadcaster)
+                (Arc::clone(&ws_state.default_broadcaster), None)
             }
         }
     };
 
     let outline_for_log = outline_name.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster, outline_for_log))
+    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster, outline_for_log, outline_ctx))
 }
 
 /// Handle an individual WebSocket connection
-async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>, outline: String) {
+async fn handle_socket(
+    socket: WebSocket,
+    broadcaster: Arc<WsBroadcaster>,
+    outline: String,
+    outline_ctx: Option<Arc<OutlineContext>>,
+) {
+    // Track active connections for non-default outlines (used by LRU eviction)
+    if let Some(ref ctx) = outline_ctx {
+        ctx.active_connections.fetch_add(1, Ordering::Relaxed);
+    }
+
     let (mut sender, mut receiver) = socket.split();
     let mut rx = broadcaster.subscribe();
 
@@ -326,8 +336,11 @@ async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>, outli
         }
     }
 
-    // Clean up send task
+    // Clean up send task and decrement active connections
     send_task.abort();
+    if let Some(ref ctx) = outline_ctx {
+        ctx.active_connections.fetch_sub(1, Ordering::Relaxed);
+    }
     tracing::info!("WebSocket client disconnected (outline: {})", outline);
 }
 
