@@ -31,7 +31,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{DateTime, Utc};
-use floatty_core::{HookSystem, InheritanceIndex, OutlineInfo, OutlineName, PageNameIndex, SearchFilters, SearchService, YDocStore};
+use floatty_core::{HookSystem, InheritanceIndex, OutlineInfo, OutlineName, PageNameIndex, YDocStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::sync::{Arc, RwLock};
@@ -590,9 +590,9 @@ pub fn create_router(
         .route("/api/v1/outlines/:name/blocks", get(outline_get_blocks).post(outline_create_block))
         .route("/api/v1/outlines/:name/blocks/:id", get(outline_get_block).patch(outline_update_block).delete(outline_delete_block))
         .route("/api/v1/outlines/:name/stats", get(outline_get_stats))
-        // 501 stubs for features requiring per-outline hooks/search (Phase 2)
-        .route("/api/v1/outlines/:name/search", get(outline_search_not_impl))
-        .route("/api/v1/outlines/:name/pages/search", get(outline_search_not_impl))
+        // Per-outline search (scoped to outline's Tantivy index)
+        .route("/api/v1/outlines/:name/search", get(outline_search_blocks))
+        .route("/api/v1/outlines/:name/pages/search", get(outline_search_blocks))
         .with_state(state)
 }
 
@@ -2054,144 +2054,12 @@ async fn search_blocks(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<BlockSearchQuery>,
 ) -> Result<Json<BlockSearchResponse>, ApiError> {
-    // Get index manager from hook system
     let index_manager = state
         .hook_system
         .index_manager()
         .ok_or_else(|| ApiError::SearchUnavailable)?;
-
-    let service = SearchService::new(index_manager);
-
-    // Build filters from query params
-    // All temporal search filters use epoch seconds. Tantivy stores seconds internally.
-    // Note: BlockDto.createdAt is milliseconds — different contract. Search = seconds.
-    let has_explicit_types = query.types.is_some();
-    let filters = SearchFilters {
-        block_types: query.types.map(|t| {
-            t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
-        }),
-        has_markers: query.has_markers,
-        parent_id: query.parent_id,
-        outlink: query.outlink,
-        marker_type: query.marker_type.clone(),
-        // Join marker_type + marker_val into "type::value" for internal Tantivy term query.
-        // Callers send ?marker_type=project&marker_val=floatty → internal "project::floatty"
-        marker_value: match (&query.marker_type, &query.marker_val) {
-            (Some(mt), Some(mv)) => Some(format!("{mt}::{mv}")),
-            (None, Some(mv)) => Some(mv.clone()),  // value-only search (rare)
-            _ => None,
-        },
-        created_after: query.created_after,
-        created_before: query.created_before,
-        ctx_after: query.ctx_after,
-        ctx_before: query.ctx_before,
-        include_inherited: query.inherited,
-        exclude_types: Some(match query.exclude_types {
-            // Caller specified explicit exclusions — use those
-            Some(t) => t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
-            // No exclusions specified — apply defaults ONLY for general queries.
-            // Skip defaults when caller used `types=` (explicit include would
-            // conflict with default MustNot on the same type, e.g. types=picker).
-            None if !has_explicit_types => vec![
-                "picker".into(),
-                "output".into(),
-                "ran".into(),
-            ],
-            None => vec![],
-        }),
-    };
-
-    // Execute search
-    let (total, hits) = service
-        .search_with_filters(&query.q, filters, query.limit)
-        .map_err(|e| ApiError::Search(e.to_string()))?;
-
-    let want_breadcrumb = query.include_breadcrumb.unwrap_or(false);
-    let want_metadata = query.include_metadata.unwrap_or(false);
-
-    // Hydrate content from Y.Doc for each hit
-    let hits: Vec<BlockSearchHit> = {
-        let doc = state.store.doc();
-        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-        let txn = doc_guard.transact();
-
-        let blocks_map = txn.get_map("blocks");
-
-        hits.into_iter()
-            .map(|h| {
-                let (content, breadcrumb, metadata, block_type) = if let Some(ref bmap) = blocks_map {
-                    // Look up content
-                    let content = bmap
-                        .get(&txn, &h.block_id)
-                        .and_then(|v| match v {
-                            yrs::Out::YMap(block_map) => Some(block_map),
-                            _ => None,
-                        })
-                        .and_then(|block_map| {
-                            block_map.get(&txn, "content").and_then(|v| match v {
-                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                                _ => None,
-                            })
-                        })
-                        .map(|c| {
-                            if c.chars().count() > 200 {
-                                let truncated: String = c.chars().take(200).collect();
-                                format!("{}...", truncated)
-                            } else {
-                                c
-                            }
-                        });
-
-                    // Breadcrumb: walk parent chain, collect content strings (max 5)
-                    let breadcrumb = if want_breadcrumb {
-                        let ancestors = crate::block_service::get_ancestors(bmap, &txn, &h.block_id);
-                        let crumbs: Vec<String> = ancestors
-                            .into_iter()
-                            .take(5)
-                            .map(|a| a.content)
-                            .collect();
-                        if crumbs.is_empty() { None } else { Some(crumbs) }
-                    } else {
-                        None
-                    };
-
-                    // Metadata from Y.Doc
-                    let metadata = if want_metadata {
-                        bmap.get(&txn, &h.block_id)
-                            .and_then(|v| match v {
-                                yrs::Out::YMap(block_map) => block_map
-                                    .get(&txn, "metadata")
-                                    .and_then(|m| extract_metadata_from_yrs(m, &txn)),
-                                _ => None,
-                            })
-                    } else {
-                        None
-                    };
-
-                    // Block type derived from content
-                    let block_type = content.as_ref().map(|c| {
-                        floatty_core::parse_block_type(c).as_str().to_string()
-                    });
-
-                    (content, breadcrumb, metadata, block_type)
-                } else {
-                    (None, None, None, None)
-                };
-
-                BlockSearchHit {
-                    block_id: h.block_id,
-                    score: h.score,
-                    content,
-                    breadcrumb,
-                    metadata,
-                    snippet: h.snippet,
-                    block_type,
-                }
-            })
-            .collect()
-    };
-
-    Ok(Json(BlockSearchResponse { hits, total }))
+    let result = crate::block_service::search_blocks(&state.store, &index_manager, &query)?;
+    Ok(Json(result))
 }
 
 /// POST /api/v1/search/clear - Clear all documents from search index
@@ -2949,14 +2817,18 @@ async fn outline_get_stats(
     })))
 }
 
-/// 501 stub for search on non-default outlines
-async fn outline_search_not_impl() -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ErrorResponse {
-            error: "search not available for non-default outlines".into(),
-        }),
-    )
+/// GET /api/v1/outlines/:name/search — scoped search within a single outline
+async fn outline_search_blocks(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<BlockSearchQuery>,
+) -> Result<Json<BlockSearchResponse>, ApiError> {
+    let ctx = resolve_outline_context(&state, &name)?;
+    let hs = ctx.ensure_hook_system();
+    let index_manager = hs.index_manager()
+        .ok_or_else(|| ApiError::SearchUnavailable)?;
+    let result = crate::block_service::search_blocks(&ctx.store, &index_manager, &query)?;
+    Ok(Json(result))
 }
 
 #[cfg(test)]

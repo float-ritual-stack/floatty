@@ -7,11 +7,11 @@
 //! **No route-awareness.** BlockService doesn't know whether the caller is
 //! a legacy route or an outline route. Route-specific behavior belongs in handlers.
 
-use crate::api::{self, ApiError, BlockDto, BlockRef, BlocksResponse, InheritedMarkerDto, SiblingContext, TokenEstimate, TreeNode};
+use crate::api::{self, ApiError, BlockDto, BlockRef, BlockSearchHit, BlockSearchQuery, BlockSearchResponse, BlocksResponse, InheritedMarkerDto, SiblingContext, TokenEstimate, TreeNode};
 use crate::WsBroadcaster;
 use floatty_core::events::BlockChange;
 use floatty_core::hooks::InheritanceIndex;
-use floatty_core::{HookSystem, Origin, YDocStore};
+use floatty_core::{HookSystem, IndexManager, Origin, SearchFilters, SearchService, YDocStore};
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
@@ -1316,4 +1316,127 @@ pub(crate) fn delete_block(
     }
 
     Ok(())
+}
+
+// =========================================================================
+// Search
+// =========================================================================
+
+/// Full-text + filtered search over a Tantivy index, hydrated from Y.Doc.
+/// Used by both legacy and per-outline search handlers.
+pub(crate) fn search_blocks(
+    store: &Arc<YDocStore>,
+    index_manager: &Arc<IndexManager>,
+    query: &BlockSearchQuery,
+) -> Result<BlockSearchResponse, ApiError> {
+    let service = SearchService::new(Arc::clone(index_manager));
+
+    // Build filters from query params
+    let has_explicit_types = query.types.is_some();
+    let filters = SearchFilters {
+        block_types: query.types.as_ref().map(|t| {
+            t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
+        }),
+        has_markers: query.has_markers,
+        parent_id: query.parent_id.clone(),
+        outlink: query.outlink.clone(),
+        marker_type: query.marker_type.clone(),
+        marker_value: match (&query.marker_type, &query.marker_val) {
+            (Some(mt), Some(mv)) => Some(format!("{mt}::{mv}")),
+            (None, Some(mv)) => Some(mv.clone()),
+            _ => None,
+        },
+        created_after: query.created_after,
+        created_before: query.created_before,
+        ctx_after: query.ctx_after,
+        ctx_before: query.ctx_before,
+        include_inherited: query.inherited,
+        exclude_types: Some(match &query.exclude_types {
+            Some(t) => t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
+            None if !has_explicit_types => vec!["picker".into(), "output".into(), "ran".into()],
+            None => vec![],
+        }),
+    };
+
+    let (total, hits) = service
+        .search_with_filters(&query.q, filters, query.limit)
+        .map_err(|e| ApiError::Search(e.to_string()))?;
+
+    let want_breadcrumb = query.include_breadcrumb.unwrap_or(false);
+    let want_metadata = query.include_metadata.unwrap_or(false);
+
+    // Hydrate content from Y.Doc for each hit
+    let hits: Vec<BlockSearchHit> = {
+        let doc = store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
+        let blocks_map = txn.get_map("blocks");
+
+        hits.into_iter()
+            .map(|h| {
+                let (content, breadcrumb, metadata, block_type) = if let Some(ref bmap) = blocks_map {
+                    let content = bmap
+                        .get(&txn, &h.block_id)
+                        .and_then(|v| match v {
+                            yrs::Out::YMap(block_map) => Some(block_map),
+                            _ => None,
+                        })
+                        .and_then(|block_map| {
+                            block_map.get(&txn, "content").and_then(|v| match v {
+                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                                _ => None,
+                            })
+                        })
+                        .map(|c| {
+                            if c.chars().count() > 200 {
+                                let truncated: String = c.chars().take(200).collect();
+                                format!("{}...", truncated)
+                            } else {
+                                c
+                            }
+                        });
+
+                    let breadcrumb = if want_breadcrumb {
+                        let ancestors = get_ancestors(bmap, &txn, &h.block_id);
+                        let crumbs: Vec<String> = ancestors.into_iter().take(5).map(|a| a.content).collect();
+                        if crumbs.is_empty() { None } else { Some(crumbs) }
+                    } else {
+                        None
+                    };
+
+                    let metadata = if want_metadata {
+                        bmap.get(&txn, &h.block_id)
+                            .and_then(|v| match v {
+                                yrs::Out::YMap(block_map) => block_map
+                                    .get(&txn, "metadata")
+                                    .and_then(|m| api::extract_metadata_from_yrs(m, &txn)),
+                                _ => None,
+                            })
+                    } else {
+                        None
+                    };
+
+                    let block_type = content.as_ref().map(|c| {
+                        floatty_core::parse_block_type(c).as_str().to_string()
+                    });
+
+                    (content, breadcrumb, metadata, block_type)
+                } else {
+                    (None, None, None, None)
+                };
+
+                BlockSearchHit {
+                    block_id: h.block_id,
+                    score: h.score,
+                    content,
+                    breadcrumb,
+                    metadata,
+                    snippet: h.snippet,
+                    block_type,
+                }
+            })
+            .collect()
+    };
+
+    Ok(BlockSearchResponse { hits, total })
 }
