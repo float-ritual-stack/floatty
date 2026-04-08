@@ -15,11 +15,14 @@
 pub mod api;
 pub mod auth;
 pub mod backup;
+pub mod block_service;
 pub mod config;
+pub mod outline_manager;
 pub mod ws;
 
 pub use api::create_router;
 pub use auth::ApiKeyAuth;
 pub use backup::{BackupDaemon, BackupInfo, DaemonStatus};
 pub use config::{BackupConfig, ServerConfig};
+pub use outline_manager::{OutlineContext, OutlineManager};
 pub use ws::{start_heartbeat, WsBroadcaster};

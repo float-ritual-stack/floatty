@@ -290,6 +290,13 @@ impl WriterHandle {
             .try_send(WriterMessage::Ping)
             .map_err(|_| SearchError::WriterClosed)
     }
+
+    /// Non-blocking commit request for eviction flush.
+    pub fn try_send_commit(&self) -> Result<(), SearchError> {
+        self.tx
+            .try_send(WriterMessage::Commit)
+            .map_err(|_| SearchError::WriterClosed)
+    }
 }
 
 /// The writer actor - owns IndexWriter and processes messages.
