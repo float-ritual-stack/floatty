@@ -364,6 +364,18 @@ function App() {
     onCleanup(() => unlistenDeepLink());
   });
 
+  // Listen for outline switch from native macOS menu (Rust → frontend)
+  onMount(async () => {
+    await listen<string>('switch-outline', (event) => {
+      const name = event.payload;
+      const current = localStorage.getItem('floatty-outline') || 'default';
+      if (name === current) return;
+      logger.info(`Menu: switching to outline '${name}'`);
+      localStorage.setItem('floatty-outline', name);
+      window.location.reload();
+    });
+  });
+
   // FLO-350: Listen for orphan detection events from Rust background worker
   onMount(async () => {
     unlistenOrphans = await listen<OrphanInfo[]>('orphans-detected', (event) => {
