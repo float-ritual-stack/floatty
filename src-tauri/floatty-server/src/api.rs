@@ -2812,42 +2812,6 @@ async fn outline_export_binary(
     ))
 }
 
-/// GET /api/v1/outlines/:name/export/json
-/// Read all blocks and root IDs from a Y.Doc transaction as raw JSON.
-/// Shared by outline_export_json and outline_get_blocks.
-fn read_all_blocks_json<T: ReadTxn>(txn: &T) -> serde_json::Value {
-    let blocks_map = match txn.get_map("blocks") {
-        Some(m) => m,
-        None => return serde_json::json!({"blocks": [], "rootIds": []}),
-    };
-
-    let mut blocks = Vec::new();
-    for (id, value) in blocks_map.iter(txn) {
-        if let yrs::Out::YMap(block_map) = value {
-            let mut block = serde_json::Map::new();
-            block.insert("id".into(), serde_json::Value::String(id.to_string()));
-            for (key, val) in block_map.iter(txn) {
-                block.insert(key.to_string(), yrs_out_to_json(val, txn));
-            }
-            blocks.push(serde_json::Value::Object(block));
-        }
-    }
-
-    let root_ids: Vec<String> = txn
-        .get_array("rootIds")
-        .map(|arr| {
-            arr.iter(txn)
-                .filter_map(|v| match v {
-                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    serde_json::json!({ "blocks": blocks, "rootIds": root_ids })
-}
-
 async fn outline_export_json(
     State(state): State<AppState>,
     Path(name): Path<String>,
