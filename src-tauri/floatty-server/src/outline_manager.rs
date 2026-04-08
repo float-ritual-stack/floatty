@@ -68,23 +68,28 @@ impl OutlineContext {
             }
         });
 
-        // Wire store callbacks on first hook_system init (change_callback + broadcast_callback)
-        if !self.callbacks_wired.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        // Wire store callbacks on first hook_system init (change_callback + broadcast_callback).
+        // Flag is set AFTER registration completes to prevent race where another thread
+        // sees callbacks_wired=true before callbacks are actually installed.
+        if !self.callbacks_wired.load(std::sync::atomic::Ordering::Acquire) {
             let hs_clone = Arc::clone(hs);
             let bc_clone = Arc::clone(&self.broadcaster);
-            if let Err(e) = self.store.set_change_callback(move |changes| {
+            let change_ok = self.store.set_change_callback(move |changes| {
                 for change in changes {
                     if let Err(e) = hs_clone.emit_change(change) {
                         tracing::error!("Hook emission failed: {}", e);
                     }
                 }
-            }) {
-                warn!("Failed to set change_callback for '{}': {}", self.name, e);
-            }
+            }).is_ok();
             self.store.set_broadcast_callback(move |update, seq| {
                 bc_clone.broadcast(update, None, Some(seq));
             });
-            info!("Wired callbacks for outline '{}'", self.name);
+            self.callbacks_wired.store(true, std::sync::atomic::Ordering::Release);
+            if change_ok {
+                info!("Wired callbacks for outline '{}'", self.name);
+            } else {
+                warn!("Wired broadcast_callback for '{}' but change_callback failed", self.name);
+            }
         }
 
         hs

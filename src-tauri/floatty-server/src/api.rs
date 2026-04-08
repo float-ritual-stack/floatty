@@ -592,7 +592,8 @@ pub fn create_router(
         .route("/api/v1/outlines/:name/stats", get(outline_get_stats))
         // Per-outline search (scoped to outline's Tantivy index)
         .route("/api/v1/outlines/:name/search", get(outline_search_blocks))
-        .route("/api/v1/outlines/:name/pages/search", get(outline_search_blocks))
+        // pages/search has a different contract (PageSearchResponse) — stub until per-outline PageNameIndex
+        .route("/api/v1/outlines/:name/pages/search", get(outline_page_search_not_impl))
         .with_state(state)
 }
 
@@ -2615,13 +2616,13 @@ async fn outline_apply_update(
     Json(req): Json<UpdateRequest>,
 ) -> Result<StatusCode, ApiError> {
     reject_default_mutation(&name)?;
-    let store = resolve_outline(&state, &name)?;
+    let ctx = resolve_outline_context(&state, &name)?;
+    ctx.ensure_hook_system(); // Wire callbacks so apply_update triggers hooks + broadcast
     let update_bytes = BASE64
         .decode(&req.update)
         .map_err(|e| ApiError::InvalidBase64(e.to_string()))?;
 
-    store.apply_update(&update_bytes)?;
-    // Phase 1: no broadcaster for non-default outlines
+    ctx.store.apply_update(&update_bytes)?;
     Ok(StatusCode::OK)
 }
 
@@ -2829,6 +2830,16 @@ async fn outline_search_blocks(
         .ok_or_else(|| ApiError::SearchUnavailable)?;
     let result = crate::block_service::search_blocks(&ctx.store, &index_manager, &query)?;
     Ok(Json(result))
+}
+
+/// 501 stub — per-outline page search needs a scoped PageNameIndex (different contract from block search)
+async fn outline_page_search_not_impl() -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse {
+            error: "page search not available for non-default outlines yet".into(),
+        }),
+    )
 }
 
 #[cfg(test)]
