@@ -11,7 +11,6 @@
 
 import { onMount, onCleanup, createSignal, type Accessor } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
-import { blockStore } from './useBlockStore';
 import * as Y from 'yjs';
 import {
   saveBackup as saveBackupIDB,
@@ -387,70 +386,6 @@ export function deduplicateChildIds(): number {
  *
  * Returns { pushedBytes } for logging by health check.
  */
-export async function switchOutline(name: string): Promise<void> {
-  const httpClient = getHttpClient();
-  if (httpClient.getOutline() === name) return;
-
-  logger.info(`Switching outline: ${httpClient.getOutline()} → ${name}`);
-
-  // 1. Close WebSocket
-  if (sharedWebSocket) {
-    sharedWebSocket.close();
-    sharedWebSocket = null;
-  }
-  if (wsReconnectTimer) {
-    clearTimeout(wsReconnectTimer);
-    wsReconnectTimer = null;
-  }
-
-  // 2. Clear Y.Doc — destroy observers, create fresh doc
-  if (sharedUndoManager) {
-    sharedUndoManager.destroy();
-    sharedUndoManager = null;
-  }
-  sharedDoc.destroy();
-  sharedDoc = new Y.Doc({ gc: true });
-  sharedDocLoaded = false;
-  sharedDocError = null;
-  sharedDocLoadPromise = null;
-
-  // 3. Reset sync state
-  sharedPendingUpdates = [];
-  if (sharedSyncTimer) clearTimeout(sharedSyncTimer);
-  sharedSyncTimer = null;
-  sharedIsFlushing = false;
-  sharedRetryCount = 0;
-  handlerRefCount = 0;
-  moduleUpdateHandler = null;
-  wsRetryCount = 0;
-  wsHasConnectedOnce = false;
-  wsReadyForMessages = true;
-  wsConnectionId++;
-  setSyncStatus('pending');
-  setPendingCount(0);
-  setLastSyncError(null);
-
-  // 4. Reset sequence tracker
-  seqTracker.resetAll();
-
-  // 5. Reset block store (detach old Y.Doc observers, clear state)
-  blockStore.resetForOutlineSwitch();
-
-  // 6. Switch HTTP client to new outline
-  httpClient.setOutline(name);
-
-  // 7. Load state from new outline
-  await triggerFullResync();
-
-  // 8. Re-initialize block store from new Y.Doc
-  blockStore.initFromYDoc(sharedDoc);
-
-  // 9. Reconnect WS
-  connectWebSocket();
-
-  logger.info(`Switched to outline '${name}'`);
-}
-
 export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
   if (!isClientInitialized()) {
     logger.warn('HTTP client not initialized, cannot trigger resync');
@@ -514,7 +449,7 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
 // Y.Doc is a singleton - survives component unmount/remount cycles.
 // Only the update observer is cleaned up per-component.
 // FLO-197/P4: Enable GC to prevent tombstone accumulation (safe with single-client)
-let sharedDoc = new Y.Doc({ gc: true });
+const sharedDoc = new Y.Doc({ gc: true });
 let sharedDocLoaded = false;
 let sharedDocError: string | null = null;
 let sharedDocLoadPromise: Promise<void> | null = null;

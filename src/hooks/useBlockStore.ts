@@ -3,7 +3,7 @@
  */
 
 import { createRoot, batch } from 'solid-js';
-import { createStore, reconcile } from 'solid-js/store';
+import { createStore } from 'solid-js/store';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
 import type { Block, BlockType, TableConfig } from '../lib/blockTypes';
@@ -370,29 +370,6 @@ function createBlockStore() {
    * a singleton that outlives individual Outliner components. If the first
    * pane's cleanup removed observers, other panes would break.
    */
-  /** Reset store for outline switching. Detaches old observers, clears state. */
-  const resetForOutlineSwitch = () => {
-    console.log('[blockStore] resetForOutlineSwitch called, isInit:', state.isInitialized, 'blocks:', Object.keys(state.blocks).length);
-    if (_doc && _blocksObserver) {
-      try { _doc.getMap('blocks').unobserveDeep(_blocksObserver); } catch {}
-    }
-    if (_doc && _rootIdsObserver) {
-      try { _doc.getArray<string>('rootIds').unobserve(_rootIdsObserver); } catch {}
-    }
-    _doc = null;
-    _blocksObserver = null;
-    _rootIdsObserver = null;
-    _isInitializing = false;
-    // reconcile forces SolidJS to treat this as a full replacement, not a shallow merge
-    setState(reconcile({
-      blocks: {},
-      rootIds: [] as string[],
-      isInitialized: false,
-      lastUpdateOrigin: null as unknown,
-    }));
-    console.log('[blockStore] After reconcile, isInit:', state.isInitialized, 'blocks:', Object.keys(state.blocks).length, 'roots:', state.rootIds.length);
-  };
-
   const initFromYDoc = (doc: Y.Doc): (() => void) => {
     // Double-check guard: store state (reactive) + local flag (sync)
     if (state.isInitialized || _isInitializing) {
@@ -2073,7 +2050,6 @@ function createBlockStore() {
     get isInitialized() { return state.isInitialized; },
     get lastUpdateOrigin() { return state.lastUpdateOrigin; },
     initFromYDoc,
-    resetForOutlineSwitch,
     getBlock,
     updateBlockContent,
     updateBlockContentFromExecutor,  // For handler-initiated updates (syncs even when focused)
