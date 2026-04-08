@@ -15,6 +15,7 @@
 pub mod api;
 pub mod auth;
 pub mod backup;
+pub mod block_service;
 pub mod config;
 pub mod outline_manager;
 pub mod ws;

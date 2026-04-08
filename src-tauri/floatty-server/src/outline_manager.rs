@@ -39,11 +39,11 @@ pub struct OutlineContext {
 }
 
 impl OutlineContext {
-    /// Get or initialize the hook system. First call triggers cold-start rehydration.
+    /// Initialize hook system if not yet initialized. First call triggers cold-start rehydration.
     ///
-    /// Uses `std::panic::catch_unwind` to prevent OnceLock poisoning if init fails.
-    /// Returns the existing hook system or a freshly initialized one.
-    pub fn hook_system(&self) -> &Arc<HookSystem> {
+    /// Use this for operations that NEED hooks (writes, reads needing inheritance/search).
+    /// Uses `catch_unwind` to prevent OnceLock poisoning if init panics.
+    pub fn ensure_hook_system(&self) -> &Arc<HookSystem> {
         self.hook_system.get_or_init(|| {
             info!("Initializing hook system for outline '{}'", self.name);
             let store = Arc::clone(&self.store);
@@ -54,16 +54,29 @@ impl OutlineContext {
                 Ok(hs) => Arc::new(hs),
                 Err(e) => {
                     warn!("HookSystem init panicked for '{}': {:?}", self.name, e);
-                    // Return a minimal hook system without search
-                    Arc::new(HookSystem::initialize_at(Arc::clone(&self.store), None))
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        HookSystem::initialize_at(Arc::clone(&self.store), None)
+                    })) {
+                        Ok(hs) => Arc::new(hs),
+                        Err(e2) => {
+                            panic!("Cannot initialize HookSystem for outline '{}': primary {:?}, fallback {:?}", self.name, e, e2);
+                        }
+                    }
                 }
             }
         })
     }
 
+    /// Check if hook system is already initialized without triggering bootstrap.
+    ///
+    /// Use this for cheap paths (flush, eviction checks) that shouldn't accidentally cold-start.
+    pub fn hook_system_if_initialized(&self) -> Option<&Arc<HookSystem>> {
+        self.hook_system.get()
+    }
+
     /// Best-effort flush before eviction. No-op if hooks never initialized.
     pub fn flush(&self) {
-        if let Some(hs) = self.hook_system.get() {
+        if let Some(hs) = self.hook_system_if_initialized() {
             if let Some(writer) = hs.writer_handle() {
                 if let Err(e) = writer.try_send_commit() {
                     warn!("Flush failed for outline '{}': {:?}", self.name, e);
@@ -221,6 +234,10 @@ impl OutlineManager {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("sqlite") {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        if OutlineName::new(stem).is_err() {
+                            warn!("Skipping non-conforming outline file: {:?}", path);
+                            continue;
+                        }
                         match OutlineInfo::from_path(stem, &path) {
                             Ok(info) => outlines.push(info),
                             Err(e) => warn!("Failed to stat outline '{}': {}", stem, e),
@@ -251,7 +268,11 @@ impl OutlineManager {
             return Err(OutlineError::AlreadyExists(name.to_string()));
         }
 
-        let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
+        let store = Arc::new(YDocStore::open(&db_path, name.as_str()).map_err(|e| {
+            // Clean up partial .sqlite file if SQLite created it before failing
+            let _ = std::fs::remove_file(&db_path);
+            e
+        })?);
         let search_path = self.search_index_path(&name);
         let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
         contexts.insert(name.as_str().to_string(), ctx);
