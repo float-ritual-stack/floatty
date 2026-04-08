@@ -44,10 +44,11 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
-    response::Response,
+    response::{IntoResponse, Response},
 };
+use crate::{OutlineContext, OutlineManager};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use floatty_core::YDocStore;
 use futures_util::{SinkExt, StreamExt};
@@ -225,20 +226,62 @@ pub fn start_heartbeat(broadcaster: Arc<WsBroadcaster>, store: Arc<YDocStore>) {
     tracing::info!("Heartbeat task started (interval: {}s)", HEARTBEAT_INTERVAL_SECS);
 }
 
-/// WebSocket upgrade handler
+/// Shared state for the WebSocket route — needs both default broadcaster and OutlineManager
+#[derive(Clone)]
+pub struct WsState {
+    pub default_broadcaster: Arc<WsBroadcaster>,
+    pub outline_manager: Arc<OutlineManager>,
+}
+
+/// Query params for WebSocket connection
+#[derive(serde::Deserialize, Default)]
+pub struct WsQuery {
+    /// Outline name to subscribe to. Absent or "default" = default outline.
+    pub outline: Option<String>,
+}
+
+/// WebSocket upgrade handler — supports ?outline={name} for per-outline subscriptions
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    State(broadcaster): State<Arc<WsBroadcaster>>,
+    State(ws_state): State<WsState>,
+    Query(query): Query<WsQuery>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster))
+    let outline_name = query.outline.unwrap_or_else(|| "default".to_string());
+
+    let (broadcaster, outline_ctx) = if outline_name == "default" {
+        (Arc::clone(&ws_state.default_broadcaster), None)
+    } else {
+        match ws_state.outline_manager.get_context(&outline_name) {
+            Ok(ctx) => {
+                // Don't call ensure_hook_system() here — WS is read-only (subscriber).
+                // Callbacks get wired on first write via block_service or outline_apply_update.
+                let bc = Arc::clone(&ctx.broadcaster);
+                (bc, Some(ctx))
+            }
+            Err(_) => {
+                return (axum::http::StatusCode::NOT_FOUND, "outline not found").into_response();
+            }
+        }
+    };
+
+    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster, outline_name, outline_ctx))
 }
 
 /// Handle an individual WebSocket connection
-async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) {
+async fn handle_socket(
+    socket: WebSocket,
+    broadcaster: Arc<WsBroadcaster>,
+    outline: String,
+    outline_ctx: Option<Arc<OutlineContext>>,
+) {
+    if let Some(ref ctx) = outline_ctx {
+        ctx.active_connections.fetch_add(1, Ordering::Relaxed);
+    }
+
     let (mut sender, mut receiver) = socket.split();
     let mut rx = broadcaster.subscribe();
 
-    tracing::info!("WebSocket client connected");
+    tracing::info!("WebSocket client connected (outline: {})", outline);
 
     // Spawn task to forward broadcasts to this client
     let send_task = tokio::spawn(async move {
@@ -291,9 +334,11 @@ async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) {
         }
     }
 
-    // Clean up send task
     send_task.abort();
-    tracing::info!("WebSocket client disconnected");
+    if let Some(ref ctx) = outline_ctx {
+        ctx.active_connections.fetch_sub(1, Ordering::Relaxed);
+    }
+    tracing::info!("WebSocket client disconnected (outline: {})", outline);
 }
 
 #[cfg(test)]

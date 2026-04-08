@@ -14,7 +14,7 @@
 use floatty_core::hooks::HookSystem;
 use floatty_core::outline::{OutlineError, OutlineInfo, OutlineName};
 use floatty_core::YDocStore;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
@@ -25,6 +25,8 @@ use crate::WsBroadcaster;
 
 /// Maximum number of loaded outlines before logging a warning.
 const MAX_LOADED_WARNING: usize = 20;
+/// Maximum loaded outlines before eviction kicks in. "default" is never evicted.
+const MAX_LOADED_OUTLINES: usize = 16;
 
 /// Per-outline runtime context: store + lazy hooks + broadcaster.
 ///
@@ -227,11 +229,38 @@ impl OutlineManager {
         let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
         contexts.insert(name.as_str().to_string(), Arc::clone(&ctx));
 
-        let count = contexts.len();
-        if count > MAX_LOADED_WARNING {
+        // Evict idle outlines when cache exceeds limit. Not true LRU — evicts
+        // first idle found. "default" and the just-opened outline are exempt.
+        // active_connections only tracks WS subscribers, not HTTP requests.
+        if contexts.len() > MAX_LOADED_OUTLINES {
+            let slots_to_free = contexts.len() - MAX_LOADED_OUTLINES;
+            let evictable: Vec<String> = contexts.iter()
+                .filter(|(k, ctx)| {
+                    *k != "default"
+                        && k.as_str() != name.as_str()
+                        && ctx.active_connections.load(Ordering::Relaxed) == 0
+                })
+                .map(|(k, _)| k.clone())
+                .take(slots_to_free)
+                .collect();
+
+            for evict_name in evictable {
+                if let Some(evicted) = contexts.remove(&evict_name) {
+                    evicted.flush();
+                    info!("Evicted idle outline '{}' (cache size: {})", evict_name, contexts.len());
+                }
+            }
+
+            if contexts.len() > MAX_LOADED_OUTLINES {
+                warn!("Cache still at {} after eviction — all non-default outlines have active connections",
+                    contexts.len());
+            }
+        }
+
+        if contexts.len() > MAX_LOADED_WARNING {
             warn!(
                 "OutlineManager: {} outlines loaded (exceeds {} warning threshold)",
-                count, MAX_LOADED_WARNING
+                contexts.len(), MAX_LOADED_WARNING
             );
         }
         info!("Opened outline '{}' from {:?}", name, db_path);
