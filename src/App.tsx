@@ -55,7 +55,13 @@ function App() {
   // The HTTP client connects to floatty-server (spawned by Tauri)
   onMount(async () => {
     try {
-      await initHttpClient();
+      const client = await initHttpClient();
+      // Restore outline from localStorage (persists across reloads)
+      const savedOutline = localStorage.getItem('floatty-outline') || 'default';
+      if (savedOutline !== 'default') {
+        client.setOutline(savedOutline);
+        logger.info(`Restored outline '${savedOutline}' from localStorage`);
+      }
       logger.info('HTTP client connected to floatty-server');
       setServerConnected(true);
     } catch (err) {
@@ -69,16 +75,21 @@ function App() {
     registerHandlers();
   });
 
-  // Listen for outline switch events (dispatched by outline:: handler)
+  // Listen for outline switch events (dispatched by outline:: handler).
+  // Strategy: save to localStorage then reload. Clean re-init avoids SolidJS store reset issues.
   onMount(() => {
     const handler = async (e: Event) => {
       const { name } = (e as CustomEvent).detail;
-      logger.info(`Outline switch requested: ${name}`);
+      const current = localStorage.getItem('floatty-outline') || 'default';
+      if (name === current) return;
+
+      logger.info(`Outline switch: ${current} → ${name}`);
+
+      // Create outline if it doesn't exist
       try {
         const serverUrl = window.__FLOATTY_SERVER_URL__;
         const apiKey = window.__FLOATTY_API_KEY__;
         if (serverUrl && apiKey) {
-          // Create outline if it doesn't exist
           const listResp = await fetch(`${serverUrl}/api/v1/outlines`, {
             headers: { 'Authorization': `Bearer ${apiKey}` },
           });
@@ -91,12 +102,13 @@ function App() {
             });
           }
         }
-        const { switchOutline } = await import('./hooks/useSyncedYDoc');
-        await switchOutline(name);
-        logger.info(`Switched to outline '${name}'`);
       } catch (err) {
-        logger.error(`Failed to switch outline: ${err}`);
+        logger.error(`Failed to ensure outline exists: ${err}`);
       }
+
+      // Save + reload — cleanest path, all singletons re-init from scratch
+      localStorage.setItem('floatty-outline', name);
+      window.location.reload();
     };
     window.addEventListener('floatty:switch-outline', handler);
     onCleanup(() => window.removeEventListener('floatty:switch-outline', handler));
