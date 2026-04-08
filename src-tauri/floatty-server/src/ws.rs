@@ -44,10 +44,11 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
     response::Response,
 };
+use crate::OutlineManager;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use floatty_core::YDocStore;
 use futures_util::{SinkExt, StreamExt};
@@ -225,20 +226,54 @@ pub fn start_heartbeat(broadcaster: Arc<WsBroadcaster>, store: Arc<YDocStore>) {
     tracing::info!("Heartbeat task started (interval: {}s)", HEARTBEAT_INTERVAL_SECS);
 }
 
-/// WebSocket upgrade handler
+/// Shared state for the WebSocket route — needs both default broadcaster and OutlineManager
+#[derive(Clone)]
+pub struct WsState {
+    pub default_broadcaster: Arc<WsBroadcaster>,
+    pub outline_manager: Arc<OutlineManager>,
+}
+
+/// Query params for WebSocket connection
+#[derive(serde::Deserialize, Default)]
+pub struct WsQuery {
+    /// Outline name to subscribe to. Absent or "default" = default outline.
+    pub outline: Option<String>,
+}
+
+/// WebSocket upgrade handler — supports ?outline={name} for per-outline subscriptions
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    State(broadcaster): State<Arc<WsBroadcaster>>,
+    State(ws_state): State<WsState>,
+    Query(query): Query<WsQuery>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster))
+    let outline_name = query.outline.unwrap_or_else(|| "default".to_string());
+
+    let broadcaster = if outline_name == "default" {
+        Arc::clone(&ws_state.default_broadcaster)
+    } else {
+        match ws_state.outline_manager.get_context(&outline_name) {
+            Ok(ctx) => {
+                ctx.ensure_hook_system(); // Wire callbacks if needed
+                Arc::clone(&ctx.broadcaster)
+            }
+            Err(e) => {
+                tracing::warn!("WS connect for unknown outline '{}': {}", outline_name, e);
+                // Fall back to default rather than rejecting — WS upgrade can't return errors cleanly
+                Arc::clone(&ws_state.default_broadcaster)
+            }
+        }
+    };
+
+    let outline_for_log = outline_name.clone();
+    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster, outline_for_log))
 }
 
 /// Handle an individual WebSocket connection
-async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) {
+async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>, outline: String) {
     let (mut sender, mut receiver) = socket.split();
     let mut rx = broadcaster.subscribe();
 
-    tracing::info!("WebSocket client connected");
+    tracing::info!("WebSocket client connected (outline: {})", outline);
 
     // Spawn task to forward broadcasts to this client
     let send_task = tokio::spawn(async move {
@@ -293,7 +328,7 @@ async fn handle_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) {
 
     // Clean up send task
     send_task.abort();
-    tracing::info!("WebSocket client disconnected");
+    tracing::info!("WebSocket client disconnected (outline: {})", outline);
 }
 
 #[cfg(test)]

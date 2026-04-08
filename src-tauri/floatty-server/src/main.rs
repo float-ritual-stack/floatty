@@ -172,10 +172,14 @@ async fn main() {
         api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone(), Arc::clone(&outline_manager))
     };
 
-    // WebSocket route (auth via query param since WS can't use headers easily)
+    // WebSocket route — supports ?outline={name} for per-outline subscriptions
+    let ws_state = ws::WsState {
+        default_broadcaster: Arc::clone(&broadcaster),
+        outline_manager: Arc::clone(&outline_manager),
+    };
     let ws_routes = Router::new()
         .route("/ws", get(ws::ws_handler))
-        .with_state(Arc::clone(&broadcaster));
+        .with_state(ws_state);
 
     // Combine routes
     // 256MB — intentionally oversized. Single-user local app, no untrusted clients.
