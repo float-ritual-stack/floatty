@@ -3,7 +3,7 @@
  */
 
 import { createRoot, batch } from 'solid-js';
-import { createStore } from 'solid-js/store';
+import { createStore, reconcile } from 'solid-js/store';
 import * as Y from 'yjs';
 import { parseBlockType, createBlock } from '../lib/blockTypes';
 import type { Block, BlockType, TableConfig } from '../lib/blockTypes';
@@ -383,10 +383,14 @@ function createBlockStore() {
     _blocksObserver = null;
     _rootIdsObserver = null;
     _isInitializing = false;
-    setState('blocks', {});
-    setState('rootIds', []);
-    setState('isInitialized', false);
-    console.log('[blockStore] After setState, isInit:', state.isInitialized, 'blocks:', Object.keys(state.blocks).length, 'roots:', state.rootIds.length);
+    // reconcile forces SolidJS to treat this as a full replacement, not a shallow merge
+    setState(reconcile({
+      blocks: {},
+      rootIds: [] as string[],
+      isInitialized: false,
+      lastUpdateOrigin: null as unknown,
+    }));
+    console.log('[blockStore] After reconcile, isInit:', state.isInitialized, 'blocks:', Object.keys(state.blocks).length, 'roots:', state.rootIds.length);
   };
 
   const initFromYDoc = (doc: Y.Doc): (() => void) => {
