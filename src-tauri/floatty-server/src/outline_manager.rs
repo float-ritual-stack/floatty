@@ -14,6 +14,7 @@
 use floatty_core::hooks::HookSystem;
 use floatty_core::outline::{OutlineError, OutlineInfo, OutlineName};
 use floatty_core::YDocStore;
+use std::sync::atomic::AtomicBool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
@@ -36,6 +37,7 @@ pub struct OutlineContext {
     pub broadcaster: Arc<WsBroadcaster>,
     pub active_connections: AtomicUsize,
     search_index_path: Option<PathBuf>,
+    callbacks_wired: AtomicBool,
 }
 
 impl OutlineContext {
@@ -44,7 +46,7 @@ impl OutlineContext {
     /// Use this for operations that NEED hooks (writes, reads needing inheritance/search).
     /// Uses `catch_unwind` to prevent OnceLock poisoning if init panics.
     pub fn ensure_hook_system(&self) -> &Arc<HookSystem> {
-        self.hook_system.get_or_init(|| {
+        let hs = self.hook_system.get_or_init(|| {
             info!("Initializing hook system for outline '{}'", self.name);
             let store = Arc::clone(&self.store);
             let path = self.search_index_path.clone();
@@ -64,7 +66,28 @@ impl OutlineContext {
                     }
                 }
             }
-        })
+        });
+
+        // Wire store callbacks on first hook_system init (change_callback + broadcast_callback)
+        if !self.callbacks_wired.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let hs_clone = Arc::clone(hs);
+            let bc_clone = Arc::clone(&self.broadcaster);
+            if let Err(e) = self.store.set_change_callback(move |changes| {
+                for change in changes {
+                    if let Err(e) = hs_clone.emit_change(change) {
+                        tracing::error!("Hook emission failed: {}", e);
+                    }
+                }
+            }) {
+                warn!("Failed to set change_callback for '{}': {}", self.name, e);
+            }
+            self.store.set_broadcast_callback(move |update, seq| {
+                bc_clone.broadcast(update, None, Some(seq));
+            });
+            info!("Wired callbacks for outline '{}'", self.name);
+        }
+
+        hs
     }
 
     /// Check if hook system is already initialized without triggering bootstrap.
@@ -96,6 +119,7 @@ impl OutlineContext {
             broadcaster,
             active_connections: AtomicUsize::new(0),
             search_index_path,
+            callbacks_wired: AtomicBool::new(true), // Default wires callbacks in main.rs
         }
     }
 
@@ -108,6 +132,7 @@ impl OutlineContext {
             broadcaster: Arc::new(WsBroadcaster::new(256)),
             active_connections: AtomicUsize::new(0),
             search_index_path,
+            callbacks_wired: AtomicBool::new(false),
         }
     }
 }
@@ -361,6 +386,7 @@ mod tests {
             broadcaster,
             active_connections: AtomicUsize::new(0),
             search_index_path: None,
+            callbacks_wired: AtomicBool::new(false),
         });
 
         let mut contexts = HashMap::new();
