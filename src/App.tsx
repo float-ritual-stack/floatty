@@ -69,6 +69,39 @@ function App() {
     registerHandlers();
   });
 
+  // Listen for outline switch events (dispatched by outline:: handler)
+  onMount(() => {
+    const handler = async (e: Event) => {
+      const { name } = (e as CustomEvent).detail;
+      logger.info(`Outline switch requested: ${name}`);
+      try {
+        const serverUrl = window.__FLOATTY_SERVER_URL__;
+        const apiKey = window.__FLOATTY_API_KEY__;
+        if (serverUrl && apiKey) {
+          // Create outline if it doesn't exist
+          const listResp = await fetch(`${serverUrl}/api/v1/outlines`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+          });
+          const outlines: { name: string }[] = listResp.ok ? await listResp.json() : [];
+          if (!outlines.some(o => o.name === name)) {
+            await fetch(`${serverUrl}/api/v1/outlines`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name }),
+            });
+          }
+        }
+        const { switchOutline } = await import('./hooks/useSyncedYDoc');
+        await switchOutline(name);
+        logger.info(`Switched to outline '${name}'`);
+      } catch (err) {
+        logger.error(`Failed to switch outline: ${err}`);
+      }
+    };
+    window.addEventListener('floatty:switch-outline', handler);
+    onCleanup(() => window.removeEventListener('floatty:switch-outline', handler));
+  });
+
   // Start sync health checking (polls every 30s, detects WS drift)
   useSyncHealth();
 

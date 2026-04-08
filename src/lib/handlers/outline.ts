@@ -3,11 +3,10 @@
  *
  * Usage:
  *   outline::           → list available outlines as children
- *   outline:: name      → switch to that outline (creates if doesn't exist)
+ *   outline:: name      → dispatch switch event (handled by App-level listener)
  */
 
 import type { BlockHandler, ExecutorActions } from './types';
-import { switchOutline } from '../../hooks/useSyncedYDoc';
 import { currentOutline } from '../httpClient';
 
 export const outlineHandler: BlockHandler = {
@@ -24,10 +23,9 @@ export const outlineHandler: BlockHandler = {
       return;
     }
 
-    actions.setBlockStatus?.(blockId, 'running');
-
     // No argument → list outlines
     if (!arg) {
+      actions.setBlockStatus?.(blockId, 'running');
       try {
         const resp = await fetch(`${serverUrl}/api/v1/outlines`, {
           headers: { 'Authorization': `Bearer ${apiKey}` },
@@ -50,7 +48,7 @@ export const outlineHandler: BlockHandler = {
       return;
     }
 
-    // Argument provided → switch (or create + switch)
+    // Argument provided → dispatch switch event (App-level listener handles it)
     const name = arg.replace(/\s*←\s*current\s*$/, '').trim();
     if (name === currentOutline()) {
       actions.setBlockStatus?.(blockId, 'complete');
@@ -58,34 +56,6 @@ export const outlineHandler: BlockHandler = {
     }
 
     actions.setBlockStatus?.(blockId, 'running');
-
-    // Run switch async AFTER handler returns — switchOutline destroys the Y.Doc,
-    // so we can't create blocks or touch the store after it runs.
-    setTimeout(async () => {
-      try {
-        // Check if outline exists, create if not
-        const listResp = await fetch(`${serverUrl}/api/v1/outlines`, {
-          headers: { 'Authorization': `Bearer ${apiKey}` },
-        });
-        const outlines: { name: string }[] = listResp.ok ? await listResp.json() : [];
-        const exists = outlines.some(o => o.name === name);
-
-        if (!exists) {
-          const createResp = await fetch(`${serverUrl}/api/v1/outlines`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name }),
-          });
-          if (!createResp.ok) {
-            const text = await createResp.text();
-            throw new Error(`Create failed: ${text}`);
-          }
-        }
-
-        await switchOutline(name);
-      } catch (err) {
-        console.error(`Failed to switch to outline '${name}':`, err);
-      }
-    }, 0);
+    window.dispatchEvent(new CustomEvent('floatty:switch-outline', { detail: { name } }));
   },
 };
