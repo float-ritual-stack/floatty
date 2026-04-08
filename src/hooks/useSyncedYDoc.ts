@@ -11,6 +11,7 @@
 
 import { onMount, onCleanup, createSignal, type Accessor } from 'solid-js';
 import { getHttpClient, isClientInitialized } from '../lib/httpClient';
+import { blockStore } from './useBlockStore';
 import * as Y from 'yjs';
 import {
   saveBackup as saveBackupIDB,
@@ -432,11 +433,19 @@ export async function switchOutline(name: string): Promise<void> {
   // 4. Reset sequence tracker
   seqTracker.resetAll();
 
-  // 5. Switch HTTP client to new outline
+  // 5. Reset block store (detach old Y.Doc observers, clear state)
+  blockStore.resetForOutlineSwitch();
+
+  // 6. Switch HTTP client to new outline
   httpClient.setOutline(name);
 
-  // 6. Load state from new outline + reconnect WS
+  // 7. Load state from new outline
   await triggerFullResync();
+
+  // 8. Re-initialize block store from new Y.Doc
+  blockStore.initFromYDoc(sharedDoc);
+
+  // 9. Reconnect WS
   connectWebSocket();
 
   logger.info(`Switched to outline '${name}'`);
