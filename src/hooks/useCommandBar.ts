@@ -52,6 +52,7 @@ export const BUILT_IN_COMMANDS: ResultItem[] = [
   { type: 'command', id: 'go-today',        label: "Today's Daily Note" },
   { type: 'command', id: 'sidebar-swap',    label: 'Sidebar: Swap Side' },
   { type: 'command', id: 'sidebar-link',   label: 'Sidebar: Link to Pane', shortcut: `${mod}L` },
+  { type: 'command', id: 'switch-outline', label: 'Switch Outline' },
 ];
 
 // ═══════════════════════════════════════════════════════════════

@@ -386,6 +386,62 @@ export function deduplicateChildIds(): number {
  *
  * Returns { pushedBytes } for logging by health check.
  */
+export async function switchOutline(name: string): Promise<void> {
+  const httpClient = getHttpClient();
+  if (httpClient.getOutline() === name) return;
+
+  logger.info(`Switching outline: ${httpClient.getOutline()} → ${name}`);
+
+  // 1. Close WebSocket
+  if (sharedWebSocket) {
+    sharedWebSocket.close();
+    sharedWebSocket = null;
+  }
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+
+  // 2. Clear Y.Doc — destroy observers, create fresh doc
+  if (sharedUndoManager) {
+    sharedUndoManager.destroy();
+    sharedUndoManager = null;
+  }
+  sharedDoc.destroy();
+  sharedDoc = new Y.Doc({ gc: true });
+  sharedDocLoaded = false;
+  sharedDocError = null;
+  sharedDocLoadPromise = null;
+
+  // 3. Reset sync state
+  sharedPendingUpdates = [];
+  if (sharedSyncTimer) clearTimeout(sharedSyncTimer);
+  sharedSyncTimer = null;
+  sharedIsFlushing = false;
+  sharedRetryCount = 0;
+  handlerRefCount = 0;
+  moduleUpdateHandler = null;
+  wsRetryCount = 0;
+  wsHasConnectedOnce = false;
+  wsReadyForMessages = true;
+  wsConnectionId++;
+  setSyncStatus('pending');
+  setPendingCount(0);
+  setLastSyncError(null);
+
+  // 4. Reset sequence tracker
+  seqTracker.resetAll();
+
+  // 5. Switch HTTP client to new outline
+  httpClient.setOutline(name);
+
+  // 6. Load state from new outline + reconnect WS
+  await triggerFullResync();
+  connectWebSocket();
+
+  logger.info(`Switched to outline '${name}'`);
+}
+
 export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
   if (!isClientInitialized()) {
     logger.warn('HTTP client not initialized, cannot trigger resync');
@@ -449,7 +505,7 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
 // Y.Doc is a singleton - survives component unmount/remount cycles.
 // Only the update observer is cleaned up per-component.
 // FLO-197/P4: Enable GC to prevent tombstone accumulation (safe with single-client)
-const sharedDoc = new Y.Doc({ gc: true });
+let sharedDoc = new Y.Doc({ gc: true });
 let sharedDocLoaded = false;
 let sharedDocError: string | null = null;
 let sharedDocLoadPromise: Promise<void> | null = null;
@@ -1128,8 +1184,12 @@ function connectWebSocket() {
     return;
   }
 
-  // Convert http://localhost:8765 to ws://localhost:8765/ws
-  const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
+  // Convert http://localhost:8765 to ws://localhost:8765/ws(?outline=name)
+  const outline = getHttpClient().getOutline();
+  let wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
+  if (outline !== 'default') {
+    wsUrl += `?outline=${encodeURIComponent(outline)}`;
+  }
   wsLogger.info(`Connecting to ${wsUrl}`);
 
   try {

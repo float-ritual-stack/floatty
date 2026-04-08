@@ -25,6 +25,7 @@ import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { createLogger } from '../lib/logger';
 import { terminalManager } from '../lib/terminalManager';
+import { currentOutline } from '../lib/httpClient';
 
 const logger = createLogger('Terminal');
 
@@ -1452,6 +1453,34 @@ export function Terminal() {
                   paneLinkStore.setSidebarLink(activeId, paneId);
                 }
               }
+              return;
+            }
+
+            // Switch outline — fetch list, prompt user, switch
+            if (commandId === 'switch-outline') {
+              (async () => {
+                try {
+                  const serverUrl = window.__FLOATTY_SERVER_URL__;
+                  const apiKey = window.__FLOATTY_API_KEY__;
+                  if (!serverUrl || !apiKey) return;
+                  const resp = await fetch(`${serverUrl}/api/v1/outlines`, {
+                    headers: { 'Authorization': `Bearer ${apiKey}` },
+                  });
+                  if (!resp.ok) return;
+                  const outlines: { name: string }[] = await resp.json();
+                  const names = outlines.map(o => o.name);
+                  const choice = window.prompt(
+                    `Switch outline (current: ${currentOutline()})\n\nAvailable: ${names.join(', ')}`,
+                    'default'
+                  );
+                  if (choice && names.includes(choice)) {
+                    const { switchOutline } = await import('../hooks/useSyncedYDoc');
+                    await switchOutline(choice);
+                  }
+                } catch (e) {
+                  logger.error('Failed to switch outline', { e });
+                }
+              })();
               return;
             }
 
