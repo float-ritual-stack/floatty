@@ -268,7 +268,11 @@ impl OutlineManager {
             return Err(OutlineError::AlreadyExists(name.to_string()));
         }
 
-        let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
+        let store = Arc::new(YDocStore::open(&db_path, name.as_str()).map_err(|e| {
+            // Clean up partial .sqlite file if SQLite created it before failing
+            let _ = std::fs::remove_file(&db_path);
+            e
+        })?);
         let search_path = self.search_index_path(&name);
         let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
         contexts.insert(name.as_str().to_string(), ctx);

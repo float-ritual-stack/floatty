@@ -2889,7 +2889,8 @@ async fn outline_update_block(
     Json(req): Json<UpdateBlockRequest>,
 ) -> Result<Json<BlockDto>, ApiError> {
     reject_default_mutation(&name)?;
-    // Phase 1: only content updates supported on outline routes
+    // Phase 1: only content updates supported on outline routes.
+    // If UpdateBlockRequest gains new fields, add them to this guard.
     if req.parent_id.is_some() || req.metadata.is_some() || req.after_id.is_some() || req.at_index.is_some() {
         return Err(ApiError::InvalidRequest(
             "Per-outline PATCH currently supports content updates only".into(),
