@@ -54,7 +54,14 @@ impl OutlineContext {
                 Ok(hs) => Arc::new(hs),
                 Err(e) => {
                     warn!("HookSystem init panicked for '{}': {:?}", self.name, e);
-                    Arc::new(HookSystem::initialize_at(Arc::clone(&self.store), None))
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        HookSystem::initialize_at(Arc::clone(&self.store), None)
+                    })) {
+                        Ok(hs) => Arc::new(hs),
+                        Err(e2) => {
+                            panic!("Cannot initialize HookSystem for outline '{}': primary {:?}, fallback {:?}", self.name, e, e2);
+                        }
+                    }
                 }
             }
         })
@@ -227,6 +234,10 @@ impl OutlineManager {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("sqlite") {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        if OutlineName::new(stem).is_err() {
+                            warn!("Skipping non-conforming outline file: {:?}", path);
+                            continue;
+                        }
                         match OutlineInfo::from_path(stem, &path) {
                             Ok(info) => outlines.push(info),
                             Err(e) => warn!("Failed to stat outline '{}': {}", stem, e),

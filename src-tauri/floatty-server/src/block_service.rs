@@ -480,6 +480,7 @@ pub(crate) fn collect_descendants(
 ) -> Vec<(String, String)> {
     let mut result = Vec::new();
     let mut stack = vec![root_id.to_string()];
+    let mut seen = std::collections::HashSet::from([root_id.to_string()]);
 
     while let Some(current_id) = stack.pop() {
         if let Some(yrs::Out::YMap(block_map)) = blocks.get(txn, &current_id) {
@@ -491,11 +492,14 @@ pub(crate) fn collect_descendants(
                 })
                 .unwrap_or_default();
 
-            // Push children onto stack for traversal
+            // Push children onto stack for traversal (skip already-seen to prevent cycles)
             if let Some(yrs::Out::YArray(child_ids)) = block_map.get(txn, "childIds") {
                 for value in child_ids.iter(txn) {
                     if let yrs::Out::Any(yrs::Any::String(s)) = value {
-                        stack.push(s.to_string());
+                        let child = s.to_string();
+                        if seen.insert(child.clone()) {
+                            stack.push(child);
+                        }
                     }
                 }
             }
