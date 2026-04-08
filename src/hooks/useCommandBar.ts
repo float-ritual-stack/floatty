@@ -134,8 +134,11 @@ export function useCommandBar() {
     };
 
     // FLO-466: When query matches command names, surface commands above pages.
-    // "export" should show Export JSON/Binary/Markdown before pages containing "export".
-    return [typedTextItem, ...commands, ...fuzzyPages];
+    // Commands first so Enter selects the command, not a create-page action.
+    if (commands.length > 0) {
+      return [...commands, typedTextItem, ...fuzzyPages];
+    }
+    return [typedTextItem, ...fuzzyPages];
   });
 
   // Reset selection when query changes (on() prevents dependency leak)
