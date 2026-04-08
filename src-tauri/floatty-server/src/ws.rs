@@ -46,7 +46,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use crate::{OutlineContext, OutlineManager};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -253,19 +253,18 @@ pub async fn ws_handler(
     } else {
         match ws_state.outline_manager.get_context(&outline_name) {
             Ok(ctx) => {
-                ctx.ensure_hook_system(); // Wire callbacks if needed
+                // Don't call ensure_hook_system() here — WS is read-only (subscriber).
+                // Callbacks get wired on first write via block_service or outline_apply_update.
                 let bc = Arc::clone(&ctx.broadcaster);
                 (bc, Some(ctx))
             }
-            Err(e) => {
-                tracing::warn!("WS connect for unknown outline '{}': {}", outline_name, e);
-                (Arc::clone(&ws_state.default_broadcaster), None)
+            Err(_) => {
+                return (axum::http::StatusCode::NOT_FOUND, "outline not found").into_response();
             }
         }
     };
 
-    let outline_for_log = outline_name.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster, outline_for_log, outline_ctx))
+    ws.on_upgrade(move |socket| handle_socket(socket, broadcaster, outline_name, outline_ctx))
 }
 
 /// Handle an individual WebSocket connection
@@ -275,7 +274,6 @@ async fn handle_socket(
     outline: String,
     outline_ctx: Option<Arc<OutlineContext>>,
 ) {
-    // Track active connections for non-default outlines (used by LRU eviction)
     if let Some(ref ctx) = outline_ctx {
         ctx.active_connections.fetch_add(1, Ordering::Relaxed);
     }
@@ -336,7 +334,6 @@ async fn handle_socket(
         }
     }
 
-    // Clean up send task and decrement active connections
     send_task.abort();
     if let Some(ref ctx) = outline_ctx {
         ctx.active_connections.fetch_sub(1, Ordering::Relaxed);

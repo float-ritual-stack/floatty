@@ -229,21 +229,22 @@ impl OutlineManager {
         let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
         contexts.insert(name.as_str().to_string(), Arc::clone(&ctx));
 
-        // LRU eviction: if cache exceeds limit, evict idle outlines (not "default")
+        // Evict idle outlines when cache exceeds limit. Not true LRU — evicts
+        // first idle found. "default" and the just-opened outline are exempt.
+        // active_connections only tracks WS subscribers, not HTTP requests.
         if contexts.len() > MAX_LOADED_OUTLINES {
+            let slots_to_free = contexts.len() - MAX_LOADED_OUTLINES;
             let evictable: Vec<String> = contexts.iter()
                 .filter(|(k, ctx)| {
                     *k != "default"
-                        && k.as_str() != name.as_str()  // Don't evict what we just opened
+                        && k.as_str() != name.as_str()
                         && ctx.active_connections.load(Ordering::Relaxed) == 0
                 })
                 .map(|(k, _)| k.clone())
+                .take(slots_to_free)
                 .collect();
 
             for evict_name in evictable {
-                if contexts.len() <= MAX_LOADED_OUTLINES {
-                    break;
-                }
                 if let Some(evicted) = contexts.remove(&evict_name) {
                     evicted.flush();
                     info!("Evicted idle outline '{}' (cache size: {})", evict_name, contexts.len());
