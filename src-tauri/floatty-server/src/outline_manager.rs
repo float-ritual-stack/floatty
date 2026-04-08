@@ -250,6 +250,11 @@ impl OutlineManager {
                     info!("Evicted idle outline '{}' (cache size: {})", evict_name, contexts.len());
                 }
             }
+
+            if contexts.len() > MAX_LOADED_OUTLINES {
+                warn!("Cache still at {} after eviction — all non-default outlines have active connections",
+                    contexts.len());
+            }
         }
 
         if contexts.len() > MAX_LOADED_WARNING {
