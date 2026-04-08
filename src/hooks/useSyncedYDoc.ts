@@ -1518,7 +1518,8 @@ export function useSyncedYDoc(
           } catch (err) {
             logger.warn('Config IPC failed for namespace, using default', { err });
           }
-          initBackupNamespace(workspaceName);
+          const outlineName = getHttpClient().getOutline();
+          initBackupNamespace(workspaceName, outlineName);
 
           // Load persisted lastContiguousSeq for incremental sync after browser refresh
           // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:

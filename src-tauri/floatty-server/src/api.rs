@@ -385,6 +385,27 @@ pub struct CreateBlockRequest {
     // with Origin::User for all frontend mutations. See hooks/system.rs.
 }
 
+/// Import block request — identity-preserving create for migration/curation workflows.
+///
+/// Use POST /api/v1/blocks/import (or /api/v1/outlines/:name/blocks/import).
+/// The normal create endpoint (POST /api/v1/blocks) never accepts caller-supplied IDs —
+/// server always owns identity for ordinary creates.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportBlockRequest {
+    /// The block ID to preserve. Must be a valid UUID and must not already exist
+    /// in the destination outline.
+    pub id: String,
+    pub content: String,
+    pub parent_id: Option<String>,
+    pub after_id: Option<String>,
+    pub at_index: Option<usize>,
+    /// Original creation timestamp (epoch millis). If absent, server uses current time.
+    pub created_at: Option<i64>,
+    /// Original update timestamp (epoch millis). If absent, server uses current time.
+    pub updated_at: Option<i64>,
+}
+
 /// Update block request
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -549,6 +570,7 @@ pub fn create_router(
         // Block CRUD
         .route("/api/v1/blocks", get(get_blocks))
         .route("/api/v1/blocks", post(create_block))
+        .route("/api/v1/blocks/import", post(import_block))
         .route("/api/v1/blocks/resolve/:prefix", get(resolve_block_prefix))
         .route("/api/v1/blocks/:id", get(get_block))
         .route("/api/v1/blocks/:id", patch(update_block))
@@ -588,6 +610,7 @@ pub fn create_router(
         .route("/api/v1/outlines/:name/export/json", get(outline_export_json))
         // Per-outline block CRUD
         .route("/api/v1/outlines/:name/blocks", get(outline_get_blocks).post(outline_create_block))
+        .route("/api/v1/outlines/:name/blocks/import", post(outline_import_block))
         .route("/api/v1/outlines/:name/blocks/:id", get(outline_get_block).patch(outline_update_block).delete(outline_delete_block))
         .route("/api/v1/outlines/:name/stats", get(outline_get_stats))
         // Per-outline search (scoped to outline's Tantivy index)
@@ -1817,6 +1840,40 @@ async fn create_block(
     Ok((StatusCode::CREATED, Json(dto)))
 }
 
+/// POST /api/v1/blocks/import - Identity-preserving block create for migration/curation.
+///
+/// Accepts a caller-supplied UUID. Distinct from the normal create endpoint so that
+/// identity preservation is an explicit, auditable operation — not ambient behavior.
+async fn import_block(
+    State(state): State<AppState>,
+    Json(req): Json<ImportBlockRequest>,
+) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
+    let dto = crate::block_service::import_block(
+        &state.store,
+        &state.broadcaster,
+        &state.hook_system,
+        req,
+    )?;
+    Ok((StatusCode::CREATED, Json(dto)))
+}
+
+/// POST /api/v1/outlines/:name/blocks/import - Per-outline import
+async fn outline_import_block(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<ImportBlockRequest>,
+) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
+    reject_default_mutation(&name)?;
+    let ctx = resolve_outline_context(&state, &name)?;
+    let dto = crate::block_service::import_block(
+        &ctx.store,
+        &ctx.broadcaster,
+        ctx.ensure_hook_system(),
+        req,
+    )?;
+    Ok((StatusCode::CREATED, Json(dto)))
+}
+
 /// PUT /api/v1/blocks/:id - Not supported, suggest PATCH
 ///
 /// Friendly error for kitty and other agents who try PUT instead of PATCH.
@@ -2855,9 +2912,10 @@ mod tests {
 
     fn test_outline_manager(dir: &std::path::Path, store: &Arc<YDocStore>, hook_system: &Arc<floatty_core::HookSystem>, broadcaster: &Arc<crate::WsBroadcaster>) -> Arc<crate::OutlineManager> {
         let ctx = Arc::new(crate::OutlineContext::new_default(
-            Arc::clone(store), Arc::clone(hook_system), Arc::clone(broadcaster), None,
+            Arc::clone(store), Arc::clone(hook_system), Arc::clone(broadcaster), None, None,
         ));
-        Arc::new(crate::OutlineManager::new_with_default(dir, ctx))
+        let no_backup = crate::config::BackupConfig { enabled: false, ..Default::default() };
+        Arc::new(crate::OutlineManager::new_with_default(dir, ctx, no_backup))
     }
 
     fn test_app() -> (Router, tempfile::TempDir, Arc<YDocStore>) {
@@ -5035,6 +5093,69 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_with_supplied_id() {
+        let (app, _dir, _store) = test_app();
+        let supplied_id = uuid::Uuid::new_v4().to_string();
+
+        let body = serde_json::json!({ "content": "hello", "id": supplied_id });
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/blocks/import")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(created["id"], supplied_id, "Import should preserve caller-supplied ID");
+    }
+
+    #[tokio::test]
+    async fn test_create_block_duplicate_id_rejected() {
+        let (router, _dir, _store) = test_app();
+        let mut app = router.into_service();
+
+        // Create a block via normal endpoint first
+        let existing = create_test_block(&mut app, "existing", None).await;
+
+        // Try to import with the same ID — should be rejected as conflict
+        let body = serde_json::json!({ "content": "duplicate", "id": existing.id });
+        let response = ServiceExt::<Request<Body>>::ready(&mut app)
+            .await.unwrap()
+            .call(
+                Request::post("/api/v1/blocks/import")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_invalid_uuid_rejected() {
+        let (app, _dir, _store) = test_app();
+
+        let body = serde_json::json!({ "content": "bad id", "id": "not-a-uuid" });
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/blocks/import")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

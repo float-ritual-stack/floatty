@@ -422,9 +422,20 @@ impl BackupDaemon {
     }
 }
 
-/// Create the backup directory path
+/// Create the backup directory path for an outline.
+/// - "default" → `{data_dir}/backups/` (legacy path, unchanged)
+/// - other     → `{data_dir}/outlines/{name}/backups/`
+pub fn backup_dir_for(outline_name: &str) -> PathBuf {
+    if outline_name == "default" {
+        data_dir().join("backups")
+    } else {
+        data_dir().join("outlines").join(outline_name).join("backups")
+    }
+}
+
+/// Create the backup directory path (legacy convenience — default outline only)
 pub fn backup_dir() -> PathBuf {
-    data_dir().join("backups")
+    backup_dir_for("default")
 }
 
 #[cfg(test)]
