@@ -2004,7 +2004,8 @@ export function FilterButtons(props: BaseComponentProps<{
   filters: Array<{ id: string; label: string; count?: number }>;
   active: string;
 }>) {
-  const [active, setActive] = useBoundProp(props.props.active, props.bindings?.active);
+  const [activeRaw, setActive] = useBoundProp(props.props.active, props.bindings?.active);
+  const active = typeof activeRaw === 'function' ? activeRaw as () => unknown : () => activeRaw;
   const filters = () => props.props.filters ?? [];
   return (
     <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
@@ -2040,15 +2041,17 @@ export function FilterButtons(props: BaseComponentProps<{
 
 export function TabNav(props: BaseComponentProps<{
   tabs: Array<{ id: string; label: string }>;
-  active: string;
+  active: unknown;
   variant?: 'horizontal' | 'pills';
 }>) {
-  const [active, setActive] = useBoundProp(props.props.active, props.bindings?.active);
+  const [activeRaw, setActive] = useBoundProp(props.props.active, props.bindings?.active);
+  // useBoundProp returns raw value OR signal depending on version — normalize to callable
+  const active = typeof activeRaw === 'function' ? activeRaw as () => unknown : () => activeRaw;
   const tabs = () => props.props.tabs ?? [];
   const isPills = () => props.props.variant === 'pills';
   return (
     <div style={{
-      display: 'flex', gap: isPills() ? '6px' : '0',
+      display: 'flex', gap: '4px', padding: '4px 0',
       'border-bottom': isPills() ? 'none' : `1px solid ${V.b}`,
     }}>
       <For each={tabs()}>
@@ -2062,14 +2065,14 @@ export function TabNav(props: BaseComponentProps<{
                 emitChirp(el, 'press', { id: tab.id });
               }}
               style={{
-                padding: isPills() ? '4px 10px' : '6px 14px',
-                border: 'none',
-                'border-bottom': isPills() ? 'none' : `2px solid ${isActive() ? V.cy : 'transparent'}`,
-                'border-radius': isPills() ? '3px' : '0',
-                background: isPills() && isActive() ? 'rgba(255,255,255,0.08)' : 'transparent',
-                'font-size': '10px', 'font-family': V.mono, cursor: 'pointer',
-                color: isActive() ? V.t : V.td,
+                padding: '5px 12px',
+                border: `1px solid ${isActive() ? V.cy : V.b}`,
+                'border-radius': '4px',
+                background: isActive() ? V.cy + '18' : V.s2,
+                'font-size': '11px', 'font-family': V.mono, cursor: 'pointer',
+                color: isActive() ? V.cy : V.td,
                 transition: 'all 0.15s ease',
+                'user-select': 'none',
               }}
             >
               {tab.label}
@@ -2077,6 +2080,514 @@ export function TabNav(props: BaseComponentProps<{
           );
         }}
       </For>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TREE VIEW
+// ═══════════════════════════════════════════════════════════════
+
+interface TreeNode {
+  id: string;
+  label: string;
+  status?: 'done' | 'active' | 'pending' | 'deferred';
+  detail?: string;
+  children?: TreeNode[];
+}
+
+function treeStatusColor(status?: string): string {
+  switch (status) {
+    case 'done': return V.green;
+    case 'active': return V.cy;
+    case 'deferred': return V.amb;
+    case 'pending': return V.tf;
+    default: return V.td;
+  }
+}
+
+function treeStatusIcon(status?: string, hasChildren?: boolean): string {
+  if (hasChildren) return '';
+  switch (status) {
+    case 'done': return '✓';
+    case 'active': return '▸';
+    case 'deferred': return '◇';
+    case 'pending': return '·';
+    default: return '·';
+  }
+}
+
+function TreeNodeRow(nodeProps: { node: TreeNode; depth: number; isLast: boolean; defaultExpanded: boolean }) {
+  const node = nodeProps.node;
+  const hasKids = () => (node.children?.length ?? 0) > 0;
+  const [expanded, setExpanded] = createSignal(nodeProps.defaultExpanded);
+  const color = () => treeStatusColor(node.status);
+  const icon = () => treeStatusIcon(node.status, hasKids());
+  const children = () => node.children ?? [];
+
+  return (
+    <div style={{ 'margin-left': nodeProps.depth > 0 ? '16px' : '0' }}>
+      <div
+        onClick={() => hasKids() && setExpanded(e => !e)}
+        style={{
+          display: 'flex',
+          'align-items': 'flex-start',
+          gap: '6px',
+          padding: '3px 0',
+          cursor: hasKids() ? 'pointer' : 'default',
+          'user-select': 'none',
+        }}
+      >
+        {/* branch glyph */}
+        <span style={{
+          'font-size': '10px',
+          color: V.tf,
+          'min-width': '10px',
+          'font-family': V.mono,
+          'line-height': '18px',
+        }}>
+          {nodeProps.depth > 0 ? (nodeProps.isLast ? '└' : '├') : ''}
+        </span>
+
+        {/* expand/collapse or status icon */}
+        <span style={{
+          'font-size': hasKids() ? '8px' : '10px',
+          color: color(),
+          'min-width': '12px',
+          'text-align': 'center',
+          'line-height': '18px',
+          transition: 'transform 0.15s ease',
+          transform: hasKids() ? (expanded() ? 'rotate(90deg)' : 'rotate(0deg)') : 'none',
+        }}>
+          {hasKids() ? '▶' : icon()}
+        </span>
+
+        {/* label + detail */}
+        <div style={{ flex: '1', 'min-width': '0' }}>
+          <span style={{
+            'font-size': '11px',
+            'font-family': V.mono,
+            color: node.status === 'deferred' ? V.amb : node.status === 'pending' ? V.td : V.t,
+            'text-decoration': node.status === 'deferred' ? 'none' : 'none',
+          }}
+            innerHTML={sanitize(inlineFormat(node.label))}
+          />
+          <Show when={node.detail}>
+            <span style={{
+              'font-size': '10px',
+              'font-family': V.mono,
+              color: V.tf,
+              'margin-left': '8px',
+            }}>
+              {node.detail}
+            </span>
+          </Show>
+        </div>
+
+        {/* status badge */}
+        <Show when={node.status}>
+          <span style={{
+            'font-size': '8px',
+            'font-family': V.mono,
+            'text-transform': 'uppercase',
+            'letter-spacing': '0.05em',
+            color: color(),
+            'background': `${color()}18`,
+            padding: '1px 5px',
+            'border-radius': '3px',
+            'white-space': 'nowrap',
+            'line-height': '16px',
+          }}>
+            {node.status}
+          </span>
+        </Show>
+      </div>
+
+      {/* children */}
+      <Show when={hasKids() && expanded()}>
+        <div style={{
+          'border-left': `1px solid ${color()}30`,
+          'margin-left': '15px',
+        }}>
+          <For each={children()}>
+            {(child, i) => (
+              <TreeNodeRow
+                node={child}
+                depth={nodeProps.depth + 1}
+                isLast={i() === children().length - 1}
+                defaultExpanded={nodeProps.defaultExpanded}
+              />
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+export function TreeView(props: BaseComponentProps<{
+  title?: string;
+  nodes: TreeNode[];
+  defaultExpanded?: boolean;
+  connectsTo?: string[];
+}>) {
+  const nodes = () => props.props.nodes ?? [];
+  const connectsTo = () => props.props.connectsTo ?? [];
+  const defaultExpanded = () => props.props.defaultExpanded !== false;
+
+  return (
+    <div style={{ padding: '0' }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '11px',
+          color: V.td,
+          'margin-bottom': '8px',
+          'font-family': V.mono,
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.1em',
+        }}>
+          {props.props.title}
+        </div>
+      </Show>
+
+      <For each={nodes()}>
+        {(node, i) => (
+          <TreeNodeRow
+            node={node}
+            depth={0}
+            isLast={i() === nodes().length - 1}
+            defaultExpanded={defaultExpanded()}
+          />
+        )}
+      </For>
+
+      <Show when={connectsTo().length > 0}>
+        <div onClick={handleWikilinkClick} style={{
+          'margin-top': '10px',
+          'padding-top': '8px',
+          'border-top': `1px solid ${V.b}`,
+          display: 'flex',
+          gap: '6px',
+          'flex-wrap': 'wrap',
+          'align-items': 'center',
+        }}>
+          <span style={{ 'font-size': '9px', color: V.tf, 'font-family': V.mono }}>→</span>
+          <For each={connectsTo()}>
+            {(link) => (
+              <span
+                class="bbs-wikilink"
+                data-wikilink={link}
+                style={{
+                  'font-size': '10px',
+                  'font-family': V.mono,
+                  color: V.cy,
+                  cursor: 'pointer',
+                  padding: '1px 4px',
+                  'border-radius': '3px',
+                  background: 'rgba(0,229,255,0.08)',
+                }}
+              >
+                [[{link}]]
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPLORER PORTS — LinkGraph, ActivityHeatmap, ProvenanceChain,
+//                  RiskMatrix, TimelineDiff
+// ═══════════════════════════════════════════════════════════════
+
+export function LinkGraph(props: BaseComponentProps<{
+  nodes: Array<{ id: string; label: string; color?: string; weight?: number; center?: boolean; ring?: number; type?: string }>;
+  edges: Array<[string, string]>;
+  title?: string;
+}>) {
+  const nodes = () => props.props.nodes ?? [];
+  const edges = () => props.props.edges ?? [];
+  const w = 420, h = 260;
+
+  const positioned = createMemo(() => {
+    const pos: Record<string, { x: number; y: number; color: string; label: string; weight?: number; type?: string; center?: boolean }> = {};
+    const all = nodes();
+    const centerNode = all.find(n => n.center);
+    const others = all.filter(n => !n.center);
+    if (centerNode) pos[centerNode.id] = { ...centerNode, x: w / 2, y: h / 2, color: centerNode.color ?? V.cy };
+    others.forEach((n, i) => {
+      const angle = (i / others.length) * Math.PI * 2 - Math.PI / 2;
+      const r = 90 + (n.ring || 1) * 30;
+      pos[n.id] = { ...n, x: w / 2 + Math.cos(angle) * r, y: h / 2 + Math.sin(angle) * r, color: n.color ?? V.td };
+    });
+    return pos;
+  });
+
+  return (
+    <div style={{ padding: '0' }}>
+      <Show when={props.props.title}>
+        <div style={{ 'font-size': '11px', color: V.td, 'margin-bottom': '8px', 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.1em' }}>
+          {props.props.title}
+        </div>
+      </Show>
+      <div style={{ border: `1px solid ${V.b}`, 'border-radius': '4px', overflow: 'hidden' }}>
+        <svg width={w} height={h} style={{ display: 'block' }}>
+          <For each={edges()}>
+            {(edge) => {
+              const pos = positioned();
+              const a = pos[edge[0]], b = pos[edge[1]];
+              if (!a || !b) return null;
+              return (
+                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                  stroke={V.b} stroke-width="0.5"
+                  stroke-dasharray={a.type === 'stub' || b.type === 'stub' ? '3,3' : 'none'}
+                />
+              );
+            }}
+          </For>
+          <For each={Object.values(positioned())}>
+            {(n) => {
+              const r = n.center ? 18 : n.type === 'stub' ? 5 : 8 + Math.min(n.weight || 0, 6);
+              return (
+                <g>
+                  <circle cx={n.x} cy={n.y} r={r}
+                    fill={n.color + '30'} stroke={n.color}
+                    stroke-width={n.center ? 2 : 1}
+                  />
+                  {(n.center || r > 8) && (
+                    <text x={n.x} y={n.y + r + 12} text-anchor="middle"
+                      fill={V.td} font-size="8" font-family={V.mono}
+                    >{n.label.length > 18 ? n.label.slice(0, 16) + '\u2026' : n.label}</text>
+                  )}
+                  {(n.weight ?? 0) > 3 && !n.center && (
+                    <text x={n.x} y={n.y + 3} text-anchor="middle"
+                      fill={V.bg} font-size="7" font-family={V.mono} font-weight="bold"
+                    >{n.weight}</text>
+                  )}
+                </g>
+              );
+            }}
+          </For>
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+export function ActivityHeatmap(props: BaseComponentProps<{
+  data: Array<{ label: string; value: number }>;
+  color?: string;
+  title?: string;
+}>) {
+  const data = () => props.props.data ?? [];
+  const c = () => props.props.color ?? V.cy;
+  const maxVal = createMemo(() => Math.max(...data().map(d => d.value), 1));
+
+  return (
+    <div style={{ padding: '0' }}>
+      <Show when={props.props.title}>
+        <div style={{ 'font-size': '11px', color: V.td, 'margin-bottom': '8px', 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.1em' }}>
+          {props.props.title}
+        </div>
+      </Show>
+      <div style={{ border: `1px solid ${V.b}`, 'border-radius': '4px', padding: '8px' }}>
+        <div style={{ display: 'flex', gap: '2px', 'flex-wrap': 'wrap', padding: '4px' }}>
+          <For each={data()}>
+            {(d) => {
+              const intensity = d.value / maxVal();
+              const bg = intensity === 0 ? V.s2
+                : intensity < 0.25 ? c() + '15'
+                : intensity < 0.5 ? c() + '30'
+                : intensity < 0.75 ? c() + '50'
+                : c() + '80';
+              return (
+                <div title={`${d.label}: ${d.value}`} style={{
+                  width: '14px', height: '14px', 'border-radius': '2px', 'background-color': bg,
+                  border: `1px solid ${intensity > 0.5 ? c() + '30' : V.b}`,
+                }} />
+              );
+            }}
+          </For>
+        </div>
+        <div style={{ display: 'flex', 'justify-content': 'space-between', padding: '0 4px', 'margin-top': '2px' }}>
+          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono }}>{data()[0]?.label}</span>
+          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono }}>peak: {maxVal()}</span>
+          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono }}>{data()[data().length - 1]?.label}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ProvenanceChain(props: BaseComponentProps<{
+  steps: Array<{ source: string; content: string; docId?: string; confidence?: number; lines?: string }>;
+  title?: string;
+}>) {
+  const steps = () => props.props.steps ?? [];
+  const sourceColors: Record<string, string> = {
+    qmd: V.cy, conversation: V.mag, bbs: '#b388ff',
+    outline: V.green, loki: V.amb, autorag: V.cy,
+  };
+
+  return (
+    <div style={{ padding: '0' }}>
+      <Show when={props.props.title}>
+        <div style={{ 'font-size': '11px', color: V.td, 'margin-bottom': '8px', 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.1em' }}>
+          {props.props.title}
+        </div>
+      </Show>
+      <div style={{ border: `1px solid ${V.b}`, 'border-radius': '4px', padding: '10px' }}>
+        <For each={steps()}>
+          {(step, i) => {
+            const sc = sourceColors[step.source] ?? V.td;
+            const isLast = () => i() === steps().length - 1;
+            return (
+              <div style={{ display: 'flex', gap: '10px', 'margin-bottom': isLast() ? '0' : '4px' }}>
+                <div style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'center', 'flex-shrink': '0', width: '16px' }}>
+                  <div style={{ 'flex-shrink': '0', 'margin-top': '4px', 'border-radius': '50%', width: '10px', height: '10px', 'background-color': sc + '30', border: `2px solid ${sc}` }} />
+                  <Show when={!isLast()}>
+                    <div style={{ flex: '1', 'margin-top': '2px', width: '2px', 'background-color': V.b }} />
+                  </Show>
+                </div>
+                <div style={{ flex: '1', 'padding-bottom': isLast() ? '0' : '8px' }}>
+                  <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'margin-bottom': '2px' }}>
+                    <span style={{ 'font-size': '8px', 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.05em', padding: '1px 6px', 'border-radius': '3px', color: sc, 'background-color': sc + '12' }}>
+                      {step.source}
+                    </span>
+                    <Show when={step.docId}>
+                      <span style={{ color: V.tf, 'font-size': '9px', 'font-family': V.mono }}>#{step.docId}</span>
+                    </Show>
+                    <Show when={step.confidence != null}>
+                      <span style={{ 'font-size': '9px', 'font-family': V.mono, 'margin-left': 'auto', color: (step.confidence ?? 0) > 0.8 ? V.green : (step.confidence ?? 0) > 0.5 ? V.amb : V.cor }}>
+                        {Math.round((step.confidence ?? 0) * 100)}%
+                      </span>
+                    </Show>
+                  </div>
+                  <div style={{ color: V.t, 'font-size': '11px', 'font-family': V.mono, 'line-height': '1.4' }}>{step.content}</div>
+                  <Show when={step.lines}>
+                    <span style={{ color: V.tf, 'font-size': '9px', 'font-family': V.mono }}>lines {step.lines}</span>
+                  </Show>
+                </div>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </div>
+  );
+}
+
+export function RiskMatrix(props: BaseComponentProps<{
+  items: Array<{ label: string; severity: string; impact: string }>;
+  title?: string;
+}>) {
+  const items = () => props.props.items ?? [];
+  const rows = ['high', 'medium', 'low'];
+  const cols = ['structural', 'content', 'cosmetic'];
+  const colColors: Record<string, string> = { structural: V.cor, content: V.amb, cosmetic: V.td };
+
+  return (
+    <div style={{ padding: '0' }}>
+      <Show when={props.props.title}>
+        <div style={{ 'font-size': '11px', color: V.td, 'margin-bottom': '8px', 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.1em' }}>
+          {props.props.title}
+        </div>
+      </Show>
+      <div style={{ border: `1px solid ${V.b}`, 'border-radius': '4px', overflow: 'hidden' }}>
+        {/* header */}
+        <div style={{ display: 'grid', 'grid-template-columns': '60px 1fr 1fr 1fr', 'border-bottom': `1px solid ${V.b}` }}>
+          <div style={{ padding: '6px' }} />
+          <For each={cols}>
+            {(col) => (
+              <div style={{ padding: '6px', 'text-align': 'center', 'font-size': '9px', 'font-family': V.mono, 'text-transform': 'uppercase', color: colColors[col], 'border-left': `1px solid ${V.b}` }}>
+                {col}
+              </div>
+            )}
+          </For>
+        </div>
+        {/* rows */}
+        <For each={rows}>
+          {(row) => (
+            <div style={{ display: 'grid', 'grid-template-columns': '60px 1fr 1fr 1fr', 'border-bottom': `1px solid ${V.b}20` }}>
+              <div style={{ padding: '6px', 'font-size': '9px', 'font-family': V.mono, 'text-transform': 'uppercase', color: row === 'high' ? V.cor : row === 'medium' ? V.amb : V.td }}>
+                {row}
+              </div>
+              <For each={cols}>
+                {(col) => {
+                  const cellItems = () => items().filter(it => it.severity === row && it.impact === col);
+                  const cc = colColors[col];
+                  return (
+                    <div style={{ padding: '4px', display: 'flex', 'flex-direction': 'column', gap: '2px', 'border-left': `1px solid ${V.b}`, 'min-height': '40px' }}>
+                      <For each={cellItems()}>
+                        {(item) => (
+                          <div style={{ padding: '2px 6px', 'border-radius': '3px', 'font-size': '9px', 'font-family': V.mono, color: V.t, 'line-height': '1.4', 'background-color': cc + '10', 'border-left': `2px solid ${cc}40` }}>
+                            {item.label}
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          )}
+        </For>
+      </div>
+    </div>
+  );
+}
+
+export function TimelineDiff(props: BaseComponentProps<{
+  before: { date: string; items: Array<{ text: string; removed?: boolean }> };
+  after: { date: string; items: Array<{ text: string; added?: boolean }> };
+  title?: string;
+}>) {
+  const before = () => props.props.before ?? { date: '', items: [] };
+  const after = () => props.props.after ?? { date: '', items: [] };
+
+  return (
+    <div style={{ padding: '0' }}>
+      <Show when={props.props.title}>
+        <div style={{ 'font-size': '11px', color: V.td, 'margin-bottom': '8px', 'font-family': V.mono, 'text-transform': 'uppercase', 'letter-spacing': '0.1em' }}>
+          {props.props.title}
+        </div>
+      </Show>
+      <div style={{ display: 'grid', 'grid-template-columns': '1fr 20px 1fr', border: `1px solid ${V.b}`, 'border-radius': '4px', overflow: 'hidden' }}>
+        {/* headers */}
+        <div style={{ padding: '6px', 'border-bottom': `1px solid ${V.b}`, 'background-color': V.cor + '08' }}>
+          <span style={{ 'font-size': '9px', 'font-family': V.mono, 'text-transform': 'uppercase', color: V.cor }}>before</span>
+          <span style={{ color: V.tf, 'font-size': '9px', 'font-family': V.mono, 'margin-left': '6px' }}>{before().date}</span>
+        </div>
+        <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'center', 'border-bottom': `1px solid ${V.b}` }}>
+          <span style={{ color: V.tf, 'font-size': '10px' }}>→</span>
+        </div>
+        <div style={{ padding: '6px', 'border-bottom': `1px solid ${V.b}`, 'background-color': V.green + '08' }}>
+          <span style={{ 'font-size': '9px', 'font-family': V.mono, 'text-transform': 'uppercase', color: V.green }}>after</span>
+          <span style={{ color: V.tf, 'font-size': '9px', 'font-family': V.mono, 'margin-left': '6px' }}>{after().date}</span>
+        </div>
+        {/* items */}
+        <div style={{ padding: '6px' }}>
+          <For each={before().items}>
+            {(item) => (
+              <div style={{ padding: '2px 6px', 'font-size': '10px', 'font-family': V.mono, 'margin-bottom': '2px', color: V.td, 'background-color': item.removed ? V.cor + '10' : 'transparent', 'text-decoration': item.removed ? 'line-through' : 'none', 'border-left': item.removed ? `2px solid ${V.cor}40` : '2px solid transparent' }}>
+                {item.text}
+              </div>
+            )}
+          </For>
+        </div>
+        <div />
+        <div style={{ padding: '6px' }}>
+          <For each={after().items}>
+            {(item) => (
+              <div style={{ padding: '2px 6px', 'font-size': '10px', 'font-family': V.mono, 'margin-bottom': '2px', color: item.added ? V.green : V.td, 'background-color': item.added ? V.green + '08' : 'transparent', 'border-left': item.added ? `2px solid ${V.green}40` : '2px solid transparent' }}>
+                {item.text}
+              </div>
+            )}
+          </For>
+        </div>
+      </div>
     </div>
   );
 }

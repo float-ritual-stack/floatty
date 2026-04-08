@@ -49,6 +49,12 @@ import {
   CollapsibleSection,
   FilterButtons,
   TabNav,
+  TreeView,
+  LinkGraph,
+  ActivityHeatmap,
+  ProvenanceChain,
+  RiskMatrix,
+  TimelineDiff,
   injectBodyStyles,
 } from './components';
 
@@ -101,6 +107,12 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     CollapsibleSection,
     FilterButtons,
     TabNav,
+    TreeView,
+    LinkGraph,
+    ActivityHeatmap,
+    ProvenanceChain,
+    RiskMatrix,
+    TimelineDiff,
   },
   actions: {
     navigate: async () => {},
