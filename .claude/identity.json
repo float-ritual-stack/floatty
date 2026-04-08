@@ -9,7 +9,9 @@
   "domains": [
     "typescript",
     "vite",
-    "react"
+    "typescript",
+    "vite",
+    "solidjs"
   ],
   "suggestedBy": "ecc-tools-repo-analysis",
   "createdAt": "2026-04-02T16:28:43.712Z"
