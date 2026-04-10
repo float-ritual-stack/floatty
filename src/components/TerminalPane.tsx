@@ -47,19 +47,23 @@ export function TerminalPane(props: TerminalPaneProps) {
   let fitTimeout: ReturnType<typeof setTimeout> | undefined;
 
   // Schedule a debounced fit() call - expensive operation, rate-limited
-  const scheduleFit = () => {
+  const scheduleFit = (meta?: { sourceEvent?: string }) => {
     if (fitTimeout) clearTimeout(fitTimeout);
     fitTimeout = setTimeout(() => {
       if (attached) {
-        terminalManager.fit(props.id);
+        terminalManager.fit(props.id, meta ? { sourceEvent: meta.sourceEvent } : undefined);
       }
     }, 50);
   };
 
+  const getPlaceholder = () => (
+    document.querySelector(`.pane-layout-leaf[data-pane-id="${CSS.escape(props.placeholderId)}"]`) as HTMLElement | null
+  );
+
   // Update CSS geometry synchronously - keeps terminal visually glued to placeholder
   // Uses provided dimensions (from ResizeObserver entry) or falls back to getBoundingClientRect
   const updateGeometry = (providedWidth?: number, providedHeight?: number) => {
-    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
+    const placeholder = getPlaceholder();
 
     if (!containerRef || !placeholder) return false;
 
@@ -92,9 +96,10 @@ export function TerminalPane(props: TerminalPaneProps) {
   // Create the imperative handle
   const handle: TerminalPaneHandle = {
     focus: () => terminalManager.focus(props.id),
-    fit: () => {
-      // updatePosition() already calls fit(), so just call that
-      updatePosition();
+    fit: (meta?: { sourceEvent?: string }) => {
+      if (updateGeometry()) {
+        scheduleFit(meta);
+      }
     },
     refresh: () => terminalManager.refresh(props.id),
     getPtyPid: () => terminalManager.getPtyPid(props.id),
@@ -138,7 +143,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     }
 
     // Watch for placeholder size/position changes
-    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
+    const placeholder = getPlaceholder();
     if (!placeholder) return;
 
     // ResizeObserver: CSS geometry updates SYNCHRONOUSLY, fit() is DEBOUNCED
