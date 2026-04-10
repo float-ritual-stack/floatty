@@ -87,9 +87,9 @@ export function TerminalPane(props: TerminalPaneProps) {
 
   // Full update: geometry (sync) + fit (debounced)
   // Used by imperative handle and visibility effect
-  const updatePosition = () => {
+  const updatePosition = (meta?: { sourceEvent?: string }) => {
     if (updateGeometry()) {
-      scheduleFit();
+      scheduleFit(meta);
     }
   };
 
@@ -139,7 +139,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     // corrupting tmux line wrapping. The visibility effect handles
     // fit-on-show when the tab becomes active.
     if (props.isVisible ?? true) {
-      updatePosition();
+      updatePosition({ sourceEvent: 'initial-mount' });
     }
 
     // Watch for placeholder size/position changes
@@ -160,19 +160,20 @@ export function TerminalPane(props: TerminalPaneProps) {
       // Sync CSS update using entry dimensions (no layout thrashing)
       if (updateGeometry(width, height)) {
         // Schedule debounced fit() - expensive xterm operation
-        scheduleFit();
+        scheduleFit({ sourceEvent: 'resize-observer' });
       }
     });
     resizeObserver.observe(placeholder);
 
     // Window resize: placeholder position may change (not just size)
     // Full updatePosition() needed since we don't have entry dimensions
-    window.addEventListener('resize', updatePosition);
+    const onWindowResize = () => updatePosition({ sourceEvent: 'window-resize' });
+    window.addEventListener('resize', onWindowResize);
 
     onCleanup(() => {
       if (fitTimeout) clearTimeout(fitTimeout);
       resizeObserver.disconnect();
-      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('resize', onWindowResize);
       // Note: We intentionally do NOT clear the ref here.
       // Terminal disposal is handled explicitly by handleClosePane/handleCloseTab,
       // not by component unmount. This prevents losing the handle during layout flickers.
@@ -199,12 +200,12 @@ export function TerminalPane(props: TerminalPaneProps) {
         rafId = requestAnimationFrame(() => {
           updateGeometry();
           if (isTabSwitch) {
-            terminalManager.fit(props.id);
+            terminalManager.fit(props.id, { sourceEvent: 'tab-switch' });
             if (terminalHostRef) {
               terminalHostRef.style.visibility = '';
             }
           } else {
-            scheduleFit();
+            scheduleFit({ sourceEvent: 'visibility-restore' });
           }
           if (props.isActive ?? true) {
             terminalManager.focus(props.id);

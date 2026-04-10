@@ -1073,11 +1073,19 @@ class TerminalManager {
 
         // Do one clean fit() for each VISIBLE terminal with saved position.
         // Hidden tabs must not be fit here — they will re-fit on show.
+        // burstSent tracks which panes already got a PTY resize in this drag-end burst.
+        const burstSent = new Set<string>();
+
         for (const [id, savedY] of this.savedScrollPositions) {
           const instance = this.instances.get(id);
           if (!instance || !instance.container) continue;
           if (!this.isContainerVisible(instance.container)) continue;
           if (!this.getFitGeometry(instance.container)) continue;
+
+          if (burstSent.has(id)) {
+            logger.debug(`drag_restore: skipping duplicate PTY resize for ${id} — already sent in this burst`);
+            continue;
+          }
 
           instance.fitAddon.fit();
 
@@ -1097,6 +1105,7 @@ class TerminalManager {
 
           const fitCycleId = this.nextFitCycleId();
           this.notifyPtyResize(id, instance, { sourcePath: 'drag_restore', sourceEvent: 'drag-end', fitCycleId });
+          burstSent.add(id);
         }
 
         // Clear saved positions and re-enable normal fit() calls
