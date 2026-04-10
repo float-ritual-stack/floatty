@@ -41,7 +41,7 @@ See @.claude/rules/architecture.md for full file inventory, data flows, and comp
 npm install           # Install JS dependencies
 npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
 npm run lint          # ESLint
-npm run test          # Run vitest (420 tests)
+npm run test          # Run vitest (1120+ tests)
 npm run test:watch    # Watch mode for TDD
 ```
 

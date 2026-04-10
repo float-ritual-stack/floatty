@@ -81,10 +81,10 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `inlineParser.ts` | Inline markdown tokenizer + wikilinks |
 | `navigation.ts` | Unified navigation (navigateToBlock, navigateToPage). See `docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md` |
 | `expansionPolicy.ts` | Unified expansion logic — one function for all expand/collapse triggers |
-| `handlers/artifact.ts` | JSX transpilation for artifact:: |
+| `handlers/artifactHandler.ts` | JSX transpilation for artifact:: |
 | `handlers/doorLoader.ts` | Door discovery + hot-reload |
 | `handlers/doorTypes.ts` | Door type definitions (`selfRender` flag) |
-| `events/blockEventBus.ts` | Block lifecycle event bus |
+| `events/eventBus.ts` | Block lifecycle event bus |
 | `markdownParser.ts` | Markdown → block hierarchy (headings, lists, fences) |
 | `cursorUtils.ts` | Cursor position utilities for keybind logic |
 | `executor.ts` | `sh::` command execution via Tauri |
@@ -96,8 +96,10 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 |------|---------|
 | `ctxRouterHook.ts` | Extracts ctx:: markers → `block.metadata.markers` |
 | `outlinksHook.ts` | Extracts [[wikilink]] targets → `block.metadata.outlinks` |
+| `outputSummaryHook.ts` | Extracts output summaries for search indexing |
+| `sendContextHook.ts` | Sends block context to ctx:: aggregation pipeline |
 
-Hooks subscribe to `blockEventBus` with origin filtering. See `docs/architecture/FLOATTY_HOOK_SYSTEM.md`.
+Hooks subscribe to `eventBus` with origin filtering. See `docs/architecture/FLOATTY_HOOK_SYSTEM.md`.
 
 ### Hooks (`src/hooks/`)
 | File | Purpose |

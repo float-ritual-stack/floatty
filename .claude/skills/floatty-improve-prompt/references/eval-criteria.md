@@ -47,6 +47,11 @@ autoresearch iteration: run the skill N times, score each output, mutate, keep/r
 **Pass**: At least one "don't regress" or "don't touch" boundary for non-trivial requests.
 **Fail**: No scope boundaries for a request that touches multiple subsystems.
 
+### EVAL 9: Risk Relevance
+**Question**: Are the listed risks scoped to the actual request type — not imported from unrelated subsystems?
+**Pass**: A docs task lists no CRDT risks. A CSS fix lists no sync-loop risks. Risks match the actual change surface.
+**Fail**: The CRDT or sync section appears in a docs/refactor/test prompt where no CRDT code is touched. Generic risk dump from the high-risk surfaces table rather than filtered selection.
+
 ## Test Inputs for Iteration
 
 Use these varied inputs to test the skill across different request types:
@@ -56,7 +61,8 @@ Use these varied inputs to test the skill across different request types:
 3. **Refactor ask**: "clean up the block input handling, it's getting messy"
 4. **Architecture**: "should we move metadata extraction to the server?"
 5. **Simple fix**: "the breadcrumb doesn't update when I zoom"
-6. **Multi-system**: "make doors work with linked panes"
+6. **Multi-system**: "make doors work with linked panes" ← stress test for compound classification: architecture (how should they interact?) + feature (enable the interaction). Watch for silent scope collapse.
+7. **Attached context**: "implement this" + a spec or PR diff ← tests Step -1, should classify off the spec not the terse text
 
 ## Autoresearch Notes
 
@@ -69,3 +75,7 @@ When running autoresearch on this skill:
   Use diverse inputs.
 - The high-risk surfaces table is the most likely section to go stale as the codebase
   evolves. Update it when architecture changes.
+- EVAL 9 (risk relevance) is the counterpart to EVAL 3 (actionable risks) — EVAL 3 checks
+  that listed risks are specific, EVAL 9 checks that irrelevant risks are absent. Both are
+  needed: a prompt can pass EVAL 3 (all listed risks are specific) and fail EVAL 9 (risks
+  from the wrong subsystem entirely).

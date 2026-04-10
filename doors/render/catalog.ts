@@ -550,6 +550,47 @@ export const bbsCatalog = schema.createCatalog({
       description: 'Side-by-side before/after diff. Before items with removed:true get red strikethrough, after items with added:true get green highlight. Good for meeting diffs, process changes, status transitions.',
     },
 
+    // ─── Layout Sections ─────────────────────────────────
+    Section: {
+      props: z.object({
+        title: z.string().optional(),
+        variant: z.enum(['default', 'highlight', 'warning']).optional(),
+      }),
+      slots: ['default'],
+      description: 'Titled section container. variant: highlight=cyan accent, warning=amber accent, default=gray. Children stacked below title. Good for grouping related content blocks.',
+    },
+
+    TimelineEvent: {
+      props: z.object({
+        time: z.string(),
+        label: z.string(),
+        color: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Single timeline event: right-aligned time, colored dot on vertical spine, label text. Use color to distinguish workstreams (e.g. cyan=float, amber=pharmacy). Stack multiple TimelineEvents inside a Section or Stack.',
+    },
+
+    StatPill: {
+      props: z.object({
+        label: z.string(),
+        value: z.string(),
+        color: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Inline pill-shaped stat: label half (dark) + value half (colored). More compact than TuiStat. Good for stat rows inside a horizontal Stack.',
+    },
+
+    GapItem: {
+      props: z.object({
+        description: z.string(),
+        severity: z.enum(['critical', 'warning', 'info']).optional(),
+        gapType: z.string().optional(),
+        target: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Action item with severity indicator. severity: critical=red border+⏺, warning=amber+◆, info=cyan+◇. Optional target label shown below. Good for next-actions lists, gap analysis, issue triage.',
+    },
+
     // ─── Tree ────────────────────────────────────────────
     TreeView: {
       props: z.object({

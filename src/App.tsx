@@ -172,7 +172,7 @@ function App() {
 
       // Get active terminal's PTY PID
       const activeTab = tabStore.getActiveTab();
-      if (!activeTab || !activeTab.ptyPid) {
+      if (!activeTab || activeTab.ptyPid == null || activeTab.ptyPid < 0) {
         logger.warn('No active terminal for drag-drop');
         return;
       }

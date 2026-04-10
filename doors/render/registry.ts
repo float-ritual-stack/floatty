@@ -55,6 +55,10 @@ import {
   ProvenanceChain,
   RiskMatrix,
   TimelineDiff,
+  Section,
+  TimelineEvent,
+  StatPill,
+  GapItem,
   injectBodyStyles,
 } from './components';
 
@@ -113,6 +117,10 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     ProvenanceChain,
     RiskMatrix,
     TimelineDiff,
+    Section,
+    TimelineEvent,
+    StatPill,
+    GapItem,
   },
   actions: {
     navigate: async () => {},

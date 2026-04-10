@@ -20,6 +20,13 @@ Take a rough engineering request and rewrite it into a high-quality implementati
 - Request is a one-liner you can just do
 - User said "just do it"
 
+## Step -1: Check for Attached Context
+
+Before classifying, check whether the request includes attached material (spec file, PR diff, code snippet, design doc). If so:
+- **Read it first** before classifying — classify off the actual scope, not the terse prompt text
+- The attached material often reveals the real scope ("implement this" + 500-line spec is architecture, not a one-liner)
+- If the attached context contradicts the prompt text, the context wins
+
 ## Step 0: Classify
 
 Before rewriting, classify the request. The classification determines which rules apply.
@@ -34,6 +41,8 @@ Before rewriting, classify the request. The classification determines which rule
 | tests | "test", "coverage", "verify" | What invariant are we checking? |
 | docs | "document", "explain" | What's the actual architecture? |
 
+**Compound requests**: Some requests are genuinely multi-type (e.g., "make doors work with linked panes" = architecture question *and* feature ask). Don't force these into one bucket — name both types and apply both rule sets. The improved prompt should address both concerns explicitly rather than silently dropping one.
+
 ## Step 1: Apply Type Rules
 
 ### bug_fix
@@ -47,6 +56,7 @@ Before rewriting, classify the request. The classification determines which rule
 - Define scope boundaries — what changes, what explicitly doesn't
 - Identify integration points with existing subsystems
 - Require validation of adjacent behavior (not just the new thing)
+- **Embed a scope guard in the output prompt**: "Only change what's required for this feature. Don't add configurability, don't clean up surrounding code, don't add comments to unchanged functions. The right amount of complexity is the minimum that makes this work."
 
 ### refactor
 - Require concrete pain statement — "it's messy" isn't enough
@@ -59,12 +69,15 @@ Before rewriting, classify the request. The classification determines which rule
 - Name tradeoffs explicitly (not just benefits)
 - Separate the design from the migration plan
 - Avoid implementation theater (designing systems that won't be built)
+- **Embed an investigate-first constraint**: "Read the relevant files before proposing changes. Never speculate about code you haven't opened."
+- **Embed a commit-to-approach constraint**: "Choose an approach and commit to it. Avoid revisiting decisions unless new information directly contradicts your reasoning."
 
 ### debugging
 - Start with failure symptoms and repro path
 - Identify likely subsystem from symptoms
 - Prefer instrumentation/logging/inspection before code changes
 - For DOM issues: check via Tauri MCP `webview_execute_js` first
+- **Embed an investigate-first constraint in the output prompt**: "Never speculate about code you have not opened. Read the file before answering. Make claims grounded in the actual codebase, not assumptions about what should be there."
 
 ### tests
 - Define the exact failure mode or invariant being tested
@@ -100,6 +113,7 @@ Use this context naturally in the rewrite — don't dump it all:
 - Use floatty terms: panes, blocks, zoom, childIds, Y.Doc, doors, command bar, metadata extraction, inheritance, search index, focus routing, linked panes
 - Don't invent files that might not exist — say "likely in" not "in"
 - If the request touches risky systems, name the invariants
+- **Explain the why behind constraints**: bare prohibitions ("don't touch X") are weaker than explained ones ("don't touch X because Y will break"). Claude generalizes from the reason, not just the rule.
 
 **High-risk surfaces** (mention only when relevant to the specific request):
 

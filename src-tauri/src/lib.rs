@@ -30,7 +30,7 @@ use floatty_core::YDocStore;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
-use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
+use tauri::menu::{Menu, SubmenuBuilder, MenuItemBuilder};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
@@ -542,15 +542,14 @@ pub fn run() {
                     let menu_url = menu_server_url.clone();
                     let menu_key = menu_api_key.clone();
 
-                    // Build initial menu with just "Default"
+                    // Build initial menu: default OS menu (includes Edit → Cmd+C/V/Z) + Outlines
                     let default_item = MenuItemBuilder::with_id("outline:default", "Default")
                         .build(app)?;
                     let outlines_submenu = SubmenuBuilder::with_id(app, "outlines", "Outlines")
                         .item(&default_item)
                         .build()?;
-                    let menu = MenuBuilder::new(app)
-                        .items(&[&outlines_submenu])
-                        .build()?;
+                    let menu = Menu::default(app.handle())?;
+                    menu.append(&outlines_submenu)?;
                     app.set_menu(menu)?;
 
                     // Handle menu clicks → emit event to frontend
@@ -670,10 +669,9 @@ fn rebuild_outlines_menu(app: &tauri::AppHandle, names: &[String]) -> Result<(),
     }
 
     let built = submenu.build().map_err(|e| format!("submenu: {}", e))?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&built])
-        .build()
-        .map_err(|e| format!("menu: {}", e))?;
+    // Start from the default OS menu (preserves Edit → Cmd+C/V/Z/Undo/Redo)
+    let menu = Menu::default(app).map_err(|e| format!("default menu: {}", e))?;
+    menu.append(&built).map_err(|e| format!("append: {}", e))?;
     app.set_menu(menu).map_err(|e| format!("set_menu: {}", e))?;
 
     tracing::info!("Outlines menu rebuilt with {} entries", names.len());

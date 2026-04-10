@@ -112,14 +112,32 @@ interface LocalBlock {
 interface BlockActions {
   getBlock: (id: string) => LocalBlock | undefined;
   getChildren: (id: string) => string[];
+  rootIds?: () => readonly string[];
 }
 
-/** Resolve [[wikilink]] or hash prefix to a full block ID */
+/** Resolve [[wikilink]] or hash prefix to a full block ID.
+ *  Direct lookup first, then prefix scan via rootIds + tree walk. */
 function resolveBlockRef(ref: string, actions: BlockActions): LocalBlock | undefined {
   const clean = ref.replace(/^\[\[|\]\]$/g, '').trim();
-  // Try direct lookup first
+  // Direct lookup (full UUID)
   const direct = actions.getBlock(clean);
   if (direct) return direct as LocalBlock;
+  // Prefix scan — walk from roots to find a block whose ID starts with the ref
+  if (clean.length >= 6 && actions.rootIds) {
+    const visited = new Set<string>();
+    const queue = [...actions.rootIds()];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      if (id.startsWith(clean)) {
+        const block = actions.getBlock(id);
+        if (block) return block as LocalBlock;
+      }
+      const children = actions.getChildren(id);
+      queue.push(...children);
+    }
+  }
   return undefined;
 }
 
@@ -923,7 +941,7 @@ export const door = {
         return;
       }
 
-      const storeActions = { getBlock: (id: string) => ctx.actions.getBlock(id) as any, getChildren: (id: string) => ctx.actions.getChildren(id) };
+      const storeActions = { getBlock: (id: string) => ctx.actions.getBlock(id) as any, getChildren: (id: string) => ctx.actions.getChildren(id), rootIds: () => ctx.actions.rootIds?.() ?? [] };
       const generate = isKanban ? kanbanSpec : expandSpec;
 
       const refresh = () => {
