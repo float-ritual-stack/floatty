@@ -140,6 +140,8 @@ class TerminalManager {
   private fitCycleSeq = 0;
   // Dedup gate: tracks last accepted PTY resize per pane to block redundant writes
   private lastAcceptedResize = new Map<string, { cols: number; rows: number; geometry: string }>();
+  // Tracks in-flight resize invocations so the dedup gate blocks duplicates before invoke resolves
+  private pendingResize = new Map<string, { cols: number; rows: number; geometry: string }>();
 
   constructor() {
     const scheduleRestore = (reason: 'visibility' | 'focus') => {
@@ -305,9 +307,9 @@ class TerminalManager {
       return;
     }
 
-    // Dedup gate: skip if same pane, same cols/rows, same geometry were just accepted
+    // Dedup gate: skip if same pane, same cols/rows, same geometry were just accepted or are in-flight
     const geoKey = telemetry.geometry ?? 'null';
-    const prev = this.lastAcceptedResize.get(id);
+    const prev = this.pendingResize.get(id) ?? this.lastAcceptedResize.get(id);
     if (prev && prev.cols === telemetry.cols && prev.rows === telemetry.rows && prev.geometry === geoKey) {
       logger.debug(`Deduped PTY resize for ${id} (same cols/rows/geometry)`, {
         ...telemetry,
@@ -317,17 +319,20 @@ class TerminalManager {
       return;
     }
 
+    this.pendingResize.set(id, { cols: telemetry.cols, rows: telemetry.rows, geometry: geoKey });
     invoke('plugin:pty|resize', {
       pid: instance.ptyPid,
       cols: telemetry.cols,
       rows: telemetry.rows,
     }).then(() => {
+      this.pendingResize.delete(id);
       this.lastAcceptedResize.set(id, { cols: telemetry.cols, rows: telemetry.rows, geometry: geoKey });
       logger.info(`PTY resize sent for ${id}`, {
         ...telemetry,
         accepted: true,
       });
     }).catch((e) => {
+      this.pendingResize.delete(id);
       logger.warn(`Resize notify failed for ${id} after ${telemetry.sourcePath}`, {
         ...telemetry,
         accepted: false,
@@ -1061,8 +1066,9 @@ class TerminalManager {
         const buffer = instance.term.buffer.active;
         this.savedScrollPositions.set(id, buffer.viewportY);
       }
-      // Clear dedup map so post-drag fit isn't blocked by pre-drag stale entries
+      // Clear dedup maps so post-drag fit isn't blocked by pre-drag stale entries
       this.lastAcceptedResize.clear();
+      this.pendingResize.clear();
       this.isDragging = true;
     } else if (this.isDragging) {
       // Drag ending - delay isDragging=false to let resize events settle
@@ -1263,6 +1269,7 @@ class TerminalManager {
       this.callbacks.delete(id);
       this.seenMarkers.delete(id);
       this.lastAcceptedResize.delete(id);
+      this.pendingResize.delete(id);
       // Note: savedScrollPositions already cleared at line 731
     } finally {
       // Always clear disposing flag, even if cleanup threw
