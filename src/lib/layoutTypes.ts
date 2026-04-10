@@ -58,7 +58,7 @@ export type PaneDropPosition = FocusDirection;
  */
 export interface PaneHandle {
   focus: () => void;
-  fit: () => void;
+  fit: (meta?: { sourceEvent?: string }) => void;
   refresh: () => void;
   getPtyPid?: () => number | null;
   getTitle?: () => string;

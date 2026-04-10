@@ -376,7 +376,7 @@ export function Terminal() {
       }
 
       for (const paneId of paneIds) {
-        paneRefs.get(paneId)?.fit();
+        paneRefs.get(paneId)?.fit({ sourceEvent: 'pane-ready' });
       }
       focusHandle?.focus();
     };
@@ -443,7 +443,7 @@ export function Terminal() {
     return getAllPaneIds(tabId)
       .filter((paneId) => paneId !== sourcePaneId)
       .flatMap((paneId) => {
-        const placeholder = document.querySelector(`[data-pane-id="${paneId}"]`) as HTMLElement | null;
+        const placeholder = document.querySelector(`.pane-layout-leaf[data-pane-id="${CSS.escape(paneId)}"]`) as HTMLElement | null;
         if (!placeholder) return [];
         return [{ targetPaneId: paneId, element: placeholder }];
       });
@@ -679,7 +679,7 @@ export function Terminal() {
         setTimeout(() => {
           const paneIds = getAllPaneIds(activeId);
           for (const paneId of paneIds) {
-            paneRefs.get(paneId)?.fit();
+            paneRefs.get(paneId)?.fit({ sourceEvent: 'split-create' });
           }
           paneRefs.get(newPaneId)?.focus();
         }, 100);
@@ -841,7 +841,7 @@ export function Terminal() {
               if (currentActiveId) {
                 const paneIds = getAllPaneIds(currentActiveId);
                 for (const paneId of paneIds) {
-                  paneRefs.get(paneId)?.fit();
+                  paneRefs.get(paneId)?.fit({ sourceEvent: 'sidebar-toggle' });
                 }
               }
             }, 50);
@@ -958,7 +958,7 @@ export function Terminal() {
         requestAnimationFrame(() => {
           const paneIds = getAllPaneIds(activeId);
           for (const paneId of paneIds) {
-            paneRefs.get(paneId)?.fit();
+            paneRefs.get(paneId)?.fit({ sourceEvent: 'tab-activate' });
           }
           setTimeout(() => {
             const pane = paneRefs.get(activePaneId);
@@ -997,7 +997,7 @@ export function Terminal() {
   const handlePtySpawn = (paneId: string, pid: number) => {
     // For now, track on the tab level (first pane's pid wins)
     const tab = tabStore.tabs.find(t => getAllPaneIds(t.id).includes(paneId));
-    if (tab && !tab.ptyPid) {
+    if (tab && (tab.ptyPid == null || tab.ptyPid < 0)) {
       tabStore.setTabPtyPid(tab.id, pid);
     }
   };
@@ -1055,7 +1055,7 @@ export function Terminal() {
     if (activeId) {
       layoutStore.setActivePaneId(activeId, paneId);
       const pane = paneRefs.get(paneId);
-      pane?.fit();
+      pane?.fit({ sourceEvent: 'pane-click' });
       // FLO-197: Only auto-focus terminal panes, not outliners
       // For outliners, BlockItem's onClick already handles focus.
       // Calling pane.focus() for outliners causes a race: it focuses the first block,
@@ -1178,7 +1178,7 @@ export function Terminal() {
             if (currentActiveId) {
               const paneIds = getAllPaneIds(currentActiveId);
               for (const paneId of paneIds) {
-                paneRefs.get(paneId)?.fit();
+                paneRefs.get(paneId)?.fit({ sourceEvent: 'sidebar-resize' });
               }
             }
           });

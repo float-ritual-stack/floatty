@@ -135,13 +135,33 @@ class TerminalManager {
   private configLoaded = false;
   // Stored for HMR cleanup
   private visibilityHandler: (() => void) | null = null;
+  private focusHandler: (() => void) | null = null;
+  private restoreRaf: number | null = null;
+  private fitCycleSeq = 0;
+  // Dedup gate: tracks last accepted PTY resize per pane to block redundant writes
+  private lastAcceptedResize = new Map<string, { cols: number; rows: number; geometry: string }>();
+  // Tracks in-flight resize invocations so the dedup gate blocks duplicates before invoke resolves
+  private pendingResize = new Map<string, { cols: number; rows: number; geometry: string }>();
 
   constructor() {
+    const scheduleRestore = (reason: 'visibility' | 'focus') => {
+      if (this.restoreRaf !== null) return;
+      this.restoreRaf = requestAnimationFrame(() => {
+        this.restoreRaf = null;
+        this.handleVisibilityRestore(reason);
+      });
+    };
+
     this.visibilityHandler = () => {
       if (document.hidden) return;
-      this.handleVisibilityRestore();
+      scheduleRestore('visibility');
+    };
+    this.focusHandler = () => {
+      if (document.hidden) return;
+      scheduleRestore('focus');
     };
     document.addEventListener('visibilitychange', this.visibilityHandler);
+    window.addEventListener('focus', this.focusHandler);
   }
 
   /**
@@ -177,11 +197,185 @@ class TerminalManager {
     }
   }
 
+  /** Return the positioned pane wrapper used to determine visibility + real geometry. */
+  private getPositionedContainer(container: HTMLElement): HTMLElement | null {
+    return container.closest('.terminal-pane-positioned') as HTMLElement | null;
+  }
+
+  /** Hidden panes must never be fit; xterm computes garbage tiny dimensions on display:none containers. */
+  private isContainerVisible(container: HTMLElement): boolean {
+    const positioned = this.getPositionedContainer(container);
+    return positioned ? getComputedStyle(positioned).display !== 'none' : true;
+  }
+
+  /**
+   * Fit/resize guardrail for restore-time flows.
+   * Rejects implausibly small-but-nonzero geometry that can collapse xterm into a narrow column.
+   */
+  private getFitGeometry(container: HTMLElement): { width: number; height: number } | null {
+    const positioned = this.getPositionedContainer(container) ?? container;
+    const rect = positioned.getBoundingClientRect();
+    if (rect.width < 100 || rect.height < 60) return null;
+    return { width: rect.width, height: rect.height };
+  }
+
+  private nextFitCycleId(): number {
+    this.fitCycleSeq += 1;
+    return this.fitCycleSeq;
+  }
+
+  private buildResizeTelemetry(
+    id: string,
+    instance: TerminalInstance,
+    meta?: {
+      sourcePath?: string;
+      sourceEvent?: string;
+      fitCycleId?: number;
+      accepted?: boolean;
+      blockedReason?: string;
+      cols?: number;
+      rows?: number;
+    }
+  ) {
+    const cols = meta?.cols ?? instance.term.cols;
+    const rows = meta?.rows ?? instance.term.rows;
+    const container = instance.container;
+    const positioned = container ? this.getPositionedContainer(container) : null;
+    const visible = container ? this.isContainerVisible(container) : false;
+    const geometry = container ? this.getFitGeometry(container) : null;
+    const activePane = positioned?.classList.contains('active') ?? false;
+    const activeTab = visible;
+    const suspiciousResize = cols < 60 || rows < 5 || geometry === null;
+    return {
+      paneId: id,
+      tabId: null,
+      sourcePath: meta?.sourcePath ?? 'fit',
+      sourceEvent: meta?.sourceEvent ?? 'unspecified',
+      fitCycleId: meta?.fitCycleId ?? null,
+      visible,
+      activeTab,
+      activePane,
+      cols,
+      rows,
+      geometry: geometry ? `${Math.round(geometry.width)}x${Math.round(geometry.height)}` : null,
+      suspiciousResize,
+      pid: instance.ptyPid,
+      accepted: meta?.accepted,
+      blockedReason: meta?.blockedReason,
+    };
+  }
+
+  private notifyPtyResize(
+    id: string,
+    instance: TerminalInstance,
+    meta?: { sourcePath?: string; sourceEvent?: string; fitCycleId?: number }
+  ): void {
+    const telemetry = this.buildResizeTelemetry(id, instance, meta);
+
+    logger.debug(`PTY resize attempt for ${id}`, telemetry);
+
+    if (instance.ptyPid === null || instance.ptyPid < 0) {
+      logger.debug(`Blocked PTY resize for ${id}: invalid pid`, {
+        ...telemetry,
+        accepted: false,
+        blockedReason: 'invalid_pid',
+      });
+      return;
+    }
+    if (!instance.container) {
+      logger.warn(`Blocked PTY resize for ${id}: missing container`, {
+        ...telemetry,
+        accepted: false,
+        blockedReason: 'missing_container',
+      });
+      return;
+    }
+    if (!telemetry.visible) {
+      logger.warn(`Blocked PTY resize for ${id}: hidden terminal`, {
+        ...telemetry,
+        accepted: false,
+        blockedReason: 'hidden_terminal',
+      });
+      return;
+    }
+    if (telemetry.geometry === null) {
+      logger.warn(`Blocked PTY resize for ${id}: suspicious geometry`, {
+        ...telemetry,
+        accepted: false,
+        blockedReason: 'suspicious_geometry',
+      });
+      return;
+    }
+
+    // Dedup gate: skip if same pane, same cols/rows, same geometry were just accepted or are in-flight
+    const geoKey = telemetry.geometry ?? 'null';
+    const prev = this.pendingResize.get(id) ?? this.lastAcceptedResize.get(id);
+    if (prev && prev.cols === telemetry.cols && prev.rows === telemetry.rows && prev.geometry === geoKey) {
+      logger.debug(`Deduped PTY resize for ${id} (same cols/rows/geometry)`, {
+        ...telemetry,
+        accepted: false,
+        blockedReason: 'dedup',
+      });
+      return;
+    }
+
+    this.pendingResize.set(id, { cols: telemetry.cols, rows: telemetry.rows, geometry: geoKey });
+    invoke('plugin:pty|resize', {
+      pid: instance.ptyPid,
+      cols: telemetry.cols,
+      rows: telemetry.rows,
+    }).then(() => {
+      this.pendingResize.delete(id);
+      this.lastAcceptedResize.set(id, { cols: telemetry.cols, rows: telemetry.rows, geometry: geoKey });
+      logger.info(`PTY resize sent for ${id}`, {
+        ...telemetry,
+        accepted: true,
+      });
+    }).catch((e) => {
+      this.pendingResize.delete(id);
+      logger.warn(`Resize notify failed for ${id} after ${telemetry.sourcePath}`, {
+        ...telemetry,
+        accepted: false,
+        blockedReason: 'invoke_failed',
+        err: e,
+      });
+    });
+  }
+
+  /**
+   * Fit a terminal only when the container is visible and geometry looks sane.
+   * Uses double-rAF for restore-time layout settling, then refreshes the viewport.
+   */
+  private safeFit(id: string, reason: string, opts?: { refresh?: boolean; minGeometryCheck?: boolean }): void {
+    const instance = this.instances.get(id);
+    if (!instance || this.disposing.has(id) || !instance.container) return;
+    if (!this.isContainerVisible(instance.container)) {
+      logger.debug(`Skipping fit for hidden terminal ${id}`, { reason });
+      return;
+    }
+    if (opts?.minGeometryCheck && !this.getFitGeometry(instance.container)) {
+      logger.debug(`Skipping fit for suspicious geometry on ${id}`, { reason });
+      return;
+    }
+
+    this.fit(id, { sourcePath: 'fit', sourceEvent: reason });
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const latest = this.instances.get(id);
+        if (!latest || this.disposing.has(id)) return;
+        if (opts?.refresh) {
+          latest.term.refresh(0, latest.term.rows - 1);
+        }
+      });
+    });
+  }
+
   /**
    * Recreate WebGL addons for all terminals after page becomes visible.
    * Fixes GPU texture atlas corruption after sleep/wake cycles (FLO-390).
    */
-  private handleVisibilityRestore(): void {
+  private handleVisibilityRestore(trigger: 'visibility' | 'focus'): void {
     if (this.instances.size === 0) return;
     let restored = 0;
     for (const [id, instance] of this.instances) {
@@ -191,23 +385,16 @@ class TerminalManager {
       restored++;
     }
     if (restored > 0) {
-      logger.info(`Visibility restored, recreated WebGL for ${restored} terminal(s)`);
-      // Re-fit after DOM has painted — column count may be stale from hidden state (FLO-568)
+      logger.info(`Restore signal (${trigger}), recreated WebGL for ${restored} terminal(s)`);
+      // Re-fit only visible terminals after layout has stabilized.
       requestAnimationFrame(() => {
-        for (const [id, instance] of this.instances) {
-          if (this.disposing.has(id)) continue;
-          if (!instance.container) continue;
-          instance.fitAddon.fit();
-          if (instance.ptyPid !== null && instance.ptyPid > 0) {
-            invoke('plugin:pty|resize', {
-              pid: instance.ptyPid,
-              cols: instance.term.cols,
-              rows: instance.term.rows,
-            }).catch((e) => {
-              logger.warn(`Resize notify failed for ${id} after visibility restore`, { err: e });
-            });
+        requestAnimationFrame(() => {
+          for (const [id, instance] of this.instances) {
+            if (this.disposing.has(id)) continue;
+            if (!instance.container) continue;
+            this.safeFit(id, `${trigger}-restore`, { refresh: true, minGeometryCheck: true });
           }
-        }
+        });
       });
     }
   }
@@ -279,19 +466,11 @@ class TerminalManager {
         // Hidden tabs (display:none) produce tiny dims from fitAddon (e.g. 11×5
         // from padding/border artifacts), corrupting tmux line wrapping.
         // Visibility effect handles fit-on-show.
-        const positioned = container.closest('.terminal-pane-positioned') as HTMLElement | null;
-        const isContainerVisible = positioned ? getComputedStyle(positioned).display !== 'none' : true;
+        const isContainerVisible = this.isContainerVisible(container);
         if (isContainerVisible) {
           instance.fitAddon.fit();
-          if (instance.ptyPid !== null && instance.ptyPid > 0) {
-            invoke('plugin:pty|resize', {
-              pid: instance.ptyPid,
-              cols: instance.term.cols,
-              rows: instance.term.rows,
-            }).catch((e) => {
-              logger.error(`Resize failed for ${id}`, { err: e });
-            });
-          }
+          const fitCycleId = this.nextFitCycleId();
+          this.notifyPtyResize(id, instance, { sourcePath: 'reparent', sourceEvent: 'reparent', fitCycleId });
         }
 
         // Restore scroll position if user was NOT at bottom (FLO-88)
@@ -401,8 +580,7 @@ class TerminalManager {
 
     // Only fit if container is visible (same guard as reattach path).
     // Hidden tabs keep xterm's default 80×24 — correct enough for PTY spawn.
-    const positioned = container.closest('.terminal-pane-positioned') as HTMLElement | null;
-    const isNewContainerVisible = positioned ? getComputedStyle(positioned).display !== 'none' : true;
+    const isNewContainerVisible = this.isContainerVisible(container);
     if (isNewContainerVisible) {
       fitAddon.fit();
     }
@@ -799,10 +977,14 @@ class TerminalManager {
         });
 
         term.onResize(({ cols, rows }) => {
-          invoke('plugin:pty|resize', { pid, cols, rows }).catch((e) => {
-            // Resize failures are common during exit - only log, don't notify user
-            logger.warn(`PTY resize failed for ${id}`, { err: e });
-          });
+          const current = this.instances.get(id);
+          if (!current) return;
+          logger.debug(`xterm resize observed for ${id}`, this.buildResizeTelemetry(id, current, {
+            sourcePath: 'xterm_resize_observer',
+            sourceEvent: 'xterm-onResize',
+            cols,
+            rows,
+          }));
         });
       } else {
         // Non-Tauri environment (browser dev mode)
@@ -857,6 +1039,8 @@ class TerminalManager {
 
   // Track whether ANY drag is in progress (set by ResizeOverlay via setDragging)
   private isDragging = false;
+  // True during the 150ms drag-end settle window — suppresses non-drag_restore fit() calls
+  private isRestoringDrag = false;
   // Saved scroll positions when drag started - Map<paneId, viewportY>
   private savedScrollPositions = new Map<string, number>();
 
@@ -882,17 +1066,32 @@ class TerminalManager {
         const buffer = instance.term.buffer.active;
         this.savedScrollPositions.set(id, buffer.viewportY);
       }
+      // Clear dedup maps so post-drag fit isn't blocked by pre-drag stale entries
+      this.lastAcceptedResize.clear();
+      this.pendingResize.clear();
       this.isDragging = true;
     } else if (this.isDragging) {
       // Drag ending - delay isDragging=false to let resize events settle
       // Must be longer than TerminalPane's 50ms debounce + some buffer
+      this.isRestoringDrag = true;
       this.restorationTimeout = setTimeout(() => {
         this.restorationTimeout = null;
 
-        // Do one clean fit() for each terminal with saved position
+        // Do one clean fit() for each VISIBLE terminal with saved position.
+        // Hidden tabs must not be fit here — they will re-fit on show.
+        // burstSent tracks which panes already got a PTY resize in this drag-end burst.
+        const burstSent = new Set<string>();
+
         for (const [id, savedY] of this.savedScrollPositions) {
           const instance = this.instances.get(id);
-          if (!instance) continue;
+          if (!instance || !instance.container) continue;
+          if (!this.isContainerVisible(instance.container)) continue;
+          if (!this.getFitGeometry(instance.container)) continue;
+
+          if (burstSent.has(id)) {
+            logger.debug(`drag_restore: skipping duplicate PTY resize for ${id} — already sent in this burst`);
+            continue;
+          }
 
           instance.fitAddon.fit();
 
@@ -906,21 +1105,18 @@ class TerminalManager {
               if (!inst || this.disposing.has(terminalId)) return;
               const maxScroll = inst.term.buffer.active.baseY;
               inst.term.scrollToLine(Math.min(target, maxScroll));
+              inst.term.refresh(0, inst.term.rows - 1);
             });
           });
 
-          // Notify PTY of new size
-          if (instance.ptyPid !== null && instance.ptyPid > 0) {
-            invoke('plugin:pty|resize', {
-              pid: instance.ptyPid,
-              cols: instance.term.cols,
-              rows: instance.term.rows,
-            }).catch(() => { /* Resize failures during exit are expected */ });
-          }
+          const fitCycleId = this.nextFitCycleId();
+          this.notifyPtyResize(id, instance, { sourcePath: 'drag_restore', sourceEvent: 'drag-end', fitCycleId });
+          burstSent.add(id);
         }
 
         // Clear saved positions and re-enable normal fit() calls
         this.savedScrollPositions.clear();
+        this.isRestoringDrag = false;
         this.isDragging = false;
       }, 150);
     }
@@ -931,12 +1127,14 @@ class TerminalManager {
    * Preserves scroll position using double-rAF to let xterm's internal viewport settle (FLO-88)
    * Skips during drag - setDragging(false) handles final fit with restoration
    */
-  fit(id: string) {
-    // Skip fit during drag - restoration happens in setDragging(false) timeout
-    if (this.isDragging) return;
+  fit(id: string, meta?: { sourceEvent?: string; sourcePath?: string }) {
+    // Skip fit during drag or during the 150ms post-drag settle window.
+    // setDragging(false) timeout handles the final fit with scroll restoration.
+    if (this.isDragging || this.isRestoringDrag) return;
 
     const instance = this.instances.get(id);
-    if (!instance) return;
+    if (!instance || !instance.container) return;
+    if (!this.isContainerVisible(instance.container)) return;
 
     const term = instance.term;
     const savedViewportY = term.buffer.active.viewportY;
@@ -962,13 +1160,12 @@ class TerminalManager {
       });
     });
 
-    if (instance.ptyPid !== null && instance.ptyPid > 0) {
-      invoke('plugin:pty|resize', {
-        pid: instance.ptyPid,
-        cols: term.cols,
-        rows: term.rows,
-      }).catch(() => { /* Resize failures during exit are expected */ });
-    }
+    const fitCycleId = this.nextFitCycleId();
+    this.notifyPtyResize(id, instance, {
+      sourcePath: meta?.sourcePath ?? 'fit',
+      sourceEvent: meta?.sourceEvent ?? 'unspecified',
+      fitCycleId,
+    });
   }
 
   /**
@@ -1033,7 +1230,7 @@ class TerminalManager {
 
     try {
       // Guard: Only attempt PTY operations for valid PIDs (excludes sentinels: -1, -999)
-      if (instance.ptyPid !== null && instance.ptyPid > 0) {
+      if (instance.ptyPid !== null && instance.ptyPid >= 0) {
         if (instance.exitedNaturally) {
           // PTY already exited - just clean up Rust session map
           try {
@@ -1071,6 +1268,8 @@ class TerminalManager {
       this.instances.delete(id);
       this.callbacks.delete(id);
       this.seenMarkers.delete(id);
+      this.lastAcceptedResize.delete(id);
+      this.pendingResize.delete(id);
       // Note: savedScrollPositions already cleared at line 731
     } finally {
       // Always clear disposing flag, even if cleanup threw
@@ -1345,12 +1544,20 @@ export const terminalManager = new TerminalManager();
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     logger.info('HMR cleanup');
-    // Remove visibilitychange listener
+    // Remove visibility/focus listeners
     if (terminalManager['visibilityHandler']) {
       document.removeEventListener('visibilitychange', terminalManager['visibilityHandler']);
       terminalManager['visibilityHandler'] = null;
     }
-    // Clear pending restoration timeout (prevents stale callback after HMR)
+    if (terminalManager['focusHandler']) {
+      window.removeEventListener('focus', terminalManager['focusHandler']);
+      terminalManager['focusHandler'] = null;
+    }
+    // Clear pending restoration callbacks
+    if (terminalManager['restoreRaf'] !== null) {
+      cancelAnimationFrame(terminalManager['restoreRaf']);
+      terminalManager['restoreRaf'] = null;
+    }
     if (terminalManager['restorationTimeout']) {
       clearTimeout(terminalManager['restorationTimeout']);
       terminalManager['restorationTimeout'] = null;

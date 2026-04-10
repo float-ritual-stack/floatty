@@ -47,19 +47,23 @@ export function TerminalPane(props: TerminalPaneProps) {
   let fitTimeout: ReturnType<typeof setTimeout> | undefined;
 
   // Schedule a debounced fit() call - expensive operation, rate-limited
-  const scheduleFit = () => {
+  const scheduleFit = (meta?: { sourceEvent?: string }) => {
     if (fitTimeout) clearTimeout(fitTimeout);
     fitTimeout = setTimeout(() => {
       if (attached) {
-        terminalManager.fit(props.id);
+        terminalManager.fit(props.id, meta ? { sourceEvent: meta.sourceEvent } : undefined);
       }
     }, 50);
   };
 
+  const getPlaceholder = () => (
+    document.querySelector(`.pane-layout-leaf[data-pane-id="${CSS.escape(props.placeholderId)}"]`) as HTMLElement | null
+  );
+
   // Update CSS geometry synchronously - keeps terminal visually glued to placeholder
   // Uses provided dimensions (from ResizeObserver entry) or falls back to getBoundingClientRect
   const updateGeometry = (providedWidth?: number, providedHeight?: number) => {
-    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
+    const placeholder = getPlaceholder();
 
     if (!containerRef || !placeholder) return false;
 
@@ -83,18 +87,19 @@ export function TerminalPane(props: TerminalPaneProps) {
 
   // Full update: geometry (sync) + fit (debounced)
   // Used by imperative handle and visibility effect
-  const updatePosition = () => {
+  const updatePosition = (meta?: { sourceEvent?: string }) => {
     if (updateGeometry()) {
-      scheduleFit();
+      scheduleFit(meta);
     }
   };
 
   // Create the imperative handle
   const handle: TerminalPaneHandle = {
     focus: () => terminalManager.focus(props.id),
-    fit: () => {
-      // updatePosition() already calls fit(), so just call that
-      updatePosition();
+    fit: (meta?: { sourceEvent?: string }) => {
+      if (updateGeometry()) {
+        scheduleFit(meta);
+      }
     },
     refresh: () => terminalManager.refresh(props.id),
     getPtyPid: () => terminalManager.getPtyPid(props.id),
@@ -134,11 +139,11 @@ export function TerminalPane(props: TerminalPaneProps) {
     // corrupting tmux line wrapping. The visibility effect handles
     // fit-on-show when the tab becomes active.
     if (props.isVisible ?? true) {
-      updatePosition();
+      updatePosition({ sourceEvent: 'initial-mount' });
     }
 
     // Watch for placeholder size/position changes
-    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
+    const placeholder = getPlaceholder();
     if (!placeholder) return;
 
     // ResizeObserver: CSS geometry updates SYNCHRONOUSLY, fit() is DEBOUNCED
@@ -155,19 +160,20 @@ export function TerminalPane(props: TerminalPaneProps) {
       // Sync CSS update using entry dimensions (no layout thrashing)
       if (updateGeometry(width, height)) {
         // Schedule debounced fit() - expensive xterm operation
-        scheduleFit();
+        scheduleFit({ sourceEvent: 'resize-observer' });
       }
     });
     resizeObserver.observe(placeholder);
 
     // Window resize: placeholder position may change (not just size)
     // Full updatePosition() needed since we don't have entry dimensions
-    window.addEventListener('resize', updatePosition);
+    const onWindowResize = () => updatePosition({ sourceEvent: 'window-resize' });
+    window.addEventListener('resize', onWindowResize);
 
     onCleanup(() => {
       if (fitTimeout) clearTimeout(fitTimeout);
       resizeObserver.disconnect();
-      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('resize', onWindowResize);
       // Note: We intentionally do NOT clear the ref here.
       // Terminal disposal is handled explicitly by handleClosePane/handleCloseTab,
       // not by component unmount. This prevents losing the handle during layout flickers.
@@ -194,12 +200,12 @@ export function TerminalPane(props: TerminalPaneProps) {
         rafId = requestAnimationFrame(() => {
           updateGeometry();
           if (isTabSwitch) {
-            terminalManager.fit(props.id);
+            terminalManager.fit(props.id, { sourceEvent: 'tab-switch' });
             if (terminalHostRef) {
               terminalHostRef.style.visibility = '';
             }
           } else {
-            scheduleFit();
+            scheduleFit({ sourceEvent: 'visibility-restore' });
           }
           if (props.isActive ?? true) {
             terminalManager.focus(props.id);
