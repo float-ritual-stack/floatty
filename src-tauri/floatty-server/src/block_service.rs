@@ -630,12 +630,31 @@ pub(crate) fn create_block(
     store: &Arc<YDocStore>,
     broadcaster: &Arc<WsBroadcaster>,
     hook_system: &Arc<HookSystem>,
+    req: api::CreateBlockRequest,
+) -> Result<BlockDto, ApiError> {
+    create_block_inner(store, broadcaster, hook_system, req, None, None, None)
+}
+
+/// Internal create used by both create_block and import_block.
+/// `explicit_id` lets the caller supply the block UUID (import path).
+/// `explicit_created_at` / `explicit_updated_at` preserve original timestamps on import.
+/// When all three are None, behaviour is identical to the old create_block.
+fn create_block_inner(
+    store: &Arc<YDocStore>,
+    broadcaster: &Arc<WsBroadcaster>,
+    hook_system: &Arc<HookSystem>,
     mut req: api::CreateBlockRequest,
+    explicit_id: Option<String>,
+    explicit_created_at: Option<i64>,
+    explicit_updated_at: Option<i64>,
 ) -> Result<BlockDto, ApiError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
+
+    let created_at = explicit_created_at.unwrap_or(now);
+    let updated_at = explicit_updated_at.unwrap_or(now);
 
     let doc = store.doc();
     let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
@@ -655,7 +674,7 @@ pub(crate) fn create_block(
         }
     }
 
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = explicit_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let update = {
         let mut txn = doc_guard.transact_mut();
@@ -725,8 +744,8 @@ pub(crate) fn create_block(
                 ("content".to_owned(), yrs::any!(req.content.clone())),
                 ("parentId".to_owned(), parent_id_value),
                 ("collapsed".to_owned(), yrs::any!(false)),
-                ("createdAt".to_owned(), yrs::any!(now as f64)),
-                ("updatedAt".to_owned(), yrs::any!(now as f64)),
+                ("createdAt".to_owned(), yrs::any!(created_at as f64)),
+                ("updatedAt".to_owned(), yrs::any!(updated_at as f64)),
             ]),
         );
         // Insert childIds as nested Y.Array (empty)
@@ -823,8 +842,8 @@ pub(crate) fn create_block(
         block_type: format!("{:?}", block_type).to_lowercase(),
         metadata: None, // Hooks will populate async
         inherited_markers: None, // Computed on read
-        created_at: now as i64,
-        updated_at: now as i64,
+        created_at,
+        updated_at,
         output_type: None,
         output: None,
     })
@@ -890,9 +909,11 @@ pub(crate) fn import_block(
         "Importing block with preserved identity"
     );
 
-    // Reuse the write+broadcast pipeline from create_block via a shared inner call.
-    // We synthesise a CreateBlockRequest and override the generated ID after the write.
-    // This avoids duplicating the Y.Doc mutation and broadcast logic.
+    // Drop the read lock before calling create_block_inner (which takes write lock)
+    drop(doc_guard);
+
+    // Single write path: supply the caller's ID and timestamps directly.
+    // No temp UUID, no rename — one Y.Doc transaction, one persist, one broadcast.
     let create_req = api::CreateBlockRequest {
         content: req.content.clone(),
         parent_id: req.parent_id.clone(),
@@ -900,120 +921,17 @@ pub(crate) fn import_block(
         at_index: req.at_index,
     };
 
-    // Drop the read lock before calling create_block (which takes write lock)
-    drop(doc_guard);
-
-    // create_block generates a random UUID; we then reparent under the supplied ID
-    // via a second transaction. This is the cleanest path that avoids duplicating
-    // the full Y.Doc write pipeline. Block count stays correct.
-    //
-    // Alternative considered: pass id through to create_block_inner(). Rejected —
-    // that couples the import path into normal create and muddies the invariant.
-    let mut dto = create_block_inner(store, broadcaster, hook_system, create_req)?;
-
-    // Rename the generated ID to the supplied one in a dedicated transaction.
-    rename_block_id(store, broadcaster, &dto.id, &req.id, created_at, updated_at)?;
-    dto.id = req.id;
-    dto.created_at = created_at;
-    dto.updated_at = updated_at;
-
-    Ok(dto)
+    create_block_inner(
+        store,
+        broadcaster,
+        hook_system,
+        create_req,
+        Some(req.id.clone()),
+        Some(created_at),
+        Some(updated_at),
+    )
 }
 
-/// Rename a block's Y.Map key from `old_id` to `new_id`.
-/// Used exclusively by `import_block` to swap the generated UUID for the caller-supplied one.
-fn rename_block_id(
-    store: &Arc<YDocStore>,
-    broadcaster: &Arc<WsBroadcaster>,
-    old_id: &str,
-    new_id: &str,
-    created_at: i64,
-    updated_at: i64,
-) -> Result<(), ApiError> {
-    let doc = store.doc();
-    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
-    let mut txn = doc_guard.transact_mut();
-
-    let blocks = txn.get_or_insert_map("blocks");
-
-    // Read old block data
-    let old_block = match blocks.get(&txn, old_id) {
-        Some(yrs::Out::YMap(m)) => m,
-        _ => return Err(ApiError::NotFound(format!("Temp block '{}' vanished", old_id))),
-    };
-
-    // Clone all fields into a new Y.Map under the new ID
-    let new_block = blocks.insert(&mut txn, new_id, yrs::MapPrelim::default());
-    let fields = ["content", "parentId", "childIds", "collapsed", "blockType"];
-    for field in &fields {
-        if let Some(val) = old_block.get(&txn, field) {
-            match val {
-                yrs::Out::Any(v) => { new_block.insert(&mut txn, *field, v); }
-                yrs::Out::YArray(arr) => {
-                    let items: Vec<yrs::Any> = arr.iter(&txn)
-                        .filter_map(|v| if let yrs::Out::Any(a) = v { Some(a) } else { None })
-                        .collect();
-                    let new_arr = new_block.insert(&mut txn, *field, yrs::ArrayPrelim::default());
-                    if !items.is_empty() {
-                        new_arr.insert_range(&mut txn, 0, items);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    new_block.insert(&mut txn, "createdAt", created_at);
-    new_block.insert(&mut txn, "updatedAt", updated_at);
-
-    // Fix parent's childIds: replace old_id with new_id
-    if let Some(yrs::Out::Any(yrs::Any::String(parent_id))) = old_block.get(&txn, "parentId") {
-        let parent_id = parent_id.to_string();
-        if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, &parent_id) {
-            if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
-                let pos = child_ids.iter(&txn).position(|v| {
-                    matches!(v, yrs::Out::Any(yrs::Any::String(s)) if s.as_ref() == old_id)
-                });
-                if let Some(idx) = pos {
-                    child_ids.remove(&mut txn, idx as u32);
-                    child_ids.insert(&mut txn, idx as u32, new_id.to_string());
-                }
-            }
-        }
-    } else {
-        // Root block: fix rootIds
-        if let Some(root_ids) = txn.get_array("rootIds") {
-            let pos = root_ids.iter(&txn).position(|v| {
-                matches!(v, yrs::Out::Any(yrs::Any::String(s)) if s.as_ref() == old_id)
-            });
-            if let Some(idx) = pos {
-                root_ids.remove(&mut txn, idx as u32);
-                root_ids.insert(&mut txn, idx as u32, new_id.to_string());
-            }
-        }
-    }
-
-    // Remove old block
-    blocks.remove(&mut txn, old_id);
-
-    // Encode update and commit txn before releasing doc_guard
-    let update = txn.encode_update_v1();
-    drop(txn);
-    drop(doc_guard);
-
-    let seq = store.persist_update(&update)?;
-    broadcaster.broadcast(update, None, Some(seq));
-    Ok(())
-}
-
-/// Internal create used by both create_block and import_block.
-fn create_block_inner(
-    store: &Arc<YDocStore>,
-    broadcaster: &Arc<WsBroadcaster>,
-    hook_system: &Arc<HookSystem>,
-    req: api::CreateBlockRequest,
-) -> Result<BlockDto, ApiError> {
-    create_block(store, broadcaster, hook_system, req)
-}
 
 /// Update an existing block. Handles content changes, metadata updates,
 /// reparenting, and repositioning. Owns the full mutation pipeline.

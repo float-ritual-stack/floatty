@@ -27,7 +27,12 @@ let dbPromise: Promise<IDBDatabase> | null = null;
  */
 export function initBackupNamespace(workspaceName: string, outlineName: string = 'default'): void {
   const build = import.meta.env.DEV ? 'dev' : 'release';
-  const newDbName = `floatty-backup-${build}-${workspaceName}-${outlineName}`;
+  // Use | as delimiter (not -) so workspace names and outline names containing
+  // hyphens don't produce colliding DB names. encodeURIComponent encodes any |
+  // in the names themselves to %7C, keeping the delimiter unambiguous.
+  const ws = encodeURIComponent(workspaceName);
+  const ol = encodeURIComponent(outlineName);
+  const newDbName = `floatty-backup-${build}|${ws}|${ol}`;
 
   if (newDbName !== dbName) {
     // CRITICAL: Null the promise SYNCHRONOUSLY before async close to prevent

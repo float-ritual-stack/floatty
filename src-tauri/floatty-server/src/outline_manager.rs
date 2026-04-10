@@ -44,6 +44,9 @@ pub struct OutlineContext {
     callbacks_wired: AtomicBool,
     /// Hourly backup daemon. None if backups are disabled in config.
     pub backup_daemon: Option<Arc<BackupDaemon>>,
+    /// Abort handle for the backup daemon task. None for the default outline
+    /// (its daemon is managed by the process, not by new_outline).
+    backup_daemon_handle: Option<tokio::task::AbortHandle>,
 }
 
 impl OutlineContext {
@@ -108,6 +111,13 @@ impl OutlineContext {
         self.hook_system.get()
     }
 
+    /// Abort the backup daemon task if one is running. No-op if none.
+    fn stop_backup_daemon(&self) {
+        if let Some(handle) = &self.backup_daemon_handle {
+            handle.abort();
+        }
+    }
+
     /// Best-effort flush before eviction. No-op if hooks never initialized.
     pub fn flush(&self) {
         if let Some(hs) = self.hook_system_if_initialized() {
@@ -132,28 +142,31 @@ impl OutlineContext {
             search_index_path,
             callbacks_wired: AtomicBool::new(true), // Default wires callbacks in main.rs
             backup_daemon,
+            backup_daemon_handle: None, // Default outline daemon managed by process, not new_outline
         }
     }
 
     /// Create a context for a non-default outline with lazy hooks and a fresh backup daemon.
     fn new_outline(name: &str, store: Arc<YDocStore>, search_index_path: Option<PathBuf>, backup_config: &BackupConfig) -> Self {
-        let backup_daemon = if backup_config.enabled {
+        let (backup_daemon, backup_daemon_handle) = if backup_config.enabled {
             let backup_dir = backup_dir_for(name);
             if let Err(e) = std::fs::create_dir_all(&backup_dir) {
                 warn!("Failed to create backup dir for outline '{}': {}", name, e);
-                None
+                (None, None)
             } else {
                 let daemon = Arc::new(BackupDaemon::new(
                     Arc::clone(&store),
                     backup_config.clone(),
                     backup_dir,
                 ));
-                let _handle = Arc::clone(&daemon).start();
+                let join_handle = Arc::clone(&daemon).start();
+                let abort_handle = join_handle.abort_handle();
+                drop(join_handle); // detach — daemon runs independently; abort_handle lets us stop it
                 info!("Backup daemon started for outline '{}'", name);
-                Some(daemon)
+                (Some(daemon), Some(abort_handle))
             }
         } else {
-            None
+            (None, None)
         };
 
         Self {
@@ -165,6 +178,7 @@ impl OutlineContext {
             search_index_path,
             callbacks_wired: AtomicBool::new(false),
             backup_daemon,
+            backup_daemon_handle,
         }
     }
 }
@@ -274,6 +288,7 @@ impl OutlineManager {
 
             for evict_name in evictable {
                 if let Some(evicted) = contexts.remove(&evict_name) {
+                    evicted.stop_backup_daemon();
                     evicted.flush();
                     info!("Evicted idle outline '{}' (cache size: {})", evict_name, contexts.len());
                 }
@@ -412,7 +427,17 @@ impl OutlineManager {
                     "lock poisoned",
                 ))
             })?;
-            contexts.remove(name.as_str());
+            if let Some(ctx) = contexts.remove(name.as_str()) {
+                ctx.stop_backup_daemon();
+            }
+        }
+
+        // Remove per-outline backup directory
+        let backup_dir = backup_dir_for(name.as_str());
+        if backup_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&backup_dir) {
+                warn!("Failed to remove backup dir {:?}: {}", backup_dir, e);
+            }
         }
 
         info!("Deleted outline '{}' at {:?}", name, db_path);
@@ -450,6 +475,7 @@ mod tests {
             search_index_path: None,
             callbacks_wired: AtomicBool::new(false),
             backup_daemon: None, // Tests don't need backup
+            backup_daemon_handle: None,
         });
 
         let mut contexts = HashMap::new();
