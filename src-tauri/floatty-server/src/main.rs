@@ -151,8 +151,9 @@ async fn main() {
         Arc::clone(&hook_system),
         Arc::clone(&broadcaster),
         Some(data_dir.join("search_index")),
+        backup_daemon.clone(),
     ));
-    let outline_manager = Arc::new(OutlineManager::new_with_default(&data_dir, default_context));
+    let outline_manager = Arc::new(OutlineManager::new_with_default(&data_dir, default_context, backup_config.clone()));
     tracing::info!("Outline manager initialized");
 
     // CORS layer - allow requests from Tauri webview (localhost origins)

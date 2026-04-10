@@ -10,6 +10,8 @@
  *   render:: prompt        → catalog.prompt() output (for debugging)
  *   render:: ai <prompt>   → Claude structured outputs (haiku 4.5), ollama fallback
  *   render:: agent <prompt> → context-aware via CLI agent (claude -p), uses outline data
+ *   render:: expand <id>   → block tree as TreeView (local store, no API, no LLM)
+ *   render:: kanban <id>   → children-as-columns board (local store, no LLM)
  *   render:: {"root":...}  → raw JSON spec (inline)
  *
  * Compile:
@@ -93,6 +95,251 @@ async function statsSpec(serverFetch: (path: string) => Promise<Response>) {
       ...typeElements,
     },
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BLOCK TREE HELPERS — local store access (no API calls)
+// ═══════════════════════════════════════════════════════════════
+
+interface LocalBlock {
+  id: string;
+  content: string;
+  childIds: string[];
+  parentId?: string | null;
+  createdAt?: number;
+}
+
+interface BlockActions {
+  getBlock: (id: string) => LocalBlock | undefined;
+  getChildren: (id: string) => string[];
+  rootIds?: () => readonly string[];
+}
+
+/** Resolve [[wikilink]] or hash prefix to a full block ID.
+ *  Direct lookup first, then prefix scan via rootIds + tree walk. */
+function resolveBlockRef(ref: string, actions: BlockActions): LocalBlock | undefined {
+  const clean = ref.replace(/^\[\[|\]\]$/g, '').trim();
+  // Direct lookup (full UUID)
+  const direct = actions.getBlock(clean);
+  if (direct) return direct as LocalBlock;
+  // Prefix scan — walk from roots to find a block whose ID starts with the ref
+  if (clean.length >= 6 && actions.rootIds) {
+    const visited = new Set<string>();
+    const queue = [...actions.rootIds()];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      if (id.startsWith(clean)) {
+        const block = actions.getBlock(id);
+        if (block) return block as LocalBlock;
+      }
+      const children = actions.getChildren(id);
+      queue.push(...children);
+    }
+  }
+  return undefined;
+}
+
+/** Walk a block tree recursively, collecting all descendants */
+function walkTree(blockId: string, actions: BlockActions, depth = 0, maxDepth = 10): LocalBlock[] {
+  if (depth > maxDepth) return [];
+  const result: LocalBlock[] = [];
+  const childIds = actions.getChildren(blockId);
+  for (const cid of childIds) {
+    const child = actions.getBlock(cid) as LocalBlock | undefined;
+    if (!child) continue;
+    result.push(child);
+    result.push(...walkTree(cid, actions, depth + 1, maxDepth));
+  }
+  return result;
+}
+
+function detectBlockStatus(content: string): string | undefined {
+  const lower = content.toLowerCase();
+  if (lower.startsWith('✓ ') || lower.includes('shipped') || lower.includes('completed') || lower.includes('merged')) return 'done';
+  if (lower.includes('deferred') || lower.includes('on hold') || lower.includes('punt')) return 'deferred';
+  if (lower.includes('next') || lower.includes('todo') || lower.includes('pending')) return 'pending';
+  if (lower.includes('in progress') || lower.includes('active') || lower.includes('working')) return 'active';
+  return undefined;
+}
+
+function blockToTreeNode(block: LocalBlock, actions: BlockActions): any {
+  const childIds = actions.getChildren(block.id);
+  const children = childIds
+    .map(id => actions.getBlock(id) as LocalBlock | undefined)
+    .filter(Boolean)
+    .map(child => blockToTreeNode(child!, actions));
+
+  return {
+    id: block.id.slice(0, 8),
+    label: block.content,
+    status: detectBlockStatus(block.content),
+    ...(children.length > 0 ? { children } : {}),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPAND — block tree → rendered spec (local, no API)
+// ═══════════════════════════════════════════════════════════════
+
+function expandSpec(blockRef: string, actions: BlockActions) {
+  const root = resolveBlockRef(blockRef, actions);
+  if (!root) throw new Error(`Block not found: ${blockRef}`);
+
+  const rootContent = root.content ?? '';
+  const directChildIds = actions.getChildren(root.id);
+  const allDescendants = walkTree(root.id, actions);
+
+  const elements: Record<string, any> = {};
+  const rootChildKeys: string[] = [];
+
+  // Separate ctx:: entries from regular children
+  const ctxCaptures: any[] = [];
+  const nonCtxChildren: LocalBlock[] = [];
+
+  for (const cid of directChildIds) {
+    const child = actions.getBlock(cid) as LocalBlock | undefined;
+    if (!child) continue;
+    if (child.content.startsWith('ctx::')) {
+      const timeMatch = child.content.match(/(\d{1,2}:\d{2}(?:\s*(?:AM|PM))?)/i);
+      const projectMatch = child.content.match(/\[project::([^\]]+)\]/);
+      const modeMatch = child.content.match(/\[mode::([^\]]+)\]/);
+      const text = child.content
+        .replace(/^ctx::\s*/, '')
+        .replace(/\d{4}-\d{2}-\d{2}\s*@?\s*/, '')
+        .replace(/\[(?:project|mode|slug|plan)::[^\]]*\]\s*/g, '')
+        .trim();
+      ctxCaptures.push({ time: timeMatch?.[1] ?? '', project: projectMatch?.[1] ?? '', mode: modeMatch?.[1] ?? '', text });
+    } else {
+      nonCtxChildren.push(child);
+    }
+  }
+
+  // Header
+  elements['header'] = { type: 'EntryHeader', props: { type: 'archaeology', title: rootContent, date: root.createdAt ? new Date(root.createdAt).toISOString().slice(0, 10) : '' }, children: [] };
+  rootChildKeys.push('header');
+
+  // Stats
+  elements['stats'] = { type: 'StatsBar', props: { stats: [
+    { label: 'blocks', value: String(allDescendants.length), color: '#00e5ff' },
+    { label: 'children', value: String(directChildIds.length), color: '#98c379' },
+  ], layout: 'row' }, children: [] };
+  rootChildKeys.push('stats');
+
+  // TreeView
+  if (nonCtxChildren.length > 0) {
+    const treeNodes = nonCtxChildren.map(child => blockToTreeNode(child, actions));
+    elements['tree'] = { type: 'TreeView', props: { nodes: treeNodes, defaultExpanded: treeNodes.length <= 8 }, children: [] };
+    rootChildKeys.push('tree');
+  }
+
+  // ContextStream
+  if (ctxCaptures.length > 0) {
+    elements['ctx'] = { type: 'ContextStream', props: { title: 'Context Trail', captures: ctxCaptures }, children: [] };
+    rootChildKeys.push('ctx');
+  }
+
+  // Backlinks from wikilinks
+  const wikilinkRe = /\[\[([^\]]+)\]\]/g;
+  const allContent = allDescendants.map(b => b.content).join(' ') + ' ' + rootContent;
+  const outbound = new Set<string>();
+  let m;
+  while ((m = wikilinkRe.exec(allContent)) !== null) outbound.add(m[1]);
+  if (outbound.size > 0) {
+    elements['refs'] = { type: 'BacklinksFooter', props: { inbound: [], outbound: [...outbound] }, children: [] };
+    rootChildKeys.push('refs');
+  }
+
+  elements['layout'] = { type: 'Stack', props: { gap: 12, direction: 'vertical' }, children: rootChildKeys };
+  return { root: 'layout', elements };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// KANBAN — children-as-columns view (local, no API)
+// ═══════════════════════════════════════════════════════════════
+
+const KANBAN_COLORS: Record<string, string> = {
+  todo: '#ffb300', backlog: '#888', doing: '#00e5ff', 'in progress': '#00e5ff',
+  active: '#00e5ff', done: '#98c379', shipped: '#98c379', complete: '#98c379',
+  blocked: '#ff4444', deferred: '#e040a0', review: '#e040a0',
+};
+
+function kanbanSpec(blockRef: string, actions: BlockActions) {
+  const root = resolveBlockRef(blockRef, actions);
+  if (!root) throw new Error(`Block not found: ${blockRef}`);
+
+  const columns = actions.getChildren(root.id);
+  if (columns.length === 0) throw new Error('No children to use as columns');
+
+  const elements: Record<string, any> = {};
+  const columnKeys: string[] = [];
+
+  // Header
+  elements['header'] = { type: 'Text', props: { content: root.content, size: 'lg', weight: 'bold', color: '#00e5ff' }, children: [] };
+
+  // Each direct child = a column
+  for (let ci = 0; ci < columns.length; ci++) {
+    const col = actions.getBlock(columns[ci]) as LocalBlock | undefined;
+    if (!col) continue;
+    const colKey = `col-${ci}`;
+    const colName = col.content.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+    const colColor = KANBAN_COLORS[colName] ?? '#888';
+
+    // Grandchildren = cards in this column
+    const cardIds = actions.getChildren(col.id);
+    const cardKeys: string[] = [];
+
+    // Count for panel title
+    const panelTitle = `${col.content} (${cardIds.length})`;
+
+    for (let ki = 0; ki < cardIds.length; ki++) {
+      const card = actions.getBlock(cardIds[ki]) as LocalBlock | undefined;
+      if (!card) continue;
+      const cardKey = `${colKey}-card-${ki}`;
+      cardKeys.push(cardKey);
+
+      // Detect status from content
+      const status = detectBlockStatus(card.content);
+      const cardColor = status === 'done' ? '#98c379' : status === 'active' ? '#00e5ff' : status === 'deferred' ? '#e040a0' : colColor;
+
+      elements[cardKey] = {
+        type: 'Text',
+        props: { content: card.content, size: 'sm', color: cardColor, mono: true },
+        children: [],
+      };
+    }
+
+    elements[colKey] = {
+      type: 'TuiPanel',
+      props: { title: panelTitle, titleColor: colColor },
+      children: cardKeys.length > 0 ? [`${colKey}-stack`] : [],
+    };
+
+    if (cardKeys.length > 0) {
+      elements[`${colKey}-stack`] = {
+        type: 'Stack',
+        props: { gap: 4, direction: 'vertical' },
+        children: cardKeys,
+      };
+    }
+
+    columnKeys.push(colKey);
+  }
+
+  elements['columns'] = {
+    type: 'Stack',
+    props: { gap: 8, direction: 'horizontal' },
+    children: columnKeys,
+  };
+
+  elements['layout'] = {
+    type: 'Stack',
+    props: { gap: 10, direction: 'vertical' },
+    children: ['header', 'columns'],
+  };
+
+  return { root: 'layout', elements };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -634,6 +881,7 @@ function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: stri
 }
 
 const executionNonces = new Map<string, number>();
+const liveIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 export const door = {
   kind: 'view' as const,
@@ -681,6 +929,43 @@ export const door = {
         ctx.log('stats fetch failed:', e.message);
         setOutputWithTitle({ spec: null }, e.message);
       }
+      return;
+    }
+
+    if (arg.startsWith('expand ') || arg.startsWith('kanban ')) {
+      const isKanban = arg.startsWith('kanban ');
+      const blockRef = arg.slice(isKanban ? 7 : 7).trim();
+      const cmd = isKanban ? 'kanban' : 'expand';
+      if (!blockRef) {
+        setOutputWithTitle({ spec: null }, `Usage: render:: ${cmd} [[blockId]]`);
+        return;
+      }
+
+      const storeActions = { getBlock: (id: string) => ctx.actions.getBlock(id) as any, getChildren: (id: string) => ctx.actions.getChildren(id), rootIds: () => ctx.actions.rootIds?.() ?? [] };
+      const generate = isKanban ? kanbanSpec : expandSpec;
+
+      const refresh = () => {
+        try {
+          const spec = generate(blockRef, storeActions);
+          setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd as any, title: `${cmd}: ${blockRef}` });
+        } catch (e: any) {
+          ctx.log(`[render::${cmd}] refresh failed:`, e.message);
+        }
+      };
+
+      // Initial render
+      try {
+        const spec = generate(blockRef, storeActions);
+        setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd as any, title: `${cmd}: ${blockRef}` });
+      } catch (e: any) {
+        ctx.log(`[render::${cmd}] failed:`, e.message);
+        setOutputWithTitle({ spec: null }, e.message);
+        return;
+      }
+
+      // Live refresh removed — was causing perf issues (setInterval + setBlockOutput every 2s
+      // triggers Y.Doc transactions + reactivity cascade). Proper solution: FLO-587 (blockEventBus).
+
       return;
     }
 

@@ -58,7 +58,7 @@ url = "2.5.7"
 shell-words = "1.1.1"
 tauri-plugin-clipboard = "2.1.11"
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
+tauri-plugin-fs = "2.5"
 tauri-plugin-mcp-bridge = "0.8"
 arboard = "3"  # Direct clipboard access for batched IPC
 

@@ -21,6 +21,8 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, OnceLock, RwLock};
 use tracing::{info, warn};
 
+use crate::backup::{backup_dir_for, BackupDaemon};
+use crate::config::BackupConfig;
 use crate::WsBroadcaster;
 
 /// Maximum number of loaded outlines before logging a warning.
@@ -28,7 +30,7 @@ const MAX_LOADED_WARNING: usize = 20;
 /// Maximum loaded outlines before eviction kicks in. "default" is never evicted.
 const MAX_LOADED_OUTLINES: usize = 16;
 
-/// Per-outline runtime context: store + lazy hooks + broadcaster.
+/// Per-outline runtime context: store + lazy hooks + broadcaster + backup daemon.
 ///
 /// For "default": hooks are pre-initialized from main.rs.
 /// For non-default: hooks initialize lazily on first mutation via OnceLock.
@@ -40,6 +42,11 @@ pub struct OutlineContext {
     pub active_connections: AtomicUsize,
     search_index_path: Option<PathBuf>,
     callbacks_wired: AtomicBool,
+    /// Hourly backup daemon. None if backups are disabled in config.
+    pub backup_daemon: Option<Arc<BackupDaemon>>,
+    /// Abort handle for the backup daemon task. None for the default outline
+    /// (its daemon is managed by the process, not by new_outline).
+    backup_daemon_handle: Option<tokio::task::AbortHandle>,
 }
 
 impl OutlineContext {
@@ -104,6 +111,13 @@ impl OutlineContext {
         self.hook_system.get()
     }
 
+    /// Abort the backup daemon task if one is running. No-op if none.
+    fn stop_backup_daemon(&self) {
+        if let Some(handle) = &self.backup_daemon_handle {
+            handle.abort();
+        }
+    }
+
     /// Best-effort flush before eviction. No-op if hooks never initialized.
     pub fn flush(&self) {
         if let Some(hs) = self.hook_system_if_initialized() {
@@ -116,7 +130,7 @@ impl OutlineContext {
     }
 
     /// Create a context for the default outline with pre-initialized hooks.
-    pub fn new_default(store: Arc<YDocStore>, hook_system: Arc<HookSystem>, broadcaster: Arc<WsBroadcaster>, search_index_path: Option<PathBuf>) -> Self {
+    pub fn new_default(store: Arc<YDocStore>, hook_system: Arc<HookSystem>, broadcaster: Arc<WsBroadcaster>, search_index_path: Option<PathBuf>, backup_daemon: Option<Arc<BackupDaemon>>) -> Self {
         let lock = OnceLock::new();
         let _ = lock.set(hook_system);
         Self {
@@ -127,11 +141,34 @@ impl OutlineContext {
             active_connections: AtomicUsize::new(0),
             search_index_path,
             callbacks_wired: AtomicBool::new(true), // Default wires callbacks in main.rs
+            backup_daemon,
+            backup_daemon_handle: None, // Default outline daemon managed by process, not new_outline
         }
     }
 
-    /// Create a context for a non-default outline with lazy hooks.
-    fn new_outline(name: &str, store: Arc<YDocStore>, search_index_path: Option<PathBuf>) -> Self {
+    /// Create a context for a non-default outline with lazy hooks and a fresh backup daemon.
+    fn new_outline(name: &str, store: Arc<YDocStore>, search_index_path: Option<PathBuf>, backup_config: &BackupConfig) -> Self {
+        let (backup_daemon, backup_daemon_handle) = if backup_config.enabled {
+            let backup_dir = backup_dir_for(name);
+            if let Err(e) = std::fs::create_dir_all(&backup_dir) {
+                warn!("Failed to create backup dir for outline '{}': {}", name, e);
+                (None, None)
+            } else {
+                let daemon = Arc::new(BackupDaemon::new(
+                    Arc::clone(&store),
+                    backup_config.clone(),
+                    backup_dir,
+                ));
+                let join_handle = Arc::clone(&daemon).start();
+                let abort_handle = join_handle.abort_handle();
+                drop(join_handle); // detach — daemon runs independently; abort_handle lets us stop it
+                info!("Backup daemon started for outline '{}'", name);
+                (Some(daemon), Some(abort_handle))
+            }
+        } else {
+            (None, None)
+        };
+
         Self {
             name: name.to_string(),
             store,
@@ -140,6 +177,8 @@ impl OutlineContext {
             active_connections: AtomicUsize::new(0),
             search_index_path,
             callbacks_wired: AtomicBool::new(false),
+            backup_daemon,
+            backup_daemon_handle,
         }
     }
 }
@@ -154,11 +193,13 @@ pub struct OutlineManager {
     default_context: Arc<OutlineContext>,
     /// Path to legacy default DB (for OutlineInfo).
     default_db_path: PathBuf,
+    /// Backup config passed to new outline contexts on creation.
+    backup_config: BackupConfig,
 }
 
 impl OutlineManager {
-    /// Create a new manager with a pre-initialized default context.
-    pub fn new_with_default(data_dir: &Path, default_context: Arc<OutlineContext>) -> Self {
+    /// Create a new manager with a pre-initialized default context and backup config.
+    pub fn new_with_default(data_dir: &Path, default_context: Arc<OutlineContext>, backup_config: BackupConfig) -> Self {
         let outlines_dir = data_dir.join("outlines");
         let default_db_path = data_dir.join("ctx_markers.db");
 
@@ -170,6 +211,7 @@ impl OutlineManager {
             outlines_dir,
             default_context,
             default_db_path,
+            backup_config,
         }
     }
 
@@ -226,7 +268,7 @@ impl OutlineManager {
 
         let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
         let search_path = self.search_index_path(&name);
-        let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
+        let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path), &self.backup_config));
         contexts.insert(name.as_str().to_string(), Arc::clone(&ctx));
 
         // Evict idle outlines when cache exceeds limit. Not true LRU — evicts
@@ -246,6 +288,7 @@ impl OutlineManager {
 
             for evict_name in evictable {
                 if let Some(evicted) = contexts.remove(&evict_name) {
+                    evicted.stop_backup_daemon();
                     evicted.flush();
                     info!("Evicted idle outline '{}' (cache size: {})", evict_name, contexts.len());
                 }
@@ -333,7 +376,7 @@ impl OutlineManager {
             e
         })?);
         let search_path = self.search_index_path(&name);
-        let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path)));
+        let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path), &self.backup_config));
         contexts.insert(name.as_str().to_string(), ctx);
 
         info!("Created outline '{}' at {:?}", name, db_path);
@@ -384,7 +427,17 @@ impl OutlineManager {
                     "lock poisoned",
                 ))
             })?;
-            contexts.remove(name.as_str());
+            if let Some(ctx) = contexts.remove(name.as_str()) {
+                ctx.stop_backup_daemon();
+            }
+        }
+
+        // Remove per-outline backup directory
+        let backup_dir = backup_dir_for(name.as_str());
+        if backup_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&backup_dir) {
+                warn!("Failed to remove backup dir {:?}: {}", backup_dir, e);
+            }
         }
 
         info!("Deleted outline '{}' at {:?}", name, db_path);
@@ -421,6 +474,8 @@ mod tests {
             active_connections: AtomicUsize::new(0),
             search_index_path: None,
             callbacks_wired: AtomicBool::new(false),
+            backup_daemon: None, // Tests don't need backup
+            backup_daemon_handle: None,
         });
 
         let mut contexts = HashMap::new();
@@ -431,6 +486,7 @@ mod tests {
             outlines_dir: dir.path().join("outlines"),
             default_context,
             default_db_path: db_path,
+            backup_config: BackupConfig { enabled: false, ..BackupConfig::default() },
         };
         (dir, mgr)
     }

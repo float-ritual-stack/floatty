@@ -1554,7 +1554,7 @@ dependencies = [
 
 [[package]]
 name = "float-pty"
-version = "0.9.8"
+version = "0.10.10"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -1622,7 +1622,7 @@ dependencies = [
 
 [[package]]
 name = "floatty-server"
-version = "0.9.8"
+version = "0.10.10"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -3232,7 +3232,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.59.0",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -6972,13 +6972,15 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-fs"
-version = "2.4.4"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47df422695255ecbe7bac7012440eddaeefd026656171eac9559f5243d3230d9"
+checksum = "36e1ec28b79f3d0683f4507e1615c36292c0ea6716668770d4396b9b39871ed8"
 dependencies = [
  "anyhow",
  "dunce",
  "glob",
+ "log",
+ "objc2-foundation 0.3.2",
  "percent-encoding",
  "schemars 0.8.22",
  "serde",

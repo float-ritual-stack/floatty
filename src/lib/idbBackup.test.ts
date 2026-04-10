@@ -44,9 +44,10 @@ describe('idbBackup namespace', () => {
 
     initBackupNamespace('my-workspace');
 
-    // Should log the new namespace via logger.info
+    // Format: floatty-backup-{build}|{encodedWorkspace}|{encodedOutline}
+    // | separator avoids collision with hyphenated names; encodeURIComponent escapes |
     expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.stringContaining('floatty-backup-dev-my-workspace')
+      expect.stringContaining('floatty-backup-dev|my-workspace|default')
     );
   });
 
@@ -54,11 +55,12 @@ describe('idbBackup namespace', () => {
     const { initBackupNamespace } = await import('./idbBackup');
     mockLogger.info.mockClear();
 
-    // Workspace names might have special chars
+    // Workspace names with spaces get encoded so they don't collide with the | delimiter
     initBackupNamespace('work space-with_chars');
 
+    // encodeURIComponent turns ' ' → '%20', but '-' and '_' stay literal
     expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.stringContaining('work space-with_chars')
+      expect.stringContaining('work%20space-with_chars')
     );
   });
 
@@ -103,6 +105,7 @@ describe('idbBackup namespace format', () => {
     );
 
     expect(relevantCall).toBeDefined();
-    expect(relevantCall![0]).toMatch(/floatty-backup-(dev|release)-format-test-ws/);
+    // Format: floatty-backup-{build}|{workspace}|{outline} (| separator, encodeURIComponent applied)
+    expect(relevantCall![0]).toMatch(/floatty-backup-(dev|release)\|format-test-ws\|default/);
   });
 });

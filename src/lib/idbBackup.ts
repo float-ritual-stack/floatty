@@ -19,15 +19,20 @@ let dbName = 'floatty-backup';
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 /**
- * Initialize the backup namespace based on build environment and workspace.
+ * Initialize the backup namespace based on build environment, workspace, and outline.
  * MUST be called BEFORE any backup operations (getBackup, saveBackup, etc.)
  *
- * Creates isolation between: dev/release builds AND different workspaces
- * e.g., 'floatty-backup-dev-default' vs 'floatty-backup-release-work'
+ * Creates isolation between: dev/release builds, different workspaces, AND outlines.
+ * e.g., 'floatty-backup-dev-default-default' vs 'floatty-backup-release-work-journal'
  */
-export function initBackupNamespace(workspaceName: string): void {
+export function initBackupNamespace(workspaceName: string, outlineName: string = 'default'): void {
   const build = import.meta.env.DEV ? 'dev' : 'release';
-  const newDbName = `floatty-backup-${build}-${workspaceName}`;
+  // Use | as delimiter (not -) so workspace names and outline names containing
+  // hyphens don't produce colliding DB names. encodeURIComponent encodes any |
+  // in the names themselves to %7C, keeping the delimiter unambiguous.
+  const ws = encodeURIComponent(workspaceName);
+  const ol = encodeURIComponent(outlineName);
+  const newDbName = `floatty-backup-${build}|${ws}|${ol}`;
 
   if (newDbName !== dbName) {
     // CRITICAL: Null the promise SYNCHRONOUSLY before async close to prevent

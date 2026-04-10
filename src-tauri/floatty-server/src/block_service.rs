@@ -630,13 +630,31 @@ pub(crate) fn create_block(
     store: &Arc<YDocStore>,
     broadcaster: &Arc<WsBroadcaster>,
     hook_system: &Arc<HookSystem>,
-    mut req: api::CreateBlockRequest,
+    req: api::CreateBlockRequest,
 ) -> Result<BlockDto, ApiError> {
-    let id = uuid::Uuid::new_v4().to_string();
+    create_block_inner(store, broadcaster, hook_system, req, None, None, None)
+}
+
+/// Internal create used by both create_block and import_block.
+/// `explicit_id` lets the caller supply the block UUID (import path).
+/// `explicit_created_at` / `explicit_updated_at` preserve original timestamps on import.
+/// When all three are None, behaviour is identical to the old create_block.
+fn create_block_inner(
+    store: &Arc<YDocStore>,
+    broadcaster: &Arc<WsBroadcaster>,
+    hook_system: &Arc<HookSystem>,
+    mut req: api::CreateBlockRequest,
+    explicit_id: Option<String>,
+    explicit_created_at: Option<i64>,
+    explicit_updated_at: Option<i64>,
+) -> Result<BlockDto, ApiError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
+
+    let created_at = explicit_created_at.unwrap_or(now);
+    let updated_at = explicit_updated_at.unwrap_or(now);
 
     let doc = store.doc();
     let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
@@ -655,6 +673,8 @@ pub(crate) fn create_block(
             }
         }
     }
+
+    let id = explicit_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let update = {
         let mut txn = doc_guard.transact_mut();
@@ -724,8 +744,8 @@ pub(crate) fn create_block(
                 ("content".to_owned(), yrs::any!(req.content.clone())),
                 ("parentId".to_owned(), parent_id_value),
                 ("collapsed".to_owned(), yrs::any!(false)),
-                ("createdAt".to_owned(), yrs::any!(now as f64)),
-                ("updatedAt".to_owned(), yrs::any!(now as f64)),
+                ("createdAt".to_owned(), yrs::any!(created_at as f64)),
+                ("updatedAt".to_owned(), yrs::any!(updated_at as f64)),
             ]),
         );
         // Insert childIds as nested Y.Array (empty)
@@ -822,12 +842,97 @@ pub(crate) fn create_block(
         block_type: format!("{:?}", block_type).to_lowercase(),
         metadata: None, // Hooks will populate async
         inherited_markers: None, // Computed on read
-        created_at: now as i64,
-        updated_at: now as i64,
+        created_at,
+        updated_at,
         output_type: None,
         output: None,
     })
 }
+
+/// Identity-preserving block create for migration and curation workflows.
+///
+/// Unlike `create_block`, the caller supplies the ID. This is an explicit import
+/// primitive — not ambient behavior. Separate endpoint, separate audit trail.
+///
+/// Audit log: emits `identity_source = "supplied"` so import operations are
+/// distinguishable from ordinary creates in log queries.
+pub(crate) fn import_block(
+    store: &Arc<YDocStore>,
+    broadcaster: &Arc<WsBroadcaster>,
+    hook_system: &Arc<HookSystem>,
+    mut req: api::ImportBlockRequest,
+) -> Result<BlockDto, ApiError> {
+    // Validate and canonicalise to lowercase — resolve_block_id() normalises lookups
+    // to lowercase, so importing the same UUID with different casing would bypass
+    // the collision check without this step.
+    let parsed_id = uuid::Uuid::parse_str(&req.id).map_err(|_| {
+        ApiError::InvalidRequest(format!("id '{}' is not a valid UUID", req.id))
+    })?;
+    req.id = parsed_id.hyphenated().to_string();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    let created_at = req.created_at.unwrap_or(now);
+    let updated_at = req.updated_at.unwrap_or(now);
+
+    let doc = store.doc();
+    let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
+
+    {
+        let txn = doc_guard.transact();
+        if let Some(blocks_map) = txn.get_map("blocks") {
+            // Collision check — reject before any mutation
+            if blocks_map.contains_key(&txn, req.id.as_str()) {
+                return Err(ApiError::Conflict(format!(
+                    "Block '{}' already exists in this outline", req.id
+                )));
+            }
+            if let Some(ref parent_id) = req.parent_id {
+                let resolved = resolve_body_field(parent_id, "parentId", &blocks_map, &txn)?;
+                req.parent_id = Some(resolved);
+            }
+            if let Some(ref after_id) = req.after_id {
+                let resolved = resolve_body_field(after_id, "afterId", &blocks_map, &txn)?;
+                req.after_id = Some(resolved);
+            }
+        }
+    }
+
+    tracing::info!(
+        target: "floatty_server::import",
+        block_id = %req.id,
+        identity_source = "supplied",
+        created_at = created_at,
+        updated_at = updated_at,
+        "Importing block with preserved identity"
+    );
+
+    // Drop the read lock before calling create_block_inner (which takes write lock)
+    drop(doc_guard);
+
+    // Single write path: supply the caller's ID and timestamps directly.
+    // No temp UUID, no rename — one Y.Doc transaction, one persist, one broadcast.
+    let create_req = api::CreateBlockRequest {
+        content: req.content.clone(),
+        parent_id: req.parent_id.clone(),
+        after_id: req.after_id.clone(),
+        at_index: req.at_index,
+    };
+
+    create_block_inner(
+        store,
+        broadcaster,
+        hook_system,
+        create_req,
+        Some(req.id.clone()),
+        Some(created_at),
+        Some(updated_at),
+    )
+}
+
 
 /// Update an existing block. Handles content changes, metadata updates,
 /// reparenting, and repositioning. Owns the full mutation pipeline.

@@ -50,13 +50,17 @@ export function OutlinerPane(props: OutlinerPaneProps) {
       const editor = targetBlock?.querySelector('[contenteditable]') as HTMLElement;
       editor?.focus({ preventScroll: true });
     },
-    fit: () => {
+    fit: (_meta?: { sourceEvent?: string }) => {
       updatePosition();
     },
     refresh: () => {
       updatePosition();
     }
   };
+
+  const getPlaceholder = () => (
+    document.querySelector(`.pane-layout-leaf[data-pane-id="${CSS.escape(props.placeholderId)}"]`) as HTMLElement | null
+  );
 
   // Register handle and set up resize tracking
   onMount(() => {
@@ -75,7 +79,7 @@ export function OutlinerPane(props: OutlinerPaneProps) {
     }
 
     // Watch for placeholder size/position changes (matches TerminalPane pattern)
-    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`) as HTMLElement;
+    const placeholder = getPlaceholder();
     let resizeObserver: ResizeObserver | undefined;
 
     if (placeholder) {
@@ -96,7 +100,7 @@ export function OutlinerPane(props: OutlinerPaneProps) {
 
   // Update absolute position based on placeholder in PaneLayout
   const updatePosition = () => {
-    const placeholder = document.querySelector(`[data-pane-id="${props.placeholderId}"]`);
+    const placeholder = getPlaceholder();
     if (placeholder && containerRef) {
       const pRect = placeholder.getBoundingClientRect();
       const parentRect = containerRef.parentElement?.getBoundingClientRect();

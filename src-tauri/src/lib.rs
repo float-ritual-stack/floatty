@@ -30,6 +30,7 @@ use floatty_core::YDocStore;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
+use tauri::menu::{Menu, SubmenuBuilder, MenuItemBuilder};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
@@ -495,6 +496,9 @@ pub fn run() {
             // Capture server info for orphan detector background worker
             let orphan_server_url = server_url_for_orphan.clone();
             let orphan_api_key = server_api_key_for_orphan.clone();
+            // Capture for outline menu
+            let menu_server_url = server_url_for_orphan.clone();
+            let menu_api_key = server_api_key_for_orphan.clone();
             // Capture doors path for hot-reload watcher
             let doors_path = paths.doors.clone();
             move |app| {
@@ -530,6 +534,49 @@ pub fn run() {
                         git_sha = %git_sha,
                         "Window title set"
                     );
+                }
+
+                // Outlines menu — lists available outlines, click to switch
+                {
+                    let app_handle = app.handle().clone();
+                    let menu_url = menu_server_url.clone();
+                    let menu_key = menu_api_key.clone();
+
+                    // Build initial menu: default OS menu (includes Edit → Cmd+C/V/Z) + Outlines
+                    let default_item = MenuItemBuilder::with_id("outline:default", "Default")
+                        .build(app)?;
+                    let outlines_submenu = SubmenuBuilder::with_id(app, "outlines", "Outlines")
+                        .item(&default_item)
+                        .build()?;
+                    let menu = Menu::default(app.handle())?;
+                    menu.append(&outlines_submenu)?;
+                    app.set_menu(menu)?;
+
+                    // Handle menu clicks → emit event to frontend
+                    app.on_menu_event(move |app_handle, event| {
+                        let id = event.id().0.as_str();
+                        if let Some(name) = id.strip_prefix("outline:") {
+                            tracing::info!("Menu: switching to outline '{}'", name);
+                            if let Err(e) = app_handle.emit("switch-outline", name.to_string()) {
+                                tracing::error!("Failed to emit switch-outline: {}", e);
+                            }
+                        }
+                    });
+
+                    // Populate menu with real outlines after server is ready
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        if let (Some(url), Some(key)) = (menu_url, menu_key) {
+                            match fetch_outline_names(&url, &key).await {
+                                Ok(names) => {
+                                    if let Err(e) = rebuild_outlines_menu(&app_handle, &names) {
+                                        tracing::warn!("Failed to rebuild outlines menu: {}", e);
+                                    }
+                                }
+                                Err(e) => tracing::warn!("Failed to fetch outlines for menu: {}", e),
+                            }
+                        }
+                    });
                 }
 
                 // FLO-350: Start orphan detection background worker
@@ -586,3 +633,55 @@ pub fn run() {
 }
 
 // ============================================================================
+// Outline menu helpers
+// ============================================================================
+
+/// Fetch outline names from the server API
+async fn fetch_outline_names(server_url: &str, api_key: &str) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/api/v1/outlines", server_url))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| format!("fetch failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("status {}", resp.status()));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct OutlineInfo { name: String }
+
+    let outlines: Vec<OutlineInfo> = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    Ok(outlines.into_iter().map(|o| o.name).collect())
+}
+
+/// Rebuild the Outlines submenu with the given names
+fn rebuild_outlines_menu(app: &tauri::AppHandle, names: &[String]) -> Result<(), String> {
+    // Always pin "Default" first so it survives rebuilds even if the API omits it
+    let default_item = MenuItemBuilder::with_id("outline:default", "Default")
+        .build(app)
+        .map_err(|e| format!("default item: {}", e))?;
+    let mut submenu = SubmenuBuilder::with_id(app, "outlines", "Outlines")
+        .item(&default_item);
+
+    for name in names {
+        if name == "default" {
+            continue; // already added above with proper capitalisation
+        }
+        let item = MenuItemBuilder::with_id(format!("outline:{}", name), name)
+            .build(app)
+            .map_err(|e| format!("menu item: {}", e))?;
+        submenu = submenu.item(&item);
+    }
+
+    let built = submenu.build().map_err(|e| format!("submenu: {}", e))?;
+    // Start from the default OS menu (preserves Edit → Cmd+C/V/Z/Undo/Redo)
+    let menu = Menu::default(app).map_err(|e| format!("default menu: {}", e))?;
+    menu.append(&built).map_err(|e| format!("append: {}", e))?;
+    app.set_menu(menu).map_err(|e| format!("set_menu: {}", e))?;
+
+    tracing::info!("Outlines menu rebuilt with {} entries", names.len());
+    Ok(())
+}

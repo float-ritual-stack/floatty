@@ -5,11 +5,16 @@
  * Server is spawned by Tauri on app start; this client connects to it.
  */
 
+import { createSignal } from 'solid-js';
 import { invoke } from './tauriTypes';
 import { base64ToBytes, bytesToBase64 } from './encoding';
 import { createLogger } from './logger';
 
 const logger = createLogger('httpClient');
+
+/** Reactive signal for current outline name */
+const [currentOutline, setCurrentOutline] = createSignal('default');
+export { currentOutline };
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -92,6 +97,10 @@ export interface FloattyHttpClient {
    * @returns Updates if available, or compactedThrough if client is too far behind
    */
   getUpdatesSince(since: number, limit?: number): Promise<UpdatesSinceResult>;
+  /** Set active outline. "default" uses legacy routes. */
+  setOutline(name: string): void;
+  /** Get active outline name */
+  getOutline(): string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -101,10 +110,29 @@ export interface FloattyHttpClient {
 class HttpClient implements FloattyHttpClient {
   private url: string;
   private apiKey: string;
+  private outlineName: string = 'default';
 
   constructor(serverInfo: ServerInfo) {
     this.url = serverInfo.url;
     this.apiKey = serverInfo.api_key;
+  }
+
+  /** Set the active outline. "default" uses legacy routes, others use /outlines/:name/ prefix. */
+  setOutline(name: string) {
+    this.outlineName = name;
+    setCurrentOutline(name);
+  }
+
+  getOutline(): string {
+    return this.outlineName;
+  }
+
+  /** API prefix: /api/v1 for default, /api/v1/outlines/:name for others */
+  private api(path: string): string {
+    if (this.outlineName === 'default') {
+      return `${this.url}/api/v1${path}`;
+    }
+    return `${this.url}/api/v1/outlines/${encodeURIComponent(this.outlineName)}${path}`;
   }
 
   private headers(): HeadersInit {
@@ -115,7 +143,7 @@ class HttpClient implements FloattyHttpClient {
   }
 
   async getState(): Promise<FullStateResponse> {
-    const response = await fetch(`${this.url}/api/v1/state`, {
+    const response = await fetch(`${this.api('/state')}`, {
       method: 'GET',
       headers: this.headers(),
     });
@@ -137,7 +165,7 @@ class HttpClient implements FloattyHttpClient {
   }
 
   async getStateVector(): Promise<Uint8Array> {
-    const response = await fetch(`${this.url}/api/v1/state-vector`, {
+    const response = await fetch(`${this.api('/state-vector')}`, {
       method: 'GET',
       headers: this.headers(),
     });
@@ -162,7 +190,7 @@ class HttpClient implements FloattyHttpClient {
       body.tx_id = txId;
     }
 
-    const response = await fetch(`${this.url}/api/v1/update`, {
+    const response = await fetch(`${this.api('/update')}`, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify(body),
@@ -192,7 +220,7 @@ class HttpClient implements FloattyHttpClient {
   }
 
   async getStateHash(): Promise<StateHashResponse> {
-    const response = await fetch(`${this.url}/api/v1/state/hash`, {
+    const response = await fetch(`${this.api('/state/hash')}`, {
       method: 'GET',
       headers: this.headers(),
     });
@@ -215,7 +243,7 @@ class HttpClient implements FloattyHttpClient {
    * Returns the raw JSON string (caller handles save dialog).
    */
   async exportJSON(): Promise<string> {
-    const response = await fetch(`${this.url}/api/v1/export/json`, {
+    const response = await fetch(`${this.api('/export/json')}`, {
       method: 'GET',
       headers: this.headers(),
     });
@@ -228,7 +256,7 @@ class HttpClient implements FloattyHttpClient {
   }
 
   async getUpdatesSince(since: number, limit: number = 100): Promise<UpdatesSinceResult> {
-    const url = new URL(`${this.url}/api/v1/updates`);
+    const url = new URL(`${this.api('/updates')}`);
     url.searchParams.set('since', String(since));
     url.searchParams.set('limit', String(limit));
 
