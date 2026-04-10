@@ -85,25 +85,34 @@ function App() {
 
       logger.info(`Outline switch: ${current} → ${name}`);
 
-      // Create outline if it doesn't exist
-      try {
-        const serverUrl = window.__FLOATTY_SERVER_URL__;
-        const apiKey = window.__FLOATTY_API_KEY__;
-        if (serverUrl && apiKey) {
+      // Create outline if it doesn't exist — abort if we can't confirm
+      const serverUrl = window.__FLOATTY_SERVER_URL__;
+      const apiKey = window.__FLOATTY_API_KEY__;
+      if (serverUrl && apiKey) {
+        try {
           const listResp = await fetch(`${serverUrl}/api/v1/outlines`, {
             headers: { 'Authorization': `Bearer ${apiKey}` },
           });
-          const outlines: { name: string }[] = listResp.ok ? await listResp.json() : [];
+          if (!listResp.ok) {
+            logger.error(`Outline switch aborted: could not list outlines (${listResp.status})`);
+            return;
+          }
+          const outlines: { name: string }[] = await listResp.json();
           if (!outlines.some(o => o.name === name)) {
-            await fetch(`${serverUrl}/api/v1/outlines`, {
+            const createResp = await fetch(`${serverUrl}/api/v1/outlines`, {
               method: 'POST',
               headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ name }),
             });
+            if (!createResp.ok) {
+              logger.error(`Outline switch aborted: could not create outline '${name}' (${createResp.status})`);
+              return;
+            }
           }
+        } catch (err) {
+          logger.error(`Outline switch aborted: fetch error: ${err}`);
+          return;
         }
-      } catch (err) {
-        logger.error(`Failed to ensure outline exists: ${err}`);
       }
 
       // Save + reload — cleanest path, all singletons re-init from scratch
@@ -366,7 +375,7 @@ function App() {
 
   // Listen for outline switch from native macOS menu (Rust → frontend)
   onMount(async () => {
-    await listen<string>('switch-outline', (event) => {
+    const unlistenOutlineSwitch = await listen<string>('switch-outline', (event) => {
       const name = event.payload;
       const current = localStorage.getItem('floatty-outline') || 'default';
       if (name === current) return;
@@ -374,6 +383,7 @@ function App() {
       localStorage.setItem('floatty-outline', name);
       window.location.reload();
     });
+    onCleanup(() => unlistenOutlineSwitch());
   });
 
   // FLO-350: Listen for orphan detection events from Rust background worker

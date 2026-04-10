@@ -2133,7 +2133,7 @@ function TreeNodeRow(nodeProps: { node: TreeNode; depth: number; isLast: boolean
           display: 'flex',
           'align-items': 'flex-start',
           gap: '6px',
-          padding: '3px 0',
+          padding: '5px 0',
           cursor: hasKids() ? 'pointer' : 'default',
           'user-select': 'none',
         }}
@@ -2163,15 +2163,31 @@ function TreeNodeRow(nodeProps: { node: TreeNode; depth: number; isLast: boolean
         </span>
 
         {/* label + detail */}
-        <div style={{ flex: '1', 'min-width': '0' }}>
-          <span style={{
-            'font-size': '11px',
-            'font-family': V.mono,
-            color: node.status === 'deferred' ? V.amb : node.status === 'pending' ? V.td : V.t,
-            'text-decoration': node.status === 'deferred' ? 'none' : 'none',
-          }}
-            innerHTML={sanitize(inlineFormat(node.label))}
-          />
+        <div style={{ flex: '1', 'min-width': '0', 'max-width': '680px' }}>
+          {(() => {
+            const headingMatch = node.label.match(/^(#{1,6})\s+(.*)$/);
+            const isHeading = !!headingMatch;
+            const headingLevel = headingMatch ? headingMatch[1].length : 0;
+            const labelText = headingMatch ? headingMatch[2] : node.label;
+            const isLongProse = !isHeading && node.label.length > 80;
+            const hSize: Record<number, string> = { 1: '16px', 2: '14px', 3: '12px', 4: '11px', 5: '10px', 6: '10px' };
+            const hColor: Record<number, string> = { 1: V.t, 2: V.t, 3: V.cy, 4: V.td, 5: V.tf, 6: V.tf };
+            return (
+              <span style={{
+                'font-size': isHeading ? (hSize[headingLevel] ?? '11px') : (isLongProse ? '12px' : '11px'),
+                'font-family': (isHeading && headingLevel <= 3) || isLongProse ? V.serif : V.mono,
+                'font-weight': isHeading ? (headingLevel <= 2 ? 'bold' : '600') : 'normal',
+                'letter-spacing': isHeading && headingLevel >= 4 ? '0.06em' : (isHeading && headingLevel <= 2 ? 'normal' : 'normal'),
+                color: isHeading ? (hColor[headingLevel] ?? V.t) : (node.status === 'deferred' ? V.amb : node.status === 'pending' ? V.td : V.t),
+                'line-height': isLongProse ? '1.8' : '1.5',
+                'word-break': 'break-word',
+                display: 'inline',
+              }}
+                innerHTML={sanitize(inlineFormat(labelText))}
+                onClick={handleWikilinkClick}
+              />
+            );
+          })()}
           <Show when={node.detail}>
             <span style={{
               'font-size': '10px',
@@ -2587,6 +2603,171 @@ export function TimelineDiff(props: BaseComponentProps<{
             )}
           </For>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LAYOUT SECTIONS
+// ═══════════════════════════════════════════════════════════════
+
+export function Section(props: BaseComponentProps<{
+  title?: string;
+  variant?: 'default' | 'highlight' | 'warning';
+}>) {
+  const variantColor = () => {
+    switch (props.props.variant) {
+      case 'highlight': return V.cy;
+      case 'warning': return V.amb;
+      default: return V.td;
+    }
+  };
+  return (
+    <div style={{ padding: '0' }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '10px',
+          'font-family': V.mono,
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.12em',
+          color: variantColor(),
+          'padding-bottom': '6px',
+          'border-bottom': `1px solid ${variantColor()}30`,
+          'margin-bottom': '10px',
+        }}>
+          {props.props.title}
+        </div>
+      </Show>
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+export function TimelineEvent(props: BaseComponentProps<{
+  time: string;
+  label: string;
+  color?: string;
+}>) {
+  const dotColor = () => props.props.color ?? V.cy;
+  return (
+    <div style={{ display: 'flex', gap: '10px', 'align-items': 'flex-start', padding: '2px 0' }}>
+      <div style={{
+        'min-width': '58px',
+        'font-family': V.mono,
+        'font-size': '9px',
+        color: V.td,
+        'padding-top': '3px',
+        'text-align': 'right',
+        'flex-shrink': 0,
+      }}>
+        {props.props.time}
+      </div>
+      <div style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'center', 'flex-shrink': 0 }}>
+        <div style={{
+          width: '6px',
+          height: '6px',
+          'border-radius': '50%',
+          background: dotColor(),
+          'margin-top': '3px',
+          'box-shadow': `0 0 4px ${dotColor()}80`,
+        }} />
+        <div style={{ width: '1px', 'min-height': '8px', background: dotColor() + '25', flex: 1 }} />
+      </div>
+      <div style={{
+        'font-size': '11px',
+        color: V.t,
+        'font-family': V.mono,
+        flex: 1,
+        'padding-top': '1px',
+        'line-height': '1.4',
+      }}>
+        {props.props.label}
+      </div>
+    </div>
+  );
+}
+
+export function StatPill(props: BaseComponentProps<{
+  label: string;
+  value: string;
+  color?: string;
+}>) {
+  const col = () => props.props.color ?? V.cy;
+  return (
+    <div style={{
+      display: 'inline-flex',
+      'align-items': 'center',
+      background: V.s1,
+      border: `1px solid ${col()}40`,
+      'border-radius': '12px',
+      overflow: 'hidden',
+    }}>
+      <span style={{
+        'font-size': '9px',
+        'font-family': V.mono,
+        'text-transform': 'uppercase',
+        'letter-spacing': '0.08em',
+        color: V.td,
+        padding: '3px 8px',
+        background: V.s2,
+      }}>
+        {props.props.label}
+      </span>
+      <span style={{
+        'font-size': '11px',
+        'font-weight': '700',
+        color: col(),
+        'font-family': V.mono,
+        padding: '3px 10px',
+      }}>
+        {props.props.value}
+      </span>
+    </div>
+  );
+}
+
+export function GapItem(props: BaseComponentProps<{
+  description: string;
+  severity?: 'critical' | 'warning' | 'info';
+  gapType?: string;
+  target?: string;
+}>) {
+  const severityColor = () => {
+    switch (props.props.severity) {
+      case 'critical': return V.cor;
+      case 'warning': return V.amb;
+      default: return V.cy;
+    }
+  };
+  const icon = () => {
+    switch (props.props.severity) {
+      case 'critical': return '⏺';
+      case 'warning': return '◆';
+      default: return '◇';
+    }
+  };
+  return (
+    <div style={{
+      display: 'flex',
+      gap: '8px',
+      'align-items': 'flex-start',
+      padding: '5px 8px',
+      'border-left': `2px solid ${severityColor()}`,
+      background: severityColor() + '0a',
+    }}>
+      <span style={{ color: severityColor(), 'font-size': '10px', 'flex-shrink': 0, 'padding-top': '2px' }}>{icon()}</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ 'font-size': '11px', color: V.t, 'font-family': V.mono, 'line-height': '1.4' }}>
+          {props.props.description}
+        </div>
+        <Show when={props.props.target}>
+          <div style={{ 'font-size': '9px', color: V.tf, 'font-family': V.mono, 'margin-top': '2px', 'text-transform': 'uppercase', 'letter-spacing': '0.06em' }}>
+            → {props.props.target}
+          </div>
+        </Show>
       </div>
     </div>
   );

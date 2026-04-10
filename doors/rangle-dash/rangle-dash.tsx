@@ -34,6 +34,7 @@ interface MeetingDetails {
 
 interface TimelineEntry {
   time: string;
+  sortKey: string; // YYYY-MM-DD HH:MM for correct dedup and chronological sort
   label: string;
 }
 
@@ -146,7 +147,7 @@ async function loadMeetingDetails(weekDir: string, meeting: MeetingItem): Promis
     if (namedMatch) {
       const mm = monthMap[namedMatch[1].toLowerCase()] || '01';
       const dd = namedMatch[2].padStart(2, '0');
-      datePrefix = `2026-${mm}-${dd}`;
+      datePrefix = `${new Date().getFullYear()}-${mm}-${dd}`;
     }
     const isoMatch = meeting.date.match(/(\d{4}-\d{2}-\d{2})/);
     if (isoMatch) datePrefix = isoMatch[1];
@@ -259,15 +260,16 @@ function extractTimeline(hits: any[]): TimelineEntry[] {
     // Truncate long labels
     if (label.length > 120) label = label.slice(0, 117) + '...';
 
-    const key = ctxMatch[2].trim() + label.slice(0, 30);
+    const sortKey = ctxMatch[1] + ' ' + ctxMatch[2].trim();
+    const key = sortKey + label.slice(0, 30);
     if (seen.has(key)) continue;
     seen.add(key);
 
-    entries.push({ time: ctxMatch[2].trim(), label });
+    entries.push({ time: ctxMatch[2].trim(), sortKey, label });
   }
 
   return entries
-    .sort((a, b) => b.time.localeCompare(a.time))
+    .sort((a, b) => b.sortKey.localeCompare(a.sortKey))
     .slice(0, 25);
 }
 
@@ -455,31 +457,38 @@ function RangleDashView(props: DoorViewProps<DashData>) {
     const weekDir = `${year}-${weekStr}`;
 
     try {
-      // Check mtime first — skip reload if unchanged
+      // Check mtime — skip tracker re-parse if unchanged, but always refresh timeline
       const mtime = (await exec(`stat -f '%m' ${trackerPath(wNum)} 2>/dev/null`))?.trim() || '';
-      if (silent && mtime && mtime === lastMtime()) return; // no change
-      setLastMtime(mtime);
+      const trackerUnchanged = silent && mtime && mtime === lastMtime();
+      if (!trackerUnchanged) setLastMtime(mtime);
 
       const now = new Date();
       setLastRefresh(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
 
-      // Read the weekly tracker from filesystem
-      const trackerContent = await exec(
-        `cat ${trackerPath(wNum)} 2>/dev/null || echo ""`
-      ) || '';
+      // Parse tracker content only when it has changed
+      let prs = data()?.prs ?? [];
+      let meetings = data()?.meetings ?? [];
+      let headlines = data()?.headlines ?? [];
+      let weekFocus = data()?.weekFocus ?? '';
 
-      if (!trackerContent.trim()) {
-        setData({ prs: [], meetings: [], timeline: [], headlines: [], week: weekStr, weekFocus: `No tracker found for ${weekDir}` });
-        setLoading(false);
-        return;
+      if (!trackerUnchanged) {
+        const trackerContent = await exec(
+          `cat ${trackerPath(wNum)} 2>/dev/null || echo ""`
+        ) || '';
+
+        if (!trackerContent.trim()) {
+          setData({ prs: [], meetings: [], timeline: [], headlines: [], week: weekStr, weekFocus: `No tracker found for ${weekDir}` });
+          setLoading(false);
+          return;
+        }
+
+        prs = parsePRTable(trackerContent);
+        meetings = parseMeetingTable(trackerContent);
+        headlines = parseHeadlines(trackerContent);
+        weekFocus = parseWeekFocus(trackerContent);
       }
 
-      const prs = parsePRTable(trackerContent);
-      const meetings = parseMeetingTable(trackerContent);
-      const headlines = parseHeadlines(trackerContent);
-      const weekFocus = parseWeekFocus(trackerContent);
-
-      // Get timeline from outline ctx:: markers (scoped to ~week range)
+      // Always refresh timeline — ctx:: markers update independently of tracker file
       const daysBack = (currentWeekNum() - wNum) * 7 + 7;
       const daysStart = (currentWeekNum() - wNum) * 7;
       const cutoffStart = Math.floor(Date.now() / 1000) - (daysBack * 86400);
@@ -541,7 +550,7 @@ function RangleDashView(props: DoorViewProps<DashData>) {
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) {
                 const w = weekNum();
-                props.onNavigate(`${new Date().getFullYear()}-W${w}-rangle-weekly`, { type: 'page' });
+                props.onNavigate?.(`${new Date().getFullYear()}-W${w}-rangle-weekly`, { type: 'page' });
               }
             }}
           >{data()?.week || '...'}</span>
@@ -588,14 +597,14 @@ function RangleDashView(props: DoorViewProps<DashData>) {
           <Show when={openPRs().length > 0}>
             <Section title="ACTIVE PRS" count={openPRs().length}>
               <For each={openPRs()}>{(pr) =>
-                <PRCard pr={pr} onNavigate={(t) => props.onNavigate(t, { type: 'page' })} />
+                <PRCard pr={pr} onNavigate={(t) => props.onNavigate?.(t, { type: 'page' })} />
               }</For>
             </Section>
           </Show>
           <Show when={mergedPRs().length > 0}>
             <Section title="MERGED" count={mergedPRs().length}>
               <For each={mergedPRs()}>{(pr) =>
-                <PRCard pr={pr} onNavigate={(t) => props.onNavigate(t, { type: 'page' })} />
+                <PRCard pr={pr} onNavigate={(t) => props.onNavigate?.(t, { type: 'page' })} />
               }</For>
             </Section>
           </Show>

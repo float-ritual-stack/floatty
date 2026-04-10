@@ -132,7 +132,7 @@ class HttpClient implements FloattyHttpClient {
     if (this.outlineName === 'default') {
       return `${this.url}/api/v1${path}`;
     }
-    return `${this.url}/api/v1/outlines/${this.outlineName}${path}`;
+    return `${this.url}/api/v1/outlines/${encodeURIComponent(this.outlineName)}${path}`;
   }
 
   private headers(): HeadersInit {
