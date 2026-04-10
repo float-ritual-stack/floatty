@@ -862,12 +862,13 @@ pub(crate) fn import_block(
     hook_system: &Arc<HookSystem>,
     mut req: api::ImportBlockRequest,
 ) -> Result<BlockDto, ApiError> {
-    // Fast-fail UUID format check before acquiring any lock
-    if uuid::Uuid::parse_str(&req.id).is_err() {
-        return Err(ApiError::InvalidRequest(format!(
-            "id '{}' is not a valid UUID", req.id
-        )));
-    }
+    // Validate and canonicalise to lowercase — resolve_block_id() normalises lookups
+    // to lowercase, so importing the same UUID with different casing would bypass
+    // the collision check without this step.
+    let parsed_id = uuid::Uuid::parse_str(&req.id).map_err(|_| {
+        ApiError::InvalidRequest(format!("id '{}' is not a valid UUID", req.id))
+    })?;
+    req.id = parsed_id.hyphenated().to_string();
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

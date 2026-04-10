@@ -659,9 +659,17 @@ async fn fetch_outline_names(server_url: &str, api_key: &str) -> Result<Vec<Stri
 
 /// Rebuild the Outlines submenu with the given names
 fn rebuild_outlines_menu(app: &tauri::AppHandle, names: &[String]) -> Result<(), String> {
-    let mut submenu = SubmenuBuilder::with_id(app, "outlines", "Outlines");
+    // Always pin "Default" first so it survives rebuilds even if the API omits it
+    let default_item = MenuItemBuilder::with_id("outline:default", "Default")
+        .build(app)
+        .map_err(|e| format!("default item: {}", e))?;
+    let mut submenu = SubmenuBuilder::with_id(app, "outlines", "Outlines")
+        .item(&default_item);
 
     for name in names {
+        if name == "default" {
+            continue; // already added above with proper capitalisation
+        }
         let item = MenuItemBuilder::with_id(format!("outline:{}", name), name)
             .build(app)
             .map_err(|e| format!("menu item: {}", e))?;

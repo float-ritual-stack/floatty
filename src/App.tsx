@@ -51,19 +51,24 @@ function App() {
   let workspaceLoadStarted = false;
   let workspaceLoadInFlight = false;
 
+  // Shared connect helper — called on first mount AND on "Try Again" retry.
+  // Ensures the saved outline is always restored regardless of which path reconnects.
+  const connectServer = async () => {
+    const client = await initHttpClient();
+    const savedOutline = localStorage.getItem('floatty-outline') || 'default';
+    if (savedOutline !== 'default') {
+      client.setOutline(savedOutline);
+      logger.info(`Restored outline '${savedOutline}' from localStorage`);
+    }
+    logger.info('HTTP client connected to floatty-server');
+    setServerConnected(true);
+  };
+
   // Phase 3: Initialize HTTP client before loading workspace
   // The HTTP client connects to floatty-server (spawned by Tauri)
   onMount(async () => {
     try {
-      const client = await initHttpClient();
-      // Restore outline from localStorage (persists across reloads)
-      const savedOutline = localStorage.getItem('floatty-outline') || 'default';
-      if (savedOutline !== 'default') {
-        client.setOutline(savedOutline);
-        logger.info(`Restored outline '${savedOutline}' from localStorage`);
-      }
-      logger.info('HTTP client connected to floatty-server');
-      setServerConnected(true);
+      await connectServer();
     } catch (err) {
       logger.error(`Failed to connect to floatty-server: ${err}`);
       setServerError(String(err));
@@ -542,8 +547,7 @@ function App() {
               onClick={async () => {
                 setServerError(null);
                 try {
-                  await initHttpClient();
-                  setServerConnected(true);
+                  await connectServer();
                 } catch (err) {
                   setServerError(String(err));
                 }
