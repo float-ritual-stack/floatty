@@ -610,7 +610,9 @@ export function Button(props: BaseComponentProps<{ label: string; variant?: stri
 }
 
 export function TextInput(props: BaseComponentProps<{ label?: string; placeholder?: string; value?: unknown }>) {
-  const [localValue, setLocalValue] = useBoundProp(props.props.value, props.bindings?.value);
+  const [valueRaw, setValue] = useBoundProp(props.props.value, props.bindings?.value);
+  // useBoundProp returns raw value OR signal depending on binding — normalize to callable
+  const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
   return (
     <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
       <Show when={props.props.label}>
@@ -620,9 +622,9 @@ export function TextInput(props: BaseComponentProps<{ label?: string; placeholde
       </Show>
       <input
         type="text"
-        value={String(localValue ?? '')}
+        value={String(localValue() ?? '')}
         placeholder={props.props.placeholder ?? ''}
-        onInput={(e) => setLocalValue(e.currentTarget.value)}
+        onInput={(e) => setValue(e.currentTarget.value)}
         style={{
           background: V.s1,
           color: V.t,
@@ -641,7 +643,9 @@ export function TextInput(props: BaseComponentProps<{ label?: string; placeholde
 }
 
 export function TextArea(props: BaseComponentProps<{ label?: string; placeholder?: string; rows?: number; value?: unknown }>) {
-  const [localValue, setLocalValue] = useBoundProp(props.props.value, props.bindings?.value);
+  const [valueRaw, setValue] = useBoundProp(props.props.value, props.bindings?.value);
+  // useBoundProp returns raw value OR signal depending on binding — normalize to callable
+  const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
   return (
     <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
       <Show when={props.props.label}>
@@ -650,10 +654,10 @@ export function TextArea(props: BaseComponentProps<{ label?: string; placeholder
         </label>
       </Show>
       <textarea
-        value={String(localValue ?? '')}
+        value={String(localValue() ?? '')}
         placeholder={props.props.placeholder ?? ''}
         rows={props.props.rows ?? 3}
-        onInput={(e) => setLocalValue(e.currentTarget.value)}
+        onInput={(e) => setValue(e.currentTarget.value)}
         style={{
           background: V.s1,
           color: V.t,

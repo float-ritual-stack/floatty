@@ -13,6 +13,7 @@ import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { initHttpClient } from './lib/httpClient';
 import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
+import { pendingOutlineSwitch, setPendingOutlineSwitch } from './lib/events/appEvents';
 import * as navigationLib from './lib/navigation';
 import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
@@ -80,16 +81,21 @@ function App() {
     registerHandlers();
   });
 
-  // Listen for outline switch events (dispatched by outline:: handler).
+  // React to outline switch requests from the outline:: handler.
   // Strategy: save to localStorage then reload. Clean re-init avoids SolidJS store reset issues.
-  onMount(() => {
-    const handler = async (e: Event) => {
-      const { name } = (e as CustomEvent).detail;
-      const current = localStorage.getItem('floatty-outline') || 'default';
-      if (name === current) return;
+  // Uses a typed module signal (appEvents.ts) instead of window.dispatchEvent per do-not.md.
+  createEffect(on(pendingOutlineSwitch, (name) => {
+    if (!name) return;
+    // Snapshot name and reset signal before async boundary (SolidJS rule #9).
+    const switchName = name;
+    setPendingOutlineSwitch(null);
 
-      logger.info(`Outline switch: ${current} → ${name}`);
+    const current = localStorage.getItem('floatty-outline') || 'default';
+    if (switchName === current) return;
 
+    logger.info(`Outline switch: ${current} → ${switchName}`);
+
+    void (async () => {
       // Create outline if it doesn't exist — abort if we can't confirm
       const serverUrl = window.__FLOATTY_SERVER_URL__;
       const apiKey = window.__FLOATTY_API_KEY__;
@@ -103,14 +109,14 @@ function App() {
             return;
           }
           const outlines: { name: string }[] = await listResp.json();
-          if (!outlines.some(o => o.name === name)) {
+          if (!outlines.some(o => o.name === switchName)) {
             const createResp = await fetch(`${serverUrl}/api/v1/outlines`, {
               method: 'POST',
               headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name }),
+              body: JSON.stringify({ name: switchName }),
             });
             if (!createResp.ok) {
-              logger.error(`Outline switch aborted: could not create outline '${name}' (${createResp.status})`);
+              logger.error(`Outline switch aborted: could not create outline '${switchName}' (${createResp.status})`);
               return;
             }
           }
@@ -121,12 +127,10 @@ function App() {
       }
 
       // Save + reload — cleanest path, all singletons re-init from scratch
-      localStorage.setItem('floatty-outline', name);
+      localStorage.setItem('floatty-outline', switchName);
       window.location.reload();
-    };
-    window.addEventListener('floatty:switch-outline', handler);
-    onCleanup(() => window.removeEventListener('floatty:switch-outline', handler));
-  });
+    })();
+  }));
 
   // Start sync health checking (polls every 30s, detects WS drift)
   useSyncHealth();

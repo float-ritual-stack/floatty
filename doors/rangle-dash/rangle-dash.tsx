@@ -193,8 +193,9 @@ async function loadMeetingDetails(weekDir: string, meeting: MeetingItem): Promis
         duration = line.replace('duration:', '').trim();
       }
 
-      // Section detection
-      if (line.startsWith('## Key Decisions') || line.startsWith('### ')) {
+      // Section detection — numbered ### N. headers are excluded so they fall through
+      // to the h3 regex below (which captures them as decisions in Scott sync format).
+      if (line.startsWith('## Key Decisions') || (line.startsWith('### ') && !/^### \d+\./.test(line))) {
         section = line.includes('Decision') ? 'decisions' :
                   line.includes('Next') ? 'next' :
                   line.includes('Transcript') ? 'transcript' : section;

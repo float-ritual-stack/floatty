@@ -8,6 +8,7 @@
 
 import type { BlockHandler, ExecutorActions } from './types';
 import { currentOutline } from '../httpClient';
+import { setPendingOutlineSwitch } from '../events/appEvents';
 
 export const outlineHandler: BlockHandler = {
   prefixes: ['outline::'],
@@ -48,7 +49,7 @@ export const outlineHandler: BlockHandler = {
       return;
     }
 
-    // Argument provided → dispatch switch event (App-level listener handles it)
+    // Argument provided → request outline switch via typed app signal (App.tsx handles it)
     const name = arg.replace(/\s*←\s*current\s*$/, '').trim();
     if (name === currentOutline()) {
       actions.setBlockStatus?.(blockId, 'complete');
@@ -56,6 +57,6 @@ export const outlineHandler: BlockHandler = {
     }
 
     actions.setBlockStatus?.(blockId, 'running');
-    window.dispatchEvent(new CustomEvent('floatty:switch-outline', { detail: { name } }));
+    setPendingOutlineSwitch(name);
   },
 };
