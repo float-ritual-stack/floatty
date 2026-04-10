@@ -15,3 +15,10 @@ import { createSignal } from 'solid-js';
  * Reset to null after the switch is processed.
  */
 export const [pendingOutlineSwitch, setPendingOutlineSwitch] = createSignal<string | null>(null);
+
+// HMR cleanup: reset signal so stale subscribers don't linger on hot-reload
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    setPendingOutlineSwitch(null);
+  });
+}

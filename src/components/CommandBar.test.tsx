@@ -71,25 +71,23 @@ describe('CommandBar', () => {
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const input = getByPlaceholderText('Search pages or commands...');
-    // Type "export" to filter to only commands
     fireEvent.input(input, { target: { value: 'export json' } });
-    // FLO-400: Typed text is position 0, arrow down to reach the command
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    // FLO-466: Commands are at position 0 when matched — Enter fires command without ArrowDown
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onCommand).toHaveBeenCalledWith('export-json');
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
-  it('Enter without ArrowDown on matching command creates page, not command (FLO-400)', () => {
+  it('Enter without ArrowDown on matching command selects command (FLO-466)', () => {
     const { getByPlaceholderText } = render(() => (
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
     const input = getByPlaceholderText('Search pages or commands...');
     fireEvent.input(input, { target: { value: 'export json' } });
-    // Without ArrowDown, typed text at position 0 is selected — fires onNavigate, not onCommand
+    // FLO-466: Commands first — Enter selects command at position 0, not create-page
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onCommand).not.toHaveBeenCalled();
-    expect(onNavigate).toHaveBeenCalledWith('export json');
+    expect(onCommand).toHaveBeenCalledWith('export-json');
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 
   it('Enter with novel query navigates to typed text (create page) (FLO-400)', () => {

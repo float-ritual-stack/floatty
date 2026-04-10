@@ -111,8 +111,8 @@ describe('useCommandBar', () => {
     const commands = bar.filteredResults().filter(r => r.type === 'command');
     expect(commands.length).toBe(1);
     expect(commands[0].id).toBe('export-binary');
-    // Also has typed text item at position 0
-    expect(bar.filteredResults()[0]).toMatchObject({ label: 'binary', isCreate: true });
+    // Commands come first (FLO-466: Enter should select command, not create-page)
+    expect(bar.filteredResults()[0]).toMatchObject({ id: 'export-binary' });
   });
 
   it('returns typed text item even when no fuzzy matches (FLO-400)', () => {
@@ -140,8 +140,8 @@ describe('useCommandBar', () => {
     const commands = bar.filteredResults().filter(r => r.type === 'command');
     expect(commands.length).toBeGreaterThan(0);
     expect(commands.map(c => c.id)).toContain('export-binary');
-    // Typed text is first result overall
-    expect(bar.filteredResults()[0]).toMatchObject({ label: 'bianry', isCreate: true });
+    // Commands come first (FLO-466: Enter should select command, not create-page)
+    expect(bar.filteredResults()[0]).toMatchObject({ id: 'export-binary' });
   });
 
   it('navigate("down") wraps from last to first', () => {

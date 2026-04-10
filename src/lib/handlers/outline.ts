@@ -56,7 +56,9 @@ export const outlineHandler: BlockHandler = {
       return;
     }
 
-    actions.setBlockStatus?.(blockId, 'running');
+    // Handler's job is done: signal fired, App.tsx effect owns the rest.
+    // Set 'complete' so the block doesn't spin forever if App.tsx aborts.
     setPendingOutlineSwitch(name);
+    actions.setBlockStatus?.(blockId, 'complete');
   },
 };

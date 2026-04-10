@@ -27,11 +27,29 @@ interface LogData {
   [key: string]: unknown;
 }
 
+/**
+ * Serialize a single value for logging.
+ * JSON.stringify silently drops Error fields (non-enumerable) and Event fields.
+ * This makes them explicit.
+ */
+function serializeLogValue(val: unknown): unknown {
+  if (val instanceof Error) {
+    return { message: val.message, name: val.name, stack: val.stack };
+  }
+  if (val instanceof Event) {
+    return { type: val.type, isTrusted: val.isTrusted };
+  }
+  return val;
+}
+
 function formatMessage(message: string, data?: LogData): string {
   if (!data || Object.keys(data).length === 0) {
     return message;
   }
-  return `${message} ${JSON.stringify(data)}`;
+  const serialized = Object.fromEntries(
+    Object.entries(data).map(([k, v]) => [k, serializeLogValue(v)])
+  );
+  return `${message} ${JSON.stringify(serialized)}`;
 }
 
 async function logToRust(level: LogLevel, target: string, message: string): Promise<void> {
@@ -105,6 +123,9 @@ export function createLogger(target: string) {
  * Only active when INTERCEPT_CONSOLE is true
  */
 if (INTERCEPT_CONSOLE) {
+  const serializeArg = (a: unknown): string =>
+    typeof a === 'string' ? a : JSON.stringify(serializeLogValue(a));
+
   const parseConsoleArgs = (args: unknown[]): { target: string; message: string } => {
     // Try to extract target from [Target] prefix in first string arg
     const firstArg = args[0];
@@ -113,16 +134,12 @@ if (INTERCEPT_CONSOLE) {
       if (match) {
         const target = match[1];
         const rest = match[2];
-        const remaining = args.slice(1).map(a =>
-          typeof a === 'string' ? a : JSON.stringify(a)
-        ).join(' ');
+        const remaining = args.slice(1).map(serializeArg).join(' ');
         return { target, message: rest ? `${rest} ${remaining}`.trim() : remaining };
       }
     }
     // No target prefix - use 'console' as target
-    const message = args.map(a =>
-      typeof a === 'string' ? a : JSON.stringify(a)
-    ).join(' ');
+    const message = args.map(serializeArg).join(' ');
     return { target: 'console', message };
   };
 
