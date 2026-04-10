@@ -6,6 +6,41 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.0] - 2026-04-10
+
+### Features
+
+- **Multi-outline support**: Switch between named outlines via `outline::` handler,
+  native macOS Outlines menu, or command bar — each outline is an independent Y.Doc
+  with its own SQLite, search index, and backup namespace
+- **outline:: handler**: `outline::` lists available outlines with current marker;
+  `outline:: name` switches to that outline (creates if needed, then reloads)
+- **Per-outline WebSocket routing**: WS connections carry `?outline=name` so the
+  server broadcasts to the correct outline subscribers
+- **Active connections + LRU eviction**: Server tracks which outlines have connected
+  clients; evicts idle outlines when slot limit is reached
+- **Block import endpoint**: `POST /api/v1/blocks/import` for bulk block creation
+  with batch Y.Doc transactions
+- **outline:: command bar integration**: Type outline name in command bar to switch
+- **Command bar ordering** (FLO-466): Matched commands surface above create-page
+  option — Enter now selects the command without requiring ArrowDown
+
+### Bug Fixes
+
+- **Error serialization in logger**: `{"err":{}}` in logs is now
+  `{"err":{"message":"...","name":"...","stack":"..."}}` — `Error` properties are
+  non-enumerable and were silently dropped by `JSON.stringify`
+- **outline handler**: Block status no longer stuck `'running'` if outline switch
+  is aborted — handler sets `'complete'` after signaling App.tsx
+- **appEvents HMR**: Added `import.meta.hot.dispose()` for `pendingOutlineSwitch`
+  signal to prevent stale subscribers on hot-reload
+- **PTY resize deduplication**: Coalesced resize chatter — dedup gate, drag-end
+  settle delay, sourceEvent labels for log tracing
+- **Backup scoping**: IDB backup namespace now includes outline name — dev/release
+  and different outlines no longer share IndexedDB state
+
+---
+
 ## [0.10.10] - 2026-04-07
 
 ### Features
