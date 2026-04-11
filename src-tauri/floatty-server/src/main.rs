@@ -38,9 +38,11 @@ fn setup_logging(log_dir: &std::path::Path) {
         .with_file(false)
         .with_line_number(false);
 
-    // Include floatty_core targets so hook system phases are visible
+    // Include floatty_core + floatty_startup (target override) so hook system phases are visible.
+    // EnvFilter matches on the log target, not crate path — the `target: "floatty_startup"` override
+    // in hooks/system.rs bypasses the crate-path filter and needs its own entry.
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("floatty_server=info,floatty_core=info,tower_http=warn"));
+        .unwrap_or_else(|_| EnvFilter::new("floatty_server=info,floatty_core=info,floatty_startup=info,tower_http=warn"));
 
     #[cfg(debug_assertions)]
     {

@@ -198,8 +198,9 @@ fn setup_logging(log_dir: &std::path::Path) {
     };
     
     // ENV filter: RUST_LOG=debug or default to info
+    // tauri_plugin_pty floods ~80 lines/session with PTY spawn details — demote to warn.
     let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info"))
+        .or_else(|_| EnvFilter::try_new("info,tauri_plugin_pty=warn"))
         .unwrap();
     
     // Initialize tracing subscriber
