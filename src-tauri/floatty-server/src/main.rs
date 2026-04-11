@@ -15,13 +15,64 @@ use floatty_server::{
     config::{BackupConfig, ServerConfig},
     start_heartbeat, ws, OutlineManager, WsBroadcaster,
 };
+use opentelemetry::KeyValue;
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use opentelemetry_otlp::{LogExporter, Protocol, WithExportConfig};
+use opentelemetry_sdk::{logs::SdkLoggerProvider, Resource};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-fn setup_logging(log_dir: &std::path::Path) {
+/// Build profile tag surfaced as the `deployment.environment` OTel resource
+/// attribute → `deployment_environment` Loki label. Lets you query dev vs
+/// release separately: `{service_name="floatty-server",deployment_environment="dev"}`.
+#[cfg(debug_assertions)]
+const BUILD_PROFILE: &str = "dev";
+#[cfg(not(debug_assertions))]
+const BUILD_PROFILE: &str = "release";
+
+/// Build an OTLP log exporter + provider when an endpoint is configured.
+///
+/// Returns None if the endpoint is None or the exporter fails to build. In both
+/// cases the server continues with file + stdout logging only. This keeps floatty
+/// functional on untrusted networks and when the collector is unreachable — the
+/// local JSONL file is always the source of truth, OTLP is fire-and-forget shipping.
+fn init_otlp_logs(endpoint: Option<&str>) -> Option<SdkLoggerProvider> {
+    let endpoint = endpoint?;
+
+    let exporter = match LogExporter::builder()
+        .with_http()
+        .with_protocol(Protocol::HttpBinary)
+        .with_endpoint(endpoint)
+        .build()
+    {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("OTLP log exporter build failed: {e}. Continuing without OTLP export.");
+            return None;
+        }
+    };
+
+    let resource = Resource::builder()
+        .with_service_name("floatty-server")
+        .with_attribute(KeyValue::new(
+            "service.version",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_attribute(KeyValue::new("deployment.environment", BUILD_PROFILE))
+        .build();
+
+    Some(
+        SdkLoggerProvider::builder()
+            .with_batch_exporter(exporter)
+            .with_resource(resource)
+            .build(),
+    )
+}
+
+fn setup_logging(log_dir: &std::path::Path, otlp_endpoint: Option<&str>) -> Option<SdkLoggerProvider> {
     // JSON file layer — rotates daily, appends to same files as Tauri process
     let file_appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
@@ -41,36 +92,79 @@ fn setup_logging(log_dir: &std::path::Path) {
     // Include floatty_core + floatty_startup (target override) so hook system phases are visible.
     // EnvFilter matches on the log target, not crate path — the `target: "floatty_startup"` override
     // in hooks/system.rs bypasses the crate-path filter and needs its own entry.
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("floatty_server=info,floatty_core=info,floatty_startup=info,tower_http=warn"));
+    //
+    // hyper/reqwest filtered to warn to prevent OTLP export telemetry-induced-telemetry loops
+    // (the HTTP client used by the OTLP exporter emits its own tracing events).
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(
+            "floatty_server=info,floatty_core=info,floatty_startup=info,\
+             tower_http=warn,hyper=warn,reqwest=warn,opentelemetry=off",
+        )
+    });
 
+    // Optional OTLP log layer — None if endpoint unset or exporter build fails.
+    // Option<L> implements Layer<S> for any L: Layer<S>, so None is a no-op in the chain.
+    let logger_provider = init_otlp_logs(otlp_endpoint);
+    let otlp_layer = logger_provider
+        .as_ref()
+        .map(OpenTelemetryTracingBridge::new);
+
+    // Compose via cfg split rather than Option<stdout> — fmt::layer() infers its subscriber
+    // type from context, and pinning it to Option<Layer<Registry>> breaks composition once
+    // the chain is already Layered<...>.
     #[cfg(debug_assertions)]
-    {
-        let stdout_layer = fmt::layer().with_target(true).with_ansi(true);
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(file_layer)
-            .with(stdout_layer)
-            .init();
-    }
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(file_layer)
+        .with(otlp_layer)
+        .with(fmt::layer().with_target(true).with_ansi(true))
+        .init();
 
     #[cfg(not(debug_assertions))]
-    {
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(file_layer)
-            .init();
-    }
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(file_layer)
+        .with(otlp_layer)
+        .init();
+
+    logger_provider
 }
 
 #[tokio::main]
 async fn main() {
-    // Initialize structured JSONL logging to same files as Tauri process
+    // Load config first — otlp_endpoint lives in config.toml, and we need it
+    // before setup_logging() so the OTLP layer can be wired. Any config parse
+    // errors will go to eprintln (tracing subscriber not up yet).
+    let config = ServerConfig::load();
+
+    // Initialize structured JSONL logging to same files as Tauri process.
+    // OTLP endpoint resolution order (first match wins):
+    //   1. OTEL_EXPORTER_OTLP_LOGS_ENDPOINT (signal-specific, honors user shell env)
+    //   2. OTEL_EXPORTER_OTLP_ENDPOINT      (general OTLP base URL)
+    //   3. config.otlp_endpoint             (floatty config.toml)
+    //
+    // The signal-specific env var is a full URL to the logs endpoint (e.g.,
+    // `http://127.0.0.1:3100/otlp/v1/logs` for Loki's native OTLP receiver).
+    // The general form is a base URL; the crate appends `/v1/logs`.
+    // config.toml treats the value as the general form (base URL).
     let log_dir = floatty_server::config::data_dir().join("logs");
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
         eprintln!("Failed to create log directory {}: {}", log_dir.display(), e);
     }
-    setup_logging(&log_dir);
+    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+        .ok()
+        .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok())
+        .or_else(|| config.otlp_endpoint.clone());
+    let _logger_provider = setup_logging(&log_dir, otlp_endpoint.as_deref());
+    if let Some(ref ep) = otlp_endpoint {
+        if _logger_provider.is_some() {
+            tracing::info!(
+                target: "floatty_startup",
+                endpoint = %ep,
+                "otlp_log_export_enabled"
+            );
+        }
+    }
 
     // Preflight: verify data dir matches build profile (FLO-317 "never again")
     {
@@ -84,9 +178,6 @@ async fn main() {
             panic!("BUG: release server resolved to dev data dir. Check config::data_dir().");
         }
     }
-
-    // Load config from file
-    let config = ServerConfig::load();
 
     // Environment variables override config file (for Tauri spawn)
     let port: u16 = std::env::var("FLOATTY_PORT")

@@ -37,6 +37,19 @@ pub struct ServerConfig {
     /// Enable API key authentication (default: true)
     #[serde(default = "default_auth_enabled")]
     pub auth_enabled: bool,
+
+    /// OTLP log export endpoint (e.g., `http://127.0.0.1:3100/otlp/v1/logs`
+    /// for a local Loki instance, or any OTLP HTTP collector).
+    ///
+    /// When set, floatty-server ships logs to this OTLP HTTP collector in addition
+    /// to writing them to the local JSONL file. Leave unset (or commented out) to
+    /// disable OTLP export — floatty still works fine offline, the file is always
+    /// the source of truth.
+    ///
+    /// Env var overrides (first match wins): `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
+    /// `OTEL_EXPORTER_OTLP_ENDPOINT`, then this config field.
+    #[serde(default)]
+    pub otlp_endpoint: Option<String>,
 }
 
 fn default_enabled() -> bool {
@@ -72,6 +85,7 @@ impl Default for ServerConfig {
             api_key: None,
             bind: default_bind(),
             auth_enabled: default_auth_enabled(),
+            otlp_endpoint: None,
         }
     }
 }
