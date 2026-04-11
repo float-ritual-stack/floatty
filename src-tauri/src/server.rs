@@ -35,11 +35,96 @@ impl Drop for ServerState {
     }
 }
 
+/// Check whether a PID is currently alive (kill -0 semantics).
+fn pid_is_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Send a signal to a PID. Returns true if `kill` reported success.
+fn send_signal(pid: u32, signal: &str) -> bool {
+    std::process::Command::new("kill")
+        .args([signal, &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Wait up to `timeout` for `pid` to exit, polling every 50ms.
+fn wait_for_exit(pid: u32, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if !pid_is_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    !pid_is_alive(pid)
+}
+
+/// Verify that `pid` is actually a floatty-server process before signaling it.
+///
+/// Between floatty exits and the next launch, the OS can recycle the PID we
+/// wrote to disk. Without this check, `kill_stale_server` could SIGKILL a
+/// completely unrelated process that happened to inherit the number. We use
+/// `ps -p <pid> -o comm=` (BSD/macOS + GNU-compat) to read the command name
+/// and require it to contain "floatty-server".
+///
+/// Returns true if verification succeeds OR if we can't determine (we err on
+/// the side of allowing the kill — the alternative is leaving a real zombie
+/// in place). Returns false only when we have positive evidence the PID
+/// belongs to something else.
+fn verify_pid_is_floatty_server(pid: u32) -> bool {
+    let output = match std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!(pid = pid, error = %e, "ps failed; allowing signal as fallback");
+            return true;
+        }
+    };
+
+    if !output.status.success() {
+        // ps exited non-zero — usually means PID no longer exists. pid_is_alive
+        // already returned true moments ago, so this is a race. Allow the signal.
+        return true;
+    }
+
+    let comm = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if comm.is_empty() {
+        return true;
+    }
+
+    // Match the binary basename. `ps comm=` gives the program name without path.
+    // macOS truncates long names, so use `contains` not exact match.
+    let is_ours = comm.contains("floatty-server") || comm.contains("float-pty");
+    if !is_ours {
+        tracing::error!(
+            pid = pid,
+            command = %comm,
+            "PID from file does NOT belong to floatty-server — refusing to signal (OS likely recycled the PID)"
+        );
+    }
+    is_ours
+}
+
 /// Kill a stale server process using saved PID file.
-/// Returns true if a stale server was found and killed.
+/// Returns true if the PID file was consumed (either the process is now dead
+/// or there was no live process to begin with). Returns false only if a
+/// living process could not be killed — in that case the caller should
+/// abort spawning a new server, since the port is still held.
+///
+/// Escalates SIGTERM → SIGKILL. A zombie in accept-but-never-respond state
+/// may ignore SIGTERM if its signal handler is wedged on the same lock
+/// that broke the HTTP path. SIGKILL is uncatchable and always works.
 fn kill_stale_server(pid_path: &PathBuf) -> bool {
     if !pid_path.exists() {
-        return false;
+        return true;
     }
 
     // Read PID from file
@@ -48,7 +133,7 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
         Err(e) => {
             tracing::error!(error = %e, "Failed to read PID file");
             let _ = std::fs::remove_file(pid_path);
-            return false;
+            return true;
         }
     };
 
@@ -57,39 +142,81 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
         Err(_) => {
             tracing::warn!(pid_str = %pid_str, "Invalid PID in file");
             let _ = std::fs::remove_file(pid_path);
-            return false;
+            return true;
         }
     };
 
-    // Check if process is still running (using kill -0 which doesn't actually kill)
-    let is_running = std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !is_running {
+    if !pid_is_alive(pid) {
         tracing::info!(pid = pid, "PID from file is not running (stale PID file)");
         let _ = std::fs::remove_file(pid_path);
+        return true;
+    }
+
+    // PID recycling guard: between our last shutdown and now, the OS may have
+    // assigned this number to something unrelated. Verify the process is
+    // actually a floatty-server before sending signals.
+    //
+    // Known TOCTOU window: the process could exit and its PID be recycled
+    // between this verify call and the send_signal calls below. Closing that
+    // window requires pidfd_send_signal (Linux-only) or equivalent; macOS has
+    // no atomic primitive. The window is microseconds and the probability is
+    // negligible, so we accept the race.
+    if !verify_pid_is_floatty_server(pid) {
+        // Not our process — remove the stale file so we don't keep trying,
+        // but don't touch the mystery process.
+        let _ = std::fs::remove_file(pid_path);
+        return true;
+    }
+
+    // SIGTERM first — give the process a chance to clean up.
+    //
+    // State-transition table for this path (send_signal × process-state-after):
+    //   (true,  exited)  → return true (clean exit)
+    //   (true,  alive)   → escalate to SIGKILL (real zombie ignoring SIGTERM)
+    //   (false, exited)  → return true (benign race: process exited between
+    //                      kill -0 and kill -TERM, the port is already free)
+    //   (false, alive)   → escalate to SIGKILL (EPERM or similar; SIGKILL
+    //                      will also fail and bail cleanly)
+    tracing::warn!(pid = pid, "Killing stale server process (SIGTERM)");
+    if !send_signal(pid, "-TERM") {
+        // Distinguish benign race from real delivery failure by re-checking.
+        if !pid_is_alive(pid) {
+            let _ = std::fs::remove_file(pid_path);
+            tracing::info!(pid = pid, "Stale server exited before SIGTERM was delivered");
+            return true;
+        }
+        tracing::warn!(pid = pid, "SIGTERM delivery failed, escalating immediately");
+    } else if wait_for_exit(pid, std::time::Duration::from_millis(500)) {
+        let _ = std::fs::remove_file(pid_path);
+        tracing::info!(pid = pid, "Stale server exited on SIGTERM");
+        return true;
+    }
+
+    // SIGTERM ignored or undeliverable — escalate to SIGKILL. This is the
+    // zombie-recovery path: a server wedged on a poisoned mutex will not
+    // respond to SIGTERM because its runtime can't schedule the handler.
+    //
+    // Same state table as SIGTERM above — a send_signal=false result could
+    // still mean the process exited on its own during the race.
+    tracing::warn!(pid = pid, "Escalating to SIGKILL");
+    if !send_signal(pid, "-KILL") {
+        if !pid_is_alive(pid) {
+            let _ = std::fs::remove_file(pid_path);
+            tracing::info!(pid = pid, "Stale server exited before SIGKILL was delivered");
+            return true;
+        }
+        tracing::error!(pid = pid, "SIGKILL delivery failed — cannot recover");
         return false;
     }
 
-    // Process exists - kill it
-    tracing::warn!(pid = pid, "Killing stale server process");
-    let killed = std::process::Command::new("kill")
-        .arg(&pid.to_string())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if killed {
-        // Wait a moment for process to exit
-        std::thread::sleep(std::time::Duration::from_millis(200));
+    if wait_for_exit(pid, std::time::Duration::from_millis(500)) {
         let _ = std::fs::remove_file(pid_path);
-        tracing::info!(pid = pid, "Stale server killed successfully");
+        tracing::info!(pid = pid, "Stale server exited on SIGKILL");
         true
     } else {
-        tracing::error!(pid = pid, "Failed to kill stale server");
+        // SIGKILL delivered but process still alive — kernel pathology.
+        // Don't delete the PID file — next launch will try again.
+        tracing::error!(pid = pid, "SIGKILL failed — zombie still holding port");
         false
     }
 }
@@ -124,7 +251,6 @@ fn remove_pid_file(pid_path: &PathBuf) {
 /// If a server is already running on the port, connects to it instead.
 ///
 /// Returns `ServerState` on success, or None if spawn/health-check fails.
-/// Uses eprintln for early boot logging (before tauri_plugin_log is initialized).
 ///
 /// # Arguments
 /// * `paths` - Data paths (used for PID file and passed to subprocess via FLOATTY_DATA_DIR)
@@ -137,7 +263,12 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
     // Previous behavior killed PID from stale file first, which murdered
     // a healthy server from the previous dev session, then the replacement
     // couldn't start fast enough within the 3s health check window.
-    if wait_for_server_health(&url) {
+    //
+    // Single-probe with a tight 1s timeout: a healthy server responds in
+    // <10ms; anything slower is treated as dead. We can't retry here — a
+    // zombie accept-but-never-respond server would otherwise delay startup
+    // by 30s before we give up and kill it.
+    if probe_server_health(&url, 1) {
         tracing::info!(url = %url, "Reusing existing server (healthy)");
         let api_key = read_api_key_from_config(&paths.config)?;
         return Some(ServerState {
@@ -147,8 +278,17 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
         });
     }
 
-    // Server not responding — kill any stale process, then spawn fresh
-    kill_stale_server(&pid_file);
+    // Server not responding — kill any stale process, then spawn fresh.
+    // If kill_stale_server returns false, a zombie is still holding the
+    // port and a fresh spawn would panic with AddrInUse. Bail out so the
+    // parent app can surface a meaningful error instead of silently dying.
+    if !kill_stale_server(&pid_file) {
+        tracing::error!(
+            "Cannot spawn floatty-server: stale process still holds the port. \
+             Manual intervention required (kill -9 the stale PID)."
+        );
+        return None;
+    }
 
     // No server running, spawn one
     let server_binary = find_server_binary()?;
@@ -159,12 +299,29 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
     // Redirect stderr to a log file so server tracing output is captured in release builds
     // (inherit goes nowhere when launched from .app bundle)
     let log_dir = paths.root.join("logs");
-    std::fs::create_dir_all(&log_dir).ok();
-    let server_log = std::fs::OpenOptions::new()
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        // Non-fatal: we'll fall through to stderr inherit below, which goes
+        // nowhere in the .app bundle. Log so the disappearance is visible.
+        tracing::warn!(
+            error = %e,
+            log_dir = ?log_dir,
+            "Failed to create server log dir; server.log will be absent and stderr will inherit (goes nowhere in .app bundle)"
+        );
+    }
+    let server_log = match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(log_dir.join("server.log"))
-        .ok();
+    {
+        Ok(f) => Some(f),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to open server.log; stderr will inherit (goes nowhere in .app bundle)"
+            );
+            None
+        }
+    };
 
     let mut cmd = std::process::Command::new(&server_binary);
     cmd.env("FLOATTY_DATA_DIR", &paths.root)
@@ -212,8 +369,20 @@ fn read_api_key_from_config(config_path: &PathBuf) -> Option<String> {
         return None;
     }
 
-    let content = std::fs::read_to_string(config_path).ok()?;
-    let doc: toml::Table = content.parse().ok()?;
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(path = ?config_path, error = %e, "Failed to read config file");
+            return None;
+        }
+    };
+    let doc: toml::Table = match content.parse() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!(path = ?config_path, error = %e, "Failed to parse config TOML");
+            return None;
+        }
+    };
 
     // Read from [server].api_key
     let api_key = doc
@@ -224,7 +393,7 @@ fn read_api_key_from_config(config_path: &PathBuf) -> Option<String> {
         .map(|s| s.to_string());
 
     if api_key.is_none() {
-        log::warn!("No [server].api_key found in config");
+        tracing::warn!("No [server].api_key found in config");
     }
 
     api_key
@@ -312,25 +481,35 @@ fn get_target_triple() -> &'static str {
     return "unknown";
 }
 
-/// Wait for server health endpoint to respond (with retries)
-fn wait_for_server_health(base_url: &str) -> bool {
+/// Single health probe with a hard curl timeout. Returns true only if the
+/// endpoint returns HTTP 200 within the timeout.
+///
+/// Uses `curl -m` because curl has NO default response timeout — a zombie
+/// server in accept-but-never-respond state will otherwise hang forever.
+fn probe_server_health(base_url: &str, timeout_secs: u32) -> bool {
     let health_url = format!("{}/api/v1/health", base_url);
-    let max_attempts = 30; // 3 seconds total
+    let timeout_str = timeout_secs.to_string();
+    match std::process::Command::new("curl")
+        .args(["-s", "-m", &timeout_str, "-o", "/dev/null", "-w", "%{http_code}", &health_url])
+        .output()
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).trim() == "200",
+        Err(_) => false,
+    }
+}
+
+/// Wait for server health endpoint to respond (with retries).
+/// Used AFTER spawning a fresh server to give it time to bind and start serving.
+fn wait_for_server_health(base_url: &str) -> bool {
+    // Worst case: 30 × (1s probe timeout + 100ms sleep) ≈ 33s.
+    // In practice a healthy fresh server responds within 1-2 attempts (~200ms).
+    let max_attempts = 30;
     let delay = std::time::Duration::from_millis(100);
 
     for attempt in 1..=max_attempts {
-        match std::process::Command::new("curl")
-            .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &health_url])
-            .output()
-        {
-            Ok(output) => {
-                let status = String::from_utf8_lossy(&output.stdout);
-                if status.trim() == "200" {
-                    log::info!("Server health check passed (attempt {})", attempt);
-                    return true;
-                }
-            }
-            Err(_) => {}
+        if probe_server_health(base_url, 1) {
+            tracing::info!(attempt = attempt, "Server health check passed");
+            return true;
         }
         std::thread::sleep(delay);
     }

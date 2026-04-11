@@ -1,13 +1,13 @@
 ---
 description: Systematic bug pattern sweep across codebase
-argument-hint: [pattern number 1-8 or "all"]
+argument-hint: [pattern number 1-9 or "all"]
 ---
 
 # Floatty Bug Pattern Sweep: $ARGUMENTS
 
 Systematic sweep for known bug patterns. Run periodically to catch issues before they bite.
 
-## The Eight Patterns
+## The Nine Patterns
 
 | # | Pattern | Symptom | Fix |
 |---|---------|---------|-----|
@@ -19,6 +19,7 @@ Systematic sweep for known bug patterns. Run periodically to catch issues before
 | 6 | HMR Singletons | State accumulates on reload | dispose() cleanup |
 | 7 | Symmetry / Hotfix Drift | Fix in one place, siblings use old way | Grep siblings, fix all or document why safe |
 | 8 | Logging Discipline Violations | Secrets in logs, drops pre-init, mode drift | Apply @.claude/rules/logging-discipline.md |
+| 9 | Hot-Path `#[tracing::instrument]` | High-cardinality fields promoted to Loki labels, explodes index | Loki `log_attributes` allowlist BEFORE shipping, or use `target:` override |
 
 ## Sweep Instructions
 
@@ -154,6 +155,33 @@ Both `src-tauri/floatty-server/src/main.rs` `setup_logging()` and `src-tauri/src
 | Critical | main.rs:182 | 1 | Endpoint URL logged raw | Mask to metadata-only |
 | Warning | config.rs:208 | 2 | `tracing::warn!` in pre-init call graph | Switch to `eprintln!` |
 | Note | main.rs:386 | 4 | Comment says stdout, code uses stderr | Fix comment |
+
+### Pattern 9: Hot-Path `#[tracing::instrument]` Cardinality
+
+**Context**: Loki's default OTLP mapping promotes every tracing structured field to a label. Fields that vary per request (`elapsed_ms`, `block_id`, `request_id`, `path`, `user_id`) explode Loki's index. Startup-rate events are fine; hot-path events are not — without an `otlp_config.log_attributes` allowlist on the Loki side, a single `#[tracing::instrument]` on a request handler ships a label value per request.
+
+**Rule**: Before any new `#[tracing::instrument]` or `tracing::*!` with high-cardinality fields lands on a hot path (per-request, per-block, per-keystroke), either (a) configure the Loki allowlist to ignore the cardinal fields, or (b) use a `target:` override excluded from the OTLP filter chain.
+
+```bash
+# All #[tracing::instrument] attributes
+grep -rn '#\[tracing::instrument' src-tauri/ --include='*.rs'
+
+# Hot-path indicators: instrumented functions on axum handlers, Y.Doc ops, WS broadcasts
+grep -rn -B1 '#\[tracing::instrument' src-tauri/floatty-server/src/api.rs src-tauri/floatty-server/src/ws.rs src-tauri/floatty-core/src/store.rs
+```
+
+For each hit, verify:
+- Does the function run on a hot path (per-request/per-block/per-event)?
+- Are the captured fields low-cardinality (enums, booleans, bounded counts) or high-cardinality (IDs, timings, paths, text)?
+- Is the Loki `log_attributes` allowlist configured for this deployment?
+- If not, is the event filtered out of OTLP via `target:` + EnvFilter off entry?
+
+See `.claude/rules/config-and-logging.md` "Cardinality warning" section and `.claude/rules/do-not.md` "Don't promote high-cardinality tracing structured fields".
+
+**Severity rubric**:
+- Critical: Hot-path instrumentation with ID/timing fields, OTLP active, no Loki allowlist
+- Warning: Hot-path instrumentation with low-cardinality fields — still worth reviewing
+- Note: Startup-rate instrumentation (fine as-is, documented here for completeness)
 
 ## Report Format
 
