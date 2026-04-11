@@ -9,6 +9,12 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test",
-    "lint": "turbo run lint"
+    "test:run": "pnpm --filter float-pty test:run",
+    "lint": "turbo run lint",
+    "preview": "pnpm --filter float-pty preview",
+    "tauri": "pnpm --filter float-pty tauri",
+    "tauri:dev": "pnpm --filter float-pty tauri:dev",
+    "tauri:dev:fresh": "pnpm --filter float-pty tauri:dev:fresh",
+    "kill-server": "pnpm --filter float-pty kill-server"
   }
 }
