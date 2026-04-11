@@ -814,18 +814,17 @@ mod tests {
         block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
     }
 
-    fn open_test_store() -> Arc<YDocStore> {
+    fn open_test_store() -> (Arc<YDocStore>, tempfile::TempDir) {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        // Keep tempdir alive by leaking — acceptable in tests
-        std::mem::forget(dir);
-        Arc::new(YDocStore::open(&db_path, "test").unwrap())
+        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
+        (store, dir)
     }
 
     #[test]
     fn test_cold_start_ordering_container_before_children() {
         // Standard order: container created before children
-        let store = open_test_store();
+        let (store, _dir) = open_test_store();
         insert_block(&store, "container-1", "pages::", None);
         insert_block(&store, "page-a", "# Home", Some("container-1"));
         insert_block(&store, "page-b", "# Notes", Some("container-1"));
@@ -846,7 +845,7 @@ mod tests {
         // Bug scenario: children inserted into store before the container.
         // Without rebuild_from_store, container_id would be None when children
         // are processed → both pages appear as stubs.
-        let store = open_test_store();
+        let (store, _dir) = open_test_store();
         // Insert children first (simulates HashMap ordering where children come before container)
         insert_block(&store, "page-a", "# Home", Some("container-1"));
         insert_block(&store, "page-b", "# Notes", Some("container-1"));
@@ -867,7 +866,7 @@ mod tests {
     #[test]
     fn test_cold_start_no_pages_container() {
         // Outlines without a pages:: container should still work (no crash, empty existing)
-        let store = open_test_store();
+        let (store, _dir) = open_test_store();
         insert_block(&store, "block-1", "# Some Heading", None);
         insert_block(&store, "block-2", "Regular content [[Some Heading]]", None);
 
@@ -883,7 +882,7 @@ mod tests {
     #[test]
     fn test_cold_start_does_not_treat_non_root_pages_container_as_container() {
         // A pages:: block nested inside another block should NOT become the container
-        let store = open_test_store();
+        let (store, _dir) = open_test_store();
         insert_block(&store, "parent-1", "Some parent", None);
         insert_block(&store, "nested-pages", "pages::", Some("parent-1")); // nested, has a parent
         insert_block(&store, "child-of-nested", "# Home", Some("nested-pages"));
