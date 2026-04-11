@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/**/*.{ts,tsx}"
+  - "apps/floatty/src/**/*.{ts,tsx}"
 ---
 
 # Y.Doc Architecture Patterns

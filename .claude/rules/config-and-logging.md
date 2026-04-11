@@ -58,7 +58,7 @@ jq 'select(.target == "js" and .fields.js_target == "useSyncedYDoc")' ~/.floatty
 jq 'select(.fields.duration_ms > 1000)' ~/.floatty-dev/logs/floatty.*.jsonl
 ```
 
-See `docs/architecture/LOGGING_STRATEGY.md` for complete guide.
+See `apps/floatty/docs/architecture/LOGGING_STRATEGY.md` for complete guide.
 
 ### EnvFilter Target Gotcha (floatty_startup)
 

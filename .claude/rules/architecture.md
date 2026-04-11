@@ -79,7 +79,7 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `layoutTypes.ts` | Layout tree types + pure transforms |
 | `blockTypes.ts` | Block type detection (`sh::`, `ai::`, etc.) |
 | `inlineParser.ts` | Inline markdown tokenizer + wikilinks |
-| `navigation.ts` | Unified navigation (navigateToBlock, navigateToPage). See `docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md` |
+| `navigation.ts` | Unified navigation (navigateToBlock, navigateToPage). See `apps/floatty/docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md` |
 | `expansionPolicy.ts` | Unified expansion logic — one function for all expand/collapse triggers |
 | `handlers/artifactHandler.ts` | JSX transpilation for artifact:: |
 | `handlers/doorLoader.ts` | Door discovery + hot-reload |
@@ -99,7 +99,7 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `outputSummaryHook.ts` | Extracts output summaries for search indexing |
 | `sendContextHook.ts` | Sends block context to ctx:: aggregation pipeline |
 
-Hooks subscribe to `eventBus` with origin filtering. See `docs/architecture/FLOATTY_HOOK_SYSTEM.md`.
+Hooks subscribe to `eventBus` with origin filtering. See `apps/floatty/docs/architecture/FLOATTY_HOOK_SYSTEM.md`.
 
 ### Hooks (`src/hooks/`)
 | File | Purpose |

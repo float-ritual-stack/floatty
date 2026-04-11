@@ -1,12 +1,12 @@
 ---
 paths:
-  - "doors/**/*"
-  - "src/lib/handlers/doorLoader.ts"
-  - "src/lib/handlers/doorAdapter.ts"
-  - "src/lib/handlers/doorSandbox.ts"
-  - "src/lib/handlers/doorTypes.ts"
-  - "src/lib/doorStdlib.ts"
-  - "scripts/compile-door-bundle.mjs"
+  - "apps/floatty/doors/**/*"
+  - "apps/floatty/src/lib/handlers/doorLoader.ts"
+  - "apps/floatty/src/lib/handlers/doorAdapter.ts"
+  - "apps/floatty/src/lib/handlers/doorSandbox.ts"
+  - "apps/floatty/src/lib/handlers/doorTypes.ts"
+  - "apps/floatty/src/lib/doorStdlib.ts"
+  - "apps/floatty/scripts/compile-door-bundle.mjs"
 ---
 
 # Door Development Patterns

@@ -122,4 +122,4 @@ Both filter defaults must be updated in lockstep when adding shared target overr
 
 - @.claude/rules/do-not.md — "Tracing / OTLP" section (specific anti-patterns)
 - @.claude/rules/config-and-logging.md — paths, config, OTLP wiring
-- @docs/architecture/LOGGING_STRATEGY.md — tier/phase tracking
+- @apps/floatty/docs/architecture/LOGGING_STRATEGY.md — tier/phase tracking
