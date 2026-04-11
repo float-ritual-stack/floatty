@@ -3087,11 +3087,13 @@ body.resizing * {
   background: var(--color-bg-hover);
 }
 
-.command-bar-selected {
+.command-bar-selected,
+.command-bar-item[data-selected="true"] {
   background: color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
-.command-bar-selected:hover {
+.command-bar-selected:hover,
+.command-bar-item[data-selected="true"]:hover {
   background: color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 

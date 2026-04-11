@@ -5,6 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@solidjs/testing-library';
+import type { JSX } from 'solid-js';
 
 // Mock dependencies
 vi.mock('../hooks/useBlockStore', () => ({
@@ -18,6 +19,155 @@ vi.mock('../hooks/useWikilinkAutocomplete', () => ({
     { name: 'Meeting Notes', updatedAt: 200 },
   ]),
 }));
+
+// Mock cmdk-solid: thin wrappers that let our component logic run without
+// pulling in @kobalte/core and its directory-import incompatibilities in jsdom.
+// We simulate cmdk's controlled `value` / `onValueChange` / keyboard navigation.
+vi.mock('cmdk-solid', () => {
+  type ItemProps = {
+    value?: string;
+    onSelect?: () => void;
+    class?: string;
+    classList?: Record<string, boolean>;
+    children?: JSX.Element;
+  };
+  type InputProps = {
+    ref?: (el: HTMLInputElement) => void;
+    value?: string;
+    onValueChange?: (v: string) => void;
+    onKeyDown?: (e: KeyboardEvent) => void;
+    placeholder?: string;
+    class?: string;
+    autocomplete?: string;
+    spellcheck?: boolean;
+  };
+  type RootProps = {
+    class?: string;
+    shouldFilter?: boolean;
+    loop?: boolean;
+    value?: string;
+    onValueChange?: (v: string) => void;
+    onClick?: (e: MouseEvent) => void;
+    children?: JSX.Element;
+  };
+  type ListProps = { class?: string; children?: JSX.Element };
+  type EmptyProps = { class?: string; children?: JSX.Element };
+
+  // Track registered items for keyboard navigation (ArrowUp/Down/Enter on root)
+  // Scoped per Command instance, cleaned up via onCleanup in Item
+  let itemRegistry: Map<string, { onSelect: () => void; el: HTMLElement }> = new Map();
+
+  const Input = (props: InputProps) => {
+    return (
+      <input
+        ref={props.ref}
+        class={props.class}
+        placeholder={props.placeholder}
+        value={props.value ?? ''}
+        autocomplete={props.autocomplete}
+        spellcheck={props.spellcheck}
+        onInput={(e) => props.onValueChange?.(e.currentTarget.value)}
+        onKeyDown={(e) => props.onKeyDown?.(e)}
+      />
+    );
+  };
+
+  const Item = (props: ItemProps) => {
+    const classObj: Record<string, boolean> = {
+      ...(props.class ? { [props.class]: true } : {}),
+      ...(props.classList ?? {}),
+    };
+    const classStr = Object.keys(classObj).filter(k => classObj[k]).join(' ');
+
+    return (
+      <div
+        ref={(r) => {
+          if (props.value) {
+            // Register for keyboard nav. Enter uses props.value lookup, so stale
+            // entries are harmless — the correct entry wins by key.
+            itemRegistry.set(props.value, { onSelect: props.onSelect ?? (() => {}), el: r });
+          }
+        }}
+        role="option"
+        aria-selected={false}
+        class={classStr}
+        data-value={props.value}
+        onClick={() => props.onSelect?.()}
+        onPointerMove={() => {}}
+      >
+        {props.children}
+      </div>
+    );
+  };
+
+  const List = (props: ListProps) => (
+    <div role="listbox" class={props.class}>
+      {props.children}
+    </div>
+  );
+
+  const Empty = (props: EmptyProps) => (
+    <div role="status" class={props.class}>{props.children}</div>
+  );
+
+  const Command = (props: RootProps) => {
+    itemRegistry = new Map();
+    let currentIndex = 0;
+
+    const getOrderedItems = () => Array.from(itemRegistry.values());
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const items = getOrderedItems();
+      if (items.length === 0) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        currentIndex = props.loop
+          ? (currentIndex + 1) % items.length
+          : Math.min(currentIndex + 1, items.length - 1);
+        items.forEach((item, i) => {
+          item.el.setAttribute('aria-selected', String(i === currentIndex));
+        });
+        const keys = Array.from(itemRegistry.keys());
+        props.onValueChange?.(keys[currentIndex]);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        currentIndex = props.loop
+          ? (currentIndex - 1 + items.length) % items.length
+          : Math.max(currentIndex - 1, 0);
+        items.forEach((item, i) => {
+          item.el.setAttribute('aria-selected', String(i === currentIndex));
+        });
+        const keys = Array.from(itemRegistry.keys());
+        props.onValueChange?.(keys[currentIndex]);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        // Use controlled value (props.value = selectedId() signal) to find selected item.
+        // Props in SolidJS are reactive getters — reads current signal value.
+        const v = props.value;
+        const byValue = v ? itemRegistry.get(v) : undefined;
+        const selected = byValue ?? getOrderedItems()[currentIndex];
+        if (selected) selected.onSelect();
+      }
+    };
+
+    return (
+      <div
+        class={props.class}
+        onClick={props.onClick}
+        onKeyDown={handleKeyDown}
+      >
+        {props.children}
+      </div>
+    );
+  };
+
+  Command.Input = Input;
+  Command.List = List;
+  Command.Item = Item;
+  Command.Empty = Empty;
+
+  return { Command };
+});
 
 import { CommandBar } from './CommandBar';
 
@@ -40,12 +190,12 @@ describe('CommandBar', () => {
   });
 
   it('shows pages and commands when query is empty', () => {
-    const { getByRole } = render(() => (
+    const { getAllByRole } = render(() => (
       <CommandBar onClose={onClose} onNavigate={onNavigate} onCommand={onCommand} />
     ));
-    const listbox = getByRole('listbox');
-    // 3 pages + 13 commands = 16
-    expect(listbox.children.length).toBe(16);
+    // 3 pages + 13 commands = 16 options
+    // (Command.List wraps items in a cmdk-list-sizer div, so count via role)
+    expect(getAllByRole('option').length).toBe(16);
   });
 
   it('Escape calls onClose', () => {
