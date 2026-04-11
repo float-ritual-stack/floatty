@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Turborepo local cache (monorepo scaffold added 2026-04-11)
+.turbo/
+**/.turbo/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
