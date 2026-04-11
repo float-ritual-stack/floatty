@@ -17,6 +17,13 @@
 use crate::Origin;
 use serde::{Deserialize, Serialize};
 
+/// Transaction ID used for cold-start rehydration batches.
+///
+/// Hooks that need two-pass rebuild logic (e.g., page name index, inheritance
+/// index) match against this constant to detect the initial load batch.
+/// Using a shared constant prevents silent failures from typos in any copy.
+pub const COLD_START_REHYDRATION_TX_ID: &str = "cold_start_rehydration";
+
 /// A single block mutation event.
 ///
 /// Each variant captures the minimal context needed for downstream processing.
