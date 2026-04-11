@@ -18,18 +18,57 @@ use floatty_server::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+fn setup_logging(log_dir: &std::path::Path) {
+    // JSON file layer — rotates daily, appends to same files as Tauri process
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("floatty")
+        .filename_suffix("jsonl")
+        .build(log_dir)
+        .expect("Failed to create log file appender");
+
+    let file_layer = fmt::layer()
+        .json()
+        .with_writer(file_appender)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false);
+
+    // Include floatty_core targets so hook system phases are visible
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("floatty_server=info,floatty_core=info,tower_http=warn"));
+
+    #[cfg(debug_assertions)]
+    {
+        let stdout_layer = fmt::layer().with_target(true).with_ansi(true);
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(file_layer)
+            .with(stdout_layer)
+            .init();
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(file_layer)
+            .init();
+    }
+}
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "floatty_server=info,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // Initialize structured JSONL logging to same files as Tauri process
+    let log_dir = floatty_server::config::data_dir().join("logs");
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("Failed to create log directory {}: {}", log_dir.display(), e);
+    }
+    setup_logging(&log_dir);
 
     // Preflight: verify data dir matches build profile (FLO-317 "never again")
     {
