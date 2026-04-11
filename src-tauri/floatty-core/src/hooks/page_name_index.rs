@@ -473,6 +473,67 @@ impl PageNameIndexHook {
         index.remove_references(id);
     }
 
+    /// Rebuild the index from scratch by reading all blocks from the store.
+    ///
+    /// Used during cold-start rehydration where Y.Doc block iteration order is
+    /// non-deterministic (HashMap). A single-pass sequential approach fails when
+    /// `pages::` container is processed after its children — container_id is None
+    /// so children never get added to `existing`. Two-pass rebuild avoids this.
+    fn rebuild_from_store(&self, store: &YDocStore) {
+        let mut index = self.index.write().expect("lock poisoned");
+        index.clear();
+
+        let all_ids = store.get_all_block_ids();
+
+        // Pass 1: find pages:: container (root block with pages:: content)
+        let mut container_id: Option<String> = None;
+        for id in &all_ids {
+            if let Some(block) = store.get_block(id) {
+                if !block.content.is_empty()
+                    && Self::is_pages_container(&block.content)
+                    && block.parent_id.is_none()
+                {
+                    container_id = Some(id.clone());
+                    index.set_pages_container_id(Some(id.clone()));
+                    debug!("Cold-start rebuild: found pages:: container: {}", id);
+                    break;
+                }
+            }
+        }
+
+        // Pass 2: index page names (children of container) + outlink references
+        for id in &all_ids {
+            if let Some(block) = store.get_block(id) {
+                if block.content.is_empty() {
+                    continue;
+                }
+
+                // Register child of pages:: container as existing page
+                if let Some(ref cid) = container_id {
+                    if block.parent_id.as_deref() == Some(cid.as_str()) {
+                        let page_name = Self::strip_heading_prefix(&block.content);
+                        if !page_name.is_empty() {
+                            index.add_existing_page(page_name, id);
+                        }
+                    }
+                }
+
+                // Register outlink references from metadata
+                if let Some(metadata) = block.metadata.as_ref() {
+                    if !metadata.outlinks.is_empty() {
+                        index.add_references(id, &metadata.outlinks);
+                    }
+                }
+            }
+        }
+
+        debug!(
+            "Cold-start rebuild complete: {} existing pages, {} referenced names",
+            index.existing_pages().len(),
+            index.all_referenced_names().len()
+        );
+    }
+
     fn handle_block_moved(&self, id: &str, old_parent_id: Option<&str>, new_parent_id: Option<&str>, store: &YDocStore) {
         let mut index = self.index.write().expect("lock poisoned");
 
@@ -531,6 +592,15 @@ impl BlockHook for PageNameIndexHook {
 
     #[instrument(skip(self, batch, store), fields(batch_size = batch.changes.len()))]
     fn process(&self, batch: &BlockChangeBatch, store: Arc<YDocStore>) {
+        // Cold start: rehydration batch has non-deterministic order (Y.Doc HashMap).
+        // pages:: container may appear after its children → container_id is None
+        // when children are processed → they're never added to existing.
+        // Two-pass rebuild avoids the ordering dependency.
+        if batch.transaction_id.as_deref() == Some("cold_start_rehydration") {
+            self.rebuild_from_store(&store);
+            return;
+        }
+
         for change in &batch.changes {
             self.process_change(change, &store);
         }
@@ -540,6 +610,9 @@ impl BlockHook for PageNameIndexHook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::YDocStore;
+    use tempfile::tempdir;
+    use yrs::{ArrayPrelim, Map, Transact, WriteTxn};
 
     // ═══════════════════════════════════════════════════════════════
     // PageNameIndex UNIT TESTS
@@ -722,5 +795,107 @@ mod tests {
         use crate::hooks::should_process;
         let hook = PageNameIndexHook::new();
         assert!(should_process(&hook, Origin::Remote));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // COLD-START REBUILD TESTS
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Insert a block directly into a YDocStore (mirrors inheritance_index test helper).
+    fn insert_block(store: &YDocStore, id: &str, content: &str, parent_id: Option<&str>) {
+        let doc = store.doc();
+        let doc_guard = doc.write().unwrap();
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let block_map: yrs::MapRef = blocks.get_or_init(&mut txn, id);
+        block_map.insert(&mut txn, "content", yrs::Any::String(content.into()));
+        if let Some(pid) = parent_id {
+            block_map.insert(&mut txn, "parentId", yrs::Any::String(pid.into()));
+        }
+        let empty: Vec<yrs::Any> = vec![];
+        block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
+    }
+
+    fn open_test_store() -> Arc<YDocStore> {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        // Keep tempdir alive by leaking — acceptable in tests
+        std::mem::forget(dir);
+        Arc::new(YDocStore::open(&db_path, "test").unwrap())
+    }
+
+    #[test]
+    fn test_cold_start_ordering_container_before_children() {
+        // Standard order: container created before children
+        let store = open_test_store();
+        insert_block(&store, "container-1", "pages::", None);
+        insert_block(&store, "page-a", "# Home", Some("container-1"));
+        insert_block(&store, "page-b", "# Notes", Some("container-1"));
+
+        let hook = PageNameIndexHook::new();
+        let batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        hook.process(&batch, store);
+
+        let index = hook.index.read().unwrap();
+        assert!(index.page_exists("home"), "page 'home' should exist");
+        assert!(index.page_exists("notes"), "page 'notes' should exist");
+        assert_eq!(index.page_block_id("home"), Some("page-a"));
+        assert_eq!(index.page_block_id("notes"), Some("page-b"));
+    }
+
+    #[test]
+    fn test_cold_start_ordering_children_before_container() {
+        // Bug scenario: children inserted into store before the container.
+        // Without rebuild_from_store, container_id would be None when children
+        // are processed → both pages appear as stubs.
+        let store = open_test_store();
+        // Insert children first (simulates HashMap ordering where children come before container)
+        insert_block(&store, "page-a", "# Home", Some("container-1"));
+        insert_block(&store, "page-b", "# Notes", Some("container-1"));
+        // Container inserted last — may still be iterated last by get_all_block_ids
+        insert_block(&store, "container-1", "pages::", None);
+
+        let hook = PageNameIndexHook::new();
+        let batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        hook.process(&batch, store);
+
+        let index = hook.index.read().unwrap();
+        assert!(index.page_exists("home"), "page 'home' should exist even when container inserted last");
+        assert!(index.page_exists("notes"), "page 'notes' should exist even when container inserted last");
+        assert_eq!(index.page_block_id("home"), Some("page-a"));
+        assert_eq!(index.page_block_id("notes"), Some("page-b"));
+    }
+
+    #[test]
+    fn test_cold_start_no_pages_container() {
+        // Outlines without a pages:: container should still work (no crash, empty existing)
+        let store = open_test_store();
+        insert_block(&store, "block-1", "# Some Heading", None);
+        insert_block(&store, "block-2", "Regular content [[Some Heading]]", None);
+
+        let hook = PageNameIndexHook::new();
+        let batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        hook.process(&batch, store);
+
+        let index = hook.index.read().unwrap();
+        assert!(index.existing_pages().is_empty(), "no pages:: container → no existing pages");
+        assert!(index.pages_container_id().is_none());
+    }
+
+    #[test]
+    fn test_cold_start_does_not_treat_non_root_pages_container_as_container() {
+        // A pages:: block nested inside another block should NOT become the container
+        let store = open_test_store();
+        insert_block(&store, "parent-1", "Some parent", None);
+        insert_block(&store, "nested-pages", "pages::", Some("parent-1")); // nested, has a parent
+        insert_block(&store, "child-of-nested", "# Home", Some("nested-pages"));
+
+        let hook = PageNameIndexHook::new();
+        let batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        hook.process(&batch, store);
+
+        let index = hook.index.read().unwrap();
+        assert!(index.pages_container_id().is_none(), "nested pages:: should not become container");
+        assert!(index.existing_pages().is_empty());
     }
 }
