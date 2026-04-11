@@ -52,7 +52,7 @@ export function CommandBar(props: CommandBarProps) {
   // Escape: close bar
   // Arrow/Enter: delegated to cmdk root via event bubbling
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Tab') {
+    if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
       const item = bar.filteredResults().find(r => r.id === selectedId());
       if (item) bar.setQuery(item.label);
