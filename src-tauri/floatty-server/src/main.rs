@@ -81,13 +81,17 @@ fn setup_logging(log_dir: &std::path::Path, otlp_endpoint: Option<&str>) -> Opti
         .build(log_dir)
         .expect("Failed to create log file appender");
 
+    // Match src-tauri/src/lib.rs field set exactly — both processes append to
+    // the same floatty.YYYY-MM-DD.jsonl files, so consistent schemas keep jq
+    // queries and log parsers from tripping on missing fields.
     let file_layer = fmt::layer()
         .json()
         .with_writer(file_appender)
         .with_target(true)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false);
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        .with_file(true)
+        .with_line_number(true);
 
     // Include floatty_core + floatty_startup (target override) so hook system phases are visible.
     // EnvFilter matches on the log target, not crate path — the `target: "floatty_startup"` override
@@ -139,21 +143,29 @@ async fn main() {
 
     // Initialize structured JSONL logging to same files as Tauri process.
     // OTLP endpoint resolution order (first match wins):
-    //   1. OTEL_EXPORTER_OTLP_LOGS_ENDPOINT (signal-specific, honors user shell env)
-    //   2. OTEL_EXPORTER_OTLP_ENDPOINT      (general OTLP base URL)
-    //   3. config.otlp_endpoint             (floatty config.toml)
+    //   1. OTEL_EXPORTER_OTLP_LOGS_ENDPOINT (signal-specific, full URL, used as-is)
+    //   2. OTEL_EXPORTER_OTLP_ENDPOINT      (general base URL; we append /v1/logs)
+    //   3. config.otlp_endpoint             (floatty config.toml, used as-is)
     //
     // The signal-specific env var is a full URL to the logs endpoint (e.g.,
     // `http://127.0.0.1:3100/otlp/v1/logs` for Loki's native OTLP receiver).
-    // The general form is a base URL; the crate appends `/v1/logs`.
-    // config.toml treats the value as the general form (base URL).
+    // The general env var follows the OTel spec — it's a base URL, and the
+    // signal-path suffix (/v1/logs for logs) is the caller's responsibility
+    // when bypassing the SDK's own env-var resolution via `.with_endpoint()`.
+    // The SDK only appends the signal path when IT reads OTEL_EXPORTER_OTLP_ENDPOINT
+    // itself; programmatic `.with_endpoint()` is a full-URL override.
+    // config.toml treats the value as a full URL (matches the LOGS_ENDPOINT form).
     let log_dir = floatty_server::config::data_dir().join("logs");
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
         eprintln!("Failed to create log directory {}: {}", log_dir.display(), e);
     }
     let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
         .ok()
-        .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok())
+        .or_else(|| {
+            std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+                .ok()
+                .map(|base| format!("{}/v1/logs", base.trim_end_matches('/')))
+        })
         .or_else(|| config.otlp_endpoint.clone());
     let _logger_provider = setup_logging(&log_dir, otlp_endpoint.as_deref());
     if let Some(ref ep) = otlp_endpoint {
@@ -195,7 +207,19 @@ async fn main() {
         return;
     }
 
-    tracing::info!("API key: {}", api_key);
+    // Never log the full API key — this line is emitted on every startup and,
+    // with OTLP export enabled, would ship the credential to any configured
+    // remote collector. Log existence + length + source only.
+    let api_key_source = if std::env::var("FLOATTY_API_KEY").is_ok() {
+        "env"
+    } else {
+        "config"
+    };
+    tracing::info!(
+        source = api_key_source,
+        length = api_key.len(),
+        "API key configured"
+    );
 
     let startup_start = std::time::Instant::now();
 
@@ -352,11 +376,14 @@ async fn main() {
     tracing::info!("floatty-server listening on http://{}", addr);
     tracing::info!("Health check: curl http://{}/api/v1/health", addr);
     if config.auth_enabled {
-        tracing::info!(
+        // Printed to stdout for local discovery only — never via the tracing
+        // subscriber, so it doesn't reach the JSONL file or OTLP collector.
+        #[cfg(debug_assertions)]
+        eprintln!(
             "Authenticated: curl -H 'Authorization: Bearer {}' http://{}/api/v1/state",
-            api_key,
-            addr
+            api_key, addr
         );
+        tracing::info!("API authentication required (key redacted from logs)");
     } else {
         tracing::info!("No auth: curl http://{}/api/v1/blocks", addr);
     }
