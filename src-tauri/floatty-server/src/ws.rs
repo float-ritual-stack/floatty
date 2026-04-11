@@ -129,13 +129,13 @@ impl WsBroadcaster {
         match self.tx.send(msg) {
             Ok(receiver_count) => {
                 if let Some(s) = seq {
-                    tracing::info!("Broadcast {} bytes (seq={}) to {} client(s)", update_len, s, receiver_count);
+                    tracing::debug!("Broadcast {} bytes (seq={}) to {} client(s)", update_len, s, receiver_count);
                 } else {
-                    tracing::info!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
+                    tracing::debug!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
                 }
             }
             Err(_) => {
-                tracing::info!("Broadcast skipped (no WebSocket clients connected)");
+                tracing::debug!("Broadcast skipped (no WebSocket clients connected)");
             }
         }
     }

@@ -2,7 +2,28 @@
 
 > Making logs useful for humans AND machines (including LLMs)
 
+## Status Note (2026-04-11)
+
+This document was written when Rust-side logging was unstructured `log::`/`println!` and before OTLP export existed. Major items from the "Target Architecture" section are now shipped:
+
+- **Structured JSON logging via `tracing`**: both the Tauri process and the `floatty-server` subprocess write to the same daily-rotating `{data_dir}/logs/floatty.YYYY-MM-DD.jsonl` files (via `tracing-appender`). See `setup_logging()` in `src-tauri/src/lib.rs` and `src-tauri/floatty-server/src/main.rs`.
+- **OTLP log export (floatty-server only, logs-only)**: shipped via `opentelemetry-appender-tracing` → `opentelemetry-otlp` (HTTP+protobuf via `reqwest-blocking-client`). Endpoint is config-driven via `[server].otlp_endpoint` in `config.toml` (any OTLP HTTP collector — Loki's native receiver at `/otlp/v1/logs`, Alloy, OTel Collector), with env var overrides (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`). Resource attributes surfaced as Loki labels: `service.name=floatty-server`, `service.version`, `deployment.environment=dev|release`.
+- **Startup phase timing**: `hooks/system.rs` and `store.rs` emit `target: "floatty_startup"` events for `db_open`, `ydoc_replay`, `search_init_complete`, `cold_start_rehydration_complete`, `hook_system_init_complete`, `phase=server_ready`. Note that `target:` overrides bypass crate-path filtering in `EnvFilter` — the default filter must include `floatty_startup=info` explicitly.
+
+**Not yet implemented** (still aspirational in the sections below):
+- Span-based request tracing (`#[tracing::instrument]` + `tracing-opentelemetry` → OTLP traces → Tempo). Logs-only for now.
+- MCP log-query tool.
+- Request ID correlation IDs on block operations.
+
+**Gotchas to read before touching the OTLP code**: @.claude/rules/do-not.md "Tracing / OTLP" section documents the landmines (cfg-gate collision, tokio-thread panic, env-var override precedence, cardinality risk).
+
+**See also**: @.claude/rules/config-and-logging.md for the short form and query examples.
+
+---
+
 ## Current State (The Problem)
+
+> Historical context — much of this has been addressed. Kept for rationale.
 
 **Audit Results**:
 - 88 `log::` statements scattered across codebase

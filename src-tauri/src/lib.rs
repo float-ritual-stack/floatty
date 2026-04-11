@@ -197,9 +197,20 @@ fn setup_logging(log_dir: &std::path::Path) {
         None
     };
     
-    // ENV filter: RUST_LOG=debug or default to info
+    // ENV filter: RUST_LOG=debug or default to info.
+    //
+    // tauri_plugin_pty floods ~80 lines/session with PTY spawn details — demote to warn.
+    //
+    // hyper/reqwest/opentelemetry are silenced pre-emptively: floatty-server ships OTLP
+    // from a separate process today, but when/if Tauri-side OTLP is added (e.g., for
+    // command tracing → Tempo) these crates' HTTP clients emit their own tracing events
+    // on every export, causing a telemetry-induced-telemetry loop. Setting the silencers
+    // now prevents anyone adding OTLP later from hitting that trap. See
+    // .claude/rules/logging-discipline.md "Filter defaults".
     let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info"))
+        .or_else(|_| EnvFilter::try_new(
+            "info,tauri_plugin_pty=warn,hyper=warn,reqwest=warn,opentelemetry=off"
+        ))
         .unwrap();
     
     // Initialize tracing subscriber

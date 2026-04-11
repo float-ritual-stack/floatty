@@ -14,6 +14,22 @@ Critical anti-patterns that will break floatty.
 
 - Remove `allow-same-origin` from iframe sandbox attributes. In Tauri, iframe content (external URLs, localhost services) is ALWAYS cross-origin from the parent (`tauri://localhost`). Without `allow-same-origin`, the iframe's origin is forced to `null`, which breaks CORS for its own subresources, `canvas.toDataURL()`, cookies, and localStorage. The textbook "`allow-scripts` + `allow-same-origin` = sandbox escape" only applies when iframe content is same-origin with the parent — which never happens in Tauri. Bot reviewers will flag this; they're wrong. See comments in `EvalOutput.tsx`.
 
+## Tracing / OTLP (floatty-server)
+
+> **See also**: @.claude/rules/logging-discipline.md — policy for secrets/sinks/failure-modes/comments. This section lists specific traps; that file is the rule-set.
+
+- **Don't enable `reqwest-client` on `opentelemetry-otlp` without `default-features = false`.** The 0.31.1 source has mutually-exclusive `cfg(all(not(reqwest-blocking-client), not(hyper-client), feature = "reqwest-client"))` gates for HTTP client selection. Default features include `reqwest-blocking-client` — if you enable `reqwest-client` on top, BOTH are on, neither cfg branch fires, and `LogExporter::build()` returns `NoHttpClient` at runtime. The error surfaces as `OTLP log exporter build failed: no http client specified` in the server startup log. Fix: `opentelemetry-otlp = { version = "0.31", default-features = false, features = [...] }`.
+
+- **Don't use `reqwest-client` (async) with `SdkLoggerProvider::with_batch_exporter()`.** The BatchLogProcessor spawns a dedicated OS thread, NOT a tokio task. Inside that thread, `reqwest::Client` (async) panics with `there is no reactor running, must be called from the context of a Tokio 1.x runtime`. Use `reqwest-blocking-client` instead — matches the upstream `basic-otlp-http` example. The "blocking inside tokio" concern is misplaced: the blocking call happens on the dedicated processor thread, not on a tokio worker.
+
+- **Don't call `.with_endpoint(url)` unconditionally when setting up the OTLP exporter.** Programmatic configuration overrides env vars per `opentelemetry_otlp::exporter::http::resolve_http_endpoint`. If the user has `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` set in their shell, your hardcoded endpoint will silently override it. Resolve endpoints in this order in application code: signal-specific env var → general env var → config file → None.
+
+- **Don't add a new `tracing::info!(target: "floatty_startup", ...)` or any other target-override log line without updating the `EnvFilter` default in `floatty-server/src/main.rs`.** `EnvFilter` matches on the target string, not the crate path — `floatty_core=info` does NOT match `target: "floatty_startup"`, so the line silently defaults to OFF. The filter default must carry every overridden target explicitly. See @.claude/rules/config-and-logging.md for the current filter.
+
+- **Don't forget the telemetry-induced-telemetry loop filter.** The OTLP exporter's HTTP client (hyper/reqwest) emits its own tracing events. Without `hyper=warn,reqwest=warn,opentelemetry=off` in the EnvFilter, every log export triggers more log events, triggering more exports. The existing filter has these entries — don't remove them when adding new targets.
+
+- **Don't promote high-cardinality tracing structured fields (e.g., `elapsed_ms`, `block_id`, `request_id`) to Loki labels without intent.** Loki's default OTLP mapping promotes every field to a label. For startup-rate events this is fine. For hot paths (per-request, per-block, per-keystroke) this explodes cardinality and Loki will complain. Mitigation is Loki-side (`limits_config.otlp_config.log_attributes` allowlist), not floatty-side — but the person adding `#[tracing::instrument]` to a hot path needs to know the risk exists.
+
 ## PTY/Rust
 
 - Remove batching pattern (breaks performance)
