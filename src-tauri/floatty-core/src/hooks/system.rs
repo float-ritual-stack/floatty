@@ -86,6 +86,7 @@ impl HookSystem {
     /// 7. Spawns periodic commit task for search index
     /// 8. Rehydrates existing blocks (cold start)
     pub fn initialize_at(store: Arc<YDocStore>, search_index_path: Option<std::path::PathBuf>) -> Self {
+        let init_start = std::time::Instant::now();
         info!("Initializing hook system...");
 
         // Create registry
@@ -101,6 +102,7 @@ impl HookSystem {
         registry.register(page_name_index_hook.clone());
 
         // Initialize search infrastructure (skip if no path provided)
+        let search_start = std::time::Instant::now();
         let (index_manager, writer_handle, commit_handle) = if let Some(path) = search_index_path {
             match Self::initialize_search_at(&registry, Arc::clone(&inheritance_index), path) {
                 Ok((im, wh, ch)) => (Some(im), Some(wh), Some(ch)),
@@ -118,7 +120,12 @@ impl HookSystem {
         };
 
         let hook_count = registry.len();
-        info!("Registered {} hooks", hook_count);
+        info!(
+            target: "floatty_startup",
+            elapsed_ms = search_start.elapsed().as_millis(),
+            hook_count = hook_count,
+            "search_init_complete"
+        );
 
         // Create emitter
         let emitter = ChangeEmitter::new();
@@ -128,12 +135,20 @@ impl HookSystem {
         let dispatch_handle = spawn_dispatch_task(rx, Arc::clone(&registry), Arc::clone(&store));
 
         // Rehydrate existing blocks (cold start)
+        let rehydrate_start = std::time::Instant::now();
         let rehydrate_count = rehydrate_existing_blocks(&emitter, &store);
-        if rehydrate_count > 0 {
-            info!("Rehydrated {} existing blocks", rehydrate_count);
-        }
+        info!(
+            target: "floatty_startup",
+            elapsed_ms = rehydrate_start.elapsed().as_millis(),
+            block_count = rehydrate_count,
+            "cold_start_rehydration_complete"
+        );
 
-        info!("Hook system initialized");
+        info!(
+            target: "floatty_startup",
+            elapsed_ms = init_start.elapsed().as_millis(),
+            "hook_system_init_complete"
+        );
 
         Self {
             registry,
