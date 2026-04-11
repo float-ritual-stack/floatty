@@ -367,7 +367,7 @@ impl BlockHook for InheritanceIndexHook {
         let is_cold_start = batch
             .transaction_id
             .as_deref()
-            == Some("cold_start_rehydration");
+            == Some(crate::events::COLD_START_REHYDRATION_TX_ID);
 
         if is_cold_start {
             index.rebuild(&store);

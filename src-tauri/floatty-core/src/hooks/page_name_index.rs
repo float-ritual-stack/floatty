@@ -504,21 +504,19 @@ impl PageNameIndexHook {
         // Pass 2: index page names (children of container) + outlink references
         for id in &all_ids {
             if let Some(block) = store.get_block(id) {
-                if block.content.is_empty() {
-                    continue;
-                }
-
-                // Register child of pages:: container as existing page
-                if let Some(ref cid) = container_id {
-                    if block.parent_id.as_deref() == Some(cid.as_str()) {
-                        let page_name = Self::strip_heading_prefix(&block.content);
-                        if !page_name.is_empty() {
-                            index.add_existing_page(page_name, id);
+                // Register child of pages:: container as existing page (only for non-empty content)
+                if !block.content.is_empty() {
+                    if let Some(ref cid) = container_id {
+                        if block.parent_id.as_deref() == Some(cid.as_str()) {
+                            let page_name = Self::strip_heading_prefix(&block.content);
+                            if !page_name.is_empty() {
+                                index.add_existing_page(page_name, id);
+                            }
                         }
                     }
                 }
 
-                // Register outlink references from metadata
+                // Register outlink references from metadata (always, even for empty-content blocks)
                 if let Some(metadata) = block.metadata.as_ref() {
                     if !metadata.outlinks.is_empty() {
                         index.add_references(id, &metadata.outlinks);
@@ -596,7 +594,7 @@ impl BlockHook for PageNameIndexHook {
         // pages:: container may appear after its children → container_id is None
         // when children are processed → they're never added to existing.
         // Two-pass rebuild avoids the ordering dependency.
-        if batch.transaction_id.as_deref() == Some("cold_start_rehydration") {
+        if batch.transaction_id.as_deref() == Some(crate::events::COLD_START_REHYDRATION_TX_ID) {
             self.rebuild_from_store(&store);
             return;
         }
@@ -833,7 +831,7 @@ mod tests {
         insert_block(&store, "page-b", "# Notes", Some("container-1"));
 
         let hook = PageNameIndexHook::new();
-        let batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        let batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
         hook.process(&batch, store);
 
         let index = hook.index.read().unwrap();
@@ -856,7 +854,7 @@ mod tests {
         insert_block(&store, "container-1", "pages::", None);
 
         let hook = PageNameIndexHook::new();
-        let batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        let batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
         hook.process(&batch, store);
 
         let index = hook.index.read().unwrap();
@@ -874,7 +872,7 @@ mod tests {
         insert_block(&store, "block-2", "Regular content [[Some Heading]]", None);
 
         let hook = PageNameIndexHook::new();
-        let batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        let batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
         hook.process(&batch, store);
 
         let index = hook.index.read().unwrap();
@@ -891,7 +889,7 @@ mod tests {
         insert_block(&store, "child-of-nested", "# Home", Some("nested-pages"));
 
         let hook = PageNameIndexHook::new();
-        let batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        let batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
         hook.process(&batch, store);
 
         let index = hook.index.read().unwrap();

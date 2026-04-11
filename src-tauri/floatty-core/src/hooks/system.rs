@@ -387,7 +387,7 @@ fn rehydrate_existing_blocks(emitter: &ChangeEmitter, store: &YDocStore) -> usiz
 
     if count > 0 {
         // Emit as a single batch for efficiency
-        let mut batch = BlockChangeBatch::with_transaction_id("cold_start_rehydration".to_string());
+        let mut batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
         for change in changes {
             batch.push(change);
         }
