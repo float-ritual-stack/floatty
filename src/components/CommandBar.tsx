@@ -58,6 +58,14 @@ export function CommandBar(props: CommandBarProps) {
         }
         break;
       }
+      case 'Tab': {
+        e.preventDefault();
+        const selected = bar.getSelection();
+        if (selected) {
+          bar.setQuery(selected.label);
+        }
+        break;
+      }
       case 'Escape':
         e.preventDefault();
         props.onClose();
