@@ -6,6 +6,41 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.2] - 2026-04-11
+
+### Features
+
+- **Structured JSONL logging for floatty-server** (#223): the server subprocess now writes daily-rotating JSON logs to the same `~/.floatty/logs/floatty.YYYY-MM-DD.jsonl` files as the Tauri process via `tracing-appender`. Both processes appear in one unified log stream distinguishable by `target`. ([[FLO-274]] Tier 1)
+- **Optional OTLP log export** (#223): `floatty-server` can ship structured logs to any OTLP HTTP collector (Loki's native receiver, OTel Collector, Alloy, etc.) via the new `[server].otlp_endpoint` config key. Resolution order: `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` env → `OTEL_EXPORTER_OTLP_ENDPOINT` env → config file → off. Resource attributes surfaced as Loki labels: `service.name=floatty-server`, `service.version`, `deployment.environment=dev|release`. Default-off — floatty works normally with file-only logging when unconfigured.
+- **Startup phase timing visibility** (#223): added `floatty_startup=info` to the default `EnvFilter` so previously-silent target-override events from `hooks/system.rs` and `store.rs` now land in logs: `phase=ydoc_store_ready`, `search_init_complete`, `cold_start_rehydration_complete`, `hook_system_init_complete`, `phase=server_ready`.
+
+### Bug Fixes
+
+- **Log noise reduction** (#223): demoted `ws::Broadcast N bytes` messages from `info` to `debug` (~214 lines/session). Added `tauri_plugin_pty=warn` to the Tauri-side filter default (~81 lines/session). Combined effect: ~38% drop in Rust-side log volume before remote ingest.
+- **`EnvFilter` target matching gotcha** (#223): `tracing::info!(target: "X", ...)` bypasses crate-path filtering and requires an explicit `X=level` filter entry. Fixes three startup-phase events that had been silently dropped.
+- **Tauri filter hardening** (#223): pre-emptively added `hyper=warn,reqwest=warn,opentelemetry=off` silencers to the Tauri process filter default so future OTLP wiring on that side doesn't trigger telemetry-induced-telemetry loops.
+
+### Security
+
+- **Credential leak prevention** (#223): removed two INFO-level log lines that were formatting the server API key into tracing events (`"API key: {key}"` and `"Authenticated: curl -H 'Authorization: Bearer {key}'"`). With OTLP export now available, these would have shipped credentials to the remote collector on every startup. API key is now logged as metadata only (`source`, `length`). Curl example moved to `#[cfg(debug_assertions)] eprintln!` so it only prints in dev builds and bypasses the tracing subscriber entirely.
+- **OTLP endpoint leak prevention** (#223): the endpoint URL itself is no longer logged — OTLP endpoints can contain basic-auth userinfo, query tokens, or internal hostnames. Startup log is now presence-only: `otlp_log_export_enabled`.
+
+### Documentation
+
+- **New rule file: `.claude/rules/logging-discipline.md`** (#223): six directive-voiced rules codifying secrets-handling, sink routing, failure-mode alignment per subsystem, comment/mechanism drift prevention, `target:` override filter-entry requirements, and canonical filter defaults. Extracted as a root-cause response to three rounds of PR review finding the same class of bug in different shapes.
+- **Sweep Pattern 8** (`.claude/commands/floatty/sweep.md`): added Logging Discipline Violations sweep with six greps keyed 1:1 to the rules in `logging-discipline.md` so regressions get caught mechanically on `/floatty:sweep` runs.
+- **`do-not.md` cross-reference**: Tracing/OTLP section now points at `logging-discipline.md` as the policy; specific traps still listed there.
+- **`docs/architecture/LOGGING_STRATEGY.md`**: added a status note marking which aspirational items from the original doc are now shipped (structured JSONL, OTLP export, startup phase timing) and which remain (trace spans → Tempo, MCP log-query tool, request ID correlation).
+
+### Internal
+
+- Replaced `RollingFileAppender` `.expect()` with `panic!` + explicit "refusing to start without file logging" message. Aligned with log-dir creation failure mode — the local JSONL file is the source of truth; silently running without file logging would hide exactly the startup-hang class of problem this branch was meant to diagnose (see [[FLO-599]]).
+- `ServerConfig::load()` switched from `tracing::warn!` to `eprintln!` for early-stage config parse/read errors. `ServerConfig::load()` runs before `setup_logging()` initializes the tracing subscriber — previous calls were silently dropped.
+- Aligned server-side `fmt::layer()` field set (`thread_ids`, `thread_names`, `file`, `line_number`) with the Tauri-side setup so `jq` queries against the unified JSONL stream see consistent schemas.
+- First real bug caught by the new instrumentation: [[FLO-599]] filed 12 minutes after the filter fix landed — "Hook dispatch lagged by 8262 messages" during cold-start rehydration, diagnosed using the newly-visible `cold_start_rehydration_complete` marker.
+
+---
+
 ## [0.11.1] - 2026-04-11
 
 ### Features
