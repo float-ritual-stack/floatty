@@ -6,6 +6,36 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.1] - 2026-04-11
+
+### Features
+
+- **Command bar: cmdk-solid migration**: Replaced hand-rolled keyboard navigation
+  (`<ul>/<li>` + `selectedIndex`) with `cmdk-solid` primitives — proper Arrow/Enter
+  handling, ARIA attributes, and a foundation for argument-taking commands
+- **Command bar: Tab autocomplete**: Tab now fills the query input with the
+  highlighted item's label instead of escaping focus (was broken since initial
+  implementation)
+- **Startup phase timing logs**: Server logs `[startup]` markers with `elapsed_ms`
+  at each startup phase (SQLite open, Y.Doc replay, cold-start rehydration, search
+  init, server ready) — query with
+  `jq 'select(.fields.message | startswith("[startup]"))' ~/.floatty/logs/floatty.*.jsonl`
+- **WAL checkpoint on open**: `PRAGMA wal_checkpoint(PASSIVE)` runs automatically
+  on every SQLite open, preventing read amplification from large uncheckpointed WAL
+  files (40MB+ observed in production)
+
+### Bug Fixes
+
+- **Command bar: Shift+Tab**: Added `!e.shiftKey` guard — Shift+Tab was incorrectly
+  triggering Tab autocomplete instead of passing through
+- **Page name index cold start**: Pages were showing as stubs on startup due to
+  ordering issue in cold-start rehydration — page name events now fire after all
+  block data is available
+- **Test temp dir leak**: `open_test_store` now returns `TempDir` to caller,
+  preventing premature cleanup of test databases
+
+---
+
 ## [0.11.0] - 2026-04-10
 
 ### Features
