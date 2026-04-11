@@ -6,6 +6,26 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.3] - 2026-04-11
+
+### Bug Fixes
+
+- **Zombie floatty-server recovery** (#224): fixes a three-layer failure mode where a wedged `floatty-server` (TCP accept succeeds, HTTP handler never replies) held port 8765 and left the app stuck on "Loading workspace…" requiring manual `kill -9`. `wait_for_server_health` now uses `curl -m 1` so probes can't hang on a dead-responsive zombie. `kill_stale_server` escalates SIGTERM → SIGKILL with `pid_is_alive` re-check after each `send_signal` failure (distinguishes benign race where the process exits between `kill -0` and the actual signal from real delivery failure). `main.rs` bind matches `AddrInUse` explicitly and exits with a diagnostic instead of `.unwrap()` panicking.
+- **PID recycling guard** (#224): `kill_stale_server` now calls `verify_pid_is_floatty_server` (`ps -p <pid> -o comm=`) before sending any signal. Between app exits the OS can recycle PIDs; without this guard we could have `kill -9`d an unrelated process that inherited the number.
+- **Graceful `axum::serve` error handling** (#224): replaced `.unwrap()` with explicit exit codes (2 for `AddrInUse`, 1 for generic bind errors).
+
+### Internal
+
+- **State-transition table discipline** (#224): `kill_stale_server`'s SIGTERM and SIGKILL paths are now documented inline with the full 2×2 state-transition table (`send_signal` outcome × `pid_is_alive` after). Root-cause response to three rounds of PR review churn that kept finding unrouted cells in forward-pass-only code — the intervention is "write the state table before the code," not "be more careful."
+- **Logging consistency sweep** (#224): replaced remaining `log::warn!` / `log::info!` calls in `server.rs` with `tracing::` equivalents (mixed macros violate `logging-discipline.md` rule 6). Replaced silent `.ok()` drops on log dir/file creation and config read/parse with logged warnings. Deleted stale docstring on `spawn_server` claiming `eprintln!` usage (function uses `tracing::` throughout — migration leftover).
+- **Sweep Pattern 9** (`.claude/commands/floatty/sweep.md`): added hot-path `#[tracing::instrument]` cardinality tripwire. Promotes the documented warning in `config-and-logging.md` (high-cardinality fields explode Loki label index without `otlp_config.log_attributes` allowlist) to a mechanical sweep check.
+
+### Related
+
+- [[FLO-602]] filed: `feat(reliability): parent-side server watchdog for wedge recovery` — extends the infrastructure in this release so mid-session wedges trigger automatic respawn via `useSyncHealth` instead of requiring app relaunch. Depends on `kill_stale_server` + `verify_pid_is_floatty_server` from this PR.
+
+---
+
 ## [0.11.2] - 2026-04-11
 
 ### Features
