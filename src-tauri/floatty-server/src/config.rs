@@ -205,11 +205,15 @@ impl ServerConfig {
                         return server_config;
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to parse config: {}. Using defaults.", e);
+                        // ServerConfig::load() is called before setup_logging() initializes
+                        // the tracing subscriber (we need the config to wire the OTLP layer).
+                        // Use eprintln! so these early-stage errors are visible instead of
+                        // silently dropped. See .claude/rules/do-not.md "Tracing / OTLP".
+                        eprintln!("Failed to parse config: {}. Using defaults.", e);
                     }
                 },
                 Err(e) => {
-                    tracing::warn!("Failed to read config: {}. Using defaults.", e);
+                    eprintln!("Failed to read config: {}. Using defaults.", e);
                 }
             }
         }

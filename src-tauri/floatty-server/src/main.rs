@@ -155,9 +155,16 @@ async fn main() {
     // The SDK only appends the signal path when IT reads OTEL_EXPORTER_OTLP_ENDPOINT
     // itself; programmatic `.with_endpoint()` is a full-URL override.
     // config.toml treats the value as a full URL (matches the LOGS_ENDPOINT form).
+    // Log dir creation is fatal: the local JSONL file is the source of truth for
+    // logs (OTLP is fire-and-forget shipping on top). Silently continuing with no
+    // file logging would leave us blind to the next startup hang. Fail loud.
     let log_dir = floatty_server::config::data_dir().join("logs");
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("Failed to create log directory {}: {}", log_dir.display(), e);
+        panic!(
+            "Failed to create log directory {}: {}. Refusing to start without file logging.",
+            log_dir.display(),
+            e
+        );
     }
     let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
         .ok()
