@@ -175,14 +175,11 @@ async fn main() {
         })
         .or_else(|| config.otlp_endpoint.clone());
     let _logger_provider = setup_logging(&log_dir, otlp_endpoint.as_deref());
-    if let Some(ref ep) = otlp_endpoint {
-        if _logger_provider.is_some() {
-            tracing::info!(
-                target: "floatty_startup",
-                endpoint = %ep,
-                "otlp_log_export_enabled"
-            );
-        }
+    if otlp_endpoint.is_some() && _logger_provider.is_some() {
+        // Never log the endpoint URL itself — it comes from user config or env
+        // vars and may contain basic-auth userinfo, query tokens, or internal
+        // hostnames. See .claude/rules/logging-discipline.md axis 1.
+        tracing::info!(target: "floatty_startup", "otlp_log_export_enabled");
     }
 
     // Preflight: verify data dir matches build profile (FLO-317 "never again")
@@ -383,8 +380,9 @@ async fn main() {
     tracing::info!("floatty-server listening on http://{}", addr);
     tracing::info!("Health check: curl http://{}/api/v1/health", addr);
     if config.auth_enabled {
-        // Printed to stdout for local discovery only — never via the tracing
-        // subscriber, so it doesn't reach the JSONL file or OTLP collector.
+        // Printed to stderr via eprintln! for local discovery only — never via
+        // the tracing subscriber, so it doesn't reach the JSONL file or the
+        // OTLP collector. See .claude/rules/logging-discipline.md axis 2.
         #[cfg(debug_assertions)]
         eprintln!(
             "Authenticated: curl -H 'Authorization: Bearer {}' http://{}/api/v1/state",

@@ -16,6 +16,8 @@ Critical anti-patterns that will break floatty.
 
 ## Tracing / OTLP (floatty-server)
 
+> **See also**: @.claude/rules/logging-discipline.md — policy for secrets/sinks/failure-modes/comments. This section lists specific traps; that file is the rule-set.
+
 - **Don't enable `reqwest-client` on `opentelemetry-otlp` without `default-features = false`.** The 0.31.1 source has mutually-exclusive `cfg(all(not(reqwest-blocking-client), not(hyper-client), feature = "reqwest-client"))` gates for HTTP client selection. Default features include `reqwest-blocking-client` — if you enable `reqwest-client` on top, BOTH are on, neither cfg branch fires, and `LogExporter::build()` returns `NoHttpClient` at runtime. The error surfaces as `OTLP log exporter build failed: no http client specified` in the server startup log. Fix: `opentelemetry-otlp = { version = "0.31", default-features = false, features = [...] }`.
 
 - **Don't use `reqwest-client` (async) with `SdkLoggerProvider::with_batch_exporter()`.** The BatchLogProcessor spawns a dedicated OS thread, NOT a tokio task. Inside that thread, `reqwest::Client` (async) panics with `there is no reactor running, must be called from the context of a Tokio 1.x runtime`. Use `reqwest-blocking-client` instead — matches the upstream `basic-otlp-http` example. The "blocking inside tokio" concern is misplaced: the blocking call happens on the dedicated processor thread, not on a tokio worker.

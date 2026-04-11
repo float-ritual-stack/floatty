@@ -1,13 +1,13 @@
 ---
 description: Systematic bug pattern sweep across codebase
-argument-hint: [pattern number 1-7 or "all"]
+argument-hint: [pattern number 1-8 or "all"]
 ---
 
 # Floatty Bug Pattern Sweep: $ARGUMENTS
 
 Systematic sweep for known bug patterns. Run periodically to catch issues before they bite.
 
-## The Six Patterns
+## The Eight Patterns
 
 | # | Pattern | Symptom | Fix |
 |---|---------|---------|-----|
@@ -18,6 +18,7 @@ Systematic sweep for known bug patterns. Run periodically to catch issues before
 | 5 | Silent Degradation | Works until it doesn't | Visible failure + recovery |
 | 6 | HMR Singletons | State accumulates on reload | dispose() cleanup |
 | 7 | Symmetry / Hotfix Drift | Fix in one place, siblings use old way | Grep siblings, fix all or document why safe |
+| 8 | Logging Discipline Violations | Secrets in logs, drops pre-init, mode drift | Apply @.claude/rules/logging-discipline.md |
 
 ## Sweep Instructions
 
@@ -101,6 +102,58 @@ Run all patterns from @.claude/commands/floatty/references/symmetry-check-patter
 
 For each finding, verify using the red flags checklist in the reference.
 Report in the standard sweep findings table.
+
+### Pattern 8: Logging Discipline Violations (PR #223)
+
+Read @.claude/rules/logging-discipline.md first. Then apply these greps:
+
+**8a — Secrets in tracing calls** (rule 1):
+```bash
+grep -rn 'tracing::\(info\|warn\|error\)!' src-tauri/floatty-server/src src-tauri/floatty-core/src src-tauri/src | grep -iE 'api_key|token|password|secret|bearer|authorization|endpoint'
+```
+For each hit, verify the field is NOT user-configurable (URLs from config/env, keys, tokens). `url = %url` where url is `http://127.0.0.1:N` is safe; where it's user-configured it's a leak.
+
+**8b — Pre-init tracing calls** (rule 2):
+```bash
+# Find functions that run before setup_logging() and emit via tracing::
+grep -n 'setup_logging\|ServerConfig::load\|BackupConfig::load' src-tauri/floatty-server/src/main.rs
+grep -n 'tracing::\(warn\|error\|info\)!' src-tauri/floatty-server/src/config.rs
+```
+Any `tracing::*` call inside `ServerConfig::load()` (or functions it calls before `setup_logging()` runs in `main.rs`) is a silent drop. Must be `eprintln!`.
+
+**8c — Mixed failure modes in one subsystem** (rule 3):
+```bash
+# Grep adjacent .expect("Failed to ...") and eprintln!("Failed to ...") in the same function
+grep -rn '\.expect("Failed' src-tauri/floatty-server/src src-tauri/floatty-core/src
+```
+For each `.expect()`, check the surrounding function. If there's also an `eprintln! + continue` path for a similar failure in the same subsystem, one of them is wrong — align upward (panic) for source-of-truth failures, downward (eprintln) for optional features.
+
+**8d — Comment/sink drift** (rule 4):
+```bash
+# Comments mentioning stdout/stderr near logging calls
+grep -rn -B1 'eprintln\|println\|tracing::' src-tauri/floatty-server/src src-tauri/src | grep -iE 'stdout|stderr|subscriber|tracing::|eprintln|println'
+```
+If a comment says "stdout" above `eprintln!` (which is stderr), or says "via subscriber" above a raw `eprintln!`, fix the comment. Comments should name the exact mechanism.
+
+**8e — `target:` overrides without filter entries** (rule 5):
+```bash
+# Find all target: overrides
+grep -rn 'target: "' src-tauri/floatty-server/src src-tauri/floatty-core/src | grep 'tracing::'
+# Find the filter defaults
+grep -A2 'EnvFilter::try_new\|EnvFilter::new' src-tauri/floatty-server/src/main.rs src-tauri/src/lib.rs
+```
+Every target name in the grep-1 output must appear in the filter default in grep-2 output. Otherwise those lines are silently filtered to OFF.
+
+**8f — Filter default parity across processes**:
+Both `src-tauri/floatty-server/src/main.rs` `setup_logging()` and `src-tauri/src/lib.rs` `setup_logging()` must include the `hyper=warn,reqwest=warn,opentelemetry=off` silencers. Removing them causes telemetry-induced-telemetry loops when OTLP ships.
+
+**Report format**: use the standard table, but cite the rule number from `logging-discipline.md`:
+
+| Severity | File:Line | Rule | Issue | Fix |
+|---|---|---|---|---|
+| Critical | main.rs:182 | 1 | Endpoint URL logged raw | Mask to metadata-only |
+| Warning | config.rs:208 | 2 | `tracing::warn!` in pre-init call graph | Switch to `eprintln!` |
+| Note | main.rs:386 | 4 | Comment says stdout, code uses stderr | Fix comment |
 
 ## Report Format
 
