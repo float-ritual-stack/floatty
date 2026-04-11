@@ -259,7 +259,15 @@ impl YDocStore {
 
     /// Open a store with a specific database path and doc key.
     pub fn open(db_path: &Path, doc_key: &str) -> Result<Self, StoreError> {
+        let open_start = std::time::Instant::now();
+
+        let db_open_start = std::time::Instant::now();
         let persistence = YDocPersistence::open(db_path)?;
+        log::info!(
+            "[startup] db_open elapsed_ms={} path={}",
+            db_open_start.elapsed().as_millis(),
+            db_path.display()
+        );
 
         // Check schema version - clear old data if incompatible
         // Version 0 = legacy data from before schema tracking (plain JSON blocks)
@@ -284,11 +292,16 @@ impl YDocStore {
 
         // Replay persisted updates
         let updates = persistence.get_updates(doc_key)?;
+        let update_count = updates.len();
+        let total_bytes: usize = updates.iter().map(|u| u.len()).sum();
+
         if !updates.is_empty() {
             log::info!(
-                "Replaying {} Y.Doc updates from persistence",
-                updates.len()
+                "[startup] ydoc_replay_start update_count={} total_bytes={}",
+                update_count,
+                total_bytes
             );
+            let replay_start = std::time::Instant::now();
             let mut txn = doc.transact_mut();
             let mut decode_errors = 0;
             let mut apply_errors = 0;
@@ -315,7 +328,18 @@ impl YDocStore {
                     apply_errors
                 );
             }
+            log::info!(
+                "[startup] ydoc_replay_complete elapsed_ms={} update_count={} total_bytes={}",
+                replay_start.elapsed().as_millis(),
+                update_count,
+                total_bytes
+            );
         }
+
+        log::info!(
+            "[startup] ydoc_store_open_complete elapsed_ms={}",
+            open_start.elapsed().as_millis()
+        );
 
         Ok(Self {
             doc: Arc::new(RwLock::new(doc)),

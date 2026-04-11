@@ -65,7 +65,10 @@ async fn main() {
 
     tracing::info!("API key: {}", api_key);
 
+    let startup_start = std::time::Instant::now();
+
     // Create the block store
+    let store_start = std::time::Instant::now();
     let store = match YDocStore::new() {
         Ok(s) => Arc::new(s),
         Err(e) => {
@@ -73,9 +76,20 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    tracing::info!(
+        target: "floatty_startup",
+        elapsed_ms = store_start.elapsed().as_millis(),
+        "phase=ydoc_store_ready"
+    );
 
     // Initialize hook system (MetadataExtractionHook + PageNameIndexHook registered, cold start rehydration)
+    let hooks_start = std::time::Instant::now();
     let hook_system = Arc::new(HookSystem::initialize(Arc::clone(&store)));
+    tracing::info!(
+        target: "floatty_startup",
+        elapsed_ms = hooks_start.elapsed().as_millis(),
+        "phase=hook_system_ready"
+    );
 
     // Wire Y.Doc observation to hook system
     // This makes ALL Y.Doc mutations (including frontend sync) trigger hooks
@@ -198,6 +212,11 @@ async fn main() {
         .parse()
         .expect("Invalid bind address");
 
+    tracing::info!(
+        target: "floatty_startup",
+        elapsed_ms = startup_start.elapsed().as_millis(),
+        "phase=server_ready"
+    );
     tracing::info!("floatty-server listening on http://{}", addr);
     tracing::info!("Health check: curl http://{}/api/v1/health", addr);
     if config.auth_enabled {
