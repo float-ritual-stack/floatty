@@ -35,11 +35,48 @@ impl Drop for ServerState {
     }
 }
 
+/// Check whether a PID is currently alive (kill -0 semantics).
+fn pid_is_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Send a signal to a PID. Returns true if `kill` reported success.
+fn send_signal(pid: u32, signal: &str) -> bool {
+    std::process::Command::new("kill")
+        .args([signal, &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Wait up to `timeout` for `pid` to exit, polling every 50ms.
+fn wait_for_exit(pid: u32, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if !pid_is_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    !pid_is_alive(pid)
+}
+
 /// Kill a stale server process using saved PID file.
-/// Returns true if a stale server was found and killed.
+/// Returns true if the PID file was consumed (either the process is now dead
+/// or there was no live process to begin with). Returns false only if a
+/// living process could not be killed — in that case the caller should
+/// abort spawning a new server, since the port is still held.
+///
+/// Escalates SIGTERM → SIGKILL. A zombie in accept-but-never-respond state
+/// may ignore SIGTERM if its signal handler is wedged on the same lock
+/// that broke the HTTP path. SIGKILL is uncatchable and always works.
 fn kill_stale_server(pid_path: &PathBuf) -> bool {
     if !pid_path.exists() {
-        return false;
+        return true;
     }
 
     // Read PID from file
@@ -48,7 +85,7 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
         Err(e) => {
             tracing::error!(error = %e, "Failed to read PID file");
             let _ = std::fs::remove_file(pid_path);
-            return false;
+            return true;
         }
     };
 
@@ -57,39 +94,41 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
         Err(_) => {
             tracing::warn!(pid_str = %pid_str, "Invalid PID in file");
             let _ = std::fs::remove_file(pid_path);
-            return false;
+            return true;
         }
     };
 
-    // Check if process is still running (using kill -0 which doesn't actually kill)
-    let is_running = std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !is_running {
+    if !pid_is_alive(pid) {
         tracing::info!(pid = pid, "PID from file is not running (stale PID file)");
         let _ = std::fs::remove_file(pid_path);
-        return false;
+        return true;
     }
 
-    // Process exists - kill it
-    tracing::warn!(pid = pid, "Killing stale server process");
-    let killed = std::process::Command::new("kill")
-        .arg(&pid.to_string())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    // SIGTERM first — give the process a chance to clean up.
+    tracing::warn!(pid = pid, "Killing stale server process (SIGTERM)");
+    send_signal(pid, "-TERM");
 
-    if killed {
-        // Wait a moment for process to exit
-        std::thread::sleep(std::time::Duration::from_millis(200));
+    if wait_for_exit(pid, std::time::Duration::from_millis(500)) {
         let _ = std::fs::remove_file(pid_path);
-        tracing::info!(pid = pid, "Stale server killed successfully");
+        tracing::info!(pid = pid, "Stale server exited on SIGTERM");
+        return true;
+    }
+
+    // SIGTERM ignored — escalate to SIGKILL. This is the zombie-recovery
+    // path: a server wedged on a poisoned mutex will not respond to
+    // SIGTERM because its runtime can't schedule the handler.
+    tracing::warn!(pid = pid, "SIGTERM ignored, escalating to SIGKILL");
+    send_signal(pid, "-KILL");
+
+    if wait_for_exit(pid, std::time::Duration::from_millis(500)) {
+        let _ = std::fs::remove_file(pid_path);
+        tracing::info!(pid = pid, "Stale server exited on SIGKILL");
         true
     } else {
-        tracing::error!(pid = pid, "Failed to kill stale server");
+        // SIGKILL failing means either the PID no longer belongs to us
+        // (permissions) or the kernel is in a bad state. Don't delete the
+        // PID file — next launch will try again.
+        tracing::error!(pid = pid, "SIGKILL failed — zombie still holding port");
         false
     }
 }
@@ -137,7 +176,12 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
     // Previous behavior killed PID from stale file first, which murdered
     // a healthy server from the previous dev session, then the replacement
     // couldn't start fast enough within the 3s health check window.
-    if wait_for_server_health(&url) {
+    //
+    // Single-probe with a tight 1s timeout: a healthy server responds in
+    // <10ms; anything slower is treated as dead. We can't retry here — a
+    // zombie accept-but-never-respond server would otherwise delay startup
+    // by 30s before we give up and kill it.
+    if probe_server_health(&url, 1) {
         tracing::info!(url = %url, "Reusing existing server (healthy)");
         let api_key = read_api_key_from_config(&paths.config)?;
         return Some(ServerState {
@@ -147,8 +191,17 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
         });
     }
 
-    // Server not responding — kill any stale process, then spawn fresh
-    kill_stale_server(&pid_file);
+    // Server not responding — kill any stale process, then spawn fresh.
+    // If kill_stale_server returns false, a zombie is still holding the
+    // port and a fresh spawn would panic with AddrInUse. Bail out so the
+    // parent app can surface a meaningful error instead of silently dying.
+    if !kill_stale_server(&pid_file) {
+        tracing::error!(
+            "Cannot spawn floatty-server: stale process still holds the port. \
+             Manual intervention required (kill -9 the stale PID)."
+        );
+        return None;
+    }
 
     // No server running, spawn one
     let server_binary = find_server_binary()?;
@@ -312,25 +365,33 @@ fn get_target_triple() -> &'static str {
     return "unknown";
 }
 
-/// Wait for server health endpoint to respond (with retries)
-fn wait_for_server_health(base_url: &str) -> bool {
+/// Single health probe with a hard curl timeout. Returns true only if the
+/// endpoint returns HTTP 200 within the timeout.
+///
+/// Uses `curl -m` because curl has NO default response timeout — a zombie
+/// server in accept-but-never-respond state will otherwise hang forever.
+fn probe_server_health(base_url: &str, timeout_secs: u32) -> bool {
     let health_url = format!("{}/api/v1/health", base_url);
-    let max_attempts = 30; // 3 seconds total
+    let timeout_str = timeout_secs.to_string();
+    match std::process::Command::new("curl")
+        .args(["-s", "-m", &timeout_str, "-o", "/dev/null", "-w", "%{http_code}", &health_url])
+        .output()
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).trim() == "200",
+        Err(_) => false,
+    }
+}
+
+/// Wait for server health endpoint to respond (with retries).
+/// Used AFTER spawning a fresh server to give it time to bind and start serving.
+fn wait_for_server_health(base_url: &str) -> bool {
+    let max_attempts = 30; // ~3 seconds of retries + up to 1s timeout per probe
     let delay = std::time::Duration::from_millis(100);
 
     for attempt in 1..=max_attempts {
-        match std::process::Command::new("curl")
-            .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &health_url])
-            .output()
-        {
-            Ok(output) => {
-                let status = String::from_utf8_lossy(&output.stdout);
-                if status.trim() == "200" {
-                    log::info!("Server health check passed (attempt {})", attempt);
-                    return true;
-                }
-            }
-            Err(_) => {}
+        if probe_server_health(base_url, 1) {
+            log::info!("Server health check passed (attempt {})", attempt);
+            return true;
         }
         std::thread::sleep(delay);
     }

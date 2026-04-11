@@ -393,8 +393,35 @@ async fn main() {
         tracing::info!("No auth: curl http://{}/api/v1/blocks", addr);
     }
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .await
-        .unwrap();
+    // Bind with graceful failure: AddrInUse is the zombie-recovery failure
+    // mode — another process is holding the port. Panic-via-unwrap here
+    // dumps a backtrace to server.log that nobody reads; a clean exit with
+    // a diagnostic message gives the parent app something actionable and
+    // makes the failure obvious on next startup.
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            tracing::error!(
+                addr = %addr,
+                "Bind failed: port already in use. Another floatty-server \
+                 (or other process) is holding this port. Kill the stale \
+                 process and relaunch."
+            );
+            eprintln!(
+                "[floatty-server] FATAL: {} already in use. \
+                 Run: lsof -nP -iTCP:{} -sTCP:LISTEN",
+                addr, port
+            );
+            std::process::exit(2);
+        }
+        Err(e) => {
+            tracing::error!(addr = %addr, error = %e, "Bind failed");
+            eprintln!("[floatty-server] FATAL: bind({}) failed: {}", addr, e);
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await {
+        tracing::error!(error = %e, "axum::serve terminated with error");
+        std::process::exit(1);
+    }
 }
