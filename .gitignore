@@ -28,11 +28,11 @@ dist-ssr
 *.sw?
 
 # Rust build artifacts (plugins)
-src-tauri/plugins/*/target/
-src-tauri/plugins/*/Cargo.lock
+apps/floatty/src-tauri/plugins/*/target/
+apps/floatty/src-tauri/plugins/*/Cargo.lock
 
 # Sidecar binaries (built at release time, platform-specific)
-src-tauri/binaries/
+apps/floatty/src-tauri/binaries/
 
 # Session exports (conversation artifacts)
 .exports/
