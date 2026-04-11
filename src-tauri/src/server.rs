@@ -155,6 +155,12 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
     // PID recycling guard: between our last shutdown and now, the OS may have
     // assigned this number to something unrelated. Verify the process is
     // actually a floatty-server before sending signals.
+    //
+    // Known TOCTOU window: the process could exit and its PID be recycled
+    // between this verify call and the send_signal calls below. Closing that
+    // window requires pidfd_send_signal (Linux-only) or equivalent; macOS has
+    // no atomic primitive. The window is microseconds and the probability is
+    // negligible, so we accept the race.
     if !verify_pid_is_floatty_server(pid) {
         // Not our process — remove the stale file so we don't keep trying,
         // but don't touch the mystery process.
@@ -163,10 +169,22 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
     }
 
     // SIGTERM first — give the process a chance to clean up.
+    //
+    // State-transition table for this path (send_signal × process-state-after):
+    //   (true,  exited)  → return true (clean exit)
+    //   (true,  alive)   → escalate to SIGKILL (real zombie ignoring SIGTERM)
+    //   (false, exited)  → return true (benign race: process exited between
+    //                      kill -0 and kill -TERM, the port is already free)
+    //   (false, alive)   → escalate to SIGKILL (EPERM or similar; SIGKILL
+    //                      will also fail and bail cleanly)
     tracing::warn!(pid = pid, "Killing stale server process (SIGTERM)");
     if !send_signal(pid, "-TERM") {
-        // Signal delivery failed immediately (permissions, process vanished
-        // between kill -0 and kill -TERM). Skip the 500ms wait and escalate.
+        // Distinguish benign race from real delivery failure by re-checking.
+        if !pid_is_alive(pid) {
+            let _ = std::fs::remove_file(pid_path);
+            tracing::info!(pid = pid, "Stale server exited before SIGTERM was delivered");
+            return true;
+        }
         tracing::warn!(pid = pid, "SIGTERM delivery failed, escalating immediately");
     } else if wait_for_exit(pid, std::time::Duration::from_millis(500)) {
         let _ = std::fs::remove_file(pid_path);
@@ -177,8 +195,16 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
     // SIGTERM ignored or undeliverable — escalate to SIGKILL. This is the
     // zombie-recovery path: a server wedged on a poisoned mutex will not
     // respond to SIGTERM because its runtime can't schedule the handler.
+    //
+    // Same state table as SIGTERM above — a send_signal=false result could
+    // still mean the process exited on its own during the race.
     tracing::warn!(pid = pid, "Escalating to SIGKILL");
     if !send_signal(pid, "-KILL") {
+        if !pid_is_alive(pid) {
+            let _ = std::fs::remove_file(pid_path);
+            tracing::info!(pid = pid, "Stale server exited before SIGKILL was delivered");
+            return true;
+        }
         tracing::error!(pid = pid, "SIGKILL delivery failed — cannot recover");
         return false;
     }
@@ -225,7 +251,6 @@ fn remove_pid_file(pid_path: &PathBuf) {
 /// If a server is already running on the port, connects to it instead.
 ///
 /// Returns `ServerState` on success, or None if spawn/health-check fails.
-/// Uses eprintln for early boot logging (before tauri_plugin_log is initialized).
 ///
 /// # Arguments
 /// * `paths` - Data paths (used for PID file and passed to subprocess via FLOATTY_DATA_DIR)
@@ -274,12 +299,29 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
     // Redirect stderr to a log file so server tracing output is captured in release builds
     // (inherit goes nowhere when launched from .app bundle)
     let log_dir = paths.root.join("logs");
-    std::fs::create_dir_all(&log_dir).ok();
-    let server_log = std::fs::OpenOptions::new()
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        // Non-fatal: we'll fall through to stderr inherit below, which goes
+        // nowhere in the .app bundle. Log so the disappearance is visible.
+        tracing::warn!(
+            error = %e,
+            log_dir = ?log_dir,
+            "Failed to create server log dir; server.log will be absent and stderr will inherit (goes nowhere in .app bundle)"
+        );
+    }
+    let server_log = match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(log_dir.join("server.log"))
-        .ok();
+    {
+        Ok(f) => Some(f),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to open server.log; stderr will inherit (goes nowhere in .app bundle)"
+            );
+            None
+        }
+    };
 
     let mut cmd = std::process::Command::new(&server_binary);
     cmd.env("FLOATTY_DATA_DIR", &paths.root)
@@ -327,8 +369,20 @@ fn read_api_key_from_config(config_path: &PathBuf) -> Option<String> {
         return None;
     }
 
-    let content = std::fs::read_to_string(config_path).ok()?;
-    let doc: toml::Table = content.parse().ok()?;
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(path = ?config_path, error = %e, "Failed to read config file");
+            return None;
+        }
+    };
+    let doc: toml::Table = match content.parse() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!(path = ?config_path, error = %e, "Failed to parse config TOML");
+            return None;
+        }
+    };
 
     // Read from [server].api_key
     let api_key = doc
@@ -339,7 +393,7 @@ fn read_api_key_from_config(config_path: &PathBuf) -> Option<String> {
         .map(|s| s.to_string());
 
     if api_key.is_none() {
-        log::warn!("No [server].api_key found in config");
+        tracing::warn!("No [server].api_key found in config");
     }
 
     api_key
@@ -454,7 +508,7 @@ fn wait_for_server_health(base_url: &str) -> bool {
 
     for attempt in 1..=max_attempts {
         if probe_server_health(base_url, 1) {
-            log::info!("Server health check passed (attempt {})", attempt);
+            tracing::info!(attempt = attempt, "Server health check passed");
             return true;
         }
         std::thread::sleep(delay);
