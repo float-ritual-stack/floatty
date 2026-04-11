@@ -65,6 +65,54 @@ fn wait_for_exit(pid: u32, timeout: std::time::Duration) -> bool {
     !pid_is_alive(pid)
 }
 
+/// Verify that `pid` is actually a floatty-server process before signaling it.
+///
+/// Between floatty exits and the next launch, the OS can recycle the PID we
+/// wrote to disk. Without this check, `kill_stale_server` could SIGKILL a
+/// completely unrelated process that happened to inherit the number. We use
+/// `ps -p <pid> -o comm=` (BSD/macOS + GNU-compat) to read the command name
+/// and require it to contain "floatty-server".
+///
+/// Returns true if verification succeeds OR if we can't determine (we err on
+/// the side of allowing the kill — the alternative is leaving a real zombie
+/// in place). Returns false only when we have positive evidence the PID
+/// belongs to something else.
+fn verify_pid_is_floatty_server(pid: u32) -> bool {
+    let output = match std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!(pid = pid, error = %e, "ps failed; allowing signal as fallback");
+            return true;
+        }
+    };
+
+    if !output.status.success() {
+        // ps exited non-zero — usually means PID no longer exists. pid_is_alive
+        // already returned true moments ago, so this is a race. Allow the signal.
+        return true;
+    }
+
+    let comm = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if comm.is_empty() {
+        return true;
+    }
+
+    // Match the binary basename. `ps comm=` gives the program name without path.
+    // macOS truncates long names, so use `contains` not exact match.
+    let is_ours = comm.contains("floatty-server") || comm.contains("float-pty");
+    if !is_ours {
+        tracing::error!(
+            pid = pid,
+            command = %comm,
+            "PID from file does NOT belong to floatty-server — refusing to signal (OS likely recycled the PID)"
+        );
+    }
+    is_ours
+}
+
 /// Kill a stale server process using saved PID file.
 /// Returns true if the PID file was consumed (either the process is now dead
 /// or there was no live process to begin with). Returns false only if a
@@ -104,30 +152,44 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
         return true;
     }
 
+    // PID recycling guard: between our last shutdown and now, the OS may have
+    // assigned this number to something unrelated. Verify the process is
+    // actually a floatty-server before sending signals.
+    if !verify_pid_is_floatty_server(pid) {
+        // Not our process — remove the stale file so we don't keep trying,
+        // but don't touch the mystery process.
+        let _ = std::fs::remove_file(pid_path);
+        return true;
+    }
+
     // SIGTERM first — give the process a chance to clean up.
     tracing::warn!(pid = pid, "Killing stale server process (SIGTERM)");
-    send_signal(pid, "-TERM");
-
-    if wait_for_exit(pid, std::time::Duration::from_millis(500)) {
+    if !send_signal(pid, "-TERM") {
+        // Signal delivery failed immediately (permissions, process vanished
+        // between kill -0 and kill -TERM). Skip the 500ms wait and escalate.
+        tracing::warn!(pid = pid, "SIGTERM delivery failed, escalating immediately");
+    } else if wait_for_exit(pid, std::time::Duration::from_millis(500)) {
         let _ = std::fs::remove_file(pid_path);
         tracing::info!(pid = pid, "Stale server exited on SIGTERM");
         return true;
     }
 
-    // SIGTERM ignored — escalate to SIGKILL. This is the zombie-recovery
-    // path: a server wedged on a poisoned mutex will not respond to
-    // SIGTERM because its runtime can't schedule the handler.
-    tracing::warn!(pid = pid, "SIGTERM ignored, escalating to SIGKILL");
-    send_signal(pid, "-KILL");
+    // SIGTERM ignored or undeliverable — escalate to SIGKILL. This is the
+    // zombie-recovery path: a server wedged on a poisoned mutex will not
+    // respond to SIGTERM because its runtime can't schedule the handler.
+    tracing::warn!(pid = pid, "Escalating to SIGKILL");
+    if !send_signal(pid, "-KILL") {
+        tracing::error!(pid = pid, "SIGKILL delivery failed — cannot recover");
+        return false;
+    }
 
     if wait_for_exit(pid, std::time::Duration::from_millis(500)) {
         let _ = std::fs::remove_file(pid_path);
         tracing::info!(pid = pid, "Stale server exited on SIGKILL");
         true
     } else {
-        // SIGKILL failing means either the PID no longer belongs to us
-        // (permissions) or the kernel is in a bad state. Don't delete the
-        // PID file — next launch will try again.
+        // SIGKILL delivered but process still alive — kernel pathology.
+        // Don't delete the PID file — next launch will try again.
         tracing::error!(pid = pid, "SIGKILL failed — zombie still holding port");
         false
     }
@@ -385,7 +447,9 @@ fn probe_server_health(base_url: &str, timeout_secs: u32) -> bool {
 /// Wait for server health endpoint to respond (with retries).
 /// Used AFTER spawning a fresh server to give it time to bind and start serving.
 fn wait_for_server_health(base_url: &str) -> bool {
-    let max_attempts = 30; // ~3 seconds of retries + up to 1s timeout per probe
+    // Worst case: 30 × (1s probe timeout + 100ms sleep) ≈ 33s.
+    // In practice a healthy fresh server responds within 1-2 attempts (~200ms).
+    let max_attempts = 30;
     let delay = std::time::Duration::from_millis(100);
 
     for attempt in 1..=max_attempts {
