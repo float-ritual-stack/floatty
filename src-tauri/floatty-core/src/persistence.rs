@@ -57,6 +57,13 @@ impl YDocPersistence {
         // Enable WAL mode for better concurrency
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
 
+        // Checkpoint WAL on open — reduces read amplification from large WAL files.
+        // PASSIVE: non-blocking, skips frames held by active readers. Safe at startup.
+        // A large uncheckpointed WAL (>10MB) forces SQLite to merge WAL+main on every read.
+        if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);") {
+            log::warn!("WAL checkpoint on open failed (non-fatal): {}", e);
+        }
+
         let persistence = Self {
             conn: Mutex::new(conn),
         };
