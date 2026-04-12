@@ -6,6 +6,31 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.4] - 2026-04-12
+
+### Refactoring
+
+- **Break up api.rs god object** (#225): split the 5,198-line `api.rs` into 7 handler modules + shared infrastructure (`api/mod.rs`). Each module owns one route family: `sync` (Y.Doc state sync), `blocks` (CRUD), `search` (full-text + page search), `export` (binary/JSON export, topology), `backup` (status/list/trigger/restore), `outlines` (outline management + per-outline scoped handlers), `discovery` (markers, stats, daily note, presence, attachments). Router composition via `Router::merge()` with per-module `pub fn router()`. Zero behavior changes — all endpoints return identical responses.
+
+### Observability
+
+- **Handler-level tracing instrumentation** (#225): added `#[tracing::instrument]` to 18 handler functions across all 7 modules. Low-cardinality structured fields: `route_family` (sync|blocks|search|export|backup|discovery|outlines), `handler` (function name), automatic `err` logging. Selective — only write paths, expensive reads, and destructive operations instrumented. Queryable in Grafana/Loki via `{service_name="floatty-server"} | json | route_family != ""`.
+
+### Bug Fixes
+
+- **Async file I/O for backup restore** (#225): replaced blocking `std::fs::read` with `tokio::fs::read` in the backup restore handler to avoid blocking a Tokio worker thread when reading large `.ydoc` backup files.
+
+### Infrastructure
+
+- **Monorepo scaffold** (eb11756..e8055e8): moved floatty into `apps/floatty/`, added `pnpm-workspace.yaml` + `turbo.json`, root-level passthrough scripts, scoped `.claude/rules` paths.
+
+### Related
+
+- [[FLO-605]] filed: restore paths clear search index before validating new state (pre-existing, surfaced by #225 review)
+- [[FLO-606]] filed: reindex endpoint doesn't clear stale entries from deleted blocks (pre-existing, surfaced by #225 review)
+
+---
+
 ## [0.11.3] - 2026-04-11
 
 ### Bug Fixes
