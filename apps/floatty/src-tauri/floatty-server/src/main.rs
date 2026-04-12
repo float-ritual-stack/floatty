@@ -76,22 +76,37 @@ fn init_otlp_logs(endpoint: Option<&str>) -> Option<SdkLoggerProvider> {
     )
 }
 
-/// Build an OTLP trace exporter + provider. Shares the same endpoint as logs —
-/// the collector (Alloy) routes logs to Loki and traces to Tempo.
+/// Build an OTLP trace exporter + provider.
 ///
-/// Uses the base endpoint (not signal-specific) so the OTLP client appends
-/// `/v1/traces` automatically, same as the log exporter appends `/v1/logs`.
+/// Trace endpoint resolution (independent of log endpoint):
+/// 1. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` env var (signal-specific, full URL)
+/// 2. `OTEL_EXPORTER_OTLP_ENDPOINT` env var (general, SDK appends `/v1/traces`)
+/// 3. Config `otlp_endpoint` — only if it's a general collector endpoint
+///    (not Loki's `/otlp/v1/logs` which only handles logs)
+///
+/// In practice: set `OTEL_EXPORTER_OTLP_ENDPOINT=http://float-box:4318` to
+/// enable trace export to Alloy/Tempo. The log endpoint in config.toml can
+/// stay pointing at Loki directly.
 fn init_otlp_traces(endpoint: Option<&str>) -> Option<SdkTracerProvider> {
-    let endpoint = endpoint?;
+    // Check signal-specific env var first
+    let trace_endpoint = std::env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT").ok();
+    // Then general OTLP endpoint
+    let general_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
+    // Then config endpoint — but skip if it's Loki-specific (contains /v1/logs)
+    let config_endpoint = endpoint
+        .filter(|e| !e.contains("/v1/logs"))
+        .map(String::from);
 
-    // Traces go to the base OTLP endpoint (collector routes to Tempo).
-    // Strip /v1/logs suffix if present — the SDK appends /v1/traces itself.
-    let base = endpoint.trim_end_matches("/v1/logs");
+    let resolved = trace_endpoint
+        .or(general_endpoint)
+        .or(config_endpoint);
+
+    let resolved = resolved.as_deref()?;
 
     let exporter = match SpanExporter::builder()
         .with_http()
         .with_protocol(Protocol::HttpBinary)
-        .with_endpoint(base)
+        .with_endpoint(resolved)
         .build()
     {
         Ok(e) => e,
