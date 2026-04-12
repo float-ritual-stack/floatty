@@ -15,10 +15,11 @@ use floatty_server::{
     config::{BackupConfig, ServerConfig},
     start_heartbeat, ws, OutlineManager, WsBroadcaster,
 };
+use opentelemetry::trace::TracerProvider;
 use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-use opentelemetry_otlp::{LogExporter, Protocol, WithExportConfig};
-use opentelemetry_sdk::{logs::SdkLoggerProvider, Resource};
+use opentelemetry_otlp::{LogExporter, Protocol, SpanExporter, WithExportConfig};
+use opentelemetry_sdk::{logs::SdkLoggerProvider, trace::SdkTracerProvider, Resource};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -32,6 +33,18 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 const BUILD_PROFILE: &str = "dev";
 #[cfg(not(debug_assertions))]
 const BUILD_PROFILE: &str = "release";
+
+/// OTel resource shared by both log and trace providers.
+fn otel_resource() -> Resource {
+    Resource::builder()
+        .with_service_name("floatty-server")
+        .with_attribute(KeyValue::new(
+            "service.version",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_attribute(KeyValue::new("deployment.environment", BUILD_PROFILE))
+        .build()
+}
 
 /// Build an OTLP log exporter + provider when an endpoint is configured.
 ///
@@ -55,24 +68,55 @@ fn init_otlp_logs(endpoint: Option<&str>) -> Option<SdkLoggerProvider> {
         }
     };
 
-    let resource = Resource::builder()
-        .with_service_name("floatty-server")
-        .with_attribute(KeyValue::new(
-            "service.version",
-            env!("CARGO_PKG_VERSION"),
-        ))
-        .with_attribute(KeyValue::new("deployment.environment", BUILD_PROFILE))
-        .build();
-
     Some(
         SdkLoggerProvider::builder()
             .with_batch_exporter(exporter)
-            .with_resource(resource)
+            .with_resource(otel_resource())
             .build(),
     )
 }
 
-fn setup_logging(log_dir: &std::path::Path, otlp_endpoint: Option<&str>) -> Option<SdkLoggerProvider> {
+/// Build an OTLP trace exporter + provider. Shares the same endpoint as logs —
+/// the collector (Alloy) routes logs to Loki and traces to Tempo.
+///
+/// Uses the base endpoint (not signal-specific) so the OTLP client appends
+/// `/v1/traces` automatically, same as the log exporter appends `/v1/logs`.
+fn init_otlp_traces(endpoint: Option<&str>) -> Option<SdkTracerProvider> {
+    let endpoint = endpoint?;
+
+    // Traces go to the base OTLP endpoint (collector routes to Tempo).
+    // Strip /v1/logs suffix if present — the SDK appends /v1/traces itself.
+    let base = endpoint.trim_end_matches("/v1/logs");
+
+    let exporter = match SpanExporter::builder()
+        .with_http()
+        .with_protocol(Protocol::HttpBinary)
+        .with_endpoint(base)
+        .build()
+    {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("OTLP trace exporter build failed: {e}. Continuing without trace export.");
+            return None;
+        }
+    };
+
+    Some(
+        SdkTracerProvider::builder()
+            .with_batch_exporter(exporter)
+            .with_resource(otel_resource())
+            .build(),
+    )
+}
+
+/// Providers returned from setup_logging — caller holds them alive for the
+/// duration of the process. Dropping them flushes pending exports.
+struct OtelProviders {
+    _logger: Option<SdkLoggerProvider>,
+    _tracer: Option<SdkTracerProvider>,
+}
+
+fn setup_logging(log_dir: &std::path::Path, otlp_endpoint: Option<&str>) -> OtelProviders {
     // JSON file layer — rotates daily, appends to same files as Tauri process
     let file_appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
@@ -109,9 +153,16 @@ fn setup_logging(log_dir: &std::path::Path, otlp_endpoint: Option<&str>) -> Opti
     // Optional OTLP log layer — None if endpoint unset or exporter build fails.
     // Option<L> implements Layer<S> for any L: Layer<S>, so None is a no-op in the chain.
     let logger_provider = init_otlp_logs(otlp_endpoint);
-    let otlp_layer = logger_provider
+    let otlp_log_layer = logger_provider
         .as_ref()
         .map(OpenTelemetryTracingBridge::new);
+
+    // Optional OTLP trace layer — bridges tracing::instrument spans → OTLP trace spans.
+    // Shares the same base endpoint; collector routes traces to Tempo.
+    let tracer_provider = init_otlp_traces(otlp_endpoint);
+    let otlp_trace_layer = tracer_provider
+        .as_ref()
+        .map(|tp| tracing_opentelemetry::layer().with_tracer(tp.tracer("floatty-server")));
 
     // Compose via cfg split rather than Option<stdout> — fmt::layer() infers its subscriber
     // type from context, and pinning it to Option<Layer<Registry>> breaks composition once
@@ -120,7 +171,8 @@ fn setup_logging(log_dir: &std::path::Path, otlp_endpoint: Option<&str>) -> Opti
     tracing_subscriber::registry()
         .with(filter)
         .with(file_layer)
-        .with(otlp_layer)
+        .with(otlp_log_layer)
+        .with(otlp_trace_layer)
         .with(fmt::layer().with_target(true).with_ansi(true))
         .init();
 
@@ -128,10 +180,14 @@ fn setup_logging(log_dir: &std::path::Path, otlp_endpoint: Option<&str>) -> Opti
     tracing_subscriber::registry()
         .with(filter)
         .with(file_layer)
-        .with(otlp_layer)
+        .with(otlp_log_layer)
+        .with(otlp_trace_layer)
         .init();
 
-    logger_provider
+    OtelProviders {
+        _logger: logger_provider,
+        _tracer: tracer_provider,
+    }
 }
 
 #[tokio::main]
@@ -174,12 +230,15 @@ async fn main() {
                 .map(|base| format!("{}/v1/logs", base.trim_end_matches('/')))
         })
         .or_else(|| config.otlp_endpoint.clone());
-    let _logger_provider = setup_logging(&log_dir, otlp_endpoint.as_deref());
-    if otlp_endpoint.is_some() && _logger_provider.is_some() {
+    let _otel = setup_logging(&log_dir, otlp_endpoint.as_deref());
+    if _otel._logger.is_some() {
         // Never log the endpoint URL itself — it comes from user config or env
         // vars and may contain basic-auth userinfo, query tokens, or internal
         // hostnames. See .claude/rules/logging-discipline.md axis 1.
         tracing::info!(target: "floatty_startup", "otlp_log_export_enabled");
+    }
+    if _otel._tracer.is_some() {
+        tracing::info!(target: "floatty_startup", "otlp_trace_export_enabled");
     }
 
     // Preflight: verify data dir matches build profile (FLO-317 "never again")

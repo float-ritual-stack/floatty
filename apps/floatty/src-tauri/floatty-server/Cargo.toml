@@ -32,16 +32,18 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 
-# Optional OTLP log export (gated on OTEL_EXPORTER_OTLP_ENDPOINT env var at runtime)
-opentelemetry = { version = "0.31", features = ["logs"] }
-opentelemetry_sdk = { version = "0.31", features = ["logs", "rt-tokio"] }
+# Optional OTLP export (logs + traces, gated on config.toml otlp_endpoint at runtime)
+opentelemetry = { version = "0.31", features = ["logs", "trace"] }
+opentelemetry_sdk = { version = "0.31", features = ["logs", "trace", "rt-tokio"] }
 # SdkLoggerProvider::with_batch_exporter spawns a dedicated OS thread (not a
 # tokio task), so reqwest-client (async) panics inside that thread with "no
 # reactor running". reqwest-blocking-client runs fine on the dedicated thread
 # without needing a tokio runtime. This matches the upstream basic-otlp-http
-# example.
-opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "logs", "reqwest-blocking-client", "internal-logs"] }
+# example. Trace exporter uses the same blocking client for consistency.
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "logs", "trace", "reqwest-blocking-client", "internal-logs"] }
 opentelemetry-appender-tracing = "0.31"
+# Bridges tracing::instrument spans → OTLP trace spans
+tracing-opentelemetry = "0.32"
 
 # Error handling
 thiserror = "2.0"
