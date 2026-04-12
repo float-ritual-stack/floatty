@@ -169,6 +169,7 @@ async fn export_binary(State(state): State<AppState>) -> Result<impl IntoRespons
 /// Returns structured JSON with all blocks. Note: This is a LOSSY export -
 /// CRDT metadata (vector clocks, tombstones) is NOT preserved.
 /// Use /api/v1/export/binary for perfect restore.
+#[tracing::instrument(skip(state), fields(route_family = "export", handler = "export_json"), err)]
 async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
@@ -299,6 +300,7 @@ async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse,
 /// Query params: ?maxLines=30&maxLineLen=90 (defaults shown)
 ///
 /// Data sources: PageNameIndex (existing pages, stubs, reference counts) + Y.Doc (blocks).
+#[tracing::instrument(skip(state, query), fields(route_family = "export", handler = "get_topology"), err)]
 async fn get_topology(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<TopologyQuery>,

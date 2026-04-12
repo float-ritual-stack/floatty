@@ -245,6 +245,7 @@ async fn outline_get_state_hash(
     }))
 }
 
+#[tracing::instrument(skip(state, req), fields(route_family = "outlines", handler = "outline_apply_update"), err)]
 async fn outline_apply_update(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -341,6 +342,7 @@ async fn outline_get_blocks(
     Ok(Json(result))
 }
 
+#[tracing::instrument(skip(state, req), fields(route_family = "outlines", handler = "outline_create_block"), err)]
 async fn outline_create_block(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -424,6 +426,7 @@ async fn outline_update_block(
     Ok(Json(block))
 }
 
+#[tracing::instrument(skip(state), fields(route_family = "outlines", handler = "outline_delete_block"), err)]
 async fn outline_delete_block(
     State(state): State<AppState>,
     Path((name, id)): Path<(String, String)>,

@@ -130,6 +130,7 @@ async fn backup_list(
     Ok(Json(BackupListResponse { backups: files }))
 }
 
+#[tracing::instrument(skip(state), fields(route_family = "backup", handler = "backup_trigger"), err)]
 async fn backup_trigger(
     State(state): State<AppState>,
 ) -> Result<Json<BackupTriggerResponse>, ApiError> {
@@ -149,6 +150,7 @@ async fn backup_trigger(
     }))
 }
 
+#[tracing::instrument(skip(state, headers, req), fields(route_family = "backup", handler = "backup_restore"), err)]
 async fn backup_restore(
     State(state): State<AppState>,
     headers: HeaderMap,

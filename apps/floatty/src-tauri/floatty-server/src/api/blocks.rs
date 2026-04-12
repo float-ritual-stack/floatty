@@ -335,6 +335,7 @@ async fn get_block(
 }
 
 /// POST /api/v1/blocks - Create block
+#[tracing::instrument(skip(state, req), fields(route_family = "blocks", handler = "create_block"), err)]
 async fn create_block(
     State(state): State<AppState>,
     Json(req): Json<CreateBlockRequest>,
@@ -352,6 +353,7 @@ async fn create_block(
 ///
 /// Accepts a caller-supplied UUID. Distinct from the normal create endpoint so that
 /// identity preservation is an explicit, auditable operation — not ambient behavior.
+#[tracing::instrument(skip(state, req), fields(route_family = "blocks", handler = "import_block"), err)]
 async fn import_block(
     State(state): State<AppState>,
     Json(req): Json<ImportBlockRequest>,
@@ -381,6 +383,7 @@ async fn put_not_supported(Path(id): Path<String>) -> (StatusCode, Json<ErrorRes
 }
 
 /// PATCH /api/v1/blocks/:id - Update content, metadata, and/or parent
+#[tracing::instrument(skip(state, req), fields(route_family = "blocks", handler = "update_block"), err)]
 async fn update_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -397,6 +400,7 @@ async fn update_block(
 }
 
 /// DELETE /api/v1/blocks/:id - Delete block and entire subtree
+#[tracing::instrument(skip(state), fields(route_family = "blocks", handler = "delete_block"), err)]
 async fn delete_block(
     State(state): State<AppState>,
     Path(id): Path<String>,

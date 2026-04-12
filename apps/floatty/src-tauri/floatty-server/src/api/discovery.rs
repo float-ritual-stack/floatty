@@ -79,6 +79,7 @@ async fn get_block_stats(
     Ok(Json(state.store.get_stats()))
 }
 
+#[tracing::instrument(skip(state), fields(route_family = "discovery", handler = "get_daily_note"), err)]
 async fn get_daily_note(
     State(state): State<AppState>,
     Path(date): Path<String>,

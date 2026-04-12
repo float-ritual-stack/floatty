@@ -149,6 +149,7 @@ async fn search_pages(
     Ok(Json(PageSearchResponse { pages }))
 }
 
+#[tracing::instrument(skip(state, query), fields(route_family = "search", handler = "search_blocks"), err)]
 async fn search_blocks(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<BlockSearchQuery>,
@@ -161,6 +162,7 @@ async fn search_blocks(
     Ok(Json(result))
 }
 
+#[tracing::instrument(skip(state), fields(route_family = "search", handler = "clear_search_index"), err)]
 async fn clear_search_index(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
     state
         .hook_system
@@ -171,6 +173,7 @@ async fn clear_search_index(State(state): State<AppState>) -> Result<StatusCode,
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[tracing::instrument(skip(state), fields(route_family = "search", handler = "reindex_search"), err)]
 async fn reindex_search(
     State(state): State<AppState>,
 ) -> Result<Json<ReindexResponse>, ApiError> {
