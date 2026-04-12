@@ -4,12 +4,14 @@
 //! - `sync` — Y.Doc state sync, updates, restore, health
 //! - (more to follow: blocks, search, export, backup, outlines, discovery)
 
+pub mod backup;
+pub mod discovery;
 pub mod search;
 pub mod sync;
 
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, StatusCode},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Json, Router,
@@ -458,22 +460,10 @@ pub fn create_router(
         .route("/api/v1/blocks/:id", delete(delete_block))
         // Search endpoints (page search, full-text, reindex, clear)
         .merge(search::router())
-        // Vocabulary discovery endpoints
-        .route("/api/v1/markers", get(list_marker_types))
-        .route("/api/v1/markers/:marker_type/values", get(list_marker_values))
-        .route("/api/v1/stats", get(get_block_stats))
-        // Backup endpoints
-        .route("/api/v1/backup/status", get(backup_status))
-        .route("/api/v1/backup/list", get(backup_list))
-        .route("/api/v1/backup/trigger", post(backup_trigger))
-        .route("/api/v1/backup/restore", post(backup_restore))
-        .route("/api/v1/backup/config", get(backup_config))
-        // Presence (spike for TUI follower)
-        .route("/api/v1/presence", get(get_presence).post(post_presence))
-        // Daily note — resolve page by date (e.g., /api/v1/daily/2026-03-31)
-        .route("/api/v1/daily/:date", get(get_daily_note))
-        // Attachments — static file serving from {data_dir}/__attachments/
-        .route("/api/v1/attachments/:filename", get(get_attachment))
+        // Backup endpoints (status, list, trigger, restore, config)
+        .merge(backup::router())
+        // Discovery endpoints (markers, stats, daily note, presence, attachments)
+        .merge(discovery::router())
         // Outline management (Phase 1: multi-outline)
         .route("/api/v1/outlines", get(list_outlines).post(create_outline_handler))
         .route("/api/v1/outlines/:name", delete(delete_outline_handler))
@@ -615,44 +605,7 @@ async fn export_binary(State(state): State<AppState>) -> Result<impl IntoRespons
 }
 
 /// GET /api/v1/attachments/:filename - Serve a file from {data_dir}/__attachments/
-///
-/// Single-user loopback endpoint. Auth is handled by the global Bearer middleware.
-/// Path traversal is prevented by rejecting filenames with `/`, `\`, or `..`.
-/// The directory is created on first request if it doesn't exist.
-async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoResponse, ApiError> {
-    // Reject path traversal attempts
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
-        return Err(ApiError::InvalidRequest("Invalid filename".to_string()));
-    }
-
-    let attachments_dir = crate::config::data_dir().join("__attachments");
-    // Create dir lazily so the endpoint works even before any files are placed there
-    let _ = tokio::fs::create_dir_all(&attachments_dir).await;
-
-    let file_path = attachments_dir.join(&filename);
-    let bytes = tokio::fs::read(&file_path).await
-        .map_err(|_| ApiError::NotFound(format!("Attachment not found: {}", filename)))?;
-
-    // Infer content type from extension
-    let content_type: &'static str = match file_path.extension().and_then(|e| e.to_str()) {
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("png") => "image/png",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("svg") => "image/svg+xml",
-        Some("mp4") => "video/mp4",
-        Some("webm") => "video/webm",
-        Some("pdf") => "application/pdf",
-        Some("html") | Some("htm") => "text/html",
-        _ => "application/octet-stream",
-    };
-
-    Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, header::HeaderValue::from_static(content_type))],
-        bytes,
-    ))
-}
+// get_attachment moved to api/discovery.rs
 
 /// GET /api/v1/export/json - Human-readable JSON export
 ///
@@ -1542,363 +1495,11 @@ async fn delete_block(
 
 // Search handlers moved to api/search.rs
 
-// ============================================================================
-// Backup Endpoints (FLO-251)
-// ============================================================================
+// Backup DTOs moved to api/backup.rs
 
-/// Backup status response
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackupStatusResponse {
-    pub running: bool,
-    pub last_backup: Option<String>,
-    pub next_backup: Option<String>,
-    pub backup_count: usize,
-    pub total_size_bytes: u64,
-    pub backup_dir: String,
-}
+// Vocabulary discovery + backup handlers moved to api/discovery.rs + api/backup.rs
 
-/// Backup file info for list response
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackupFileInfo {
-    pub filename: String,
-    pub size_bytes: u64,
-    pub created: String,
-}
-
-/// Backup list response
-#[derive(Serialize)]
-pub struct BackupListResponse {
-    pub backups: Vec<BackupFileInfo>,
-}
-
-/// Backup trigger response
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackupTriggerResponse {
-    pub filename: String,
-    pub size_bytes: u64,
-}
-
-/// Backup restore request
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BackupRestoreRequest {
-    pub filename: String,
-}
-
-/// Backup config response
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackupConfigResponse {
-    pub enabled: bool,
-    pub interval_hours: u64,
-    pub retain_hourly: u32,
-    pub retain_daily: u32,
-    pub retain_weekly: u32,
-    pub backup_dir: String,
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// VOCABULARY DISCOVERY
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// GET /api/v1/markers - List distinct marker types with counts
-///
-/// Returns all marker types found across blocks with their occurrence counts.
-/// Sorted by count descending.
-async fn list_marker_types(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let types = state.store.enumerate_marker_types();
-    let items: Vec<serde_json::Value> = types
-        .into_iter()
-        .map(|(marker_type, count)| {
-            serde_json::json!({ "type": marker_type, "count": count })
-        })
-        .collect();
-    Ok(Json(serde_json::json!({ "markers": items, "total": items.len() })))
-}
-
-/// GET /api/v1/markers/:marker_type/values - List values for a marker type
-///
-/// Returns distinct values for a specific marker type with counts.
-/// E.g., `/api/v1/markers/project/values` returns `[{value: "floatty", count: 350}, ...]`
-async fn list_marker_values(
-    State(state): State<AppState>,
-    axum::extract::Path(marker_type): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let values = state.store.enumerate_marker_values(&marker_type);
-    let items: Vec<serde_json::Value> = values
-        .into_iter()
-        .map(|(value, count)| {
-            serde_json::json!({ "value": value, "count": count })
-        })
-        .collect();
-    Ok(Json(serde_json::json!({
-        "markerType": marker_type,
-        "values": items,
-        "total": items.len()
-    })))
-}
-
-/// GET /api/v1/stats - Block statistics
-///
-/// Returns total block count, root count, type distribution, and metadata coverage.
-async fn get_block_stats(
-    State(state): State<AppState>,
-) -> Result<Json<floatty_core::store::BlockStats>, ApiError> {
-    Ok(Json(state.store.get_stats()))
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// BACKUP
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Format SystemTime as ISO 8601 string (UTC)
-fn format_system_time(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    DateTime::from_timestamp(secs as i64, 0)
-        .map(|dt: DateTime<Utc>| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// GET /api/v1/backup/status - Backup daemon status
-async fn backup_status(State(state): State<AppState>) -> Result<Json<BackupStatusResponse>, ApiError> {
-    let daemon = state.backup_daemon.as_ref()
-        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
-
-    let status = daemon.get_status();
-
-    Ok(Json(BackupStatusResponse {
-        running: status.running,
-        last_backup: status.last_backup.map(format_system_time),
-        next_backup: status.next_backup.map(format_system_time),
-        backup_count: status.backup_count,
-        total_size_bytes: status.total_size_bytes,
-        backup_dir: daemon.backup_dir().display().to_string(),
-    }))
-}
-
-/// GET /api/v1/backup/list - List backup files
-async fn backup_list(State(state): State<AppState>) -> Result<Json<BackupListResponse>, ApiError> {
-    let daemon = state.backup_daemon.as_ref()
-        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
-
-    let backups = daemon.list_backups()
-        .map_err(|e| ApiError::Search(format!("Failed to list backups: {}", e)))?;
-
-    let files: Vec<BackupFileInfo> = backups.into_iter()
-        .map(|b| BackupFileInfo {
-            filename: b.filename,
-            size_bytes: b.size_bytes,
-            created: format_system_time(b.created),
-        })
-        .collect();
-
-    Ok(Json(BackupListResponse { backups: files }))
-}
-
-/// POST /api/v1/backup/trigger - Trigger immediate backup
-async fn backup_trigger(State(state): State<AppState>) -> Result<Json<BackupTriggerResponse>, ApiError> {
-    let daemon = state.backup_daemon.as_ref()
-        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
-
-    let info = daemon.trigger_backup().await
-        .map_err(|e| ApiError::Search(e))?;
-
-    Ok(Json(BackupTriggerResponse {
-        filename: info.filename,
-        size_bytes: info.size_bytes,
-    }))
-}
-
-/// POST /api/v1/backup/restore - Restore from backup file
-///
-/// **DESTRUCTIVE**: Requires `x-floatty-confirm-destructive: true` header.
-async fn backup_restore(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<BackupRestoreRequest>,
-) -> Result<Json<RestoreResponse>, ApiError> {
-    // Safety check: require explicit confirmation header for destructive operation
-    let confirmed = headers
-        .get("x-floatty-confirm-destructive")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    if !confirmed {
-        return Err(ApiError::MissingConfirmationHeader);
-    }
-
-    let daemon = state.backup_daemon.as_ref()
-        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
-
-    // Find the backup file
-    let backups = daemon.list_backups()
-        .map_err(|e| ApiError::Search(format!("Failed to list backups: {}", e)))?;
-
-    let backup = backups.iter()
-        .find(|b| b.filename == req.filename)
-        .ok_or_else(|| ApiError::NotFound(format!("Backup not found: {}", req.filename)))?;
-
-    // Read the backup file
-    let state_bytes = std::fs::read(&backup.path)
-        .map_err(|e| ApiError::Search(format!("Failed to read backup: {}", e)))?;
-
-    // Clear search index before restore
-    if let Err(e) = state.hook_system.clear_search_index().await {
-        tracing::warn!("Failed to clear search index before restore: {}", e);
-    }
-
-    // Reset the store to the backup state
-    let block_count = state.store.reset_from_state(&state_bytes)?;
-
-    // Broadcast new state to connected clients
-    // No seq for restore - this is a full state replacement, not an incremental update
-    let new_state = state.store.get_full_state()?;
-    state.broadcaster.broadcast(new_state, None, None);
-
-    // Rehydrate hooks
-    let rehydrated = state.hook_system.rehydrate_all_blocks(&state.store);
-    tracing::info!("Rehydrated {} blocks after backup restore", rehydrated);
-
-    // Count roots
-    let root_count = {
-        let doc = state.store.doc();
-        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-        let txn = doc_guard.transact();
-        txn.get_array("rootIds")
-            .map(|arr| arr.len(&txn) as usize)
-            .unwrap_or(0)
-    };
-
-    tracing::info!(
-        block_count = block_count,
-        root_count = root_count,
-        filename = %req.filename,
-        "Restored from backup"
-    );
-
-    Ok(Json(RestoreResponse { block_count, root_count }))
-}
-
-/// GET /api/v1/backup/config - Get backup configuration
-async fn backup_config(State(state): State<AppState>) -> Result<Json<BackupConfigResponse>, ApiError> {
-    let daemon = state.backup_daemon.as_ref()
-        .ok_or_else(|| ApiError::Search("Backups not enabled".to_string()))?;
-
-    let config = daemon.config();
-
-    Ok(Json(BackupConfigResponse {
-        enabled: config.enabled,
-        interval_hours: config.interval_hours,
-        retain_hourly: config.retain_hourly,
-        retain_daily: config.retain_daily,
-        retain_weekly: config.retain_weekly,
-        backup_dir: daemon.backup_dir().display().to_string(),
-    }))
-}
-
-// ═══════════════════════════════════════════════════════════════
-// PRESENCE (spike for TUI follower)
-// ═══════════════════════════════════════════════════════════════
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct PresenceRequest {
-    block_id: String,
-    pane_id: Option<String>,
-}
-
-/// GET /api/v1/daily/:date — Resolve daily note page by date string.
-///
-/// Looks up a page named exactly `date` (e.g., "2026-03-31") in the PageNameIndex.
-/// Returns the page block with children by default, same shape as `GET /api/v1/blocks/:id`.
-/// Accepts optional `include` query param for additional context (ancestors, tree, etc.).
-async fn get_daily_note(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-    axum::extract::Query(mut ctx_query): axum::extract::Query<BlockContextQuery>,
-) -> Result<Json<BlockWithContextResponse>, ApiError> {
-    let page_block_id = {
-        let page_index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
-        page_index.page_block_id(&date).map(String::from)
-    };
-
-    let page_id = page_block_id.ok_or_else(|| {
-        ApiError::NotFound(format!("Page not found: {}", date))
-    })?;
-
-    // Default to including children if no include param specified (or empty string)
-    if ctx_query.include.as_deref().map_or(true, |s| s.trim().is_empty()) {
-        ctx_query.include = Some("children".to_string());
-    }
-
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
-
-    let blocks_map = txn
-        .get_map("blocks")
-        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
-
-    let value = blocks_map
-        .get(&txn, &page_id)
-        .ok_or_else(|| ApiError::NotFound(page_id.clone()))?;
-
-    if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, &page_id)
-        };
-        let block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
-        Ok(Json(crate::block_service::build_block_context_response(
-            &blocks_map, &txn, &page_id, block_dto, &ctx_query,
-        )))
-    } else {
-        Err(ApiError::NotFound(page_id))
-    }
-}
-
-/// GET /api/v1/presence — returns the last focused block, or 204 if none yet / block deleted
-async fn get_presence(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    let Some(info) = state.broadcaster.get_last_presence() else {
-        return StatusCode::NO_CONTENT.into_response();
-    };
-
-    // Validate block still exists — cached presence can outlive deleted blocks
-    let doc = state.store.doc();
-    let Ok(doc_guard) = doc.read() else {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    };
-    let txn = doc_guard.transact();
-    let block_exists = txn
-        .get_map("blocks")
-        .and_then(|m| m.get(&txn, &info.block_id))
-        .is_some();
-
-    if !block_exists {
-        return StatusCode::NO_CONTENT.into_response();
-    }
-
-    Json(serde_json::json!({
-        "blockId": info.block_id,
-        "paneId": info.pane_id,
-    })).into_response()
-}
-
-async fn post_presence(
-    State(state): State<AppState>,
-    Json(req): Json<PresenceRequest>,
-) -> StatusCode {
-    state.broadcaster.broadcast_presence(req.block_id, req.pane_id);
-    StatusCode::OK
-}
+// Discovery + presence handlers moved to api/discovery.rs
 
 // =========================================================================
 // Outline management endpoints (Phase 1: multi-outline)
