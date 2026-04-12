@@ -1,4 +1,9 @@
-# Floatty Handler Registry Architecture
+# Floatty Handler Registry Architecture (ARCHIVED — ORIGINAL VISION)
+
+> **ARCHIVED 2026-04-12** — This described the original Rust-side handler trait vision that was
+> never implemented. Actual implementation is TypeScript-only.
+> **Current source of truth**: [`HANDLER_REGISTRY_IMPLEMENTATION.md`](../architecture/HANDLER_REGISTRY_IMPLEMENTATION.md)
+> Kept for historical context only — unsafe to implement against.
 
 > Reducing handler ceremony. Currently TypeScript frontend handlers; coordination protocol enables multi-client execution.
 

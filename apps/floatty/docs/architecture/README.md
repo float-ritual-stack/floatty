@@ -20,28 +20,28 @@
 | Document | Purpose |
 |----------|---------|
 | [ARCHITECTURE_MAP.md](./ARCHITECTURE_MAP.md) | **Start here** — four-layer model, document index |
-| [FLOATTY_HANDLER_REGISTRY.md](./FLOATTY_HANDLER_REGISTRY.md) | Handler registry design |
-| [HANDLER_REGISTRY_IMPLEMENTATION.md](./HANDLER_REGISTRY_IMPLEMENTATION.md) | Handler implementation details |
-| [FLOATTY_HOOK_SYSTEM.md](./FLOATTY_HOOK_SYSTEM.md) | Hook lifecycle contracts |
-| [EVENTBUS_HOOK_MIGRATION_REVIEW.md](./EVENTBUS_HOOK_MIGRATION_REVIEW.md) | Two-lane event system |
-| [KEYBOARD_CONTROL_PATTERNS.md](./KEYBOARD_CONTROL_PATTERNS.md) | Four keyboard patterns |
-| [LOGGING_STRATEGY.md](./LOGGING_STRATEGY.md) | Structured logging guide |
-| [RUST_MODULARIZATION_GUIDE.md](./RUST_MODULARIZATION_GUIDE.md) | Rust backend structure |
+| [HANDLER_REGISTRY_IMPLEMENTATION.md](./HANDLER_REGISTRY_IMPLEMENTATION.md) | Handler implementation details `[SHIPPED]` |
+| [FLOATTY_HOOK_SYSTEM.md](./FLOATTY_HOOK_SYSTEM.md) | Hook lifecycle contracts `[SHIPPED — has known error, see doc]` |
+| [EVENTBUS_HOOK_MIGRATION_REVIEW.md](./EVENTBUS_HOOK_MIGRATION_REVIEW.md) | Two-lane event system `[SHIPPED — status column stale]` |
+| [KEYBOARD_CONTROL_PATTERNS.md](./KEYBOARD_CONTROL_PATTERNS.md) | Four keyboard patterns `[SHIPPED]` |
+| [LOGGING_STRATEGY.md](./LOGGING_STRATEGY.md) | Structured logging guide `[SHIPPED — needs reorganization]` |
+| [RUST_MODULARIZATION_GUIDE.md](./RUST_MODULARIZATION_GUIDE.md) | Rust backend structure `[ASPIRATIONAL]` |
+| [archive/FLOATTY_HANDLER_REGISTRY_ORIGINAL_VISION.md](../archive/FLOATTY_HANDLER_REGISTRY_ORIGINAL_VISION.md) | Original Rust handler vision `[ARCHIVED — superseded]` |
 
 ### Guides (How To Build)
 
 | Document | Purpose |
 |----------|---------|
 | [RICH_OUTPUT_HANDLER_GUIDE.md](./RICH_OUTPUT_HANDLER_GUIDE.md) | Adding new `prefix::` output handlers |
-| [INLINE_EXPANSION_PATTERNS.md](./INLINE_EXPANSION_PATTERNS.md) | Per-item expandable state |
+| [INLINE_EXPANSION_PATTERNS.md](./INLINE_EXPANSION_PATTERNS.md) | Per-item expandable state `[ASPIRATIONAL — not implemented]` |
 
 ### Vision (Where We're Going)
 
 | Document | Purpose |
 |----------|---------|
-| [MDX_LITE_VISION.md](./MDX_LITE_VISION.md) | Children-as-config component blocks |
-| [FLOATTY_MULTI_CLIENT.md](./FLOATTY_MULTI_CLIENT.md) | Multi-client protocol |
-| [INTENT_PRIMITIVES.md](./INTENT_PRIMITIVES.md) | Stable API vocabulary |
+| [MDX_LITE_VISION.md](./MDX_LITE_VISION.md) | Children-as-config component blocks `[PARTIAL — filter:: shipped, kanban/grid/poll aspirational]` |
+| [FLOATTY_MULTI_CLIENT.md](./FLOATTY_MULTI_CLIENT.md) | Multi-client protocol `[PARTIAL — Y.Doc sync shipped, coordination protocol aspirational]` |
+| [INTENT_PRIMITIVES.md](./INTENT_PRIMITIVES.md) | Stable API vocabulary `[ASPIRATIONAL — not implemented]` |
 
 ### Lineage (Why It's This Shape)
 

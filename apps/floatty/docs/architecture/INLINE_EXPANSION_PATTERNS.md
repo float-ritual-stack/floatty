@@ -1,5 +1,9 @@
 # Inline Expansion Patterns
 
+> **STATUS: ASPIRATIONAL** — Inline block expansion at cursor position is not yet implemented.
+> No expand/split-inline handler exists in `src/lib/handlers/`. This describes a planned UX pattern.
+> Do not implement against this doc without verifying the feature has since landed.
+
 When items within an output or picker view have their own expandable sub-structure that isn't a separate block.
 
 ## The Problem
