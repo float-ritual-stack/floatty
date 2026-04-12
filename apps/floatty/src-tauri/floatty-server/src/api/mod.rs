@@ -5,6 +5,7 @@
 //! - (more to follow: blocks, search, export, backup, outlines, discovery)
 
 pub mod backup;
+pub mod blocks;
 pub mod discovery;
 pub mod export;
 pub mod search;
@@ -14,7 +15,7 @@ use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
     response::IntoResponse,
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -126,224 +127,14 @@ pub use sync::{
 pub use search::{BlockSearchHit, BlockSearchQuery, BlockSearchResponse};
 // Export DTOs re-exported (used by outline handlers, tests)
 pub use export::{ExportedBlock, ExportedOutline, TopologyNode, TopologyResponse, TopologyMeta, DailyEntry, TopologyQuery, PageContentResponse};
+// Block DTOs re-exported (used by block_service, outline handlers, discovery, tests)
+pub use blocks::{
+    BlockDto, BlocksResponse, BlockContextQuery, BlockRef, BlockWithContextResponse,
+    BlocksQuery, CreateBlockRequest, ImportBlockRequest, InheritedMarkerDto,
+    ResolveResponse, SiblingContext, TokenEstimate, TreeNode, UpdateBlockRequest,
+};
 
-/// Block list response
-#[derive(Serialize, Deserialize)]
-pub struct BlocksResponse {
-    pub blocks: Vec<BlockDto>,
-    pub root_ids: Vec<String>,
-}
-
-/// Block DTO for API responses
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BlockDto {
-    pub id: String,
-    pub content: String,
-    pub parent_id: Option<String>,
-    pub child_ids: Vec<String>,
-    pub collapsed: bool,
-    pub block_type: String,
-    /// Block metadata (markers, wikilinks, etc). Null if not set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
-    /// Markers inherited from ancestor blocks. Only present when the block
-    /// has no own tag markers but an ancestor does. Contains only tag-style
-    /// markers (those with values like project::floatty), not prefix markers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inherited_markers: Option<Vec<InheritedMarkerDto>>,
-    /// Timestamp when block was created (ms since epoch)
-    pub created_at: i64,
-    /// Timestamp when block was last updated (ms since epoch)
-    pub updated_at: i64,
-    /// Block output type (e.g., "door", "eval-result", "search-results")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_type: Option<String>,
-    /// Block output data (door envelope, eval result, etc.)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<serde_json::Value>,
-}
-
-/// A marker inherited from an ancestor block.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct InheritedMarkerDto {
-    pub marker_type: String,
-    pub value: String,
-    /// Block ID of the ancestor this marker was inherited from.
-    pub source_block_id: String,
-}
-
-// ============================================================================
-// Block Context Retrieval (FLO-338)
-// ============================================================================
-
-/// Query parameters for GET /api/v1/blocks/:id
-#[derive(Deserialize, Debug, Default)]
-pub struct BlockContextQuery {
-    /// Comma-separated include directives: ancestors, siblings, children, tree, token_estimate
-    #[serde(default)]
-    pub include: Option<String>,
-    /// Number of siblings before/after to include (default: 2)
-    #[serde(default = "default_sibling_radius")]
-    pub sibling_radius: usize,
-    /// Max depth for tree traversal (default: 50, prevents runaway on huge subtrees)
-    #[serde(default = "default_max_depth")]
-    pub max_depth: usize,
-}
-
-fn default_sibling_radius() -> usize { 2 }
-fn default_max_depth() -> usize { 50 }
-
-/// Lightweight block reference for context (ancestors, siblings, children)
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct BlockRef {
-    pub id: String,
-    pub content: String,
-}
-
-/// A block in a subtree traversal, with depth info
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct TreeNode {
-    pub id: String,
-    pub content: String,
-    pub depth: usize,
-    pub child_ids: Vec<String>,
-}
-
-/// Sibling context: blocks before and after within parent's childIds
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SiblingContext {
-    pub before: Vec<BlockRef>,
-    pub after: Vec<BlockRef>,
-}
-
-/// Token/size estimate for a subtree
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenEstimate {
-    pub total_chars: usize,
-    pub block_count: usize,
-    pub max_depth: usize,
-}
-
-/// Extended block response with optional context fields
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BlockWithContextResponse {
-    #[serde(flatten)]
-    pub block: BlockDto,
-
-    /// Parent chain up to root (nearest first), max 10
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ancestors: Option<Vec<BlockRef>>,
-
-    /// Sibling blocks before/after within parent
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub siblings: Option<SiblingContext>,
-
-    /// Direct children (id + content)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub children: Option<Vec<BlockRef>>,
-
-    /// Full subtree DFS traversal
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tree: Option<Vec<TreeNode>>,
-
-    /// Rough size estimate for the subtree
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_estimate: Option<TokenEstimate>,
-}
-
-/// Create block request
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CreateBlockRequest {
-    pub content: String,
-    pub parent_id: Option<String>,
-
-    /// Insert after this sibling block (mutually exclusive with at_index)
-    pub after_id: Option<String>,
-
-    /// Insert at this index in parent's childIds (0 = prepend)
-    /// Mutually exclusive with after_id
-    pub at_index: Option<usize>,
-    // NOTE: Origin field removed - origin is now handled via Y.Doc observation
-    // with Origin::User for all frontend mutations. See hooks/system.rs.
-}
-
-/// Import block request — identity-preserving create for migration/curation workflows.
-///
-/// Use POST /api/v1/blocks/import (or /api/v1/outlines/:name/blocks/import).
-/// The normal create endpoint (POST /api/v1/blocks) never accepts caller-supplied IDs —
-/// server always owns identity for ordinary creates.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ImportBlockRequest {
-    /// The block ID to preserve. Must be a valid UUID and must not already exist
-    /// in the destination outline.
-    pub id: String,
-    pub content: String,
-    pub parent_id: Option<String>,
-    pub after_id: Option<String>,
-    pub at_index: Option<usize>,
-    /// Original creation timestamp (epoch millis). If absent, server uses current time.
-    pub created_at: Option<i64>,
-    /// Original update timestamp (epoch millis). If absent, server uses current time.
-    pub updated_at: Option<i64>,
-}
-
-/// Update block request
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct UpdateBlockRequest {
-    /// New content for the block (optional if only updating metadata)
-    pub content: Option<String>,
-    /// New parent ID for reparenting:
-    /// - Field absent: None = don't change parent
-    /// - Field present with null: Some(None) = move to root
-    /// - Field present with value: Some(Some(id)) = move under parent
-    #[serde(default, deserialize_with = "deserialize_optional_parent_id")]
-    pub parent_id: Option<Option<String>>,
-    /// Metadata to set on the block
-    pub metadata: Option<serde_json::Value>,
-
-    /// Insert after this sibling block (mutually exclusive with at_index)
-    /// Used for repositioning within parent or during reparenting
-    pub after_id: Option<String>,
-
-    /// Insert at this index in parent's childIds (0 = prepend)
-    /// Mutually exclusive with after_id
-    pub at_index: Option<usize>,
-    // NOTE: Origin field removed - origin is now handled via Y.Doc observation
-    // with Origin::User for all frontend mutations. See hooks/system.rs.
-}
-
-/// Custom deserializer for Option<Option<String>> that distinguishes:
-/// - field absent: returns None (don't change)
-/// - field present with null: returns Some(None) (move to root)
-/// - field present with value: returns Some(Some(value)) (move under parent)
-fn deserialize_optional_parent_id<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // Deserialize the field value (null or string)
-    // The #[serde(default)] handles the absent case by not calling this at all
-    let value: Option<String> = Option::deserialize(deserializer)?;
-    // Wrap in Some to indicate field was present
-    Ok(Some(value))
-}
-
-/// Response for GET /api/v1/blocks/resolve/:prefix
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResolveResponse {
-    pub id: String,
-    pub block: BlockDto,
-}
+// Block CRUD handlers moved to api/blocks.rs
 
 /// Standard error response
 #[derive(Serialize, Deserialize)]
@@ -446,14 +237,7 @@ pub fn create_router(
         // Export + topology endpoints
         .merge(export::router())
         // Block CRUD
-        .route("/api/v1/blocks", get(get_blocks))
-        .route("/api/v1/blocks", post(create_block))
-        .route("/api/v1/blocks/import", post(import_block))
-        .route("/api/v1/blocks/resolve/:prefix", get(resolve_block_prefix))
-        .route("/api/v1/blocks/:id", get(get_block))
-        .route("/api/v1/blocks/:id", patch(update_block))
-        .route("/api/v1/blocks/:id", put(put_not_supported))
-        .route("/api/v1/blocks/:id", delete(delete_block))
+        .merge(blocks::router())
         // Search endpoints (page search, full-text, reindex, clear)
         .merge(search::router())
         // Backup endpoints (status, list, trigger, restore, config)
@@ -485,131 +269,7 @@ pub fn create_router(
 
 // Sync handlers moved to api/sync.rs
 // Export + topology handlers moved to api/export.rs
-
-// ═══════════════════════════════════════════════════════════════════════════
-// METADATA INHERITANCE
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Look up inherited markers from the pre-computed InheritanceIndex.
-/// Returns None if the block has no inherited markers (O(1) lookup).
-use crate::block_service::{lookup_inherited, read_block_dto};
-
-/// Query parameters for GET /api/v1/blocks
-#[derive(Deserialize, Default)]
-pub struct BlocksQuery {
-    /// Filter: createdAt >= since (unix ms)
-    pub since: Option<i64>,
-    /// Filter: createdAt < until (unix ms)
-    pub until: Option<i64>,
-    /// Filter: block has a marker with this markerType
-    pub marker_type: Option<String>,
-    /// Filter: marker value (requires marker_type)
-    pub marker_value: Option<String>,
-}
-
-use crate::block_service::resolve_block_id;
-
-/// GET /api/v1/blocks/resolve/:prefix - Resolve short-hash prefix to full block ID
-///
-/// Accepts 6+ hex character prefixes (git-sha style). Returns the full block if
-/// exactly one match. 400 for invalid prefix, 404 for no match, 409 for ambiguous.
-async fn resolve_block_prefix(
-    State(state): State<AppState>,
-    Path(prefix): Path<String>,
-) -> Result<Json<ResolveResponse>, ApiError> {
-    let trimmed = prefix.trim();
-    if trimmed.len() < 6 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ApiError::InvalidRequest(
-            "Prefix must be at least 6 hex characters".to_string(),
-        ));
-    }
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
-
-    let blocks_map = txn
-        .get_map("blocks")
-        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
-
-    let full_id = resolve_block_id(trimmed, &blocks_map, &txn)?;
-
-    let value = blocks_map
-        .get(&txn, full_id.as_str())
-        .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
-
-    if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, &full_id)
-        };
-        let block_dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
-        Ok(Json(ResolveResponse {
-            id: full_id,
-            block: block_dto,
-        }))
-    } else {
-        Err(ApiError::NotFound(full_id))
-    }
-}
-
-/// GET /api/v1/blocks - All blocks as JSON (with optional filters)
-async fn get_blocks(
-    State(state): State<AppState>,
-    axum::extract::Query(query): axum::extract::Query<BlocksQuery>,
-) -> Result<Json<BlocksResponse>, ApiError> {
-    let result = crate::block_service::get_blocks(
-        &state.store,
-        Some(&state.inheritance_index),
-        &query,
-    )?;
-    Ok(Json(result))
-}
-
-/// GET /api/v1/blocks/:id - Single block with optional context
-async fn get_block(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    axum::extract::Query(ctx_query): axum::extract::Query<BlockContextQuery>,
-) -> Result<Json<BlockWithContextResponse>, ApiError> {
-    let result = crate::block_service::get_block(
-        &state.store,
-        &state.inheritance_index,
-        &id,
-        &ctx_query,
-    )?;
-    Ok(Json(result))
-}
-
-/// POST /api/v1/blocks - Create block
-async fn create_block(
-    State(state): State<AppState>,
-    Json(req): Json<CreateBlockRequest>,
-) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
-    let dto = crate::block_service::create_block(
-        &state.store,
-        &state.broadcaster,
-        &state.hook_system,
-        req,
-    )?;
-    Ok((StatusCode::CREATED, Json(dto)))
-}
-
-/// POST /api/v1/blocks/import - Identity-preserving block create for migration/curation.
-///
-/// Accepts a caller-supplied UUID. Distinct from the normal create endpoint so that
-/// identity preservation is an explicit, auditable operation — not ambient behavior.
-async fn import_block(
-    State(state): State<AppState>,
-    Json(req): Json<ImportBlockRequest>,
-) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
-    let dto = crate::block_service::import_block(
-        &state.store,
-        &state.broadcaster,
-        &state.hook_system,
-        req,
-    )?;
-    Ok((StatusCode::CREATED, Json(dto)))
-}
+// Block CRUD handlers moved to api/blocks.rs
 
 /// POST /api/v1/outlines/:name/blocks/import - Per-outline import
 async fn outline_import_block(
@@ -626,51 +286,6 @@ async fn outline_import_block(
         req,
     )?;
     Ok((StatusCode::CREATED, Json(dto)))
-}
-
-/// PUT /api/v1/blocks/:id - Not supported, suggest PATCH
-///
-/// Friendly error for kitty and other agents who try PUT instead of PATCH.
-async fn put_not_supported(Path(id): Path<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (
-        StatusCode::METHOD_NOT_ALLOWED,
-        Json(ErrorResponse {
-            error: format!(
-                "PUT not supported. Did you mean PATCH? Use: PATCH /api/v1/blocks/{} with {{\042content\042: ..., \042parentId\042: ...}}",
-                id
-            ),
-        }),
-    )
-}
-
-/// PATCH /api/v1/blocks/:id - Update content, metadata, and/or parent
-async fn update_block(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateBlockRequest>,
-) -> Result<Json<BlockDto>, ApiError> {
-    let dto = crate::block_service::update_block(
-        &state.store,
-        &state.broadcaster,
-        &state.hook_system,
-        &id,
-        req,
-    )?;
-    Ok(Json(dto))
-}
-
-/// DELETE /api/v1/blocks/:id - Delete block and entire subtree
-async fn delete_block(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, ApiError> {
-    crate::block_service::delete_block(
-        &state.store,
-        &state.broadcaster,
-        &state.hook_system,
-        &id,
-    )?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 // Search handlers moved to api/search.rs
