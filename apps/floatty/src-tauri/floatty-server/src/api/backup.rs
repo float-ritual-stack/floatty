@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use yrs::{Array, ReadTxn, Transact};
 
-use super::{ApiError, AppState};
-use super::sync::RestoreResponse;
+use super::{ApiError, AppState, RestoreResponse};
 
 pub fn router() -> Router<AppState> {
     Router::new()

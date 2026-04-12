@@ -1,8 +1,13 @@
 //! REST API for floatty block store.
 //!
-//! Route families are split into submodules:
+//! Route families split into submodules:
 //! - `sync` — Y.Doc state sync, updates, restore, health
-//! - (more to follow: blocks, search, export, backup, outlines, discovery)
+//! - `blocks` — block CRUD (thin wrappers over `block_service`)
+//! - `search` — full-text + page search, reindex, clear
+//! - `export` — binary/JSON export, topology graph, page content
+//! - `backup` — backup status, list, trigger, restore, config
+//! - `outlines` — outline management + per-outline sync/blocks/search
+//! - `discovery` — markers, stats, daily note, presence, attachments
 
 pub mod backup;
 pub mod blocks;
@@ -130,8 +135,6 @@ pub use blocks::{
     ResolveResponse, SiblingContext, TokenEstimate, TreeNode, UpdateBlockRequest,
 };
 
-// Block CRUD handlers moved to api/blocks.rs
-
 /// Standard error response
 #[derive(Serialize, Deserialize)]
 pub struct ErrorResponse {
@@ -244,23 +247,6 @@ pub fn create_router(
         .merge(outlines::router())
         .with_state(state)
 }
-
-// Sync handlers moved to api/sync.rs
-// Export + topology handlers moved to api/export.rs
-// Block CRUD handlers moved to api/blocks.rs
-
-// outline_import_block moved to api/outlines.rs
-
-// Search handlers moved to api/search.rs
-
-// Backup DTOs moved to api/backup.rs
-
-// Vocabulary discovery + backup handlers moved to api/discovery.rs + api/backup.rs
-
-// Discovery + presence handlers moved to api/discovery.rs
-
-// Outline handlers moved to api/outlines.rs
-// Outline handlers moved to api/outlines.rs
 
 #[cfg(test)]
 mod tests {
