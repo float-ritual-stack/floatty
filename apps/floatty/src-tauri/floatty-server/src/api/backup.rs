@@ -179,7 +179,8 @@ async fn backup_restore(
         .find(|b| b.filename == req.filename)
         .ok_or_else(|| ApiError::NotFound(format!("Backup not found: {}", req.filename)))?;
 
-    let state_bytes = std::fs::read(&backup.path)
+    let state_bytes = tokio::fs::read(&backup.path)
+        .await
         .map_err(|e| ApiError::Search(format!("Failed to read backup: {}", e)))?;
 
     if let Err(e) = state.hook_system.clear_search_index().await {
