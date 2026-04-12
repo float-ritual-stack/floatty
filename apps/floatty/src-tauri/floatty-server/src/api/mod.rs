@@ -4,6 +4,7 @@
 //! - `sync` — Y.Doc state sync, updates, restore, health
 //! - (more to follow: blocks, search, export, backup, outlines, discovery)
 
+pub mod search;
 pub mod sync;
 
 use axum::{
@@ -119,6 +120,8 @@ pub use sync::{
     HealthResponse, RestoreResponse, StateHashResponse, StateResponse, StateVectorResponse,
     UpdateEntry, UpdateRequest, UpdatesCompactedResponse, UpdatesQuery, UpdatesResponse,
 };
+// Search DTOs re-exported (used by outline handlers, block_service, tests)
+pub use search::{BlockSearchHit, BlockSearchQuery, BlockSearchResponse};
 
 /// Block list response
 #[derive(Serialize, Deserialize)]
@@ -453,11 +456,8 @@ pub fn create_router(
         .route("/api/v1/blocks/:id", patch(update_block))
         .route("/api/v1/blocks/:id", put(put_not_supported))
         .route("/api/v1/blocks/:id", delete(delete_block))
-        // Search endpoints
-        .route("/api/v1/pages/search", get(search_pages))
-        .route("/api/v1/search", get(search_blocks))
-        .route("/api/v1/search/clear", post(clear_search_index))
-        .route("/api/v1/search/reindex", post(reindex_search))
+        // Search endpoints (page search, full-text, reindex, clear)
+        .merge(search::router())
         // Vocabulary discovery endpoints
         .route("/api/v1/markers", get(list_marker_types))
         .route("/api/v1/markers/:marker_type/values", get(list_marker_values))
@@ -1540,234 +1540,7 @@ async fn delete_block(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ============================================================================
-// Page Search API (autocomplete for [[wikilinks]])
-// ============================================================================
-
-/// Search query parameters
-#[derive(Deserialize)]
-pub struct PageSearchQuery {
-    /// Prefix/query to search for (e.g., "My Pa" to find "My Page")
-    #[serde(default)]
-    pub prefix: String,
-    /// Maximum results to return (default: 10)
-    #[serde(default = "default_limit")]
-    pub limit: usize,
-    /// Use fuzzy matching instead of prefix matching (typo-tolerant, nucleo scorer)
-    #[serde(default)]
-    pub fuzzy: bool,
-}
-
-fn default_limit() -> usize {
-    10
-}
-
-/// Search result DTO
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PageSearchResult {
-    pub name: String,
-    pub is_stub: bool,
-    /// Block ID of the page block. `None` for stubs (referenced but not yet created).
-    pub block_id: Option<String>,
-}
-
-/// Page search response
-#[derive(Serialize)]
-pub struct PageSearchResponse {
-    pub pages: Vec<PageSearchResult>,
-}
-
-/// GET /api/v1/pages/search?prefix=xxx
-///
-/// Search for pages matching a prefix. Returns existing pages first, then stubs.
-/// Used for [[ autocomplete in the outliner.
-async fn search_pages(
-    State(state): State<AppState>,
-    axum::extract::Query(query): axum::extract::Query<PageSearchQuery>,
-) -> Result<Json<PageSearchResponse>, ApiError> {
-    let index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
-
-    let results = if query.fuzzy {
-        index.fuzzy_search(&query.prefix)
-    } else {
-        index.search(&query.prefix)
-    };
-
-    let pages: Vec<PageSearchResult> = results
-        .into_iter()
-        .take(query.limit)
-        .map(|s| PageSearchResult {
-            name: s.name,
-            is_stub: s.is_stub,
-            block_id: s.block_id,
-        })
-        .collect();
-
-    Ok(Json(PageSearchResponse { pages }))
-}
-
-// ============================================================================
-// Full-Text Search API (Tantivy)
-// ============================================================================
-
-/// Full-text search query parameters
-#[derive(Deserialize)]
-pub struct BlockSearchQuery {
-    /// Search text (optional — omit or empty for filter-only queries)
-    #[serde(default)]
-    pub q: String,
-    /// Maximum results to return (default: 20)
-    #[serde(default = "default_search_limit")]
-    pub limit: usize,
-    /// Block types to filter (comma-separated, e.g., "sh,ai")
-    #[serde(default)]
-    pub types: Option<String>,
-    /// Filter by marker presence
-    #[serde(default)]
-    pub has_markers: Option<bool>,
-    /// Filter by parent ID (search within subtree)
-    #[serde(default)]
-    pub parent_id: Option<String>,
-    /// Include breadcrumb (parent chain) per hit
-    #[serde(default)]
-    pub include_breadcrumb: Option<bool>,
-    /// Include block metadata per hit
-    #[serde(default)]
-    pub include_metadata: Option<bool>,
-    /// Filter by [[wikilink]] outlink target
-    #[serde(default)]
-    pub outlink: Option<String>,
-    /// Filter by marker type (e.g., "project", "mode")
-    #[serde(default)]
-    pub marker_type: Option<String>,
-    /// Filter by marker value (e.g., "floatty", "rangle/pharmacy").
-    /// Combines with marker_type to form the internal "type::value" term query.
-    /// Use alone for "any marker with this value" or with marker_type for precise match.
-    #[serde(default)]
-    pub marker_val: Option<String>,
-    /// Filter: created after this epoch timestamp (seconds).
-    /// Note: BlockDto.createdAt is milliseconds, but search filters use seconds
-    /// for consistency across all temporal filters (created_at, ctx_at).
-    #[serde(default)]
-    pub created_after: Option<i64>,
-    /// Filter: created before this epoch timestamp (seconds)
-    #[serde(default)]
-    pub created_before: Option<i64>,
-    /// Filter: ctx:: event after this epoch timestamp (seconds)
-    #[serde(default)]
-    pub ctx_after: Option<i64>,
-    /// Filter: ctx:: event before this epoch timestamp (seconds)
-    #[serde(default)]
-    pub ctx_before: Option<i64>,
-    /// When false, marker_type/marker_value filter only own markers (excludes inherited).
-    /// Default: true (includes inherited markers from ancestors).
-    #[serde(default)]
-    pub inherited: Option<bool>,
-    /// Block types to exclude (comma-separated, e.g., "eval,sh").
-    /// Uses MustNot logic — all specified types are excluded from results.
-    #[serde(default)]
-    pub exclude_types: Option<String>,
-}
-
-fn default_search_limit() -> usize {
-    20
-}
-
-/// Search hit DTO
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BlockSearchHit {
-    /// Block ID (foreign key — serializes as "blockId" via camelCase rename)
-    pub block_id: String,
-    /// Relevance score (higher = more relevant)
-    pub score: f32,
-    /// Block content (truncated for display)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    /// Parent chain as content strings (nearest first), max 5 levels
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub breadcrumb: Option<Vec<String>>,
-    /// Block metadata (markers, wikilinks, etc)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
-    /// Highlighted snippet from Tantivy (HTML with <b> tags around matched terms)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub snippet: Option<String>,
-    /// Block type (text, h1, h2, h3, ctx, sh, etc.)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub block_type: Option<String>,
-}
-
-/// Full-text search response
-#[derive(Serialize, Deserialize)]
-pub struct BlockSearchResponse {
-    /// Search results (IDs + scores)
-    pub hits: Vec<BlockSearchHit>,
-    /// Total number of matching blocks (may exceed hits.len() when limit applies)
-    pub total: usize,
-}
-
-/// GET /api/v1/search?q=...
-///
-/// Full-text search across all blocks. Returns block IDs and scores.
-/// Frontend should hydrate full blocks from Y.Doc using the IDs.
-///
-/// # Query Parameters
-///
-/// - `q` (required): Search text
-/// - `limit` (optional, default 20): Maximum results
-/// - `types` (optional): Comma-separated block types to filter (e.g., "sh,ai")
-/// - `has_markers` (optional): Filter by marker presence (true/false)
-/// - `parent_id` (optional): Search within a specific subtree
-/// - `include_breadcrumb` (optional): Include parent chain per hit (max 5 levels)
-/// - `include_metadata` (optional): Include block metadata per hit
-///
-/// # Example
-///
-/// ```text
-/// GET /api/v1/search?q=floatty&limit=10&types=sh,ctx
-/// GET /api/v1/search?q=FLO-414&include_breadcrumb=true&include_metadata=true
-/// ```
-async fn search_blocks(
-    State(state): State<AppState>,
-    axum::extract::Query(query): axum::extract::Query<BlockSearchQuery>,
-) -> Result<Json<BlockSearchResponse>, ApiError> {
-    let index_manager = state
-        .hook_system
-        .index_manager()
-        .ok_or_else(|| ApiError::SearchUnavailable)?;
-    let result = crate::block_service::search_blocks(&state.store, &index_manager, &query)?;
-    Ok(Json(result))
-}
-
-/// POST /api/v1/search/clear - Clear all documents from search index
-///
-/// Use when Y.Doc is cleared to remove stale index entries.
-async fn clear_search_index(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
-    state
-        .hook_system
-        .clear_search_index()
-        .await
-        .map_err(|e| ApiError::Search(format!("Failed to clear: {}", e)))?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// POST /api/v1/search/reindex - Rebuild search index from Y.Doc
-///
-/// Rehydrates all blocks through the hook pipeline (metadata extraction → Tantivy indexing).
-/// Use after clear, restore, or when search results are stale.
-async fn reindex_search(State(state): State<AppState>) -> Result<Json<ReindexResponse>, ApiError> {
-    let count = state.hook_system.rehydrate_all_blocks(&state.store);
-    tracing::info!("Reindex triggered: {} blocks rehydrated", count);
-    Ok(Json(ReindexResponse { rehydrated: count }))
-}
-
-#[derive(Serialize)]
-struct ReindexResponse {
-    rehydrated: usize,
-}
+// Search handlers moved to api/search.rs
 
 // ============================================================================
 // Backup Endpoints (FLO-251)
