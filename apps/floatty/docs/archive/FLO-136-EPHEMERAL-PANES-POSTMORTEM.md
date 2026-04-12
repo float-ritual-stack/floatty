@@ -1,4 +1,10 @@
-# Floatty: Resume Ephemeral Pane Feature (Post-Revert)
+# FLO-136: Ephemeral Panes Postmortem (ARCHIVED)
+
+> **ARCHIVED 2026-04-12** — Postmortem on the FLO-136 ephemeral panes revert (PRs #63-65, v0.2.4).
+> Contains critical `handleBlur` direction constraints and do-not-touch patterns.
+> **Forward reference**: FLO-137 (Pinned Panes) is the planned successor — see
+> [`FLO-137-PINNED-PANES-SPEC.md`](../FLO-137-PINNED-PANES-SPEC.md).
+> Read this before re-implementing any ephemeral or pinned pane behavior.
 
 > **Created**: 2026-01-06 @ 09:00 PM
 > **Context**: Reverted PRs #63-65, tagged v0.2.4. Issues #67-70 created for backlog.

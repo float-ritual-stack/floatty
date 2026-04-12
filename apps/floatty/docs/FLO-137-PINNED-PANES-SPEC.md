@@ -1,5 +1,10 @@
 # Feature: Pinned Panes & Preview Navigation (FLO-137)
 
+> **STATUS: ASPIRATIONAL SPEC — NOT IMPLEMENTED** — No `pinnedPaneIds` in `useLayoutStore.ts`
+> or `usePaneStore.ts`. No Cmd+Shift+P handler. No pin indicators. This spec describes planned
+> behavior only. Related: FLO-136 (simpler ephemeral panes) was reverted — see
+> [`docs/archive/FLO-136-EPHEMERAL-PANES-POSTMORTEM.md`](archive/FLO-136-EPHEMERAL-PANES-POSTMORTEM.md).
+
 ## Overview
 
 Implement a "pinned pane" system for the outliner that changes how wikilink navigation works. When a pane is **pinned**, clicking links in it opens content in a reusable "preview" pane rather than navigating in place. This enables a "home base" workflow where users can browse linked content without losing their current position.

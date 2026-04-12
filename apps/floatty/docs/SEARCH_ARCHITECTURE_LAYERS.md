@@ -1,5 +1,10 @@
 # Search Architecture: Layers & Feature Flows
 
+> **STATUS: PARTIALLY ASPIRATIONAL** — Part 1 (Current State) is accurate as of v0.11.4.
+> Parts 2-4 describe planned Tantivy integration, Hook Registry dispatch, and full-text search
+> architecture that **does not yet exist** (Tantivy is absent from Cargo.toml).
+> For current search state, see [`SEARCH_ARCHITECTURE_SNAPSHOT.md`](SEARCH_ARCHITECTURE_SNAPSHOT.md).
+
 **Generated**: 2026-01-10
 **Purpose**: Clear documentation for agents executing work units without full context
 **Status**: Authoritative reference for implementation decisions

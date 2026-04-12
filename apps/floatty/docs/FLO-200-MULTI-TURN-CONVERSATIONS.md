@@ -1,5 +1,9 @@
 # FLO-200: Multi-Turn LLM Conversations
 
+> **STATUS: ASPIRATIONAL SPEC — NOT IMPLEMENTED** — Current `ai::` blocks are single-turn only.
+> No conversation state tracking, no role system (`user`/`assistant`/`system`), no TTL directives,
+> no conversation tree structure. This spec describes planned behavior for a future milestone.
+
 > Transform Floatty's outliner into a native environment for multi-turn LLM conversations where the conversation IS the outline.
 
 ---
