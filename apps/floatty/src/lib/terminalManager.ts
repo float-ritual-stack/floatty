@@ -86,6 +86,7 @@ export interface TerminalInstance {
   semanticState: SemanticState;
   stickyBottom: boolean;  // FLO-220: Follow output when true, stay put when false
   wheelHandler?: (e: WheelEvent) => void;  // FLO-220: Stored for cleanup
+  tmuxScrollTimer?: ReturnType<typeof setTimeout>;  // Cleared on dispose
 }
 
 export interface TerminalCallbacks {
@@ -768,6 +769,26 @@ class TerminalManager {
         let textBuffer = '';
         const seenSet = this.seenMarkers.get(id)!;
 
+        // For tmux reattach: the viewport may be stranded in scrollback if the user scrolled
+        // up before the session data flood arrives. Force scroll-to-bottom once the initial
+        // burst settles — tmux draws the current screen at the buffer's active position, not
+        // the viewport's current position, so stickyBottom alone isn't enough.
+        // Timer is stored on the instance so dispose() can cancel it if the pane closes first.
+        const scheduleReattachScroll = () => {
+          const inst = this.instances.get(id);
+          if (!inst) return;
+          if (inst.tmuxScrollTimer) clearTimeout(inst.tmuxScrollTimer);
+          inst.tmuxScrollTimer = setTimeout(() => {
+            const i = this.instances.get(id);
+            if (i) {
+              term.scrollToBottom();
+              i.stickyBottom = true;
+              i.tmuxScrollTimer = undefined;
+            }
+          }, 1500);
+        };
+        if (tmuxSession) scheduleReattachScroll();
+
         const onData = new Channel<string>();
         onData.onmessage = (base64Data: string) => {
           const inst = this.instances.get(id);
@@ -778,6 +799,10 @@ class TerminalManager {
           for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
+
+          // Reschedule the tmux reattach scroll-to-bottom on each data chunk so it
+          // fires 1.5s after the initial flood settles (not 1.5s from spawn).
+          if (tmuxSession) scheduleReattachScroll();
 
           // FLO-220: Auto-scroll if sticky (wheel events handle detach)
           term.write(bytes, () => {
@@ -973,9 +998,12 @@ class TerminalManager {
 
           // FLO-220: Scroll to bottom + reattach
           // Cmd+End or Cmd+Down (macOS) / Ctrl+End or Ctrl+Down (other)
-          // Cmd+Down added for compact keyboards without End key
+          // Cmd+Down added for compact keyboards without End key.
+          // Note: on macOS, Cmd+ArrowDown is intercepted by the system before reaching the
+          // webview in some configurations. Ctrl+End is the reliable fallback on all platforms.
           const modifier = isMac ? event.metaKey : event.ctrlKey;
-          const isScrollToBottom = modifier && (event.key === 'End' || event.key === 'ArrowDown');
+          const isScrollToBottom = (modifier && (event.key === 'End' || event.key === 'ArrowDown'))
+            || (event.ctrlKey && event.key === 'End');  // Ctrl+End works on macOS too
           if (isScrollToBottom && event.type === 'keydown') {
             term.scrollToBottom();
             setStickyBottom(true, 'cmd-down');
@@ -1270,6 +1298,12 @@ class TerminalManager {
             logger.error(`PTY kill failed for ${id} (pid=${instance.ptyPid})`, { err: e });
           }
         }
+      }
+
+      // Cancel any pending tmux reattach scroll timer before disposal
+      if (instance.tmuxScrollTimer) {
+        clearTimeout(instance.tmuxScrollTimer);
+        instance.tmuxScrollTimer = undefined;
       }
 
       // FLO-220: Remove wheel event listener before disposing terminal
