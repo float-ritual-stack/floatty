@@ -134,8 +134,8 @@ function createLayoutStore() {
       direction,
       ratio: 0.5,
       children: [
-        // CLONE the leaf - spread to preserve all properties (tmuxSession, etc.)
-        // Must clone from proxy to plain object to avoid infinite recursion
+        // Preserve the original pane's layout state in place. The new split pane is a
+        // fresh terminal and must not inherit the original pane's tmux attachment contract.
         { type: 'leaf' as const, id: activePane.id, cwd: activePane.cwd, leafType: activePane.leafType || 'terminal', ...(activePane.tmuxSession ? { tmuxSession: activePane.tmuxSession } : {}) },
         // FLO-136/FLO-197: Mark ephemeral if requested, set collapse depth for outliners
         { type: 'leaf' as const, id: newPaneId, cwd: activePane.cwd, leafType, initialScrollTop, ephemeral, initialCollapseDepth: collapseDepth },
@@ -430,7 +430,9 @@ function createLayoutStore() {
   };
 
   /**
-   * Set or clear tmux session on a pane leaf (for auto-reattach)
+   * Set or clear tmux session on a pane leaf (for auto-reattach).
+   * Pane-owned, not tab-owned. Cleared when the user exits tmux.
+   * Multiple panes do not share tmux session state.
    */
   const setPaneTmuxSession = (tabId: string, paneId: string, tmuxSession: string | undefined) => {
     const layout = state.layouts[tabId];
@@ -443,7 +445,9 @@ function createLayoutStore() {
     const updated: PaneLeaf = { ...pane, tmuxSession };
     if (!tmuxSession) delete updated.tmuxSession; // clean undefined from serialization
     const newRoot = replaceNode(layout.root, paneId, updated);
-    setState('layouts', tabId, 'root', newRoot);
+    setState('layouts', tabId, produce((currentLayout: TabLayout) => {
+      currentLayout.root = newRoot;
+    }));
     bumpPersistenceVersion();
   };
 
