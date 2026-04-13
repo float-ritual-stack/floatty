@@ -25,7 +25,6 @@ import type { FocusDirection, PaneLeaf, PaneHandle, PaneDropPosition } from '../
 import { collectPaneIds, findNode } from '../lib/layoutTypes';
 import { createLogger } from '../lib/logger';
 import { terminalManager } from '../lib/terminalManager';
-import { syncPaneSemanticState } from '../lib/terminalSemanticState';
 
 const logger = createLogger('Terminal');
 
@@ -1268,12 +1267,14 @@ export function Terminal() {
                   onSemanticStateChange={(state) => {
                     const i = info();
                     const s = state as SemanticState;
-                    syncPaneSemanticState(
-                      i,
-                      s,
-                      (tabId, paneId, tmuxSession) => layoutStore.setPaneTmuxSession(tabId, paneId, tmuxSession),
-                      (next) => setSemanticState(next),
-                    );
+                    // Bubble tmux session to pane in layout store (per-pane persistence)
+                    if (s.tmuxSession !== undefined) {
+                      layoutStore.setPaneTmuxSession(i.tabId, i.paneId, s.tmuxSession);
+                    }
+                    // Only update status bar for active pane
+                    if (i.isActivePane && i.isActiveTab) {
+                      setSemanticState({ ...s });
+                    }
                   }}
                   onStickyChange={(sticky) => handleStickyChange(info().paneId, sticky)}
                   onCtxMarker={() => {
