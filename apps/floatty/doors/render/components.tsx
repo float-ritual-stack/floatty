@@ -12,7 +12,9 @@ import { Show, For, createSignal, createMemo, onMount, createEffect, onCleanup }
 import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
-import { getHttpClient } from '../../src/lib/httpClient';
+// NOTE: Do NOT import from httpClient.ts — the door bundle is a separate compiled
+// module. The singleton clientInstance is never initialized in the bundle context.
+// Use window.__FLOATTY_SERVER_URL__ / __FLOATTY_API_KEY__ globals instead.
 
 const sanitize = (html: string) => DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 
@@ -968,7 +970,10 @@ export function Image(props: BaseComponentProps<{ src: string; alt?: string; max
       : src;
 
     const doFetch = isAttachment
-      ? getHttpClient().fetchWithAuth(fetchUrl, { signal: controller.signal })
+      ? fetch(fetchUrl, {
+          signal: controller.signal,
+          headers: { Authorization: `Bearer ${window.__FLOATTY_API_KEY__ ?? ''}` },
+        })
       : fetch(fetchUrl, { signal: controller.signal });
 
     doFetch

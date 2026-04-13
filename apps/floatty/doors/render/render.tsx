@@ -387,6 +387,11 @@ const CLAUDE_SYSTEM_PROMPT = [
 
 function normalizeSpec(spec: any, ctx: any): any {
   for (const el of Object.values(spec.elements || {}) as any[]) {
+    // Translate legacy "component" field → "type" (json-render resolver uses el.type)
+    if (el.component && !el.type) {
+      el.type = el.component;
+      delete el.component;
+    }
     if (el.type === 'Stack' && typeof el.props?.gap === 'string') {
       el.props.gap = parseInt(el.props.gap) || 8;
     }
