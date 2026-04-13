@@ -738,11 +738,28 @@ class TerminalManager {
       if (isTauri) {
         const os = await platform();
         const shell = os === 'macos' ? '/bin/zsh' : os === 'windows' ? 'powershell.exe' : '/bin/bash';
-        // When restoring a tmux session, use -c to attempt reattach with login shell fallback
-        // TODO: PATH hardcode assumes common macOS/Homebrew locations.
+        const home = await homeDir();
+        // Build a comprehensive PATH so tmux is findable in both dev and release environments
+        // where the shell's own PATH (e.g. from .zshrc) hasn't been sourced yet.
+        const shellPath = [
+          `${home}/.cargo/bin`,
+          `${home}/.local/bin`,
+          `${home}/.bun/bin`,
+          '/opt/homebrew/bin',
+          '/opt/homebrew/sbin',
+          '/usr/local/bin',
+          '/usr/bin',
+          '/bin',
+          '/usr/sbin',
+          '/sbin',
+        ].join(':');
+        // When restoring a tmux session, attempt reattach with login shell fallback.
+        // On attach failure (session gone), emit an empty TmuxSession OSC so the existing
+        // handler clears semanticState.tmuxSession and the layout store drops the contract —
+        // preventing endless reattach attempts on future reopens.
         const args = os === 'windows' ? []
           : tmuxSession
-            ? ['-c', `unset TMUX; PATH=/opt/homebrew/bin:/usr/local/bin:$PATH tmux attach-session -t ${tmuxSession} 2>/dev/null; exec ${shell} -l`]
+            ? ['-c', `unset TMUX; PATH=${shellPath} tmux attach-session -t ${tmuxSession} 2>/dev/null || printf '\\033]1337;TmuxSession=\\007'; exec ${shell} -l`]
             : ['-l'];  // login shell (PTY provides TTY for interactive mode)
 
         logger.info(`spawnPty ${id}: tmuxSession=${tmuxSession ?? '(none)'}, args=${JSON.stringify(args)}`);
