@@ -870,11 +870,12 @@ These are explicitly deferred:
 ### Key Principles
 
 1. **Y.Doc is truth** - Tantivy is discovery, Y.Doc is retrieval
-2. **Metadata in CRDT** - block.metadata travels with sync
-3. **Wrap, don't replace** - Build on existing observers
-4. **Reuse TS parsing** - Don't recreate in Rust
-5. **Priority hooks** - Simple ordering, sync/async distinction
-6. **Origin prevents loops** - Hook writes don't trigger hooks
+2. **Index is ephemeral** - Nuked and rebuilt from Y.Doc on every startup. Correctness over warm-start speed. See [ADR-005](../adrs/ADR-005-search-index-ephemeral.md).
+3. **Metadata in CRDT** - block.metadata travels with sync
+4. **Wrap, don't replace** - Build on existing observers
+5. **Reuse TS parsing** - Don't recreate in Rust
+6. **Priority hooks** - Simple ordering, sync/async distinction
+7. **Origin prevents loops** - Hook writes don't trigger hooks
 
 ---
 

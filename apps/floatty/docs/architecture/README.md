@@ -12,6 +12,7 @@
 | **Y.Doc rules** | [ydoc-patterns.md](../../.claude/rules/ydoc-patterns.md) |
 | **SolidJS traps** | [solidjs-patterns.md](../../.claude/rules/solidjs-patterns.md) |
 | **What NOT to do** | [do-not.md](../../.claude/rules/do-not.md) |
+| **Decision records** | [../adrs/](../adrs/) — ADR-001 through ADR-005 |
 
 ## All Documents
 
@@ -42,6 +43,19 @@
 | [MDX_LITE_VISION.md](./MDX_LITE_VISION.md) | Children-as-config component blocks `[PARTIAL — filter:: shipped, kanban/grid/poll aspirational]` |
 | [FLOATTY_MULTI_CLIENT.md](./FLOATTY_MULTI_CLIENT.md) | Multi-client protocol `[PARTIAL — Y.Doc sync shipped, coordination protocol aspirational]` |
 | [INTENT_PRIMITIVES.md](./INTENT_PRIMITIVES.md) | Stable API vocabulary `[ASPIRATIONAL — not implemented]` |
+
+### Agent Runtime (Execution Roles)
+
+| Document | Purpose |
+|----------|---------|
+| [agentic-runtime/README.md](./agentic-runtime/README.md) | Alignment layer overview |
+| [agentic-runtime/agent-roles.md](./agentic-runtime/agent-roles.md) | clerk / librarian / gardener / renderer |
+| [agentic-runtime/clerk.md](./agentic-runtime/clerk.md) | Ingestion boundary |
+| [agentic-runtime/state-model.md](./agentic-runtime/state-model.md) | raw → normalized → refined → projected |
+| [agentic-runtime/work-log-model.md](./agentic-runtime/work-log-model.md) | Attribution layer |
+| [agentic-runtime/provenance-and-links.md](./agentic-runtime/provenance-and-links.md) | Provenance discipline |
+| [agentic-runtime/agent-types.md](./agentic-runtime/agent-types.md) | Outline-native vs external execution agents |
+| [agentic-runtime/clerk-interface.md](./agentic-runtime/clerk-interface.md) | Clerk as fuzzy compiler / ingestion DSL |
 
 ### Lineage (Why It's This Shape)
 

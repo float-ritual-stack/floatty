@@ -283,6 +283,19 @@ export const bbsCatalog = schema.createCatalog({
       description: 'Monospace pre block with optional floating label',
     },
 
+    Image: {
+      props: z.object({
+        src: z.string(),
+        alt: z.string().optional(),
+        maxWidth: z.number().optional(),
+        maxHeight: z.number().optional(),
+        borderRadius: z.number().optional(),
+        caption: z.string().optional(),
+      }),
+      slots: [],
+      description: 'Image display. src = filename for attachments or full URL. Omit maxWidth for full-width.',
+    },
+
     ShippedItem: {
       props: z.object({
         content: z.string(),

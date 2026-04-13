@@ -8,7 +8,7 @@
  * Wikilink navigation via chirp CustomEvent bubbling to BlockItem.
  */
 
-import { Show, For, createSignal, createMemo, onMount } from 'solid-js';
+import { Show, For, createSignal, createMemo, onMount, createEffect } from 'solid-js';
 import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
@@ -924,6 +924,138 @@ export function DataBlock(props: BaseComponentProps<{ label?: string; content: s
       }}>
         {props.props.content}
       </pre>
+    </div>
+  );
+}
+
+export function Image(props: BaseComponentProps<{ src: string; alt?: string; maxWidth?: number; maxHeight?: number; borderRadius?: number; caption?: string }>) {
+  const [blobUrl, setBlobUrl] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [loading, setLoading] = createSignal(true);
+
+  let currentBlobUrl: string | null = null;
+
+  createEffect(() => {
+    const src = props.props.src;
+    if (!src) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    // Revoke previous blob URL to avoid leaking memory
+    if (currentBlobUrl) {
+      URL.revokeObjectURL(currentBlobUrl);
+      currentBlobUrl = null;
+    }
+
+    // Check if it's a filename (no slashes) → treat as attachment
+    const isAttachment = !src.includes('/') && !src.startsWith('http');
+    const fetchUrl = isAttachment
+      ? `/api/v1/attachments/${encodeURIComponent(src)}`
+      : src;
+
+    // Try to fetch as attachment first (with auth), fallback to direct URL
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    fetch(fetchUrl, {
+      signal: controller.signal,
+      // Send auth header if available (for attachments)
+      headers: isAttachment ? {} : {},
+    })
+      .then(async (res) => {
+        clearTimeout(timeoutId);
+        if (!res.ok) {
+          throw new Error(`${res.status} ${res.statusText}`);
+        }
+        return res.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        currentBlobUrl = url;
+        setBlobUrl(url);
+        setLoading(false);
+      })
+      .catch((err: Error) => {
+        clearTimeout(timeoutId);
+        setError(err.message);
+        // Fallback: try direct src as-is (for public URLs)
+        if (!isAttachment) {
+          setBlobUrl(src);
+          setLoading(false);
+        } else {
+          setLoading(false);
+        }
+      });
+  });
+
+  onMount(() => {
+    return () => {
+      if (currentBlobUrl) {
+        URL.revokeObjectURL(currentBlobUrl);
+        currentBlobUrl = null;
+      }
+    };
+  });
+
+  return (
+    <div style={{
+      display: 'flex',
+      'flex-direction': 'column',
+      gap: '8px',
+      margin: '12px 0',
+    }}>
+      <Show when={loading()}>
+        <div style={{
+          'font-size': '12px',
+          color: V.td,
+          'font-family': V.mono,
+          padding: '12px',
+          border: `1px solid ${V.b}`,
+          background: V.s1,
+        }}>
+          ⋯ {props.props.src}
+        </div>
+      </Show>
+      <Show when={error() && !blobUrl()}>
+        <div style={{
+          'font-size': '12px',
+          color: V.cor,
+          'font-family': V.mono,
+          padding: '12px',
+          border: `1px solid ${V.cor}`,
+          background: V.s1,
+        }}>
+          ⚠ {props.props.src}: {error()}
+        </div>
+      </Show>
+      <Show when={blobUrl()}>
+        <img
+          src={blobUrl()!}
+          alt={props.props.alt || props.props.src}
+          style={{
+            'max-width': props.props.maxWidth ? `${props.props.maxWidth}px` : '100%',
+            'max-height': props.props.maxHeight ? `${props.props.maxHeight}px` : 'auto',
+            'border-radius': props.props.borderRadius ? `${props.props.borderRadius}px` : '0px',
+            border: `1px solid ${V.b}`,
+            display: 'block',
+          }}
+        />
+      </Show>
+      <Show when={props.props.caption}>
+        <div style={{
+          'font-size': '11px',
+          color: V.td,
+          'font-family': V.mono,
+          'text-align': 'center',
+          'padding-top': '4px',
+        }}>
+          {props.props.caption}
+        </div>
+      </Show>
     </div>
   );
 }
