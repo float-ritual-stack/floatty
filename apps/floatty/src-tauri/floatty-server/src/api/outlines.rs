@@ -462,7 +462,7 @@ async fn outline_get_stats(
         .unwrap_or(0);
 
     Ok(Json(serde_json::json!({
-        "blockCount": block_count,
+        "totalBlocks": block_count,
         "rootCount": root_count,
     })))
 }

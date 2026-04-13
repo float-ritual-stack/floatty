@@ -177,6 +177,11 @@ async fn clear_search_index(State(state): State<AppState>) -> Result<StatusCode,
 async fn reindex_search(
     State(state): State<AppState>,
 ) -> Result<Json<ReindexResponse>, ApiError> {
+    state
+        .hook_system
+        .clear_search_index()
+        .await
+        .map_err(|e| ApiError::Search(format!("Failed to clear before reindex: {}", e)))?;
     let count = state.hook_system.rehydrate_all_blocks(&state.store);
     tracing::info!("Reindex triggered: {} blocks rehydrated", count);
     Ok(Json(ReindexResponse { rehydrated: count }))
