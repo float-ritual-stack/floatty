@@ -101,6 +101,8 @@ export interface FloattyHttpClient {
   setOutline(name: string): void;
   /** Get active outline name */
   getOutline(): string;
+  /** Fetch a URL with the server auth header attached. */
+  fetchWithAuth(url: string, init?: RequestInit): Promise<Response>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -125,6 +127,10 @@ class HttpClient implements FloattyHttpClient {
 
   getOutline(): string {
     return this.outlineName;
+  }
+
+  fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
+    return fetch(url, { ...init, headers: { ...this.headers(), ...(init?.headers ?? {}) } });
   }
 
   /** API prefix: /api/v1 for default, /api/v1/outlines/:name for others */

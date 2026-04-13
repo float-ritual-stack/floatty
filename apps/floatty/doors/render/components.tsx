@@ -8,10 +8,11 @@
  * Wikilink navigation via chirp CustomEvent bubbling to BlockItem.
  */
 
-import { Show, For, createSignal, createMemo, onMount, createEffect } from 'solid-js';
+import { Show, For, createSignal, createMemo, onMount, createEffect, onCleanup } from 'solid-js';
 import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
+import { getHttpClient } from '../../src/lib/httpClient';
 
 const sanitize = (html: string) => DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 
@@ -937,6 +938,15 @@ export function Image(props: BaseComponentProps<{ src: string; alt?: string; max
 
   createEffect(() => {
     const src = props.props.src;
+
+    // Abort any in-flight fetch when src changes or component unmounts
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    onCleanup(() => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    });
+
     if (!src) {
       setLoading(false);
       return;
@@ -951,21 +961,17 @@ export function Image(props: BaseComponentProps<{ src: string; alt?: string; max
       currentBlobUrl = null;
     }
 
-    // Check if it's a filename (no slashes) → treat as attachment
+    // Filename with no slashes → attachment (needs auth); otherwise treat as public URL
     const isAttachment = !src.includes('/') && !src.startsWith('http');
     const fetchUrl = isAttachment
-      ? `/api/v1/attachments/${encodeURIComponent(src)}`
+      ? `${window.__FLOATTY_SERVER_URL__}/api/v1/attachments/${encodeURIComponent(src)}`
       : src;
 
-    // Try to fetch as attachment first (with auth), fallback to direct URL
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const doFetch = isAttachment
+      ? getHttpClient().fetchWithAuth(fetchUrl, { signal: controller.signal })
+      : fetch(fetchUrl, { signal: controller.signal });
 
-    fetch(fetchUrl, {
-      signal: controller.signal,
-      // Send auth header if available (for attachments)
-      headers: isAttachment ? {} : {},
-    })
+    doFetch
       .then(async (res) => {
         clearTimeout(timeoutId);
         if (!res.ok) {
@@ -980,9 +986,10 @@ export function Image(props: BaseComponentProps<{ src: string; alt?: string; max
         setLoading(false);
       })
       .catch((err: Error) => {
+        if (err.name === 'AbortError') return;
         clearTimeout(timeoutId);
         setError(err.message);
-        // Fallback: try direct src as-is (for public URLs)
+        // Fallback: try direct src as-is for public URLs
         if (!isAttachment) {
           setBlobUrl(src);
           setLoading(false);
@@ -992,13 +999,11 @@ export function Image(props: BaseComponentProps<{ src: string; alt?: string; max
       });
   });
 
-  onMount(() => {
-    return () => {
-      if (currentBlobUrl) {
-        URL.revokeObjectURL(currentBlobUrl);
-        currentBlobUrl = null;
-      }
-    };
+  onCleanup(() => {
+    if (currentBlobUrl) {
+      URL.revokeObjectURL(currentBlobUrl);
+      currentBlobUrl = null;
+    }
   });
 
   return (

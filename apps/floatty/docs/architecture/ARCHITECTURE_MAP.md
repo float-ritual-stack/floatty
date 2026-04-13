@@ -122,7 +122,7 @@ Batched work that can lag behind typing:
 | Search index | <5s | Async, batched commits |
 | ctx:: sidebar | <2s | Polling (event-driven is a future target) |
 
-**Rule**: Projections are rebuildable. If the index corrupts, rebuild from Y.Doc. Intentional nuke-on-start: the search index is disposable derived state — Y.Doc is canonical, rebuild from ground truth rather than trust prior index coherence. Revisit when cold-start rebuild becomes meaningfully expensive. See [ADR-005](../docs/adrs/ADR-005-search-index-ephemeral.md).
+**Rule**: Projections are rebuildable. If the index corrupts, rebuild from Y.Doc. Intentional nuke-on-start: the search index is disposable derived state — Y.Doc is canonical, rebuild from ground truth rather than trust prior index coherence. Revisit when cold-start rebuild becomes meaningfully expensive. See [ADR-005](../adrs/ADR-005-search-index-ephemeral.md).
 
 ### UI Projections
 
