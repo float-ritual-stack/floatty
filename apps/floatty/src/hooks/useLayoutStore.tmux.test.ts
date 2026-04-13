@@ -97,19 +97,26 @@ describe('layoutStore tmux ownership', () => {
     expect(layoutStore.getPaneLeaf(tabId, newPaneId!)?.tmuxSession).toBeUndefined();
   });
 
-  it('clears the persisted contract through the layout store when reattach fails on reopen', () => {
-    // Simulates the full missing-session lifecycle:
+  it('clears the persisted contract through the full propagation chain when reattach fails on reopen', () => {
+    // Exercises the complete missing-session lifecycle end-to-end:
     // pane had tmuxSession='work' persisted → app reopens → tmux session gone →
     // spawnPty emits empty TmuxSession OSC (|| printf '\033]1337;TmuxSession=\007') →
     // OSC handler sets semanticState.tmuxSession = undefined →
-    // syncPaneSemanticState propagates clear → layout store removes the field →
+    // syncPaneSemanticState detects delta ('work' !== undefined) →
+    // calls setPaneTmuxSession callback → layout store removes the field →
     // next reopen finds no contract, spawns plain shell instead of retrying
     const tabId = 'tab-1';
     const paneId = 'pane-1';
+    const setSemanticState = vi.fn();
     layoutStore.hydrateLayouts(makeTerminalLayout(tabId, paneId, 'work'));
 
-    // Simulate the propagation that results from the failed-attach OSC clear
-    layoutStore.setPaneTmuxSession(tabId, paneId, undefined);
+    // Simulate the OSC clear arriving via the Terminal.tsx wiring
+    syncPaneSemanticState(
+      { tabId, paneId, tmuxSession: 'work', isActivePane: true, isActiveTab: true },
+      makeSemanticState(undefined),
+      (t, p, s) => layoutStore.setPaneTmuxSession(t, p, s),
+      setSemanticState,
+    );
 
     expect(layoutStore.getPaneLeaf(tabId, paneId)?.tmuxSession).toBeUndefined();
     const persistedRoot = layoutStore.getLayoutsForPersistence()[tabId]?.root as Record<string, unknown>;
