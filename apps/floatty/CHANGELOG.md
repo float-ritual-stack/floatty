@@ -6,6 +6,29 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.6] - 2026-04-13
+
+### Features
+
+- **Image component in `render::` door** ([[FLO-586]], #230): the render door now supports an `Image` component for displaying images inline in blocks. Filenames without slashes are treated as floatty attachments and fetched with auth; full URLs pass through directly. Includes loading state, error display, 5s timeout, and proper blob URL cleanup on `src` change. Specs using the legacy `"component"` field are normalized to `"type"` automatically so both formats work.
+- **OTLP trace export to Tempo** (#230): `floatty-server` now exports traces to Tempo via OTLP when `otlp_endpoint` is configured. Trace and log endpoint resolution are now independent — each follows its own env-var priority chain (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` → `OTEL_EXPORTER_OTLP_ENDPOINT` → config) rather than sharing a single endpoint config.
+
+### Bug Fixes
+
+- **`fetchWithAuth` header merging** (#230): fixed a bug where spreading a `Headers` instance into an object literal produced `{}` (the `Headers` API stores data internally — spreading gives an empty object). `fetchWithAuth` now uses `new Headers(init?.headers)` to normalize incoming headers before setting the auth header, ensuring the auth key always wins regardless of how headers are passed in.
+- **Abort vs timeout disambiguation in Image fetch** (#230): the `AbortController` abort fired by the 5s timeout was indistinguishable from the `onCleanup` abort (both are `AbortError`). Added a `timedOut` boolean flag — timeout errors now correctly show "Request timed out" instead of being silently swallowed.
+
+### Documentation
+
+- **Architecture docs cleanup** (#230): added ADRs 001–005 under `docs/adrs/`, wired `docs/architecture/README.md` to the new agentic-runtime docs, fixed broken relative path in `ARCHITECTURE_MAP.md`, added ephemeral search index principle to `SEARCH_ARCHITECTURE_LAYERS.md`.
+- **Agentic runtime docs** (#230): new `docs/architecture/agentic-runtime/` tree formalizing outline-native vs external-execution agent boundaries, clerk interface, state model, work log model, provenance, and four ADRs on agent role boundaries.
+
+### Refactoring
+
+- **Lock-poison error deduplication** ([[FLO-586]], #230): extracted `lock_poisoned()` helper in `outline_manager.rs` to replace 4 identical `map_err` closures. No behavior change — pure DRY cleanup.
+
+---
+
 ## [0.11.4] - 2026-04-12
 
 ### Refactoring
