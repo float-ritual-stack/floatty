@@ -1675,7 +1675,7 @@ export function useSyncedYDoc(
           logger.error('Failed to load initial state from server', { err });
           sharedDocError = String(err);
         }
-      })();
+      })().finally(() => { sharedDocLoadPromise = null; });
 
       await sharedDocLoadPromise;
       setIsLoaded(sharedDocLoaded);
