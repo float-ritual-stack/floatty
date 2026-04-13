@@ -943,7 +943,11 @@ export function Image(props: BaseComponentProps<{ src: string; alt?: string; max
 
     // Abort any in-flight fetch when src changes or component unmounts
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 5000);
     onCleanup(() => {
       clearTimeout(timeoutId);
       controller.abort();
@@ -991,16 +995,14 @@ export function Image(props: BaseComponentProps<{ src: string; alt?: string; max
         setLoading(false);
       })
       .catch((err: Error) => {
-        if (err.name === 'AbortError') return;
+        if (err.name === 'AbortError' && !timedOut) return;
         clearTimeout(timeoutId);
-        setError(err.message);
+        setError(timedOut ? 'Request timed out' : err.message);
         // Fallback: try direct src as-is for public URLs
         if (!isAttachment) {
           setBlobUrl(src);
-          setLoading(false);
-        } else {
-          setLoading(false);
         }
+        setLoading(false);
       });
   });
 

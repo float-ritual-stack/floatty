@@ -130,7 +130,14 @@ class HttpClient implements FloattyHttpClient {
   }
 
   fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
-    return fetch(url, { ...init, headers: { ...this.headers(), ...(init?.headers ?? {}) } });
+    // Build headers via Headers API — spreading a Headers instance into an object literal
+    // produces {} (its data is internal), so we normalize first, then set auth to win.
+    const headers = new Headers(init?.headers);
+    headers.set('Authorization', `Bearer ${this.apiKey}`);
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    return fetch(url, { ...init, headers });
   }
 
   /** API prefix: /api/v1 for default, /api/v1/outlines/:name for others */

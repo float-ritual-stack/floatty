@@ -42,9 +42,11 @@ Floatty complements execution surfaces; it does not replace them.
 
 ## Pipeline
 
-`input -> clerk -> outline (canonical state)`
-`                 -> librarian (read/query)`
-`                 -> gardener (refine/mutate)`
-`                 -> renderer (projection)`
+```text
+input -> clerk -> outline (canonical state)
+               -> librarian (read/query)
+               -> gardener (refine/mutate)
+               -> renderer (projection)
+```
 
 Execution agents may write traces, summaries, issues, plans, and artifacts back into the outline, but they are not reduced to outline-native roles.
