@@ -30,6 +30,13 @@ const MAX_LOADED_WARNING: usize = 20;
 /// Maximum loaded outlines before eviction kicks in. "default" is never evicted.
 const MAX_LOADED_OUTLINES: usize = 16;
 
+fn lock_poisoned() -> OutlineError {
+    OutlineError::Io(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        "lock poisoned",
+    ))
+}
+
 /// Per-outline runtime context: store + lazy hooks + broadcaster + backup daemon.
 ///
 /// For "default": hooks are pre-initialized from main.rs.
@@ -238,24 +245,14 @@ impl OutlineManager {
     fn get_outline_context(&self, name: &OutlineName) -> Result<Arc<OutlineContext>, OutlineError> {
         // Fast path: read lock cache hit
         {
-            let contexts = self.contexts.read().map_err(|_| {
-                OutlineError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "lock poisoned",
-                ))
-            })?;
+            let contexts = self.contexts.read().map_err(|_| lock_poisoned())?;
             if let Some(ctx) = contexts.get(name.as_str()) {
                 return Ok(Arc::clone(ctx));
             }
         }
 
         // Slow path: write lock, double-check, open
-        let mut contexts = self.contexts.write().map_err(|_| {
-            OutlineError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "lock poisoned",
-            ))
-        })?;
+        let mut contexts = self.contexts.write().map_err(|_| lock_poisoned())?;
 
         if let Some(ctx) = contexts.get(name.as_str()) {
             return Ok(Arc::clone(ctx));
@@ -359,12 +356,7 @@ impl OutlineManager {
 
         let db_path = self.outline_path(name);
 
-        let mut contexts = self.contexts.write().map_err(|_| {
-            OutlineError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "lock poisoned",
-            ))
-        })?;
+        let mut contexts = self.contexts.write().map_err(|_| lock_poisoned())?;
 
         if contexts.contains_key(name.as_str()) || db_path.exists() {
             return Err(OutlineError::AlreadyExists(name.to_string()));
@@ -421,12 +413,7 @@ impl OutlineManager {
         }
 
         {
-            let mut contexts = self.contexts.write().map_err(|_| {
-                OutlineError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "lock poisoned",
-                ))
-            })?;
+            let mut contexts = self.contexts.write().map_err(|_| lock_poisoned())?;
             if let Some(ctx) = contexts.remove(name.as_str()) {
                 ctx.stop_backup_daemon();
             }

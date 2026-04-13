@@ -101,6 +101,8 @@ export interface FloattyHttpClient {
   setOutline(name: string): void;
   /** Get active outline name */
   getOutline(): string;
+  /** Fetch a URL with the server auth header attached. */
+  fetchWithAuth(url: string, init?: RequestInit): Promise<Response>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -125,6 +127,17 @@ class HttpClient implements FloattyHttpClient {
 
   getOutline(): string {
     return this.outlineName;
+  }
+
+  fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
+    // Build headers via Headers API — spreading a Headers instance into an object literal
+    // produces {} (its data is internal), so we normalize first, then set auth to win.
+    const headers = new Headers(init?.headers);
+    headers.set('Authorization', `Bearer ${this.apiKey}`);
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    return fetch(url, { ...init, headers });
   }
 
   /** API prefix: /api/v1 for default, /api/v1/outlines/:name for others */
