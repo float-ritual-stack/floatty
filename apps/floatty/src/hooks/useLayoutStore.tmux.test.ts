@@ -139,5 +139,8 @@ describe('layoutStore tmux ownership', () => {
     );
 
     expect(setPaneTmuxSession).not.toHaveBeenCalled();
+    // setSemanticState still fires for the active pane — the delta guard only
+    // suppresses the layout-store write, not the semantic state update.
+    expect(setSemanticState).toHaveBeenCalledTimes(1);
   });
 });
