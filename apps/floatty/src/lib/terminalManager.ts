@@ -759,7 +759,7 @@ class TerminalManager {
         // preventing endless reattach attempts on future reopens.
         const args = os === 'windows' ? []
           : tmuxSession
-            ? ['-c', `unset TMUX; PATH="${shellPath}" tmux attach-session -t ${tmuxSession} 2>/dev/null || printf '\\033]1337;TmuxSession=\\007'; exec ${shell} -l`]
+            ? ['-c', `unset TMUX; PATH="${shellPath}:$PATH" tmux attach-session -t ${tmuxSession} 2>/dev/null || printf '\\033]1337;TmuxSession=\\007'; exec ${shell} -l`]
             : ['-l'];  // login shell (PTY provides TTY for interactive mode)
 
         logger.info(`spawnPty ${id}: tmuxSession=${tmuxSession ?? '(none)'}, args=${JSON.stringify(args)}`);
