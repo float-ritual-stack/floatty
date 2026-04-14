@@ -1,6 +1,17 @@
+---
+paths:
+  - ".claude/skills/**/SKILL.md"
+  - "apps/floatty/src/components/views/**/*.tsx"
+  - "apps/floatty/src/hooks/useBlockStore.ts"
+  - "apps/floatty/src/components/BlockItem.tsx"
+  - "apps/floatty/src/lib/handlers/**/*.ts"
+---
+
 # Pattern Fit Check
 
 Meta-rule for adopting reference implementations. When you find a reference pattern to copy, verification ("this file exists, this function does what I think") is necessary but not sufficient. The missing step is **asking whether the pattern's invariants match your problem's invariants** before copying it.
+
+**Active version**: for structured invariant analysis, invoke the `pattern-fit-check` skill (not this rule file). The skill runs in an isolated Explore subagent with extended thinking. This rule file is the passive version — auto-attached via the `paths:` frontmatter when editing matching files, so the "check invariants before copying" reflex is in your context when you need it.
 
 ## Why This Rule Exists
 

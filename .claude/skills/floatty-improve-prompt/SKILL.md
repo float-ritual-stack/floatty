@@ -1,6 +1,7 @@
 ---
 name: floatty-improve-prompt
 description: Rewrite rough engineering requests into floatty-specific implementation prompts. Use when the user drops a vague or messy task description and you need to sharpen it before executing — "improve this prompt", "make this clearer", "sharpen this request", or when a request touches multiple floatty subsystems and needs scoping. Also use proactively when a request is ambiguous enough that executing it directly would risk wasted work. Overlaps with util-er (which handles burp→contract routing) but this skill focuses specifically on prompt quality for engineering tasks, not workflow orchestration.
+allowed-tools: Read Grep Glob Bash(ls *) Bash(find *) Bash(cat *) Bash(grep *) Bash(test *)
 ---
 
 # Floatty Prompt Improver
@@ -71,6 +72,8 @@ Before rewriting, classify the request. The classification determines which rule
 - Avoid implementation theater (designing systems that won't be built)
 - **Embed an investigate-first constraint**: "Read the relevant files before proposing changes. Never speculate about code you haven't opened."
 - **Embed a commit-to-approach constraint**: "Choose an approach and commit to it. Avoid revisiting decisions unless new information directly contradicts your reasoning."
+- **Trigger extended thinking for invariant analysis**: include the keyword "ultrathink" somewhere in the improved prompt. Architecture decisions involving multiple reference patterns or tradeoffs across subsystems benefit measurably from extended thinking — observed in the 2026-04-13 evaluation where a 6-minute "baked" architectural response outperformed all faster responses on invariant analysis. The keyword only activates in Claude Code environments but is harmless elsewhere.
+- **Invoke `pattern-fit-check` skill when copying a reference pattern**: if the architecture involves adopting or adapting an existing implementation, call the `pattern-fit-check` skill with the reference and target as arguments. It runs the four-question invariant-match checklist in a fresh Explore subagent.
 
 ### debugging
 - Start with failure symptoms and repro path
@@ -90,6 +93,49 @@ Before rewriting, classify the request. The classification determines which rule
 - Reference specific files and line numbers
 
 ## Step 2: Rewrite with Floatty Context
+
+### Pre-rendered codebase state (injected fresh at each invocation)
+
+These listings are rendered before you see this skill, so they reflect the actual tree at invocation time. Use them as the source of truth for "what files exist." Do NOT cite files not present in these listings without explicit "likely in" hedging.
+
+**Block type union (ts-rs generated — closed set, cannot be extended from TypeScript side alone)**:
+```!
+cat apps/floatty/src/generated/BlockType.ts 2>/dev/null || echo "(file not found on this branch)"
+```
+
+**View-mode components (mounted via `<Show when={block.type === 'X'}>` in BlockItem.tsx)**:
+```!
+ls apps/floatty/src/components/views/ 2>/dev/null
+```
+
+**Core block components**:
+```!
+ls apps/floatty/src/components/BlockItem.tsx apps/floatty/src/components/BlockDisplay.tsx apps/floatty/src/components/BlockOutputView.tsx 2>/dev/null
+```
+
+**Existing doors** (source convention: `{name}/{name}.tsx` + `door.json`):
+```!
+ls -d apps/floatty/doors/*/ 2>/dev/null
+```
+
+**Rule files** (cite by filename only if present here):
+```!
+ls .claude/rules/ 2>/dev/null
+```
+
+**Architecture docs**:
+```!
+ls apps/floatty/docs/*.md 2>/dev/null | head -30
+```
+
+**Key infrastructure files**:
+```!
+ls apps/floatty/src/hooks/useBlockStore.ts apps/floatty/src/hooks/useSyncedYDoc.ts apps/floatty/src/lib/blockTypes.ts apps/floatty/src/lib/blockItemHelpers.ts 2>/dev/null
+```
+
+---
+
+### Context to reference when writing
 
 Use this context naturally in the rewrite — don't dump it all:
 
@@ -150,6 +196,25 @@ Before returning the improved prompt, do a grep pass on your own draft. This ste
 5. **Self-sniff test**: Re-read the draft with one question — "does this prompt contain the answer?" If a section can be copy-pasted into the final memo with only a citation added, it's an answer. Rewrite as an investigation (see the "Risks as investigations" rule in Step 2).
 
 If any check fails, either fix the assertion or downgrade to hedged phrasing. Don't emit an improved prompt that asserts things you haven't verified — unverified assertions propagate into confident-sounding wrong answers downstream.
+
+### Chain to `verify-citations` for deep verification
+
+For any architecture, feature, or compound prompt that cites multiple files, rule numbers, method signatures, or line numbers, invoke the `verify-citations` skill with the draft as its argument as a final verification pass:
+
+> Use the Skill tool to invoke `verify-citations` with the draft content as `$ARGUMENTS`. That skill runs in an isolated Explore subagent with a fresh context budget, verifies every claim against the actual codebase, and returns a structured report distinguishing verified / errors / warnings / unverifiable.
+
+**When to chain**:
+- Architecture or compound-type prompts (always)
+- Any prompt citing 3+ specific files
+- Any prompt citing rule numbers by number
+- Any prompt a downstream model will act on directly without human review
+
+**When to skip the chain**:
+- Simple refactor prompts with a single file
+- Trivial edits already obvious from context
+- Debugging prompts that are pure investigation paths (the downstream model will verify as it reads)
+
+If `verify-citations` reports errors, correct the draft before emitting. If it reports warnings, consider downgrading the flagged claims to hedged phrasing ("likely in" / "investigate whether"). Do NOT emit a draft that failed verification without addressing the findings.
 
 ## Step 4: Output Format
 
