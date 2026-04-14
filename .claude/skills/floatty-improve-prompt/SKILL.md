@@ -114,6 +114,10 @@ Use this context naturally in the rewrite — don't dump it all:
 - Don't invent files that might not exist — say "likely in" not "in"
 - If the request touches risky systems, name the invariants
 - **Explain the why behind constraints**: bare prohibitions ("don't touch X") are weaker than explained ones ("don't touch X because Y will break"). Claude generalizes from the reason, not just the rule.
+- **Cite search terms, not filenames, for reference implementations you haven't verified.** Filenames in an improved prompt are load-bearing — the downstream model will either defer to them (and cite wrong files) or verify them and over-fit on whatever they find. If you're naming a reference pattern but haven't opened the file in this session, describe it by behavior: "the view-mode block that parses structured data from children — likely in `src/components/views/`, find it before starting" beats "read `TableBlockDisplay.tsx`" when you don't actually know `TableBlockDisplay.tsx` is the real name. Search terms force the downstream model to do discovery and report the real filename in its own verified response.
+- **Risks as investigations, not conclusions**: The "Risks / Regression Surfaces" section should name *topics to investigate*, not conclusions the downstream model should restate. "`resolveLink()` may return stale pane references after drag/drop" is a conclusion — the model just files it with a citation. "Pane link resolution during drag/drop: investigate whether `resolveLink()` handles rearrangement correctly" is an investigation — the model has to find the answer. Pointers, not conclusions. If you already know the answer, the downstream model isn't being tested; it's being stenographed.
+- **Don't hand out rule numbers as answers**: "Cmd+L linked panes — rule #7 applies" tells the model to file rule #7. "Cmd+L linked panes: determine which `ydoc-patterns.md` rule (if any) applies to the origin-tagging model" forces the model to open the file. Reserve rule-number citations for "Relevant Files" (here is the file to read) — not the prompt body (here is the analysis).
+- **Don't pre-enumerate solution spaces.** "Three candidates to evaluate: A, B, C" means the downstream model picks from A, B, C and misses D. Prefer "List the storage approaches this codebase supports for mutable shared state, then pick one and justify." Let the model find options before evaluating them. Name the question, not the answer set.
 
 **High-risk surfaces** (mention only when relevant to the specific request):
 
@@ -129,7 +133,25 @@ Use this context naturally in the rewrite — don't dump it all:
 | contentEditable | Bare `<br>` not `<div>` wrapping. `Range.toString()` lies about offsets. `isAtStart()` != offset 0 |
 | Search index | Standard tokenizer destroys `::` and `[[]]` syntax. Field boost missing → marker matches outrank prose |
 
-## Step 3: Output Format
+## Step 3: Verify Assertions Before Emitting
+
+Before returning the improved prompt, do a grep pass on your own draft. This step is non-negotiable — the prior version of this skill produced prompts that confidently cited files that didn't exist (e.g., `TableBlockDisplay.tsx` was cited as a real file when the actual pattern lives as a `TableView` function inside `BlockDisplay.tsx`). That cascade hurts downstream work in two directions: models that defer to the hallucinated filename cite wrong files; models that verify the filename discover the wrong reference pattern and over-fit on it.
+
+**Required checks before emitting:**
+
+1. **File paths**: Every file cited in "Relevant Files" or referenced in the prompt body — `ls` or `test -f` it. If you can't verify, downgrade to search-term phrasing ("find the view-mode block in `src/components/views/` that…") or "likely in".
+
+2. **Rule numbers**: Every `#N` citation (e.g., "ydoc-patterns.md #9") — read the rule file and confirm that rule exists and the content matches what you're claiming. If you're naming a rule by number, the downstream model will assume you read it.
+
+3. **Skill references**: `/floatty:classify`, `door-component-development`, etc. — verify via `ls ~/.claude/skills/` or the project's `.claude/` tree. Don't cite a skill you haven't confirmed exists.
+
+4. **Method signatures**: If the prompt mentions `updateBlockMetadata(id, partial, origin)`, grep for the actual signature. Do not assert argument orders from memory.
+
+5. **Self-sniff test**: Re-read the draft with one question — "does this prompt contain the answer?" If a section can be copy-pasted into the final memo with only a citation added, it's an answer. Rewrite as an investigation (see the "Risks as investigations" rule in Step 2).
+
+If any check fails, either fix the assertion or downgrade to hedged phrasing. Don't emit an improved prompt that asserts things you haven't verified — unverified assertions propagate into confident-sounding wrong answers downstream.
+
+## Step 4: Output Format
 
 ```markdown
 ## Improved Prompt
