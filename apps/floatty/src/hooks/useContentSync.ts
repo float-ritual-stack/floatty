@@ -15,6 +15,7 @@ import { createLogger } from '../lib/logger';
 
 const logger = createLogger('ContentSync');
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
+import type { CursorState } from './useCursor';
 
 const UPDATE_DEBOUNCE_MS = 150;
 
@@ -85,6 +86,12 @@ export interface ContentSyncDeps {
   store: ContentSyncStore;
   onAutocompleteCheck?: (content: string, offset: number, ref: HTMLElement) => void;
   onContentChange?: () => void;
+  /**
+   * FLO-387: Optional cursor state used to invalidate the snapshot cache
+   * after programmatic innerText mutations (which do not fire input events).
+   * Optional so tests can omit it.
+   */
+  cursor?: CursorState;
 }
 
 export interface ContentSyncReturn {
@@ -207,6 +214,11 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
         }
 
         contentRef.innerText = storeContent;
+
+        // FLO-387: programmatic innerText assignment does not fire
+        // input/selectionchange, so the cursor snapshot cache (if any)
+        // is now stale. Invalidate explicitly before repositioning.
+        deps.cursor?.invalidate();
 
         // Restore cursor position if we were focused
         // Clamp to new content length in case content shortened

@@ -294,6 +294,11 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
     const store = deps.blockStore;
     const paneStore = deps.paneStore;
 
+    // FLO-387: Single cursor snapshot — one DOM walk produces all three
+    // boundary values instead of three consecutive walks per keystroke.
+    // Snapshot is cached per element until the next selection change.
+    const snap = deps.cursor.snapshot();
+
     // Use the pure logic function to determine action
     const keyAction = determineKeyAction(
       e.key,
@@ -302,9 +307,9 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       {
         block,
         isCollapsed: deps.isCollapsed(),
-        cursorAtStart: deps.cursor.isAtStart(),
-        cursorAtEnd: deps.cursor.isAtEnd(),
-        cursorOffset: deps.cursor.getOffset(),
+        cursorAtStart: snap?.atStart ?? false,
+        cursorAtEnd: snap?.atEnd ?? false,
+        cursorOffset: snap?.offset ?? 0,
         selectionCollapsed: deps.cursor.isSelectionCollapsed(),
         zoomedRootId: paneStore.getZoomedRootId(deps.paneId),
         findPrevId: () => deps.findPrevVisibleBlock(deps.getBlockId(), deps.paneId),
