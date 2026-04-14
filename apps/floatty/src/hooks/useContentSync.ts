@@ -25,12 +25,22 @@
  * - ydoc-patterns.md #6 blur/remote race — preserved via contentAtFocus snapshot
  * - ydoc-patterns.md #7 multi-pane echo — preserved via origin-aware sync effect
  *
- * Conflict handling (MVP): focus-time contentAtFocus snapshot captures the
- * store's content when the block gains focus. At commit time, if the store's
- * block.content no longer matches the snapshot, a remote update landed during
- * the edit session. Current behavior is last-write-wins; the new diagnostic
- * `logger.warn('conflict-detected: ...')` makes the LWW event visible so we
- * can tell whether a retry UI is needed. [[FLO-???]] tracks the UI design.
+ * Conflict handling (MVP): a `contentAtFocus` snapshot captures the store's
+ * view of block.content at the moment the current dirty session starts (the
+ * hasLocalChanges false→true transition in updateContentFromDom). At commit
+ * time, if the store's block.content no longer matches the snapshot, a
+ * background writer (remote, hook, another handler) changed the content
+ * during this edit session. Current behavior is last-write-wins; the
+ * `logger.warn('conflict-detected: ...')` diagnostic makes the LWW event
+ * visible.
+ *
+ * NOTE: the snapshot is keyed to "start of dirty session" NOT "focus-in".
+ * This matters because code paths like handleAutocompleteSelect and
+ * handleStructuredPaste legitimately write to the store mid-focus, bouncing
+ * the dirty flag clean→dirty multiple times within a single focus session.
+ * A focus-time snapshot would produce false-positive conflict logs every
+ * time the user kept typing after autocomplete or paste. The dirty-transition
+ * snapshot automatically re-baselines on each new edit session.
  */
 import { createSignal, createEffect, onCleanup, untrack, type Accessor, type Setter } from 'solid-js';
 import { createLogger } from '../lib/logger';
@@ -93,36 +103,20 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   // Still used by the sync effect to skip DOM overwrites during active typing.
   const [hasLocalChanges, setHasLocalChanges] = createSignal(false);
 
-  // FLO-387: Focus-time snapshot for conflict detection. Captures the store's
-  // block.content when focus arrives; cleared on blur. At commit time, compare
-  // against current block.content — if different, a remote update landed during
-  // the edit session, and the local commit is about to LWW over it. Log so we
-  // can tell if this is happening in practice.
+  // FLO-387: Snapshot for conflict detection. Captured lazily at the moment
+  // the current dirty session begins (the false→true transition of
+  // hasLocalChanges inside updateContentFromDom). Represents "store content
+  // when my edits last diverged from it." On commit, flushContentUpdate
+  // compares against the current block.content — if different, a background
+  // writer (remote, hook, another handler) mutated the block during this
+  // dirty session, and a conflict diagnostic is logged before LWW applies.
+  //
+  // Intentionally NOT captured on focusin: code paths like
+  // handleAutocompleteSelect and handleStructuredPaste write to the store
+  // mid-focus and legitimately bounce the dirty flag, and a focus-time
+  // snapshot would produce false-positive conflict logs every time the user
+  // continued typing after such a write.
   const [contentAtFocus, setContentAtFocus] = createSignal<string | null>(null);
-
-  // Wire focusin/focusout listeners to capture/clear the snapshot.
-  // These events bubble, and are more reliable than watching activeElement
-  // across the sync effect. onCleanup removes them with HMR in mind.
-  createEffect(() => {
-    const ref = deps.getContentRef();
-    if (!ref) return;
-
-    const onFocusIn = () => {
-      const block = deps.getBlock();
-      setContentAtFocus(block?.content ?? null);
-    };
-    const onFocusOut = () => {
-      setContentAtFocus(null);
-    };
-
-    ref.addEventListener('focusin', onFocusIn);
-    ref.addEventListener('focusout', onFocusOut);
-
-    onCleanup(() => {
-      ref.removeEventListener('focusin', onFocusIn);
-      ref.removeEventListener('focusout', onFocusOut);
-    });
-  });
 
   // FLO-387: Commit the current DOM innerText to the store, synchronously.
   // Called at boundaries — blur (handleBlurSync), structural ops (~25 call
@@ -337,6 +331,16 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
     // textContent ignores <div> and <br> elements, losing line breaks.
     // innerText respects visual line breaks and converts them to \n.
     const content = target.innerText || '';
+
+    // FLO-387: On the false→true transition of hasLocalChanges, capture the
+    // store's current block.content as the conflict-detection baseline for
+    // THIS dirty session. Re-captures after every flush/cancel + new input,
+    // so autocomplete/paste/remove_spaces that clean the dirty flag and then
+    // resume typing get a fresh baseline and don't trip false positives.
+    if (!hasLocalChanges()) {
+      const block = deps.getBlock();
+      setContentAtFocus(block?.content ?? null);
+    }
 
     // FLO-197: Mark as dirty BEFORE any updates so the sync effect knows
     // not to overwrite DOM from store during the same frame.

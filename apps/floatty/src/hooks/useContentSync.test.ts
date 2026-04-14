@@ -216,50 +216,86 @@ describe('FLO-387 blur-is-the-boundary: useContentSync', () => {
     });
   });
 
-  it('7. Focus-time snapshot + conflict-detected diagnostic on remote update during focus', async () => {
+  it('7. Dirty-transition snapshot + conflict-detected diagnostic on background write mid-edit', () => {
     warnSpy.mockClear();
+    inRoot(() => {
+      const ref = makeContentRef('initial');
+      const block: MutableBlock = { id: 'blk-7', content: 'initial' };
+      const { deps, store } = makeDeps({ block, contentRef: ref });
+      const sync = useContentSync(deps);
 
-    // Set up the hook and capture the sync instance before yielding to
-    // SolidJS so its createEffect can wire up the focusin listener.
-    const ref = makeContentRef('initial');
-    const block: MutableBlock = { id: 'blk-7', content: 'initial' };
-    const { deps, store } = makeDeps({ block, contentRef: ref });
+      // User starts typing locally → hasLocalChanges flips false→true →
+      // snapshot captures the store's current view ('initial').
+      ref.innerText = 'initial + local edit';
+      sync.updateContentFromDom(ref);
 
-    let sync!: ReturnType<typeof useContentSync>;
-    let dispose!: () => void;
-    createRoot((d) => {
-      dispose = d;
-      sync = useContentSync(deps);
+      // A background writer (simulating remote update, or a hook, or a
+      // different handler writing to the same block) mutates block.content
+      // WITHOUT clearing the dirty flag — exactly the pattern the diagnostic
+      // is designed to catch.
+      block.content = 'initial + REMOTE change';
+
+      // Blur fires. flushContentUpdate sees the divergence between
+      // the baseline snapshot ('initial') and the current store view
+      // ('initial + REMOTE change'), logs the conflict, and LWW applies.
+      sync.handleBlurSync();
+
+      expect(store.updateBlockContent).toHaveBeenCalledTimes(1);
+      expect(store.updateBlockContent).toHaveBeenCalledWith('blk-7', 'initial + local edit');
+
+      // Assert the diagnostic fired.
+      expect(warnSpy).toHaveBeenCalled();
+      const warnCalls = (warnSpy as MockedFunction<(msg: string) => void>).mock.calls
+        .map((args) => String(args[0]));
+      expect(warnCalls.some((msg) => msg.includes('conflict-detected'))).toBe(true);
     });
+  });
 
-    // Yield so SolidJS's createEffect runs and the focusin listener attaches.
-    await Promise.resolve();
+  it('7b. No false positive when store is cleanly written mid-focus then typing resumes (autocomplete pattern)', () => {
+    warnSpy.mockClear();
+    inRoot(() => {
+      const ref = makeContentRef('');
+      const block: MutableBlock = { id: 'blk-7b', content: '' };
+      const { deps, store } = makeDeps({ block, contentRef: ref });
+      const sync = useContentSync(deps);
 
-    // Focus arrives — snapshot captures 'initial'.
-    ref.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      // Phase 1: user types '[[pa' — dirty flips true, snapshot = ''.
+      ref.innerText = '[[pa';
+      sync.updateContentFromDom(ref);
+      expect(sync.hasLocalChanges()).toBe(true);
 
-    // User types locally (dirty, DOM diverges).
-    ref.innerText = 'initial + local edit';
-    sync.updateContentFromDom(ref);
+      // Phase 2: autocomplete pattern — an external handler (simulated by
+      // direct store mutation + flush + dirty clear) installs the wikilink.
+      // Under the new blur-boundary contract, handleAutocompleteSelect would
+      // flush first, write the replacement, then clear the dirty flag.
+      sync.flushContentUpdate();                       // commits '[[pa' to store
+      expect(store.updateBlockContent).toHaveBeenLastCalledWith('blk-7b', '[[pa');
+      block.content = '[[Page Name]]';                 // handler writes replacement
+      ref.innerText = '[[Page Name]]';                 // handler syncs DOM
+      sync.setHasLocalChanges(false);                  // handler clears dirty flag
+      // (the real handleAutocompleteSelect also calls setDisplayContent but
+      // that's not relevant to the conflict-check path)
 
-    // Meanwhile, a remote update lands on the SAME block — simulate by
-    // mutating the store's view of block.content directly.
-    block.content = 'initial + REMOTE change';
+      // Phase 3: user keeps typing after the replacement.
+      // hasLocalChanges is currently false; first input flips it true and
+      // RE-CAPTURES the snapshot to the post-autocomplete store value.
+      ref.innerText = '[[Page Name]], cool';
+      sync.updateContentFromDom(ref);
 
-    // Blur fires. flushContentUpdate must detect the divergence,
-    // log a conflict diagnostic, and still apply the local content (LWW).
-    sync.handleBlurSync();
+      // Phase 4: blur. snapshot should be '[[Page Name]]' (the post-autocomplete
+      // baseline, NOT the pre-typing '' from phase 1). No conflict — store
+      // matches snapshot.
+      sync.handleBlurSync();
 
-    expect(store.updateBlockContent).toHaveBeenCalledTimes(1);
-    expect(store.updateBlockContent).toHaveBeenCalledWith('blk-7', 'initial + local edit');
+      // Final commit should land without any conflict log.
+      expect(store.updateBlockContent).toHaveBeenLastCalledWith('blk-7b', '[[Page Name]], cool');
 
-    // Assert the diagnostic fired.
-    expect(warnSpy).toHaveBeenCalled();
-    const warnCalls = (warnSpy as MockedFunction<(msg: string) => void>).mock.calls
-      .map((args) => String(args[0]));
-    expect(warnCalls.some((msg) => msg.includes('conflict-detected'))).toBe(true);
-
-    dispose();
+      // Critical assertion: the conflict diagnostic must NOT fire in this
+      // legitimate autocomplete + continue-typing flow.
+      const warnCalls = (warnSpy as MockedFunction<(msg: string) => void>).mock.calls
+        .map((args) => String(args[0]));
+      expect(warnCalls.some((msg) => msg.includes('conflict-detected'))).toBe(false);
+    });
   });
 
   it('8. Unmount while dirty flushes pending DOM content', () => {
