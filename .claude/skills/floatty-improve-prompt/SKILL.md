@@ -96,17 +96,27 @@ Before rewriting, classify the request. The classification determines which rule
 
 ### Pre-rendered codebase state (injected fresh at each invocation)
 
-These listings are rendered before you see this skill, so they reflect the actual tree at invocation time. Use them as the source of truth for "what files exist." Do NOT cite files not present in these listings without explicit "likely in" hedging.
+These listings are rendered before you see this skill (Claude Code's `!command` shell injection, verified working 2026-04-14). They reflect the actual tree at invocation time. Use them as the source of truth for "what files exist." Do NOT cite files not present in these listings without explicit "likely in" hedging.
+
+When emitting the improved prompt, you may reference these listings directly — you saw the real files, not a stale memory. Attribution note: prefer "verified via pre-rendered `ls` at skill invocation" over "from CLAUDE.md" in any downstream-facing hedge, because it is more accurate and the downstream model benefits from knowing the source is fresh.
 
 **Block type union (ts-rs generated — closed set, cannot be extended from TypeScript side alone)**:
 ```!
 cat apps/floatty/src/generated/BlockType.ts 2>/dev/null || echo "(file not found on this branch)"
 ```
 
-**View-mode components (mounted via `<Show when={block.type === 'X'}>` in BlockItem.tsx)**:
+**View-mode components in `src/components/views/`** (each has a different mounting mechanism — do NOT assume they are all `<Show when={block.type === 'X'}>` mounts. Verify in `BlockItem.tsx` before claiming a pattern):
+
 ```!
 ls apps/floatty/src/components/views/ 2>/dev/null
 ```
+
+Known mounting mechanisms (verify for any specific component before citing):
+- `FilterBlockDisplay` — mounted via `<Show when={block()?.type === 'filter'}>` in `BlockItem.tsx` (the only true `block.type`-mounted sibling view)
+- `SearchResultsView`, `ImgView` — mounted via `outputType` dispatch through `BlockOutputView.tsx` (`outputType?.startsWith('search-')`, `outputType === 'img-view'`)
+- `DoorHost`, `DoorPaneView`, `IframePaneView` — door rendering + pane-level linked-pane views (different path entirely from block-type sibling views)
+
+The "sibling view mounted via block.type" pattern is real for filter:: but is NOT the only pattern in this directory. Do not generalize.
 
 **Core block components**:
 ```!
@@ -201,7 +211,9 @@ If any check fails, either fix the assertion or downgrade to hedged phrasing. Do
 
 For any architecture, feature, or compound prompt that cites multiple files, rule numbers, method signatures, or line numbers, invoke the `verify-citations` skill with the draft as its argument as a final verification pass:
 
-> Use the Skill tool to invoke `verify-citations` with the draft content as `$ARGUMENTS`. That skill runs in an isolated Explore subagent with a fresh context budget, verifies every claim against the actual codebase, and returns a structured report distinguishing verified / errors / warnings / unverifiable.
+> Invoke the `verify-citations` skill and pass the full draft text as its invocation input. That skill runs in an isolated Explore subagent with a fresh context budget, verifies every claim against the actual codebase, and returns a structured report distinguishing verified / errors / warnings / unverifiable.
+>
+> (Note for the skill author: do NOT refer to the arguments placeholder by its literal variable name in backticks here — Claude Code's template engine substitutes it literally even inside code spans, producing nonsense output. Describe the behavior, not the variable.)
 
 **When to chain**:
 - Architecture or compound-type prompts (always)
