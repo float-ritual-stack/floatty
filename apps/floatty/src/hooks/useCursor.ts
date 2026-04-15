@@ -20,8 +20,6 @@
  */
 
 import {
-  isCursorAtContentStart,
-  isCursorAtContentEnd,
   getAbsoluteCursorOffset,
   setCursorAtOffset,
   getContentLength,
@@ -86,10 +84,16 @@ function bumpGeneration(): void {
 }
 
 /**
- * Compute a fresh snapshot by walking the DOM once. Still uses the
- * underlying cursorUtils functions, but avoids the redundant walks
- * that happen when isCursorAtContentStart/End each re-fetch the offset
- * internally — we compute offset once and derive atStart/atEnd from it.
+ * Compute a fresh snapshot with a SINGLE DOM walk for the offset, then
+ * derive atStart/atEnd from the already-computed offset + contentLength.
+ *
+ * Earlier revision called isCursorAtContentStart + isCursorAtContentEnd,
+ * each of which re-invokes getAbsoluteCursorOffset internally — that was
+ * 3 walks per cache miss, directly contradicting the PR's "one walk" goal
+ * (caught in review, Greptile P2 on PR #233).
+ *
+ * Semantics match cursorUtils.ts:298-321 exactly: atStart/atEnd are only
+ * meaningful for a collapsed selection with a live range.
  */
 function computeSnapshot(element: HTMLElement): CursorSnapshot {
   const contentLength = getContentLength(element);
@@ -99,15 +103,21 @@ function computeSnapshot(element: HTMLElement): CursorSnapshot {
     return { offset: 0, atStart: true, atEnd: true, contentLength: 0 };
   }
 
-  // Defer to existing boundary checks — they handle the selection/range
-  // edge cases (no selection, non-collapsed selection, etc.). These are
-  // the SAME calls the old shim made, just aggregated into one place so
-  // subsequent reads in the same generation hit the cache.
+  // Single DOM walk.
   const offset = getAbsoluteCursorOffset(element);
-  const atStart = isCursorAtContentStart(element);
-  const atEnd = isCursorAtContentEnd(element);
 
-  return { offset, atStart, atEnd, contentLength };
+  // atStart/atEnd only defined for a collapsed selection with a range —
+  // mirrors isCursorAtContentStart/End's guard ladder without the extra walks.
+  const selection = window.getSelection();
+  const isCollapsed =
+    !!selection && selection.isCollapsed && selection.rangeCount > 0;
+
+  return {
+    offset,
+    atStart: isCollapsed && offset === 0,
+    atEnd: isCollapsed && offset >= contentLength,
+    contentLength,
+  };
 }
 
 // ─── Document-level invalidation listeners ──────────────────────────
