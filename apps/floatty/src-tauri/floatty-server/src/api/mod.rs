@@ -23,10 +23,19 @@ use axum::{
     Json, Router,
 };
 use floatty_core::{HookSystem, InheritanceIndex, PageNameIndex, YDocStore};
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, RwLock};
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
 use yrs::{Array, Map, ReadTxn, Transact};
+
+/// Cache key for computed door-block markdown projections.
+/// `(block_id, hash(output.data))` — hash change = automatic invalidation.
+pub(crate) type ProjectionCacheKey = (String, u64);
+/// In-memory LRU cache for [`walk_spec_to_markdown`] output.
+/// Capacity 10_000 entries; bounded to prevent unbounded growth on long-running servers.
+pub(crate) type ProjectionCache = Arc<Mutex<LruCache<ProjectionCacheKey, String>>>;
 
 use crate::OutlineManager;
 use crate::WsBroadcaster;
@@ -117,6 +126,10 @@ pub struct AppState {
     pub backup_daemon: Option<Arc<BackupDaemon>>,
     /// Multi-outline manager (Phase 1: server-side only)
     pub outline_manager: Arc<OutlineManager>,
+    /// LRU cache for computed door-block markdown projections (FLO-633).
+    /// Keyed by `(block_id, hash(output.data))`; in-memory, no persistence,
+    /// no WS broadcast on writes. See `blocks::inject_rendered_markdown`.
+    pub projection_cache: ProjectionCache,
 }
 
 // Sync DTOs re-exported (used by ApiError::IntoResponse, outline handlers, tests)
@@ -228,7 +241,19 @@ pub fn create_router(
 ) -> Router {
     let page_name_index = hook_system.page_name_index();
     let inheritance_index = hook_system.inheritance_index();
-    let state = AppState { store, broadcaster, page_name_index, inheritance_index, hook_system, backup_daemon, outline_manager };
+    let projection_cache: ProjectionCache = Arc::new(Mutex::new(LruCache::new(
+        NonZeroUsize::new(10_000).expect("10_000 is nonzero"),
+    )));
+    let state = AppState {
+        store,
+        broadcaster,
+        page_name_index,
+        inheritance_index,
+        hook_system,
+        backup_daemon,
+        outline_manager,
+        projection_cache,
+    };
 
     Router::new()
         // Sync endpoints (health, state, update, restore, updates-since)

@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "float-pty"
-version = "0.11.6"
+version = "0.11.7"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -1542,7 +1542,7 @@ dependencies = [
 
 [[package]]
 name = "floatty-server"
-version = "0.11.6"
+version = "0.11.7"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1551,6 +1551,7 @@ dependencies = [
  "floatty-core",
  "futures-util",
  "http-body-util",
+ "lru",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
