@@ -161,9 +161,10 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
     // FLO-387 conflict detection (MVP: LWW + diagnostic log).
     // If the store's content diverged from the focus-time snapshot, a remote
     // update landed during this edit session. Log it. The local commit still
-    // wins (LWW on Y.Map field merge). A conflict-resolution UI is a future
-    // follow-up — the logger.warn + onConflictDetected test hook make the
-    // LWW event observable so the UI work can be scoped when it's queued.
+    // wins (LWW on Y.Map field merge). The conflict-resolution UI follow-up
+    // is [[FLO-623]] — the logger.warn + onConflictDetected test hook make
+    // the LWW event observable so that UX work can scope against real
+    // conflict frequency.
     const snapshot = contentAtFocus();
     if (snapshot !== null && block.content !== snapshot) {
       logger.warn(
