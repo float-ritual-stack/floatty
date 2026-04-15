@@ -65,7 +65,7 @@ Emit exactly one:
 
 ## Output format
 
-```
+```markdown
 ## Pattern Fit Report
 
 **Reference**: $0 (at <actual file path>)

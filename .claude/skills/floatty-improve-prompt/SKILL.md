@@ -199,7 +199,7 @@ Before returning the improved prompt, do a grep pass on your own draft. This ste
 
 2. **Rule numbers**: Every `#N` citation (e.g., "ydoc-patterns.md #9") — read the rule file and confirm that rule exists and the content matches what you're claiming. If you're naming a rule by number, the downstream model will assume you read it.
 
-3. **Skill references**: `/floatty:classify`, `door-component-development`, etc. — verify via `ls ~/.claude/skills/` or the project's `.claude/` tree. Don't cite a skill you haven't confirmed exists.
+3. **Skill references**: `/floatty:classify`, `door-component-development`, etc. — verify repo-local first via `ls .claude/skills/`, then fall back to `ls ~/.claude/skills/` for globally-installed skills. Project-grounded verification avoids false positives from unrelated local/global skills. Don't cite a skill you haven't confirmed exists.
 
 4. **Method signatures**: If the prompt mentions `updateBlockMetadata(id, partial, origin)`, grep for the actual signature. Do not assert argument orders from memory.
 

@@ -190,6 +190,7 @@ def audit_rule_file(project_root: Path, rule_file: Path) -> dict:
             'read_error': str(e),
             'citation_count': 0,
             'verified': [],
+            'near_match': [],
             'missing': [],
             'drift': [],
             'partial': [],

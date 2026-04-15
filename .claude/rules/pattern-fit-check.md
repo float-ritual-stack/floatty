@@ -96,7 +96,7 @@ Now the compensation is discoverable to future readers.
 Files that should link here:
 
 - `.claude/skills/floatty-improve-prompt/SKILL.md` — when the improver recommends a reference pattern, it should pass through this check
-- `.claude/skills/door-component-development/SKILL.md` — when copying an existing door, run this check
+- `door-component-development` skill (installed globally at `~/.claude/skills/door-component-development/`) — when copying an existing door, run this check
 - `.claude/commands/floatty/classify.md` — after classifying as Handler/Hook/Projection/Renderer, apply this before picking a specific reference
 - `apps/floatty/docs/BLOCK_TYPE_PATTERNS.md` — when adding a new block type, this check is between "find reference" and "write code"
 

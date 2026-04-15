@@ -68,7 +68,7 @@ For each skill-reference, command-reference, or inter-doc link:
 
 ## Output format
 
-```
+```markdown
 ## Verification Report
 
 ### Verified ✅
