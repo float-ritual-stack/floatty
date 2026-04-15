@@ -65,18 +65,39 @@ selfRender doors fire `execute` when user presses Enter (command handler pattern
 
 The door loader reads `{doorDir}/index.js`. NOT `render.js`, NOT `{id}.js`.
 
+### Monorepo paths (post-monorepo shift)
+
+Source and script now live under `apps/floatty/`. The deploy target didn't change — it's still the user-level `~/.floatty{,-dev}/doors/` dir. Only the source/script paths shifted.
+
 ```bash
-# ✅ CORRECT — compile to index.js in the door's deploy directory
-node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
+# ✅ CORRECT — run from apps/floatty/
+cd apps/floatty && node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
+
+# OR from repo root, with full paths
+node apps/floatty/scripts/compile-door-bundle.mjs apps/floatty/doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
 
 # Deploy to BOTH dev and release (user runs release daily)
 cp ~/.floatty-dev/doors/render/index.js ~/.floatty/doors/render/index.js
 
-# ❌ WRONG — loader ignores this file entirely
-node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty/doors/render/render.js
+# ❌ WRONG — pre-monorepo path, script no longer at repo root
+node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
+
+# ❌ WRONG — loader ignores this file entirely (wrong filename)
+node apps/floatty/scripts/compile-door-bundle.mjs apps/floatty/doors/render/render.tsx ~/.floatty/doors/render/render.js
 ```
 
+### Deploy target paths
+
+| Profile | Source of truth | Deploy target |
+|---|---|---|
+| Debug (`tauri dev`) | `apps/floatty/doors/{id}/*.tsx` | `~/.floatty-dev/doors/{id}/index.js` |
+| Release (`tauri build`) | Same source | `~/.floatty/doors/{id}/index.js` |
+
+Path resolution: `paths.rs → default_root()` uses `#[cfg(debug_assertions)]` to pick `.floatty-dev` vs `.floatty`. The doors dir is always `{root}/doors/`.
+
 **Burned 2026-03-27**: Deployed all session to `render.js` instead of `index.js`. Release build ran stale 7:50 AM code while we thought fixes were live. Every "it's not working" was this bug.
+
+**Burned 2026-04-15**: Ran `node scripts/compile-door-bundle.mjs ...` from repo root after the monorepo shift. Script lives at `apps/floatty/scripts/` now — old path errors out with `Cannot find module`. Update the rule when you move files.
 
 ## Hot-Reload
 

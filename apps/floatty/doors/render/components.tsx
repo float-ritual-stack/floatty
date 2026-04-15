@@ -1275,6 +1275,18 @@ export const BODY_STYLES = `
   color: ${V.td};
   line-height: 1.65;
 }
+/* FLO-625: Prose elements self-constrain to a reading column so bare
+   EntryBody / PatternCard content reads well at any pane width. Tables,
+   pre blocks, and hr stay at container width so data/code can sprawl. */
+.bbs-entry-body > p,
+.bbs-entry-body > ul,
+.bbs-entry-body > ol,
+.bbs-entry-body > blockquote,
+.bbs-entry-body > h1,
+.bbs-entry-body > h2,
+.bbs-entry-body > h3 {
+  max-width: var(--content-max-width, 720px);
+}
 .bbs-entry-body h1 {
   font-family: ${V.mono};
   font-size: 18px;
