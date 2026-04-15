@@ -365,7 +365,7 @@ When implementing migrations, observe these patterns from `CLAUDE.md`:
 1. **Y.Doc is source of truth** - Tantivy is for discovery, Y.Doc for retrieval
 2. **Metadata lives in Y.Doc** - Store in `block.metadata`, not just indexes
 3. **Origin prevents loops** - All transactions need origin tags
-4. **Debounce at right layer** - Input 150ms, Sync 50ms, Hooks 1-2s, Index 2-5s
+4. **Commit at the right boundary** — Input commits at blur/structural op/unmount (FLO-387, no time-based debounce), Sync 50ms debounce, Hooks 1-2s debounce, Index 2-5s debounce
 
 ### From do-not.md
 

@@ -64,52 +64,55 @@ if (origin === Origin.Hook) return;  // Don't process hook-generated changes
 
 **Origin values**: `User`, `Hook`, `Remote`, `Agent`, `BulkImport`
 
-## 5. Debounce at the Right Layer
+## 5. Commit at Boundaries, Not Ticks (FLO-387)
 
-| Layer | Timing | Why |
-|-------|--------|-----|
-| Input (BlockItem) | 150ms | Batch keystrokes |
-| Sync (useSyncedYDoc) | 50ms | Batch server sync |
-| Hooks (ChangeEmitter) | 1-2s | Batch metadata extraction |
-| Index (TantivyWriter) | 2-5s | Batch expensive commits |
+| Layer | Trigger | Why |
+|-------|---------|-----|
+| Input (BlockItem) | **Boundary: blur / structural op / unmount** | Keystrokes stay in the DOM; Y.Doc only sees user-meaningful commits. See `useContentSync.ts`. |
+| Sync (useSyncedYDoc) | 50ms debounce on Y.Doc updates | Batch server sync |
+| Hooks (ChangeEmitter) | 1-2s debounce | Batch metadata extraction |
+| Index (TantivyWriter) | 2-5s debounce | Batch expensive commits |
 
-Don't add debouncing at random points. Each layer has a purpose.
+**Why boundaries, not 150ms**: The input layer used to debounce at 150ms on every keystroke, which landed ~7 Y.Doc transactions/second during typing. Each transaction fired `observeDeep`, EventBus hooks, SolidJS reactivity, and OTLP spans — blocking the writer lock on the Rust side. FLO-387 replaced this with boundary-triggered commits. The DOM is authoritative between boundaries; `hasLocalChanges` still gates the sync effect so remote updates don't clobber in-progress DOM during focus. The `contentAtFocus` snapshot handles remote-while-focused conflicts at commit time (see rule 6).
+
+**Don't add debouncing at random points.** Sync/Hooks/Index layers still debounce because they batch work that can't happen synchronously. The input layer no longer debounces at all — commits are event-driven.
+
+**Canonical explanation**: the 44-line module header in `useContentSync.ts` is the source of truth for the new model. This rule points there; don't duplicate the explanation.
 
 ## 6. Blur/Remote-Update Race Condition
 
-**Problem**: User blurs a block (triggering flush), but a remote update arrives between blur and flush. The local flush overwrites the remote change.
+**Problem**: User is focused on a block typing into the DOM. A remote update arrives for the same block. The local flush on blur overwrites the remote change because `hasLocalChanges` suppressed the in-focus sync effect.
+
+**floatty's implementation** (`useContentSync.ts`, FLO-387):
 
 ```typescript
-// ❌ WRONG - blind overwrite on blur
-const handleBlur = () => {
-  flushContentUpdate();  // Overwrites any remote changes
-};
+// On the hasLocalChanges false→true transition (inside updateContentFromDom),
+// capture the store's current block.content as the conflict baseline.
+if (!hasLocalChanges()) {
+  const block = deps.getBlock();
+  setContentAtFocus(block?.content ?? null);
+}
+setHasLocalChanges(true);
 
-// ✅ CORRECT - use edit token to detect stale writes
-let localEditToken = 0;
-
-const handleInput = () => {
-  localEditToken = Date.now();
-  debouncedUpdate(id, content, localEditToken);
-};
-
-const handleBlur = () => {
-  const tokenAtBlur = localEditToken;
-  flushContentUpdate((id, content, token) => {
-    // Only write if no remote update since we started editing
-    const block = store.getBlock(id);
-    if (block.lastRemoteUpdate > token) {
-      // Remote won - merge or discard local
-      return;
-    }
-    store.updateBlockContent(id, content);
-  });
-};
+// At commit time (inside flushContentUpdate, called on blur/structural op/unmount),
+// compare the captured snapshot against the current store content.
+const snapshot = contentAtFocus();
+if (snapshot !== null && block.content !== snapshot) {
+  // Store diverged from the snapshot → a remote/hook/background writer
+  // landed during this edit session. Log, fire the test hook, LWW applies.
+  logger.warn(`conflict-detected: block ${block.id} ... — LWW applied`);
+  (window as any).__floattyTestHooks?.onConflictDetected?.(block.id);
+}
+deps.store.updateBlockContent(block.id, content);
 ```
 
-**Why**: CRDTs handle concurrent edits, but blind overwrites bypass conflict resolution. Track when local edits started to detect if remote changes should take precedence.
+**Why a dirty-transition snapshot, not a focus-time snapshot**: code paths like `handleAutocompleteSelect` and `handleStructuredPaste` legitimately write to the store mid-focus, bouncing `hasLocalChanges` clean→dirty multiple times within a single focus session. A focus-time snapshot would produce false-positive conflict logs every time the user kept typing after autocomplete. The dirty-transition snapshot auto-rebaselines on each new edit session.
 
-**Correctness note**: For text, prefer Y.Text with positional ops over content replacement. This pattern is for cases where replacement is unavoidable.
+**Current policy is LWW + diagnostic**. The local commit wins on Y.Map field merge; the conflict-detected warning and the `__floattyTestHooks.onConflictDetected` hook make the event observable for tests and future UI.
+
+**Correctness note**: For text, prefer Y.Text with positional ops over content replacement. floatty currently stores block content as a plain string on the block Y.Map — replacement is unavoidable, so the snapshot+diagnostic pattern is how conflicts surface.
+
+**Canonical explanation**: the 44-line module header in `useContentSync.ts` documents this in full — do not duplicate it here.
 
 ## 7. Multi-Pane Echo Prevention
 
