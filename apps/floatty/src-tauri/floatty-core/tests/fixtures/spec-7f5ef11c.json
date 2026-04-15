@@ -1,0 +1,261 @@
+{
+  "agentRaw": "[sanitized test fixture — original terminal transcript removed]",
+  "agentSessionId": "00000000-0000-4000-8000-000000000001",
+  "generatedVia": "agent",
+  "spec": {
+    "elements": {
+      "arc-alpha": {
+        "children": [],
+        "props": {
+          "confidence": "shipped",
+          "connectsTo": [
+            "PR #101",
+            "PR #102",
+            "PR #103",
+            "2026-W16-weekly"
+          ],
+          "content": "Two PRs shipped in Demo Arc Alpha.\n\n- **#101** First demo change\n- **#102** Second demo change\n- **#103** Third demo change",
+          "title": "alpha :: demo arc alpha",
+          "type": "rent"
+        },
+        "type": "PatternCard"
+      },
+      "arc-beta": {
+        "children": [],
+        "props": {
+          "confidence": "shipped",
+          "connectsTo": [
+            "FLO-100",
+            "PR #201"
+          ],
+          "content": "- **FLO-100** Demo refactor placeholder\n- **Widget** demo bundle fix\n- **demo::** discovery placeholder",
+          "title": "beta :: demo arc beta",
+          "type": "float"
+        },
+        "type": "PatternCard"
+      },
+      "arc-gamma": {
+        "children": [],
+        "props": {
+          "content": "Demo content line one.\n\n- Demo bullet one\n- Demo bullet two\n- Demo bullet three\n- Demo bullet four\n- Demo bullet five",
+          "title": "gamma :: demo arc gamma",
+          "type": "life"
+        },
+        "type": "PatternCard"
+      },
+      "arcs-section": {
+        "children": [
+          "arc-alpha",
+          "arc-beta",
+          "arc-gamma"
+        ],
+        "props": {
+          "title": "Work Arcs",
+          "variant": "default"
+        },
+        "type": "Section"
+      },
+      "countdown": {
+        "children": [
+          "countdown-text"
+        ],
+        "props": {
+          "title": "GO-LIVE COUNTDOWN",
+          "variant": "warning"
+        },
+        "type": "Section"
+      },
+      "countdown-text": {
+        "children": [],
+        "props": {
+          "color": "#ffb300",
+          "content": "Demo cutover sentence — Demo Alice driving. ~48h runway. #100 UNBLOCKED (Demo Bob's PR #99 merged Fri).",
+          "size": "md"
+        },
+        "type": "Text"
+      },
+      "gap-beta": {
+        "children": [],
+        "props": {
+          "description": "#200 demo gap — PR #201 opened, CI pending",
+          "severity": "warning",
+          "target": "PR #201"
+        },
+        "type": "GapItem"
+      },
+      "gap-gamma": {
+        "children": [],
+        "props": {
+          "description": "Demo gamma gap — placeholder description",
+          "severity": "info",
+          "target": "life"
+        },
+        "type": "GapItem"
+      },
+      "gap-golive": {
+        "children": [],
+        "props": {
+          "description": "Demo go-live Wed Apr 15–16 — Demo Alice driving cutover",
+          "severity": "critical",
+          "target": "2026-W16-weekly"
+        },
+        "type": "GapItem"
+      },
+      "header": {
+        "children": [],
+        "props": {
+          "date": "2026-04-13",
+          "stats": [
+            {
+              "label": "arcs",
+              "value": "3"
+            },
+            {
+              "label": "PRs",
+              "value": "3"
+            },
+            {
+              "label": "go-live",
+              "value": "~48h"
+            }
+          ],
+          "subtitle": "W16 — DEMO WEEK",
+          "title": "Monday Apr 13 At a Glance"
+        },
+        "type": "MetadataHeader"
+      },
+      "layout": {
+        "children": [
+          "header",
+          "countdown",
+          "stats-row",
+          "arcs-section",
+          "shipped-section",
+          "upcoming-section",
+          "links"
+        ],
+        "props": {
+          "direction": "vertical",
+          "gap": 12
+        },
+        "type": "Stack"
+      },
+      "links": {
+        "children": [],
+        "props": {
+          "inbound": [
+            "2026-04-12",
+            "2026-W16-weekly"
+          ],
+          "outbound": [
+            "2026-04-14",
+            "2026-W16-weekly",
+            "2026-04-13-demo-headlines",
+            "FLO-100",
+            "PR #201",
+            "PR #101"
+          ]
+        },
+        "type": "BacklinksFooter"
+      },
+      "shipped-1": {
+        "children": [],
+        "props": {
+          "content": "PR #101 — demo shipped item one"
+        },
+        "type": "ShippedItem"
+      },
+      "shipped-2": {
+        "children": [],
+        "props": {
+          "content": "PR #102 — demo shipped item two"
+        },
+        "type": "ShippedItem"
+      },
+      "shipped-3": {
+        "children": [],
+        "props": {
+          "content": "PR #103 — demo shipped item three"
+        },
+        "type": "ShippedItem"
+      },
+      "shipped-4": {
+        "children": [],
+        "props": {
+          "content": "PR #201 — demo shipped item four"
+        },
+        "type": "ShippedItem"
+      },
+      "shipped-section": {
+        "children": [
+          "shipped-1",
+          "shipped-2",
+          "shipped-3",
+          "shipped-4"
+        ],
+        "props": {
+          "title": "Shipped",
+          "variant": "highlight"
+        },
+        "type": "Section"
+      },
+      "stat-alpha": {
+        "children": [],
+        "props": {
+          "color": "#ffb300",
+          "label": "alpha",
+          "value": "12:00–1:07"
+        },
+        "type": "StatPill"
+      },
+      "stat-beta": {
+        "children": [],
+        "props": {
+          "color": "#00e5ff",
+          "label": "beta",
+          "value": "4:11–4:49"
+        },
+        "type": "StatPill"
+      },
+      "stat-gamma": {
+        "children": [],
+        "props": {
+          "color": "#98c379",
+          "label": "gamma",
+          "value": "5:00–11:45"
+        },
+        "type": "StatPill"
+      },
+      "stats-row": {
+        "children": [
+          "stat-alpha",
+          "stat-beta",
+          "stat-gamma"
+        ],
+        "props": {
+          "direction": "horizontal",
+          "gap": 8
+        },
+        "type": "Stack"
+      },
+      "upcoming-section": {
+        "children": [
+          "gap-golive",
+          "gap-beta",
+          "gap-gamma"
+        ],
+        "props": {
+          "title": "Open Threads",
+          "variant": "default"
+        },
+        "type": "Section"
+      }
+    },
+    "root": "layout",
+    "state": {
+      "tab": "overview"
+    },
+    "title": "Monday Apr 13 At a Glance"
+  },
+  "title": "Monday Apr 13 At a Glance"
+}
