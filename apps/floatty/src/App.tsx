@@ -547,7 +547,7 @@ function App() {
           <pre>{serverError()}</pre>
           <div style={{ display: 'flex', gap: '8px', 'margin-top': '12px' }}>
             <button
-              style={{ background: '#3c3836', color: '#ebdbb2', border: '1px solid #665c54', 'border-radius': '4px', padding: '6px 16px', cursor: 'pointer', 'font-family': 'JetBrains Mono, monospace', 'font-size': '13px' }}
+              style={{ background: 'var(--color-bg-hover)', color: 'var(--color-fg)', border: '1px solid var(--color-border)', 'border-radius': '4px', padding: '6px 16px', cursor: 'pointer', 'font-family': 'JetBrains Mono, monospace', 'font-size': '13px' }}
               onClick={async () => {
                 setServerError(null);
                 try {
@@ -560,7 +560,7 @@ function App() {
               Try Again
             </button>
           </div>
-          <p style={{ color: '#928374', 'font-size': '11px', 'margin-top': '8px' }}>
+          <p style={{ color: 'var(--color-fg-muted)', 'font-size': '11px', 'margin-top': '8px' }}>
             Server may still be starting. Try again in a few seconds.
           </p>
         </div>

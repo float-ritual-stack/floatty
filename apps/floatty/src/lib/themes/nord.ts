@@ -12,8 +12,11 @@ export const nordTheme: FloattyTheme = {
   bg: '#2e3440',
   bgDark: '#242933',
   bgLight: '#3b4252',
+  bgSecondary: '#353c4a',
+  bgHover: '#434c5e',
   fg: '#eceff4',
   fgMuted: '#d8dee9',
+  fgDimmed: '#7b8499',
   border: '#4c566a',
 
   // Accent colors (Frost)
@@ -28,6 +31,11 @@ export const nordTheme: FloattyTheme = {
 
   // Selection
   selection: '#434c5e',
+
+  // Reader typography (FLO-625)
+  textPrimary: '#d8dee9',
+  contentMaxWidth: '720px',
+  bodyLineHeight: '1.6',
 
   // Terminal ANSI palette
   ansi: {

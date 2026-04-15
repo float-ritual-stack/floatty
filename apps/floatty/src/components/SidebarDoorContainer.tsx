@@ -100,7 +100,7 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
         {/* Registry doors: render via Dynamic */}
         <Show when={store.activeDoorId() !== 'ctx' && activeView()}>
           <ErrorBoundary fallback={(err) => (
-            <div style={{ padding: '12px', color: '#fb4934', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace' }}>
+            <div style={{ padding: '12px', color: 'var(--color-error)', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace' }}>
               <div style={{ 'font-weight': 'bold', 'margin-bottom': '4px' }}>Sidebar door error</div>
               {err?.message || String(err)}
             </div>

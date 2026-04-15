@@ -12,8 +12,11 @@ export const defaultTheme: FloattyTheme = {
   bg: '#1a1a2e',
   bgDark: '#0f0f1a',
   bgLight: '#24243e',
+  bgSecondary: '#1e1e3a',
+  bgHover: '#2e2e4e',
   fg: '#eaeaea',
   fgMuted: '#8b8b8b',
+  fgDimmed: '#6b6b8b',
   border: '#2a2a4a',
 
   // Accent colors
@@ -28,6 +31,11 @@ export const defaultTheme: FloattyTheme = {
 
   // Selection
   selection: '#4a4a7a',
+
+  // Reader typography (FLO-625)
+  textPrimary: '#c8c3bb',
+  contentMaxWidth: '720px',
+  bodyLineHeight: '1.6',
 
   // Terminal ANSI palette
   ansi: {

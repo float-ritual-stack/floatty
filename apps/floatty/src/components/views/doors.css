@@ -6,21 +6,28 @@
  * ═══════════════════════════════════════════════════════════ */
 
 .door-output {
-  --door-bg: var(--color-bg-secondary, #1a1a2e);
-  --door-fg: var(--color-fg-primary, #e0e0e0);
-  --door-accent: var(--color-ansi-cyan, #56b6c2);
-  --door-muted: var(--color-fg-muted, #888);
-  --door-border: var(--color-border, #333);
-  --door-tag-bg: var(--color-bg-tertiary, #252540);
-  --door-error: var(--color-ansi-red, #e06c75);
-  --door-success: var(--color-ansi-green, #98c379);
+  --door-bg: var(--color-bg-secondary);
+  /* FLO-625: door body text uses warm --text-primary for readability.
+     Fallback chain: text-primary → fg. Earlier versions referenced
+     --color-fg-primary which never existed; that's fixed here. */
+  --door-fg: var(--text-primary, var(--color-fg));
+  --door-accent: var(--color-ansi-cyan);
+  --door-muted: var(--color-fg-muted);
+  --door-border: var(--color-border);
+  /* Elevated tag/chip background — lighter than --door-bg so pills pop. */
+  --door-tag-bg: var(--color-bg-hover);
+  --door-error: var(--color-error);
+  --door-success: var(--color-success);
 
   position: relative;
   padding: 0;
+  /* FLO-625: center door output in a reading column. Per-door, not per-block. */
+  max-width: var(--content-max-width, 720px);
+  margin-inline: auto;
   color: var(--door-fg);
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: var(--body-line-height, 1.5);
 }
 
 /* ─── Toolbar ─── */

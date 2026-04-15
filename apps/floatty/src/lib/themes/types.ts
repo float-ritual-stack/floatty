@@ -32,8 +32,11 @@ export interface FloattyTheme {
   bg: string;           // Main background
   bgDark: string;       // Darker background (tab bar, status)
   bgLight: string;      // Lighter background (sidebar, active pane)
+  bgSecondary: string;  // Card/panel background (door tag bg, nested surfaces)
+  bgHover: string;      // Hover state background
   fg: string;           // Primary text
   fgMuted: string;      // Secondary/muted text
+  fgDimmed: string;     // Dimmed text (placeholders, tertiary info)
   border: string;       // Borders and dividers
 
   // Accent colors
@@ -48,6 +51,13 @@ export interface FloattyTheme {
 
   // Selection
   selection: string;    // Text selection background
+
+  // Reader typography (FLO-625)
+  // Controls max reading column width, body line-height, and warm text color
+  // for comfortable long-form reading in outliner + door output.
+  textPrimary: string;      // Warm body text color (separate from fg which can be brighter)
+  contentMaxWidth: string;  // e.g. "720px" — reading column width
+  bodyLineHeight: string;   // e.g. "1.6" — body text line-height
 
   // Terminal ANSI palette
   ansi: AnsiColors;
@@ -89,9 +99,17 @@ export function applyThemeToCSS(theme: FloattyTheme) {
   root.style.setProperty('--color-bg', theme.bg);
   root.style.setProperty('--color-bg-dark', theme.bgDark);
   root.style.setProperty('--color-bg-light', theme.bgLight);
+  root.style.setProperty('--color-bg-secondary', theme.bgSecondary);
+  root.style.setProperty('--color-bg-hover', theme.bgHover);
   root.style.setProperty('--color-fg', theme.fg);
   root.style.setProperty('--color-fg-muted', theme.fgMuted);
+  root.style.setProperty('--color-fg-dimmed', theme.fgDimmed);
   root.style.setProperty('--color-border', theme.border);
+
+  // Reader typography (FLO-625)
+  root.style.setProperty('--text-primary', theme.textPrimary);
+  root.style.setProperty('--content-max-width', theme.contentMaxWidth);
+  root.style.setProperty('--body-line-height', theme.bodyLineHeight);
 
   // Accent
   root.style.setProperty('--color-accent', theme.accent);

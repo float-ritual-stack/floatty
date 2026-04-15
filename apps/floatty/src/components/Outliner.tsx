@@ -838,16 +838,16 @@ export function Outliner(props: OutlinerProps) {
               </Match>
               <Match when={doorZoomBlockId()}>
                 <ErrorBoundary fallback={(err) => (
-                  <div style={{ padding: '16px', color: 'var(--door-error, #e06c75)' }}>
+                  <div style={{ padding: '16px', color: 'var(--color-error)' }}>
                     <p>Door crashed: {String(err)}</p>
                     <button
                       onClick={() => paneStore.zoomTo(props.paneId, null)}
                       style={{
                         'margin-top': '8px',
                         padding: '4px 12px',
-                        background: '#3c3836',
-                        color: '#ebdbb2',
-                        border: '1px solid #665c54',
+                        background: 'var(--color-bg-hover)',
+                        color: 'var(--color-fg)',
+                        border: '1px solid var(--color-border)',
                         'border-radius': '3px',
                         cursor: 'pointer',
                       }}

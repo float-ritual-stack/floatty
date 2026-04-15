@@ -13,8 +13,11 @@ export const tokyoNightTheme: FloattyTheme = {
   bg: '#1a1b26',
   bgDark: '#15161e',
   bgLight: '#24283b',
+  bgSecondary: '#1f202e',
+  bgHover: '#2d3046',
   fg: '#c0caf5',
   fgMuted: '#565f89',
+  fgDimmed: '#414868',
   border: '#3b4261',
 
   // Accent colors
@@ -29,6 +32,11 @@ export const tokyoNightTheme: FloattyTheme = {
 
   // Selection
   selection: '#33467c',
+
+  // Reader typography (FLO-625)
+  textPrimary: '#c0caf5',
+  contentMaxWidth: '720px',
+  bodyLineHeight: '1.6',
 
   // ANSI 16-color palette
   ansi: {

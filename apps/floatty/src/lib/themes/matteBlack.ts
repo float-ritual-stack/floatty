@@ -14,8 +14,11 @@ export const matteBlackTheme: FloattyTheme = {
   bg: '#0a0a0a',
   bgDark: '#000000',
   bgLight: '#1a1a1a',
+  bgSecondary: '#141414',
+  bgHover: '#222222',
   fg: '#e0e0e0',
   fgMuted: '#6e6e6e',
+  fgDimmed: '#4a4a4a',
   border: '#2a2a2a',
 
   // Accent colors - warm orange
@@ -30,6 +33,11 @@ export const matteBlackTheme: FloattyTheme = {
 
   // Selection
   selection: '#3a3a3a',
+
+  // Reader typography (FLO-625)
+  textPrimary: '#d0cbc2',
+  contentMaxWidth: '720px',
+  bodyLineHeight: '1.6',
 
   // ANSI 16-color palette
   ansi: {
