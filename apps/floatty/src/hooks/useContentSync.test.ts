@@ -222,6 +222,17 @@ describe('FLO-387 blur-is-the-boundary: useContentSync', () => {
       const ref = makeContentRef('initial');
       const block: MutableBlock = { id: 'blk-7', content: 'initial' };
       const { deps, store } = makeDeps({ block, contentRef: ref });
+
+      // Wire the mock to mirror production: real updateBlockContent commits
+      // to the local Y.Doc synchronously, so deps.getBlock() returns the
+      // freshly committed local content on the next read. Without this,
+      // handleBlurSync would re-read the stale 'remote' block.content and
+      // silently overwrite the DOM with the remote value — the test would
+      // still pass the call-count assertion but hide a behavioral drift.
+      store.updateBlockContent.mockImplementation((_id, content) => {
+        block.content = content;
+      });
+
       const sync = useContentSync(deps);
 
       // User starts typing locally → hasLocalChanges flips false→true →
@@ -237,7 +248,7 @@ describe('FLO-387 blur-is-the-boundary: useContentSync', () => {
 
       // Blur fires. flushContentUpdate sees the divergence between
       // the baseline snapshot ('initial') and the current store view
-      // ('initial + REMOTE change'), logs the conflict, and LWW applies.
+      // ('initial + REMOTE change'), logs the conflict, LWW applies.
       sync.handleBlurSync();
 
       expect(store.updateBlockContent).toHaveBeenCalledTimes(1);
@@ -248,6 +259,11 @@ describe('FLO-387 blur-is-the-boundary: useContentSync', () => {
       const warnCalls = (warnSpy as MockedFunction<(msg: string) => void>).mock.calls
         .map((args) => String(args[0]));
       expect(warnCalls.some((msg) => msg.includes('conflict-detected'))).toBe(true);
+
+      // DOM must hold the local edit after blur — production's real
+      // updateBlockContent would have updated block.content, the post-flush
+      // rehydration in handleBlurSync would see DOM==store and leave it.
+      expect(ref.innerText).toBe('initial + local edit');
     });
   });
 
@@ -339,5 +355,45 @@ describe('FLO-387 blur-is-the-boundary: useContentSync', () => {
       sync.flushContentUpdate();
       expect(store.updateBlockContent).toHaveBeenCalledTimes(0);
     });
+  });
+
+  // This test documents an acknowledged limitation, not a bug. The PR plan
+  // claims "HMR reload while dirty → no data loss (onCleanup flushes)" —
+  // that claim is only true OUTSIDE of IME composition. flushContentUpdate
+  // bails early when isComposing() is true, because committing a half-
+  // composed CJK glyph would corrupt the block. As a result, a tab-close
+  // or HMR reload mid-composition silently drops the in-flight characters.
+  // The real fix (if one is ever queued) would be to call
+  // `compositionEnd` programmatically on teardown, which is non-trivial
+  // and cross-browser messy. For now the tradeoff is explicit.
+  it('10. Unmount during active IME composition does NOT flush (acknowledged limitation)', () => {
+    let dispose!: () => void;
+    const ref = makeContentRef('');
+    const block: MutableBlock = { id: 'blk-10', content: '' };
+    const { deps, store } = makeDeps({ block, contentRef: ref });
+
+    createRoot((d) => {
+      dispose = d;
+      const sync = useContentSync(deps);
+      // Simulate user mid-IME: first character of a CJK composition is
+      // sitting in the DOM but hasn't been finalized by compositionend.
+      sync.setIsComposing(true);
+      ref.innerText = '你';
+      sync.updateContentFromDom(ref);
+      // Partial composition IS in the dirty set because updateContentFromDom
+      // still flips hasLocalChanges — but flushContentUpdate will bail on
+      // isComposing, so onCleanup cannot commit.
+      expect(sync.hasLocalChanges()).toBe(true);
+      expect(sync.isComposing()).toBe(true);
+    });
+
+    // Unmount (disposer triggers onCleanup → flushContentUpdate → bails
+    // because isComposing is still true). The half-composed character is
+    // lost. This test makes the limitation explicit so a future regression
+    // where unmount-during-IME silently starts committing (possibly
+    // corrupting with a partial glyph) would be caught.
+    dispose();
+
+    expect(store.updateBlockContent).toHaveBeenCalledTimes(0);
   });
 });
