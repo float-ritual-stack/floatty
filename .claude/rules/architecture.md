@@ -4,7 +4,7 @@
 
 SolidJS (local Y.Doc) → Tauri IPC → Rust (floatty-server subprocess) → Axum (Y.Doc authority, SQLite).
 
-Sync: User types → Y.Doc update (50ms debounce) → POST /api/v1/update → Yrs apply → WS broadcast.
+Sync (FLO-387 blur-is-the-boundary): User types → DOM (contentEditable) → (on blur / structural op / unmount) Y.Doc update → useSyncedYDoc 50ms debounce → POST /api/v1/update → Yrs apply → WS broadcast. Keystrokes do NOT hit Y.Doc between boundaries — see `ydoc-patterns.md` §5 and `useContentSync.ts` module header.
 Persistence: SQLite append-only + hourly .ydoc snapshots. Compacts every 100 updates.
 
 ## PTY Performance (DO NOT DEVIATE)

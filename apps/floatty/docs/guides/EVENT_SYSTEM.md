@@ -183,14 +183,16 @@ const scheduler = new ProjectionScheduler({
 
 ### Timing Guidelines
 
-From `ydoc-patterns.md`:
+From `ydoc-patterns.md` §5 (FLO-387 blur-is-the-boundary):
 
-| Layer | Timing | Purpose |
-|-------|--------|---------|
-| Input (BlockItem) | 150ms | Batch keystrokes |
-| Sync (Y.Doc) | 50ms | Batch server sync |
-| Hooks (metadata) | 1-2s | Batch extraction |
-| Index (Tantivy) | 2-5s | Batch expensive commits |
+| Layer | Trigger | Purpose |
+|-------|---------|---------|
+| Input (BlockItem) | **Boundary** (blur / structural op / unmount) | Keystrokes stay in DOM; Y.Doc sees only user-meaningful commits |
+| Sync (Y.Doc) | 50ms debounce | Batch server sync |
+| Hooks (metadata) | 1-2s debounce | Batch extraction |
+| Index (Tantivy) | 2-5s debounce | Batch expensive commits |
+
+The input layer no longer debounces — it commits at semantic boundaries. Hooks fire on commit, so EventBus subscribers that previously saw ~7 fires/sec while typing now see one fire per blur. See `useContentSync.ts` module header for the full rationale.
 
 ---
 

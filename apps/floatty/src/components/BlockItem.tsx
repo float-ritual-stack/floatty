@@ -369,9 +369,20 @@ export function BlockItem(props: BlockItemProps) {
     const acState = autocomplete.state();
     if (!acState) { autocomplete.dismiss(); return; }
 
-    // Cancel pending debounced update — it would overwrite our replacement
-    // (e.g., revert [[Page Name]] back to [[pa)
-    cancelContentUpdate();
+    // FLO-387: Sync the user's in-flight DOM content to the store BEFORE reading
+    // the replacement source. Under blur-is-the-boundary, the store never holds
+    // the latest typed content during a focus session — it lags behind the DOM
+    // until flush/blur. Without this flush, `store.getBlock(props.id).content`
+    // returns the last-committed value (often empty or stale), the validation
+    // guards below detect the mismatch (cursorOffset > content.length), and the
+    // autocomplete silently dismisses without inserting the wikilink.
+    //
+    // Same pattern as handleStructuredPaste and useEditingActions.remove_spaces:
+    // "boundary writers flush first, then operate on the synchronized state."
+    // The old cancelContentUpdate() call here was a no-op under blur-boundary
+    // (no debounce timer exists) and is covered by the setHasLocalChanges(false)
+    // at the end of this function.
+    flushContentUpdate();
 
     const startOffset = acState.startOffset;
     const replacement = `[[${pageName}]]`;
