@@ -6,6 +6,45 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.7] - 2026-04-15
+
+### Features
+
+- **Reader view typography** ([[FLO-625]], #235): three new CSS variables (`--content-max-width: 720px`, `--body-line-height: 1.6`, `--text-primary: warm`) constrain body prose to a 720px reading column with roomier line-height and warmer off-white text color (~8:1 contrast, up from ~4:1). Constraint lives on direct block-level children of `.outliner-container` so zoomed door/iframe pane views escape naturally and use the full pane for sidebar+content and dashboard layouts. `.block-content-text`, `.block-content-bullet`, and `.block-content-ctx` pick up `--text-primary`; semantic block-type colors (`sh::`/`ai::`/headings/errors/quotes) remain on the ANSI palette so syntax hierarchy is preserved.
+
+### Performance
+
+- **Commit block content on blur, not every 150ms** ([[FLO-387]], #234): replaced the 150ms-debounced Y.Doc write path with boundary-triggered commits. Keystrokes stay in the DOM between boundaries; Y.Doc only sees user-meaningful commits at blur, structural operations, and unmount. Previously ~7 Y.Doc transactions per second during typing fired `observeDeep`, EventBus hooks, SolidJS reactivity, and OTLP spans — each blocking the writer lock. New model: ~1 transaction per edit session. Dirty-transition `contentAtFocus` snapshot catches remote-while-focused conflicts at commit time; diagnostic logged + `__floattyTestHooks.onConflictDetected` fired for observability (conflict-resolution UI tracked in [[FLO-623]]).
+- **Cache cursor boundary snapshot per selection** ([[FLO-387]], #233): WeakMap + monotonic generation counter in `useCursor.ts` caches the four boundary values (offset, atStart, atEnd, contentLength) per element until the selection actually changes. `determineKeyAction` previously made 3 consecutive DOM walks per keystroke — now one walk per selection change, cache hits thereafter. Document-level `selectionchange`/`input`/`compositionupdate` listeners bump the generation; programmatic `innerText` mutations require explicit `cursor.invalidate()`.
+
+### Theming System Cleanup
+
+- **Three orphan CSS variables wired through theme system** ([[FLO-625]], #235): `--color-bg-secondary`, `--color-bg-hover`, `--color-fg-dimmed` were set in `:root` but never applied by `applyThemeToCSS()`. All 5 themes silently used the default-theme values. Added to `FloattyTheme` interface, populated per-theme, pushed through `applyThemeToCSS`.
+- **Door variable fallback references fixed** (#235): `doors.css` referenced `--color-fg-primary` and `--color-bg-tertiary`, neither of which existed. Door output silently fell back to hardcoded OneDark-ish hex values regardless of active theme. Now uses `--text-primary`, `--color-fg`, and `--color-bg-hover`.
+- **terminalManager theme cache** (#235): `new XTerm({ theme: toXtermTheme(defaultTheme) })` was hardcoded at both terminal-creation sites, so tabs/panes opened after a theme switch booted in the default theme. Added `currentXtermTheme` cache on the singleton; `updateAllThemes()` writes to it, new terminals read from it.
+- **Hardcoded Gruvbox colors swapped for theme variables** (#235): `App.tsx` server-error fallback, `BlockOutputView.tsx` door error card, `Outliner.tsx` zoom crash button, and `SidebarDoorContainer.tsx` sidebar door error all contained hardcoded `#fb4934` / `#1d2021` / `#3c3836` / `#ebdbb2` values bypassing the theme system. All swapped for `var(--color-error)` / `var(--color-bg-secondary)` / `var(--color-fg)` / `var(--color-border)`.
+
+### Render Door
+
+- **Prose self-constraint** ([[FLO-625]], #235): `.bbs-entry-body` direct prose children (`p`, `ul`, `ol`, `blockquote`, `h1/h2/h3`) self-constrain to `max-width: var(--content-max-width)` so bare `EntryBody` / `PatternCard` content reads well at any pane width. Tables, `pre` blocks, and `hr` stay at container width so data/code can sprawl — matches the prose-vs-dashboard contract from FLO-625. Agent contract unchanged; same JSON spec now renders readably whether inline or zoomed.
+
+### Internal
+
+- **Rule files: pattern-fit-check, block-type-patterns, rule-audit, verify-citations** (#232): derived from a six-run AI tool evaluation on a `poll::` block design task (2026-04-13). `pattern-fit-check` adds the missing "does this pattern's invariants match my problem's invariants" step between finding a reference and copying it. `rule-audit` is a grep-based walker that verifies rule-file citations against the actual codebase. `verify-citations` runs the same checks on draft prompts/memos before they ship. `floatty-improve-prompt` refreshed with a Step 3 grep-verification requirement plus a chain-to-`verify-citations` rule for compound prompts.
+
+### Documentation
+
+- **`ydoc-patterns.md` rule 5 & 6 rewritten** ([[FLO-387]], #234): rule 5 ("Debounce at the Right Layer") replaced with "Commit at Boundaries, Not Ticks" — documents the new blur-is-the-boundary input-layer model and why keystroke-level debouncing was wrong. Rule 6 ("Blur/Remote-Update Race Condition") rewritten to reflect the dirty-transition snapshot instead of focus-time snapshot, with the full commit-time conflict-detection flow and the rationale for why the autocomplete/structured-paste paths needed the dirty-transition shape.
+- **`door-development.md` monorepo paths** ([[FLO-625]], #235): deploy-path section updated with monorepo-aware paths. The compile script moved to `apps/floatty/scripts/` in the monorepo shift; the old rule still listed repo-root paths. Now has both "from `apps/floatty/`" and "from repo root with full paths" examples. Added a second burn entry for the 2026-04-15 monorepo script path case.
+
+### Related
+
+- [[FLO-628]] filed: backend `set_theme` accepts any string without validating against the theme registry — low priority config normalization.
+- [[FLO-629]] filed: reader view heading line-height tightening (deferred from FLO-625 scope).
+- [[FLO-630]] filed: theming audit — systematic grep for remaining orphan CSS variable references and hardcoded hex.
+
+---
+
 ## [0.11.6] - 2026-04-13
 
 ### Features
