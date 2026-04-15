@@ -169,6 +169,11 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
         `(focus len=${snapshot.length}, pre-commit store len=${block.content.length}, ` +
         `local len=${content.length}) — LWW applied`
       );
+      // E2E test hook — no-op in production (window.__floattyTestHooks is never set).
+      // The harness installs { onConflictDetected: (id) => ... } before the test run.
+      // We can't spy on console.warn because logger.ts captures originalConsole at
+      // module load time, before any spy is installed.
+      (window as any).__floattyTestHooks?.onConflictDetected?.(block.id);
     }
 
     deps.store.updateBlockContent(block.id, content);
