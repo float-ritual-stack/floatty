@@ -123,6 +123,13 @@ export function BlockItem(props: BlockItemProps) {
   let wrapperRef: HTMLDivElement | undefined;
   const [inlineDoorRef, setInlineDoorRef] = createSignal<HTMLElement | undefined>(undefined);
 
+  // Cursor abstraction - enables mocking in tests.
+  // FLO-387: owns the per-element snapshot cache shared by useContentSync
+  // (for invalidate() after programmatic innerText sync) and useBlockInput
+  // (for the single-walk snapshot() read in determineKeyAction).
+  // Declared before useContentSync so the dep can reference it directly.
+  const cursor = useCursor(() => contentRef);
+
   // Content sync hook — handles debounced Y.Doc updates, origin-aware sync,
   // blur flush, input handling, IME composition, and dirty flag (FLO-197/FLO-256)
   const contentSync = useContentSync({
@@ -130,6 +137,7 @@ export function BlockItem(props: BlockItemProps) {
     getBlock: () => block(),
     getContentRef: () => contentRef,
     store,
+    cursor,
     onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref),
     onContentChange: () => {
       const tabId = findTabIdByPaneId(props.paneId);
@@ -201,9 +209,6 @@ export function BlockItem(props: BlockItemProps) {
       });
     }
   });
-
-  // Cursor abstraction - enables mocking in tests
-  const cursor = useCursor(() => contentRef);
 
   // FLO-376: Wikilink autocomplete (FLO-322: pageNames from singleton context)
   const autocomplete = useWikilinkAutocomplete(pageNames);
