@@ -32,8 +32,9 @@ export const nordTheme: FloattyTheme = {
   // Selection
   selection: '#434c5e',
 
-  // Reader typography (FLO-625)
-  textPrimary: '#d8dee9',
+  // Reader typography (FLO-625) — Snow Storm 2, between fg (SS3) and fgMuted (SS1)
+  // so body text stays distinct from both muted secondary and primary fg.
+  textPrimary: '#e5e9f0',
   contentMaxWidth: '720px',
   bodyLineHeight: '1.6',
 
