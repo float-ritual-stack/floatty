@@ -796,13 +796,20 @@ body.pane-dragging .terminal-pane-positioned {
   height: 100%;
   width: 100%;
   overflow-y: auto;
-  /* FLO-625: Asymmetric inline padding centers content within --content-max-width
-     without touching JSX or moving the scrollbar off the pane edge. Vertical
-     padding stays fixed at 16px. */
-  padding-block: 16px;
-  padding-inline: max(16px, calc(50% - var(--content-max-width) / 2));
+  padding: 16px;
   font-family: "JetBrains Mono", monospace;
   background: var(--color-bg);
+}
+
+/* FLO-625: Reading column for body content.
+   Constraint lives at the direct-child level — not on .outliner-container —
+   so zoomed door/iframe views (.door-pane-view, .iframe-pane-view) can
+   escape and use the full pane width for dashboard/multi-column layouts. */
+.outliner-container > .block-wrapper,
+.outliner-container > .breadcrumb,
+.outliner-container > .linked-references {
+  max-width: var(--content-max-width);
+  margin-inline: auto;
 }
 
 /* FLO-278: Scroll lock for focus routing - CSS class instead of inline style

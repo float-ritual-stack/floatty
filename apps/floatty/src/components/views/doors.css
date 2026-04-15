@@ -21,9 +21,9 @@
 
   position: relative;
   padding: 0;
-  /* FLO-625: center door output in a reading column. Per-door, not per-block. */
-  max-width: var(--content-max-width, 720px);
-  margin-inline: auto;
+  /* FLO-625: NO max-width here. Inline doors inherit the reading column
+     from their enclosing .block-wrapper. Zoomed doors (.door-pane-view)
+     get the full pane so sidebar+content layouts can breathe. */
   color: var(--door-fg);
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 13px;
