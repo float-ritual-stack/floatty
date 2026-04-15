@@ -142,6 +142,10 @@ class TerminalManager {
   private lastAcceptedResize = new Map<string, { cols: number; rows: number; geometry: string }>();
   // Tracks in-flight resize invocations so the dedup gate blocks duplicates before invoke resolves
   private pendingResize = new Map<string, { cols: number; rows: number; geometry: string }>();
+  // Current xterm theme — applied to every new terminal. Kept in sync by
+  // updateAllThemes() so that tabs/panes created after a theme change pick
+  // up the active theme instead of booting in defaultTheme.
+  private currentXtermTheme: ReturnType<typeof toXtermTheme> = toXtermTheme(defaultTheme);
 
   constructor() {
     const scheduleRestore = (reason: 'visibility' | 'focus') => {
@@ -495,7 +499,7 @@ class TerminalManager {
       fontWeight: String(this.config.font_weight),
       fontWeightBold: String(this.config.font_weight_bold),
       lineHeight: this.config.line_height,
-      theme: toXtermTheme(defaultTheme),
+      theme: this.currentXtermTheme,
     });
 
     const fitAddon = new FitAddon();
@@ -1322,7 +1326,7 @@ class TerminalManager {
       fontWeight: String(this.config.font_weight),
       fontWeightBold: String(this.config.font_weight_bold),
       lineHeight: this.config.line_height,
-      theme: toXtermTheme(defaultTheme),
+      theme: this.currentXtermTheme,
       rows: 18, // Fixed height for picker mode
     });
 
@@ -1504,29 +1508,10 @@ class TerminalManager {
   /**
    * Update theme for all terminal instances (hot-swap)
    */
-  updateAllThemes(theme: {
-    background: string;
-    foreground: string;
-    cursor: string;
-    cursorAccent: string;
-    selectionBackground: string;
-    black: string;
-    red: string;
-    green: string;
-    yellow: string;
-    blue: string;
-    magenta: string;
-    cyan: string;
-    white: string;
-    brightBlack: string;
-    brightRed: string;
-    brightGreen: string;
-    brightYellow: string;
-    brightBlue: string;
-    brightMagenta: string;
-    brightCyan: string;
-    brightWhite: string;
-  }) {
+  updateAllThemes(theme: ReturnType<typeof toXtermTheme>) {
+    // Cache for subsequently-created terminals so tabs/panes opened after a
+    // theme change inherit the current theme instead of booting in defaultTheme.
+    this.currentXtermTheme = theme;
     for (const [id, instance] of this.instances) {
       logger.debug(`Updating theme for terminal ${id}`);
       instance.term.options.theme = theme;

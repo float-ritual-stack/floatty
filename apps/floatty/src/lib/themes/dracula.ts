@@ -12,8 +12,11 @@ export const draculaTheme: FloattyTheme = {
   bg: '#282a36',
   bgDark: '#21222c',
   bgLight: '#44475a',
+  bgSecondary: '#2e303e',
+  bgHover: '#3a3c4e',
   fg: '#f8f8f2',
   fgMuted: '#6272a4',
+  fgDimmed: '#4d5572',
   border: '#44475a',
 
   // Accent colors
@@ -28,6 +31,11 @@ export const draculaTheme: FloattyTheme = {
 
   // Selection
   selection: '#44475a',
+
+  // Reader typography (FLO-625)
+  textPrimary: '#e8e4d8',
+  contentMaxWidth: '720px',
+  bodyLineHeight: '1.6',
 
   // Terminal ANSI palette
   ansi: {
