@@ -2788,6 +2788,8 @@ body.block-dragging * {
 .render-title-wrapper {
   position: relative;
   outline: none;
+  border-radius: 3px;
+  transition: background-color 80ms ease-out;
 }
 
 .render-title-wrapper .block-display {
@@ -2796,9 +2798,20 @@ body.block-dragging * {
   pointer-events: auto;
 }
 
+/* FLO-587: Stronger focus cue in rich mode.
+   contentEditable is hidden here (title mode has no caret), so the user
+   needs an unmistakable marker that keyboard focus landed on the title. */
 .block-item:not(.block-selected):focus-within .render-title-wrapper {
   outline: 2px solid var(--color-accent);
-  outline-offset: -1px;
+  outline-offset: 2px;
+  background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+/* When the inline door output owns focus (e.g. a kanban card), keep the title
+   visibly associated but de-emphasized. */
+.block-item:not(.block-selected):focus-within .render-title-wrapper:not(:focus-within) {
+  outline-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  background-color: transparent;
 }
 
 /* ═══════════════════════════════════════════════════════════════

@@ -17,6 +17,12 @@ export interface ChirpListenerDeps {
   getBlockId: () => string;
   getStore: () => ChirpWriteStore;
   onNavigate: (target: string, opts: { type?: string; splitDirection?: 'horizontal' | 'vertical' }) => void;
+  /**
+   * FLO-587 — called when a door's internal navigation exits at a boundary
+   * (e.g. ArrowUp at first kanban card, ArrowDown at last). Host should
+   * focus prev/next sibling of the door's emitting block.
+   */
+  onNavOut?: (direction: 'up' | 'down') => void;
 }
 
 /**
@@ -25,7 +31,9 @@ export interface ChirpListenerDeps {
  *
  * Routes:
  * - 'navigate' → onNavigate callback (with modifier key → split direction)
- * - write verbs ('create-child', 'upsert-child') → handleChirpWrite
+ * - write verbs ('create-child', 'upsert-child', 'update-block', 'move-block')
+ *   → handleChirpWrite
+ * - 'nav-out' → onNavOut callback (FLO-587, door internal nav exited bounds)
  */
 export function useDoorChirpListener(
   elementAccessor: () => HTMLElement | undefined,
@@ -47,6 +55,10 @@ export function useDoorChirpListener(
           splitDirection = sourceEvent?.shiftKey ? 'vertical' : 'horizontal';
         }
         deps.onNavigate(e.detail.target, { splitDirection });
+      } else if (msg === 'nav-out') {
+        e.stopPropagation();
+        const direction = e.detail?.data?.direction === 'down' ? 'down' : 'up';
+        deps.onNavOut?.(direction);
       } else if (isChirpWriteVerb(msg)) {
         e.stopPropagation();
         handleChirpWrite(msg, e.detail?.data as ChirpWriteData, deps.getBlockId(), deps.getStore());

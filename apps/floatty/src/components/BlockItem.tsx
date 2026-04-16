@@ -235,6 +235,17 @@ export function BlockItem(props: BlockItemProps) {
         originBlockId: props.id,
       });
     },
+    // FLO-587 — door's internal arrow navigation exited at a boundary.
+    // Mirror the TableView onNavigateOut bridge at BlockItem.tsx:887-895.
+    onNavOut: (direction) => {
+      const nextBlockId = direction === 'up'
+        ? findPrevVisibleBlock(props.id, props.paneId)
+        : findNextVisibleBlock(props.id, props.paneId);
+      if (nextBlockId) {
+        paneStore.setFocusCursorHint(props.paneId, direction === 'up' ? 'end' : 'start');
+        props.onFocus(nextBlockId);
+      }
+    },
   });
 
   // Find wikilink at cursor position (for keyboard navigation)
@@ -668,6 +679,18 @@ export function BlockItem(props: BlockItemProps) {
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
+      // FLO-587 — when this render:: block has an inline door output with
+      // an internally-focusable surface (currently only the kanban board's
+      // cards — `[data-kanban-card-id]`), descend into it instead of skipping
+      // to the next sibling. Mirrors TableView's "arrow-into-view" model
+      // (BlockDisplay.tsx:488-515), just reached from a title-mode parent
+      // rather than a replaced contentEditable.
+      const door = inlineDoorRef();
+      const firstCard = door?.querySelector<HTMLElement>('[data-kanban-card-id]');
+      if (firstCard) {
+        firstCard.focus();
+        return;
+      }
       const next = findNextVisibleBlock(props.id, props.paneId);
       if (next) {
         paneStore.setFocusCursorHint(props.paneId, 'start');

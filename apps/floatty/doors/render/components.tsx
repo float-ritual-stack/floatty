@@ -2952,6 +2952,54 @@ const KANBAN_DRAG_MIME = 'application/x-floatty-kanban-card';
  * Edit: deferred. Text edits inside the card are not wired yet; the plan
  *   reserves editable cards for a follow-up unit.
  */
+/**
+ * Find the next focusable KanbanCard in the DOM, in visual order.
+ * direction: 'next' = down/right (within column then across), 'prev' = up/left.
+ * 'vertical' = within same column, 'horizontal' = across columns.
+ * Returns null at boundary (no more cards in that direction).
+ */
+function findNeighborCard(
+  from: HTMLElement,
+  direction: 'next' | 'prev',
+  axis: 'vertical' | 'horizontal',
+): HTMLElement | null {
+  // Walk up to find the root containing all kanban cards (the inline-door wrapper).
+  const root = from.closest('[contenteditable="false"]') ?? from.ownerDocument.body;
+  if (axis === 'vertical') {
+    // Same column: find sibling cards inside the same data-kanban-column-id.
+    const column = from.closest('[data-kanban-column-id]');
+    if (!column) return null;
+    const siblings = Array.from(
+      column.querySelectorAll<HTMLElement>('[data-kanban-card-id]'),
+    );
+    const idx = siblings.indexOf(from);
+    if (idx < 0) return null;
+    return direction === 'next'
+      ? (siblings[idx + 1] ?? null)
+      : (siblings[idx - 1] ?? null);
+  }
+  // Horizontal: move to a neighboring column's card at the same row index if possible.
+  const columns = Array.from(
+    root.querySelectorAll<HTMLElement>('[data-kanban-column-id]'),
+  );
+  const currentCol = from.closest<HTMLElement>('[data-kanban-column-id]');
+  if (!currentCol) return null;
+  const colIdx = columns.indexOf(currentCol);
+  const targetColIdx = direction === 'next' ? colIdx + 1 : colIdx - 1;
+  const targetCol = columns[targetColIdx];
+  if (!targetCol) return null;
+  const targetCards = Array.from(
+    targetCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'),
+  );
+  if (targetCards.length === 0) return null;
+  // Pick the card at the same row index if possible, else last card.
+  const currentCards = Array.from(
+    currentCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'),
+  );
+  const rowIdx = currentCards.indexOf(from);
+  return targetCards[Math.min(rowIdx, targetCards.length - 1)] ?? targetCards[0];
+}
+
 export function KanbanCard(
   props: BaseComponentProps<{
     content?: string;
@@ -2965,6 +3013,7 @@ export function KanbanCard(
   const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
   const [dragOver, setDragOver] = createSignal<'above' | 'below' | null>(null);
   const [editing, setEditing] = createSignal(false);
+  const [focused, setFocused] = createSignal(false);
   let ref: HTMLDivElement | undefined;
   let editRef: HTMLDivElement | undefined;
 
@@ -3003,17 +3052,13 @@ export function KanbanCard(
     });
   };
 
-  // Click anywhere on the card enters edit mode. Double-click would also work
-  // but single-click matches the direct-manipulation feel of the outline.
-  const handleClick = (e: MouseEvent) => {
-    if (editing()) return;
-    if (!props.bindings?.content) return; // read-only without binding
-    e.stopPropagation();
+  // Enter edit mode. Called from click AND keyboard (Enter on focused card).
+  const enterEdit = () => {
+    if (!props.bindings?.content) return;
     setEditing(true);
     queueMicrotask(() => {
       if (!editRef) return;
       editRef.focus();
-      // Place caret at end
       const range = document.createRange();
       range.selectNodeContents(editRef);
       range.collapse(false);
@@ -3023,19 +3068,32 @@ export function KanbanCard(
     });
   };
 
+  const handleClick = (e: MouseEvent) => {
+    if (editing()) return;
+    e.stopPropagation();
+    enterEdit();
+  };
+
   const commit = () => {
     if (!editRef) return;
     const next = editRef.innerText;
     const prev = String(localValue() ?? '');
     if (next !== prev) setValue(next);
     setEditing(false);
+    // Return focus to the card root so arrow nav continues to work.
+    queueMicrotask(() => ref?.focus());
   };
 
   const cancel = () => {
     setEditing(false);
+    queueMicrotask(() => ref?.focus());
   };
 
-  const handleKeyDown = (e: KeyboardEvent) => {
+  // Keydown on the edit-mode contentEditable. Stop propagation so the parent
+  // block handlers (render-title, block-item) don't fire on Enter/Escape.
+  // Matches TableView's handleInputKeyDown at BlockDisplay.tsx:570-578 invariant F.
+  const handleEditKeyDown = (e: KeyboardEvent) => {
+    e.stopPropagation();
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       commit();
@@ -3045,15 +3103,83 @@ export function KanbanCard(
     }
   };
 
+  // Keydown on the card ROOT when NOT editing. Internal arrow navigation
+  // between cards; nav-out chirp at boundaries (bridge back to outline
+  // navigation — mirrors TableView's onNavigateOut at BlockDisplay.tsx:488-567).
+  const handleRootKeyDown = (e: KeyboardEvent) => {
+    if (editing()) return;
+    if (!ref) return;
+    switch (e.key) {
+      case 'Enter': {
+        e.preventDefault();
+        e.stopPropagation();
+        enterEdit();
+        return;
+      }
+      case 'ArrowDown':
+      case 'ArrowUp': {
+        const neighbor = findNeighborCard(
+          ref,
+          e.key === 'ArrowDown' ? 'next' : 'prev',
+          'vertical',
+        );
+        if (neighbor) {
+          e.preventDefault();
+          e.stopPropagation();
+          neighbor.focus();
+          return;
+        }
+        // At boundary — emit nav-out chirp so the host (useDoorChirpListener)
+        // moves focus to prev/next sibling block of the render:: block.
+        e.preventDefault();
+        e.stopPropagation();
+        emitChirp(ref, 'nav-out', {
+          direction: e.key === 'ArrowDown' ? 'down' : 'up',
+        });
+        return;
+      }
+      case 'ArrowRight':
+      case 'ArrowLeft': {
+        const neighbor = findNeighborCard(
+          ref,
+          e.key === 'ArrowRight' ? 'next' : 'prev',
+          'horizontal',
+        );
+        if (neighbor) {
+          e.preventDefault();
+          e.stopPropagation();
+          neighbor.focus();
+        }
+        return;
+      }
+      case 'Escape': {
+        e.preventDefault();
+        e.stopPropagation();
+        emitChirp(ref, 'nav-out', { direction: 'up' });
+        return;
+      }
+    }
+  };
+
+  const focusRing = () => {
+    if (editing()) return `1px solid ${V.cy}`;
+    if (focused()) return `2px solid ${V.cy}`;
+    return 'none';
+  };
+
   return (
     <div
       ref={(el) => (ref = el)}
+      tabindex={0}
       draggable={!editing()}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       onClick={handleClick}
+      onKeyDown={handleRootKeyDown}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       data-kanban-card-id={props.props.blockId}
       style={{
         background: V.s1,
@@ -3067,7 +3193,8 @@ export function KanbanCard(
         padding: '6px 8px',
         cursor: editing() ? 'text' : 'grab',
         'user-select': editing() ? 'text' : 'none',
-        outline: editing() ? `1px solid ${V.cy}` : 'none',
+        outline: focusRing(),
+        'outline-offset': '1px',
       }}
     >
       <Show
@@ -3077,7 +3204,7 @@ export function KanbanCard(
         <div
           ref={(el) => (editRef = el)}
           contentEditable={true}
-          onKeyDown={handleKeyDown}
+          onKeyDown={handleEditKeyDown}
           onBlur={commit}
           style={{ outline: 'none', 'min-height': '1em' }}
         >
