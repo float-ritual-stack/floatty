@@ -68,6 +68,15 @@ pub fn walk_spec_to_markdown(output_data: &Value) -> String {
 }
 
 /// Recurse into a single element by key. Mutates `lines` in place.
+///
+/// `visiting` is a "gray-set" / in-stack tracker — entries are added on
+/// descent and removed on exit. This correctly catches cycles (protects
+/// against infinite recursion on malformed specs) but intentionally does
+/// NOT deduplicate DAG convergence: an element key appearing in two
+/// different parents' `children` arrays will be rendered once per reference.
+/// Spec trees produced by the render door are proper trees in practice, so
+/// this is fine; if a future spec shape starts reusing element keys as
+/// shared references, swap this for a permanent "seen" set.
 fn walk_element(
     key: &str,
     elements: &serde_json::Map<String, Value>,

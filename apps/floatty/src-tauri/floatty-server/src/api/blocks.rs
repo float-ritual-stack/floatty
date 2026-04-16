@@ -296,7 +296,10 @@ async fn resolve_block_prefix(
             let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, &full_id)
         };
-        let block_dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+        let mut block_dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+        // Parity with /api/v1/blocks/:id (FLO-633): inject server-computed
+        // renderedMarkdown for door blocks whose frontend hook left it null.
+        inject_rendered_markdown(&mut block_dto, &state.projection_cache);
         Ok(Json(ResolveResponse {
             id: full_id,
             block: block_dto,
@@ -446,13 +449,21 @@ fn hash_json_value(value: &serde_json::Value) -> u64 {
 
 /// Set `dto.metadata.renderedMarkdown` to `markdown`, creating the metadata
 /// object if absent. Response-only mutation — no Y.Doc writes.
+///
+/// `BlockDto.metadata` is `Option<serde_json::Value>`, so it can theoretically
+/// be a scalar or array. We normalize to an empty object in that case rather
+/// than silently dropping the computed markdown.
 fn write_rendered_markdown(dto: &mut BlockDto, markdown: String) {
     let metadata = dto
         .metadata
         .get_or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    if let Some(map) = metadata.as_object_mut() {
-        map.insert("renderedMarkdown".to_string(), serde_json::Value::String(markdown));
+    if !metadata.is_object() {
+        *metadata = serde_json::Value::Object(serde_json::Map::new());
     }
+    metadata
+        .as_object_mut()
+        .expect("metadata normalized to object above")
+        .insert("renderedMarkdown".to_string(), serde_json::Value::String(markdown));
 }
 
 /// POST /api/v1/blocks - Create block
