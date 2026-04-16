@@ -379,38 +379,22 @@ pub(crate) fn inject_rendered_markdown(dto: &mut BlockDto, cache: &super::Projec
     }
 
     // Cache miss — compute with panic protection. Spec walker first, generic
-    // walker as last resort. Both functions are documented as panic-free but
-    // we wrap defensively in case of future changes or untrusted data shapes.
-    let data_for_spec = output_data.clone();
-    let spec_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        floatty_core::projections::walk_spec_to_markdown(&data_for_spec)
-    }));
-    let mut computed = match spec_result {
-        Ok(s) => s,
-        Err(_) => {
-            tracing::warn!(
-                block_id = %dto.id,
-                "renderedMarkdown spec walker panicked — falling through to generic walker"
-            );
-            String::new()
-        }
-    };
-
+    // walker as last resort. Both walkers are documented as panic-free but we
+    // wrap defensively in case of future changes or untrusted data shapes.
+    // `catch_unwind` on a closure that borrows `&Value` is fine: serde_json::Value
+    // is RefUnwindSafe, so no clone is required — AssertUnwindSafe is kept because
+    // `dto.id` (the warn! field) does not carry an UnwindSafe bound through axum.
+    let mut computed = run_walker_protected(
+        "spec",
+        &dto.id,
+        || floatty_core::projections::walk_spec_to_markdown(output_data),
+    );
     if computed.trim().is_empty() {
-        let data_for_generic = output_data.clone();
-        let generic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            floatty_core::projections::walk_generic_json_to_markdown(&data_for_generic)
-        }));
-        computed = match generic_result {
-            Ok(s) => s,
-            Err(_) => {
-                tracing::warn!(
-                    block_id = %dto.id,
-                    "renderedMarkdown generic walker panicked — leaving null"
-                );
-                String::new()
-            }
-        };
+        computed = run_walker_protected(
+            "generic",
+            &dto.id,
+            || floatty_core::projections::walk_generic_json_to_markdown(output_data),
+        );
     }
 
     // Still empty? Leave metadata untouched (null stays null — no worse than before).
@@ -418,11 +402,29 @@ pub(crate) fn inject_rendered_markdown(dto: &mut BlockDto, cache: &super::Projec
         return;
     }
 
-    // Cache the hit for subsequent requests.
+    // Cache the hit for subsequent requests. Lock poisoning is treated as a
+    // correctness-preserving degrade (recompute next request) rather than a
+    // panic, consistent with this subsystem's "optional feature" failure mode.
     if let Ok(mut guard) = cache.lock() {
         guard.put(key, computed.clone());
     }
     write_rendered_markdown(dto, computed);
+}
+
+/// Run a walker closure under `catch_unwind`. On panic, log a warning and
+/// return empty string so the caller can fall through to the next tier.
+fn run_walker_protected<F: FnOnce() -> String>(tier: &'static str, block_id: &str, walker: F) -> String {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(walker)) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!(
+                block_id = %block_id,
+                tier,
+                "renderedMarkdown walker panicked — falling through"
+            );
+            String::new()
+        }
+    }
 }
 
 /// Hash a JSON value stably for cache keying. Uses the rendered JSON string
@@ -549,6 +551,17 @@ mod projection_injection_tests {
         Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(10).unwrap())))
     }
 
+    /// Extract `metadata.renderedMarkdown` from a DTO, or panic if absent.
+    /// Keeps test assertions terse.
+    fn rendered_md(dto: &BlockDto) -> String {
+        dto.metadata
+            .as_ref()
+            .and_then(|m| m.get("renderedMarkdown"))
+            .and_then(|v| v.as_str())
+            .expect("renderedMarkdown should be set")
+            .to_string()
+    }
+
     fn door_dto_with_output(id: &str, output: serde_json::Value, metadata: Option<serde_json::Value>) -> BlockDto {
         BlockDto {
             id: id.to_string(),
@@ -585,12 +598,7 @@ mod projection_injection_tests {
         let cache = empty_cache();
         let mut dto = door_dto_with_output("b1", minimal_spec_output(), None);
         inject_rendered_markdown(&mut dto, &cache);
-        let md = dto
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("renderedMarkdown"))
-            .and_then(|v| v.as_str())
-            .unwrap();
+        let md = rendered_md(&dto);
         assert!(md.contains("Test Doc"), "should render title; got {:?}", md);
         assert!(md.contains("hello"), "should render text content");
     }
@@ -605,13 +613,7 @@ mod projection_injection_tests {
             Some(json!({ "renderedMarkdown": prior })),
         );
         inject_rendered_markdown(&mut dto, &cache);
-        let md = dto
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("renderedMarkdown"))
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(md, prior, "should not overwrite existing hook-populated markdown");
+        assert_eq!(rendered_md(&dto), prior, "should not overwrite hook markdown");
     }
 
     #[test]
@@ -624,12 +626,7 @@ mod projection_injection_tests {
             Some(json!({ "renderedMarkdown": "" })),
         );
         inject_rendered_markdown(&mut dto, &cache);
-        let md = dto
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("renderedMarkdown"))
-            .and_then(|v| v.as_str())
-            .unwrap();
+        let md = rendered_md(&dto);
         assert!(!md.is_empty(), "empty-string markdown should be replaced");
         assert!(md.contains("Test Doc"));
     }
@@ -680,27 +677,12 @@ mod projection_injection_tests {
         let cache = empty_cache();
         let mut dto1 = door_dto_with_output("b7", minimal_spec_output(), None);
         inject_rendered_markdown(&mut dto1, &cache);
-        let first = dto1
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("renderedMarkdown"))
-            .and_then(|v| v.as_str())
-            .unwrap()
-            .to_string();
 
         let mut dto2 = door_dto_with_output("b7", minimal_spec_output(), None);
         inject_rendered_markdown(&mut dto2, &cache);
-        let second = dto2
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("renderedMarkdown"))
-            .and_then(|v| v.as_str())
-            .unwrap()
-            .to_string();
 
-        assert_eq!(first, second, "cache hit should produce identical output");
-        // And the cache should actually contain the entry
-        assert_eq!(cache.lock().unwrap().len(), 1);
+        assert_eq!(rendered_md(&dto1), rendered_md(&dto2), "cache hit should produce identical output");
+        assert_eq!(cache.lock().unwrap().len(), 1, "single cache entry for matching id+hash");
     }
 
     #[test]
@@ -722,12 +704,7 @@ mod projection_injection_tests {
         });
         let mut dto2 = door_dto_with_output("b8", mutated, None);
         inject_rendered_markdown(&mut dto2, &cache);
-        let md2 = dto2
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("renderedMarkdown"))
-            .and_then(|v| v.as_str())
-            .unwrap();
+        let md2 = rendered_md(&dto2);
         assert!(md2.contains("Mutated Doc"), "different output → different hash → recompute");
         assert!(md2.contains("different"));
         // Two distinct cache entries (same id, different hash).

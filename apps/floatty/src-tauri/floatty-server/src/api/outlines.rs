@@ -392,8 +392,11 @@ async fn outline_get_block(
 
     match blocks_map.get(&txn, &block_id) {
         Some(yrs::Out::YMap(map)) => {
-            let dto =
+            let mut dto =
                 crate::block_service::read_block_dto(&map, &txn, &block_id, None, false);
+            // Parity with /api/v1/blocks/:id (FLO-633): inject server-computed
+            // renderedMarkdown for door blocks whose frontend hook left it null.
+            crate::api::blocks::inject_rendered_markdown(&mut dto, &state.projection_cache);
             Ok(Json(dto))
         }
         _ => Err(ApiError::NotFound(format!("block '{}' not found", id))),
