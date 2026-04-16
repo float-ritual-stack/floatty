@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-surface2: var(--color-surface2);
+  --color-hover: var(--color-hover);
+  --color-border: var(--color-border);
+  --color-text: var(--color-text);
+  --color-muted: var(--color-muted);
+  --color-dim: var(--color-dim);
+  --color-cyan: var(--color-cyan);
+  --color-magenta: var(--color-magenta);
+  --color-coral: var(--color-coral);
+  --color-amber: var(--color-amber);
+  --color-green: var(--color-green);
+  --color-purple: var(--color-purple);
+  --color-red: var(--color-red);
+  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+}

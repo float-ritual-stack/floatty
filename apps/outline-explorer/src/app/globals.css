@@ -1,0 +1,97 @@
+@import "tailwindcss";
+@source "../../../node_modules/streamdown/dist/*.js";
+
+/* Color custom properties are injected by layout.tsx from src/lib/constants.ts
+   — edit colors there, not here. */
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-surface2: var(--color-surface2);
+  --color-hover: var(--color-hover);
+  --color-border: var(--color-border);
+  --color-text: var(--color-text);
+  --color-muted: var(--color-muted);
+  --color-dim: var(--color-dim);
+  --color-cyan: var(--color-cyan);
+  --color-magenta: var(--color-magenta);
+  --color-coral: var(--color-coral);
+  --color-amber: var(--color-amber);
+  --color-green: var(--color-green);
+  --color-purple: var(--color-purple);
+  --color-red: var(--color-red);
+  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+/* Scrollbar styling for the dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-dim);
+}
+
+/* AI panel prose — wraps Streamdown output to match panel sizing */
+.ai-prose {
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+}
+.ai-prose p {
+  margin: 0.25em 0;
+}
+.ai-prose h1 { font-size: 14px; }
+.ai-prose h2 { font-size: 13px; }
+.ai-prose h3 { font-size: 12px; }
+.ai-prose pre {
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+.ai-prose code:not(pre code) {
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--color-surface2);
+  color: var(--color-cyan);
+}
+.ai-prose ul, .ai-prose ol {
+  padding-left: 1.2em;
+  margin: 0.25em 0;
+}
+.ai-prose li {
+  margin: 0.1em 0;
+}
+.ai-prose strong {
+  color: var(--color-text);
+}
+
+/* Spinner animation for loading states */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin 1s linear infinite;
+}
