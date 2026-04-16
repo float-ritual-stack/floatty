@@ -277,36 +277,48 @@ async fn resolve_block_prefix(
             "Prefix must be at least 6 hex characters".to_string(),
         ));
     }
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
 
-    let blocks_map = txn
-        .get_map("blocks")
-        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+    // Y.Doc read scope: the transaction + read guard are released at the
+    // end of this block, BEFORE we run the FLO-633 projection injection.
+    // Injection runs a potentially-heavy walker and takes the cache Mutex;
+    // holding the Y.Doc read lock across that would serialize against
+    // writers on large specs.
+    let (full_id, mut block_dto) = {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
 
-    let full_id = resolve_block_id(trimmed, &blocks_map, &txn)?;
+        let blocks_map = txn
+            .get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
 
-    let value = blocks_map
-        .get(&txn, full_id.as_str())
-        .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
+        let full_id = resolve_block_id(trimmed, &blocks_map, &txn)?;
 
-    if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, &full_id)
-        };
-        let mut block_dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
-        // Parity with /api/v1/blocks/:id (FLO-633): inject server-computed
-        // renderedMarkdown for door blocks whose frontend hook left it null.
-        inject_rendered_markdown(&mut block_dto, &state.projection_cache);
-        Ok(Json(ResolveResponse {
-            id: full_id,
-            block: block_dto,
-        }))
-    } else {
-        Err(ApiError::NotFound(full_id))
-    }
+        let value = blocks_map
+            .get(&txn, full_id.as_str())
+            .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
+
+        match value {
+            yrs::Out::YMap(block_map) => {
+                let inherited_markers = {
+                    let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+                    lookup_inherited(&index, &full_id)
+                };
+                let dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+                (full_id, dto)
+            }
+            _ => return Err(ApiError::NotFound(full_id)),
+        }
+    };
+
+    // Y.Doc read lock released — safe to run walker + cache operations.
+    // Parity with /api/v1/blocks/:id (FLO-633).
+    inject_rendered_markdown(&mut block_dto, &state.projection_cache);
+
+    Ok(Json(ResolveResponse {
+        id: full_id,
+        block: block_dto,
+    }))
 }
 
 /// GET /api/v1/blocks - All blocks as JSON (with optional filters)

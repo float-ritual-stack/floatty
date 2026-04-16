@@ -380,27 +380,36 @@ async fn outline_get_block(
     Path((name, id)): Path<(String, String)>,
 ) -> Result<Json<BlockDto>, ApiError> {
     let store = resolve_outline(&state, &name)?;
-    let doc = store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
 
-    let blocks_map = txn
-        .get_map("blocks")
-        .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
+    // Y.Doc read scope: the transaction + read guard are released at the
+    // end of this block, BEFORE we run the FLO-633 projection injection.
+    // Injection runs a potentially-heavy walker and takes the cache Mutex;
+    // holding the Y.Doc read lock across that would serialize against
+    // writers on large specs.
+    let mut dto = {
+        let doc = store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
 
-    let block_id = crate::block_service::resolve_block_id(&id, &blocks_map, &txn)?;
+        let blocks_map = txn
+            .get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound(format!("block '{}' not found", id)))?;
 
-    match blocks_map.get(&txn, &block_id) {
-        Some(yrs::Out::YMap(map)) => {
-            let mut dto =
-                crate::block_service::read_block_dto(&map, &txn, &block_id, None, false);
-            // Parity with /api/v1/blocks/:id (FLO-633): inject server-computed
-            // renderedMarkdown for door blocks whose frontend hook left it null.
-            crate::api::blocks::inject_rendered_markdown(&mut dto, &state.projection_cache);
-            Ok(Json(dto))
+        let block_id = crate::block_service::resolve_block_id(&id, &blocks_map, &txn)?;
+
+        match blocks_map.get(&txn, &block_id) {
+            Some(yrs::Out::YMap(map)) => {
+                crate::block_service::read_block_dto(&map, &txn, &block_id, None, false)
+            }
+            _ => return Err(ApiError::NotFound(format!("block '{}' not found", id))),
         }
-        _ => Err(ApiError::NotFound(format!("block '{}' not found", id))),
-    }
+    };
+
+    // Y.Doc read lock released — safe to run walker + cache operations.
+    // Parity with /api/v1/blocks/:id (FLO-633).
+    crate::api::blocks::inject_rendered_markdown(&mut dto, &state.projection_cache);
+
+    Ok(Json(dto))
 }
 
 async fn outline_update_block(
