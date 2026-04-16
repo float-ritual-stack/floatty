@@ -265,7 +265,7 @@ const KANBAN_COLORS: Record<string, string> = {
   blocked: '#ff4444', deferred: '#e040a0', review: '#e040a0',
 };
 
-function kanbanSpec(blockRef: string, actions: BlockActions) {
+export function kanbanSpec(blockRef: string, actions: BlockActions) {
   const root = resolveBlockRef(blockRef, actions);
   if (!root) throw new Error(`Block not found: ${blockRef}`);
 
@@ -886,7 +886,6 @@ function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: stri
 }
 
 const executionNonces = new Map<string, number>();
-const liveIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 export const door = {
   kind: 'view' as const,
@@ -968,9 +967,8 @@ export const door = {
         return;
       }
 
-      // Live refresh removed — was causing perf issues (setInterval + setBlockOutput every 2s
-      // triggers Y.Doc transactions + reactivity cascade). Proper solution: FLO-587 (blockEventBus).
-
+      // Kanban reactivity lives in the view layer (blockEventBus subscription);
+      // see kanban.test.ts and FLO-587 plan for the event-driven model.
       return;
     }
 
