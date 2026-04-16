@@ -16,10 +16,12 @@ pnpm start      # Run compiled output
 
 ## Environment Variables
 
-Requires `.env` file:
+Requires `.env` file (see `.env.example`):
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+FLOATTY_URL=http://127.0.0.1:8765
+FLOATTY_API_KEY=your-api-key-here
+AI_GATEWAY_API_KEY=your-gateway-key-here
 ```
 
 ## Architecture
