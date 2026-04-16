@@ -2938,6 +2938,78 @@ export function GapItem(props: BaseComponentProps<{
 // ═══════════════════════════════════════════════════════════════
 
 const KANBAN_DRAG_MIME = 'application/x-floatty-kanban-card';
+const KANBAN_LOG_PREFIX = '[kanban]';
+
+/**
+ * One-time install: document-level capture-phase keyboard interceptor that
+ * redirects ArrowDown from the `render::` block's title wrapper INTO the first
+ * kanban card, and ArrowUp at the first card back to the title.
+ *
+ * This compensates for pre-FLO-587-5c app binaries where
+ * `handleRenderTitleKeyDown` in `BlockItem.tsx` unconditionally routes
+ * ArrowDown to the next outline sibling — skipping the kanban. In post-5c
+ * binaries, the app handler does the same descent; this listener becomes a
+ * harmless no-op because it stopImmediatePropagations before the target
+ * handler fires (when and only when a kanban is actually present).
+ *
+ * Guarded against re-install across door HMR reloads via `window` flag.
+ */
+function installKanbanNavShim() {
+  const w = window as unknown as { __floatty_kanban_nav_v1?: (e: KeyboardEvent) => void };
+  if (w.__floatty_kanban_nav_v1) {
+    document.removeEventListener('keydown', w.__floatty_kanban_nav_v1, true);
+  }
+  const handler = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    // ArrowDown on a render title → descend into the first kanban card below.
+    if (e.key === 'ArrowDown' && target.classList?.contains('render-title-wrapper')) {
+      const blockItem = target.closest('.block-item');
+      const card = blockItem?.querySelector<HTMLElement>('[data-kanban-card-id]');
+      if (card) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        card.focus();
+        console.log(KANBAN_LOG_PREFIX, 'nav-shim: ArrowDown title → card', { cardId: card.dataset.kanbanCardId });
+      }
+    }
+  };
+  document.addEventListener('keydown', handler, true);
+  w.__floatty_kanban_nav_v1 = handler;
+  console.log(KANBAN_LOG_PREFIX, 'nav-shim installed');
+}
+
+/**
+ * CSS injected at module init so the `render::` block's title wrapper stops
+ * looking focused when a kanban descendant owns focus. The app CSS keys the
+ * focus outline off `.block-item:focus-within` — too broad, it matches when
+ * a card has focus too. Override via a class toggled by KanbanCard focus
+ * handlers below.
+ */
+function injectKanbanStyles() {
+  if (typeof document === 'undefined') return;
+  if (document.querySelector('[data-kanban-styles]')) return;
+  const s = document.createElement('style');
+  s.setAttribute('data-kanban-styles', '');
+  s.textContent = `
+    .block-item.kanban-focus-descended .render-title-wrapper {
+      outline: 1px dashed color-mix(in srgb, #888 40%, transparent) !important;
+      background-color: transparent !important;
+    }
+    .block-item.kanban-focus-descended .render-title-wrapper::before {
+      content: '';
+    }
+  `;
+  document.head.appendChild(s);
+}
+
+/** Toggle the kanban-focus-descended class on the KanbanCard's ancestor .block-item */
+function markBlockItemFocused(from: HTMLElement | undefined, on: boolean) {
+  const blockItem = from?.closest('.block-item');
+  if (!blockItem) return;
+  blockItem.classList.toggle('kanban-focus-descended', on);
+}
 
 /**
  * KanbanCard — draggable, display-bound card used by render:: kanban.
@@ -3018,6 +3090,11 @@ export function KanbanCard(
   let editRef: HTMLDivElement | undefined;
 
   const handleDragStart = (e: DragEvent) => {
+    console.log(KANBAN_LOG_PREFIX, 'dragstart fired', {
+      blockId: props.props.blockId,
+      editing: editing(),
+      hasDataTransfer: !!e.dataTransfer,
+    });
     if (editing()) { e.preventDefault(); return; }
     if (!props.props.blockId || !e.dataTransfer) return;
     e.dataTransfer.setData(KANBAN_DRAG_MIME, props.props.blockId);
@@ -3069,6 +3146,11 @@ export function KanbanCard(
   };
 
   const handleClick = (e: MouseEvent) => {
+    console.log(KANBAN_LOG_PREFIX, 'click fired', {
+      blockId: props.props.blockId,
+      editing: editing(),
+      hasBinding: !!props.bindings?.content,
+    });
     if (editing()) return;
     e.stopPropagation();
     enterEdit();
@@ -3180,8 +3262,8 @@ export function KanbanCard(
       onDrop={handleDrop}
       onClick={handleClick}
       onKeyDown={handleRootKeyDown}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
+      onFocus={() => { setFocused(true); markBlockItemFocused(ref, true); }}
+      onBlur={() => { setFocused(false); markBlockItemFocused(ref, false); }}
       data-kanban-card-id={props.props.blockId}
       style={{
         background: V.s1,
@@ -3289,9 +3371,14 @@ export function KanbanColumn(
 
 export function injectBodyStyles() {
   if (typeof document === 'undefined') return;
-  if (document.querySelector('[data-bbs-entry-styles]')) return;
-  const style = document.createElement('style');
-  style.setAttribute('data-bbs-entry-styles', '');
-  style.textContent = BODY_STYLES;
-  document.head.appendChild(style);
+  if (!document.querySelector('[data-bbs-entry-styles]')) {
+    const style = document.createElement('style');
+    style.setAttribute('data-bbs-entry-styles', '');
+    style.textContent = BODY_STYLES;
+    document.head.appendChild(style);
+  }
+  // FLO-587 — kanban shims that must run regardless of whether bbs styles
+  // were already injected on a prior module load. Both are idempotent.
+  injectKanbanStyles();
+  installKanbanNavShim();
 }
