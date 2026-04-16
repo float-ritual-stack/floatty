@@ -772,6 +772,30 @@ interface DoorViewProps {
   onChirp?: (message: string, data?: unknown) => void;
 }
 
+/**
+ * FLO-587 — translate json-render StateProvider changes into chirp verbs
+ * that floatty's chirp handler routes back to useBlockStore. Kanban emits
+ * paths of shape `/cards/<blockId>/content`; other modes' bindings (if any)
+ * get a no-op here. Runs on every value change (notifyChanges fires once
+ * per distinct value per flush in @json-render/solid).
+ */
+export function handleRenderStateChange(
+  changes: Array<{ path: string; value: unknown }>,
+  onChirp?: (message: string, data?: unknown) => void,
+): void {
+  if (!onChirp) return;
+  for (const { path, value } of changes) {
+    const cardContent = /^\/cards\/([^/]+)\/content$/.exec(path);
+    if (cardContent && typeof value === 'string') {
+      onChirp('update-block', { blockId: cardContent[1], content: value });
+      continue;
+    }
+    // Any other path is either from a non-kanban render mode that doesn't
+    // use block-bound paths, or a kanban path shape we haven't wired yet.
+    // Silent no-op — logging every such change would spam demo/stats/etc.
+  }
+}
+
 function RenderView(props: DoorViewProps) {
   const spec = () => props.data?.spec;
   const generatedVia = () => props.data?.generatedVia;
@@ -807,7 +831,10 @@ function RenderView(props: DoorViewProps) {
       </div>
     }>
       <div style={{ padding: '8px 0', 'font-family': 'JetBrains Mono, monospace' }}>
-        <StateProvider initialState={spec()?.state || {}}>
+        <StateProvider
+          initialState={spec()?.state || {}}
+          onStateChange={(changes) => handleRenderStateChange(changes, props.onChirp)}
+        >
           <RenderViewInner spec={spec()!} onNavigate={props.onNavigate} onChirp={props.onChirp} />
         </StateProvider>
         <Show when={generatedVia() || sessionId()}>

@@ -6,8 +6,8 @@
  * fence. Fixtures are synthetic ("Demo Todo", "Card 1") per
  * .claude/rules/test-fixtures-no-pii.md.
  */
-import { describe, it, expect } from 'vitest';
-import { kanbanSpec } from './render';
+import { describe, it, expect, vi } from 'vitest';
+import { kanbanSpec, handleRenderStateChange } from './render';
 
 interface Block {
   id: string;
@@ -142,5 +142,80 @@ describe('kanbanSpec — baseline shape (pre-FLO-587 wiring)', () => {
     const actions = makeActions(blocks, []);
 
     expect(() => kanbanSpec('missing-block-id', actions)).toThrow(/not found/i);
+  });
+});
+
+describe('handleRenderStateChange — FLO-587 path → chirp translation', () => {
+  it('translates /cards/<id>/content → update-block chirp', () => {
+    const onChirp = vi.fn();
+    handleRenderStateChange(
+      [{ path: '/cards/abc-123/content', value: 'new card text' }],
+      onChirp,
+    );
+    expect(onChirp).toHaveBeenCalledTimes(1);
+    expect(onChirp).toHaveBeenCalledWith('update-block', {
+      blockId: 'abc-123',
+      content: 'new card text',
+    });
+  });
+
+  it('handles multiple changes in one batch', () => {
+    const onChirp = vi.fn();
+    handleRenderStateChange(
+      [
+        { path: '/cards/card-1/content', value: 'first' },
+        { path: '/cards/card-2/content', value: 'second' },
+      ],
+      onChirp,
+    );
+    expect(onChirp).toHaveBeenCalledTimes(2);
+    expect(onChirp).toHaveBeenNthCalledWith(1, 'update-block', {
+      blockId: 'card-1',
+      content: 'first',
+    });
+    expect(onChirp).toHaveBeenNthCalledWith(2, 'update-block', {
+      blockId: 'card-2',
+      content: 'second',
+    });
+  });
+
+  it('silently ignores unknown paths (e.g. demo-mode state)', () => {
+    const onChirp = vi.fn();
+    handleRenderStateChange(
+      [{ path: '/count', value: 7 }, { path: '/user/name', value: 'Demo' }],
+      onChirp,
+    );
+    expect(onChirp).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-string values on /cards paths (defensive)', () => {
+    const onChirp = vi.fn();
+    handleRenderStateChange(
+      [{ path: '/cards/card-1/content', value: 42 }],
+      onChirp,
+    );
+    expect(onChirp).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when onChirp is undefined', () => {
+    // Should not throw
+    expect(() =>
+      handleRenderStateChange(
+        [{ path: '/cards/card-1/content', value: 'x' }],
+        undefined,
+      ),
+    ).not.toThrow();
+  });
+
+  it('handles uuid-shaped block ids with dashes', () => {
+    const onChirp = vi.fn();
+    handleRenderStateChange(
+      [{ path: '/cards/a1b2c3d4-e5f6-7890-abcd-ef1234567890/content', value: 'x' }],
+      onChirp,
+    );
+    expect(onChirp).toHaveBeenCalledWith('update-block', {
+      blockId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+      content: 'x',
+    });
   });
 });
