@@ -2933,6 +2933,171 @@ export function GapItem(props: BaseComponentProps<{
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// KANBAN (FLO-587)
+// ═══════════════════════════════════════════════════════════════
+
+const KANBAN_DRAG_MIME = 'application/x-floatty-kanban-card';
+
+/**
+ * KanbanCard — draggable, display-bound card used by render:: kanban.
+ *
+ * Drag: HTML5 native DnD. On drop, emits a `move-block` chirp with
+ *   { blockId, targetParentId, targetIndex }. The host routes through
+ *   chirpWriteHandler → ScopedActions.moveBlock → Y.Doc surgical move.
+ * Read: `bindings.content` = `/cards/<blockId>/content`. When the bound
+ *   value changes (state-provider update), text re-renders. (Outside-in
+ *   reactivity — the kanban view subscribes via server.subscribeBlockChanges
+ *   to trigger re-projection; see render.tsx.)
+ * Edit: deferred. Text edits inside the card are not wired yet; the plan
+ *   reserves editable cards for a follow-up unit.
+ */
+export function KanbanCard(
+  props: BaseComponentProps<{
+    content?: string;
+    color?: string;
+    blockId?: string;
+    parentId?: string | null;
+    index?: number;
+  }>,
+) {
+  const [valueRaw] = useBoundProp(props.props.content, props.bindings?.content);
+  const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
+  const [dragOver, setDragOver] = createSignal<'above' | 'below' | null>(null);
+  let ref: HTMLDivElement | undefined;
+
+  const handleDragStart = (e: DragEvent) => {
+    if (!props.props.blockId || !e.dataTransfer) return;
+    e.dataTransfer.setData(KANBAN_DRAG_MIME, props.props.blockId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: DragEvent) => {
+    if (!e.dataTransfer?.types.includes(KANBAN_DRAG_MIME)) return;
+    if (!ref) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = ref.getBoundingClientRect();
+    setDragOver(e.clientY > rect.top + rect.height / 2 ? 'below' : 'above');
+  };
+
+  const handleDragLeave = () => setDragOver(null);
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    const sourceId = e.dataTransfer?.getData(KANBAN_DRAG_MIME);
+    const position = dragOver();
+    setDragOver(null);
+    if (!sourceId || !props.props.blockId || !ref) return;
+    if (sourceId === props.props.blockId) return;
+    const parentId = props.props.parentId ?? null;
+    const baseIndex = props.props.index ?? 0;
+    const targetIndex = position === 'below' ? baseIndex + 1 : baseIndex;
+    emitChirp(ref, 'move-block', {
+      blockId: sourceId,
+      targetParentId: parentId,
+      targetIndex,
+    });
+  };
+
+  return (
+    <div
+      ref={(el) => (ref = el)}
+      draggable={true}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      data-kanban-card-id={props.props.blockId}
+      style={{
+        background: V.s1,
+        color: props.props.color ?? V.t,
+        'font-family': V.mono,
+        'font-size': '13px',
+        border: `1px solid ${V.b2}`,
+        'border-top': dragOver() === 'above' ? `2px solid ${V.cy}` : `1px solid ${V.b2}`,
+        'border-bottom': dragOver() === 'below' ? `2px solid ${V.cy}` : `1px solid ${V.b2}`,
+        'border-radius': '4px',
+        padding: '6px 8px',
+        cursor: 'grab',
+        'user-select': 'none',
+      }}
+    >
+      {String(localValue() ?? '')}
+    </div>
+  );
+}
+
+/**
+ * KanbanColumn — drop target for appending cards to the end of a column.
+ * Wraps TuiPanel visually (so the kanban layout stays identical) while
+ * adding a full-area drop zone that fires when there are no cards to
+ * drop between, or when the user wants to append.
+ */
+export function KanbanColumn(
+  props: BaseComponentProps<{
+    title?: string;
+    titleColor?: string;
+    blockId?: string;
+    childCount?: number;
+  }>,
+) {
+  const [dragOver, setDragOver] = createSignal(false);
+  let ref: HTMLDivElement | undefined;
+
+  const handleDragOver = (e: DragEvent) => {
+    if (!e.dataTransfer?.types.includes(KANBAN_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(true);
+  };
+  const handleDragLeave = () => setDragOver(false);
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    const sourceId = e.dataTransfer?.getData(KANBAN_DRAG_MIME);
+    setDragOver(false);
+    if (!sourceId || !props.props.blockId || !ref) return;
+    // Append to end — targetIndex = current child count.
+    const targetIndex = props.props.childCount ?? 0;
+    emitChirp(ref, 'move-block', {
+      blockId: sourceId,
+      targetParentId: props.props.blockId,
+      targetIndex,
+    });
+  };
+
+  return (
+    <div
+      ref={(el) => (ref = el)}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      data-kanban-column-id={props.props.blockId}
+      style={{
+        border: `1px solid ${dragOver() ? V.cy : V.b}`,
+        'border-radius': '6px',
+        'background-color': dragOver() ? 'rgba(0,229,255,0.04)' : 'transparent',
+        'min-width': '200px',
+        padding: '8px',
+      }}
+    >
+      <div style={{
+        'font-family': V.mono,
+        'font-size': '11px',
+        color: props.props.titleColor ?? V.td,
+        'text-transform': 'uppercase',
+        'letter-spacing': '0.08em',
+        'margin-bottom': '8px',
+      }}>
+        {props.props.title}
+      </div>
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
 export function injectBodyStyles() {
   if (typeof document === 'undefined') return;
   if (document.querySelector('[data-bbs-entry-styles]')) return;

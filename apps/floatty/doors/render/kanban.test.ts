@@ -79,7 +79,7 @@ describe('kanbanSpec — baseline shape (pre-FLO-587 wiring)', () => {
     });
   });
 
-  it('produces one column per direct child, panel-wrapped with count in title', () => {
+  it('produces one KanbanColumn per direct child, tagged with blockId + childCount', () => {
     const { root, blocks } = makeFixture();
     const actions = makeActions(blocks, [root.id]);
 
@@ -92,25 +92,55 @@ describe('kanbanSpec — baseline shape (pre-FLO-587 wiring)', () => {
     });
 
     expect(spec.elements['col-0']).toMatchObject({
-      type: 'TuiPanel',
-      props: expect.objectContaining({ title: 'Todo (2)' }),
+      type: 'KanbanColumn',
+      props: expect.objectContaining({
+        title: 'Todo (2)',
+        blockId: 'col-todo',
+        childCount: 2,
+      }),
+      children: ['col-0-card-0', 'col-0-card-1'],
     });
     expect(spec.elements['col-1'].props.title).toBe('Doing (2)');
+    expect(spec.elements['col-1'].props.blockId).toBe('col-doing');
+    expect(spec.elements['col-1'].props.childCount).toBe(2);
     expect(spec.elements['col-2'].props.title).toBe('Done (1)');
+    expect(spec.elements['col-2'].props.blockId).toBe('col-done');
+    expect(spec.elements['col-2'].props.childCount).toBe(1);
   });
 
-  it('produces one card element per grandchild, keyed col-N-card-M', () => {
+  it('produces one KanbanCard element per grandchild, keyed col-N-card-M', () => {
     const { root, blocks } = makeFixture();
     const actions = makeActions(blocks, [root.id]);
 
     const spec = kanbanSpec(root.id, actions);
 
     expect(spec.elements['col-0-card-0']).toMatchObject({
-      type: 'Text',
-      props: expect.objectContaining({ content: 'Card Todo-1' }),
+      type: 'KanbanCard',
+      props: expect.objectContaining({
+        content: 'Card Todo-1',
+        blockId: 't1',
+        parentId: 'col-todo',
+        index: 0,
+      }),
     });
-    expect(spec.elements['col-0-card-1'].props.content).toBe('Card Todo-2');
-    expect(spec.elements['col-2-card-0'].props.content).toBe('Card Done-1');
+    expect(spec.elements['col-0-card-1']).toMatchObject({
+      type: 'KanbanCard',
+      props: expect.objectContaining({
+        content: 'Card Todo-2',
+        blockId: 't2',
+        parentId: 'col-todo',
+        index: 1,
+      }),
+    });
+    expect(spec.elements['col-2-card-0']).toMatchObject({
+      type: 'KanbanCard',
+      props: expect.objectContaining({
+        content: 'Card Done-1',
+        blockId: 'n1',
+        parentId: 'col-done',
+        index: 0,
+      }),
+    });
   });
 
   it('populates spec.state.cards keyed by block id with current content', () => {
@@ -149,7 +179,7 @@ describe('kanbanSpec — baseline shape (pre-FLO-587 wiring)', () => {
     });
   });
 
-  it('does not bind non-card elements (header, columns, panels, stacks)', () => {
+  it('does not bind non-card elements (header, columns, panels)', () => {
     const { root, blocks } = makeFixture();
     const actions = makeActions(blocks, [root.id]);
 
@@ -159,7 +189,6 @@ describe('kanbanSpec — baseline shape (pre-FLO-587 wiring)', () => {
     expect(spec.elements.layout.bindings).toBeUndefined();
     expect(spec.elements.columns.bindings).toBeUndefined();
     expect(spec.elements['col-0'].bindings).toBeUndefined();
-    expect(spec.elements['col-0-stack'].bindings).toBeUndefined();
   });
 
   it('state.cards keys match blockIds referenced in bindings paths (round-trip consistency)', () => {
@@ -191,6 +220,19 @@ describe('kanbanSpec — baseline shape (pre-FLO-587 wiring)', () => {
     expect(spec.elements['col-0'].props.titleColor).toBe('#ffb300'); // todo
     expect(spec.elements['col-1'].props.titleColor).toBe('#00e5ff'); // doing
     expect(spec.elements['col-2'].props.titleColor).toBe('#98c379'); // done
+  });
+
+  it('does not produce a stand-alone Stack per column — KanbanColumn owns the stack', () => {
+    const { root, blocks } = makeFixture();
+    const actions = makeActions(blocks, [root.id]);
+
+    const spec = kanbanSpec(root.id, actions);
+
+    // Pre-FLO-587 versions emitted a `col-N-stack` child of the column.
+    // KanbanColumn now renders the stack internally.
+    expect(spec.elements['col-0-stack']).toBeUndefined();
+    expect(spec.elements['col-1-stack']).toBeUndefined();
+    expect(spec.elements['col-2-stack']).toBeUndefined();
   });
 
   it('throws when the referenced block has no children', () => {

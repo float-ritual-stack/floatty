@@ -242,6 +242,29 @@ export const bbsCatalog = schema.createCatalog({
       description: 'Bordered container with title floating on top border edge',
     },
 
+    KanbanCard: {
+      props: z.object({
+        content: z.string().optional(),
+        color: z.string().optional(),
+        blockId: z.string().optional(),
+        parentId: z.string().nullable().optional(),
+        index: z.number().optional(),
+      }),
+      slots: [],
+      description: 'FLO-587 — draggable card used inside KanbanColumn. Binds to /cards/<blockId>/content for two-way sync. On drop, emits a move-block chirp the host routes to useBlockStore.moveBlock.',
+    },
+
+    KanbanColumn: {
+      props: z.object({
+        title: z.string().optional(),
+        titleColor: z.string().optional(),
+        blockId: z.string().optional(),
+        childCount: z.number().optional(),
+      }),
+      slots: ['default'],
+      description: 'FLO-587 — drop-target column that wraps a stack of KanbanCards. Accepts drops to append to the end (e.g. empty column or drop below last card).',
+    },
+
     TuiStat: {
       props: z.object({
         label: z.string(),

@@ -314,26 +314,29 @@ export function kanbanSpec(blockRef: string, actions: BlockActions) {
       cardsState[card.id] = { content: card.content };
 
       elements[cardKey] = {
-        type: 'Text',
-        props: { content: card.content, size: 'sm', color: cardColor, mono: true },
+        type: 'KanbanCard',
+        props: {
+          content: card.content,
+          color: cardColor,
+          blockId: card.id,
+          parentId: col.id,
+          index: ki,
+        },
         bindings: { content: `/cards/${card.id}/content` },
         children: [],
       };
     }
 
     elements[colKey] = {
-      type: 'TuiPanel',
-      props: { title: panelTitle, titleColor: colColor },
-      children: cardKeys.length > 0 ? [`${colKey}-stack`] : [],
+      type: 'KanbanColumn',
+      props: {
+        title: panelTitle,
+        titleColor: colColor,
+        blockId: col.id,
+        childCount: cardKeys.length,
+      },
+      children: cardKeys,
     };
-
-    if (cardKeys.length > 0) {
-      elements[`${colKey}-stack`] = {
-        type: 'Stack',
-        props: { gap: 4, direction: 'vertical' },
-        children: cardKeys,
-      };
-    }
 
     columnKeys.push(colKey);
   }
