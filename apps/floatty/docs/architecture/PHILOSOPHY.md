@@ -732,6 +732,34 @@ blockProjectionScheduler.register('backlink-index', async (envelope) => {
 }, { debounceMs: 1500 });
 ```
 
+#### Door Block Markdown (FLO-633) — Handler, Hook, or Projection?
+
+**Analysis:**
+- No user trigger — fires on read
+- Pure function over `block.output` (no side effects)
+- Never mutates Y.Doc — lives only in the HTTP response payload
+- Cacheable (content-addressed via `hash(output.data)`)
+
+**Verdict: PROJECTION** (read-side, server-computed)
+
+This is the first **server-side Projection** in floatty — the backlink index above is a frontend `ProjectionScheduler` example; this one runs in Rust at read-time inside the Axum handler. Same CQRS role (computed read model), different layer.
+
+```rust
+// floatty_core::projections (pure, sync, panic-free)
+pub fn walk_spec_to_markdown(output_data: &Value) -> String { ... }
+
+// api::blocks::inject_rendered_markdown — wired into the GET handler
+pub(crate) fn inject_rendered_markdown(dto: &mut BlockDto, cache: &ProjectionCache) {
+    // Only door blocks, only when metadata.renderedMarkdown is null/empty.
+    // LRU cache keyed by (block_id, hash(output.data)) — content-addressed.
+    // Walker wrapped in catch_unwind so malformed specs never 500.
+}
+```
+
+**Why server-side, not frontend-hook**: agent-path render blocks (`generatedVia: "agent"`) never get observed by a browser, so the frontend hook never runs. The read-time projection closes the blind spot without touching the write path — agents hitting the REST API get the same markdown a human would see in the outliner.
+
+**Symmetry with the frontend ProjectionScheduler**: both are read models that compute from block state and live outside the CRDT. The frontend version rebuilds the backlink index in response to events (write-triggered, read-fast); the server version computes on request (read-triggered, read-compute-cache). Same pattern, different temporal shape.
+
 #### Wikilink Expansion for AI — Handler, Hook, or Projection?
 
 **Analysis:**

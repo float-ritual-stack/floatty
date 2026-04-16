@@ -63,6 +63,25 @@ PATCH /api/v1/blocks/:id
 
 ---
 
+### 7. ~~Door blocks return null `renderedMarkdown` on agent-path creates~~ SHIPPED (PR #236, FLO-633)
+
+**The blind spot**: `metadata.renderedMarkdown` on door blocks (`outputType === "door"`) was populated by a frontend TypeScript hook that only runs when a browser observes the Y.Doc update. Agent-path render blocks (`generatedVia: "agent"`) created headlessly would return `renderedMarkdown: null` forever — API consumers (including agents) had no projection to read, only the raw spec JSON.
+
+**The fix**: four-layer fallback computed server-side on GET, no Y.Doc writes, response-only:
+
+1. `output.data.normalizedMarkdown` (future)
+2. `metadata.renderedMarkdown` (frontend hook — still the preferred tier)
+3. `walk_spec_to_markdown(output.data.spec)` — new crude Rust walker in `floatty_core::projections`
+4. `walk_generic_json_to_markdown(output.data)` — last-resort fallback
+
+Cached in-memory via LRU keyed by `(block_id, hash(output.data))` — content-addressed invalidation, no WebSocket broadcasts. Walker wrapped in `catch_unwind` so malformed specs never 500. Applied to both `GET /api/v1/blocks/:id` and `GET /api/v1/outlines/:name/blocks/:id` for parity. Bulk reads (`GET /api/v1/blocks`, `GET /api/v1/outlines/:name/blocks`) stay outside the projection path to avoid N× walker cost.
+
+**Token efficiency**: crude walker output is ~0.19× raw spec JSON (81% reduction) on the motivating block `7f5ef11c-...`. Target consumer is agents, not humans — no visual formatting preserved, no round-trip fidelity.
+
+**Follow-up**: [[FLO-634]] — audit sibling hook-only fields (`summary`, `markers`, `outlinks`) that share the same blind-spot shape.
+
+---
+
 ## Current API (Working)
 
 | Endpoint | Method | Purpose |
