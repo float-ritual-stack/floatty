@@ -3083,50 +3083,130 @@ export function KanbanCard(
 ) {
   const [valueRaw, setValue] = useBoundProp(props.props.content, props.bindings?.content);
   const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
-  const [dragOver, setDragOver] = createSignal<'above' | 'below' | null>(null);
   const [editing, setEditing] = createSignal(false);
   const [focused, setFocused] = createSignal(false);
   let ref: HTMLDivElement | undefined;
   let editRef: HTMLDivElement | undefined;
+  // `preventDefault` on pointerup does NOT cancel the follow-up click (MDN).
+  // Guard the click handler with a flag set when a real drag completed.
+  let justDragged = false;
 
-  const handleDragStart = (e: DragEvent) => {
-    console.log(KANBAN_LOG_PREFIX, 'dragstart fired', {
-      blockId: props.props.blockId,
-      editing: editing(),
-      hasDataTransfer: !!e.dataTransfer,
-    });
-    if (editing()) { e.preventDefault(); return; }
-    if (!props.props.blockId || !e.dataTransfer) return;
-    e.dataTransfer.setData(KANBAN_DRAG_MIME, props.props.blockId);
-    e.dataTransfer.effectAllowed = 'move';
-  };
+  // ─── Pointer-based drag (matches useBlockDrag.ts pattern) ────────────
+  // HTML5 DnD is suppressed by Tauri 2's native drag-drop interception
+  // (dragDropEnabled defaults true → webview never sees dragstart). The
+  // outline's block-drag uses pointer events for this reason; mirror that.
+  const DRAG_THRESHOLD_PX = 5;
 
-  const handleDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer?.types.includes(KANBAN_DRAG_MIME)) return;
-    if (!ref) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const rect = ref.getBoundingClientRect();
-    setDragOver(e.clientY > rect.top + rect.height / 2 ? 'below' : 'above');
-  };
+  const onPointerDown = (e: PointerEvent) => {
+    if (editing()) return;
+    if (e.button !== 0) return; // primary button only
+    if (!props.props.blockId || !ref) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const sourceId = props.props.blockId;
+    let started = false;
+    let currentTargetCard: HTMLElement | null = null;
+    let currentPosition: 'above' | 'below' | null = null;
+    console.log(KANBAN_LOG_PREFIX, 'pointerdown', { sourceId, startX, startY });
 
-  const handleDragLeave = () => setDragOver(null);
+    const clearAllDropHighlights = () => {
+      const root = ref?.closest('[contenteditable="false"]') ?? document.body;
+      for (const el of root.querySelectorAll<HTMLElement>('[data-kanban-card-id]')) {
+        el.style.borderTop = '';
+        el.style.borderBottom = '';
+      }
+    };
 
-  const handleDrop = (e: DragEvent) => {
-    e.preventDefault();
-    const sourceId = e.dataTransfer?.getData(KANBAN_DRAG_MIME);
-    const position = dragOver();
-    setDragOver(null);
-    if (!sourceId || !props.props.blockId || !ref) return;
-    if (sourceId === props.props.blockId) return;
-    const parentId = props.props.parentId ?? null;
-    const baseIndex = props.props.index ?? 0;
-    const targetIndex = position === 'below' ? baseIndex + 1 : baseIndex;
-    emitChirp(ref, 'move-block', {
-      blockId: sourceId,
-      targetParentId: parentId,
-      targetIndex,
-    });
+    const applyDropHighlight = (card: HTMLElement, pos: 'above' | 'below') => {
+      clearAllDropHighlights();
+      if (pos === 'above') card.style.borderTop = `2px solid ${V.cy}`;
+      else card.style.borderBottom = `2px solid ${V.cy}`;
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!started) {
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+        started = true;
+        document.body.style.cursor = 'grabbing';
+        console.log(KANBAN_LOG_PREFIX, 'drag started');
+      }
+      // Find the kanban card under the pointer (ignoring ourselves)
+      // Temporarily set pointer-events:none on source so elementFromPoint sees underneath.
+      const prevPE = ref!.style.pointerEvents;
+      ref!.style.pointerEvents = 'none';
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      ref!.style.pointerEvents = prevPE;
+      const card = under?.closest<HTMLElement>('[data-kanban-card-id]');
+      if (!card || card === ref) {
+        currentTargetCard = null;
+        currentPosition = null;
+        clearAllDropHighlights();
+        return;
+      }
+      const rect = card.getBoundingClientRect();
+      const pos = ev.clientY > rect.top + rect.height / 2 ? 'below' : 'above';
+      if (card !== currentTargetCard || pos !== currentPosition) {
+        currentTargetCard = card;
+        currentPosition = pos;
+        applyDropHighlight(card, pos);
+      }
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      document.body.style.cursor = '';
+      clearAllDropHighlights();
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      if (!started) {
+        console.log(KANBAN_LOG_PREFIX, 'pointerup below threshold — treat as click');
+        return; // below threshold: a click handler will run instead
+      }
+      justDragged = true;
+      // Reset on next frame — the click event fires after this pointerup.
+      queueMicrotask(() => { justDragged = false; });
+      if (!currentTargetCard || !currentPosition) {
+        console.log(KANBAN_LOG_PREFIX, 'drop: no target');
+        return;
+      }
+      const targetId = currentTargetCard.getAttribute('data-kanban-card-id');
+      if (!targetId || targetId === sourceId) {
+        console.log(KANBAN_LOG_PREFIX, 'drop: same card, ignoring');
+        return;
+      }
+      // Compute targetParentId + targetIndex from the target card's DOM ancestry.
+      const targetCol = currentTargetCard.closest<HTMLElement>('[data-kanban-column-id]');
+      const targetParentId = targetCol?.getAttribute('data-kanban-column-id') ?? null;
+      const siblings = targetCol
+        ? Array.from(targetCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'))
+        : [];
+      const targetBase = siblings.indexOf(currentTargetCard);
+      const targetIndex = currentPosition === 'below' ? targetBase + 1 : targetBase;
+      console.log(KANBAN_LOG_PREFIX, 'drop emit move-block', {
+        sourceId, targetParentId, targetIndex, position: currentPosition,
+      });
+      emitChirp(ref!, 'move-block', {
+        blockId: sourceId,
+        targetParentId,
+        targetIndex,
+      });
+      // Prevent the click that follows pointerup from entering edit mode.
+      ev.preventDefault();
+    };
+
+    const onCancel = () => {
+      document.body.style.cursor = '';
+      clearAllDropHighlights();
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
   };
 
   // Enter edit mode. Called from click AND keyboard (Enter on focused card).
@@ -3150,8 +3230,10 @@ export function KanbanCard(
       blockId: props.props.blockId,
       editing: editing(),
       hasBinding: !!props.bindings?.content,
+      justDragged,
     });
     if (editing()) return;
+    if (justDragged) return; // drag finished — don't enter edit
     e.stopPropagation();
     enterEdit();
   };
@@ -3253,13 +3335,7 @@ export function KanbanCard(
     <div
       ref={(el) => (ref = el)}
       tabindex={0}
-      // HTML draggable is a Boolean attr per HTML5 but Solid can strip `false`
-      // values. Force via `attr:` to guarantee "true"/"false" string renders.
-      attr:draggable={editing() ? 'false' : 'true'}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onPointerDown={onPointerDown}
       onClick={handleClick}
       onKeyDown={handleRootKeyDown}
       onFocus={() => { setFocused(true); markBlockItemFocused(ref, true); }}
@@ -3271,8 +3347,10 @@ export function KanbanCard(
         'font-family': V.mono,
         'font-size': '13px',
         border: `1px solid ${V.b2}`,
-        'border-top': dragOver() === 'above' ? `2px solid ${V.cy}` : `1px solid ${V.b2}`,
-        'border-bottom': dragOver() === 'below' ? `2px solid ${V.cy}` : `1px solid ${V.b2}`,
+        // Border highlight during drag is applied directly to the DOM via
+        // inline style from the pointer-drag handler (see onPointerDown),
+        // bypassing SolidJS reactivity so it can be set on any card the
+        // pointer lands on without passing state through props.
         'border-radius': '4px',
         padding: '6px 8px',
         cursor: editing() ? 'text' : 'grab',
