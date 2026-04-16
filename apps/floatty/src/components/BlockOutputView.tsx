@@ -358,7 +358,10 @@ export function BlockOutputView(props: BlockOutputViewProps) {
           return env.kind === 'view'
             ? <div
                 ref={(el) => props.setInlineDoorRef(el)}
-                contenteditable={false}
+                // contenteditable is an ENUMERATED attr, not a boolean. SolidJS strips
+                // `contenteditable={false}` when evaluated as a boolean-false attribute,
+                // so pass the literal string "false" to guarantee the attribute lands.
+                attr:contenteditable="false"
                 style={{ 'user-select': 'text' }}
               >
               <DoorHost

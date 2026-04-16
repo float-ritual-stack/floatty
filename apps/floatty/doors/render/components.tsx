@@ -3171,7 +3171,9 @@ export function KanbanCard(
     <div
       ref={(el) => (ref = el)}
       tabindex={0}
-      draggable={!editing()}
+      // HTML draggable is a Boolean attr per HTML5 but Solid can strip `false`
+      // values. Force via `attr:` to guarantee "true"/"false" string renders.
+      attr:draggable={editing() ? 'false' : 'true'}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
