@@ -277,33 +277,48 @@ async fn resolve_block_prefix(
             "Prefix must be at least 6 hex characters".to_string(),
         ));
     }
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
 
-    let blocks_map = txn
-        .get_map("blocks")
-        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+    // Y.Doc read scope: the transaction + read guard are released at the
+    // end of this block, BEFORE we run the FLO-633 projection injection.
+    // Injection runs a potentially-heavy walker and takes the cache Mutex;
+    // holding the Y.Doc read lock across that would serialize against
+    // writers on large specs.
+    let (full_id, mut block_dto) = {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
 
-    let full_id = resolve_block_id(trimmed, &blocks_map, &txn)?;
+        let blocks_map = txn
+            .get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
 
-    let value = blocks_map
-        .get(&txn, full_id.as_str())
-        .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
+        let full_id = resolve_block_id(trimmed, &blocks_map, &txn)?;
 
-    if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, &full_id)
-        };
-        let block_dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
-        Ok(Json(ResolveResponse {
-            id: full_id,
-            block: block_dto,
-        }))
-    } else {
-        Err(ApiError::NotFound(full_id))
-    }
+        let value = blocks_map
+            .get(&txn, full_id.as_str())
+            .ok_or_else(|| ApiError::NotFound(full_id.clone()))?;
+
+        match value {
+            yrs::Out::YMap(block_map) => {
+                let inherited_markers = {
+                    let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+                    lookup_inherited(&index, &full_id)
+                };
+                let dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+                (full_id, dto)
+            }
+            _ => return Err(ApiError::NotFound(full_id)),
+        }
+    };
+
+    // Y.Doc read lock released — safe to run walker + cache operations.
+    // Parity with /api/v1/blocks/:id (FLO-633).
+    inject_rendered_markdown(&mut block_dto, &state.projection_cache);
+
+    Ok(Json(ResolveResponse {
+        id: full_id,
+        block: block_dto,
+    }))
 }
 
 /// GET /api/v1/blocks - All blocks as JSON (with optional filters)
@@ -325,13 +340,142 @@ async fn get_block(
     Path(id): Path<String>,
     axum::extract::Query(ctx_query): axum::extract::Query<BlockContextQuery>,
 ) -> Result<Json<BlockWithContextResponse>, ApiError> {
-    let result = crate::block_service::get_block(
+    let mut result = crate::block_service::get_block(
         &state.store,
         &state.inheritance_index,
         &id,
         &ctx_query,
     )?;
+    inject_rendered_markdown(&mut result.block, &state.projection_cache);
     Ok(Json(result))
+}
+
+/// Inject a server-computed `metadata.renderedMarkdown` into a door-block DTO
+/// when the frontend hook hasn't populated it (FLO-633).
+///
+/// This is a read-time projection — nothing is written back to Y.Doc. The cache
+/// is in-memory, keyed by `(block_id, hash(output.data))`, and bounded by an
+/// LRU. Walker calls are wrapped in `catch_unwind` so malformed specs produce
+/// a fall-through to the generic walker rather than a 500.
+///
+/// Quality tiers: frontend-hook markdown > spec walker > generic walker > null.
+/// This function only fills in the gap when the frontend hook produced nothing.
+pub(crate) fn inject_rendered_markdown(dto: &mut BlockDto, cache: &super::ProjectionCache) {
+    // Only applies to door blocks.
+    if dto.output_type.as_deref() != Some("door") {
+        return;
+    }
+    // If the frontend hook already populated a non-empty string, leave it alone.
+    let already_has = dto
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("renderedMarkdown"))
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if already_has {
+        return;
+    }
+    // Unwrap the door output envelope: walker operates on `output.data`.
+    let Some(output_data) = dto.output.as_ref().and_then(|o| o.get("data")) else {
+        return;
+    };
+
+    // Hash the output bytes for cache key (content-addressed invalidation).
+    let hash = hash_json_value(output_data);
+    let key: super::ProjectionCacheKey = (dto.id.clone(), hash);
+
+    // Fast path: cache hit.
+    if let Ok(mut guard) = cache.lock() {
+        if let Some(cached) = guard.get(&key).cloned() {
+            write_rendered_markdown(dto, cached);
+            return;
+        }
+    }
+
+    // Cache miss — compute with panic protection. Spec walker first, generic
+    // walker as last resort. Both walkers are documented as panic-free but we
+    // wrap defensively in case of future changes or untrusted data shapes.
+    // `catch_unwind` on a closure that borrows `&Value` is fine: serde_json::Value
+    // is RefUnwindSafe, so no clone is required — AssertUnwindSafe is kept because
+    // `dto.id` (the warn! field) does not carry an UnwindSafe bound through axum.
+    let mut computed = run_walker_protected(
+        "spec",
+        &dto.id,
+        || floatty_core::projections::walk_spec_to_markdown(output_data),
+    );
+    if computed.trim().is_empty() {
+        computed = run_walker_protected(
+            "generic",
+            &dto.id,
+            || floatty_core::projections::walk_generic_json_to_markdown(output_data),
+        );
+    }
+
+    // Still empty? Leave metadata untouched (null stays null — no worse than before).
+    if computed.trim().is_empty() {
+        return;
+    }
+
+    // Cache the hit for subsequent requests. Lock poisoning is treated as a
+    // correctness-preserving degrade (recompute next request) rather than a
+    // panic, consistent with this subsystem's "optional feature" failure mode.
+    if let Ok(mut guard) = cache.lock() {
+        guard.put(key, computed.clone());
+    }
+    write_rendered_markdown(dto, computed);
+}
+
+/// Run a walker closure under `catch_unwind`. On panic, log a warning and
+/// return empty string so the caller can fall through to the next tier.
+fn run_walker_protected<F: FnOnce() -> String>(tier: &'static str, block_id: &str, walker: F) -> String {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(walker)) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!(
+                block_id = %block_id,
+                tier,
+                "renderedMarkdown walker panicked — falling through"
+            );
+            String::new()
+        }
+    }
+}
+
+/// Hash a JSON value stably for cache keying. Uses the rendered JSON string
+/// so that logically-equal values produce equal hashes across serde_json's
+/// non-deterministic HashMap ordering. For a 10k-entry cache the collision
+/// surface on u64 is negligible.
+fn hash_json_value(value: &serde_json::Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+    // to_string() uses BTreeMap-like deterministic ordering via serde_json's
+    // object iteration order, which matches insertion order for Map<String,_>.
+    // This is stable enough for cache keying (if a consumer mutates output
+    // and we produce the same hash, they'd see stale cached markdown — but
+    // Y.Doc Map iteration order is deterministic so this is fine in practice).
+    let serialized = value.to_string();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serialized.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Set `dto.metadata.renderedMarkdown` to `markdown`, creating the metadata
+/// object if absent. Response-only mutation — no Y.Doc writes.
+///
+/// `BlockDto.metadata` is `Option<serde_json::Value>`, so it can theoretically
+/// be a scalar or array. We normalize to an empty object in that case rather
+/// than silently dropping the computed markdown.
+fn write_rendered_markdown(dto: &mut BlockDto, markdown: String) {
+    let metadata = dto
+        .metadata
+        .get_or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if !metadata.is_object() {
+        *metadata = serde_json::Value::Object(serde_json::Map::new());
+    }
+    metadata
+        .as_object_mut()
+        .expect("metadata normalized to object above")
+        .insert("renderedMarkdown".to_string(), serde_json::Value::String(markdown));
 }
 
 /// POST /api/v1/blocks - Create block
@@ -412,4 +556,181 @@ async fn delete_block(
         &id,
     )?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod projection_injection_tests {
+    use super::*;
+    use lru::LruCache;
+    use serde_json::json;
+    use std::num::NonZeroUsize;
+    use std::sync::{Arc, Mutex};
+
+    fn empty_cache() -> super::super::ProjectionCache {
+        Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(10).unwrap())))
+    }
+
+    /// Extract `metadata.renderedMarkdown` from a DTO, or panic if absent.
+    /// Keeps test assertions terse.
+    fn rendered_md(dto: &BlockDto) -> String {
+        dto.metadata
+            .as_ref()
+            .and_then(|m| m.get("renderedMarkdown"))
+            .and_then(|v| v.as_str())
+            .expect("renderedMarkdown should be set")
+            .to_string()
+    }
+
+    fn door_dto_with_output(id: &str, output: serde_json::Value, metadata: Option<serde_json::Value>) -> BlockDto {
+        BlockDto {
+            id: id.to_string(),
+            content: String::new(),
+            parent_id: None,
+            child_ids: vec![],
+            collapsed: false,
+            block_type: "text".to_string(),
+            metadata,
+            inherited_markers: None,
+            created_at: 0,
+            updated_at: 0,
+            output_type: Some("door".to_string()),
+            output: Some(output),
+        }
+    }
+
+    fn minimal_spec_output() -> serde_json::Value {
+        json!({
+            "data": {
+                "title": "Test Doc",
+                "spec": {
+                    "root": "r",
+                    "elements": {
+                        "r": { "type": "Text", "props": { "content": "hello" } }
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn computes_markdown_when_metadata_null() {
+        let cache = empty_cache();
+        let mut dto = door_dto_with_output("b1", minimal_spec_output(), None);
+        inject_rendered_markdown(&mut dto, &cache);
+        let md = rendered_md(&dto);
+        assert!(md.contains("Test Doc"), "should render title; got {:?}", md);
+        assert!(md.contains("hello"), "should render text content");
+    }
+
+    #[test]
+    fn leaves_existing_non_empty_markdown_alone() {
+        let cache = empty_cache();
+        let prior = "pre-existing markdown from hook";
+        let mut dto = door_dto_with_output(
+            "b2",
+            minimal_spec_output(),
+            Some(json!({ "renderedMarkdown": prior })),
+        );
+        inject_rendered_markdown(&mut dto, &cache);
+        assert_eq!(rendered_md(&dto), prior, "should not overwrite hook markdown");
+    }
+
+    #[test]
+    fn overwrites_empty_string_markdown() {
+        // Empty string counts as "not populated" — fall through to walker.
+        let cache = empty_cache();
+        let mut dto = door_dto_with_output(
+            "b3",
+            minimal_spec_output(),
+            Some(json!({ "renderedMarkdown": "" })),
+        );
+        inject_rendered_markdown(&mut dto, &cache);
+        let md = rendered_md(&dto);
+        assert!(!md.is_empty(), "empty-string markdown should be replaced");
+        assert!(md.contains("Test Doc"));
+    }
+
+    #[test]
+    fn skips_non_door_blocks() {
+        let cache = empty_cache();
+        let mut dto = door_dto_with_output("b4", minimal_spec_output(), None);
+        dto.output_type = Some("eval-result".to_string());
+        inject_rendered_markdown(&mut dto, &cache);
+        assert!(
+            dto.metadata.is_none()
+                || dto
+                    .metadata
+                    .as_ref()
+                    .unwrap()
+                    .get("renderedMarkdown")
+                    .is_none(),
+            "non-door block should not get markdown injected"
+        );
+    }
+
+    #[test]
+    fn handles_door_block_with_no_output() {
+        let cache = empty_cache();
+        let mut dto = door_dto_with_output("b5", json!({}), None);
+        dto.output = None;
+        inject_rendered_markdown(&mut dto, &cache);
+        // No output → nothing to compute → metadata stays untouched.
+        assert!(dto.metadata.is_none());
+    }
+
+    #[test]
+    fn handles_door_block_with_empty_output_data() {
+        // Output present but data key missing → walker produces empty string →
+        // metadata is left untouched (rather than set to "").
+        let cache = empty_cache();
+        let mut dto = door_dto_with_output("b6", json!({ "shell": true }), None);
+        inject_rendered_markdown(&mut dto, &cache);
+        assert!(
+            dto.metadata.is_none(),
+            "empty walker output should leave metadata untouched"
+        );
+    }
+
+    #[test]
+    fn cache_hit_returns_same_markdown() {
+        let cache = empty_cache();
+        let mut dto1 = door_dto_with_output("b7", minimal_spec_output(), None);
+        inject_rendered_markdown(&mut dto1, &cache);
+
+        let mut dto2 = door_dto_with_output("b7", minimal_spec_output(), None);
+        inject_rendered_markdown(&mut dto2, &cache);
+
+        assert_eq!(rendered_md(&dto1), rendered_md(&dto2), "cache hit should produce identical output");
+        assert_eq!(cache.lock().unwrap().len(), 1, "single cache entry for matching id+hash");
+    }
+
+    #[test]
+    fn output_mutation_invalidates_cache_via_hash() {
+        let cache = empty_cache();
+        let mut dto1 = door_dto_with_output("b8", minimal_spec_output(), None);
+        inject_rendered_markdown(&mut dto1, &cache);
+
+        let mutated = json!({
+            "data": {
+                "title": "Mutated Doc",
+                "spec": {
+                    "root": "r",
+                    "elements": {
+                        "r": { "type": "Text", "props": { "content": "different" } }
+                    }
+                }
+            }
+        });
+        let mut dto2 = door_dto_with_output("b8", mutated, None);
+        inject_rendered_markdown(&mut dto2, &cache);
+        let md2 = rendered_md(&dto2);
+        assert!(md2.contains("Mutated Doc"), "different output → different hash → recompute");
+        assert!(md2.contains("different"));
+        // Two distinct cache entries (same id, different hash).
+        assert_eq!(cache.lock().unwrap().len(), 2);
+    }
 }

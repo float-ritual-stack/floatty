@@ -107,6 +107,14 @@ Critical anti-patterns that will break floatty.
 - Skip the services pattern for new features (thin command adapters, pure service logic)
 - Add block operations to API without emitting corresponding `BlockChange::*` event (hooks depend on complete event coverage - FLO-224 missed `Moved` event on reparent, caught by Greptile)
 
+## Test Fixtures (see @.claude/rules/test-fixtures-no-pii.md)
+
+- Commit a fixture captured directly from a running floatty server, real user outline, conversation export, or session log without sanitizing first (FLO-633: `spec-7f5ef11c.json` shipped with real names, grief note, bank status, `/Users/evan/` paths — CodeRabbit flagged as 🟠 Major, required git history rewrite + force-push)
+- Include real UUIDs that could be session / block / user IDs (use `00000000-0000-4000-8000-0000000000NN` synthetic placeholders)
+- Leave terminal control sequences (`\u001b]1337;CurrentDir=/Users/...`) in fixtures — they often carry the CWD of the capture machine
+- Use real names from colleagues, family, or clients in test assertions (use `Demo Alice`, `Demo Bob` — even if "it's just a test")
+- Assume "it's my private repo" means PII is safe — branches get shared, forks get created, PRs get indexed by GitHub search before anyone reads the bot comments
+
 ## Paths/Config (Build Profile Isolation)
 
 - Construct paths with hardcoded `.floatty` or `.floatty-dev` outside `paths.rs` (use `DataPaths::default_root()` or pass paths through from `DataPaths::resolve()`)

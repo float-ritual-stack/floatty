@@ -51,6 +51,9 @@ thiserror = "2.0"
 # Hashing (for sync health check)
 sha2 = "0.10"
 
+# In-memory LRU cache for computed markdown projections (FLO-633)
+lru = "0.12"
+
 # Config
 dirs = "5"
 toml = "0.8"

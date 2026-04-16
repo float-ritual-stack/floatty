@@ -4,6 +4,10 @@ All notable changes to floatty are documented here.
 
 ## [Unreleased]
 
+### Server
+
+- **API contract: door blocks always have `metadata.renderedMarkdown` in responses** ([[FLO-633]]): `GET /api/v1/blocks/:id` now injects a server-computed markdown projection for door blocks whose frontend-hook `renderedMarkdown` is null or empty. Previously, agent-path render blocks (`generatedVia: "agent"`) never got their markdown projected — if no browser had observed the relevant Y.Doc update, the field stayed null forever and API consumers had no fallback. The new path computes via a crude Rust walker over `output.data.spec` (new `floatty_core::projections` module), falls through to a generic JSON flattener on malformed input, and caches the result in an in-memory LRU keyed by `(block_id, hash(output))`. No Y.Doc writes, no WebSocket broadcasts, response-only projection. Quality tiers: hook-populated markdown > spec walker > generic walker > null; the server only fills the gap when the hook produced nothing. Motivating block: `7f5ef11c-2d0e-421a-aa67-14c671b04956` on the `render tests` page — raw spec JSON is ~4× larger than the walker output (12417 → 2311 chars, 81% reduction). Follow-up tracked for auditing other hook-populated metadata fields (`summary`, `markers`, `outlinks`) that share the same API blind spot.
+
 ---
 
 ## [0.11.7] - 2026-04-15

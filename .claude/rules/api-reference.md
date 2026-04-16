@@ -29,6 +29,17 @@ PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 | `tree` | Full subtree DFS (max 1000) |
 | `token_estimate` | totalChars, blockCount, maxDepth |
 
+### Door Block Markdown Projection (FLO-633)
+
+`GET /api/v1/blocks/:id` always returns a non-null `metadata.renderedMarkdown` for door blocks (`outputType === "door"`) with non-empty output. Four-layer fallback chain, response-only (no Y.Doc writes, no WS broadcasts):
+
+1. `output.data.normalizedMarkdown` (future, not yet used)
+2. `metadata.renderedMarkdown` (frontend hook — preferred when present)
+3. `walk_spec_to_markdown(output.data.spec)` — server-side Rust walker
+4. `walk_generic_json_to_markdown(output.data)` — last-resort fallback
+
+Agents consuming the API can rely on the field being populated. Walker output is ~0.19× raw spec JSON (agent-oriented crude walker, no visual formatting preserved). Cached in-memory via LRU keyed by `(block_id, hash(output.data))`. Applies to both `/api/v1/blocks/:id` and `/api/v1/outlines/:name/blocks/:id`. **Bulk endpoints** (`GET /api/v1/blocks`, `GET /api/v1/outlines/:name/blocks`) do NOT apply the projection — use per-block GETs if you need markdown for many doors.
+
 ### Short-Hash Resolution
 
 All `:id` params and body fields (`parentId`, `afterId`) accept 6+ hex-char prefixes.
