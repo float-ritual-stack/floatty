@@ -356,7 +356,11 @@ export function BlockOutputView(props: BlockOutputViewProps) {
           const env = block()!.output as DoorEnvelope;
           if (!env || !env.kind) return null;
           return env.kind === 'view'
-            ? <div ref={(el) => props.setInlineDoorRef(el)}>
+            ? <div
+                ref={(el) => props.setInlineDoorRef(el)}
+                contenteditable={false}
+                style={{ 'user-select': 'text' }}
+              >
               <DoorHost
                 doorId={env.doorId}
                 data={env.data}

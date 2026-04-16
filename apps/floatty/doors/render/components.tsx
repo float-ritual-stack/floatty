@@ -2961,12 +2961,15 @@ export function KanbanCard(
     index?: number;
   }>,
 ) {
-  const [valueRaw] = useBoundProp(props.props.content, props.bindings?.content);
+  const [valueRaw, setValue] = useBoundProp(props.props.content, props.bindings?.content);
   const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
   const [dragOver, setDragOver] = createSignal<'above' | 'below' | null>(null);
+  const [editing, setEditing] = createSignal(false);
   let ref: HTMLDivElement | undefined;
+  let editRef: HTMLDivElement | undefined;
 
   const handleDragStart = (e: DragEvent) => {
+    if (editing()) { e.preventDefault(); return; }
     if (!props.props.blockId || !e.dataTransfer) return;
     e.dataTransfer.setData(KANBAN_DRAG_MIME, props.props.blockId);
     e.dataTransfer.effectAllowed = 'move';
@@ -3000,14 +3003,57 @@ export function KanbanCard(
     });
   };
 
+  // Click anywhere on the card enters edit mode. Double-click would also work
+  // but single-click matches the direct-manipulation feel of the outline.
+  const handleClick = (e: MouseEvent) => {
+    if (editing()) return;
+    if (!props.bindings?.content) return; // read-only without binding
+    e.stopPropagation();
+    setEditing(true);
+    queueMicrotask(() => {
+      if (!editRef) return;
+      editRef.focus();
+      // Place caret at end
+      const range = document.createRange();
+      range.selectNodeContents(editRef);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    });
+  };
+
+  const commit = () => {
+    if (!editRef) return;
+    const next = editRef.innerText;
+    const prev = String(localValue() ?? '');
+    if (next !== prev) setValue(next);
+    setEditing(false);
+  };
+
+  const cancel = () => {
+    setEditing(false);
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  };
+
   return (
     <div
       ref={(el) => (ref = el)}
-      draggable={true}
+      draggable={!editing()}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onClick={handleClick}
       data-kanban-card-id={props.props.blockId}
       style={{
         background: V.s1,
@@ -3019,11 +3065,25 @@ export function KanbanCard(
         'border-bottom': dragOver() === 'below' ? `2px solid ${V.cy}` : `1px solid ${V.b2}`,
         'border-radius': '4px',
         padding: '6px 8px',
-        cursor: 'grab',
-        'user-select': 'none',
+        cursor: editing() ? 'text' : 'grab',
+        'user-select': editing() ? 'text' : 'none',
+        outline: editing() ? `1px solid ${V.cy}` : 'none',
       }}
     >
-      {String(localValue() ?? '')}
+      <Show
+        when={editing()}
+        fallback={<>{String(localValue() ?? '')}</>}
+      >
+        <div
+          ref={(el) => (editRef = el)}
+          contentEditable={true}
+          onKeyDown={handleKeyDown}
+          onBlur={commit}
+          style={{ outline: 'none', 'min-height': '1em' }}
+        >
+          {String(localValue() ?? '')}
+        </div>
+      </Show>
     </div>
   );
 }
