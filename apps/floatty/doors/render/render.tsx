@@ -275,6 +275,12 @@ export function kanbanSpec(blockRef: string, actions: BlockActions) {
   const elements: Record<string, any> = {};
   const columnKeys: string[] = [];
 
+  // FLO-587 — state.cards[blockId].content is the binding surface for
+  // two-way sync. Card elements declare `bindings: { content: '/cards/<id>/content' }`;
+  // StateProvider.onStateChange translates writes back to the outline via
+  // the chirp `update-block` verb (see handleRenderStateChange).
+  const cardsState: Record<string, { content: string }> = {};
+
   // Header
   elements['header'] = { type: 'Text', props: { content: root.content, size: 'lg', weight: 'bold', color: '#00e5ff' }, children: [] };
 
@@ -303,9 +309,14 @@ export function kanbanSpec(blockRef: string, actions: BlockActions) {
       const status = detectBlockStatus(card.content);
       const cardColor = status === 'done' ? '#98c379' : status === 'active' ? '#00e5ff' : status === 'deferred' ? '#e040a0' : colColor;
 
+      // Seed state with the current block content so the element's
+      // binding resolves to the live value.
+      cardsState[card.id] = { content: card.content };
+
       elements[cardKey] = {
         type: 'Text',
         props: { content: card.content, size: 'sm', color: cardColor, mono: true },
+        bindings: { content: `/cards/${card.id}/content` },
         children: [],
       };
     }
@@ -339,7 +350,11 @@ export function kanbanSpec(blockRef: string, actions: BlockActions) {
     children: ['header', 'columns'],
   };
 
-  return { root: 'layout', elements };
+  return {
+    root: 'layout',
+    state: { cards: cardsState },
+    elements,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════

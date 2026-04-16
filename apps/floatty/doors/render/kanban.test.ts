@@ -113,6 +113,75 @@ describe('kanbanSpec — baseline shape (pre-FLO-587 wiring)', () => {
     expect(spec.elements['col-2-card-0'].props.content).toBe('Card Done-1');
   });
 
+  it('populates spec.state.cards keyed by block id with current content', () => {
+    const { root, blocks } = makeFixture();
+    const actions = makeActions(blocks, [root.id]);
+
+    const spec = kanbanSpec(root.id, actions);
+
+    expect(spec.state).toBeDefined();
+    expect(spec.state!.cards).toEqual({
+      t1: { content: 'Card Todo-1' },
+      t2: { content: 'Card Todo-2' },
+      d1: { content: 'Card Doing-1' },
+      d2: { content: 'Card Doing-2' },
+      n1: { content: 'Card Done-1' },
+    });
+    // No column or root entries — state.cards is only cards, not columns.
+    expect(spec.state!.cards).not.toHaveProperty('col-todo');
+    expect(spec.state!.cards).not.toHaveProperty('board-root');
+  });
+
+  it('emits bindings: { content: "/cards/<id>/content" } on each card element', () => {
+    const { root, blocks } = makeFixture();
+    const actions = makeActions(blocks, [root.id]);
+
+    const spec = kanbanSpec(root.id, actions);
+
+    expect(spec.elements['col-0-card-0'].bindings).toEqual({
+      content: '/cards/t1/content',
+    });
+    expect(spec.elements['col-1-card-1'].bindings).toEqual({
+      content: '/cards/d2/content',
+    });
+    expect(spec.elements['col-2-card-0'].bindings).toEqual({
+      content: '/cards/n1/content',
+    });
+  });
+
+  it('does not bind non-card elements (header, columns, panels, stacks)', () => {
+    const { root, blocks } = makeFixture();
+    const actions = makeActions(blocks, [root.id]);
+
+    const spec = kanbanSpec(root.id, actions);
+
+    expect(spec.elements.header.bindings).toBeUndefined();
+    expect(spec.elements.layout.bindings).toBeUndefined();
+    expect(spec.elements.columns.bindings).toBeUndefined();
+    expect(spec.elements['col-0'].bindings).toBeUndefined();
+    expect(spec.elements['col-0-stack'].bindings).toBeUndefined();
+  });
+
+  it('state.cards keys match blockIds referenced in bindings paths (round-trip consistency)', () => {
+    const { root, blocks } = makeFixture();
+    const actions = makeActions(blocks, [root.id]);
+
+    const spec = kanbanSpec(root.id, actions);
+
+    // For every card element, the blockId in its binding path MUST exist
+    // in spec.state.cards — otherwise outside-in updates can't hydrate
+    // and inside-out writes can't be round-tripped back through.
+    for (const [, element] of Object.entries(spec.elements)) {
+      const el = element as { type: string; bindings?: { content?: string } };
+      const binding = el.bindings?.content;
+      if (!binding) continue;
+      const match = /^\/cards\/([^/]+)\/content$/.exec(binding);
+      expect(match, `binding path ${binding} must match /cards/<id>/content`).not.toBeNull();
+      const blockId = match![1];
+      expect(spec.state!.cards).toHaveProperty(blockId);
+    }
+  });
+
   it('applies KANBAN_COLORS by normalized column title', () => {
     const { root, blocks } = makeFixture();
     const actions = makeActions(blocks, [root.id]);
