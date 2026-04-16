@@ -4,7 +4,7 @@
  * Usage: help:: <topic>
  *
  * Topics: filter, keyboard, handlers, hooks, events, send, backup,
- *         full-width, eval, func, doors, echocopy
+ *         full-width, eval, func, doors, echocopy, kanban
  */
 
 import type { BlockHandler, ExecutorActions } from './types';
@@ -27,6 +27,8 @@ const HELP_TOPICS: Record<string, string> = {
   func: 'docs/guides/FUNC.md',
   doors: 'docs/guides/DOORS.md',
   echocopy: 'docs/guides/ECHOCOPY.md',
+  kanban: 'docs/guides/KANBAN.md',
+  'render-kanban': 'docs/guides/KANBAN.md',
 };
 
 export const helpHandler: BlockHandler = {
