@@ -1,12 +1,14 @@
-# Test Fixtures: No PII, For The Love Of God
+# No PII, Secrets, or Internal Identifiers in Committed Code
 
-Real production data is a great source of test fixtures. It is also the fastest way to leak names, schedules, health information, financial details, grief, and `/Users/<name>` paths into a public GitHub repo.
+Real production data in test fixtures AND hardcoded credentials in source files are both fast tracks to leaking sensitive information into a public GitHub repo.
 
-This rule exists because [[FLO-633]] shipped with a 260-line fixture captured straight from the release server containing real names (Stephen, Ken, Scott, Marco), a grief note, a bank-account status, raw terminal control codes with `/Users/evan/...` paths, and a real agent session UUID. CodeRabbit flagged it, git history had to be rewritten, the branch had to be force-pushed. Don't repeat.
+This rule exists because:
+- **[[FLO-633]]** (2026-04-15): test fixture shipped with real names, grief note, bank status, `/Users/evan/` paths. Git history rewrite + force-push.
+- **PR #237** (2026-04-16): lift-and-shift of two apps copied hardcoded API keys (`floatty-1890872e6255d2d0`), internal client names (`rangle/pharmacy`), and ngrok URLs from their private dev repos into the public monorepo. Same root cause, different shape. Git history rewrite + force-push.
 
 ## The Rule
 
-**Never commit a test fixture captured directly from live user data without sanitizing it first.** "It's just my private repo" is not an exception — branches get shared, forks get created, PRs get indexed by search engines before anyone reviews the bot comments.
+**Never commit test fixtures from live user data OR source files with hardcoded credentials without sanitizing first.** "It's just my private repo" / "it's just a dev key" is not an exception — branches get shared, forks get created, PRs get indexed by search engines before anyone reads the bot comments.
 
 ## When this applies
 
@@ -87,9 +89,25 @@ Some tests genuinely need the exact shape of real-world data that's too complex 
 2. Sanitize before committing anyway — the edge case is almost certainly reproducible with neutral names.
 3. If the edge case *depends* on the specific bytes of a real value (unlikely but possible), put the fixture in `.gitignore`d directory and reference it via an env var: `TEST_FIXTURE_PATH=/path/to/private.json cargo test`. The test should skip (not fail) when the env var is unset.
 
+## Source Files: No Hardcoded Credentials
+
+When colocating, forking, or lifting code from private repos into public ones, scan for:
+
+1. **Hardcoded API keys / tokens** (even "dev" keys). Use `process.env.X` with fail-closed validation — never `|| "default-key"`.
+2. **Internal client / project identifiers** (`rangle/pharmacy`, client codenames). Replace with neutral placeholders (`client/project-a`).
+3. **Remote URLs with baked-in auth** (`https://service.ngrok.app`). Require via env var, don't default.
+4. **Fallback credentials that silently authenticate** (`process.env.KEY || "hardcoded"`). These are the most dangerous — they work invisibly on every clone.
+
+**Expanded grep** (run on `.ts`/`.tsx`/`.json` source files, not just fixtures):
+
+```bash
+grep -rn 'floatty-[0-9a-f]\{8\}\|sk-ant-\|vck_\|ngrok\.app\|rangle/pharmacy\|pharmonline' apps/ --include='*.ts' --include='*.tsx' --include='*.json' | grep -v node_modules | grep -v '.next'
+```
+
 ## Prior Incidents
 
-- **[[FLO-633]]** (2026-04-15): `spec-7f5ef11c.json` committed with real names, grief note, bank-account status, `/Users/evan/` paths, real agent session UUID. CodeRabbit flagged as `🟠 Major`. Fix required git history rewrite + force-push. This rule is the postmortem artifact.
+- **[[FLO-633]]** (2026-04-15): `spec-7f5ef11c.json` committed with real names, grief note, bank-account status, `/Users/evan/` paths, real agent session UUID. CodeRabbit flagged as `🟠 Major`. Fix required git history rewrite + force-push.
+- **PR #237** (2026-04-16): ink-chat + outline-explorer colocated into monorepo with hardcoded API key `floatty-1890872e6255d2d0`, internal client name `rangle/pharmacy`, and `https://floatty.ngrok.app` fallback URL in committed source. CodeRabbit flagged key as `🔴 Critical`, Greptile flagged client name as P2. Fix required git history rewrite + force-push. Root cause identical to FLO-633: files crossed a repo boundary without sanitization.
 
 ## The Grep (Keep It Updated)
 
