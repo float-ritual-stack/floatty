@@ -7,6 +7,7 @@
  */
 
 import type {
+  BlockChangeSubscribeOptions,
   DoorContext,
   DoorMeta,
   DoorServerAccess,
@@ -17,10 +18,44 @@ import type {
 import type { ExecutorActions } from './types';
 import type { BatchBlockOp } from '../../hooks/useBlockStore';
 import { createLogger } from '../logger';
+import { blockEventBus } from '../events/eventBus';
+import { EventFilters } from '../events/types';
+import type { EventFilter } from '../events/types';
 
 // ═══════════════════════════════════════════════════════════════
 // SERVER ACCESS (Tier 1)
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Build a block-change subscribe function for doors. Under the hood it
+ * wraps blockEventBus.subscribe; the door-facing API is deliberately
+ * narrow (handler takes no args, returns unsubscribe) so doors don't
+ * depend on internal envelope shapes.
+ *
+ * FLO-587.
+ */
+export function buildSubscribeBlockChanges(): DoorServerAccess['subscribeBlockChanges'] {
+  return (handler: () => void, options?: BlockChangeSubscribeOptions) => {
+    const filter: EventFilter | undefined = options?.fields?.length
+      ? EventFilters.any(
+          ...options.fields.map((f) =>
+            EventFilters.fieldChanged(f as Parameters<typeof EventFilters.fieldChanged>[0]),
+          ),
+        )
+      : undefined;
+
+    const subscriptionId = blockEventBus.subscribe(
+      () => handler(),
+      {
+        filter,
+        priority: 50,
+        name: 'door-subscribeBlockChanges',
+      },
+    );
+
+    return () => blockEventBus.unsubscribe(subscriptionId);
+  };
+}
 
 /**
  * Build DoorServerAccess from globals set by httpClient.ts.
@@ -48,6 +83,7 @@ export function createServerAccess(): DoorServerAccess {
       }
       return globalThis.fetch(fullUrl, { ...init, headers });
     },
+    subscribeBlockChanges: buildSubscribeBlockChanges(),
   };
 }
 

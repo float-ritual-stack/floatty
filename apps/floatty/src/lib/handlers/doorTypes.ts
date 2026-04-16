@@ -74,11 +74,30 @@ export interface DoorMeta {
 // DOOR CONTEXT (passed to door.execute)
 // ═══════════════════════════════════════════════════════════════
 
-/** Pre-authenticated access to floatty-server REST API */
+/**
+ * Options for subscribeBlockChanges.
+ * - `fields`: fire only when a changed event's `changedFields` intersects this list
+ *   (e.g. ['content', 'childIds']). Default: fire on any field.
+ */
+export interface BlockChangeSubscribeOptions {
+  fields?: string[];
+}
+
+/** Pre-authenticated access to floatty-server REST API + event subscriptions */
 export interface DoorServerAccess {
   url: string;
   wsUrl: string;
   fetch(path: string, init?: RequestInit): Promise<Response>;
+  /**
+   * FLO-587 — subscribe to block-change events. Handler is called with no
+   * arguments (pulse, not event details) — door decides what to re-read.
+   * Returns an unsubscribe function. Intended for outside-in reactivity
+   * (e.g. kanban re-projects when its subtree changes).
+   */
+  subscribeBlockChanges(
+    handler: () => void,
+    options?: BlockChangeSubscribeOptions,
+  ): () => void;
 }
 
 /** Scoped block operations available to doors */
