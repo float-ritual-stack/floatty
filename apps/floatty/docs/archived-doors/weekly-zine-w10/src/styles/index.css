@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#0a0a0a] text-zinc-400 font-mono antialiased;
+  }
+
+  ::selection {
+    @apply bg-accent-green/20 text-white;
+  }
+
+  ::-webkit-scrollbar {
+    @apply w-1;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-[#0a0a0a];
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-zinc-800 hover:bg-zinc-700;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse {
+    animation: none;
+  }
+}
