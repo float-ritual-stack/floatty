@@ -161,3 +161,19 @@ Before building a new interactive view (Tree, Calendar, Graph):
   git show a26b58a -- apps/floatty/doors/render/components.tsx
 
 Pattern-match on it. Don't re-derive.
+
+## Reference implementation
+
+Commit `a26b58a` — "FLO-587 unit 6: kanban refactor per skill" — is
+the canonical first reference implementation of this pattern.
+
+Verified state (2026-04-17):
+  - 1185/1185 tests passing
+  - Bundle-only deploy, 895 KB
+  - Zero app-source changes
+  - Diagnostic logs wired for MCP probe
+
+Before building a new interactive view (Tree, Calendar, Graph):
+  git show a26b58a -- apps/floatty/doors/render/components.tsx
+
+Pattern-match on it. Don't re-derive.
