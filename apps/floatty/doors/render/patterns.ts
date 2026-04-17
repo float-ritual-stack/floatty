@@ -64,4 +64,41 @@ COMPOSITION RULES:
 - WikilinkChip for inline [[bracket]] references
 - Text with size="sm" + mono=true for structured data lists
 - Color-code by severity: #ff4444 critical, #ffb300 warning, #98c379 ok, #00e5ff info
+
+KANBAN (FLO-587 — two-way bound):
+When the user asks for a kanban / board / todo-columns view of a block
+subtree, use KanbanCard + KanbanColumn. The cards are two-way bound to
+the outline: dragging a card to another column emits a move-block chirp
+that mutates the outline; editing a card's text commits via update-block
+chirp. Re-projection happens automatically.
+
+Required shape:
+- state.cards is a map keyed by REAL blockId → { content: "<current>" }.
+  Seed from the block you're projecting.
+- Each KanbanCard element carries:
+    props: { blockId: "<real-uuid>", parentId: "<col-real-uuid>", index: <n>, content: "<current>", color?: "<hex>" }
+    bindings: { content: "/cards/<blockId>/content" }
+- Each KanbanColumn carries: props: { title: "<col-name>", titleColor: "<hex>", blockId: "<col-real-uuid>", childCount: <n> }
+- Columns are children of a horizontal Stack; cards are children of the column.
+
+Minimal shape reference (3 cols, 2 cards — expand with real data):
+{
+  "root":"board",
+  "title":"Sprint Board",
+  "state":{"cards":{"<uuid-a>":{"content":"Task A"},"<uuid-b>":{"content":"Task B"}}},
+  "elements":{
+    "board":{"type":"Stack","props":{"direction":"vertical","gap":10},"children":["header","cols"]},
+    "header":{"type":"Text","props":{"content":"Sprint Board","size":"lg","weight":"bold","color":"#00e5ff"},"children":[]},
+    "cols":{"type":"Stack","props":{"direction":"horizontal","gap":8},"children":["col-todo","col-doing","col-done"]},
+    "col-todo":{"type":"KanbanColumn","props":{"title":"Todo (1)","titleColor":"#ffb300","blockId":"<uuid-col-todo>","childCount":1},"children":["card-a"]},
+    "col-doing":{"type":"KanbanColumn","props":{"title":"Doing (1)","titleColor":"#00e5ff","blockId":"<uuid-col-doing>","childCount":1},"children":["card-b"]},
+    "col-done":{"type":"KanbanColumn","props":{"title":"Done (0)","titleColor":"#98c379","blockId":"<uuid-col-done>","childCount":0},"children":[]},
+    "card-a":{"type":"KanbanCard","props":{"blockId":"<uuid-a>","parentId":"<uuid-col-todo>","index":0,"content":"Task A","color":"#ffb300"},"bindings":{"content":"/cards/<uuid-a>/content"},"children":[]},
+    "card-b":{"type":"KanbanCard","props":{"blockId":"<uuid-b>","parentId":"<uuid-col-doing>","index":0,"content":"Task B","color":"#00e5ff"},"bindings":{"content":"/cards/<uuid-b>/content"},"children":[]}
+  }
+}
+
+Color hint by column status (detect from column content — "todo"/"backlog" → amber,
+"doing"/"in progress"/"active" → cyan, "done"/"shipped" → green, "blocked" → coral):
+  amber #ffb300, cyan #00e5ff, green #98c379, coral #ff4444, magenta #e040a0
 `;
