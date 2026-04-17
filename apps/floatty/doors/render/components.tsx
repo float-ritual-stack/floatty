@@ -3011,7 +3011,7 @@ export function KanbanCard(
     let dropCol: HTMLElement | null = null;
 
     const clearHighlights = () => {
-      const root = ref?.closest('.kanban-board') ?? document.body;
+      const root = ref?.closest('[data-section-id="kanban-board"]') ?? ref?.closest('.kanban-board') ?? document.body;
       for (const el of root.querySelectorAll<HTMLElement>('[data-kanban-card-id]')) {
         el.style.removeProperty('box-shadow');
       }
@@ -3105,7 +3105,11 @@ export function KanbanCard(
         return;
       }
       justDragged = true;
-      queueMicrotask(() => { justDragged = false; });
+      // Reset on a later task so the synthetic `click` event that
+      // follows `pointerup` still sees `justDragged=true` and bails.
+      // queueMicrotask runs BEFORE the click is dispatched, which
+      // would re-enter edit mode after a drop.
+      setTimeout(() => { justDragged = false; }, 0);
 
       // Card-relative drop (insert above/below a specific card)
       if (dropCard && dropPos) {
@@ -3252,7 +3256,11 @@ export function KanbanCard(
       if (idx < 0) return null;
       return dir === 'down' ? (siblings[idx + 1] ?? null) : (siblings[idx - 1] ?? null);
     }
-    const board = ref.closest('.kanban-board') ?? ref.closest('[contenteditable]')?.parentElement ?? document.body;
+    // Scope to THIS kanban's DOM root (data-section-id="kanban-board"
+    // set by kanbanSpec in render.tsx). Without the scope, left/right
+    // nav from board A's last column would leak into board B's columns
+    // when two kanbans share a split pane.
+    const board = ref.closest('[data-section-id="kanban-board"]') ?? ref.closest('.kanban-board') ?? ref.closest('[contenteditable]')?.parentElement ?? document.body;
     const cols = Array.from(board.querySelectorAll<HTMLElement>('[data-kanban-column-id]'));
     const currentCol = ref.closest<HTMLElement>('[data-kanban-column-id]');
     if (!currentCol) return null;

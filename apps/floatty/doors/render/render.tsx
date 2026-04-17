@@ -349,7 +349,11 @@ export function kanbanSpec(blockRef: string, actions: BlockActions) {
 
   elements['layout'] = {
     type: 'Stack',
-    props: { gap: 10, direction: 'vertical' },
+    // sectionId renders as data-section-id on the root Stack div. Used
+    // by KanbanCard.findNeighbor to scope cross-column lookups to THIS
+    // board's DOM subtree — without it, a second kanban in a split pane
+    // would leak left/right nav across boards.
+    props: { gap: 10, direction: 'vertical', sectionId: 'kanban-board' },
     children: ['header', 'columns'],
   };
 
@@ -934,10 +938,22 @@ const executionNonces = new Map<string, number>();
 
 // FLO-587 — per-block subscription to Y.Doc changes so kanban/expand
 // re-project when their subtree mutates (e.g. after drag-drop). Key is
-// `${blockId}:${cmd}` so kanban and expand for the same block don't
-// stomp each other. Re-executing unsubscribes the previous handler
-// before installing a new one.
+// `${blockId}:${cmd}` so re-running the SAME cmd on the same block
+// replaces its handler cleanly. Switching between commands on the same
+// block (kanban → expand, etc.) clears ALL `${blockId}:*` entries via
+// `clearRenderSubscriptionsForBlock` so stale callbacks don't keep
+// overwriting the current view's output.
 const renderSubscriptions = new Map<string, () => void>();
+
+function clearRenderSubscriptionsForBlock(blockId: string): void {
+  const prefix = `${blockId}:`;
+  for (const key of Array.from(renderSubscriptions.keys())) {
+    if (key.startsWith(prefix)) {
+      try { renderSubscriptions.get(key)?.(); } catch { /* ignore */ }
+      renderSubscriptions.delete(key);
+    }
+  }
+}
 
 export const door = {
   kind: 'view' as const,
@@ -947,6 +963,12 @@ export const door = {
     const nonce = (executionNonces.get(blockId) ?? 0) + 1;
     executionNonces.set(blockId, nonce);
     const thisExecution = nonce;
+    // Clear any subscriptions left behind by previous executions of THIS
+    // render block (regardless of prior cmd). The branches that need a
+    // subscription (expand/kanban) will install a fresh one below;
+    // branches that don't (demo, stats, prompt, ai, agent) leave the
+    // block with zero live subscriptions, as intended.
+    clearRenderSubscriptionsForBlock(blockId);
     ctx.actions.setBlockStatus(blockId, 'running');
     const raw = content.replace(/^render::\s*/i, '').trim();
     const explicitTitle = extractTitle(raw);
@@ -1026,9 +1048,13 @@ export const door = {
       // `refresh()` re-generates spec → setOutputWithTitle propagates).
       // Filter to structural + content fields; ignore metadata-only updates
       // (outlinks/markers) that don't change what the kanban renders.
+      //
+      // Clear ALL prior subscriptions for this blockId before installing
+      // the new one. Otherwise switching kanban → expand → demo on the
+      // same block leaves stale callbacks that keep calling
+      // setOutputWithTitle with obsolete spec/title.
+      clearRenderSubscriptionsForBlock(blockId);
       const subKey = `${blockId}:${cmd}`;
-      const prior = renderSubscriptions.get(subKey);
-      if (prior) prior();
       const unsubscribe = ctx.server.subscribeBlockChanges(refresh, {
         fields: ['childIds', 'content', 'parentId'],
       });

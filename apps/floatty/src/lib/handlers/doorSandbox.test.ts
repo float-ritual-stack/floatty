@@ -115,26 +115,43 @@ describe('buildSubscribeBlockChanges (FLO-587)', () => {
     expect(mocks.unsubscribe).toHaveBeenLastCalledWith('sub-b');
   });
 
-  it('does not fire the door handler for envelopes whose fields filter rejects', () => {
+  it('filter accepts events whose changedFields include a requested field', () => {
     const subscribe = buildSubscribeBlockChanges();
-    const handler = vi.fn();
+    subscribe(vi.fn(), { fields: ['content'] });
 
-    subscribe(handler, { fields: ['content'] });
+    const [, opts] = mocks.subscribe.mock.calls[0];
+    const filter = (opts as {
+      filter?: (event: unknown, envelope: EventEnvelope) => boolean;
+    }).filter;
+    expect(typeof filter).toBe('function');
+    if (typeof filter !== 'function') return;
 
-    // The wrapped handler the bus will eventually call
-    const wrapped = mocks.subscribe.mock.calls[0][0];
-
-    // Bus-level filter pre-filters events before calling wrapped. We don't
-    // re-filter inside the wrapped handler, so wrapped gets called only
-    // for matching envelopes. Here we just verify the wiring: calling
-    // wrapped DOES fire handler (filter is enforced by the bus, not here).
-    const fakeEnvelope = {
-      batchId: 'b2',
-      timestamp: 0,
-      origin: 'user',
-      events: [],
+    const envelope = {
+      batchId: 'b', timestamp: 0, origin: 'user', events: [],
     } as unknown as EventEnvelope;
-    wrapped(fakeEnvelope);
-    expect(handler).toHaveBeenCalled();
+    const matchingEvent = {
+      type: 'block:update', blockId: 'x', changedFields: ['content'],
+    };
+    expect(filter(matchingEvent, envelope)).toBe(true);
+  });
+
+  it('filter rejects events whose changedFields do not intersect the requested fields', () => {
+    const subscribe = buildSubscribeBlockChanges();
+    subscribe(vi.fn(), { fields: ['content'] });
+
+    const [, opts] = mocks.subscribe.mock.calls[0];
+    const filter = (opts as {
+      filter?: (event: unknown, envelope: EventEnvelope) => boolean;
+    }).filter;
+    expect(typeof filter).toBe('function');
+    if (typeof filter !== 'function') return;
+
+    const envelope = {
+      batchId: 'b', timestamp: 0, origin: 'user', events: [],
+    } as unknown as EventEnvelope;
+    const nonMatchingEvent = {
+      type: 'block:update', blockId: 'x', changedFields: ['collapsed'],
+    };
+    expect(filter(nonMatchingEvent, envelope)).toBe(false);
   });
 });

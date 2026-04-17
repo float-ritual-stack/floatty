@@ -11,12 +11,18 @@ subtree with interactive verbs — drag to reparent, click to edit, arrow
 keys to navigate. The architectural contract is:
 
 - **Spec declares verbs.** Every interaction becomes a named entry in the
-  spec element's `on` map (`on.activate`, `on.drag`, `on.navOut`).
+  spec element's `on` map (`on.activate`, `on.drag`, `on.navOut`) OR a
+  chirp emission from the component.
 - **Host dispatches verbs.** One dispatcher resolves verb → mutation, via
-  the existing chirp pipeline into `useBlockStore`.
-- **Door has zero handlers.** Components are pure presentation. Never
-  `onClick`, `onDragStart`, `onPointerDown` inside the door — those are
-  verbs the spec declares, not handlers the door owns.
+  the existing chirp pipeline into `useBlockStore` (writes) or
+  `BlockOutputView.onChirp` (focus/nav).
+- **Door handlers may exist — but they never call store methods.** The
+  invariant the door must uphold is: *the outcome of any interaction is
+  a chirp emission, never a direct mutation.* Imperative code inside a
+  component is allowed when the interaction needs it (pointer drag with
+  `elementFromPoint`, caret positioning during edit, input focus
+  orchestration) — but the decision it reaches must be emitted as a
+  verb, not dispatched as a store call.
 
 This skill exists because FLO-587 unit 5b–5f spent ~90 minutes
 rediscovering what this pattern prevents. Every anti-pattern below is a
@@ -39,11 +45,14 @@ commit hash from that stack. Skill-as-memorial.
 
 ## The Rule
 
-**No handler function inside a door component.** If you find yourself
-writing `onClick` / `onDragStart` / `onPointerDown` inside `components.tsx`,
-stop — the component needs a verb declaration on the spec element, and a
-matching handler on the host dispatcher. See
-`references/dispatch-wiring.md`.
+**No direct store mutation inside a door component.** If a handler in
+`components.tsx` calls `store.updateBlockContent`, `store.moveBlock`,
+or any other `useBlockStore` method directly, stop — the handler must
+emit a chirp verb instead, routed through the host dispatcher. Handlers
+themselves are fine when the interaction needs them (drag with
+`elementFromPoint`, focus orchestration, input blur detection) —
+see `dispatch-wiring.md` "When the Pattern Breaks Down." The invariant
+is on the *outcome*, not the presence of handlers.
 
 ## Required Reads (in this order, before writing any code)
 
@@ -290,8 +299,10 @@ Before shipping a new view, verify:
 - [ ] DOM probe via `tauri-mcp-server` post-deploy confirms: component
       renders, verb dispatch logs fire, outline reflects mutation via
       `/api/v1/blocks/<id>`
-- [ ] Zero `onPointerDown` / `onClick` / `onDragStart` inside the door
-      bundle (grep to prove)
+- [ ] Zero direct `store.*` calls inside door components (grep
+      `doors/.*/components.tsx` for `store\.`; imperative handlers
+      are allowed, but every mutation outcome must go through
+      `emitChirp(...)` or a spec `on:` verb)
 
 ## Anti-Patterns (from FLO-587 session, 2026-04-16)
 

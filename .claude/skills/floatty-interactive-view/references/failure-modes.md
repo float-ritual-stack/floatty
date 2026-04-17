@@ -16,7 +16,7 @@ infrastructure was never consumed before being replaced.
 **Reproducer:** at the start of any "investigate why X doesn't work"
 session, run:
 
-```
+```bash
 mcp___hypothesi_tauri-mcp-server__read_logs \
   --source console --filter "<your log prefix>" --lines 100
 ```

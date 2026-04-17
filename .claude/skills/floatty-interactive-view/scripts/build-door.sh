@@ -110,7 +110,7 @@ if not isinstance(m.get('prefixes'), list) or not m['prefixes']:
     sys.exit(1)
 
 for p in m['prefixes']:
-    if not isinstance(p, str) or '::' not in p:
+    if not isinstance(p, str) or not p.endswith('::'):
         print(f"INVALID_PREFIX: '{p}' — must end with '::'", file=sys.stderr)
         sys.exit(1)
 

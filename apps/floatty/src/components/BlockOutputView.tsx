@@ -14,6 +14,9 @@ import { useBlockOperations } from '../hooks/useBlockOperations';
 import { navigateToBlock, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
 import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../lib/chirpWriteHandler';
 import { isMac } from '../lib/keybinds';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('BlockOutputView');
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { DoorHost, DoorExecCard } from './views/DoorHost';
 import { ImgView } from './views/ImgView';
@@ -371,7 +374,7 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                     const nextBlockId = goPrev
                       ? findPrevVisibleBlock(props.blockId, props.paneId)
                       : findNextVisibleBlock(props.blockId, props.paneId);
-                    console.log('[focus-sibling]', { direction, fromRenderBlock: props.blockId, paneId: props.paneId, nextBlockId });
+                    logger.debug('[focus-sibling]', { direction, fromRenderBlock: props.blockId, paneId: props.paneId, nextBlockId });
                     if (nextBlockId) {
                       props.onFocus(nextBlockId);
                     }
