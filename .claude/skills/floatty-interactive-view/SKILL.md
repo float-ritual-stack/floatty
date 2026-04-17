@@ -195,7 +195,9 @@ detail + reproducer steps.
 4. Draft verb catalog additions (if any new verbs).
 5. Draft dispatcher cases.
 6. Write component as pure presentation (no handlers).
-7. Deploy door bundle only.
+7. Deploy with scripts/build-door.sh <door-name> (validates
+   manifest, compiles, deploys BOTH index.js + door.json to
+   BOTH dev + release profiles — see FM-9).
 8. Measure via tauri-mcp-server:
    - DOM renders the component
    - Verb dispatch logs fire on interaction
@@ -205,6 +207,30 @@ detail + reproducer steps.
 ```
 
 Step 9 is the discipline. It's what 5b–5f skipped.
+
+## Deploy Command
+
+Use the skill's deploy script — it's the only path that catches
+the FM-9 class of bug (missing manifest → "Unknown door"):
+
+```bash
+bash .claude/skills/floatty-interactive-view/scripts/build-door.sh <door-name>
+```
+
+What it does:
+- Validates `apps/floatty/doors/<name>/door.json` (structure +
+  required fields: id, name, prefixes, version)
+- Warns if manifest `id` doesn't match the directory name
+- Compiles `<name>.tsx` via `scripts/compile-door-bundle.mjs`
+- Deploys BOTH `door.json` AND `index.js` to BOTH
+  `~/.floatty-dev/doors/<name>/` AND `~/.floatty/doors/<name>/`
+- Verifies both files exist after copy (fails loud if not)
+- Pings the backend health endpoint (informational)
+
+Fails loud on: missing source dir, missing/invalid manifest,
+compile errors, missing target files. This is the full fail-loud
+pipeline — do not fall back to raw `compile-door-bundle.mjs` +
+manual `cp` calls. That path is exactly what burned us in FM-9.
 
 ## Files
 

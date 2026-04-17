@@ -198,3 +198,54 @@ Not: ship five changes in rapid succession.
 **Detection:** your own turn count on the current bug. If you've
 committed more than once in the same session without a `read_logs`
 or MCP probe in between, the bleet has you.
+
+## FM-9 — Deploy the bundle without the manifest
+
+**Cited:** end of 2026-04-16 session, building the `input::` door from
+scratch. Compiled `input.tsx` to `~/.floatty-dev/doors/input/index.js`
+via `scripts/compile-door-bundle.mjs`. Did NOT copy
+`doors/input/door.json` alongside it. MCP probe reported "Unknown
+door: input" — and initially I blamed the MCP probe ("the DOM must be
+stale"). User corrected: the build was fresh. The real cause was the
+missing manifest: `doorLoader` scans each door directory and needs
+BOTH `index.js` (the bundle) and `door.json` (the manifest) to
+register the door. Without the manifest, the file exists but the
+frontend has no way to know the door's id, prefixes, or version — so
+`resolve-door('input')` legitimately returns "unknown."
+
+**Reproducer:**
+
+```bash
+# Symptom: door bundle on disk, frontend says "Unknown door"
+ls ~/.floatty-dev/doors/input/
+# index.js
+
+# Missing:
+test -f ~/.floatty-dev/doors/input/door.json
+# (file does not exist)
+```
+
+**Rule:** every door deploy is TWO files, not one. The compile step
+produces `index.js`. The manifest at `doors/<name>/door.json` must be
+copied alongside it. If either is missing, the door does not load.
+
+**Fix shipped this session:** the skill now has a
+`scripts/build-door.sh` command that validates the manifest, compiles
+the bundle, deploys BOTH files to BOTH profiles (dev + release), and
+verifies on disk. It fails loud if the manifest is missing or
+malformed. Use it instead of raw `node scripts/compile-door-bundle.mjs`
+for any new door work.
+
+**Detection:** if you're about to `cp index.js ~/.floatty*/doors/<id>/`
+without also copying `door.json`, you're shipping a broken deploy.
+Run `bash .claude/skills/floatty-interactive-view/scripts/build-door.sh
+<name>` — it handles both files and tells you what went wrong.
+
+**Meta-pattern:** this is the same shape as FM-1 (trust MCP over user
+observation). When MCP said "Unknown door: input", the hypothesis was
+"MCP is stale, I'll retry." The real answer was "MCP is right — the
+door is actually unregistered." Symmetry: user-trumps-MCP when the
+user's observation contradicts MCP (FM-1), but MCP-trumps-hypothesis
+when your hypothesis contradicts an observable fact. The discipline
+is the same: when two signals conflict, find the measurement that
+resolves the conflict before stacking another change.
