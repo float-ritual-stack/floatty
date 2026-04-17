@@ -3004,21 +3004,34 @@ export function KanbanCard(
     console.log(KANBAN_LOG, 'pointerdown', { sourceId, startX, startY });
 
     let started = false;
+    // Drop target types: card-relative (above/below specific card) OR column
+    // (append to end of column, empty-space drop).
     let dropCard: HTMLElement | null = null;
     let dropPos: 'above' | 'below' | null = null;
+    let dropCol: HTMLElement | null = null;
 
     const clearHighlights = () => {
       const root = ref?.closest('.kanban-board') ?? document.body;
       for (const el of root.querySelectorAll<HTMLElement>('[data-kanban-card-id]')) {
         el.style.removeProperty('box-shadow');
       }
+      for (const el of root.querySelectorAll<HTMLElement>('[data-kanban-column-id]')) {
+        el.style.removeProperty('outline');
+        el.style.removeProperty('outline-offset');
+      }
     };
 
-    const setHighlight = (card: HTMLElement, pos: 'above' | 'below') => {
+    const setCardHighlight = (card: HTMLElement, pos: 'above' | 'below') => {
       clearHighlights();
       card.style.boxShadow = pos === 'above'
         ? `inset 0 2px 0 0 ${V.cy}`
         : `inset 0 -2px 0 0 ${V.cy}`;
+    };
+
+    const setColHighlight = (col: HTMLElement) => {
+      clearHighlights();
+      col.style.outline = `2px dashed ${V.cy}`;
+      col.style.outlineOffset = '-2px';
     };
 
     const onMove = (ev: PointerEvent) => {
@@ -3029,6 +3042,8 @@ export function KanbanCard(
         if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
         started = true;
         document.body.classList.add('kanban-dragging');
+        // Fade source so user sees which card is being dragged.
+        ref!.style.opacity = '0.4';
         console.log(KANBAN_LOG, 'drag started');
       }
       // Temporarily disable pointer-events on the source to find target under cursor.
@@ -3036,24 +3051,42 @@ export function KanbanCard(
       ref!.style.pointerEvents = 'none';
       const under = document.elementFromPoint(ev.clientX, ev.clientY);
       ref!.style.pointerEvents = prevPE;
+
       const card = under?.closest<HTMLElement>('[data-kanban-card-id]');
-      if (!card || card === ref) {
-        dropCard = null;
-        dropPos = null;
-        clearHighlights();
+      if (card && card !== ref) {
+        const rect = card.getBoundingClientRect();
+        const pos = ev.clientY > rect.top + rect.height / 2 ? 'below' : 'above';
+        if (card !== dropCard || pos !== dropPos) {
+          dropCard = card;
+          dropPos = pos;
+          dropCol = null;
+          setCardHighlight(card, pos);
+        }
         return;
       }
-      const rect = card.getBoundingClientRect();
-      const pos = ev.clientY > rect.top + rect.height / 2 ? 'below' : 'above';
-      if (card !== dropCard || pos !== dropPos) {
-        dropCard = card;
-        dropPos = pos;
-        setHighlight(card, pos);
+
+      // No card under cursor — check for column (empty-space drop).
+      const col = under?.closest<HTMLElement>('[data-kanban-column-id]');
+      if (col) {
+        if (col !== dropCol) {
+          dropCol = col;
+          dropCard = null;
+          dropPos = null;
+          setColHighlight(col);
+        }
+        return;
       }
+
+      // Nothing valid under cursor.
+      dropCard = null;
+      dropPos = null;
+      dropCol = null;
+      clearHighlights();
     };
 
     const cleanup = () => {
       document.body.classList.remove('kanban-dragging');
+      if (ref) ref.style.removeProperty('opacity');
       clearHighlights();
       try {
         if (captureTarget.hasPointerCapture?.(capturePointerId)) {
@@ -3073,31 +3106,51 @@ export function KanbanCard(
       }
       justDragged = true;
       queueMicrotask(() => { justDragged = false; });
-      if (!dropCard || !dropPos) {
-        console.log(KANBAN_LOG, 'drop: no target');
+
+      // Card-relative drop (insert above/below a specific card)
+      if (dropCard && dropPos) {
+        const targetId = dropCard.getAttribute('data-kanban-card-id');
+        if (!targetId || targetId === sourceId) {
+          console.log(KANBAN_LOG, 'drop: same card');
+          return;
+        }
+        const targetCol = dropCard.closest<HTMLElement>('[data-kanban-column-id]');
+        const targetParentId = targetCol?.getAttribute('data-kanban-column-id') ?? null;
+        // Exclude source card from sibling list — its old position shouldn't
+        // affect the insert index in the target column.
+        const siblings = targetCol
+          ? Array.from(targetCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'))
+              .filter(el => el !== ref)
+          : [];
+        const baseIdx = siblings.indexOf(dropCard);
+        const targetIndex = dropPos === 'below' ? baseIdx + 1 : baseIdx;
+        console.log(KANBAN_LOG, 'emit move-block (card)', { sourceId, targetParentId, targetIndex });
+        if (ref) {
+          emitChirp(ref, 'move-block', { blockId: sourceId, targetParentId, targetIndex });
+        }
+        ev.preventDefault();
         return;
       }
-      const targetId = dropCard.getAttribute('data-kanban-card-id');
-      if (!targetId || targetId === sourceId) {
-        console.log(KANBAN_LOG, 'drop: same card');
+
+      // Column empty-space drop (append to end of column)
+      if (dropCol) {
+        const targetParentId = dropCol.getAttribute('data-kanban-column-id');
+        if (!targetParentId) {
+          console.log(KANBAN_LOG, 'drop: column missing id');
+          return;
+        }
+        const siblings = Array.from(dropCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'))
+          .filter(el => el !== ref);
+        const targetIndex = siblings.length;
+        console.log(KANBAN_LOG, 'emit move-block (column)', { sourceId, targetParentId, targetIndex });
+        if (ref) {
+          emitChirp(ref, 'move-block', { blockId: sourceId, targetParentId, targetIndex });
+        }
+        ev.preventDefault();
         return;
       }
-      const targetCol = dropCard.closest<HTMLElement>('[data-kanban-column-id]');
-      const targetParentId = targetCol?.getAttribute('data-kanban-column-id') ?? null;
-      const siblings = targetCol
-        ? Array.from(targetCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'))
-        : [];
-      const baseIdx = siblings.indexOf(dropCard);
-      const targetIndex = dropPos === 'below' ? baseIdx + 1 : baseIdx;
-      console.log(KANBAN_LOG, 'emit move-block', { sourceId, targetParentId, targetIndex });
-      if (ref) {
-        emitChirp(ref, 'move-block', {
-          blockId: sourceId,
-          targetParentId,
-          targetIndex,
-        });
-      }
-      ev.preventDefault();
+
+      console.log(KANBAN_LOG, 'drop: no target');
     };
 
     const onCancel = () => {

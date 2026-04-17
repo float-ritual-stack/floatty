@@ -932,6 +932,13 @@ function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: stri
 
 const executionNonces = new Map<string, number>();
 
+// FLO-587 — per-block subscription to Y.Doc changes so kanban/expand
+// re-project when their subtree mutates (e.g. after drag-drop). Key is
+// `${blockId}:${cmd}` so kanban and expand for the same block don't
+// stomp each other. Re-executing unsubscribes the previous handler
+// before installing a new one.
+const renderSubscriptions = new Map<string, () => void>();
+
 export const door = {
   kind: 'view' as const,
   prefixes: ['render::'],
@@ -1012,8 +1019,18 @@ export const door = {
         return;
       }
 
-      // Kanban reactivity lives in the view layer (blockEventBus subscription);
-      // see kanban.test.ts and FLO-587 plan for the event-driven model.
+      // FLO-587 — subscribe to block changes so the view re-projects when
+      // the subtree mutates (drag-drop moves cards → Y.Doc updates →
+      // `refresh()` re-generates spec → setOutputWithTitle propagates).
+      // Filter to structural + content fields; ignore metadata-only updates
+      // (outlinks/markers) that don't change what the kanban renders.
+      const subKey = `${blockId}:${cmd}`;
+      const prior = renderSubscriptions.get(subKey);
+      if (prior) prior();
+      const unsubscribe = ctx.server.subscribeBlockChanges(refresh, {
+        fields: ['childIds', 'content', 'parentId'],
+      });
+      renderSubscriptions.set(subKey, unsubscribe);
       return;
     }
 
