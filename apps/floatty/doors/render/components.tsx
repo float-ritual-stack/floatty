@@ -3166,7 +3166,9 @@ export function KanbanCard(
   // --- CLICK → EDIT ---------------------------------------------------
 
   const enterEdit = () => {
-    if (!props.bindings?.content) return;
+    // Edit no longer requires bindings — we emit update-block chirp
+    // directly in commit(). Only guard on blockId presence.
+    if (!props.props.blockId) return;
     console.log(KANBAN_LOG, 'enterEdit', { blockId: props.props.blockId });
     setEditing(true);
     queueMicrotask(() => {
@@ -3182,6 +3184,23 @@ export function KanbanCard(
     if (editing() || justDragged) return;
     e.stopPropagation();
     enterEdit();
+  };
+
+  // Commit/cancel both exit edit mode, then try to refocus the card.
+  // After commit, refresh() regenerates the spec → json-render
+  // reconciles → the original `ref` may be detached. Look up the new
+  // card DOM by data-kanban-card-id and retry across a few rAFs so we
+  // land after the re-projection settles.
+  const refocusCard = () => {
+    const id = props.props.blockId;
+    if (!id) { ref?.focus(); return; }
+    let attempts = 0;
+    const tryFocus = () => {
+      const el = document.querySelector<HTMLElement>(`[data-kanban-card-id="${id}"]`);
+      if (el) { el.focus(); return; }
+      if (attempts++ < 8) requestAnimationFrame(tryFocus);
+    };
+    queueMicrotask(tryFocus);
   };
 
   const commit = () => {
@@ -3200,12 +3219,12 @@ export function KanbanCard(
       emitChirp(ref, 'update-block', { blockId: props.props.blockId, content: next });
     }
     setEditing(false);
-    queueMicrotask(() => ref?.focus());
+    refocusCard();
   };
 
   const cancel = () => {
     setEditing(false);
-    queueMicrotask(() => ref?.focus());
+    refocusCard();
   };
 
   const onInputKeyDown = (e: KeyboardEvent) => {

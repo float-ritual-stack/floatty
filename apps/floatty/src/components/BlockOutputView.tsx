@@ -371,6 +371,7 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                     const nextBlockId = goPrev
                       ? findPrevVisibleBlock(props.blockId, props.paneId)
                       : findNextVisibleBlock(props.blockId, props.paneId);
+                    console.log('[focus-sibling]', { direction, fromRenderBlock: props.blockId, paneId: props.paneId, nextBlockId });
                     if (nextBlockId) {
                       props.onFocus(nextBlockId);
                     }

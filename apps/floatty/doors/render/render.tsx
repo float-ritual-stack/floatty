@@ -1003,6 +1003,8 @@ export const door = {
       const refresh = () => {
         try {
           const spec = generate(blockRef, storeActions);
+          const elementCount = Object.keys(spec.elements ?? {}).length;
+          ctx.log(`[render::${cmd}] refresh fired — ${elementCount} elements`);
           setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd as any, title: `${cmd}: ${blockRef}` });
         } catch (e: any) {
           ctx.log(`[render::${cmd}] refresh failed:`, e.message);
