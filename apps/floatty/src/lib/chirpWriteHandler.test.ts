@@ -44,6 +44,15 @@ describe('isChirpWriteVerb', () => {
     expect(isChirpWriteVerb('delete-block')).toBe(false);
     expect(isChirpWriteVerb('')).toBe(false);
   });
+
+  // FLO-587 — focus-sibling is NOT a store write verb. It's host-level
+  // focus coordination, dispatched in BlockOutputView's onChirp handler
+  // (findPrev/NextVisibleBlock + props.onFocus). If anyone adds it here,
+  // handleChirpWrite will try to route it and there's no store method
+  // to call — silent drop. This test is the canary.
+  it('focus-sibling is NOT a write verb (dispatched in BlockOutputView, not here)', () => {
+    expect(isChirpWriteVerb('focus-sibling')).toBe(false);
+  });
 });
 
 describe('handleChirpWrite — create-child / upsert-child (existing)', () => {

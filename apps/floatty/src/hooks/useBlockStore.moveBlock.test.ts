@@ -1,6 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 
+// Mock logger so we can assert on bail-out diagnostic warns.
+// FLO-587 (commit 010cb5f): every moveBlock bail-out was silent, which
+// violated ydoc-patterns.md rule 14.6 ("every bail-out gets a diagnostic
+// counter"). Tests below guard the six named bail-out paths so a future
+// edit that removes a warn (or renames its text) fails loudly.
+const warnSpy = vi.fn();
+vi.mock('../lib/logger', () => ({
+  createLogger: () => ({
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: (...args: unknown[]) => warnSpy(...args),
+    error: vi.fn(),
+  }),
+}));
+
 function createBlockMap(id: string, parentId: string | null, childIds: string[] = []): Y.Map<unknown> {
   const map = new Y.Map<unknown>();
   map.set('id', id);
@@ -202,5 +218,101 @@ describe('useBlockStore.moveBlock', () => {
 
     undoManager.redo();
     expect(getChildIds(blocksMap, 'parent')).toEqual(['b', 'a']);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// FLO-587 — bail-out diagnostic coverage (rule 14.6)
+//
+// moveBlock has six early-return paths. Before commit 010cb5f they were
+// silent; chirpWriteHandler logged "store rejected move" with no reason.
+// These tests assert each path fires a specific logger.warn so the
+// diagnostic never regresses to silence.
+// ═════════════════════════════════════════════════════════════════════
+
+describe('useBlockStore.moveBlock — bail-out diagnostics (rule 14.6)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    warnSpy.mockClear();
+  });
+
+  it('logs when source block not in state.blocks', async () => {
+    const { blockStore } = await setupStore((_doc, blocksMap, rootIds) => {
+      blocksMap.set('parent', createBlockMap('parent', null, []));
+      rootIds.push(['parent']);
+    });
+
+    const moved = blockStore.moveBlock('ghost', 'parent', 0);
+
+    expect(moved).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('source block not in state.blocks'),
+      expect.objectContaining({ blockId: 'ghost' }),
+    );
+  });
+
+  it('logs when source block === target parent (self-move)', async () => {
+    const { blockStore } = await setupStore((_doc, blocksMap, rootIds) => {
+      blocksMap.set('a', createBlockMap('a', null, []));
+      rootIds.push(['a']);
+    });
+
+    const moved = blockStore.moveBlock('a', 'a', 0);
+
+    expect(moved).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('self-move'),
+      expect.objectContaining({ blockId: 'a' }),
+    );
+  });
+
+  it('logs when target parent not in state.blocks', async () => {
+    const { blockStore } = await setupStore((_doc, blocksMap, rootIds) => {
+      blocksMap.set('a', createBlockMap('a', null, []));
+      rootIds.push(['a']);
+    });
+
+    const moved = blockStore.moveBlock('a', 'ghost-parent', 0);
+
+    expect(moved).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('target parent not in state.blocks'),
+      expect.objectContaining({ blockId: 'a', targetParentId: 'ghost-parent' }),
+    );
+  });
+
+  it('logs when target is descendant of source (cycle)', async () => {
+    const { blockStore } = await setupStore((_doc, blocksMap, rootIds) => {
+      blocksMap.set('p', createBlockMap('p', null, ['c']));
+      blocksMap.set('c', createBlockMap('c', 'p', ['g']));
+      blocksMap.set('g', createBlockMap('g', 'c', []));
+      rootIds.push(['p']);
+    });
+
+    const moved = blockStore.moveBlock('p', 'g', 0);
+
+    expect(moved).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('target is descendant of source (cycle)'),
+      expect.objectContaining({ blockId: 'p', targetParentId: 'g' }),
+    );
+  });
+
+  it('logs when no-op (same parent, same adjusted index)', async () => {
+    const { blockStore } = await setupStore((_doc, blocksMap, rootIds) => {
+      blocksMap.set('parent', createBlockMap('parent', null, ['a', 'b']));
+      blocksMap.set('a', createBlockMap('a', 'parent'));
+      blocksMap.set('b', createBlockMap('b', 'parent'));
+      rootIds.push(['parent']);
+    });
+
+    // Move 'a' onto itself — index 0 in same parent = no-op after adjust
+    const moved = blockStore.moveBlock('a', 'parent', 0);
+
+    expect(moved).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('no-op (same position)'),
+      expect.objectContaining({ blockId: 'a', oldParentId: 'parent' }),
+    );
   });
 });
