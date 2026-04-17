@@ -2933,11 +2933,565 @@ export function GapItem(props: BaseComponentProps<{
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// KANBAN (FLO-587) — spec-verb-aligned refactor per
+// .claude/skills/floatty-interactive-view/SKILL.md
+// ═══════════════════════════════════════════════════════════════
+
+const KANBAN_LOG = '[kanban]';
+
+/**
+ * KanbanCard — card projection of a block inside a kanban column.
+ *
+ * Verbs emitted (as chirps that host routes through chirpWriteHandler):
+ *   - `move-block` on drop — { blockId, targetParentId, targetIndex }
+ *   - `update-block` on edit commit — { blockId, content }
+ *     (path: useBoundProp.setter → StateProvider.onStateChange →
+ *      handleRenderStateChange in render.tsx → chirp)
+ *
+ * Drag uses pointer events per useBlockDrag.ts:377-420 (the working
+ * outline drag — pointer events are the safe default in Tauri's webview,
+ * verified in-repo, NOT assumed from docs per FM-4).
+ * - setPointerCapture on pointerdown
+ * - preventDefault on pointerdown AND pointermove (kills text-selection)
+ * - document.body.classList.add('kanban-dragging') while active (CSS
+ *   user-select: none scoped to the class, not ambient)
+ *
+ * Edit uses a native `<input>`, NOT a contentEditable div — per
+ * TableView's cell editor at BlockDisplay.tsx:702. Nested
+ * contenteditable is unreliable in WKWebView (FM-5 history — 5b
+ * wrapped the door in contenteditable=false to defend against an
+ * inherited CE that title mode already hides; non-problem). The input
+ * is unaffected by any surrounding CE state.
+ */
+export function KanbanCard(
+  props: BaseComponentProps<{
+    content?: string;
+    color?: string;
+    blockId?: string;
+    parentId?: string | null;
+    index?: number;
+  }>,
+) {
+  const [valueRaw, setValue] = useBoundProp(props.props.content, props.bindings?.content);
+  const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
+  const [editing, setEditing] = createSignal(false);
+  const [focused, setFocused] = createSignal(false);
+  let ref: HTMLDivElement | undefined;
+  let inputRef: HTMLInputElement | undefined;
+  // preventDefault on pointerup doesn't cancel the follow-up click (MDN).
+  // Flag the click-after-drag so we don't enter edit mode on drop.
+  let justDragged = false;
+
+  const DRAG_THRESHOLD_PX = 5;
+
+  // --- DRAG: pointer events (mirrors useBlockDrag.ts) ----------------
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (editing()) return;
+    if (e.button !== 0) return;
+    if (!props.props.blockId || !ref) return;
+    // Kill the browser's native text-selection that would otherwise
+    // win on mousedown over text content.
+    e.preventDefault();
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const sourceId = props.props.blockId;
+    const captureTarget = ref;
+    const capturePointerId = e.pointerId;
+    try { captureTarget.setPointerCapture(capturePointerId); } catch { /* detached */ }
+    console.log(KANBAN_LOG, 'pointerdown', { sourceId, startX, startY });
+
+    let started = false;
+    // Drop target types: card-relative (above/below specific card) OR column
+    // (append to end of column, empty-space drop).
+    let dropCard: HTMLElement | null = null;
+    let dropPos: 'above' | 'below' | null = null;
+    let dropCol: HTMLElement | null = null;
+
+    const clearHighlights = () => {
+      const root = ref?.closest('[data-section-id="kanban-board"]') ?? ref?.closest('.kanban-board') ?? document.body;
+      for (const el of root.querySelectorAll<HTMLElement>('[data-kanban-card-id]')) {
+        el.style.removeProperty('box-shadow');
+      }
+      for (const el of root.querySelectorAll<HTMLElement>('[data-kanban-column-id]')) {
+        el.style.removeProperty('outline');
+        el.style.removeProperty('outline-offset');
+      }
+    };
+
+    const setCardHighlight = (card: HTMLElement, pos: 'above' | 'below') => {
+      clearHighlights();
+      card.style.boxShadow = pos === 'above'
+        ? `inset 0 2px 0 0 ${V.cy}`
+        : `inset 0 -2px 0 0 ${V.cy}`;
+    };
+
+    const setColHighlight = (col: HTMLElement) => {
+      clearHighlights();
+      col.style.outline = `2px dashed ${V.cy}`;
+      col.style.outlineOffset = '-2px';
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      ev.preventDefault();
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!started) {
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+        started = true;
+        document.body.classList.add('kanban-dragging');
+        // Fade source so user sees which card is being dragged.
+        ref!.style.opacity = '0.4';
+        console.log(KANBAN_LOG, 'drag started');
+      }
+      // Temporarily disable pointer-events on the source to find target under cursor.
+      const prevPE = ref!.style.pointerEvents;
+      ref!.style.pointerEvents = 'none';
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      ref!.style.pointerEvents = prevPE;
+
+      const card = under?.closest<HTMLElement>('[data-kanban-card-id]');
+      if (card && card !== ref) {
+        const rect = card.getBoundingClientRect();
+        const pos = ev.clientY > rect.top + rect.height / 2 ? 'below' : 'above';
+        if (card !== dropCard || pos !== dropPos) {
+          dropCard = card;
+          dropPos = pos;
+          dropCol = null;
+          setCardHighlight(card, pos);
+        }
+        return;
+      }
+
+      // No card under cursor — check for column (empty-space drop).
+      const col = under?.closest<HTMLElement>('[data-kanban-column-id]');
+      if (col) {
+        if (col !== dropCol) {
+          dropCol = col;
+          dropCard = null;
+          dropPos = null;
+          setColHighlight(col);
+        }
+        return;
+      }
+
+      // Nothing valid under cursor.
+      dropCard = null;
+      dropPos = null;
+      dropCol = null;
+      clearHighlights();
+    };
+
+    const cleanup = () => {
+      document.body.classList.remove('kanban-dragging');
+      if (ref) ref.style.removeProperty('opacity');
+      clearHighlights();
+      try {
+        if (captureTarget.hasPointerCapture?.(capturePointerId)) {
+          captureTarget.releasePointerCapture(capturePointerId);
+        }
+      } catch { /* detached */ }
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      cleanup();
+      if (!started) {
+        console.log(KANBAN_LOG, 'pointerup below threshold — click path');
+        return;
+      }
+      justDragged = true;
+      // Reset on a later task so the synthetic `click` event that
+      // follows `pointerup` still sees `justDragged=true` and bails.
+      // queueMicrotask runs BEFORE the click is dispatched, which
+      // would re-enter edit mode after a drop.
+      setTimeout(() => { justDragged = false; }, 0);
+
+      // Card-relative drop (insert above/below a specific card)
+      if (dropCard && dropPos) {
+        const targetId = dropCard.getAttribute('data-kanban-card-id');
+        if (!targetId || targetId === sourceId) {
+          console.log(KANBAN_LOG, 'drop: same card');
+          return;
+        }
+        const targetCol = dropCard.closest<HTMLElement>('[data-kanban-column-id]');
+        const targetParentId = targetCol?.getAttribute('data-kanban-column-id') ?? null;
+        // Exclude source card from sibling list — its old position shouldn't
+        // affect the insert index in the target column.
+        const siblings = targetCol
+          ? Array.from(targetCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'))
+              .filter(el => el !== ref)
+          : [];
+        const baseIdx = siblings.indexOf(dropCard);
+        const targetIndex = dropPos === 'below' ? baseIdx + 1 : baseIdx;
+        console.log(KANBAN_LOG, 'emit move-block (card)', { sourceId, targetParentId, targetIndex });
+        if (ref) {
+          emitChirp(ref, 'move-block', { blockId: sourceId, targetParentId, targetIndex });
+        }
+        ev.preventDefault();
+        return;
+      }
+
+      // Column empty-space drop (append to end of column)
+      if (dropCol) {
+        const targetParentId = dropCol.getAttribute('data-kanban-column-id');
+        if (!targetParentId) {
+          console.log(KANBAN_LOG, 'drop: column missing id');
+          return;
+        }
+        const siblings = Array.from(dropCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'))
+          .filter(el => el !== ref);
+        const targetIndex = siblings.length;
+        console.log(KANBAN_LOG, 'emit move-block (column)', { sourceId, targetParentId, targetIndex });
+        if (ref) {
+          emitChirp(ref, 'move-block', { blockId: sourceId, targetParentId, targetIndex });
+        }
+        ev.preventDefault();
+        return;
+      }
+
+      console.log(KANBAN_LOG, 'drop: no target');
+    };
+
+    const onCancel = () => {
+      console.log(KANBAN_LOG, 'pointercancel');
+      cleanup();
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+  };
+
+  // --- CLICK → EDIT ---------------------------------------------------
+
+  const enterEdit = () => {
+    // Edit no longer requires bindings — we emit update-block chirp
+    // directly in commit(). Only guard on blockId presence.
+    if (!props.props.blockId) return;
+    console.log(KANBAN_LOG, 'enterEdit', { blockId: props.props.blockId });
+    setEditing(true);
+    queueMicrotask(() => {
+      if (!inputRef) return;
+      inputRef.focus();
+      const len = inputRef.value.length;
+      try { inputRef.setSelectionRange(len, len); } catch { /* not text */ }
+    });
+  };
+
+  const onClick = (e: MouseEvent) => {
+    console.log(KANBAN_LOG, 'click', { blockId: props.props.blockId, editing: editing(), justDragged });
+    if (editing() || justDragged) return;
+    e.stopPropagation();
+    enterEdit();
+  };
+
+  // Commit/cancel both exit edit mode, then try to refocus the card.
+  // After commit, refresh() regenerates the spec → json-render
+  // reconciles → the original `ref` may be detached. Look up the new
+  // card DOM by data-kanban-card-id and retry across a few rAFs so we
+  // land after the re-projection settles.
+  const refocusCard = () => {
+    const id = props.props.blockId;
+    if (!id) { ref?.focus(); return; }
+    let attempts = 0;
+    const tryFocus = () => {
+      const el = document.querySelector<HTMLElement>(`[data-kanban-card-id="${id}"]`);
+      if (el) { el.focus(); return; }
+      if (attempts++ < 8) requestAnimationFrame(tryFocus);
+    };
+    queueMicrotask(tryFocus);
+  };
+
+  const commit = () => {
+    if (!inputRef) return;
+    const next = inputRef.value;
+    const prev = String(localValue() ?? '');
+    // Emit update-block chirp directly rather than routing through
+    // useBoundProp → StateProvider → onStateChange. The StateProvider
+    // bridge has two internal gates (value-change + snapshot-identity)
+    // that can silently suppress the callback; direct chirp is both
+    // simpler and architecturally correct for floatty, where the outline
+    // (not spec state) is source of truth. Reactive re-projection via
+    // subscribeBlockChanges handles the display round-trip.
+    if (next !== prev && props.props.blockId && ref) {
+      console.log(KANBAN_LOG, 'emit update-block', { blockId: props.props.blockId });
+      emitChirp(ref, 'update-block', { blockId: props.props.blockId, content: next });
+    }
+    setEditing(false);
+    refocusCard();
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    refocusCard();
+  };
+
+  const onInputKeyDown = (e: KeyboardEvent) => {
+    // stopPropagation so outer card / block handlers don't catch Enter/Escape.
+    // Mirrors TableView handleInputKeyDown at BlockDisplay.tsx:570-578.
+    e.stopPropagation();
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  };
+
+  // --- KEYBOARD NAV BETWEEN CARDS ------------------------------------
+
+  const findNeighbor = (dir: 'up' | 'down' | 'left' | 'right'): HTMLElement | null => {
+    if (!ref) return null;
+    if (dir === 'up' || dir === 'down') {
+      const col = ref.closest('[data-kanban-column-id]');
+      if (!col) return null;
+      const siblings = Array.from(col.querySelectorAll<HTMLElement>('[data-kanban-card-id]'));
+      const idx = siblings.indexOf(ref);
+      if (idx < 0) return null;
+      return dir === 'down' ? (siblings[idx + 1] ?? null) : (siblings[idx - 1] ?? null);
+    }
+    // Scope to THIS kanban's DOM root (data-section-id="kanban-board"
+    // set by kanbanSpec in render.tsx). Without the scope, left/right
+    // nav from board A's last column would leak into board B's columns
+    // when two kanbans share a split pane.
+    const board = ref.closest('[data-section-id="kanban-board"]') ?? ref.closest('.kanban-board') ?? ref.closest('[contenteditable]')?.parentElement ?? document.body;
+    const cols = Array.from(board.querySelectorAll<HTMLElement>('[data-kanban-column-id]'));
+    const currentCol = ref.closest<HTMLElement>('[data-kanban-column-id]');
+    if (!currentCol) return null;
+    const colIdx = cols.indexOf(currentCol);
+    const targetCol = cols[dir === 'right' ? colIdx + 1 : colIdx - 1];
+    if (!targetCol) return null;
+    const targetCards = Array.from(targetCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'));
+    if (targetCards.length === 0) return null;
+    const currentCards = Array.from(currentCol.querySelectorAll<HTMLElement>('[data-kanban-card-id]'));
+    const row = currentCards.indexOf(ref);
+    return targetCards[Math.min(row, targetCards.length - 1)] ?? targetCards[0];
+  };
+
+  const onCardKeyDown = (e: KeyboardEvent) => {
+    if (editing()) return;
+    switch (e.key) {
+      case 'Enter':
+        e.preventDefault();
+        e.stopPropagation();
+        enterEdit();
+        return;
+      case 'ArrowDown':
+      case 'ArrowUp': {
+        const dir = e.key === 'ArrowDown' ? 'down' : 'up';
+        const n = findNeighbor(dir);
+        if (n) {
+          e.preventDefault();
+          e.stopPropagation();
+          n.focus();
+        } else if (ref && props.props.blockId) {
+          // Boundary: emit focus-sibling verb. Host's BlockOutputView
+          // dispatches to findPrev/NextVisibleBlock + onFocus.
+          e.preventDefault();
+          e.stopPropagation();
+          console.log(KANBAN_LOG, 'emit focus-sibling', { direction: dir });
+          emitChirp(ref, 'focus-sibling', { direction: dir, fromBlockId: props.props.blockId });
+        }
+        return;
+      }
+      case 'ArrowLeft':
+      case 'ArrowRight': {
+        const dir = e.key === 'ArrowRight' ? 'right' : 'left';
+        const n = findNeighbor(dir);
+        if (n) {
+          e.preventDefault();
+          e.stopPropagation();
+          n.focus();
+        } else if (ref && props.props.blockId) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log(KANBAN_LOG, 'emit focus-sibling', { direction: dir });
+          emitChirp(ref, 'focus-sibling', { direction: dir, fromBlockId: props.props.blockId });
+        }
+        return;
+      }
+      case 'Escape':
+        e.preventDefault();
+        e.stopPropagation();
+        ref?.blur();
+        return;
+    }
+  };
+
+  const outlineRing = () => {
+    if (editing()) return `1px solid ${V.cy}`;
+    if (focused()) return `2px solid ${V.cy}`;
+    return '1px solid transparent';
+  };
+
+  return (
+    <div
+      ref={(el) => (ref = el)}
+      tabindex={0}
+      onPointerDown={onPointerDown}
+      onClick={onClick}
+      onKeyDown={onCardKeyDown}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      data-kanban-card-id={props.props.blockId}
+      style={{
+        background: V.s1,
+        color: props.props.color ?? V.t,
+        'font-family': V.mono,
+        'font-size': '13px',
+        border: '1px solid ' + V.b2,
+        'border-radius': '4px',
+        padding: '6px 8px',
+        cursor: editing() ? 'text' : 'grab',
+        outline: outlineRing(),
+        'outline-offset': '1px',
+      }}
+    >
+      <Show
+        when={editing()}
+        fallback={<>{String(localValue() ?? '')}</>}
+      >
+        <input
+          ref={(el) => (inputRef = el)}
+          type="text"
+          value={String(localValue() ?? '')}
+          onKeyDown={onInputKeyDown}
+          onBlur={commit}
+          style={{
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            outline: 'none',
+            padding: '0',
+            margin: '0',
+            color: 'inherit',
+            font: 'inherit',
+          }}
+        />
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * KanbanColumn — column container. Pure presentation.
+ * Carries `data-kanban-column-id` so KanbanCard's pointer-drag can resolve
+ * the drop target's parent. No drop handler — card-level drag owns the
+ * entire drop resolution via elementFromPoint.
+ */
+export function KanbanColumn(
+  props: BaseComponentProps<{
+    title?: string;
+    titleColor?: string;
+    blockId?: string;
+    childCount?: number;
+  }>,
+) {
+  return (
+    <div
+      data-kanban-column-id={props.props.blockId}
+      style={{
+        border: `1px solid ${V.b}`,
+        'border-radius': '6px',
+        'background-color': 'transparent',
+        'min-width': '200px',
+        padding: '8px',
+      }}
+    >
+      <div style={{
+        'font-family': V.mono,
+        'font-size': '11px',
+        color: props.props.titleColor ?? V.td,
+        'text-transform': 'uppercase',
+        'letter-spacing': '0.08em',
+        'margin-bottom': '8px',
+      }}>
+        {props.props.title}
+      </div>
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+// ─── KANBAN SHIMS (installed at door init) ───────────────────────────
+// Non-negotiable for Tier 1 (door-bundle-only, pre-rebuild):
+// - body.kanban-dragging CSS so text-selection doesn't fight pointer drag
+// - capture-phase ArrowDown interceptor so the render-title descends into
+//   the first card instead of jumping past the board
+//
+// These are both invariant CSS/event concerns unrelated to business
+// logic, and belong at the door boundary. Both guarded against HMR
+// re-install.
+
+function installKanbanStyles() {
+  if (typeof document === 'undefined') return;
+  // Always refresh — door HMR should pick up any style changes.
+  document.querySelector('[data-kanban-styles]')?.remove();
+  const s = document.createElement('style');
+  s.setAttribute('data-kanban-styles', '');
+  s.textContent = `
+    body.kanban-dragging {
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      cursor: grabbing !important;
+    }
+    body.kanban-dragging * {
+      cursor: grabbing !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+    }
+  `;
+  document.head.appendChild(s);
+  console.log(KANBAN_LOG, 'styles injected');
+}
+
+function installKanbanNavShim() {
+  if (typeof document === 'undefined') return;
+  const w = window as unknown as {
+    __floatty_kanban_nav_v1?: (e: KeyboardEvent) => void;
+    __floatty_kanban_nav_v2?: (e: KeyboardEvent) => void;
+  };
+  // Clean up leaks from any prior bundle version (v1 from 5e/5f stack).
+  if (w.__floatty_kanban_nav_v1) {
+    document.removeEventListener('keydown', w.__floatty_kanban_nav_v1, true);
+    delete w.__floatty_kanban_nav_v1;
+  }
+  if (w.__floatty_kanban_nav_v2) {
+    document.removeEventListener('keydown', w.__floatty_kanban_nav_v2, true);
+  }
+  const handler = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowDown') return;
+    const target = e.target as HTMLElement | null;
+    if (!target || !target.classList?.contains('render-title-wrapper')) return;
+    const blockItem = target.closest('.block-item');
+    const card = blockItem?.querySelector<HTMLElement>('[data-kanban-card-id]');
+    if (!card) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    card.focus();
+    console.log(KANBAN_LOG, 'nav-shim ArrowDown → first card');
+  };
+  document.addEventListener('keydown', handler, true);
+  w.__floatty_kanban_nav_v2 = handler;
+  console.log(KANBAN_LOG, 'nav-shim installed');
+}
+
 export function injectBodyStyles() {
   if (typeof document === 'undefined') return;
-  if (document.querySelector('[data-bbs-entry-styles]')) return;
-  const style = document.createElement('style');
-  style.setAttribute('data-bbs-entry-styles', '');
-  style.textContent = BODY_STYLES;
-  document.head.appendChild(style);
+  if (!document.querySelector('[data-bbs-entry-styles]')) {
+    const style = document.createElement('style');
+    style.setAttribute('data-bbs-entry-styles', '');
+    style.textContent = BODY_STYLES;
+    document.head.appendChild(style);
+  }
+  installKanbanStyles();
+  installKanbanNavShim();
 }

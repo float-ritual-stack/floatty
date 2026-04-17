@@ -265,7 +265,7 @@ const KANBAN_COLORS: Record<string, string> = {
   blocked: '#ff4444', deferred: '#e040a0', review: '#e040a0',
 };
 
-function kanbanSpec(blockRef: string, actions: BlockActions) {
+export function kanbanSpec(blockRef: string, actions: BlockActions) {
   const root = resolveBlockRef(blockRef, actions);
   if (!root) throw new Error(`Block not found: ${blockRef}`);
 
@@ -274,6 +274,12 @@ function kanbanSpec(blockRef: string, actions: BlockActions) {
 
   const elements: Record<string, any> = {};
   const columnKeys: string[] = [];
+
+  // FLO-587 — state.cards[blockId].content is the binding surface for
+  // two-way sync. Card elements declare `bindings: { content: '/cards/<id>/content' }`;
+  // StateProvider.onStateChange translates writes back to the outline via
+  // the chirp `update-block` verb (see handleRenderStateChange).
+  const cardsState: Record<string, { content: string }> = {};
 
   // Header
   elements['header'] = { type: 'Text', props: { content: root.content, size: 'lg', weight: 'bold', color: '#00e5ff' }, children: [] };
@@ -303,26 +309,34 @@ function kanbanSpec(blockRef: string, actions: BlockActions) {
       const status = detectBlockStatus(card.content);
       const cardColor = status === 'done' ? '#98c379' : status === 'active' ? '#00e5ff' : status === 'deferred' ? '#e040a0' : colColor;
 
+      // Seed state with the current block content so the element's
+      // binding resolves to the live value.
+      cardsState[card.id] = { content: card.content };
+
       elements[cardKey] = {
-        type: 'Text',
-        props: { content: card.content, size: 'sm', color: cardColor, mono: true },
+        type: 'KanbanCard',
+        props: {
+          content: card.content,
+          color: cardColor,
+          blockId: card.id,
+          parentId: col.id,
+          index: ki,
+        },
+        bindings: { content: `/cards/${card.id}/content` },
         children: [],
       };
     }
 
     elements[colKey] = {
-      type: 'TuiPanel',
-      props: { title: panelTitle, titleColor: colColor },
-      children: cardKeys.length > 0 ? [`${colKey}-stack`] : [],
+      type: 'KanbanColumn',
+      props: {
+        title: panelTitle,
+        titleColor: colColor,
+        blockId: col.id,
+        childCount: cardKeys.length,
+      },
+      children: cardKeys,
     };
-
-    if (cardKeys.length > 0) {
-      elements[`${colKey}-stack`] = {
-        type: 'Stack',
-        props: { gap: 4, direction: 'vertical' },
-        children: cardKeys,
-      };
-    }
 
     columnKeys.push(colKey);
   }
@@ -335,11 +349,19 @@ function kanbanSpec(blockRef: string, actions: BlockActions) {
 
   elements['layout'] = {
     type: 'Stack',
-    props: { gap: 10, direction: 'vertical' },
+    // sectionId renders as data-section-id on the root Stack div. Used
+    // by KanbanCard.findNeighbor to scope cross-column lookups to THIS
+    // board's DOM subtree — without it, a second kanban in a split pane
+    // would leak left/right nav across boards.
+    props: { gap: 10, direction: 'vertical', sectionId: 'kanban-board' },
     children: ['header', 'columns'],
   };
 
-  return { root: 'layout', elements };
+  return {
+    root: 'layout',
+    state: { cards: cardsState },
+    elements,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -772,6 +794,30 @@ interface DoorViewProps {
   onChirp?: (message: string, data?: unknown) => void;
 }
 
+/**
+ * FLO-587 — translate json-render StateProvider changes into chirp verbs
+ * that floatty's chirp handler routes back to useBlockStore. Kanban emits
+ * paths of shape `/cards/<blockId>/content`; other modes' bindings (if any)
+ * get a no-op here. Runs on every value change (notifyChanges fires once
+ * per distinct value per flush in @json-render/solid).
+ */
+export function handleRenderStateChange(
+  changes: Array<{ path: string; value: unknown }>,
+  onChirp?: (message: string, data?: unknown) => void,
+): void {
+  if (!onChirp) return;
+  for (const { path, value } of changes) {
+    const cardContent = /^\/cards\/([^/]+)\/content$/.exec(path);
+    if (cardContent && typeof value === 'string') {
+      onChirp('update-block', { blockId: cardContent[1], content: value });
+      continue;
+    }
+    // Any other path is either from a non-kanban render mode that doesn't
+    // use block-bound paths, or a kanban path shape we haven't wired yet.
+    // Silent no-op — logging every such change would spam demo/stats/etc.
+  }
+}
+
 function RenderView(props: DoorViewProps) {
   const spec = () => props.data?.spec;
   const generatedVia = () => props.data?.generatedVia;
@@ -807,7 +853,10 @@ function RenderView(props: DoorViewProps) {
       </div>
     }>
       <div style={{ padding: '8px 0', 'font-family': 'JetBrains Mono, monospace' }}>
-        <StateProvider initialState={spec()?.state || {}}>
+        <StateProvider
+          initialState={spec()?.state || {}}
+          onStateChange={(changes) => handleRenderStateChange(changes, props.onChirp)}
+        >
           <RenderViewInner spec={spec()!} onNavigate={props.onNavigate} onChirp={props.onChirp} />
         </StateProvider>
         <Show when={generatedVia() || sessionId()}>
@@ -886,7 +935,25 @@ function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: stri
 }
 
 const executionNonces = new Map<string, number>();
-const liveIntervals = new Map<string, ReturnType<typeof setInterval>>();
+
+// FLO-587 — per-block subscription to Y.Doc changes so kanban/expand
+// re-project when their subtree mutates (e.g. after drag-drop). Key is
+// `${blockId}:${cmd}` so re-running the SAME cmd on the same block
+// replaces its handler cleanly. Switching between commands on the same
+// block (kanban → expand, etc.) clears ALL `${blockId}:*` entries via
+// `clearRenderSubscriptionsForBlock` so stale callbacks don't keep
+// overwriting the current view's output.
+const renderSubscriptions = new Map<string, () => void>();
+
+function clearRenderSubscriptionsForBlock(blockId: string): void {
+  const prefix = `${blockId}:`;
+  for (const key of Array.from(renderSubscriptions.keys())) {
+    if (key.startsWith(prefix)) {
+      try { renderSubscriptions.get(key)?.(); } catch { /* ignore */ }
+      renderSubscriptions.delete(key);
+    }
+  }
+}
 
 export const door = {
   kind: 'view' as const,
@@ -896,6 +963,12 @@ export const door = {
     const nonce = (executionNonces.get(blockId) ?? 0) + 1;
     executionNonces.set(blockId, nonce);
     const thisExecution = nonce;
+    // Clear any subscriptions left behind by previous executions of THIS
+    // render block (regardless of prior cmd). The branches that need a
+    // subscription (expand/kanban) will install a fresh one below;
+    // branches that don't (demo, stats, prompt, ai, agent) leave the
+    // block with zero live subscriptions, as intended.
+    clearRenderSubscriptionsForBlock(blockId);
     ctx.actions.setBlockStatus(blockId, 'running');
     const raw = content.replace(/^render::\s*/i, '').trim();
     const explicitTitle = extractTitle(raw);
@@ -952,6 +1025,8 @@ export const door = {
       const refresh = () => {
         try {
           const spec = generate(blockRef, storeActions);
+          const elementCount = Object.keys(spec.elements ?? {}).length;
+          ctx.log(`[render::${cmd}] refresh fired — ${elementCount} elements`);
           setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd as any, title: `${cmd}: ${blockRef}` });
         } catch (e: any) {
           ctx.log(`[render::${cmd}] refresh failed:`, e.message);
@@ -968,9 +1043,22 @@ export const door = {
         return;
       }
 
-      // Live refresh removed — was causing perf issues (setInterval + setBlockOutput every 2s
-      // triggers Y.Doc transactions + reactivity cascade). Proper solution: FLO-587 (blockEventBus).
-
+      // FLO-587 — subscribe to block changes so the view re-projects when
+      // the subtree mutates (drag-drop moves cards → Y.Doc updates →
+      // `refresh()` re-generates spec → setOutputWithTitle propagates).
+      // Filter to structural + content fields; ignore metadata-only updates
+      // (outlinks/markers) that don't change what the kanban renders.
+      //
+      // Clear ALL prior subscriptions for this blockId before installing
+      // the new one. Otherwise switching kanban → expand → demo on the
+      // same block leaves stale callbacks that keep calling
+      // setOutputWithTitle with obsolete spec/title.
+      clearRenderSubscriptionsForBlock(blockId);
+      const subKey = `${blockId}:${cmd}`;
+      const unsubscribe = ctx.server.subscribeBlockChanges(refresh, {
+        fields: ['childIds', 'content', 'parentId'],
+      });
+      renderSubscriptions.set(subKey, unsubscribe);
       return;
     }
 

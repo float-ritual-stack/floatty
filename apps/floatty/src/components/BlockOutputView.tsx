@@ -14,6 +14,9 @@ import { useBlockOperations } from '../hooks/useBlockOperations';
 import { navigateToBlock, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
 import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../lib/chirpWriteHandler';
 import { isMac } from '../lib/keybinds';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('BlockOutputView');
 import { SearchResultsView, SearchErrorView } from './views/SearchResultsView';
 import { DoorHost, DoorExecCard } from './views/DoorHost';
 import { ImgView } from './views/ImgView';
@@ -364,6 +367,19 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                 status={block()?.outputStatus}
                 onNavigate={handleDoorNavigate}
                 onChirp={(message, data) => {
+                  if (message === 'focus-sibling') {
+                    const { direction } = (data ?? {}) as { direction?: 'up' | 'down' | 'left' | 'right' };
+                    if (!direction) return;
+                    const goPrev = direction === 'up' || direction === 'left';
+                    const nextBlockId = goPrev
+                      ? findPrevVisibleBlock(props.blockId, props.paneId)
+                      : findNextVisibleBlock(props.blockId, props.paneId);
+                    logger.debug('[focus-sibling]', { direction, fromRenderBlock: props.blockId, paneId: props.paneId, nextBlockId });
+                    if (nextBlockId) {
+                      props.onFocus(nextBlockId);
+                    }
+                    return;
+                  }
                   if (isChirpWriteVerb(message)) {
                     handleChirpWrite(message, data as ChirpWriteData, props.blockId, store);
                   }

@@ -1340,17 +1340,37 @@ function createBlockStore() {
     if (!_doc) { warnDocNotReady('moveBlock'); return false; }
 
     const block = state.blocks[blockId];
-    if (!block) return false;
-    if (targetParentId === blockId) return false;
-    if (targetParentId && !state.blocks[targetParentId]) return false;
-    if (targetParentId && isDescendant(blockId, targetParentId)) return false;
+    if (!block) {
+      logger.warn('moveBlock rejected: source block not in state.blocks', { blockId, targetParentId, targetIndex });
+      return false;
+    }
+    if (targetParentId === blockId) {
+      logger.warn('moveBlock rejected: self-move (targetParentId === blockId)', { blockId });
+      return false;
+    }
+    if (targetParentId && !state.blocks[targetParentId]) {
+      logger.warn('moveBlock rejected: target parent not in state.blocks', { blockId, targetParentId });
+      return false;
+    }
+    if (targetParentId && isDescendant(blockId, targetParentId)) {
+      logger.warn('moveBlock rejected: target is descendant of source (cycle)', { blockId, targetParentId });
+      return false;
+    }
 
     const oldParentId = block.parentId;
     const oldSiblings = oldParentId
       ? (state.blocks[oldParentId]?.childIds ?? [])
       : state.rootIds;
     const oldIndex = oldSiblings.indexOf(blockId);
-    if (oldIndex < 0) return false;
+    if (oldIndex < 0) {
+      logger.warn('moveBlock rejected: source not in old parent childIds', {
+        blockId,
+        oldParentId,
+        oldSiblingsLength: oldSiblings.length,
+        blockParentIdInState: block.parentId,
+      });
+      return false;
+    }
 
     const targetSiblings = targetParentId
       ? (state.blocks[targetParentId]?.childIds ?? [])
@@ -1361,7 +1381,10 @@ function createBlockStore() {
         ? clampedTarget - 1
         : clampedTarget;
 
-    if (oldParentId === targetParentId && oldIndex === adjustedTarget) return false;
+    if (oldParentId === targetParentId && oldIndex === adjustedTarget) {
+      logger.warn('moveBlock rejected: no-op (same position)', { blockId, oldParentId, oldIndex, targetIndex, adjustedTarget });
+      return false;
+    }
 
     const previousBlock = { ...block };
     _pendingMoveEvent = {

@@ -1,12 +1,21 @@
 /**
- * Chirp write verb handler — shared logic for create-child and upsert-child.
+ * Chirp write verb handler — shared logic for block mutation verbs emitted
+ * from doors (SolidJS inline, full-pane, and artifact iframes).
  *
  * Called from 3 chirp sites:
  *   1. EvalOutput onChirp in BlockItem (artifact:: iframes)
  *   2. DoorHost onChirp in BlockItem (render:: SolidJS doors, inline)
  *   3. DoorPaneView chirp listener (render:: doors, full-pane)
  *
- * Parent is always the emitting block (scoped writes).
+ * Verb map:
+ *   create-child  — create a new child of the emitting block (scoped write)
+ *   upsert-child  — upsert child of emitting block by prefix (scoped write)
+ *   update-block  — update content of any block by id (FLO-587 two-way binding)
+ *   move-block    — move any block to target parent + index (FLO-587)
+ *
+ * create-child/upsert-child are scoped to the emitting block (parent). update-block
+ * and move-block accept an explicit blockId in the data payload; they're scoped
+ * by the door's own spec (the door only emits ids it put in its projection).
  */
 
 import { createLogger } from './logger';
@@ -18,12 +27,17 @@ export interface ChirpWriteData {
   match?: string;
   execute?: boolean;
   navigate?: boolean;
+  // FLO-587 — update-block / move-block
+  blockId?: string;
+  targetParentId?: string | null;
+  targetIndex?: number;
 }
 
 export interface ChirpWriteStore {
   createBlockInside: (parentId: string) => string;
   updateBlockContent: (id: string, content: string) => void;
   upsertChildByPrefix: (parentId: string, prefix: string, content: string) => string | null;
+  moveBlock: (blockId: string, targetParentId: string | null, targetIndex: number) => boolean;
 }
 
 export interface ChirpWriteResult {
@@ -73,6 +87,34 @@ export function handleChirpWrite(
       return { success: true, blockId: resultId };
     }
 
+    case 'update-block': {
+      const blockId = data?.blockId;
+      const content = data?.content;
+      if (!blockId || content === undefined) {
+        logger.warn('update-block: missing blockId or content');
+        return { success: false };
+      }
+      store.updateBlockContent(blockId, content);
+      return { success: true, blockId };
+    }
+
+    case 'move-block': {
+      const blockId = data?.blockId;
+      const targetParentId = data?.targetParentId;
+      const targetIndex = data?.targetIndex;
+      if (!blockId || targetParentId === undefined || typeof targetIndex !== 'number') {
+        logger.warn('move-block: missing blockId, targetParentId, or targetIndex');
+        return { success: false };
+      }
+      const ok = store.moveBlock(blockId, targetParentId ?? null, targetIndex);
+      if (!ok) {
+        logger.warn('move-block: store rejected move', { blockId, targetParentId, targetIndex });
+        return { success: false };
+      }
+      logger.info('move-block', { blockId, targetParentId, targetIndex });
+      return { success: true, blockId };
+    }
+
     default:
       return { success: false };
   }
@@ -80,5 +122,10 @@ export function handleChirpWrite(
 
 /** Check if a chirp message is a write verb handled by this module. */
 export function isChirpWriteVerb(message: string): boolean {
-  return message === 'create-child' || message === 'upsert-child';
+  return (
+    message === 'create-child' ||
+    message === 'upsert-child' ||
+    message === 'update-block' ||
+    message === 'move-block'
+  );
 }
