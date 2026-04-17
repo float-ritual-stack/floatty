@@ -245,12 +245,29 @@ export function Terminal() {
   const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [sidebarSide, setSidebarSide] = createSignal<'left' | 'right'>('right');
   // Sidebar width — persisted in localStorage (not config.toml, which serializes
-  // the entire struct and caused race conditions with Rust config writes)
+  // the entire struct and caused race conditions with Rust config writes).
+  //
+  // Corvu's onSizesChange fires on every internal size change, not just user
+  // drags — including the registration window where the main content panel
+  // (no initialSize → defaults to 0.5) is the only panel in the sizes array.
+  // Without gating, 0.5 × clientWidth ≈ half the screen gets saved as the
+  // sidebar width. Gate saves on actual drag via Handle's drag hooks, and
+  // clamp the loaded value so any already-poisoned storage self-heals.
   const SIDEBAR_WIDTH_KEY = 'floatty-sidebar-width-px';
-  const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-  const [sidebarWidth, setSidebarWidth] = createSignal<number | string>(
-    savedWidth ? `${savedWidth}px` : '280px'
-  );
+  const SIDEBAR_MIN_PX = 200;
+  const SIDEBAR_DEFAULT_PX = 280;
+  const loadSavedSidebarWidth = (): string => {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (!raw) return `${SIDEBAR_DEFAULT_PX}px`;
+    const n = Number.parseInt(raw, 10);
+    const maxPx = Math.floor(window.innerWidth * 0.4); // matches CSS max-width: 40vw
+    if (!Number.isFinite(n) || n < SIDEBAR_MIN_PX || n > maxPx) {
+      return `${SIDEBAR_DEFAULT_PX}px`;
+    }
+    return `${n}px`;
+  };
+  const [sidebarWidth, setSidebarWidth] = createSignal<number | string>(loadSavedSidebarWidth());
+  const [isUserResizing, setIsUserResizing] = createSignal(false);
   const saveSidebarWidth = (widthPx: number) => {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(widthPx)));
   };
@@ -1161,15 +1178,25 @@ export function Terminal() {
         orientation="horizontal"
         style={{ display: 'flex', width: '100%', height: '100%' }}
         onSizesChange={(sizes) => {
-          // Persist sidebar width across side swaps + save to config (FLO-507)
-          // Corvu sizes are fractions (0-1) — convert to pixels for persistence
-          const sideIdx = sidebarSide() === 'left' ? 0 : sizes.length - 1;
-          if (sidebarVisible() && sizes[sideIdx] > 0) {
-            const containerWidth = document.querySelector('.terminal-wrapper')?.clientWidth ?? 0;
-            const widthPx = Math.round(sizes[sideIdx] * containerWidth);
-            if (widthPx > 50) {
-              setSidebarWidth(`${widthPx}px`);
-              saveSidebarWidth(widthPx);
+          // Only persist during an actual user drag. onSizesChange also fires
+          // during panel (un)registration — HMR, sidebar toggle, side swap —
+          // where sizes[length-1] may point at the main content panel, not
+          // the sidebar, and poisons storage with ~half the screen width.
+          // Requires both panels registered and sizes to be fractions in (0,1).
+          if (
+            isUserResizing() &&
+            sidebarVisible() &&
+            sizes.length >= 2
+          ) {
+            const sideIdx = sidebarSide() === 'left' ? 0 : sizes.length - 1;
+            const fraction = sizes[sideIdx];
+            if (fraction > 0 && fraction < 1) {
+              const containerWidth = document.querySelector('.terminal-wrapper')?.clientWidth ?? 0;
+              const widthPx = Math.round(fraction * containerWidth);
+              if (widthPx >= SIDEBAR_MIN_PX) {
+                setSidebarWidth(`${widthPx}px`);
+                saveSidebarWidth(widthPx);
+              }
             }
           }
           // Refit all visible terminals when sidebar resizes
@@ -1200,7 +1227,12 @@ export function Terminal() {
               getOutlinerPaneId={() => resolvedOutlinerPaneId()}
             />
           </Resizable.Panel>
-          <Resizable.Handle class="sidebar-resize-handle" aria-label="Resize sidebar" />
+          <Resizable.Handle
+            class="sidebar-resize-handle"
+            aria-label="Resize sidebar"
+            onHandleDragStart={() => setIsUserResizing(true)}
+            onHandleDragEnd={() => setIsUserResizing(false)}
+          />
         </Show>
         <Resizable.Panel class="terminal-container" as="main" role="main" minSize={0.3}>
           {/* Layout layer - just placeholder divs */}
@@ -1324,7 +1356,12 @@ export function Terminal() {
         </Resizable.Panel>
         {/* Sidebar on right side */}
         <Show when={sidebarVisible() && sidebarSide() === 'right'}>
-          <Resizable.Handle class="sidebar-resize-handle" aria-label="Resize sidebar" />
+          <Resizable.Handle
+            class="sidebar-resize-handle"
+            aria-label="Resize sidebar"
+            onHandleDragStart={() => setIsUserResizing(true)}
+            onHandleDragEnd={() => setIsUserResizing(false)}
+          />
           <Resizable.Panel
             class="sidebar-panel-wrapper"
             minSize={'200px'}
