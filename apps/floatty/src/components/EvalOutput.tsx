@@ -124,7 +124,7 @@ const UrlViewer: Component<ViewerProps> = (props) => {
             URLs (never same-origin as the Tauri webview at tauri://localhost). Without it,
             the iframe origin is forced to `null` which breaks:
             - CORS for subresources (CSS, JS, fonts from the iframe's own server)
-            - canvas.toDataURL() (e.g. claude-mem viewer-bundle)
+            - canvas.toDataURL() (iframe viewer bundles using canvas operations)
             The "allow-scripts + allow-same-origin = sandbox escape" concern only applies
             when iframe content shares origin with the parent. In Tauri, it never does. */}
         <iframe
