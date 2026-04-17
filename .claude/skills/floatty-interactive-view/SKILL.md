@@ -179,7 +179,7 @@ For inline edits, json-render provides `useBoundProp` which reads/writes
 to spec state. The bridge to the outline is a separate concern — here
 is the full path:
 
-```
+```text
 KanbanCard.commit()
   → setValue(newContent)                              // useBoundProp setter
   → StateProvider.set('/cards/<blockId>/content', ...) // writes spec state
@@ -366,7 +366,7 @@ detail + reproducer steps.
 
 ## Workflow
 
-```
+```text
 1. Read required files (6, in order).
 2. Invoke `pattern-fit-check` skill. Write four answers.
 3. Draft spec shape: element types, bindings, on-map.
