@@ -191,6 +191,65 @@ content. The regex in `handleRenderStateChange` only matches that exact
 shape. A binding path like `/items/<id>/text` would fall through as a
 silent no-op. Extend the regex if you need a new shape.
 
+## Keyboard Navigation & Boundary Crossing (FLO-587, 2026-04-17)
+
+Views own in-view arrow nav. At view boundaries (top of first column,
+bottom of last, past leftmost/rightmost column, etc.), focus must exit
+to the outline block before/after the view — otherwise users get
+trapped inside the view.
+
+**In-view nav:** a `findNeighbor(direction)` helper that walks the
+view's DOM (e.g. `querySelectorAll('[data-kanban-card-id]')`) and
+returns the next focusable element or `null` at a boundary. Reference:
+`apps/floatty/doors/render/components.tsx` `findNeighbor` in
+KanbanCard.
+
+**Boundary crossing:** emit the `focus-sibling` verb with
+`{ direction: 'up' | 'down' | 'left' | 'right', fromBlockId }`. The
+host dispatches to `findPrev/NextVisibleBlock(blockId, paneId)` + the
+BlockOutputView's `props.onFocus(nextBlockId)` callback. `props.onFocus`
+transfers focus to the next BlockItem via pane state — SolidJS effect
+in that BlockItem sees `isFocused() === true` and calls
+`contentRef?.focus()`.
+
+**Dispatcher location:** `focus-sibling` is NOT a store write — it's
+host-level focus coordination. Handle it in the DoorHost `onChirp`
+handler in `apps/floatty/src/components/BlockOutputView.tsx` (BEFORE
+the `isChirpWriteVerb` check), NOT in `chirpWriteHandler.ts`. This
+keeps the store-write dispatcher tight (only verbs that mutate
+useBlockStore) and keeps focus verbs in the view-host layer where
+focus state actually lives.
+
+**Reference implementation (verb form):** kanban emits focus-sibling
+in `components.tsx` `onCardKeyDown` at Arrow{Up,Down,Left,Right}
+boundaries. BlockOutputView dispatches. This is the first production
+reference for the verb.
+
+**Reference implementation (prop-callback form, non-door):** TableView
+uses the same bridge but via a prop-callback because it's a
+host-rendered block type, not a door view:
+
+- `apps/floatty/src/components/BlockDisplay.tsx:488-567` —
+  `handleTableKeyDown` detects cell boundaries and calls
+  `props.onNavigateOut('up' | 'down')`
+- `apps/floatty/src/components/BlockItem.tsx:887-895` — the bridge
+  callback: `findPrev/NextVisibleBlock` + `props.onFocus(nextBlockId)`
+
+Door views can't take direct props from the host (they're bundled JS
+loaded at runtime), so doors use chirps. Host-rendered blocks can use
+either pattern; prop-callback is lighter if you don't need verb-level
+declarativeness.
+
+**Anti-pattern:** letting the arrow key bubble when `findNeighbor`
+returns null, hoping the outline's nav-shim catches it. Kanban tried
+that until 2026-04-17; focus got stuck on the boundary card. The
+boundary case must be explicit — either emit the verb or call the
+callback.
+
+**Escape key convention:** TableView calls `onNavigateOut('up')` on
+Escape (default upward). Kanban currently just blurs on Escape; adopt
+TableView's convention if your view uses Escape for "exit."
+
 ## Drag Drop Zone Design (FLO-587, 2026-04-17)
 
 Lessons from shipping kanban drag:

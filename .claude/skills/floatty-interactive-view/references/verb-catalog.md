@@ -103,8 +103,8 @@ measurement. Required elements:
 
 ### `focus-sibling`
 
-Keyboard navigation exits the view at a boundary. View's internal arrow
-nav calls this when there's no more room to move inside.
+Keyboard navigation exits the view at a boundary. The view's internal
+arrow nav emits this when `findNeighbor(direction)` returns null.
 
 **Params (Zod):**
 ```ts
@@ -114,18 +114,44 @@ z.object({
 })
 ```
 
-**Dispatcher action:**
-- Host calls `findPrevVisibleBlock` / `findNextVisibleBlock` on the
-  outline pane containing the view
-- `props.onFocus(nextBlockId)` + `paneStore.setFocusCursorHint(paneId,
-  direction === 'up' ? 'end' : 'start')`
-- Left/right currently treated as no-op (views can override if they
-  have column-style left/right semantics that wrap into prev/next
-  outline blocks).
+**Dispatcher location (IMPORTANT):** `focus-sibling` is NOT handled in
+`chirpWriteHandler.ts` — it's host-level focus coordination, not a
+store write. Handle it in the DoorHost `onChirp` handler in
+`apps/floatty/src/components/BlockOutputView.tsx`, BEFORE the
+`isChirpWriteVerb` check. Keeps the store-write dispatcher tight.
 
-**Reference impl:** TableView's `onNavigateOut` at
-`apps/floatty/src/components/BlockItem.tsx:887-895`. This verb is the
-declarative version of that prop.
+**Dispatcher action:**
+- `goPrev = direction === 'up' || direction === 'left'`
+- `findPrevVisibleBlock(props.blockId, props.paneId)` or
+  `findNextVisibleBlock(...)` — these come from `useBlockOperations()`,
+  already in BlockOutputView's scope
+- `props.onFocus(nextBlockId)` — pane-state focus transfer; the next
+  BlockItem's SolidJS effect sees `isFocused()===true` and calls
+  `contentRef?.focus()`
+- Left/Right map to prev/next via the `goPrev` logic above. Views with
+  different left/right semantics (e.g. horizontal-only grid) can
+  deviate, but default is "left = prev block, right = next block."
+
+**Reference impl (verb form, first production use):** kanban emits
+`focus-sibling` in `apps/floatty/doors/render/components.tsx`
+`onCardKeyDown` at Arrow{Up,Down,Left,Right} boundaries. BlockOutputView
+dispatches at `apps/floatty/src/components/BlockOutputView.tsx:366`
+DoorHost `onChirp`.
+
+**Reference impl (prop-callback form, non-door views):** TableView uses
+a prop-callback `onNavigateOut: (direction: 'up' | 'down') => void`
+because it's host-rendered (not a door). Same bridge logic but via a
+direct prop:
+
+- `apps/floatty/src/components/BlockDisplay.tsx:488-567` —
+  `handleTableKeyDown` (boundary detection, e.preventDefault +
+  stopPropagation before calling onNavigateOut)
+- `apps/floatty/src/components/BlockItem.tsx:887-895` — the bridge
+  callback
+
+The two patterns solve the same problem. Use chirp for doors (bundle
+JS, no direct prop access to host), prop-callback for host-rendered
+block types.
 
 ### `activate-block`
 
