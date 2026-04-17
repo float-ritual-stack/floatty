@@ -93,6 +93,55 @@ After reading those six, invoke the `pattern-fit-check` skill with the
 reference as TableView (`:277`) and the target as your new view.
 Answer the four invariant questions before writing code.
 
+## Reactive Re-Projection (CRITICAL — FLO-587, 2026-04-17)
+
+**The spec generator is pure data → spec. It runs ONCE unless you wire a
+subscription.** An interactive view that doesn't subscribe to Y.Doc
+changes is a frozen snapshot — user drags a card, outline updates, view
+doesn't re-render. Kanban looked broken this way for 4+ hours until we
+found `refresh()` was defined-but-never-called.
+
+**The contract:** every interactive view MUST subscribe via
+`ctx.server.subscribeBlockChanges(handler, { fields: [...] })` after its
+initial render. The handler pulses (no args) — the view re-generates
+its spec from current store state and calls `setOutputWithTitle` again.
+
+**Reference implementation** — `apps/floatty/doors/render/render.tsx`
+in the `expand/kanban` branch:
+
+```typescript
+const refresh = () => {
+  const spec = generate(blockRef, storeActions);
+  setOutputWithTitle({ spec: normalizeSpec(spec, ctx), ... });
+};
+
+// Initial render
+refresh();
+
+// Subscribe — per-block+cmd key so re-execution doesn't stack
+const subKey = `${blockId}:${cmd}`;
+renderSubscriptions.get(subKey)?.();  // unsub prior
+const unsubscribe = ctx.server.subscribeBlockChanges(refresh, {
+  fields: ['childIds', 'content', 'parentId'],
+});
+renderSubscriptions.set(subKey, unsubscribe);
+```
+
+**Field filter matters.** Metadata-only updates (outlinks, markers,
+`updatedAt`) shouldn't trigger re-projections — they don't change what
+renders. Filter to `['childIds', 'content', 'parentId']` unless your
+view actually depends on other fields.
+
+**Re-execution discipline.** If the door can re-execute for the same
+block (Enter on a `render:: kanban` block re-runs), track subscriptions
+in a module-level `Map<key, () => void>` and unsubscribe-then-resubscribe
+on each execution. Otherwise you stack N subscriptions and `refresh`
+runs N times per change.
+
+**Anti-pattern:** a comment that says "reactivity lives in the view
+layer (see XYZ)" without actually wiring it. If you wrote `refresh()`
+and never call it from a subscription, you have a frozen view. See FM-12.
+
 ## The Verb Vocabulary
 
 Base verbs — every interactive view should speak these. See
@@ -100,15 +149,74 @@ Base verbs — every interactive view should speak these. See
 
 | Verb | Emitted when | Host dispatches to |
 |---|---|---|
-| `edit-block` | User activates a block for inline editing (click, Enter) | `store.updateBlockContent` when editor commits |
+| `update-block` | Inline editor commits (blur / Enter) — direct write | `store.updateBlockContent(blockId, content)` |
 | `move-block` | Drag-drop, reorder, reparent | `store.moveBlock` with surgical Y.Array ops |
 | `focus-sibling` | Keyboard navigation exits the view at a boundary | `findPrev/NextVisibleBlock` + `props.onFocus` |
 | `activate-block` | User "activates" without editing (Enter on header, preview) | View-specific; default = navigate |
+
+The `edit-block` entry in `references/verb-catalog.md` describes the
+view-state verb ("enter edit mode on block X"); the actual write verb
+that commits the edit is `update-block` with `{ blockId, content }`,
+already registered in `chirpWriteHandler.ts`.
 
 A new view extends this only if it has a genuinely new interaction —
 `expand/collapse` for tree, `resize` for calendar event. Adding a
 verb requires updating `references/verb-catalog.md` + Zod schema in
 `catalog.ts` + handler case in `chirpWriteHandler.ts`.
+
+## Two-Way Binding Pattern (useBoundProp → chirp)
+
+For inline edits, json-render provides `useBoundProp` which reads/writes
+to spec state. The bridge to the outline is a separate concern — here
+is the full path:
+
+```
+KanbanCard.commit()
+  → setValue(newContent)                              // useBoundProp setter
+  → StateProvider.set('/cards/<blockId>/content', ...) // writes spec state
+  → onStateChange([{path, value}])                    // StateProvider fires
+  → handleRenderStateChange(changes, props.onChirp)   // render.tsx translates
+  → onChirp('update-block', { blockId, content })     // DoorHost prop
+  → BlockOutputView handler → isChirpWriteVerb → handleChirpWrite
+  → store.updateBlockContent(blockId, content)        // outline mutates
+```
+
+**Every link in this chain must be wired.** If `setValue` fires but the
+outline doesn't update, instrument each hop: StateProvider callback,
+handleRenderStateChange path match, onChirp presence, isChirpWriteVerb
+membership, chirpWriteHandler case.
+
+**Binding path convention:** use `/cards/<blockId>/content` for card
+content. The regex in `handleRenderStateChange` only matches that exact
+shape. A binding path like `/items/<id>/text` would fall through as a
+silent no-op. Extend the regex if you need a new shape.
+
+## Drag Drop Zone Design (FLO-587, 2026-04-17)
+
+Lessons from shipping kanban drag:
+
+1. **Drop zones must cover empty column space, not just cards.** If
+   your drop detection only fires on `elementFromPoint → closest(card)`,
+   users dropping between cards or at the bottom of a column get
+   "drop: no target" and nothing happens. Fall back to
+   `closest(column)` and compute `targetIndex = siblings.length`.
+
+2. **Source must fade/indicate during drag.** Tauri webview has no
+   native drag ghost. Set `ref.style.opacity = '0.4'` on drag-started
+   and remove in cleanup. Without this, users can't see what they're
+   moving — they overshoot and drop on same-column cards.
+
+3. **Exclude source from sibling index calculation.** When computing
+   the insert index in a target column, filter the source element out
+   of `querySelectorAll('[data-kanban-card-id]')`. Otherwise dropping
+   on your own neighbor computes an index that, after `adjustedTarget`
+   math in `moveBlock`, equals your old position → legitimate
+   no-op reject → user experience is "drag doesn't work."
+
+4. **Distinct highlight styles per drop target type.** Card-relative
+   drops (above/below) use `inset box-shadow`. Column empty-space drops
+   use dashed `outline`. Different visuals = different feedback to
+   user about what the drop will do.
 
 ## Required Outputs Contract
 

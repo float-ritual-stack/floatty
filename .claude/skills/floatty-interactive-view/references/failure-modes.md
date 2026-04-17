@@ -273,3 +273,92 @@ copy; the commit is the ground truth. Ask the user before grepping.
 more than 2 are `git log` / `git show` / `grep` against your own
 recent commits *without* a preceding question to the user, FM-10
 is firing. Stop, ask, trust the commits.
+
+## FM-11 — Silent bail-outs in shared mutation code
+
+**Cited:** 2026-04-17 kanban drag debug. User reported drag doesn't
+work; kanban door emitted `move-block` chirps correctly; chirpWriteHandler
+logged `move-block: store rejected move` but with no reason. `moveBlock`
+in `apps/floatty/src/hooks/useBlockStore.ts:1334-1421` had SIX paths
+that silently returned `false`:
+
+1. `!block` (source not in state.blocks)
+2. `targetParentId === blockId` (self-move)
+3. `!state.blocks[targetParentId]` (target parent missing)
+4. `isDescendant(blockId, targetParentId)` (cycle)
+5. `oldIndex < 0` (source not in parent's childIds)
+6. `oldParentId === targetParentId && oldIndex === adjustedTarget` (no-op)
+
+None logged why. This **directly violates** the repo's own
+`ydoc-patterns.md` rule 14.6: "Every bail-out gets a diagnostic counter."
+When your door's emit looks correct but the outline doesn't mutate, the
+bug may not be in your door — it may be in shared mutation code that
+rejects silently.
+
+**Rule:** when a chirp verb dispatches to the store and the mutation
+doesn't happen, ALWAYS check whether the store path logs a reason.
+If not, instrument it BEFORE writing a fix in your door. Six silent
+branches, six different root causes — guessing which one fired is
+exactly the FM-7 (stacking patches on wrong measurement) rabbit hole.
+
+**Detection:** if your door's log says "emit X" but you see no
+corresponding host-side `[chirp-write]` success or warn, AND the
+store call returns `false`/`null` without logging, you are blind.
+Instrument first. See commit `010cb5f` for the `moveBlock` rejection
+diagnostic pattern — six `logger.warn` lines, zero behavior change,
+immediate root-cause visibility.
+
+**Meta-pattern:** this is an FM-1 cousin — shipping fixes without
+reading diagnostic logs — but upstream. FM-1 is "you have logs and
+don't read them." FM-11 is "you don't have logs yet because the
+shared code violates its own diagnostic contract."
+
+## FM-12 — "Reactivity lives in the view layer" as vaporware comment
+
+**Cited:** 2026-04-17 kanban re-projection debug. Kanban rendered
+correctly on initial load but didn't update when cards moved. The
+door's `execute` branch had this pattern:
+
+```typescript
+const refresh = () => { /* regenerates spec + setOutputWithTitle */ };
+
+// Initial render
+refresh();
+
+// Kanban reactivity lives in the view layer (blockEventBus subscription);
+// see kanban.test.ts and FLO-587 plan for the event-driven model.
+return;
+```
+
+`refresh` was **defined but never called after initial render**. The
+comment pointed to "kanban.test.ts and the FLO-587 plan" as if the
+reactivity were implemented there — but no subscription was wired
+anywhere. A pure one-shot view with a comment claiming otherwise.
+
+**Rule:** a spec generator that doesn't subscribe to Y.Doc changes
+is a frozen snapshot. Wire `ctx.server.subscribeBlockChanges(refresh,
+{ fields: [...] })` explicitly. Don't trust a comment that says
+"reactivity lives in XYZ" — verify XYZ fires by dragging something
+and watching `refresh` log.
+
+**Anti-pattern:** writing a refresh function "for later" and adding a
+comment claiming reactivity is handled by the view layer without
+actually connecting them. Future-you will read the comment, believe
+the view is live, and spend 4 hours debugging "why doesn't it update"
+when the answer is: you never subscribed.
+
+**Fix shipped:** commit `7b5defe..HEAD` wired `renderSubscriptions`
+(module-level map) + `ctx.server.subscribeBlockChanges(refresh, {
+fields: ['childIds', 'content', 'parentId'] })`. Per-block+cmd key so
+re-execution unsubscribes the prior handler. Field filter so metadata
+churn doesn't flood the refresh.
+
+**Detection:** in any view door, grep for `refresh`, `re-project`,
+`updateSpec`, or `regenerate` functions. For each, verify at least one
+call site that's NOT the initial render. If the only caller is the
+initial render, the view is frozen.
+
+**Meta-pattern:** FM-2 (hypothesis as source comment) cousin. FM-2 is
+"false claim about external behavior." FM-12 is "false claim about
+internal wiring." Both: the comment survives the session that was
+supposed to make it true, and future readers believe it.

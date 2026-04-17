@@ -5,10 +5,46 @@ set; new verbs get added here BEFORE code changes them.
 
 ## Base Verbs
 
-### `edit-block`
+### `update-block` (the write verb)
+
+Direct content write — commits an edit to a block's content. This is
+the verb that chirpWriteHandler actually handles; use this for edit
+commits from your view.
+
+**Params (Zod):**
+```ts
+z.object({
+  blockId: z.string(),
+  content: z.string(),
+})
+```
+
+**Dispatcher action:**
+- `store.updateBlockContent(blockId, content)` via `chirpWriteHandler.ts`
+  case `'update-block'`.
+- Already wired in `isChirpWriteVerb()` — no host changes needed.
+
+**Two paths to emit:**
+
+1. **Direct chirp** (simplest, for views without json-render state):
+   ```typescript
+   emitChirp(ref, 'update-block', { blockId, content });
+   ```
+
+2. **Via useBoundProp + StateProvider** (for json-render-wired specs):
+   Bind the element to a state path, use `setValue` to write, and
+   `handleRenderStateChange` translates `/cards/<id>/content` state
+   writes to `update-block` chirps. See **Two-Way Binding Pattern**
+   in `SKILL.md`. Path-regex convention: use `/cards/<blockId>/content`
+   for card content, or extend the regex in `handleRenderStateChange`
+   for new shapes.
+
+### `edit-block` (view-state verb; not a write)
 
 User activates a block for inline text editing (click, Enter on focused
-card, dbl-click, etc).
+card, dbl-click, etc). This is a **view-state** intent, not a write.
+It signals "enter edit mode for block X." The actual content commit
+uses `update-block` above.
 
 **Params (Zod):**
 ```ts
@@ -18,9 +54,13 @@ z.object({
 ```
 
 **Dispatcher action:**
-- Host enters edit state for the named block. View re-renders with an
-  editable input. On commit (blur / Enter), host emits a `update-block`
-  chirp to `store.updateBlockContent`.
+- In practice, `edit-block` is handled entirely inside the view
+  component — flip a local `editing` signal, render an `<input>`,
+  on commit emit `update-block`. There is no host-side `edit-block`
+  verb today; it's a view-local convenience.
+- If you genuinely need the host to know about edit state (e.g. to
+  prevent parallel edits across panes), add a case in
+  `chirpWriteHandler.ts` and document it here.
 
 **Note on editing UI:** the editor element must be a native `<input>` or
 `<textarea>`, NOT a contentEditable div. Nested `contentEditable=true`
