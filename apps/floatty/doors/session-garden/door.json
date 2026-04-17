@@ -1,0 +1,7 @@
+{
+  "id": "session-garden",
+  "name": "Session Garden",
+  "prefixes": ["garden::"],
+  "version": "0.1.0",
+  "selfRender": false
+}

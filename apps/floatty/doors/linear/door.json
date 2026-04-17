@@ -1,0 +1,6 @@
+{
+  "id": "linear",
+  "name": "Linear",
+  "prefixes": ["linear::"],
+  "version": "0.1.0"
+}

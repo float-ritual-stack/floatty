@@ -1,0 +1,6 @@
+{
+  "id": "floatctl",
+  "name": "Floatctl",
+  "prefixes": ["floatctl::"],
+  "version": "0.2.0"
+}
