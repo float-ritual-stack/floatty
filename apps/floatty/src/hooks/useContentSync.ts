@@ -49,6 +49,44 @@ const logger = createLogger('ContentSync');
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import type { CursorState } from './useCursor';
 
+// ─── Module-level flusher registry (FLO-646) ────────────────────────────
+// Call sites that read store content (markdown export, clipboard copy) need
+// pending DOM typing committed first. Under FLO-387's blur-is-the-boundary
+// model, the focused block's DOM can be ahead of the store until blur.
+// Each useContentSync instance registers its flushContentUpdate on mount
+// and deregisters on cleanup; `flushPendingContent()` iterates the set.
+//
+// Iteration cost is negligible: at most one mounted block has pending local
+// changes at a time (only the focused contentEditable receives input), and
+// each flushContentUpdate early-returns on !hasLocalChanges() without
+// touching Y.Doc.
+const activeFlushers = new Set<() => void>();
+
+/**
+ * Flush any in-progress DOM typing across all mounted useContentSync
+ * instances. Callers that read `block.content` from the store (markdown
+ * export, clipboard copy, etc.) must call this before the read so the
+ * returned content reflects what the user has actually typed — not the
+ * last-committed value.
+ *
+ * Idempotent; no-op when no instance has pending changes.
+ */
+export function flushPendingContent(): void {
+  // Snapshot to array so a flusher that unexpectedly mutates the set
+  // mid-iteration (via an onCleanup triggered by a sync effect, etc.)
+  // doesn't invalidate the iterator.
+  const snapshot = Array.from(activeFlushers);
+  for (const fn of snapshot) fn();
+}
+
+// HMR cleanup — see `.claude/rules/do-not.md` HMR section. Without this,
+// module reloads leak closures pointing at unmounted instances.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    activeFlushers.clear();
+  });
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────
 
 interface ContentSyncBlock {
@@ -210,6 +248,14 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   // DOM content must be committed before teardown or it is lost.
   onCleanup(() => {
     flushContentUpdate();
+  });
+
+  // FLO-646: register this instance's flusher so cross-module callers
+  // (markdown export, clipboard copy) can commit pending DOM typing before
+  // reading store content.
+  activeFlushers.add(flushContentUpdate);
+  onCleanup(() => {
+    activeFlushers.delete(flushContentUpdate);
   });
 
   // ─── Content sync effect ────────────────────────────────────────────

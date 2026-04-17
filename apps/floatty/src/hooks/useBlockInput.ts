@@ -278,7 +278,7 @@ export function determineKeyAction(
  */
 export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
   const handleKeyDown = (e: KeyboardEvent) => {
-    const block = deps.getBlock();
+    let block = deps.getBlock();
     if (!block) return;
 
     // FLO-376: Defense-in-depth gate — BlockItem's handleKeyDownWithAutocomplete
@@ -288,6 +288,22 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
         return;
       }
+    }
+
+    // FLO-646: Enter's branching inside determineKeyAction depends on
+    // content-type detection (`registry.findHandler(block.content)`) and on
+    // content.length. Under FLO-387's blur-is-the-boundary model (see the
+    // useContentSync.ts module header), keystrokes typed into a fresh
+    // executable prefix like `sh::` live only in the DOM until a commit
+    // boundary fires. Flush + re-read here so first-press Enter on a
+    // freshly-typed executable block dispatches to the handler instead of
+    // falling through to split/create-sibling. Flush is a no-op when
+    // hasLocalChanges is false, so this does not reintroduce per-keystroke
+    // Y.Doc traffic.
+    if (e.key === 'Enter') {
+      deps.flushContentUpdate();
+      const refreshed = deps.getBlock();
+      if (refreshed) block = refreshed;
     }
 
     const action = getActionForEvent(e);

@@ -5,10 +5,12 @@
  * This is the payoff of the entire refactor - we can test complex
  * keyboard interactions by calling determineKeyAction directly.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
-import { determineKeyAction, type KeyboardAction } from './useBlockInput';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { determineKeyAction, useBlockInput, type KeyboardAction, type BlockInputDependencies } from './useBlockInput';
 import { registerHandlers } from '../lib/handlers';
 import type { Block } from '../lib/blockTypes';
+import { createMockBlockStore, createMockPaneStore } from '../context/WorkspaceContext';
+import type { CursorState } from './useCursor';
 
 // Type-safe assertion helper for discriminated unions
 function expectAction<T extends KeyboardAction['type']>(
@@ -589,5 +591,173 @@ describe('determineKeyAction', () => {
       // Should return none - browser will delete selected text
       expect(result.type).toBe('none');
     });
+  });
+
+  // FLO-646: Enter on freshly-typed executable block must dispatch to handler.
+  // Pure-logic regression guard that determineKeyAction still returns
+  // execute_block when the caller passes fresh content starting with a
+  // registered prefix. The integration-level fix (flush + re-read before
+  // this runs) is covered below in the useBlockInput handleKeyDown suite.
+  describe('Enter on executable block (FLO-646 pure-logic guard)', () => {
+    it('returns execute_block for sh:: content (handler match short-circuits)', () => {
+      const result = determineKeyAction('Enter', false, null, createDeps({
+        cursorOffset: 12,
+        block: createBlock({ content: 'sh:: echo hi' }),
+        content: 'sh:: echo hi',
+      }));
+      // Handler match wins over all fallthrough branches — this is the
+      // behavior the FLO-646 flush exists to ensure the caller can reach.
+      expect(result.type).toBe('execute_block');
+    });
+
+    it('returns execute_block even at cursor start (handler check runs first)', () => {
+      const result = determineKeyAction('Enter', false, null, createDeps({
+        cursorOffset: 0,
+        cursorAtStart: true,
+        block: createBlock({ content: 'sh:: echo hi' }),
+        content: 'sh:: echo hi',
+      }));
+      expect(result.type).toBe('execute_block');
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// handleKeyDown integration — FLO-646 flush-before-decide
+// ═══════════════════════════════════════════════════════════════
+// The pure determineKeyAction suite above verifies what SHOULD happen when
+// content is fresh. This suite verifies that handleKeyDown actually produces
+// fresh content before calling determineKeyAction, by flushing pending DOM
+// edits and re-reading the block from the store. See useContentSync.ts
+// module header for the FLO-387 commit-boundary model this works with.
+
+function createCursorMock(): CursorState {
+  return {
+    isAtStart: () => false,
+    isAtEnd: () => false,
+    getOffset: () => 0,
+    setOffset: () => {},
+    isSelectionCollapsed: () => true,
+    snapshot: () => ({ offset: 12, atStart: false, atEnd: true, contentLength: 12 }),
+    invalidate: () => {},
+  };
+}
+
+function createMinimalDeps(
+  getBlock: () => Block | undefined,
+  flushContentUpdate: () => void,
+): BlockInputDependencies {
+  return {
+    getBlockId: () => 'test-block',
+    paneId: 'test-pane',
+    getBlock,
+    isCollapsed: () => false,
+    blockStore: createMockBlockStore(),
+    paneStore: createMockPaneStore(),
+    cursor: createCursorMock(),
+    findNextVisibleBlock: () => null,
+    findPrevVisibleBlock: () => null,
+    findFocusAfterDelete: () => null,
+    onFocus: () => {},
+    flushContentUpdate,
+    getContentRef: () => undefined,
+  };
+}
+
+describe('useBlockInput.handleKeyDown — FLO-646 flush-before-decide', () => {
+  beforeAll(() => registerHandlers());
+
+  it('flushes pending content and re-reads block before deciding on Enter', () => {
+    // Simulate the FLO-646 scenario: user typed "sh:: echo hi" into the DOM
+    // but FLO-387's blur-is-the-boundary model hasn't committed it to the
+    // store yet. First getBlock() sees empty content; flush commits the
+    // DOM → store; next getBlock() sees the executable prefix.
+    let storeContent = '';
+    const callLog: string[] = [];
+
+    const getBlock = vi.fn((): Block => {
+      callLog.push(`getBlock:${storeContent}`);
+      return {
+        id: 'test-block',
+        content: storeContent,
+        type: 'text',
+        parentId: null,
+        childIds: [],
+        collapsed: false,
+        createdAt: 0,
+        updatedAt: 0,
+      };
+    });
+    const flushContentUpdate = vi.fn(() => {
+      callLog.push('flush');
+      storeContent = 'sh:: echo hi';
+    });
+
+    const { handleKeyDown } = useBlockInput(
+      createMinimalDeps(getBlock, flushContentUpdate),
+    );
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+    // Flush must run BEFORE the second getBlock that feeds determineKeyAction.
+    // (The execute_block case runs a second defense-in-depth flush downstream;
+    // we only care that the first flush happens before the decision.)
+    expect(callLog[0]).toBe('getBlock:');        // initial snapshot — stale/empty
+    expect(callLog[1]).toBe('flush');             // FLO-646 flush
+    expect(callLog[2]).toBe('getBlock:sh:: echo hi'); // re-read — fresh
+    expect(flushContentUpdate.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('flushes on Shift+Enter too (executable-block create_block_before path)', () => {
+    // Shift+Enter on an executable block at cursor start creates a block
+    // before (FLO-571). That decision also calls registry.findHandler(content),
+    // so it has the same stale-read problem and needs the same flush.
+    const getBlock = vi.fn((): Block => ({
+      id: 'test-block',
+      content: 'sh::',
+      type: 'text',
+      parentId: null,
+      childIds: [],
+      collapsed: false,
+      createdAt: 0,
+      updatedAt: 0,
+    }));
+    const flushContentUpdate = vi.fn();
+
+    const { handleKeyDown } = useBlockInput(
+      createMinimalDeps(getBlock, flushContentUpdate),
+    );
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
+
+    expect(flushContentUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT flush on non-Enter keys (preserves FLO-387 perf)', () => {
+    // The whole point of FLO-387 is no per-keystroke Y.Doc writes. The fix
+    // must only flush for Enter, not for every key that passes through
+    // handleKeyDown.
+    const getBlock = vi.fn((): Block => ({
+      id: 'test-block',
+      content: 'some text',
+      type: 'text',
+      parentId: null,
+      childIds: [],
+      collapsed: false,
+      createdAt: 0,
+      updatedAt: 0,
+    }));
+    const flushContentUpdate = vi.fn();
+
+    const { handleKeyDown } = useBlockInput(
+      createMinimalDeps(getBlock, flushContentUpdate),
+    );
+
+    // A key that takes the 'none' path (Backspace without selection at
+    // non-zero offset on a block with no prev sibling) — handleKeyDown runs
+    // but no boundary was crossed.
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+
+    expect(flushContentUpdate).not.toHaveBeenCalled();
   });
 });
