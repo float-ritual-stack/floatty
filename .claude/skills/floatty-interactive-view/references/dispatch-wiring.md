@@ -150,3 +150,14 @@ to `store.moveBlock`.
 Rule of thumb: "I can have any amount of local component state and
 computed values, but the moment I want to mutate outline state, I
 emit a verb."
+
+## Reference implementation
+
+Commit `a26b58a` — "FLO-587 unit 6: kanban refactor per skill" — is
+the canonical first reference implementation of this pattern. Bundle-
+only deploy, 1185 tests passing, diagnostic logs wired for MCP probe.
+
+Before building a new interactive view (Tree, Calendar, Graph):
+  git show a26b58a -- apps/floatty/doors/render/components.tsx
+
+Pattern-match on it. Don't re-derive.
