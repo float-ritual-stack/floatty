@@ -83,8 +83,6 @@ Accessible in execute as `ctx.settings` and in view as `props.settings`.
 
 Doors with `sidebarEligible: true` appear as tabs in the sidebar (next to the ctx:: tab). The sidebar renders the door's view component directly — no prefix trigger needed.
 
-Example: the claude-mem door shows a viewer iframe in the sidebar.
-
 ## Hot Reload
 
 Doors auto-reload when their files change on disk. The file watcher detects modifications and re-imports without restarting floatty.
@@ -110,7 +108,6 @@ Doors share the host app's SolidJS runtime (signals, reactivity, rendering). The
 | `daily` | `daily::` | Structured daily notes |
 | `timestamp` | `timestamp::` | Render timestamps in multiple formats |
 | `extractTo` | `extractTo::` | Extract block subtree to new location |
-| `claude-mem` | `mem::` | Claude memory viewer (sidebar iframe) |
 
 ## Creating a New Door
 
