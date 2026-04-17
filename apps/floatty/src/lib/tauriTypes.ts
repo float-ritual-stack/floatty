@@ -115,8 +115,6 @@ export interface AggregatorConfig {
   unfocused_pane_opacity: number;
   /** Max children to render per block (0 = no limit). */
   child_render_limit?: number;
-  /** Sidebar width in pixels (0 = default 280px). */
-  sidebar_width?: number;
   /** Per-door plugin settings from [plugins.*] sections in config.toml */
   plugins?: Record<string, Record<string, unknown>>;
   /** Whether this is a dev (debug) build (runtime-only, not persisted) */
