@@ -250,41 +250,26 @@ when your hypothesis contradicts an observable fact. The discipline
 is the same: when two signals conflict, find the measurement that
 resolves the conflict before stacking another change.
 
-## FM-10: post-compact archaeology paralysis
+## FM-10 — Post-compact archaeology paralysis
 
-Symptom: after context compact, new instance reads summary, doesn't
-trust it, re-greps codebase to verify state instead of asking user
-or trusting commit messages.
+**Cited:** session `86926a53` ending 2026-04-17 03:53:03 UTC. After
+context compact, new instance read the summary, didn't trust it,
+re-grepped codebase to verify state instead of asking user or
+trusting commit messages. Last 9 bash calls: `jq` + `grep` +
+`git-log` against own committed state. Last text: "Wait — that's
+the full 5g KanbanCard. Let me check git state." (It was `a26b58a`
+unit 6, and it was fine — 1185/1185 passing, bundle deployed,
+diagnostics wired.)
 
-Reproducer: session 86926a53 ending 2026-04-17 03:53:03 UTC. Last
-9 bash calls: jq + grep + git-log against own committed state.
-Last text: "Wait — that's the full 5g KanbanCard. Let me check git
-state." (It was a26b58a unit 6, and it was fine.)
+**Rule:** post-compact, commit messages ARE the contract. If a
+commit says "1185 tests pass, reference implementation," believe
+it. Verify by running the tests, not by re-reading the diff.
 
-Rule: post-compact, commit messages ARE the contract. If a commit
-says "1185 tests pass, reference implementation," believe it. Verify
-by running the tests, not by re-reading the diff.
+**Anti-pattern:** treating a well-annotated commit as suspicious
+because your summary is opaque to you. The summary is the lossy
+copy; the commit is the ground truth. Ask the user before grepping.
 
-Anti-pattern: treating a well-annotated commit as suspicious because
-your summary is opaque to you. The summary is the lossy copy; the
-commit is the ground truth.
-
-## FM-10: post-compact archaeology paralysis
-
-Symptom: after context compact, new instance reads summary,
-doesn't trust it, re-greps codebase to verify state instead of
-asking user or trusting commit messages.
-
-Reproducer: session 86926a53 ending 2026-04-17 03:53:03 UTC.
-Last 9 bash calls: jq + grep + git-log against own committed
-state. Last text: "Wait — that's the full 5g KanbanCard. Let
-me check git state." (It was a26b58a unit 6, and it was fine.)
-
-Rule: post-compact, commit messages ARE the contract. If a
-commit says "1185 tests pass, reference implementation,"
-believe it. Verify by running the tests, not by re-reading
-the diff.
-
-Anti-pattern: treating a well-annotated commit as suspicious
-because your summary is opaque to you. The summary is the
-lossy copy; the commit is the ground truth.
+**Detection:** post-compact, count your first 10 tool calls. If
+more than 2 are `git log` / `git show` / `grep` against your own
+recent commits *without* a preceding question to the user, FM-10
+is firing. Stop, ask, trust the commits.
