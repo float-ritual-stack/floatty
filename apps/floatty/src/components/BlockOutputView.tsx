@@ -364,6 +364,18 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                 status={block()?.outputStatus}
                 onNavigate={handleDoorNavigate}
                 onChirp={(message, data) => {
+                  if (message === 'focus-sibling') {
+                    const { direction } = (data ?? {}) as { direction?: 'up' | 'down' | 'left' | 'right' };
+                    if (!direction) return;
+                    const goPrev = direction === 'up' || direction === 'left';
+                    const nextBlockId = goPrev
+                      ? findPrevVisibleBlock(props.blockId, props.paneId)
+                      : findNextVisibleBlock(props.blockId, props.paneId);
+                    if (nextBlockId) {
+                      props.onFocus(nextBlockId);
+                    }
+                    return;
+                  }
                   if (isChirpWriteVerb(message)) {
                     handleChirpWrite(message, data as ChirpWriteData, props.blockId, store);
                   }

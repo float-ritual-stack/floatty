@@ -3188,9 +3188,16 @@ export function KanbanCard(
     if (!inputRef) return;
     const next = inputRef.value;
     const prev = String(localValue() ?? '');
-    if (next !== prev) {
-      console.log(KANBAN_LOG, 'emit update-block (via setValue)', { blockId: props.props.blockId });
-      setValue(next);  // → StateProvider.onStateChange → handleRenderStateChange → chirp update-block
+    // Emit update-block chirp directly rather than routing through
+    // useBoundProp → StateProvider → onStateChange. The StateProvider
+    // bridge has two internal gates (value-change + snapshot-identity)
+    // that can silently suppress the callback; direct chirp is both
+    // simpler and architecturally correct for floatty, where the outline
+    // (not spec state) is source of truth. Reactive re-projection via
+    // subscribeBlockChanges handles the display round-trip.
+    if (next !== prev && props.props.blockId && ref) {
+      console.log(KANBAN_LOG, 'emit update-block', { blockId: props.props.blockId });
+      emitChirp(ref, 'update-block', { blockId: props.props.blockId, content: next });
     }
     setEditing(false);
     queueMicrotask(() => ref?.focus());
@@ -3250,22 +3257,35 @@ export function KanbanCard(
         return;
       case 'ArrowDown':
       case 'ArrowUp': {
-        const n = findNeighbor(e.key === 'ArrowDown' ? 'down' : 'up');
+        const dir = e.key === 'ArrowDown' ? 'down' : 'up';
+        const n = findNeighbor(dir);
         if (n) {
           e.preventDefault();
           e.stopPropagation();
           n.focus();
+        } else if (ref && props.props.blockId) {
+          // Boundary: emit focus-sibling verb. Host's BlockOutputView
+          // dispatches to findPrev/NextVisibleBlock + onFocus.
+          e.preventDefault();
+          e.stopPropagation();
+          console.log(KANBAN_LOG, 'emit focus-sibling', { direction: dir });
+          emitChirp(ref, 'focus-sibling', { direction: dir, fromBlockId: props.props.blockId });
         }
-        // else: bubble — nav-shim / host handles exit
         return;
       }
       case 'ArrowLeft':
       case 'ArrowRight': {
-        const n = findNeighbor(e.key === 'ArrowRight' ? 'right' : 'left');
+        const dir = e.key === 'ArrowRight' ? 'right' : 'left';
+        const n = findNeighbor(dir);
         if (n) {
           e.preventDefault();
           e.stopPropagation();
           n.focus();
+        } else if (ref && props.props.blockId) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log(KANBAN_LOG, 'emit focus-sibling', { direction: dir });
+          emitChirp(ref, 'focus-sibling', { direction: dir, fromBlockId: props.props.blockId });
         }
         return;
       }
