@@ -437,15 +437,24 @@ export async function resolveWikilinks(
 
   for (const link of links) {
     try {
-      // Search for the page by name (fuzzy to handle slight variations)
+      // Search for the page by name (fuzzy to keep typo tolerance).
+      // Widen the limit so an exact case-insensitive match is always in the
+      // returned set even when it loses the fuzzy ranking (FLO-637).
       const pages = (await floattyFetch(
-        `/api/v1/pages/search?prefix=${encodeURIComponent(link)}&limit=3&fuzzy=true`,
+        `/api/v1/pages/search?prefix=${encodeURIComponent(link)}&limit=10&fuzzy=true`,
       )) as {
         pages: Array<{ name: string; isStub: boolean; blockId: string | null }>;
       };
 
-      // Try exact prefix match first, then fuzzy
-      const page = pages.pages.find((p) => !p.isStub && p.blockId);
+      // FLO-637: exact case-insensitive name wins over fuzzy-ranked neighbours.
+      // Without this, `[[Foo]]` silently resolved to `Foobar` whenever the
+      // former was a stub or outranked by score. Only fall back to first
+      // non-stub when no exact match is present.
+      const linkLower = link.toLowerCase();
+      const exactMatch = pages.pages.find(
+        (p) => p.name.toLowerCase() === linkLower && !p.isStub && p.blockId,
+      );
+      const page = exactMatch ?? pages.pages.find((p) => !p.isStub && p.blockId);
 
       if (page?.blockId) {
         // Fetch page tree
