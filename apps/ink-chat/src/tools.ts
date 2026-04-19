@@ -952,23 +952,30 @@ export const floattyDailyAdd = tool({
     try {
       const today = new Date().toISOString().split("T")[0]!;
 
-      // Find or use parent
+      // Resolve today's daily note via the dedicated endpoint. GET /api/v1/daily/:date
+      // goes through PageNameIndex and returns the page block regardless of whether
+      // it's a stub, real, or needs creation — the caller doesn't have to know that
+      // pages live under `pages::` (FLO-636, "semantic endpoints for outline conventions").
+      //
+      // The old search-based lookup fell through to creating a bare root block when
+      // the heading `# YYYY-MM-DD` didn't match — the CodeRabbit-Critical symptom on
+      // PR #237. Now an unresolved daily note fails explicitly instead of silently
+      // rooting the new block.
       let parentId = parent_id;
       if (!parentId) {
-        // Find today's daily note heading
-        const heading = `# ${today}`;
-        const search = (await floattyFetch(
-          `/api/v1/search?q=${encodeURIComponent(heading)}&limit=5&include_breadcrumb=true`,
-        )) as { hits: Array<{ blockId: string; content: string }> };
-
-        const dailyHit = search.hits.find((h) => h.content.trim() === heading);
-        if (dailyHit) {
-          parentId = dailyHit.blockId;
+        try {
+          const daily = (await floattyFetch(
+            `/api/v1/daily/${encodeURIComponent(today)}`,
+          )) as { id: string };
+          parentId = daily.id;
+        } catch {
+          return {
+            error: `No daily note for ${today} — create one in floatty before appending, or pass parent_id explicitly.`,
+          };
         }
       }
 
-      const body: Record<string, string> = { content };
-      if (parentId) body.parentId = parentId;
+      const body: Record<string, string> = { content, parentId };
 
       const block = (await floattyFetch("/api/v1/blocks", {
         method: "POST",
