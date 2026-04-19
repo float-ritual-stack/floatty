@@ -74,11 +74,20 @@ function makeDeps(params: {
 /**
  * Tests always run inside createRoot so createEffect/onCleanup work.
  * `fn` receives the disposer so it can tear down between sub-steps.
+ *
+ * Auto-disposes after `fn` returns so the module-level `activeFlushers`
+ * registry (FLO-646) does not leak useContentSync instances across tests.
+ * Callers that invoke `dispose()` mid-fn are unaffected — Solid's root
+ * disposer is idempotent, so the `finally` call is a no-op on re-entry.
  */
 function inRoot<T>(fn: (dispose: () => void) => T): T {
   let out!: T;
   createRoot((dispose) => {
-    out = fn(dispose);
+    try {
+      out = fn(dispose);
+    } finally {
+      dispose();
+    }
   });
   return out;
 }

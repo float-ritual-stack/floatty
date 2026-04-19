@@ -253,6 +253,11 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   // FLO-646: register this instance's flusher so cross-module callers
   // (markdown export, clipboard copy) can commit pending DOM typing before
   // reading store content.
+  // NOTE: SolidJS runs onCleanup in LIFO order, so on unmount the deregister
+  // below fires first and the earlier unmount-flush (lines 249–251) runs
+  // second. Net result is correct — unmount still flushes, and the instance
+  // is deregistered before any concurrent flushPendingContent() could
+  // double-fire it — but the visual top-to-bottom reading implies FIFO.
   activeFlushers.add(flushContentUpdate);
   onCleanup(() => {
     activeFlushers.delete(flushContentUpdate);
