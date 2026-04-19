@@ -64,7 +64,23 @@ export interface ExecutorActions {
 export interface BlockHandler {
   /** Prefixes that trigger this handler (e.g., ['sh::', 'term::']) */
   prefixes: string[];
-  
+
   /** Execute the block content and handle output */
   execute: (blockId: string, content: string, actions: ExecutorActions) => Promise<void>;
+
+  /**
+   * When true, the caller (useBlockInput.execute_block case, or title-mode
+   * keyboard handlers in BlockItem) advances the cursor to the next visible
+   * sibling at dispatch time — NOT after completion. The user keeps typing
+   * while the handler runs asynchronously. If no next visible sibling
+   * exists, a new trailing block is created.
+   *
+   * Handlers that manage their own placeholder + focus internally
+   * (conversationHandler, sendHandler) should leave this undefined — they
+   * own the focus target inside their execute body.
+   *
+   * Intended for selfRender-style handlers (e.g. render::) where output
+   * lands back on the same block and there's no placeholder child to focus.
+   */
+  advanceCursorOnExecute?: boolean;
 }

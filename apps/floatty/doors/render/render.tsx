@@ -1191,4 +1191,5 @@ export const meta = {
   name: 'JSON Render',
   version: '0.2.0',
   selfRender: true,
+  advanceCursorOnExecute: true,
 };

@@ -189,6 +189,7 @@ function buildSelfRenderHandler(
 ): BlockHandler {
   return {
     prefixes: door.prefixes,
+    advanceCursorOnExecute: meta.advanceCursorOnExecute,
     async execute(blockId: string, content: string, actions: ExecutorActions) {
       const ctx = createDoorContext({ blockId, content, meta, actions, settings });
       try {
