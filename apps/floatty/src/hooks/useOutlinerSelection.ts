@@ -8,6 +8,7 @@
 import { createSignal, createEffect } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import { blocksToMarkdown } from '../lib/markdownExport';
+import { flushPendingContent } from './useContentSync';
 
 interface UseOutlinerSelectionParams {
   blockStore: {
@@ -218,6 +219,12 @@ export function useOutlinerSelection(params: UseOutlinerSelectionParams) {
   };
 
   const copySelection = async () => {
+    // FLO-646: commit any in-focus typing before reading store content.
+    // Under FLO-387's blur-is-the-boundary model the focused block's DOM
+    // can be ahead of the store; without this the clipboard misses chars
+    // the user typed but hasn't blurred out of yet.
+    flushPendingContent();
+
     const selected = selectedBlockIds();
     if (selected.size === 0) {
       // Copy focused block if no selection

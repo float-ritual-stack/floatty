@@ -11,6 +11,7 @@ import { Breadcrumb } from './Breadcrumb';
 import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
 import { blocksToMarkdown } from '../lib/markdownExport';
+import { flushPendingContent } from '../hooks/useContentSync';
 import { useConfig } from '../context/ConfigContext';
 import { downloadJSON } from '../lib/jsonExport';
 import type { ExportedOutline } from '../lib/jsonExport';
@@ -290,6 +291,10 @@ export function Outliner(props: OutlinerProps) {
 
   // Export functions (used by both tinykeys and global handlers)
   const exportToMarkdown = async () => {
+    // FLO-646: commit any in-focus typing before reading store content,
+    // so the export reflects what the user has actually typed.
+    flushPendingContent();
+
     const allIds = selection.getAllBlockIds();
     if (allIds.length === 0) return;
 
@@ -305,8 +310,12 @@ export function Outliner(props: OutlinerProps) {
   };
 
   const exportToJSON = async () => {
-    // Flush any pending contentEditable edits before export
-    (document.activeElement as HTMLElement)?.blur();
+    // FLO-646: commit any in-focus typing before export. Replaces the prior
+    // `document.activeElement.blur()` workaround, which stole focus from the
+    // user's current block as a side effect. Note: JSON/binary exports hit
+    // the server, which lags the client Y.Doc by ~50ms during active typing
+    // (useSyncedYDoc debounce). This fix addresses the local flush only.
+    flushPendingContent();
 
     try {
       // FLO-393: Single export path — fetch from server (same as /api/v1/export/json)
@@ -358,8 +367,9 @@ export function Outliner(props: OutlinerProps) {
   };
 
   const exportToBinary = async () => {
-    // Flush any pending contentEditable edits before export
-    (document.activeElement as HTMLElement)?.blur();
+    // FLO-646: commit any in-focus typing before export (replaces the prior
+    // activeElement.blur() workaround — same rationale as exportToJSON).
+    flushPendingContent();
 
     try {
       await downloadBinary(doc);

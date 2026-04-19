@@ -33,7 +33,7 @@ vi.mock('../lib/logger', () => ({
   }),
 }));
 
-import { useContentSync, type ContentSyncDeps, type ContentSyncStore } from './useContentSync';
+import { useContentSync, flushPendingContent, type ContentSyncDeps, type ContentSyncStore } from './useContentSync';
 
 /** Build a fresh contentEditable element attached to the DOM. */
 function makeContentRef(initial = ''): HTMLDivElement {
@@ -74,11 +74,20 @@ function makeDeps(params: {
 /**
  * Tests always run inside createRoot so createEffect/onCleanup work.
  * `fn` receives the disposer so it can tear down between sub-steps.
+ *
+ * Auto-disposes after `fn` returns so the module-level `activeFlushers`
+ * registry (FLO-646) does not leak useContentSync instances across tests.
+ * Callers that invoke `dispose()` mid-fn are unaffected — Solid's root
+ * disposer is idempotent, so the `finally` call is a no-op on re-entry.
  */
 function inRoot<T>(fn: (dispose: () => void) => T): T {
   let out!: T;
   createRoot((dispose) => {
-    out = fn(dispose);
+    try {
+      out = fn(dispose);
+    } finally {
+      dispose();
+    }
   });
   return out;
 }
@@ -395,5 +404,80 @@ describe('FLO-387 blur-is-the-boundary: useContentSync', () => {
     dispose();
 
     expect(store.updateBlockContent).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// FLO-646: flushPendingContent registry
+// ═══════════════════════════════════════════════════════════════
+// Call sites that read store content (markdown export, clipboard copy)
+// need pending DOM typing committed first. Each mounted useContentSync
+// instance registers its flushContentUpdate in a module-level Set; the
+// exported flushPendingContent() iterates it.
+
+describe('flushPendingContent — cross-module flush registry (FLO-646)', () => {
+  it('calls the registered flush when flushPendingContent() is invoked', () => {
+    inRoot((dispose) => {
+      const ref = makeContentRef('');
+      const block: MutableBlock = { id: 'reg-2', content: '' };
+      const { deps, store } = makeDeps({ block, contentRef: ref });
+      const sync = useContentSync(deps);
+
+      ref.innerText = 'hello';
+      sync.updateContentFromDom(ref);
+      expect(store.updateBlockContent).toHaveBeenCalledTimes(0);
+
+      // Cross-module caller — e.g., exportToMarkdown — flushes before read.
+      flushPendingContent();
+
+      expect(store.updateBlockContent).toHaveBeenCalledTimes(1);
+      expect(store.updateBlockContent).toHaveBeenCalledWith('reg-2', 'hello');
+
+      dispose(); // deregister flusher so it does not leak into later tests
+    });
+  });
+
+  it('deregisters the flusher on cleanup (unmounted instances are not flushed)', () => {
+    const refA = makeContentRef('');
+    const blockA: MutableBlock = { id: 'reg-3a', content: '' };
+    const { deps: depsA, store: storeA } = makeDeps({ block: blockA, contentRef: refA });
+
+    const refB = makeContentRef('');
+    const blockB: MutableBlock = { id: 'reg-3b', content: '' };
+    const { deps: depsB, store: storeB } = makeDeps({ block: blockB, contentRef: refB });
+
+    // Mount A + dirty + dispose. Dispose's onCleanup flushes once (pending
+    // content is not lost on unmount) and also deregisters the flusher.
+    let disposeA!: () => void;
+    createRoot((dispose) => {
+      disposeA = dispose;
+      const syncA = useContentSync(depsA);
+      refA.innerText = 'from-A';
+      syncA.updateContentFromDom(refA);
+    });
+    disposeA();
+    const storeACallsAfterDispose = storeA.updateBlockContent.mock.calls.length;
+    expect(storeACallsAfterDispose).toBe(1); // sanity: onCleanup flushed once
+
+    inRoot((dispose) => {
+      const syncB = useContentSync(depsB);
+      refB.innerText = 'from-B';
+      syncB.updateContentFromDom(refB);
+
+      flushPendingContent();
+
+      // A's flusher was deregistered → no further calls on storeA.
+      expect(storeA.updateBlockContent.mock.calls.length).toBe(storeACallsAfterDispose);
+      // B is still mounted → its pending content was committed.
+      expect(storeB.updateBlockContent).toHaveBeenCalledTimes(1);
+      expect(storeB.updateBlockContent).toHaveBeenCalledWith('reg-3b', 'from-B');
+
+      dispose();
+    });
+  });
+
+  it('is a no-op when nothing is mounted', () => {
+    // No active instances — flushPendingContent should not throw.
+    expect(() => flushPendingContent()).not.toThrow();
   });
 });
