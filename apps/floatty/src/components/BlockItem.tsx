@@ -595,6 +595,21 @@ export function BlockItem(props: BlockItemProps) {
         }, hookStore).catch(err => {
           logger.error('Handler execution failed (render title)', { err });
         });
+
+        // Mirror useBlockInput.execute_block: opt-in caller-side cursor-advance
+        // at dispatch time (not after completion). Render:: uses selfRender, so
+        // there's no placeholder child to focus — advance to the next sibling
+        // (or create one if render:: is the last visible block).
+        if (handler.advanceCursorOnExecute) {
+          let nextId = findNextVisibleBlock(props.id, props.paneId);
+          if (!nextId) {
+            nextId = store.createBlockAfter(props.id);
+          }
+          if (nextId) {
+            const targetId = nextId;
+            requestAnimationFrame(() => props.onFocus(targetId));
+          }
+        }
       }
       return;
     }

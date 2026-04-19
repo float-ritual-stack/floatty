@@ -189,7 +189,23 @@ function buildSelfRenderHandler(
 ): BlockHandler {
   return {
     prefixes: door.prefixes,
+    advanceCursorOnExecute: meta.advanceCursorOnExecute,
     async execute(blockId: string, content: string, actions: ExecutorActions) {
+      // Write a placeholder envelope BEFORE awaiting the door's execute.
+      // For view doors this mounts DoorHost immediately — the loading
+      // indicator then renders off the block's outputStatus (set to
+      // 'running' by the executor prior to calling us). Without this,
+      // DoorHost only mounts once the door's async execute finishes
+      // writing its first real envelope, so the first press feels dead.
+      // Mirrors doorAdapter.ts:51 for non-selfRender doors.
+      if (door.kind === 'view') {
+        actions.setBlockOutput?.(
+          blockId,
+          { kind: 'view', doorId: meta.id, schema: 1, data: null },
+          'door',
+        );
+      }
+
       const ctx = createDoorContext({ blockId, content, meta, actions, settings });
       try {
         await door.execute(blockId, content, ctx);

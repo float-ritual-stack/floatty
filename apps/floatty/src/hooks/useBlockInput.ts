@@ -575,6 +575,22 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           }, hookStore).catch(err => {
             logger.error('Handler execution failed', { err });
           });
+
+          // Advance cursor to next block at dispatch time (NOT after completion)
+          // so the user can keep typing while the handler runs asynchronously.
+          // Opt-in per handler — selfRender doors like render:: set this; handlers
+          // that manage their own placeholder/focus (conversationHandler, send) don't.
+          if (handler.advanceCursorOnExecute) {
+            const currentId = deps.getBlockId();
+            let nextId = deps.findNextVisibleBlock(currentId, deps.paneId);
+            if (!nextId) {
+              nextId = store.createBlockAfter(currentId);
+            }
+            if (nextId) {
+              const targetId = nextId;
+              requestAnimationFrame(() => deps.onFocus(targetId));
+            }
+          }
         }
         return;
       }

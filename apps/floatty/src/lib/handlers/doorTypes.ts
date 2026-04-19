@@ -68,6 +68,13 @@ export interface DoorMeta {
   sidebarEligible?: boolean;
   /** Skip adapter wrapping — door calls setBlockOutput on itself */
   selfRender?: boolean;
+  /**
+   * When true, the caller advances focus to the next visible sibling at
+   * dispatch time (creating a trailing block if none), letting the user
+   * keep typing while the door executes asynchronously. See
+   * BlockHandler.advanceCursorOnExecute for semantics.
+   */
+  advanceCursorOnExecute?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -34,6 +34,7 @@ export function doorToBlockHandler(
 ): BlockHandler {
   return {
     prefixes: door.prefixes,
+    advanceCursorOnExecute: meta.advanceCursorOnExecute,
 
     async execute(blockId: string, content: string, actions: ExecutorActions): Promise<void> {
       // Find or create output child block

@@ -370,6 +370,51 @@ describe('executeHandler', () => {
     });
   });
 
+  describe('status lifecycle', () => {
+    it("sets status='running' synchronously before awaiting handler", async () => {
+      const order: string[] = [];
+
+      const actions = createTestActions({
+        setBlockStatus: vi.fn((_id: string, status: string) => {
+          order.push(`setStatus:${status}`);
+        }),
+      });
+
+      const handler = createTestHandler(async (id, _content, a) => {
+        order.push('execute:start');
+        // Simulate a door that ALSO sets 'running' inside its body.
+        // The executor's sync set must have fired first.
+        a.setBlockStatus?.(id, 'running');
+        await Promise.resolve(); // yield to microtask queue
+        order.push('execute:after-await');
+      });
+
+      const block = createTestBlock('b1', 'test::');
+      const store = createTestStore({ b1: block });
+
+      await executeHandler(handler, 'b1', 'test::', actions, store);
+
+      // The first setStatus:running MUST come from the executor, before the
+      // handler's await. This is the fix for FLO-new (A): no race between
+      // handler dispatch and the loading-indicator paint.
+      expect(order[0]).toBe('setStatus:running');
+      expect(order[1]).toBe('execute:start');
+    });
+
+    it('does not crash when setBlockStatus is undefined on actions', async () => {
+      const handler = createTestHandler();
+      const block = createTestBlock('b1', 'test::');
+      const store = createTestStore({ b1: block });
+      const actions = createTestActions({ setBlockStatus: undefined });
+
+      await expect(
+        executeHandler(handler, 'b1', 'test::', actions, store)
+      ).resolves.not.toThrow();
+
+      expect(handler.execute).toHaveBeenCalled();
+    });
+  });
+
   describe('full lifecycle', () => {
     it('runs complete before → handler → after flow', async () => {
       const order: string[] = [];

@@ -91,6 +91,12 @@ export async function executeHandler(
   (extendedActions as any).hookContext = hookResult.context;
 
   // 7. Execute the handler
+  // Set 'running' status SYNCHRONOUSLY before awaiting the handler. Handlers
+  // that set status inside their async execute (e.g. render door) race with
+  // SolidJS reconciliation — the DOM can paint once between flush and
+  // status-set, showing no indicator on first Enter press. Setting here
+  // guarantees the indicator lights up in the same microtask as Enter.
+  actions.setBlockStatus?.(blockId, 'running');
   try {
     await handler.execute(blockId, finalContent, extendedActions);
   } catch (err) {
