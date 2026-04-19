@@ -6,6 +6,24 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.10] - 2026-04-19
+
+### ✨ Features
+
+- **Outliner keyboard fluency — jump first/last + send to linked pane** ([[FLO-495]], [[FLO-469]], #247): `⌘⇧↑` / `⌘⇧↓` now focus the first / last visible block of the current view, honouring zoom + expansion state via the existing `getVisibleBlockIds()` memo. `⌘⇧L` sends the currently-focused block to the pane linked via `⌘L`, zooming the linked pane without moving source focus (uses `navigateToBlock`'s `originBlockId`). `⌘↑`/`⌘↓` stay bound to `moveBlockUp`/`moveBlockDown` ([[FLO-75]]) — Shift added for reach semantics. CLAUDE.md keybind table backfilled with the new shortcuts AND the previously-undocumented move-block rows surfaced during the conflict audit.
+
+### 🐛 Fixes
+
+- **`#`-prefixed wikilinks no longer create duplicate pages** ([[FLO-573]], #244): `getPageTitle`'s regex `/^#+\s*/` stripped leading `#`s regardless of whitespace, so `[[#2817]]` normalized to `2817` on lookup while the stored page (content `# #2817`) normalized to `#2817` — mismatch bypassed `findPage` and spawned a new page on every click. Tightened to `/^#+\s+/` (CommonMark: headings require whitespace). Applied symmetrically across the client (`useBacklinkNavigation.getPageTitle`) and the server-side `PageNameIndex` hook (`strip_heading_prefix`) per [[FLO-317]] symmetry discipline.
+- **Autocomplete no longer offers "Create new page" for `<hex>|alias` block references** ([[FLO-552]], #245): typing `[[abc123de|my alias]]` against a real block showed a "Create" badge because `buildSuggestionsWithTypedText` classified existence by page-name lookup only. Added a pre-check: when the query contains `|` and the left side is a `BLOCK_ID_PREFIX_RE`-shaped hex prefix that resolves via `resolveBlockIdPrefix`, return a single `exists: true` suggestion. Fuzzy page-name noise is dropped — a block-alias is an unambiguous intent. Plumbed through an optional `resolveAlias` accessor so the pure function stays testable.
+- **ink-chat wikilink resolver prefers exact name over fuzzy neighbours** ([[FLO-637]], #246): `resolveWikilinks` used `pages.find((p) => !p.isStub && p.blockId)` on a fuzzy-sorted 3-result window — `[[Foo]]` (stub) silently resolved to adjacent `Foobar` (real page), injecting the wrong subtree into AI context. Widened `limit=3 → limit=10` and made the exact case-insensitive name match authoritative regardless of stub-ness: a stub exact match leaves `page` undefined so we fall through to block search. Typo-tolerance preserved via the fuzzy first-non-stub fallback when no exact name matches.
+
+### Internal
+
+- **Keybind registry discipline** (#247): surfaced that CLAUDE.md's keybind registry was stale — `⌘↑`/`⌘↓` had been declared in `apps/floatty/src/lib/keybinds.ts:152-153` ([[FLO-75]]) without a matching docs row. Backfill + new `.claude` memory rule ("grep both `keybinds.ts` and `Outliner.tsx` tinykeys before proposing shortcuts") to prevent the next conflict.
+
+---
+
 ## [0.11.9] - 2026-04-19
 
 ### ✨ Features
