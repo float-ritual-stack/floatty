@@ -446,15 +446,18 @@ export async function resolveWikilinks(
         pages: Array<{ name: string; isStub: boolean; blockId: string | null }>;
       };
 
-      // FLO-637: exact case-insensitive name wins over fuzzy-ranked neighbours.
-      // Without this, `[[Foo]]` silently resolved to `Foobar` whenever the
-      // former was a stub or outranked by score. Only fall back to first
-      // non-stub when no exact match is present.
+      // FLO-637: exact case-insensitive name match is authoritative — even
+      // when the match is a stub. A stub `[[Foo]]` must NOT silently fall
+      // back to `Foobar` just because Foobar happens to be a real page in
+      // the fuzzy-ranked results. Only when there is no exact-name match at
+      // all do we fall back to the first non-stub (keeps typo tolerance).
       const linkLower = link.toLowerCase();
-      const exactMatch = pages.pages.find(
-        (p) => p.name.toLowerCase() === linkLower && !p.isStub && p.blockId,
+      const exactByName = pages.pages.find(
+        (p) => p.name.toLowerCase() === linkLower,
       );
-      const page = exactMatch ?? pages.pages.find((p) => !p.isStub && p.blockId);
+      const page = exactByName
+        ? (!exactByName.isStub && exactByName.blockId ? exactByName : undefined)
+        : pages.pages.find((p) => !p.isStub && p.blockId);
 
       if (page?.blockId) {
         // Fetch page tree
