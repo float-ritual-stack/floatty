@@ -824,6 +824,27 @@ function RenderView(props: DoorViewProps) {
   const agentRaw = () => props.data?.agentRaw;
   const sessionId = () => props.data?.agentSessionId;
 
+  // Tracks which footer snippet was most recently copied so we can swap the
+  // label to "✓ copied" for ~1200ms. `null` = nothing recently copied.
+  const [copied, setCopied] = createSignal<string | null>(null);
+  const copy = (key: string, text: string) => {
+    const write = navigator.clipboard?.writeText?.bind(navigator.clipboard);
+    if (!write) return;
+    void write(text).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied((c) => (c === key ? null : c)), 1200);
+    }).catch(() => { /* non-fatal */ });
+  };
+  const copyBtnStyle = {
+    background: 'transparent',
+    border: 'none',
+    color: 'inherit',
+    font: 'inherit',
+    padding: '0 3px',
+    'border-radius': '2px',
+    cursor: 'pointer',
+  } as const;
+
   return (
     <Show when={spec()} fallback={
       <div style={{ padding: '8px', 'font-family': 'JetBrains Mono, monospace' }}>
@@ -873,10 +894,44 @@ function RenderView(props: DoorViewProps) {
             </Show>
             <Show when={sessionId()}>
               <span style={{ 'margin-left': generatedVia() ? '12px' : '0' }}>
-                session: {sessionId()!}
+                session:{' '}
+                <button
+                  type="button"
+                  style={copyBtnStyle}
+                  aria-label="Copy session ID"
+                  title="Click to copy session ID"
+                  onClick={() => copy('id', sessionId()!)}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  {copied() === 'id' ? '✓ copied' : sessionId()!}
+                </button>
               </span>
               <span style={{ color: 'var(--color-fg-muted, #444)', 'margin-left': '8px' }}>
-                → render:: agent --continue | --resume {sessionId()!}
+                → render:: agent{' '}
+                <button
+                  type="button"
+                  style={copyBtnStyle}
+                  aria-label="Copy --continue flag"
+                  title="Click to copy --continue"
+                  onClick={() => copy('cont', '--continue')}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  {copied() === 'cont' ? '✓ copied' : '--continue'}
+                </button>
+                {' | '}
+                <button
+                  type="button"
+                  style={copyBtnStyle}
+                  aria-label="Copy --resume with session ID"
+                  title="Click to copy --resume with session ID"
+                  onClick={() => copy('res', `--resume ${sessionId()!}`)}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  {copied() === 'res' ? '✓ copied' : `--resume ${sessionId()!}`}
+                </button>
               </span>
             </Show>
           </div>
