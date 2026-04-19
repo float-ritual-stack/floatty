@@ -1,15 +1,23 @@
 //! Discovery handlers — markers, stats, daily note, presence, attachments.
+//!
+//! Also hosts the "semantic endpoints for outline conventions" track
+//! ([[FLO-652]]): `POST /api/v1/pages/:name` (upsert) and
+//! `POST /api/v1/daily/:date/append` — both hide the `pages::`-container
+//! structural detail from API consumers so agents (ink-chat, Desktop
+//! Daddy, future surfaces) don't have to rediscover outline layout rules
+//! on every new tool.
 
 use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use yrs::{Map, ReadTxn, Transact};
 
+use crate::api::{self, BlockDto};
 use crate::block_service::{lookup_inherited, read_block_dto};
 use super::{ApiError, AppState, BlockContextQuery, BlockWithContextResponse};
 
@@ -26,6 +34,8 @@ pub fn router() -> Router<AppState> {
             get(get_presence).post(post_presence),
         )
         .route("/api/v1/daily/:date", get(get_daily_note))
+        .route("/api/v1/daily/:date/append", post(append_to_daily_note))
+        .route("/api/v1/pages/:name", post(upsert_page))
         .route("/api/v1/attachments/:filename", get(get_attachment))
 }
 
@@ -39,6 +49,21 @@ struct PresenceRequest {
     block_id: String,
     pane_id: Option<String>,
 }
+
+/// Body for `POST /api/v1/daily/:date/append` — append a child block to the
+/// specified daily note (auto-creates the daily note page if missing).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DailyAppendRequest {
+    content: String,
+}
+
+/// Body for `POST /api/v1/pages/:name` — upsert a page by name. Body is
+/// currently empty-shaped; kept as a struct so we can extend with optional
+/// initial content without breaking the wire contract later.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpsertPageRequest {}
 
 // ============================================================================
 // Handlers
@@ -207,4 +232,171 @@ async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoRespons
         )],
         bytes,
     ))
+}
+
+// ============================================================================
+// Semantic endpoints — FLO-652 ("agents shouldn't need to know pages:: layout")
+// ============================================================================
+
+/// Resolve a page name to an existing block id, creating the page (and the
+/// `pages::` container if needed) when absent.
+///
+/// The page content uses the canonical `# ${name}` heading form so it renders
+/// correctly when zoomed. This mirrors `createPage` in the frontend's
+/// `useBacklinkNavigation.ts` — same content shape, same parent chain.
+fn find_or_create_page(state: &AppState, name: &str) -> Result<String, ApiError> {
+    // Fast path: page already exists in the PageNameIndex.
+    {
+        let index = state
+            .page_name_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        if let Some(id) = index.page_block_id(name) {
+            return Ok(id.to_string());
+        }
+    }
+
+    // Ensure `pages::` container exists — create as a root block if the
+    // outline has never had any pages.
+    let pages_container_id = {
+        let index = state
+            .page_name_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        index.pages_container_id().map(String::from)
+    };
+
+    let pages_container_id = match pages_container_id {
+        Some(id) => id,
+        None => {
+            let container = crate::block_service::create_block(
+                &state.store,
+                &state.broadcaster,
+                &state.hook_system,
+                api::CreateBlockRequest {
+                    content: "pages::".to_string(),
+                    parent_id: None,
+                    after_id: None,
+                    at_index: None,
+                },
+            )?;
+            container.id
+        }
+    };
+
+    // Create the page block under the pages:: container.
+    let page = crate::block_service::create_block(
+        &state.store,
+        &state.broadcaster,
+        &state.hook_system,
+        api::CreateBlockRequest {
+            content: format!("# {}", name),
+            parent_id: Some(pages_container_id),
+            after_id: None,
+            at_index: None,
+        },
+    )?;
+
+    Ok(page.id)
+}
+
+/// Read a page block as a `BlockDto` for returning from the upsert handler.
+/// Scoped to this module — the full `get_block` in `block_service` builds a
+/// context response (ancestors, siblings, etc.) that we don't need here.
+fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let blocks_map = txn
+        .get_map("blocks")
+        .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+
+    let value = blocks_map
+        .get(&txn, id)
+        .ok_or_else(|| ApiError::NotFound(id.to_string()))?;
+
+    if let yrs::Out::YMap(block_map) = value {
+        let inherited_markers = {
+            let index = state
+                .inheritance_index
+                .read()
+                .map_err(|_| ApiError::LockPoisoned)?;
+            lookup_inherited(&index, id)
+        };
+        Ok(read_block_dto(&block_map, &txn, id, inherited_markers, true))
+    } else {
+        Err(ApiError::NotFound(id.to_string()))
+    }
+}
+
+/// `POST /api/v1/pages/:name` — upsert a page under the `pages::` container.
+///
+/// Idempotent: returns the existing page when one matches the name
+/// (case-insensitive, via PageNameIndex). Creates a new page and the
+/// `pages::` container (if absent) otherwise.
+///
+/// Responses:
+/// - `200 OK` when the page already existed
+/// - `201 Created` when the page was freshly created
+#[tracing::instrument(skip(state, _req), fields(route_family = "semantic", handler = "upsert_page"), err)]
+async fn upsert_page(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(_req): Json<UpsertPageRequest>,
+) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
+    if name.trim().is_empty() {
+        return Err(ApiError::InvalidRequest("Page name cannot be empty".to_string()));
+    }
+
+    let existed = {
+        let index = state
+            .page_name_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        index.page_block_id(&name).is_some()
+    };
+
+    let page_id = find_or_create_page(&state, &name)?;
+    let dto = read_page_dto(&state, &page_id)?;
+    let status = if existed {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    Ok((status, Json(dto)))
+}
+
+/// `POST /api/v1/daily/:date/append` — append a child block under the
+/// specified daily note. The daily note (and `pages::` container) are
+/// autocreated when missing — same ergonomic contract as typing
+/// `[[YYYY-MM-DD]]` in the frontend.
+///
+/// Responses:
+/// - `201 Created` with the new child's `BlockDto`
+#[tracing::instrument(skip(state, req), fields(route_family = "semantic", handler = "append_to_daily_note"), err)]
+async fn append_to_daily_note(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Json(req): Json<DailyAppendRequest>,
+) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
+    if date.trim().is_empty() {
+        return Err(ApiError::InvalidRequest("Date cannot be empty".to_string()));
+    }
+
+    let daily_id = find_or_create_page(&state, &date)?;
+
+    let dto = crate::block_service::create_block(
+        &state.store,
+        &state.broadcaster,
+        &state.hook_system,
+        api::CreateBlockRequest {
+            content: req.content,
+            parent_id: Some(daily_id),
+            after_id: None,
+            at_index: None,
+        },
+    )?;
+
+    Ok((StatusCode::CREATED, Json(dto)))
 }

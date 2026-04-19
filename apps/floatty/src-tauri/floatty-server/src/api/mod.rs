@@ -2469,6 +2469,149 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
+    // ========================================================================
+    // Semantic endpoints — FLO-652
+    // ========================================================================
+
+    /// Send a POST with a JSON body via the router (one-shot — each call
+    /// clones the router since `oneshot` consumes it). Returns parsed JSON.
+    async fn post_json_oneshot(
+        router: &Router,
+        path: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let request = Request::post(path)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = if bytes.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+        };
+        (status, json)
+    }
+
+    async fn get_json_oneshot(router: &Router, path: &str) -> (StatusCode, serde_json::Value) {
+        let response = router
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = if bytes.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+        };
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn test_upsert_page_creates_when_missing() {
+        let (router, _dir, _store) = test_app();
+
+        let (status, page) =
+            post_json_oneshot(&router, "/api/v1/pages/Spec%20Draft", serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(page["content"], "# Spec Draft");
+
+        // Upserted page must live under a pages:: container, not at root.
+        let parent_id = page["parentId"].as_str().expect("page must have a parentId");
+        let (pstatus, parent) = get_json_oneshot(&router, &format!("/api/v1/blocks/{}", parent_id)).await;
+        assert_eq!(pstatus, StatusCode::OK);
+        assert_eq!(parent["content"], "pages::");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_page_returns_existing_when_present() {
+        let (router, _dir, _store) = test_app();
+
+        // First call creates.
+        let (status1, page1) =
+            post_json_oneshot(&router, "/api/v1/pages/Shell%20Lite", serde_json::json!({})).await;
+        assert_eq!(status1, StatusCode::CREATED);
+        let first_id = page1["id"].as_str().unwrap().to_string();
+
+        // Poll for PageNameIndex hook (async).
+        for attempt in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            let (status2, page2) =
+                post_json_oneshot(&router, "/api/v1/pages/Shell%20Lite", serde_json::json!({})).await;
+            if status2 == StatusCode::OK {
+                assert_eq!(page2["id"], first_id, "upsert must return the same page id");
+                return;
+            }
+            assert!(attempt < 19, "PageNameIndex never caught up for upsert idempotency");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_upsert_page_rejects_empty_name() {
+        let (router, _dir, _store) = test_app();
+
+        // Whitespace-only path — the InvalidRequest guard catches it.
+        let (status, _) =
+            post_json_oneshot(&router, "/api/v1/pages/%20%20%20", serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_daily_append_creates_child_autocreating_daily_note() {
+        let (router, _dir, _store) = test_app();
+
+        let (status, child) = post_json_oneshot(
+            &router,
+            "/api/v1/daily/2026-04-19/append",
+            serde_json::json!({ "content": "ctx::quick test note" }),
+        ).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(child["content"], "ctx::quick test note");
+
+        // Child -> daily note (# YYYY-MM-DD) -> pages:: container (root).
+        let parent_id = child["parentId"].as_str().expect("appended block must have a parentId");
+        let (pstatus, parent) = get_json_oneshot(&router, &format!("/api/v1/blocks/{}", parent_id)).await;
+        assert_eq!(pstatus, StatusCode::OK);
+        assert_eq!(parent["content"], "# 2026-04-19");
+
+        let grandparent_id = parent["parentId"].as_str().expect("daily note must live under pages::");
+        let (gpstatus, gp) = get_json_oneshot(&router, &format!("/api/v1/blocks/{}", grandparent_id)).await;
+        assert_eq!(gpstatus, StatusCode::OK);
+        assert_eq!(gp["content"], "pages::");
+    }
+
+    #[tokio::test]
+    async fn test_daily_append_reuses_existing_daily_note() {
+        let (router, _dir, _store) = test_app();
+
+        let (_, first) = post_json_oneshot(
+            &router,
+            "/api/v1/daily/2026-04-20/append",
+            serde_json::json!({ "content": "first entry" }),
+        ).await;
+        let first_parent = first["parentId"].as_str().unwrap().to_string();
+
+        // Poll for PageNameIndex to catch up, then verify second append
+        // lands under the same daily-note parent.
+        for attempt in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            let (_, second) = post_json_oneshot(
+                &router,
+                "/api/v1/daily/2026-04-20/append",
+                serde_json::json!({ "content": "second entry" }),
+            ).await;
+            if second["parentId"].as_str() == Some(first_parent.as_str()) {
+                return;
+            }
+            assert!(attempt < 19, "second append created a new daily note instead of reusing");
+        }
+    }
+
+
     #[tokio::test]
     async fn test_create_block_with_supplied_id() {
         let (app, _dir, _store) = test_app();
