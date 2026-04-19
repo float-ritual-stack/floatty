@@ -339,13 +339,29 @@ impl PageNameIndexHook {
     /// - Strip heading prefix (# ## ### etc)
     /// - Trim whitespace
     ///
+    /// A "heading prefix" is one-or-more `#` followed by at least one
+    /// whitespace (per CommonMark). Bare `#name` (no whitespace after) is
+    /// NOT a heading — it's a page whose name starts with `#`, e.g.
+    /// `[[#2817]]` (FLO-573). Must stay in sync with the frontend
+    /// `getPageTitle` in `useBacklinkNavigation.ts`.
+    ///
     /// Examples:
     ///   "# My Page"                    → "My Page"
     ///   "# Summary\n[board:: recon]"   → "Summary"
+    ///   "# #2817"                      → "#2817"
+    ///   "#2817"                        → "#2817"  (no whitespace, not a heading)
     ///   "No prefix"                    → "No prefix"
     fn strip_heading_prefix(content: &str) -> &str {
         let first_line = content.lines().next().unwrap_or(content);
-        first_line.trim_start_matches('#').trim()
+        let hash_count = first_line.bytes().take_while(|&b| b == b'#').count();
+        if hash_count == 0 {
+            return first_line.trim();
+        }
+        let after_hashes = &first_line[hash_count..];
+        match after_hashes.chars().next() {
+            Some(c) if c.is_whitespace() => after_hashes.trim(),
+            _ => first_line.trim(),
+        }
     }
 
     /// Check if content starts with `pages::` (case-insensitive).
@@ -740,7 +756,15 @@ mod tests {
         assert_eq!(PageNameIndexHook::strip_heading_prefix("## Nested"), "Nested");
         assert_eq!(PageNameIndexHook::strip_heading_prefix("### Deep"), "Deep");
         assert_eq!(PageNameIndexHook::strip_heading_prefix("No prefix"), "No prefix");
-        assert_eq!(PageNameIndexHook::strip_heading_prefix("#Tag"), "Tag"); // No space
+
+        // FLO-573: bare "#name" (no whitespace) is a page name, not a heading.
+        // Without this, [[#2817]] normalizes to "2817" on lookup but stored
+        // pages (content "# #2817") normalize to "#2817" — mismatch creates a
+        // fresh page on every click.
+        assert_eq!(PageNameIndexHook::strip_heading_prefix("#Tag"), "#Tag");
+        assert_eq!(PageNameIndexHook::strip_heading_prefix("#2817"), "#2817");
+        assert_eq!(PageNameIndexHook::strip_heading_prefix("# #2817"), "#2817");
+        assert_eq!(PageNameIndexHook::strip_heading_prefix("## #2817"), "#2817");
     }
 
     #[test]
