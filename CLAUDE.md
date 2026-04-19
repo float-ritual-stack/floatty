@@ -155,6 +155,9 @@ Check this list when adding keybinds to avoid conflicts.
 | `⌘Z` / `⌘⇧Z` | Undo/redo |
 | `⌘A` | Select all (escalates: text → block → tree) |
 | `⌘0-3` | Expand to level N |
+| `⌘↑` / `⌘↓` | Move block before previous / after next sibling (FLO-75, `keybinds.ts`) |
+| `⌘⇧↑` / `⌘⇧↓` | Focus first / last visible block in current view (FLO-495) |
+| `⌘⇧L` | Send focused block to linked pane (FLO-469 — requires prior `⌘L` link) |
 
 ## Four Bug Categories
 
