@@ -211,7 +211,11 @@ export function BlockItem(props: BlockItemProps) {
   });
 
   // FLO-376: Wikilink autocomplete (FLO-322: pageNames from singleton context)
-  const autocomplete = useWikilinkAutocomplete(pageNames);
+  // FLO-552: resolveAlias lets the autocomplete suppress "Create new page"
+  // when the typed text is a `<hex-prefix>|alias` referencing an existing block.
+  const resolveAlias = (hex: string): boolean =>
+    resolveBlockIdPrefix(hex, Object.keys(blockStore.blocks), shortHashIndex()) !== null;
+  const autocomplete = useWikilinkAutocomplete(pageNames, resolveAlias);
 
   // Dismiss autocomplete on scroll (anchorRect goes stale)
   createEffect(on(() => autocomplete.isOpen(), (open) => {

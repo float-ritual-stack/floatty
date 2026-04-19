@@ -11,6 +11,7 @@ import { createSignal } from 'solid-js';
 import { findPagesContainer, getPageTitle } from './useBacklinkNavigation';
 import type { BlockStoreInterface } from '../context/WorkspaceContext';
 import { fuzzyFilter } from '../lib/fuzzyFilter';
+import { BLOCK_ID_PREFIX_RE } from '../lib/blockTypes';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('wikilinkAutocomplete');
@@ -124,13 +125,34 @@ export function filterSuggestions(pages: string[], query: string): string[] {
  * Build autocomplete suggestions with typed text prepended at position 0.
  * Deduplicates: if typed text case-insensitively matches a fuzzy result, it's removed from fuzzy section.
  * FLO-400
+ *
+ * FLO-552: When the query is a block-alias form (`<hex-prefix>|alias text`)
+ * AND the hex prefix resolves to an existing block, suppress the "Create"
+ * badge by marking the typed-text row `exists: true`. Fuzzy page suggestions
+ * are dropped in this case — typing a block alias is an unambiguous intent
+ * and page-name fuzzy matches would be noise.
+ *
+ * @param resolveAlias - Optional callback; given a hex prefix, returns true
+ *   if it resolves to exactly one block. Supplied by the hook caller so the
+ *   pure function stays testable with mocks.
  */
 export function buildSuggestionsWithTypedText(
   pages: string[],
   query: string,
+  resolveAlias?: (hexPrefix: string) => boolean,
 ): AutocompleteSuggestion[] {
   if (!query) {
     return pages.map(name => ({ name, exists: true }));
+  }
+
+  // FLO-552: block-alias form. Split on the first pipe only — the alias text
+  // itself may contain further `|` characters, per parseWikilinkInner semantics.
+  const pipeIdx = query.indexOf('|');
+  if (pipeIdx > 0 && resolveAlias) {
+    const hexCandidate = query.slice(0, pipeIdx);
+    if (BLOCK_ID_PREFIX_RE.test(hexCandidate) && resolveAlias(hexCandidate)) {
+      return [{ name: query, exists: true }];
+    }
   }
 
   const queryLower = query.toLowerCase();
@@ -154,8 +176,16 @@ export function buildSuggestionsWithTypedText(
 /**
  * FLO-322: pageNames is now a singleton Accessor from WorkspaceContext.
  * Previously each BlockItem created its own identical memo (N×M recomputation).
+ *
+ * FLO-552: Optional `resolveAlias` callback lets the autocomplete recognise
+ * `<hex-prefix>|alias text` as a block-alias form and suppress the "Create
+ * new page" suggestion. The caller builds it from `shortHashIndex` +
+ * `blockStore.blocks` so the accessor stays reactive.
  */
-export function useWikilinkAutocomplete(pageNames: () => string[]) {
+export function useWikilinkAutocomplete(
+  pageNames: () => string[],
+  resolveAlias?: (hexPrefix: string) => boolean,
+) {
   const [state, setState] = createSignal<AutocompleteState | null>(null);
 
   /**
@@ -188,7 +218,7 @@ export function useWikilinkAutocomplete(pageNames: () => string[]) {
       ? contentRef.getBoundingClientRect()
       : rect;
 
-    const suggestions = buildSuggestionsWithTypedText(pageNames(), trigger.query);
+    const suggestions = buildSuggestionsWithTypedText(pageNames(), trigger.query, resolveAlias);
 
     // Preserve selectedIndex if the previously selected item is still in the filtered list
     const prev = state();
