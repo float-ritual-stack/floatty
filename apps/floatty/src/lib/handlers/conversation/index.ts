@@ -172,6 +172,13 @@ async function executeConversationTurn(
     const nextId = actions.createBlockInside(responseId);
     // Leave empty - user will type here
     actions.updateBlockContent(nextId, '');
+
+    // Focus the continuation block so user can type while LLM responds.
+    // Mirrors the send.ts pattern. rAF defers focus to the next frame so
+    // SolidJS has reconciled the newly-created block's DOM node.
+    if (actions.focusBlock) {
+      requestAnimationFrame(() => actions.focusBlock!(nextId));
+    }
   } catch (err) {
     logger.error('Error', { err });
     actions.updateBlockContent(responseId, `error:: ${String(err)}`);
@@ -220,6 +227,12 @@ async function executeSingleTurn(
     // Create continuation block
     const nextId = actions.createBlockInside(responseId);
     actions.updateBlockContent(nextId, '');
+
+    // Focus the continuation block so user can type while LLM responds.
+    // See executeConversationTurn for the full explanation.
+    if (actions.focusBlock) {
+      requestAnimationFrame(() => actions.focusBlock!(nextId));
+    }
   } catch (err) {
     logger.error('Single-turn error', { err });
     actions.updateBlockContent(responseId, `error:: ${String(err)}`);
