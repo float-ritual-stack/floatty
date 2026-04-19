@@ -2,8 +2,8 @@
  * Conversation Handler — cursor-advance regression tests
  *
  * Asserts that both executeConversationTurn and executeSingleTurn focus the
- * newly-created continuation block so the user can keep typing while the LLM
- * responds. Mirrors the pattern from send.ts.
+ * newly-created continuation block BEFORE awaiting the LLM, so the user can
+ * keep typing while the response streams back. Mirrors send.ts timing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -32,6 +32,8 @@ function makeActions(overrides: Partial<ExecutorActions> = {}): ExecutorActions 
     updateBlockContent: vi.fn(),
     setBlockStatus: vi.fn(),
     focusBlock: vi.fn(),
+    deleteBlock: vi.fn(() => true),
+    getBlock: vi.fn(() => ({ content: '' })) as ExecutorActions['getBlock'],
     ...overrides,
   };
 }
@@ -53,7 +55,7 @@ function makeBlock(overrides: Partial<ConversationBlock> = {}): ConversationBloc
 describe('conversationHandler — cursor-advance on execute', () => {
   beforeEach(() => {
     mockInvoke.mockReset();
-    // Install a rAF shim that runs synchronously so tests don't need to wait.
+    // rAF runs synchronously so tests don't need timers.
     (globalThis as typeof globalThis & {
       requestAnimationFrame: (cb: FrameRequestCallback) => number;
     }).requestAnimationFrame = ((cb: FrameRequestCallback) => {
@@ -66,62 +68,86 @@ describe('conversationHandler — cursor-advance on execute', () => {
     vi.clearAllMocks();
   });
 
-  it('executeSingleTurn focuses the continuation block after response lands', async () => {
-    mockInvoke.mockResolvedValue('hello back');
+  it('executeSingleTurn focuses the continuation block BEFORE the LLM responds', async () => {
+    // The invoke promise is parked; resolve it manually so we can observe
+    // ordering. The focus call must happen while invoke is still pending.
+    let resolveInvoke: (v: string) => void = () => {};
+    mockInvoke.mockReturnValueOnce(new Promise<string>((res) => { resolveInvoke = res; }));
 
-    // No tree navigation -> falls through to executeSingleTurn.
-    // createBlockInsideAtTop is used for the placeholder (when provided);
-    // createBlockInside is used once for the empty continuation block.
     const actions = makeActions();
-    await conversationHandler.execute('b1', 'ai:: hello', actions);
+    const exec = conversationHandler.execute('b1', 'ai:: hello', actions);
 
+    // At this microtask, invoke has been called but NOT resolved.
+    // focusBlock should already have fired (via sync rAF shim).
+    await Promise.resolve();
     expect(actions.focusBlock).toHaveBeenCalledTimes(1);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+
     const createInsideCalls = (actions.createBlockInside as ReturnType<typeof vi.fn>).mock.results;
     const continuationId = createInsideCalls[createInsideCalls.length - 1].value;
     expect(actions.focusBlock).toHaveBeenCalledWith(continuationId);
+
+    resolveInvoke('ok');
+    await exec;
   });
 
-  it('executeConversationTurn focuses the continuation block after response lands', async () => {
-    mockInvoke.mockResolvedValue('multi-turn response');
+  it('executeConversationTurn focuses the continuation block BEFORE the LLM responds', async () => {
+    let resolveInvoke: (v: string) => void = () => {};
+    mockInvoke.mockReturnValueOnce(new Promise<string>((res) => { resolveInvoke = res; }));
 
     const root = makeBlock({ id: 'root', content: 'ai:: hello', childIds: [] });
-    // Tree navigation available — conversationHandler goes through
-    // executeConversationTurn for a fresh-root ai:: block with no children.
     const actions = makeActions({
-      getBlock: vi.fn((id: string) => (id === 'root' ? root : undefined)) as ExecutorActions['getBlock'],
+      getBlock: vi.fn((id: string) => (id === 'root' ? root : { content: '' })) as ExecutorActions['getBlock'],
       getParentId: vi.fn(() => undefined),
       getChildren: vi.fn(() => []),
     });
 
-    await conversationHandler.execute('root', 'ai:: hello', actions);
+    const exec = conversationHandler.execute('root', 'ai:: hello', actions);
+    await Promise.resolve();
 
     expect(actions.focusBlock).toHaveBeenCalledTimes(1);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+
     const createCalls = (actions.createBlockInside as ReturnType<typeof vi.fn>).mock.results;
-    // createBlockInside is called once for nextId. The placeholder uses
-    // createBlockInsideAtTop (falls back to createBlockInside only if the
-    // former is undefined). With both provided, nextId is the only
-    // createBlockInside call — which is what we focus.
     const continuationId = createCalls[createCalls.length - 1].value;
     expect(actions.focusBlock).toHaveBeenCalledWith(continuationId);
+
+    resolveInvoke('multi-turn response');
+    await exec;
   });
 
   it('does not crash when focusBlock is undefined on actions', async () => {
     mockInvoke.mockResolvedValue('ok');
-
     const actions = makeActions({ focusBlock: undefined });
     await expect(
       conversationHandler.execute('b1', 'ai:: hello', actions)
     ).resolves.not.toThrow();
   });
 
-  it('does not call focusBlock when the LLM request errors out', async () => {
+  it('deletes the empty continuation block when the LLM errors out', async () => {
     mockInvoke.mockRejectedValue(new Error('network down'));
 
-    const actions = makeActions();
+    const actions = makeActions({
+      // Simulate the pre-created continuation staying empty through the error.
+      getBlock: vi.fn(() => ({ content: '' })) as ExecutorActions['getBlock'],
+    });
     await conversationHandler.execute('b1', 'ai:: hello', actions);
 
-    // Error path writes `error::` to the placeholder and sets status='error'
-    // — it does NOT create a continuation block, so no focus call.
-    expect(actions.focusBlock).not.toHaveBeenCalled();
+    // Focus still fires (before the invoke rejected); cleanup deletes the block.
+    expect(actions.focusBlock).toHaveBeenCalledTimes(1);
+    expect(actions.deleteBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the continuation block if the user has typed into it before the error', async () => {
+    mockInvoke.mockRejectedValue(new Error('network down'));
+
+    // Simulate user typing "halfway" before the error came back.
+    const actions = makeActions({
+      getBlock: vi.fn(() => ({ content: 'halfway typed' })) as ExecutorActions['getBlock'],
+    });
+    await conversationHandler.execute('b1', 'ai:: hello', actions);
+
+    expect(actions.focusBlock).toHaveBeenCalledTimes(1);
+    expect(actions.deleteBlock).not.toHaveBeenCalled();
   });
 });

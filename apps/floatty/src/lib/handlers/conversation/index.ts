@@ -148,6 +148,16 @@ async function executeConversationTurn(
   actions.updateBlockContent(responseId, 'assistant:: Thinking...');
   actions.setBlockStatus?.(responseId, 'running');
 
+  // Create the continuation block + focus it BEFORE awaiting the LLM.
+  // Matches send.ts ordering: the user keeps typing while the model
+  // responds. Without this, focus only moves once the response lands,
+  // which defeats the "type while it thinks" UX.
+  const nextId = actions.createBlockInside(responseId);
+  actions.updateBlockContent(nextId, '');
+  if (actions.focusBlock) {
+    requestAnimationFrame(() => actions.focusBlock!(nextId));
+  }
+
   try {
     // Call backend - use camelCase params as Tauri auto-converts to snake_case
     const response = await invoke<string>('execute_ai_conversation', {
@@ -164,25 +174,27 @@ async function executeConversationTurn(
       responseLength: response.length,
     });
 
-    // Update response block
-    actions.updateBlockContent(responseId, `assistant:: ${response.trim()}`);
+    // Update response block. Use updateBlockContentFromExecutor when
+    // available so the write lands even if the user has since focused
+    // responseId (e.g. clicked up into it).
+    const updateResponse =
+      actions.updateBlockContentFromExecutor ?? actions.updateBlockContent;
+    updateResponse(responseId, `assistant:: ${response.trim()}`);
     actions.setBlockStatus?.(responseId, 'complete');
-
-    // Create continuation block for next user input
-    const nextId = actions.createBlockInside(responseId);
-    // Leave empty - user will type here
-    actions.updateBlockContent(nextId, '');
-
-    // Focus the continuation block so user can type while LLM responds.
-    // Mirrors the send.ts pattern. rAF defers focus to the next frame so
-    // SolidJS has reconciled the newly-created block's DOM node.
-    if (actions.focusBlock) {
-      requestAnimationFrame(() => actions.focusBlock!(nextId));
-    }
   } catch (err) {
     logger.error('Error', { err });
     actions.updateBlockContent(responseId, `error:: ${String(err)}`);
     actions.setBlockStatus?.(responseId, 'error');
+
+    // Clean up the pre-created empty continuation block on error — keeps
+    // the tree tidy. If the user has already typed into nextId between
+    // focus and the error, preserve their content.
+    if (actions.deleteBlock) {
+      const nextBlock = actions.getBlock?.(nextId) as { content?: string } | undefined;
+      if (!nextBlock?.content) {
+        actions.deleteBlock(nextId);
+      }
+    }
   }
 }
 
@@ -208,6 +220,14 @@ async function executeSingleTurn(
   actions.updateBlockContent(responseId, 'assistant:: Thinking...');
   actions.setBlockStatus?.(responseId, 'running');
 
+  // Create the continuation block + focus it BEFORE awaiting the LLM.
+  // See executeConversationTurn for the full explanation.
+  const nextId = actions.createBlockInside(responseId);
+  actions.updateBlockContent(nextId, '');
+  if (actions.focusBlock) {
+    requestAnimationFrame(() => actions.focusBlock!(nextId));
+  }
+
   try {
     // Call original single-turn command
     const response = await invoke<string>('execute_ai_command', {
@@ -220,23 +240,22 @@ async function executeSingleTurn(
       responseLength: response.length,
     });
 
-    // Update response block
-    actions.updateBlockContent(responseId, `assistant:: ${response.trim()}`);
+    // Update response block — see executeConversationTurn note.
+    const updateResponse =
+      actions.updateBlockContentFromExecutor ?? actions.updateBlockContent;
+    updateResponse(responseId, `assistant:: ${response.trim()}`);
     actions.setBlockStatus?.(responseId, 'complete');
-
-    // Create continuation block
-    const nextId = actions.createBlockInside(responseId);
-    actions.updateBlockContent(nextId, '');
-
-    // Focus the continuation block so user can type while LLM responds.
-    // See executeConversationTurn for the full explanation.
-    if (actions.focusBlock) {
-      requestAnimationFrame(() => actions.focusBlock!(nextId));
-    }
   } catch (err) {
     logger.error('Single-turn error', { err });
     actions.updateBlockContent(responseId, `error:: ${String(err)}`);
     actions.setBlockStatus?.(responseId, 'error');
+
+    if (actions.deleteBlock) {
+      const nextBlock = actions.getBlock?.(nextId) as { content?: string } | undefined;
+      if (!nextBlock?.content) {
+        actions.deleteBlock(nextId);
+      }
+    }
   }
 }
 
