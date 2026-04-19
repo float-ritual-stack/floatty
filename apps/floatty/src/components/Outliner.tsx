@@ -29,7 +29,7 @@ import { tabStore } from '../hooks/useTabStore';
 import { layoutStore, findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { IframePaneView } from './views/IframePaneView';
 import { DoorPaneView } from './views/DoorPaneView';
-import { handleChirpNavigate } from '../lib/navigation';
+import { handleChirpNavigate, navigateToBlock } from '../lib/navigation';
 import type { EvalResult } from '../lib/evalEngine';
 import type { DoorViewOutput } from '../lib/handlers/doorTypes';
 
@@ -620,6 +620,42 @@ export function Outliner(props: OutlinerProps) {
               }
             });
           }
+        },
+
+        // FLO-495: Jump to first / last visible block of the current view.
+        // `getVisibleBlockIds` already honours zoom + expansion state, so
+        // the shortcut lands on whatever is currently rendered at the top or
+        // bottom of this pane. Cmd+Up/Down are taken by moveBlockUp/Down
+        // (FLO-75) — Shift added for reach semantics.
+        '$mod+Shift+ArrowUp': (e) => {
+          e.preventDefault();
+          const ids = getVisibleBlockIds();
+          if (ids.length === 0) return;
+          setFocusedBlockId(ids[0]);
+          collapse.ensureVisibleFocus();
+        },
+        '$mod+Shift+ArrowDown': (e) => {
+          e.preventDefault();
+          const ids = getVisibleBlockIds();
+          if (ids.length === 0) return;
+          setFocusedBlockId(ids[ids.length - 1]);
+          collapse.ensureVisibleFocus();
+        },
+
+        // FLO-469: Send the currently focused block to the linked pane
+        // (set via Cmd+L). No-op when there is no link or the link resolves
+        // back to this pane. Source focus is preserved via `originBlockId`.
+        '$mod+Shift+l': (e) => {
+          const focused = focusedBlockId();
+          if (!focused) return;
+          const linked = paneLinkStore.resolveLink(props.paneId, focused);
+          if (!linked || linked === props.paneId) return;
+          e.preventDefault();
+          navigateToBlock(focused, {
+            paneId: linked,
+            highlight: true,
+            originBlockId: focused,
+          });
         },
       });
       onCleanup(unsubscribe);
