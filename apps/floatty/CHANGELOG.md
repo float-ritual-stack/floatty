@@ -6,6 +6,41 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.11.9] - 2026-04-19
+
+### ✨ Features
+
+- **Kanban two-way binding + interactive-view pattern** ([[FLO-587]], #238): kanban becomes the first complete reference implementation of the `floatty-interactive-view` skill — drag, drop, reactive re-projection, inline edit, keyboard boundary navigation. Host dispatches chirp verbs declared in the spec's `on:` map; the door ships with zero handlers. Reactive re-projection via `ctx.server.subscribeBlockChanges` so views re-render when the outline mutates underneath them. Inline edits commit through `update-block` chirps (bypassing json-render-solid's StateProvider gate). Arrow-key navigation flips to a `focus-sibling` verb at column/row boundaries. Drop zones extended to empty column space; source card fades during drag; post-commit refocus locates the new card by `data-kanban-card-id` + rAF retry. Skill docs updated with Reactive Re-Projection, Keyboard Navigation & Boundary Crossing, Drag Drop Zone Design, and Two-Way Binding Pattern sections. Tree, Calendar, and Graph views can follow the same playbook.
+- **Click-to-copy in render:: agent footer** (#243): the session UUID, `--continue`, and `--resume <uuid>` snippets are now `<button>`s. Click any of them to copy to clipboard with a transient `✓ copied` label swap. Keyboard-accessible via Tab + Enter/Space.
+- **`render::` advance-cursor on Enter** (#243): pressing Enter on a `render::` block now executes the handler AND advances focus to the next visible sibling (creating a trailing block if none), so the user can keep typing while the render compiles. Opt-in via new `advanceCursorOnExecute` flag on `BlockHandler` / `DoorMeta` — selfRender doors can surface the same behavior.
+
+### 🔧 Improvements
+
+- **render:: loading indicator on first press** (#243): `executeHandler` now sets `status='running'` synchronously before `await handler.execute(...)`, and `buildSelfRenderHandler` writes a null-data view envelope before the await so `DoorHost` mounts immediately. Root cause: `DoorHost` only mounts once `block.output` is non-null — for selfRender doors that was after the first full execution, making first-press feel dead. Second-press worked because prior output kept the host mounted. Now first press behaves identically to subsequent presses for every door-backed handler.
+- **ai::/chat:: advance cursor immediately, not after the LLM responds** (#243): restructured `conversationHandler` (both `executeConversationTurn` and `executeSingleTurn`) so the continuation block is created and focused BEFORE `await invoke('execute_ai_conversation', …)`. Matches the `::send` pattern and restores the "keep typing while the model thinks" UX. Error path deletes the empty pre-created continuation unless the user typed into it during the roundtrip.
+
+### 🐛 Fixes
+
+- **First Enter on executable blocks now dispatches** ([[FLO-646]], #242): after [[FLO-387]] moved block content commits to boundaries (blur / structural op / unmount), `determineKeyAction` was reading `block.content` from the store before the freshly-typed characters had been flushed. First Enter on a new `sh::`/`ai::`/`render::`/etc. block inserted a newline instead of executing; second press worked because the intervening ArrowUp caused a blur+flush. Fix flushes + re-reads the block at the top of `handleKeyDown` whenever the key is Enter. Perf invariant preserved: `flushContentUpdate` early-returns on `!hasLocalChanges()`, so clean-state Enter is still a no-op on Y.Doc.
+- **Markdown export + clipboard copy read stale content under FLO-387** (#242): ⌘⇧M / ⌘⇧J / ⌘⇧B / ⌘C wrote the pre-boundary store snapshot instead of the user's latest typing. ⌘⇧J and ⌘⇧B used a `document.activeElement.blur()` workaround that stole focus. New `flushPendingContent()` exported from `useContentSync.ts` walks a module-level registry of active instances; `Outliner.tsx` export paths and `useOutlinerSelection.ts` copy path call it before reading store content. HMR cleanup per `do-not.md`.
+- **Sidebar half-screen on reload** ([[FLO-507]], #239): root-cause fix for the three-times-patched bug. Corvu's `onSizesChange` fires on *every* internal `sizes()` change, not just user drags — during panel registration (and every HMR remount / sidebar toggle / side swap) the main content panel registers first with `sizes = [0.5]`, and the handler was treating `sizes[length-1] = 0.5` as the sidebar fraction and saving ~700px. Fix gates save on actual user drag via `onHandleDragStart`/`onHandleDragEnd` + `isUserResizing` signal. Loaded values are now clamped to `[200px, 40vw]` so already-poisoned localStorage self-heals on next mount. Dead `sidebar_width` field removed from Rust `AggregatorConfig` + TS type (pre-localStorage residue, never read).
+
+### 🗑️ Housekeeping
+
+- **Remove dead `claude-mem` door** (#240): `apps/floatty/doors/manifest/manifest.tsx` (prefix `mem::`, localhost:4077 iframe) and doc references in `docs/guides/DOORS.md` and `EvalOutput.tsx` removed. Historical `CHANGELOG.md` entry preserved.
+- **Door housekeeping — three independent steps bundled** (#241): removed `dailylog` door (replaced by `render::`); recovered 5 orphaned door sources that existed only as compiled `~/.floatty/doors/*/index.js` (4 hand-written JS doors + session-garden from pre-monorepo git); preserved `weekly-zine-w10` (Vite + Tailwind project with 10KB SPEC.md) in `docs/archived-doors/`.
+
+### Internal
+
+- **`moveBlock` silent bail-outs now log** ([[PR #238]]): six `return false` paths in `useBlockStore.moveBlock` previously bailed silently — violation of `ydoc-patterns.md` rule 14.6 ("every bail-out gets a diagnostic counter"). Each path now emits a specific `logger.warn`. Regression from FLO-280 surgical-mutation migration.
+- **Rule updates** (#238): `floatty-interactive-view` skill rewritten with reactive-reprojection / keyboard-boundary / drag-drop / two-way-binding sections. `verb-catalog.md` adds `update-block` as a first-class verb, clarifies `edit-block` as view-state only, and corrects `focus-sibling` dispatcher location. New failure-mode entries (FM-10: post-compact archaeology paralysis; FM-11: silent bail-outs; FM-12: "reactivity lives in the view layer" as vaporware comment).
+
+### Related
+
+- [[FLO-623]] filed (via #242 follow-up): conflict-resolution UI for the LWW+diagnostic path added in FLO-387.
+
+---
+
 ## [0.11.8] - 2026-04-16
 
 ### ✨ Features
