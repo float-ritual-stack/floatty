@@ -181,4 +181,45 @@ describe('buildSuggestionsWithTypedText (FLO-400)', () => {
     const result = buildSuggestionsWithTypedText(pages, 'zzzzxyzzy');
     expect(result).toEqual([{ name: 'zzzzxyzzy', exists: false }]);
   });
+
+  // FLO-552: block-alias form (`<hex-prefix>|alias`) should not offer "Create new page"
+  describe('block-alias form (FLO-552)', () => {
+    it('suppresses Create badge when hex prefix resolves to an existing block', () => {
+      // "abc123de" is an 8-char hex; resolveAlias returns true → exists:true, no fuzzy noise
+      const resolveAlias = (hex: string) => hex === 'abc123de';
+      const result = buildSuggestionsWithTypedText(pages, 'abc123de|alias text', resolveAlias);
+      expect(result).toEqual([{ name: 'abc123de|alias text', exists: true }]);
+    });
+
+    it('keeps Create badge when hex prefix is valid shape but does not resolve', () => {
+      // Shape matches BLOCK_ID_PREFIX_RE but no such block exists → falls through to normal flow
+      const resolveAlias = () => false;
+      const result = buildSuggestionsWithTypedText(pages, 'deadbeef00|fake', resolveAlias);
+      expect(result[0]).toEqual({ name: 'deadbeef00|fake', exists: false });
+    });
+
+    it('ignores alias form when left side is not hex', () => {
+      // "not-hex" is not a block-ID prefix → resolveAlias never consulted, normal flow applies
+      const resolveAlias = () => {
+        throw new Error('should not be called for non-hex prefix');
+      };
+      const result = buildSuggestionsWithTypedText(pages, 'not-hex|alias', resolveAlias);
+      expect(result[0]).toEqual({ name: 'not-hex|alias', exists: false });
+    });
+
+    it('does not trigger block-alias path without a pipe', () => {
+      // Bare hex prefix (no pipe) should fall through to normal page search
+      const resolveAlias = () => {
+        throw new Error('should not be called without a pipe');
+      };
+      const result = buildSuggestionsWithTypedText(pages, 'abc123de', resolveAlias);
+      expect(result[0]).toEqual({ name: 'abc123de', exists: false });
+    });
+
+    it('backward-compat: no resolveAlias arg behaves exactly like pre-FLO-552', () => {
+      const result = buildSuggestionsWithTypedText(pages, 'abc123de|alias');
+      // No resolver → Create badge still shows, same as any unknown typed text
+      expect(result[0]).toEqual({ name: 'abc123de|alias', exists: false });
+    });
+  });
 });
