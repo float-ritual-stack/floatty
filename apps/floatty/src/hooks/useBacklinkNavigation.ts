@@ -27,15 +27,21 @@ const PAGES_PREFIX = 'pages::';
  * Extract page title from block content: first line only, heading prefix stripped.
  * Handles multi-line pages where metadata lives on subsequent lines.
  *
+ * A "heading prefix" is one-or-more `#` followed by at least one whitespace
+ * (per CommonMark). Bare `#name` (no whitespace) is NOT a heading — it's a
+ * page whose name happens to start with `#`, e.g. [[#2817]] (FLO-573).
+ *
  * Examples:
  *   "# My Page" → "My Page"
  *   "# Summary\n[board:: recon]" → "Summary"
  *   "### Deep" → "Deep"
+ *   "#2817" → "#2817"   (no whitespace after #, not a heading)
+ *   "# #2817" → "#2817" (outer # is heading, inner # is part of the name)
  *   "No prefix" → "No prefix"
  */
 export function getPageTitle(content: string): string {
   const firstLine = content.split('\n')[0];
-  return firstLine.replace(/^#+\s*/, '').trim();
+  return firstLine.replace(/^#+\s+/, '').trim();
 }
 
 /**

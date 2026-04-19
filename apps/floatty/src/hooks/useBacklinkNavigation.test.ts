@@ -42,4 +42,19 @@ describe('getPageTitle', () => {
     const content = 'plain title\nsome metadata';
     expect(getPageTitle(content)).toBe('plain title');
   });
+
+  // FLO-573: bare "#name" (no whitespace after #) is a page name, not a heading
+  it('preserves # prefix on names without whitespace (FLO-573)', () => {
+    expect(getPageTitle('#2817')).toBe('#2817');
+    expect(getPageTitle('#tag')).toBe('#tag');
+    expect(getPageTitle('##nested')).toBe('##nested');
+  });
+
+  it('strips heading but preserves inner # on pages named #NNN (FLO-573)', () => {
+    // createPage writes "# ${name}" into the page block. For a page named
+    // "#2817" the stored content is "# #2817" — title should be "#2817".
+    expect(getPageTitle('# #2817')).toBe('#2817');
+    expect(getPageTitle('# #tag')).toBe('#tag');
+    expect(getPageTitle('## #2817')).toBe('#2817');
+  });
 });
