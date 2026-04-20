@@ -2,10 +2,13 @@
 # floatty-garden.sh - Outline gardening helpers (sort, dedup, resolve, sweep)
 # Source floatty-api.sh first, or this will source it
 
-# Self-locate via BASH_SOURCE so the probe works from ANY install path:
-# legacy ~/.claude/skills/, Claude Code plugin cache, `--plugin-dir`, or
-# claude.ai /mnt/skills. Each script lives in <plugin-root>/scripts/, so the
-# parent of the script directory is the plugin/skill root.
+# Self-locate via BASH_SOURCE so scripts work regardless of install path:
+#   Plugin marketplace: ~/.claude/plugins/cache/<market>/<plugin>/<ver>/skills/floatty-backend/
+#   --plugin-dir:       <plugin>/skills/floatty-backend/
+#   Legacy:             ~/.claude/skills/floatty-backend/
+#   claude.ai upload:   /mnt/skills/user/floatty-backend/
+#
+# Scripts live at <skill-root>/scripts/, so BASH_SOURCE/.. is the skill root.
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
   FLOATTY_SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi

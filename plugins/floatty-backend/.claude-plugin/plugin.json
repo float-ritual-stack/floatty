@@ -1,7 +1,6 @@
 {
   "name": "floatty-backend",
   "description": "Interact with floatty-server REST API for block CRUD, search, daily notes, and semantic endpoints. Use when working with floatty outliner data, creating blocks via API, searching content, or managing daily notes programmatically.",
-  "version": "0.3.0",
   "author": {
     "name": "Evan Schultz"
   },
