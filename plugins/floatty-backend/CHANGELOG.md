@@ -7,6 +7,18 @@ semver ([semver.org](https://semver.org/)). The authoritative version lives
 in `marketplace.json` (per Claude Code's
 [relative-path plugin guidance](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels)).
 
+## [0.6.0] — 2026-04-20
+
+ngrok browser-warning interstitial workaround. Discovered by a parallel kitty session probing `floatty.ngrok.app` from a sandbox environment — ngrok 3.37.6+ serves a 503 "DNS cache overflow" interstitial to agent UAs unless `ngrok-skip-browser-warning: 1` is set.
+
+### Fixed
+
+- `floatty_curl` in `scripts/floatty-api.sh` now sends `ngrok-skip-browser-warning: 1` on every request. Harmless on localhost (ignored), fixes the 503 interstitial on ngrok-tunneled floatty-server endpoints.
+
+### Why it matters
+
+Before 0.6.0, any agent calling `floatty_curl` against `https://*.ngrok.app` from a UA that triggered ngrok's anti-bot detection got `503 "DNS cache overflow"` instead of the real JSON response — misleading because the error body looks like a server failure, not a tunnel-interstitial.
+
 ## [0.5.0] — 2026-04-20
 
 New doctrine section in `SKILL.md` on how to format block content for the floatty renderer. Authored by a parallel kitty session that initially landed the edit in the marketplace checkout (which gets clobbered on `/plugin marketplace update`) rather than the monorepo source — ported over here so it persists.

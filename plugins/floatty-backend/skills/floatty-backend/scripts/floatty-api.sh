@@ -88,13 +88,23 @@ if [[ -z "$AUTH_DISABLED" ]]; then
   fi
 fi
 
-# Core curl wrapper with auth headers (or without if auth disabled)
+# Core curl wrapper with auth headers (or without if auth disabled).
+#
+# The `ngrok-skip-browser-warning` header bypasses the agent-interstitial
+# that ngrok 3.37.6+ serves to free-tier tunnels. Without it, requests
+# through https://<subdomain>.ngrok.app get a 503 "DNS cache overflow"
+# body that is actually ngrok's anti-bot page, not a real server error.
+# The header is ignored when talking to localhost, so it's safe to always
+# send. (Discovered 2026-04-20 against floatty.ngrok.app.)
 floatty_curl() {
   if [[ -n "$AUTH_DISABLED" ]]; then
-    curl -s -H "Content-Type: application/json" "$@"
+    curl -s -H "Content-Type: application/json" \
+         -H "ngrok-skip-browser-warning: 1" \
+         "$@"
   else
     curl -s -H "Authorization: Bearer $FLOATTY_API_KEY" \
          -H "Content-Type: application/json" \
+         -H "ngrok-skip-browser-warning: 1" \
          "$@"
   fi
 }
