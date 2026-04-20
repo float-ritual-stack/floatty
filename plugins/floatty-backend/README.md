@@ -5,8 +5,8 @@ Shell helpers + Claude Code skill for working with the [floatty-server](../../ap
 ## What's inside
 
 - `skills/floatty-backend/SKILL.md` — the skill description + mental model that Claude Code loads when you use the plugin.
-- `scripts/` — bash functions (`floatty_block_*`, `floatty_search`, `floatty_daily_*`, etc.) that wrap the API. Sourced on demand by the skill.
-- `references/` — expanded docs (`api-reference.md`, `helpers.md`, `workflows.md`, `anti-patterns.md`) loaded via progressive disclosure when the task needs them.
+- `skills/floatty-backend/references/` — expanded docs (`api-reference.md`, `helpers.md`, `workflows.md`, `anti-patterns.md`) loaded via progressive disclosure when the task needs them. Lives inside the skill directory so `[helpers.md](references/helpers.md)` links in SKILL.md resolve correctly.
+- `scripts/` — bash functions (`floatty_block_*`, `floatty_search`, `floatty_daily_*`, etc.) that wrap the API. Sourced on demand by the skill; self-locating via `BASH_SOURCE` so any install path works.
 
 ## Install
 
@@ -24,10 +24,15 @@ The marketplace is declared in the repo root at `.claude-plugin/marketplace.json
 
 ## Configure
 
-The scripts read two environment variables (both auto-detected from `~/.floatty-dev/config.toml` if present):
+The scripts read two environment variables. Auto-detection tries BOTH config paths in order:
 
-- `FLOATTY_URL` — defaults to `http://127.0.0.1:8765` (release) or `http://127.0.0.1:33333` (dev)
-- `FLOATTY_API_KEY` — the `api_key` field from the TOML config
+- `~/.floatty-dev/config.toml` (tauri dev, port 33333)
+- `~/.floatty/config.toml` (release build, port 8765)
+
+Priority:
+
+- `FLOATTY_URL` — probes localhost:8765, then localhost:33333; falls back to the existing env var or `127.0.0.1:8765`. Set explicitly for ngrok / remote floatty.
+- `FLOATTY_API_KEY` — explicit env var wins; otherwise the first `api_key=` line found across the two config paths; otherwise the well-known bootstrap default (fine for localhost — **rotate the key if you tunnel publicly**; see the comment in `scripts/floatty-api.sh`).
 
 ## Bug history
 

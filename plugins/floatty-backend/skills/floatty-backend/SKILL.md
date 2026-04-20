@@ -344,4 +344,4 @@ Read these when you need detail beyond what's above:
 **No blocks**: Verify server: `curl -s -H "Authorization: Bearer floatty-1890872e6255d2d0" http://127.0.0.1:8765/api/v1/health`
 **Empty search**: Tantivy index may need time to sync. Try broader terms.
 **Block prefix returns 404 but block exists**: Helper scripts are wrappers. If they fail, try direct `curl` to the same endpoint. If prefix resolution fails but full UUID works, there may be an index sync delay — use `floatty_presence` to get the full UUID when user is focused on the block.
-**Daily note not found**: `floatty_daily_add` auto-creates. Check date format (macOS vs Linux).
+**Daily note not found**: `floatty_daily_add` now returns an explicit error when today's daily note doesn't exist ([[FLO-636]] behaviour — no more silent root-block creation). Open floatty and click `[[YYYY-MM-DD]]` to create the daily note under `pages::`, then retry. Once the FLO-652 endpoints ship in a release, a follow-up will add `floatty_daily_append_via_api` that autocreates via `POST /api/v1/daily/:date/append`.

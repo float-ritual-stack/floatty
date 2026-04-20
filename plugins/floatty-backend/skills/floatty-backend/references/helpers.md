@@ -79,8 +79,8 @@ Run as: `$FLOATTY_SKILL_DIR/scripts/floatty-context.sh <command>`
 
 | Helper | Purpose |
 |--------|---------|
-| `floatty_daily_create [date]` | Create daily note header |
-| `floatty_daily_add <content>` | Add timestamped entry (auto-creates daily if missing) |
+| `floatty_daily_create [date]` | DEPRECATED (FLO-636) — creates a `## $date` root block instead of the canonical `# $date` page under `pages::`. Prints a warning; open floatty and click `[[YYYY-MM-DD]]` instead. Kept for backward compat only. |
+| `floatty_daily_add <content>` | Add timestamped entry to today's daily note. Errors if the daily note doesn't exist yet (FLO-636 — no more silent root-block creation). Create the page in floatty first. |
 | `floatty_tldr <summary> [did] [learned] [next]` | Create TLDR block tree |
 
 ## Gardening (`floatty-garden.sh`)

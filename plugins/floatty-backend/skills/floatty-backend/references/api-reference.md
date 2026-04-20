@@ -348,9 +348,9 @@ GET /api/v1/stats
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /markers` | Distinct marker types + counts |
-| `GET /markers/{type}/values` | Values for a marker type (e.g., `/markers/project/values`) |
-| `GET /stats` | Block count, root count, type distribution, metadata coverage |
+| `GET /api/v1/markers` | Distinct marker types + counts |
+| `GET /api/v1/markers/{type}/values` | Values for a marker type (e.g., `/api/v1/markers/project/values`) |
+| `GET /api/v1/stats` | Block count, root count, type distribution, metadata coverage |
 
 ---
 

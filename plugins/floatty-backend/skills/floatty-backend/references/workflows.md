@@ -24,6 +24,8 @@ floatty_search "ctx::"
 
 ### Quick Note
 
+**Precondition**: today's daily note must already exist under `pages::` — `floatty_daily_add` uses `GET /api/v1/daily/:date` and errors if the note is missing (FLO-636). Open floatty and click `[[YYYY-MM-DD]]` to create it first.
+
 ```bash
 floatty_daily_add "Fixed scroll yanking bug - overflow:hidden pattern"
 ```

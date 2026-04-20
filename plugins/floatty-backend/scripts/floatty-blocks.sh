@@ -7,12 +7,13 @@
 # zsh echo interprets \n in JSON strings → parse errors on multiline content.
 # Or just pipe directly: `floatty_block_get "$ID" | jq '.content'`
 
-# Auto-detect skill directory (Claude Code: ~/.claude/skills/, claude.ai: /mnt/skills/user/)
+# Self-locate via BASH_SOURCE so the probe works from ANY install path:
+# legacy ~/.claude/skills/, Claude Code plugin cache (~/.claude/plugins/
+# cache/<id>/...), `--plugin-dir ./plugins/floatty-backend`, or claude.ai's
+# /mnt/skills/. Each script lives in <plugin-root>/scripts/, so the parent
+# of the script directory is the plugin/skill root.
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
-  for _d in "$HOME/.claude/skills/floatty-backend" /mnt/skills/user/floatty-backend /mnt/skills/private/floatty-backend; do
-    [[ -d "$_d/scripts" ]] && FLOATTY_SKILL_DIR="$_d" && break
-  done
-  FLOATTY_SKILL_DIR="${FLOATTY_SKILL_DIR:-$HOME/.claude/skills/floatty-backend}"
+  FLOATTY_SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 [[ -z "$FLOATTY_URL" ]] && source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
 
@@ -20,7 +21,9 @@ fi
 floatty_blocks_list() {
   local filter="${1:-}"
   if [[ -n "$filter" ]]; then
-    floatty_curl "$FLOATTY_URL/api/v1/blocks" | jq ".blocks[] | select(.content | test(\"$filter\"; \"i\"))"
+    # Pass $filter via --arg so caller input cannot break out of the jq
+    # string literal and inject arbitrary jq (CodeRabbit/Greptile on PR #250).
+    floatty_curl "$FLOATTY_URL/api/v1/blocks" | jq --arg f "$filter" '.blocks[] | select(.content | test($f; "i"))'
   else
     floatty_curl "$FLOATTY_URL/api/v1/blocks" | jq '.blocks'
   fi

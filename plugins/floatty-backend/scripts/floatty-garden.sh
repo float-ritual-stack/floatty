@@ -2,12 +2,12 @@
 # floatty-garden.sh - Outline gardening helpers (sort, dedup, resolve, sweep)
 # Source floatty-api.sh first, or this will source it
 
-# Auto-detect skill directory (Claude Code: ~/.claude/skills/, claude.ai: /mnt/skills/user/)
+# Self-locate via BASH_SOURCE so the probe works from ANY install path:
+# legacy ~/.claude/skills/, Claude Code plugin cache, `--plugin-dir`, or
+# claude.ai /mnt/skills. Each script lives in <plugin-root>/scripts/, so the
+# parent of the script directory is the plugin/skill root.
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
-  for _d in "$HOME/.claude/skills/floatty-backend" /mnt/skills/user/floatty-backend /mnt/skills/private/floatty-backend; do
-    [[ -d "$_d/scripts" ]] && FLOATTY_SKILL_DIR="$_d" && break
-  done
-  FLOATTY_SKILL_DIR="${FLOATTY_SKILL_DIR:-$HOME/.claude/skills/floatty-backend}"
+  FLOATTY_SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 [[ -z "$FLOATTY_URL" ]] && source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
 
@@ -19,21 +19,23 @@ floatty_find_page() {
   local title="$1"
   [[ -z "$title" ]] && { echo "Usage: floatty_find_page <title>" >&2; return 1; }
 
-  # Fetch all blocks, find pages (blocks with childIds) matching title
-  # Pages have content starting with "# " (heading) matching the title
+  # Fetch all blocks, find pages (blocks with childIds) matching title.
+  # Title is passed via sys.argv (NOT interpolated into the Python source)
+  # so a title containing ''' cannot terminate the Python string literal and
+  # inject code (CodeRabbit/Greptile on PR #250).
   floatty_curl "$FLOATTY_URL/api/v1/blocks" | \
-    python3 -c "
+    python3 -c '
 import sys, json
 data = json.load(sys.stdin)
-title = '''$title'''
-blocks = data.get('blocks', data) if isinstance(data, dict) else data
+title = sys.argv[1]
+blocks = data.get("blocks", data) if isinstance(data, dict) else data
 for b in blocks:
-    content = b.get('content', '')
+    content = b.get("content", "")
     # Match exact page title (with or without # prefix)
-    bare = content.lstrip('# ').strip()
+    bare = content.lstrip("# ").strip()
     if bare.lower() == title.lower():
-        print(json.dumps({'id': b['id'], 'content': content, 'children': len(b.get('childIds', []))}))
-"
+        print(json.dumps({"id": b["id"], "content": content, "children": len(b.get("childIds", []))}))
+' "$title"
 }
 
 # Find page by content substring (broader than find_page)

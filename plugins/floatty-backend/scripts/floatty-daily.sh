@@ -2,12 +2,12 @@
 # floatty-daily.sh - Daily note workflows for floatty-server
 # Source floatty-api.sh and floatty-blocks.sh first, or this will source them
 
-# Auto-detect skill directory (Claude Code: ~/.claude/skills/, claude.ai: /mnt/skills/user/)
+# Self-locate via BASH_SOURCE so the probe works from ANY install path:
+# legacy ~/.claude/skills/, Claude Code plugin cache, `--plugin-dir`, or
+# claude.ai /mnt/skills. Each script lives in <plugin-root>/scripts/, so the
+# parent of the script directory is the plugin/skill root.
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
-  for _d in "$HOME/.claude/skills/floatty-backend" /mnt/skills/user/floatty-backend /mnt/skills/private/floatty-backend; do
-    [[ -d "$_d/scripts" ]] && FLOATTY_SKILL_DIR="$_d" && break
-  done
-  FLOATTY_SKILL_DIR="${FLOATTY_SKILL_DIR:-$HOME/.claude/skills/floatty-backend}"
+  FLOATTY_SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 [[ -z "$FLOATTY_URL" ]] && source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
 source "$FLOATTY_SKILL_DIR/scripts/floatty-blocks.sh"
