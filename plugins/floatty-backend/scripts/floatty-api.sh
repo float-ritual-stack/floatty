@@ -17,28 +17,30 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # Server URL resolution (in priority order):
-# 1. Probe localhost:8765 (release server) — if it responds, use it
-# 2. Probe localhost:33333 (dev server) — if it responds, use it
-# 3. FLOATTY_URL env var (may be stale from a tauri dev session)
-# 4. ngrok tunnel (Desktop Claude / sandbox fallback)
+# 1. FLOATTY_URL env var — if set, always wins (explicit > auto)
+# 2. Probe localhost:8765 (release server) — if it responds, use it
+# 3. Probe localhost:33333 (dev server) — if it responds, use it
+# 4. Fall back to release default (http://127.0.0.1:8765)
 #
-# Why not just trust FLOATTY_URL? Because tauri dev injects
-# FLOATTY_URL=http://127.0.0.1:33333 into the shell env, and Claude Code
-# inherits it even when the dev server is long dead and the release server
-# is alive on 8765. Probing is cheap (1 curl), silent failure is not.
+# PR #250 feedback: previously probes won over explicit FLOATTY_URL, which
+# broke the documented Desktop Daddy / ngrok remote-agent flow — callers
+# passing `FLOATTY_URL=https://floatty.ngrok.app` got silently redirected to
+# localhost. Explicit user intent should win, full stop. If the user sets
+# FLOATTY_URL to a stale dev port, that's a user problem (and a clear one:
+# curl will fail with connection refused, not silently hit a different outline).
 _floatty_probe_url() {
   local url="$1"
   curl -sf -o /dev/null --max-time 1 "$url/api/v1/health" 2>/dev/null
 }
 
-if _floatty_probe_url "http://localhost:8765"; then
+if [[ -n "$FLOATTY_URL" ]]; then
+  : # explicit env var wins — do nothing
+elif _floatty_probe_url "http://localhost:8765"; then
   FLOATTY_URL="http://localhost:8765"
 elif _floatty_probe_url "http://localhost:33333"; then
   FLOATTY_URL="http://localhost:33333"
-elif [[ -n "$FLOATTY_URL" ]] && _floatty_probe_url "$FLOATTY_URL"; then
-  : # env var is valid, keep it
 else
-  FLOATTY_URL="${FLOATTY_URL:-http://127.0.0.1:8765}"
+  FLOATTY_URL="http://127.0.0.1:8765"
 fi
 
 # API key resolution (priority order):

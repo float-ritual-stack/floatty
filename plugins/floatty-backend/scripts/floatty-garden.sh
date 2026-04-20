@@ -9,7 +9,10 @@
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
   FLOATTY_SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
-[[ -z "$FLOATTY_URL" ]] && source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
+# Guard on floatty_curl presence (not $FLOATTY_URL) — see blocks.sh for why.
+if ! declare -F floatty_curl >/dev/null 2>&1; then
+  source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
+fi
 
 # ─── Page Resolution ───────────────────────────────────────────────
 # Resolve a page title to its block UUID
@@ -44,8 +47,10 @@ floatty_find_blocks() {
   local term="$1"
   [[ -z "$term" ]] && { echo "Usage: floatty_find_blocks <term>" >&2; return 1; }
 
+  # ascii()|test() would treat $t as regex; use ascii_downcase | contains()
+  # for literal substring match (CodeRabbit 🟡 on PR #250).
   floatty_curl "$FLOATTY_URL/api/v1/blocks" | \
-    jq --arg t "$term" '[.blocks[] | select(.content | test($t; "i")) | {id, content: .content[0:120], children: (.childIds | length), parent: .parentId}]'
+    jq --arg t "$term" '[.blocks[] | select(.content | ascii_downcase | contains($t | ascii_downcase)) | {id, content: .content[0:120], children: (.childIds | length), parent: .parentId}]'
 }
 
 # ─── Sort Children ─────────────────────────────────────────────────
@@ -56,7 +61,11 @@ floatty_sort_children() {
   local dry_run="${2:-}"
   [[ -z "$parent_id" ]] && { echo "Usage: floatty_sort_children <parent_id> [--dry-run]" >&2; return 1; }
 
-  python3 << 'PYEOF'
+  # Pass parent_id + dry_run flag as Python argv so the quoted heredoc
+  # (safe: prevents $VAR injection) can still receive the shell variables.
+  # Fix for PR #250: previously the heredoc received no args, so sort_children
+  # silently exited with "Parent block  not found" on every call.
+  python3 - "$parent_id" "$dry_run" << 'PYEOF'
 import json, sys, urllib.request, os
 
 parent_id = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -261,7 +270,9 @@ PYEOF
 floatty_orphan_sweep() {
   local fix="${1:-}"
 
-  python3 << 'PYEOF'
+  # Pass fix flag via argv (quoted heredoc blocks $VAR interpolation).
+  # Fix for PR #250: previously heredoc received no args, so --fix was silently ignored.
+  python3 - "$fix" << 'PYEOF'
 import json, sys, urllib.request, os
 
 fix = "--fix" in sys.argv
@@ -312,7 +323,9 @@ PYEOF
 floatty_dedup_sh() {
   local dry_run="${1:---dry-run}"
 
-  python3 << 'PYEOF'
+  # Pass dry_run flag via argv.
+  # Fix for PR #250: previously heredoc received no args, so --dry-run check was always False.
+  python3 - "$dry_run" << 'PYEOF'
 import json, sys, re, urllib.request, os
 from collections import defaultdict
 

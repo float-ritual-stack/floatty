@@ -7,7 +7,7 @@ Common workflows for kitty and other Claude instances.
 Check what's in floatty from recent sessions:
 
 ```bash
-source "$_FBD/scripts/floatty-daily.sh"  # see SKILL.md setup for $_FBD
+source "$FLOATTY_SKILL_DIR/scripts/floatty-daily.sh"  # see SKILL.md setup for $FLOATTY_SKILL_DIR
 
 # Yesterday's notes
 floatty_search "$(date -v-1d +%Y-%m-%d)"  # macOS
@@ -98,7 +98,7 @@ floatty_search_backlinks "Intent Primitives"
 The most common agent workflow: "give me this page, let me work on it."
 
 ```bash
-source "$_FBD/scripts/floatty-blocks.sh"  # see SKILL.md setup for $_FBD
+source "$FLOATTY_SKILL_DIR/scripts/floatty-blocks.sh"  # see SKILL.md setup for $FLOATTY_SKILL_DIR
 
 # One command: resolve short-hash + fetch full tree
 floatty_page 5696d8b9
@@ -177,22 +177,19 @@ curl -s -X PATCH "http://localhost:8765/api/v1/blocks/$BLOCK_ID" \
 ### Gardening loop (batch reparent + sort)
 
 ```bash
-# 1. Create new day node
-DAY_NODE=$(curl -s -X POST "http://localhost:8765/api/v1/blocks" \
-  -H "Content-Type: application/json" \
-  -d "{\"content\": \"## scratch for [[2026-02-13]] -\", \"parentId\": \"$WEEK_NODE\"}" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+# 1. Create new day node (use floatty_block_create — handles auth + FLOATTY_URL)
+DAY_NODE=$(floatty_block_create "## scratch for [[2026-02-13]] -" "$WEEK_NODE" \
+  | jq -r '.id')
 
 # 2. Reparent blocks (full UUIDs required)
 for block in "${BLOCK_IDS[@]}"; do
-  curl -s -X PATCH "http://localhost:8765/api/v1/blocks/${block}" \
-    -H "Content-Type: application/json" \
+  floatty_curl -X PATCH "$FLOATTY_URL/api/v1/blocks/${block}" \
     -d "{\"parentId\": \"${DAY_NODE}\"}"
 done
 
 # 3. Sort day nodes (reverse-chron: newest first)
-curl -s -X PATCH "http://localhost:8765/api/v1/blocks/$NEWEST_DAY" \
-  -H "Content-Type: application/json" -d '{"atIndex": 0}'
+floatty_curl -X PATCH "$FLOATTY_URL/api/v1/blocks/$NEWEST_DAY" \
+  -d '{"atIndex": 0}'
 ```
 
 **Short-hash resolution**: Block IDs can be resolved from 6+ hex-char prefixes via `GET /api/v1/blocks/resolve/818b2ef9` → returns full UUID + block data. For content-based discovery, use search: `GET /api/v1/search?q=content+snippet` → `.hits[0].blockId`.
@@ -215,7 +212,7 @@ floatty_ctx "$MSG" "floatty" "build"
 ### Check Server Health
 
 ```bash
-source "$_FBD/scripts/floatty-api.sh"  # see SKILL.md setup for $_FBD
+source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"  # see SKILL.md setup for $FLOATTY_SKILL_DIR
 floatty_health
 # {"status":"ok","version":"0.8.4","gitSha":"...","gitDirty":false}
 ```
@@ -240,9 +237,16 @@ floatty_blocks_list | head -20
 
 ### Export Daily to Markdown
 
+Daily notes are resolved via `GET /api/v1/daily/:date` (PageNameIndex),
+not by text-searching for `## $TODAY` — that misses the canonical page and
+only returns content snippets that happen to contain the heading.
+
 ```bash
 TODAY=$(date +%Y-%m-%d)
-floatty_search "## $TODAY" 50 | jq -r '.hits[].content' > "daily-$TODAY.md"
+# Get the daily note's full subtree
+floatty_daily_get "$TODAY" tree \
+  | jq -r '.tree[] | ("  " * .depth) + "- " + .content' \
+  > "daily-$TODAY.md"
 ```
 
 ### Find and Update

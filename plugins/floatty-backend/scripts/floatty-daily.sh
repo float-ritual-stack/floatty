@@ -9,7 +9,10 @@
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
   FLOATTY_SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
-[[ -z "$FLOATTY_URL" ]] && source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
+# Guard on floatty_curl presence (not $FLOATTY_URL) — see blocks.sh for why.
+if ! declare -F floatty_curl >/dev/null 2>&1; then
+  source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
+fi
 source "$FLOATTY_SKILL_DIR/scripts/floatty-blocks.sh"
 source "$FLOATTY_SKILL_DIR/scripts/floatty-search.sh"
 

@@ -33,9 +33,10 @@ COMMANDS:
   context <id> [radius]    Block with ancestors + siblings + children
   tree <id> [depth]        Block subtree with token estimate
 
-OPTIONS:
-  --json                   Output raw JSON instead of formatted
-  --ids-only               Output only block IDs
+OUTPUT:
+  All commands emit formatted markdown. For raw JSON use the underlying
+  helpers directly: floatty_search "$QUERY" | jq ... or
+  floatty_block_context "$ID" | jq -r '.children[].id'.
 
 EXAMPLES:
   floatty-context today

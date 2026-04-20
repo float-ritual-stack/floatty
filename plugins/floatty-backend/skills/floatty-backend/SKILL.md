@@ -49,18 +49,37 @@ Agents running inside floatty terminals (Claude Code, pi mono, etc.) automatical
 
 ## Setup
 
-```bash
-# Scripts auto-detect their location. Source from wherever the skill is installed:
-# Claude Code: ~/.claude/skills/floatty-backend/scripts/
-# claude.ai:   /mnt/skills/user/floatty-backend/scripts/
-# Override:    FLOATTY_SKILL_DIR=/your/path
+The scripts self-locate via `BASH_SOURCE`, so you only need to source one —
+the others are resolved relative to it. The probe below covers every install
+layout the skill ships in:
 
-_FBD=$(for d in "$HOME/.claude/skills/floatty-backend" /mnt/skills/user/floatty-backend /mnt/skills/private/floatty-backend; do [ -d "$d/scripts" ] && echo "$d" && break; done)
-source "$_FBD/scripts/floatty-api.sh"
-source "$_FBD/scripts/floatty-blocks.sh"
-source "$_FBD/scripts/floatty-search.sh"
-source "$_FBD/scripts/floatty-daily.sh"
+```bash
+# Install layouts (first match wins):
+#   Plugin marketplace cache:  ~/.claude/plugins/cache/*/floatty-backend
+#   Claude Code --plugin-dir:  any path containing scripts/floatty-api.sh
+#   Legacy skill:              ~/.claude/skills/floatty-backend
+#   claude.ai:                 /mnt/skills/user/floatty-backend
+#                              /mnt/skills/private/floatty-backend
+#   Override:                  FLOATTY_SKILL_DIR=/your/path
+
+if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
+  for d in \
+    "$HOME"/.claude/plugins/cache/*/floatty-backend \
+    "$HOME/.claude/skills/floatty-backend" \
+    /mnt/skills/user/floatty-backend \
+    /mnt/skills/private/floatty-backend; do
+    [[ -d "$d/scripts" ]] && { FLOATTY_SKILL_DIR="$d"; break; }
+  done
+fi
+source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
+source "$FLOATTY_SKILL_DIR/scripts/floatty-blocks.sh"
+source "$FLOATTY_SKILL_DIR/scripts/floatty-search.sh"
+source "$FLOATTY_SKILL_DIR/scripts/floatty-daily.sh"
 ```
+
+After sourcing `floatty-api.sh`, later scripts (blocks/search/daily/garden/
+context) auto-source it themselves via a `declare -F floatty_curl` guard, so
+re-sourcing is idempotent.
 
 **Server**: `http://127.0.0.1:8765` (local dev/release, override: `FLOATTY_URL` env var). Agents running inside a floatty terminal get `FLOATTY_URL` injected automatically and should use it as-is.
 **API Key**: `floatty-1890872e6255d2d0` (override: `FLOATTY_API_KEY` env var)
@@ -216,7 +235,7 @@ For queries needing params not exposed by helpers, use `floatty_curl` directly:
 |-------|---------|---------|
 | `q` | required | Search text (can be empty string for filter-only) |
 | `limit` | 20 | Max results |
-| `include_breadcrumb` | true (via helper) | Parent chain per hit (returns `list[string]` of page names) |
+| `include_breadcrumb` | true (via helper) | Parent chain per hit — `list[string]` of ancestor block content (nearest parent last), NOT just page names. e.g. `["pages::", "# 2026-04-20"]`. |
 | `include_metadata` | true (via helper) | Markers + outlinks per hit |
 | `types` | all | Filter by block type prefix (`sh,ai`) |
 | `has_markers` | false | Only blocks with `::` annotations |

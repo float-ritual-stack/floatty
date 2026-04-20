@@ -15,7 +15,13 @@
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
   FLOATTY_SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
-[[ -z "$FLOATTY_URL" ]] && source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
+# Source api.sh when floatty_curl is not yet defined. Previously guarded on
+# $FLOATTY_URL, but floatty terminals pre-inject FLOATTY_URL into the env, so
+# the guard skipped the source and floatty_curl never got defined
+# (CodeRabbit 🟠 on PR #250).
+if ! declare -F floatty_curl >/dev/null 2>&1; then
+  source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
+fi
 
 # List all blocks (optionally filter by content regex)
 floatty_blocks_list() {
