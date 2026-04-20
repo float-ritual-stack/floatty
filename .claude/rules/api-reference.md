@@ -87,6 +87,50 @@ curl -H "Authorization: Bearer $KEY" "http://127.0.0.1:$PORT/api/v1/daily/2026-0
 
 Returns 404 if no page with that name exists.
 
+## Semantic Endpoints (FLO-652)
+
+Semantic siblings of the low-level block CRUD. Hide structural conventions (`pages::` container, daily-note naming) from API consumers so agents don't have to rediscover layout rules.
+
+### Upsert Page
+
+`POST /api/v1/pages/:name` — get-or-create a page under the `pages::` container.
+
+Idempotent. Body is currently empty (`{}`). Responses:
+- **200 OK** when the page already existed (lookup via PageNameIndex, case-insensitive)
+- **201 Created** when the page was freshly created (autocreates the `pages::` container too if absent)
+- **400 Bad Request** when the name is empty / whitespace-only
+
+Returns a `BlockDto` — same shape as `GET /api/v1/blocks/:id`. Page content is written as `# ${name}` (CommonMark heading) so it renders correctly when zoomed.
+
+Concurrency-safe: a per-process `semantic_cache` mutex in `AppState` serialises the find-or-create path so simultaneous POSTs for the same name return the same page id and the same 200/201 classification. Cache also bridges the async `PageNameIndex` hook-update window.
+
+```bash
+curl -X POST -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" -d '{}' \
+  "http://127.0.0.1:$PORT/api/v1/pages/Shell-Lite%20Spec"
+```
+
+### Append to Daily Note
+
+`POST /api/v1/daily/:date/append` — append a child block under the specified daily note, autocreating the daily note (and `pages::` container) when missing.
+
+Body: `{ "content": "..." }` — the child block's content.
+
+Responses:
+- **201 Created** with the new child's `BlockDto`
+- **400 Bad Request** when:
+  - `:date` isn't `YYYY-MM-DD` shape — prevents creating orphan pages that `GET /api/v1/daily/:date` cannot resolve
+  - `content` is empty / whitespace-only — empty appends are almost never intentional
+
+```bash
+curl -X POST -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"ctx::quick note"}' \
+  "http://127.0.0.1:$PORT/api/v1/daily/2026-04-19/append"
+```
+
+Use this instead of `POST /api/v1/blocks` with a search-resolved `parentId` — callers no longer need to know that daily notes live under `pages::` or what their content format looks like.
+
 ## Vocabulary Discovery
 
 | Endpoint | Returns |
