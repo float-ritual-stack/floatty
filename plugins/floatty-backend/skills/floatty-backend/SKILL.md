@@ -57,7 +57,8 @@ layout the skill ships in:
 # Install layouts (first match wins):
 #   Plugin marketplace cache:  ~/.claude/plugins/cache/<marketplace>/floatty-backend/<version>/
 #                              (Claude Code interposes a semver directory;
-#                              the scripts/ dir lives one level deeper.)
+#                              the scripts/ dir lives one level deeper. Multiple
+#                              versions can coexist post-update until GC.)
 #   Claude Code --plugin-dir:  any path containing scripts/floatty-api.sh
 #   Legacy skill:              ~/.claude/skills/floatty-backend
 #   claude.ai:                 /mnt/skills/user/floatty-backend
@@ -65,14 +66,18 @@ layout the skill ships in:
 #   Override:                  FLOATTY_SKILL_DIR=/your/path
 
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
-  for d in \
-    "$HOME"/.claude/plugins/cache/*/floatty-backend/*/ \
+  # Prefer the HIGHEST version among cached installs. Bash glob expansion
+  # returns ascending (so 0.1.0 wins over 0.2.0 without sort -V -r).
+  for d in $(ls -1d "$HOME"/.claude/plugins/cache/*/floatty-backend/*/ 2>/dev/null | sort -V -r); do
+    d="${d%/}"
+    [[ -d "$d/scripts" ]] && { FLOATTY_SKILL_DIR="$d"; break; }
+  done
+  # Fall back to non-versioned paths (legacy skill, claude.ai, --plugin-dir)
+  [[ -z "$FLOATTY_SKILL_DIR" ]] && for d in \
     "$HOME"/.claude/plugins/cache/*/floatty-backend \
     "$HOME/.claude/skills/floatty-backend" \
     /mnt/skills/user/floatty-backend \
     /mnt/skills/private/floatty-backend; do
-    # Strip trailing slash so FLOATTY_SKILL_DIR doesn't have a double-slash
-    d="${d%/}"
     [[ -d "$d/scripts" ]] && { FLOATTY_SKILL_DIR="$d"; break; }
   done
 fi
