@@ -15,30 +15,37 @@ if ! declare -F floatty_curl >/dev/null 2>&1; then
 fi
 
 # ─── Page Resolution ───────────────────────────────────────────────
-# Resolve a page title to its block UUID
+# Resolve a page title to its block UUID via the PageNameIndex endpoint.
+#
+# Previously this downloaded every block in the outline and ran a Python
+# filter to find pages by exact name — O(n) per call, with no fuzzy support.
+# GET /api/v1/pages/search?prefix=<name> uses the server-side PageNameIndex
+# (indexed, bounded, returns only matching pages + isStub flag). This helper
+# is a thin filter on that endpoint: exact case-insensitive match.
+#
+# For fuzzy / prefix / list-all, use the richer wrappers in floatty-search.sh:
+#   floatty_search_pages       (prefix match)
+#   floatty_search_pages_fuzzy (nucleo fuzzy)
+#   floatty_pages_list         (list all)
+#
 # Usage: floatty_find_page "Issue #1211"
-# Returns: UUID or empty string
+# Returns: one-line JSON object {id, name, isStub} or empty on no match
 floatty_find_page() {
   local title="$1"
   [[ -z "$title" ]] && { echo "Usage: floatty_find_page <title>" >&2; return 1; }
 
-  # Fetch all blocks, find pages (blocks with childIds) matching title.
-  # Title is passed via sys.argv (NOT interpolated into the Python source)
-  # so a title containing ''' cannot terminate the Python string literal and
-  # inject code (CodeRabbit/Greptile on PR #250).
-  floatty_curl "$FLOATTY_URL/api/v1/blocks" | \
-    python3 -c '
-import sys, json
-data = json.load(sys.stdin)
-title = sys.argv[1]
-blocks = data.get("blocks", data) if isinstance(data, dict) else data
-for b in blocks:
-    content = b.get("content", "")
-    # Match exact page title (with or without # prefix)
-    bare = content.lstrip("# ").strip()
-    if bare.lower() == title.lower():
-        print(json.dumps({"id": b["id"], "content": content, "children": len(b.get("childIds", []))}))
-' "$title"
+  # Defer to the search endpoint — encode title as prefix (won't include
+  # longer titles that happen to start with the same text, since we filter
+  # by exact equality below). Limit 10 in case of near-duplicates.
+  local encoded
+  encoded=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$title")
+
+  floatty_curl "$FLOATTY_URL/api/v1/pages/search?prefix=$encoded&limit=10" | \
+    jq -c --arg t "$title" '
+      .pages[]
+      | select((.name | ascii_downcase) == ($t | ascii_downcase))
+      | {id: .blockId, name, isStub}
+    '
 }
 
 # Find page by content substring (broader than find_page)
@@ -151,6 +158,14 @@ PYEOF
 floatty_dedup_pages() {
   local dry_run="${1:-}"
 
+  # NOTE on endpoint choice (PR #250 audit): GET /api/v1/pages/search uses
+  # PageNameIndex, which only knows about pages *registered under the
+  # `pages::` container*. But the real dedup use case is to find `# Title`
+  # blocks that have ended up under other parents too (e.g. archived dupes
+  # of a hub page) — those aren't in PageNameIndex. Full /api/v1/blocks
+  # scan is unavoidable here until a richer "all blocks with heading
+  # content" endpoint exists. For indexed-only enumeration use
+  # `floatty_search_pages` / `floatty_pages_list` in floatty-search.sh.
   python3 - "$dry_run" << 'PYEOF'
 import json, sys, re, urllib.request, os
 from collections import defaultdict
@@ -175,7 +190,10 @@ def api(method, path, data=None):
 resp = api("GET", "/api/v1/blocks")
 blocks = resp.get("blocks", [])
 
-# Find pages (blocks starting with #)
+# Find pages (blocks starting with #). Scans all blocks — no endpoint
+# returns "all heading blocks" today. /api/v1/pages/search would miss
+# headings parented outside the `pages::` container (which is exactly
+# the merge target we care about).
 pages = []
 for b in blocks:
     content = b.get("content", "")
@@ -223,32 +241,43 @@ for norm_title, group in sorted(dupes.items()):
 if dry_run:
     sys.exit(0)
 
-# Count wikilink references to each variant
-all_blocks = blocks
+# Merge path. Use /api/v1/search?outlink=<name> to find blocks containing
+# [[dupe_title]] (server-side indexed — much faster than scanning `blocks`
+# in-memory for substring). The `blocks` dict we already have is fine for
+# childIds lookups during reparenting.
 for norm_title, group in dupes.items():
     canonical = max(group, key=lambda x: x["children"])
     others = [p for p in group if p["id"] != canonical["id"]]
 
+    block_by_id = {b["id"]: b for b in blocks}
+
     for dupe in others:
-        # Find blocks referencing the dupe title via wikilink
-        refs = []
-        for b in all_blocks:
-            content = b.get("content", "")
-            if f"[[{dupe['title']}]]" in content:
-                refs.append(b)
+        # Refs via outlink filter — index-backed, no content substring walk.
+        from urllib.parse import quote
+        outlink_encoded = quote(dupe["title"])
+        refs_resp = api("GET", f"/api/v1/search?q=&outlink={outlink_encoded}&limit=1000")
+        refs = refs_resp.get("hits", []) if "error" not in refs_resp else []
 
         print(f"Merging \"{dupe['title']}\" → \"{canonical['title']}\"")
 
-        # Rewrite wikilink references
-        for ref_block in refs:
-            new_content = ref_block["content"].replace(f"[[{dupe['title']}]]", f"[[{canonical['title']}]]")
-            if new_content != ref_block["content"]:
-                result = api("PATCH", f"/api/v1/blocks/{ref_block['id']}", {"content": new_content})
+        # Rewrite wikilink references. Search hits omit full content by
+        # default; fetch each block fresh to avoid clobbering co-edits.
+        for hit in refs:
+            block_id = hit.get("blockId")
+            if not block_id:
+                continue
+            block = api("GET", f"/api/v1/blocks/{block_id}")
+            if "error" in block:
+                continue
+            current = block.get("content", "")
+            new_content = current.replace(f"[[{dupe['title']}]]", f"[[{canonical['title']}]]")
+            if new_content != current:
+                result = api("PATCH", f"/api/v1/blocks/{block_id}", {"content": new_content})
                 status = "ok" if "error" not in result else f"err:{result['error']}"
-                print(f"  ref rewrite: {ref_block['id'][:12]} ({status})")
+                print(f"  ref rewrite: {block_id[:12]} ({status})")
 
-        # Reparent dupe's children to canonical (append)
-        dupe_block = next((b for b in blocks if b["id"] == dupe["id"]), None)
+        # Reparent dupe's children to canonical (use cached childIds map).
+        dupe_block = block_by_id.get(dupe["id"])
         if dupe_block:
             for child_id in dupe_block.get("childIds", []):
                 result = api("PATCH", f"/api/v1/blocks/{child_id}", {"parentId": canonical["id"]})

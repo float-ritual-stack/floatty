@@ -75,10 +75,13 @@ source "$FLOATTY_SKILL_DIR/scripts/floatty-api.sh"
 source "$FLOATTY_SKILL_DIR/scripts/floatty-blocks.sh"
 source "$FLOATTY_SKILL_DIR/scripts/floatty-search.sh"
 source "$FLOATTY_SKILL_DIR/scripts/floatty-daily.sh"
+# Optional: garden, context, ops
+source "$FLOATTY_SKILL_DIR/scripts/floatty-garden.sh"
+source "$FLOATTY_SKILL_DIR/scripts/floatty-ops.sh"
 ```
 
 After sourcing `floatty-api.sh`, later scripts (blocks/search/daily/garden/
-context) auto-source it themselves via a `declare -F floatty_curl` guard, so
+context/ops) auto-source it themselves via a `declare -F floatty_curl` guard, so
 re-sourcing is idempotent.
 
 **Server**: `http://127.0.0.1:8765` (local dev/release, override: `FLOATTY_URL` env var). Agents running inside a floatty terminal get `FLOATTY_URL` injected automatically and should use it as-is.
@@ -91,6 +94,38 @@ re-sourcing is idempotent.
 **CRITICAL — zsh echo corrupts JSON**: Use `printf '%s'` not `echo` when piping captured output. Or pipe directly: `floatty_search "query" | jq ...`
 
 ## Rules
+
+### Prefer the API over reinvention
+
+The server exposes primitives for the operations agents need. If you find
+yourself downloading the whole outline (`GET /api/v1/blocks`) to filter it
+in Python/jq, stop and check whether an endpoint does it server-side. A
+non-exhaustive map (see `references/api-reference.md` for the full list):
+
+| You want to... | Use this helper | Endpoint |
+|---|---|---|
+| Find a page by title | `floatty_find_page` | `GET /api/v1/pages/search` |
+| Prefix-match pages | `floatty_search_pages` | `GET /api/v1/pages/search?prefix=` |
+| Fuzzy-match pages | `floatty_search_pages_fuzzy` | `GET /api/v1/pages/search?fuzzy=true` |
+| List all pages | `floatty_pages_list` | `GET /api/v1/pages/search?prefix=` |
+| Get/resolve today's daily note | `floatty_daily_get` | `GET /api/v1/daily/:date` |
+| Append to today's daily note | `floatty_daily_append` | `POST /api/v1/daily/:date/append` (FLO-652, fallback auto) |
+| Create/resolve a page by name | `floatty_page_upsert` | `POST /api/v1/pages/:name` (FLO-652) |
+| Full-text + structured search | `floatty_search` | `GET /api/v1/search` (20+ filter params) |
+| Backlinks (outlink-filtered) | `floatty_search_backlinks` | `GET /api/v1/search?outlink=` |
+| Block ancestors + siblings + children | `floatty_block_context` | `GET /api/v1/blocks/:id?include=…` |
+| Short-hash → UUID | `floatty_resolve` | `GET /api/v1/blocks/resolve/:prefix` |
+| Page content by name (rendered) | `floatty_page_content` | `GET /api/v1/topology/content/:pageName` |
+| Whole-outline graph | `floatty_topology` | `GET /api/v1/topology` |
+| Vocabulary discovery | `floatty_markers`, `floatty_marker_values`, `floatty_stats` | `GET /api/v1/markers`, `…/values`, `…/stats` |
+| Where's the user looking? | `floatty_presence`, `floatty_presence_context` | `GET /api/v1/presence` |
+| Backup status / trigger | `floatty_backup_status`, `floatty_backup_trigger` | `GET/POST /api/v1/backup/…` |
+| Rebuild search index | `floatty_search_reindex` | `POST /api/v1/search/reindex` |
+
+**The test**: before writing a helper that pulls `GET /api/v1/blocks` + Python
+filter, grep `routes` in `apps/floatty/src-tauri/floatty-server/src/api/*.rs`
+for the operation. The API has grown significantly — a helper written six
+months ago may be reinventing something that now has a dedicated endpoint.
 
 ### Search: always read the full response
 

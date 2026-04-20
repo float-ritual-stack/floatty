@@ -25,6 +25,95 @@ floatty_daily_get() {
   floatty_curl "$FLOATTY_URL/api/v1/daily/$date?include=$include"
 }
 
+# ─── FLO-652 Semantic Endpoints ────────────────────────────────────
+# These wrap the new POST endpoints that hide the `pages::`-container
+# structural detail from callers. They're present on dev (port 33333 sha
+# after 8eb5cdf) but NOT on release v0.11.10 — wrappers do a feature-
+# detect via the 404 response and surface an actionable error.
+
+# Upsert a page by name under the pages:: container.
+# Returns the page BlockDto on both hit (200) and miss (201).
+# Usage: floatty_page_upsert "Shell-Lite Spec"
+floatty_page_upsert() {
+  local name="$1"
+  [[ -z "$name" ]] && { echo "Usage: floatty_page_upsert <name>" >&2; return 1; }
+
+  # URL-encode the page name (spaces, special chars are common in titles).
+  local encoded
+  encoded=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$name")
+
+  local resp http_code
+  resp=$(floatty_curl -w "\n__FLOATTY_CODE__%{http_code}" -X POST \
+    "$FLOATTY_URL/api/v1/pages/$encoded" -d '{}')
+  http_code=$(printf '%s' "$resp" | sed -n 's/.*__FLOATTY_CODE__//p' | tail -1)
+  resp=$(printf '%s' "$resp" | sed 's/__FLOATTY_CODE__[0-9]*$//' | sed '$ { /^$/d; }')
+
+  case "$http_code" in
+    200|201)
+      printf '%s' "$resp"
+      ;;
+    404)
+      echo "POST /api/v1/pages/:name returned 404 — server $FLOATTY_URL does not yet have FLO-652 (requires v > 0.11.10 or a post-8eb5cdf dev build)." >&2
+      return 1
+      ;;
+    400)
+      echo "Page name rejected: $name (empty/whitespace?)" >&2
+      return 1
+      ;;
+    *)
+      echo "Unexpected status $http_code upserting page '$name': $resp" >&2
+      return 1
+      ;;
+  esac
+}
+
+# Append a child block under the specified (or today's) daily note.
+# Autocreates the daily note + pages:: container if missing.
+# Usage: floatty_daily_append "content" [YYYY-MM-DD]
+# Returns: BlockDto of the created child block (201)
+#
+# Falls back to find_or_create + block_create on 404 so callers work on
+# both dev (with FLO-652) and release v0.11.10 (without). The fallback
+# is NOT autocreating — it errors if the daily note is missing, matching
+# the explicit FLO-636 contract.
+floatty_daily_append() {
+  local content="$1"
+  local date="${2:-$(TZ="${FLOATTY_TZ:-America/Toronto}" date +%Y-%m-%d)}"
+  [[ -z "$content" ]] && { echo "Usage: floatty_daily_append <content> [YYYY-MM-DD]" >&2; return 1; }
+
+  # Build JSON payload safely via jq --arg (prevents injection of quotes/newlines)
+  local payload
+  payload=$(jq -n --arg c "$content" '{content: $c}')
+
+  local resp http_code
+  resp=$(floatty_curl -w "\n__FLOATTY_CODE__%{http_code}" -X POST \
+    "$FLOATTY_URL/api/v1/daily/$date/append" -d "$payload")
+  http_code=$(printf '%s' "$resp" | sed -n 's/.*__FLOATTY_CODE__//p' | tail -1)
+  resp=$(printf '%s' "$resp" | sed 's/__FLOATTY_CODE__[0-9]*$//' | sed '$ { /^$/d; }')
+
+  case "$http_code" in
+    201)
+      printf '%s' "$resp"
+      ;;
+    404)
+      # Fallback for release servers without FLO-652. Uses the find-or-create
+      # path (errors if missing, does NOT autocreate — matches FLO-636).
+      local daily_id
+      daily_id=$(floatty_daily_find_or_create "$date")
+      [[ -z "$daily_id" ]] && return 1
+      floatty_block_create "$content" "$daily_id"
+      ;;
+    400)
+      echo "Daily append rejected (date shape? empty content?): date=$date content=\"$content\"" >&2
+      return 1
+      ;;
+    *)
+      echo "Unexpected status $http_code appending to daily $date: $resp" >&2
+      return 1
+      ;;
+  esac
+}
+
 # DEPRECATED (FLO-636): this function creates a "## $date" ROOT block, which
 # is the wrong shape AND wrong location. The canonical daily note is
 # `# YYYY-MM-DD` under the `pages::` container, created by the frontend when
@@ -62,7 +151,9 @@ floatty_daily_find_or_create() {
   echo "$daily_id"
 }
 
-# Add timestamped entry to today's daily
+# Add timestamped entry to today's daily.
+# Uses floatty_daily_append so autocreate-on-missing works on dev (FLO-652)
+# and falls back to find_or_create + block_create on release (v0.11.10).
 # Usage: floatty_daily_add "content" [project] [mode]
 floatty_daily_add() {
   local content="$1"
@@ -76,15 +167,7 @@ floatty_daily_add() {
   [[ -n "$project" ]] && markers="[project::$project] "
   [[ -n "$mode" ]] && markers="${markers}[mode::$mode] "
 
-  local daily_id
-  daily_id=$(floatty_daily_find_or_create)
-
-  if [[ -z "$daily_id" || "$daily_id" == "null" ]]; then
-    echo "Failed to find or create daily note" >&2
-    return 1
-  fi
-
-  floatty_block_create "[$timestamp] ${markers}$content" "$daily_id"
+  floatty_daily_append "[$timestamp] ${markers}$content"
 }
 
 # Create TLDR block tree
@@ -103,28 +186,18 @@ floatty_tldr() {
   local proj_marker=""
   [[ -n "$project" ]] && proj_marker="[project::$project] "
 
-  # Resolve today's daily note so the TLDR lands UNDER it, not as a root
-  # block. Mirrors the FLO-636 fix for floatty_daily_add. If the daily note
-  # doesn't exist yet, find_or_create errors out (by design — create the
-  # daily note in floatty first, or use the future floatty_tldr_append_via_api
-  # once FLO-652 ships in release).
-  local daily_id
-  daily_id=$(floatty_daily_find_or_create)
-  if [[ -z "$daily_id" || "$daily_id" == "null" ]]; then
-    echo "Failed to resolve today's daily note — create it in floatty first (see floatty_daily_find_or_create error above)." >&2
-    return 1
-  fi
-
-  # Create TLDR header as a child of the daily note.
+  # Append the TLDR header under today's daily note via the semantic endpoint
+  # (autocreates daily note if missing on FLO-652-capable servers; falls back
+  # to find_or_create + block_create on release).
   local parent_id
-  parent_id=$(floatty_block_create "## $time - ${proj_marker}$summary" "$daily_id" | jq -r '.id')
+  parent_id=$(floatty_daily_append "## $time - ${proj_marker}$summary" | jq -r '.id')
 
   if [[ "$parent_id" == "null" || -z "$parent_id" ]]; then
     echo "Failed to create TLDR header" >&2
     return 1
   fi
 
-  # Add sections if provided
+  # Add sections if provided (children of the TLDR header block, not the daily)
   [[ -n "$did" ]] && floatty_block_create "**Did**: $did" "$parent_id" > /dev/null
   [[ -n "$learned" ]] && floatty_block_create "**Learned**: $learned" "$parent_id" > /dev/null
   [[ -n "$next" ]] && floatty_block_create "**Next**: $next" "$parent_id" > /dev/null

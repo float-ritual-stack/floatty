@@ -338,6 +338,48 @@ curl -X POST -H "Authorization: Bearer $KEY" \
 
 ---
 
+### Topology (Graph)
+
+```
+GET /api/v1/topology
+GET /api/v1/topology/content/:pageName
+```
+
+`GET /api/v1/topology` returns a graph-shaped view of the outline for
+cross-page analysis:
+
+```json
+{
+  "n": { ... },   // nodes (pages keyed by name)
+  "e": { ... },   // edges (wikilink graph)
+  "c": { ... },   // counts per page
+  "daily": [...], // daily-note nodes
+  "meta": { ... } // generation timestamp, totals
+}
+```
+
+`GET /api/v1/topology/content/:pageName` returns a page's rendered content
+by NAME (no UUID lookup). **Note:** response uses `snake_case`, unlike most
+endpoints which are camelCase:
+
+```json
+{
+  "name": "2026-04-20",
+  "lines": [[0, "text"], [1, "child text"], ...],  // (depth, content) pairs
+  "block_count": 10
+}
+```
+
+Case-insensitive match. 404 if the page isn't in PageNameIndex.
+
+```bash
+curl -H "Authorization: Bearer $KEY" "$URL/api/v1/topology/content/2026-04-20"
+```
+
+Helper: `floatty_page_content` + `floatty_page_content_pretty`.
+
+---
+
 ### Vocabulary Discovery
 
 ```
@@ -438,6 +480,61 @@ Returns the last focused block, or `204 No Content` if no presence set or the bl
 - Presence is broadcast to all WebSocket clients.
 - GET validates the block still exists — stale presence returns 204.
 - `paneId` is optional (may be null if set without pane context).
+
+---
+
+### Export
+
+```
+GET /api/v1/export/binary   — Full Y.Doc as base64 (content-type: application/octet-stream)
+GET /api/v1/export/json     — Full outline as JSON
+```
+
+One-shot dumps for backup / migration. Helpers: `floatty_export_binary`,
+`floatty_export_json`.
+
+---
+
+### Search Index Maintenance
+
+```
+POST /api/v1/search/reindex  → { rehydrated: N }
+POST /api/v1/search/clear    → 204
+```
+
+Tantivy is ephemeral — rebuilt from Y.Doc on app start. These let you
+rebuild/clear manually. Helpers: `floatty_search_reindex`, `floatty_search_clear`.
+
+---
+
+### Backup
+
+```
+GET  /api/v1/backup/status   — { running, lastBackup, nextBackup, backupCount, totalSizeBytes, backupDir }
+GET  /api/v1/backup/list     — all snapshots (hourly/daily/weekly)
+GET  /api/v1/backup/config   — { enabled, intervalHours, retainHourly, retainDaily, retainWeekly, backupDir }
+POST /api/v1/backup/trigger  — force immediate snapshot
+POST /api/v1/backup/restore  — DESTRUCTIVE; body { path: "/path/to/backup.ydoc" }
+```
+
+Helpers: `floatty_backup_status`, `floatty_backup_list`, `floatty_backup_config`,
+`floatty_backup_trigger`, `floatty_backup_restore`.
+
+---
+
+### Sync / State
+
+```
+GET /api/v1/state          — Full Y.Doc base64 (large)
+GET /api/v1/state-vector   — Smaller reconciliation vector
+GET /api/v1/state/hash     — { hash, blockCount, timestamp } — cheap probe
+GET /api/v1/updates?since= — Delta updates since a sequence number
+POST /api/v1/update        — Apply a CRDT update
+POST /api/v1/restore       — DESTRUCTIVE Y.Doc replacement (needs confirm header)
+```
+
+Helper: `floatty_state_hash`. The rest are for frontend sync infrastructure
+and rarely useful from helpers.
 
 ---
 
