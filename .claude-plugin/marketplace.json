@@ -13,7 +13,7 @@
       "name": "floatty-backend",
       "source": "./plugins/floatty-backend",
       "description": "Shell helpers + skill for working with the floatty-server REST API. Block CRUD, search, daily notes, and semantic endpoints.",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "category": "floatty",
       "tags": ["floatty", "api", "outliner", "blocks", "shell"]
     }

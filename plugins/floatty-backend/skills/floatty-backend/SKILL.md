@@ -54,30 +54,37 @@ the others are resolved relative to it. The probe below covers every install
 layout the skill ships in:
 
 ```bash
-# Install layouts (first match wins):
-#   Plugin marketplace cache:  ~/.claude/plugins/cache/<marketplace>/floatty-backend/<version>/
-#                              (Claude Code interposes a semver directory;
-#                              the scripts/ dir lives one level deeper. Multiple
-#                              versions can coexist post-update until GC.)
-#   Claude Code --plugin-dir:  any path containing scripts/floatty-api.sh
-#   Legacy skill:              ~/.claude/skills/floatty-backend
-#   claude.ai:                 /mnt/skills/user/floatty-backend
-#                              /mnt/skills/private/floatty-backend
-#   Override:                  FLOATTY_SKILL_DIR=/your/path
+# FLOATTY_SKILL_DIR points at the directory containing SKILL.md — the skill
+# root. `scripts/` and `references/` live directly under it.
+#
+# Resolution order:
+#   1. Explicit FLOATTY_SKILL_DIR override (user-set)
+#   2. $CLAUDE_PLUGIN_ROOT (set by Claude Code when loaded as a plugin) —
+#      the official mechanism per the Plugins reference. Skill lives at
+#      $CLAUDE_PLUGIN_ROOT/skills/floatty-backend/
+#   3. Cached plugin install — ~/.claude/plugins/cache/<marketplace>/
+#      floatty-backend/<version>/skills/floatty-backend/. Multiple versions
+#      may coexist post-update until the 7-day orphan GC runs — pick newest.
+#   4. Legacy / non-plugin layouts: ~/.claude/skills/, /mnt/skills/user/,
+#      /mnt/skills/private/ (claude.ai zip upload).
+
+if [[ -z "$FLOATTY_SKILL_DIR" && -n "$CLAUDE_PLUGIN_ROOT" && -d "$CLAUDE_PLUGIN_ROOT/skills/floatty-backend/scripts" ]]; then
+  FLOATTY_SKILL_DIR="$CLAUDE_PLUGIN_ROOT/skills/floatty-backend"
+fi
 
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
-  # Prefer the HIGHEST version among cached installs. Bash glob expansion
-  # returns ascending (so 0.1.0 wins over 0.2.0 without sort -V -r).
-  for d in $(ls -1d "$HOME"/.claude/plugins/cache/*/floatty-backend/*/ 2>/dev/null | sort -V -r); do
+  # Pick the HIGHEST version among cached plugin installs. Bash glob
+  # returns ascending, so 0.1.0 would win over 0.2.0 without sort -V -r.
+  for d in $(ls -1d "$HOME"/.claude/plugins/cache/*/floatty-backend/*/skills/floatty-backend/ 2>/dev/null | sort -V -r); do
     d="${d%/}"
     [[ -d "$d/scripts" ]] && { FLOATTY_SKILL_DIR="$d"; break; }
   done
-  # Fall back to non-versioned paths (legacy skill, claude.ai, --plugin-dir)
+  # Fall back to non-marketplace layouts (legacy skill, --plugin-dir, claude.ai zip).
   [[ -z "$FLOATTY_SKILL_DIR" ]] && for d in \
-    "$HOME"/.claude/plugins/cache/*/floatty-backend \
     "$HOME/.claude/skills/floatty-backend" \
     /mnt/skills/user/floatty-backend \
-    /mnt/skills/private/floatty-backend; do
+    /mnt/skills/private/floatty-backend \
+    "$HOME"/.claude/plugins/cache/*/floatty-backend/skills/floatty-backend; do
     [[ -d "$d/scripts" ]] && { FLOATTY_SKILL_DIR="$d"; break; }
   done
 fi
@@ -319,16 +326,21 @@ Discover what markers and values exist in the outline without searching:
 ```bash
 # What marker types exist? (project, ctx, mode, issue, sh, sc, sysop, ...)
 floatty_curl "$FLOATTY_URL/api/v1/markers"
+# → {markers: [{type: "project", count: 717}, ...]}
 
 # What values exist for a marker type?
 floatty_curl "$FLOATTY_URL/api/v1/markers/project/values"
 # → {markerType: "project", total: 12, values: [{value: "floatty", count: 352}, ...]}
 
-# Outline stats (block count, marker coverage, type distribution)
+# Outline stats (total blocks, root count, marker/outlink coverage, type distribution)
 floatty_curl "$FLOATTY_URL/api/v1/stats"
+# → {totalBlocks: 23277, rootCount: 6, typeDistribution: {...}, withMarkers: ..., withOutlinks: ...}
 ```
 
-Use `/markers/:type/values` to answer "what projects exist?" without guessing search terms. Use `/stats` for outline health checks.
+`/stats` uses **snake-keyed camelCase** — the field is `totalBlocks`, NOT `blockCount`.
+`withMarkers` / `withOutlinks` are counts of blocks that have any marker / any outlink
+(coverage numbers). Use `/markers/:type/values` to answer "what projects exist?" without
+guessing search terms.
 
 ## Page Search API Parameters
 
@@ -337,6 +349,17 @@ Use `/markers/:type/values` to answer "what projects exist?" without guessing se
 | `prefix` | `""` | Search text (prefix or fuzzy query) |
 | `limit` | 10 | Max results |
 | `fuzzy` | false | Use nucleo fuzzy matching instead of prefix |
+
+Response: `{pages: [{name, isStub, blockId}]}`. Note the field names:
+
+- `name` — page name from heading, **lowercased** (e.g. `2026-w17=rangle-weekly`,
+  not `2026-W17=rangle-weekly`). Case-insensitive for matching purposes.
+- `isStub` — `true` when the page is referenced by `[[wikilink]]` but no block
+  with that heading exists yet.
+- `blockId` — UUID of the page block, or `null` for stubs.
+
+No `.score` field, no `.pageName` field. For scored full-text results use
+`GET /api/v1/search` (hits carry `.score`).
 
 ```bash
 # Direct curl for page search
