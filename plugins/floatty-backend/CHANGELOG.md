@@ -7,6 +7,21 @@ semver ([semver.org](https://semver.org/)). The authoritative version lives
 in `marketplace.json` (per Claude Code's
 [relative-path plugin guidance](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels)).
 
+## [0.5.0] — 2026-04-20
+
+New doctrine section in `SKILL.md` on how to format block content for the floatty renderer. Authored by a parallel kitty session that initially landed the edit in the marketplace checkout (which gets clobbered on `/plugin marketplace update`) rather than the monorepo source — ported over here so it persists.
+
+### Added
+
+- **`Rules > Render hygiene — write shape matches read shape`** in `SKILL.md`. Four-layer doctrine covering:
+  - Layer 0 — parser color semantics (code/pills/bold/timestamps/tree-chars)
+  - Layer 1 — per-block content shape (one logical chunk, fenced trees, paragraph breaks)
+  - Layer 2 — parent/child tree structure over flat ASCII art
+  - Layer 3 — single-blob leaf captures (active_context stream discipline)
+  - `◆` vs `•` convention for named-vs-ambient list items
+  - Anti-patterns: over-pilling, 30-line ASCII trees inside one block, wall-of-numbered-prose
+  - References external rule file at `~/.claude/rules/capture-format.md` for the full doctrine + examples
+
 ## [0.4.0] — 2026-04-20
 
 Layout aligned with the Agent Skills convention. Scripts directory moved

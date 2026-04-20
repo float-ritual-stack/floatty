@@ -112,6 +112,81 @@ re-sourcing is idempotent.
 
 ## Rules
 
+### Render hygiene — write shape matches read shape
+
+The floatty outline is a document someone will scan-read, not a chat log to be appended. Every `POST /api/v1/blocks` payload is an outline node that renders in a color-aware parser. Format for scanning or land as noise.
+
+**Layer 0 — parser color semantics.** The parser has opinions. Notate to the category, don't compete with it.
+
+| Notation | Renders as | Use for |
+|---|---|---|
+| `` `symbol` `` | green inline code | identifiers, paths, config values |
+| `[[PR #250]]` | purple pill | PR refs (use everywhere, including prose) |
+| `[[FLO-655]]` / `[[Issue #2123]]` | amber pill | Linear / GitHub issue refs |
+| `[[page-name]]` | blue wikilink | outline page refs |
+| `[key::value]` | value-hashed color pill | `[project::X]`, `[mode::Y]`, `[type::Z]`, `[meeting::W]` |
+| `**claim**` | amber bold | reserve for actual claims — rare, stays loud |
+| `HH:MM` / `Mar 9` | auto cyan | timestamps — never bold these, cyan already has them |
+| `├── │ └──` inside ``` fences | dim gray | tree scaffolding |
+| `║ ═` inside ``` fences | purple | callout boxes (louder than trees) |
+
+Over-pilling = confetti. One semantic pill per paragraph. Don't bold a timestamp — cyan already carries it. Don't wrap a PR ref in backticks — `[[PR #NNN]]` is the right notation.
+
+**Layer 1 — block content (what goes inside ONE block's text).**
+
+- ONE logical chunk per block. Not a section, not a treatise.
+- Paragraph breaks inside content (actual `\n\n`, not running prose).
+- Trees ALWAYS inside triple-backtick fences. Raw tree chars in prose collapse on render.
+- Trees scoped 6–12 lines. Longer → scroll fatigue → split into child blocks.
+- prose → fenced tree → prose pattern even within one block. Reader needs resting points.
+- ctx:: metadata (if present) on its own line at top, body below a blank-line separator.
+
+**Anti-pattern**: one block containing 30 lines of ASCII tree, or a wall-of-numbered-list where each item is a 3-4 line prose blob with no internal structure. That treats the outline like a blog post and throws away the outliner's value proposition.
+
+**Layer 2 — tree structure (use parent/child, don't flatten).**
+
+- If your content HAS a tree, post it AS a tree — parent block + child blocks.
+- NOT: one block containing 30 lines of `├── │ └──` ASCII art.
+- Parent block = the claim / header / name the thing.
+- Child blocks = the evidence / detail / sub-items.
+- Grandchild blocks = drill-down only when it earns its depth.
+- **Collapse duplicates before posting.** Three siblings with the same heading = caller bug. Use `floatty_block_context` to check existing children before `POST`.
+- A "SHIPPED vs SLIPPED" section is two sibling parent blocks with child blocks under each — not one block containing an ASCII two-column layout.
+
+**Layer 3 — capture-level (active_context, single-blob leaf).**
+
+Captures land as leaf blocks in the active_context stream — no parent/child to exploit. Structure has to live inside the content string. Minimum viable shape:
+
+```
+ctx::YYYY-MM-DD @ HH:MM [TZ]
+project::X
+mode::Y
+type::Z
+
+One-line headline claim — what this capture is about.
+
+Supporting detail as short paragraphs. Blank line between.
+
+Optional fenced tree when there's structural data:
+├── item a
+├── item b
+└── item c
+
+Closing line or next-step marker.
+```
+
+Three rules: blank line after the metadata block, lists go inside a fence (not numbered prose blobs), paragraphs cap at ~3 short sentences (longer → wants to be a child block via a different call).
+
+**Convention — `◆` vs `•`.** Use `◆` for named patterns / things worth remembering (doctrine, pattern, decision). Use `•` for ambient list items. Future-scan reader gets a free visual filter.
+
+**Check before writing**
+
+- `floatty_block_context $PARENT_ID` to verify duplicate siblings don't already exist.
+- Content > ~12 tree lines or > ~3 prose paragraphs → split into multiple POSTs (parent + children).
+- Writing to active_context? → apply Layer 3 discipline to the single content string.
+
+See `~/.claude/rules/capture-format.md` for the full doctrine including parser color semantics and concrete before/after examples.
+
 ### Prefer the API over reinvention
 
 The server exposes primitives for the operations agents need. If you find
