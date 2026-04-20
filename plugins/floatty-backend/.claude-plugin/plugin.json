@@ -1,0 +1,12 @@
+{
+  "name": "floatty-backend",
+  "description": "Interact with floatty-server REST API for block CRUD, search, daily notes, and semantic endpoints. Use when working with floatty outliner data, creating blocks via API, searching content, or managing daily notes programmatically.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Evan Schultz"
+  },
+  "homepage": "https://github.com/float-ritual-stack/floatty",
+  "repository": "https://github.com/float-ritual-stack/floatty",
+  "license": "MIT",
+  "keywords": ["floatty", "outliner", "crdt", "api", "floatty-server", "blocks"]
+}
