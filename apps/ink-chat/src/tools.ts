@@ -938,7 +938,7 @@ export const floattyDaily = tool({
 
 export const floattyDailyAdd = tool({
   description:
-    "Add an entry to today's daily note in the floatty outliner. Creates the daily note if it doesn't exist.",
+    "Add an entry to today's daily note in the floatty outliner. Requires today's daily note to already exist — returns an explicit error if missing rather than autocreating. Open floatty and click today's date to create the daily note first, or pass parent_id to bypass the daily-note lookup.",
   inputSchema: z.object({
     content: z.string().describe("Content to add to today's daily note"),
     parent_id: z
@@ -952,23 +952,38 @@ export const floattyDailyAdd = tool({
     try {
       const today = new Date().toISOString().split("T")[0]!;
 
-      // Find or use parent
+      // Resolve today's daily note via the dedicated endpoint. GET /api/v1/daily/:date
+      // goes through PageNameIndex and returns the page block when the daily note
+      // exists, without the caller needing to know that pages live under `pages::`
+      // (FLO-636, "semantic endpoints for outline conventions").
+      //
+      // The old search-based lookup fell through to creating a bare root block when
+      // the heading `# YYYY-MM-DD` didn't match — the CodeRabbit-Critical symptom on
+      // PR `#237`. Now an unresolved daily note fails explicitly instead of silently
+      // rooting the new block.
       let parentId = parent_id;
       if (!parentId) {
-        // Find today's daily note heading
-        const heading = `# ${today}`;
-        const search = (await floattyFetch(
-          `/api/v1/search?q=${encodeURIComponent(heading)}&limit=5&include_breadcrumb=true`,
-        )) as { hits: Array<{ blockId: string; content: string }> };
-
-        const dailyHit = search.hits.find((h) => h.content.trim() === heading);
-        if (dailyHit) {
-          parentId = dailyHit.blockId;
+        try {
+          const daily = (await floattyFetch(
+            `/api/v1/daily/${encodeURIComponent(today)}`,
+          )) as { id: string };
+          parentId = daily.id;
+        } catch (error) {
+          // Only the 404 case maps to "no daily note" — other failures
+          // (auth, timeout, 5xx) must propagate so the caller can see
+          // them instead of getting a misleading "no daily note" message.
+          // floattyFetch throws Error(`Floatty ${status}: ${body}`) on !ok.
+          const msg = error instanceof Error ? error.message : String(error);
+          if (msg.startsWith("Floatty 404:")) {
+            return {
+              error: `No daily note for ${today} — create one in floatty before appending, or pass parent_id explicitly.`,
+            };
+          }
+          throw error;
         }
       }
 
-      const body: Record<string, string> = { content };
-      if (parentId) body.parentId = parentId;
+      const body: Record<string, string> = { content, parentId };
 
       const block = (await floattyFetch("/api/v1/blocks", {
         method: "POST",
