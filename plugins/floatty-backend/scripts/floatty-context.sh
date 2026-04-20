@@ -162,7 +162,7 @@ cmd_search() {
   echo ""
   format_hits_full "$result"
   echo ""
-  echo "Total: $(echo "$result" | jq '.total') hits"
+  echo "Total: $(printf '%s' "$result" | jq '.total') hits"
 }
 
 cmd_block() {
@@ -184,21 +184,21 @@ cmd_context() {
 
   echo "## Block Context"
   echo ""
-  echo "**Content**: $(echo "$result" | jq -r '.content // "?"' | head -3)"
+  echo "**Content**: $(printf '%s' "$result" | jq -r '.content // "?"' | head -3)"
   echo ""
 
   # Ancestors (breadcrumb)
   local ancestor_count
-  ancestor_count=$(echo "$result" | jq '.ancestors // [] | length')
+  ancestor_count=$(printf '%s' "$result" | jq '.ancestors // [] | length')
   if [[ "$ancestor_count" -gt 0 ]]; then
     echo "**Breadcrumb** (nearest first):"
-    echo "$result" | jq -r '.ancestors[] | "  → \(.content[0:80])"'
+    printf '%s' "$result" | jq -r '.ancestors[] | "  → \(.content[0:80])"'
     echo ""
   fi
 
   # Siblings
   echo "**Siblings**:"
-  echo "$result" | jq -r '
+  printf '%s' "$result" | jq -r '
     (.siblings.before // [] | .[] | "  ↑ \(.content[0:80])"),
     "  ● \(.content[0:80])",
     (.siblings.after // [] | .[] | "  ↓ \(.content[0:80])")
@@ -207,10 +207,10 @@ cmd_context() {
 
   # Children
   local child_count
-  child_count=$(echo "$result" | jq '.children // [] | length')
+  child_count=$(printf '%s' "$result" | jq '.children // [] | length')
   if [[ "$child_count" -gt 0 ]]; then
     echo "**Children** ($child_count):"
-    echo "$result" | jq -r '.children[:5][] | "  • \(.content[0:80])"'
+    printf '%s' "$result" | jq -r '.children[:5][] | "  • \(.content[0:80])"'
     [[ "$child_count" -gt 5 ]] && echo "  ... and $((child_count - 5)) more"
   fi
 }
@@ -226,13 +226,13 @@ cmd_tree() {
 
   echo "## Subtree"
   echo ""
-  echo "**Root**: $(echo "$result" | jq -r '.content // "?"' | head -1)"
-  echo "$result" | jq -r '.tokenEstimate | "**Size**: \(.totalChars) chars, \(.blockCount) blocks, max depth \(.maxDepth)"'
+  echo "**Root**: $(printf '%s' "$result" | jq -r '.content // "?"' | head -1)"
+  printf '%s' "$result" | jq -r '.tokenEstimate | "**Size**: \(.totalChars) chars, \(.blockCount) blocks, max depth \(.maxDepth)"'
   echo ""
-  echo "$result" | jq -r '.tree[:20][] | ("  " * .depth) + "• \(.content[0:80])"'
+  printf '%s' "$result" | jq -r '.tree[:20][] | ("  " * .depth) + "• \(.content[0:80])"'
 
   local tree_count
-  tree_count=$(echo "$result" | jq '.tree | length')
+  tree_count=$(printf '%s' "$result" | jq '.tree | length')
   [[ "$tree_count" -gt 20 ]] && echo "... and $((tree_count - 20)) more blocks"
 }
 
@@ -247,8 +247,8 @@ cmd_search_ctx() {
 
   echo "## Search: $query (with context)"
   echo ""
-  echo "$result" | jq -r '.hits[] | "─── [\(.blockId[0:8])] score:\(.score | . * 10 | round / 10) ───\n\(.content)\n  breadcrumb: \(.breadcrumb // ["(root)"] | join(" → "))\n"'
-  echo "Total: $(echo "$result" | jq '.total') hits"
+  printf '%s' "$result" | jq -r '.hits[] | "─── [\(.blockId[0:8])] score:\(.score | . * 10 | round / 10) ───\n\(.content)\n  breadcrumb: \(.breadcrumb // ["(root)"] | join(" → "))\n"'
+  echo "Total: $(printf '%s' "$result" | jq '.total') hits"
 }
 
 # Main dispatch

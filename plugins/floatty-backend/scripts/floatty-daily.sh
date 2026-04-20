@@ -100,9 +100,21 @@ floatty_tldr() {
   local proj_marker=""
   [[ -n "$project" ]] && proj_marker="[project::$project] "
 
-  # Create TLDR header
+  # Resolve today's daily note so the TLDR lands UNDER it, not as a root
+  # block. Mirrors the FLO-636 fix for floatty_daily_add. If the daily note
+  # doesn't exist yet, find_or_create errors out (by design — create the
+  # daily note in floatty first, or use the future floatty_tldr_append_via_api
+  # once FLO-652 ships in release).
+  local daily_id
+  daily_id=$(floatty_daily_find_or_create)
+  if [[ -z "$daily_id" || "$daily_id" == "null" ]]; then
+    echo "Failed to resolve today's daily note — create it in floatty first (see floatty_daily_find_or_create error above)." >&2
+    return 1
+  fi
+
+  # Create TLDR header as a child of the daily note.
   local parent_id
-  parent_id=$(floatty_block_create "## $time - ${proj_marker}$summary" | jq -r '.id')
+  parent_id=$(floatty_block_create "## $time - ${proj_marker}$summary" "$daily_id" | jq -r '.id')
 
   if [[ "$parent_id" == "null" || -z "$parent_id" ]]; then
     echo "Failed to create TLDR header" >&2
