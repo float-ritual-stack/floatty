@@ -938,7 +938,7 @@ export const floattyDaily = tool({
 
 export const floattyDailyAdd = tool({
   description:
-    "Add an entry to today's daily note in the floatty outliner. Creates the daily note if it doesn't exist.",
+    "Add an entry to today's daily note in the floatty outliner. Requires today's daily note to already exist — returns an explicit error if missing rather than autocreating. Open floatty and click today's date to create the daily note first, or pass parent_id to bypass the daily-note lookup.",
   inputSchema: z.object({
     content: z.string().describe("Content to add to today's daily note"),
     parent_id: z
@@ -968,10 +968,18 @@ export const floattyDailyAdd = tool({
             `/api/v1/daily/${encodeURIComponent(today)}`,
           )) as { id: string };
           parentId = daily.id;
-        } catch {
-          return {
-            error: `No daily note for ${today} — create one in floatty before appending, or pass parent_id explicitly.`,
-          };
+        } catch (error) {
+          // Only the 404 case maps to "no daily note" — other failures
+          // (auth, timeout, 5xx) must propagate so the caller can see
+          // them instead of getting a misleading "no daily note" message.
+          // floattyFetch throws Error(`Floatty ${status}: ${body}`) on !ok.
+          const msg = error instanceof Error ? error.message : String(error);
+          if (msg.startsWith("Floatty 404:")) {
+            return {
+              error: `No daily note for ${today} — create one in floatty before appending, or pass parent_id explicitly.`,
+            };
+          }
+          throw error;
         }
       }
 
