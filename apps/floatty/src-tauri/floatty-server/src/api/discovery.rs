@@ -15,6 +15,7 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use yrs::{Map, ReadTxn, Transact};
 
 use crate::api::{self, BlockDto};
@@ -238,26 +239,89 @@ async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoRespons
 // Semantic endpoints — FLO-652 ("agents shouldn't need to know pages:: layout")
 // ============================================================================
 
+/// Serialisation + hook-lag bridge for the semantic endpoints.
+///
+/// Why: `PageNameIndex` is updated asynchronously by a hook that fires AFTER
+/// `create_block` returns. Two back-to-back POSTs for the same missing page
+/// name can both observe `None` from the index and both call `create_block`,
+/// producing duplicate `# {name}` pages (Greptile P1 on PR #249).
+///
+/// The `Mutex<SemanticCache>` in `AppState.semantic_cache` solves this:
+///
+/// 1. **Serialisation** — taking the mutex across the whole `find_or_create_page`
+///    body makes the check-then-create pair atomic with respect to other
+///    concurrent calls.
+/// 2. **Hook-lag bridge** — once we've created a page or the `pages::`
+///    container inside the critical section, we remember it here. Later
+///    callers inside the critical section find it even before the async hook
+///    has updated the `PageNameIndex`.
+///
+/// Entries are never evicted — single-user system, bounded in practice
+/// (~hundreds of pages). Lives for the lifetime of the `AppState`
+/// (per-instance, test-isolated).
+pub struct SemanticCache {
+    pages_container_id: Option<String>,
+    /// Lowercased page name → block id, populated on create.
+    pages: HashMap<String, String>,
+}
+
+impl SemanticCache {
+    pub fn new() -> Self {
+        Self {
+            pages_container_id: None,
+            pages: HashMap::new(),
+        }
+    }
+}
+
+impl Default for SemanticCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Resolve a page name to an existing block id, creating the page (and the
 /// `pages::` container if needed) when absent.
+///
+/// Returns `(block_id, existed_before_this_call)`. The `existed` bool drives
+/// the `200 OK` vs `201 Created` status code in `upsert_page` — caller must
+/// not second-guess it via an extra index read (which would race).
 ///
 /// The page content uses the canonical `# ${name}` heading form so it renders
 /// correctly when zoomed. This mirrors `createPage` in the frontend's
 /// `useBacklinkNavigation.ts` — same content shape, same parent chain.
-fn find_or_create_page(state: &AppState, name: &str) -> Result<String, ApiError> {
-    // Fast path: page already exists in the PageNameIndex.
+fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), ApiError> {
+    // Serialise all find_or_create_page calls so check-then-create is atomic.
+    // Held across the full body, including the `create_block` calls — those
+    // touch the Y.Doc write lock and the hook system, neither of which is
+    // held at this point, so no deadlock. The async hook that updates
+    // `PageNameIndex` runs AFTER we release this lock.
+    let mut cache = state
+        .semantic_cache
+        .lock()
+        .map_err(|_| ApiError::LockPoisoned)?;
+    let name_key = name.to_lowercase();
+
+    // Fast path 1: PageNameIndex (hook-populated). Primary authority once the
+    // hook has caught up.
     {
         let index = state
             .page_name_index
             .read()
             .map_err(|_| ApiError::LockPoisoned)?;
         if let Some(id) = index.page_block_id(name) {
-            return Ok(id.to_string());
+            return Ok((id.to_string(), true));
         }
     }
 
-    // Ensure `pages::` container exists — create as a root block if the
-    // outline has never had any pages.
+    // Fast path 2: pages we created earlier in this server's lifetime but
+    // whose index entry hasn't landed yet.
+    if let Some(id) = cache.pages.get(&name_key) {
+        return Ok((id.clone(), true));
+    }
+
+    // Resolve the pages:: container — PageNameIndex first, cache fallback
+    // for the same hook-lag reason.
     let pages_container_id = {
         let index = state
             .page_name_index
@@ -265,23 +329,26 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<String, ApiError>
             .map_err(|_| ApiError::LockPoisoned)?;
         index.pages_container_id().map(String::from)
     };
-
     let pages_container_id = match pages_container_id {
         Some(id) => id,
-        None => {
-            let container = crate::block_service::create_block(
-                &state.store,
-                &state.broadcaster,
-                &state.hook_system,
-                api::CreateBlockRequest {
-                    content: "pages::".to_string(),
-                    parent_id: None,
-                    after_id: None,
-                    at_index: None,
-                },
-            )?;
-            container.id
-        }
+        None => match cache.pages_container_id.clone() {
+            Some(id) => id,
+            None => {
+                let container = crate::block_service::create_block(
+                    &state.store,
+                    &state.broadcaster,
+                    &state.hook_system,
+                    api::CreateBlockRequest {
+                        content: "pages::".to_string(),
+                        parent_id: None,
+                        after_id: None,
+                        at_index: None,
+                    },
+                )?;
+                cache.pages_container_id = Some(container.id.clone());
+                container.id
+            }
+        },
     };
 
     // Create the page block under the pages:: container.
@@ -297,7 +364,8 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<String, ApiError>
         },
     )?;
 
-    Ok(page.id)
+    cache.pages.insert(name_key, page.id.clone());
+    Ok((page.id, false))
 }
 
 /// Read a page block as a `BlockDto` for returning from the upsert handler.
@@ -349,15 +417,10 @@ async fn upsert_page(
         return Err(ApiError::InvalidRequest("Page name cannot be empty".to_string()));
     }
 
-    let existed = {
-        let index = state
-            .page_name_index
-            .read()
-            .map_err(|_| ApiError::LockPoisoned)?;
-        index.page_block_id(&name).is_some()
-    };
-
-    let page_id = find_or_create_page(&state, &name)?;
+    // Single atomic resolve — find_or_create_page holds the semantic lock
+    // across the existence check AND any creation, so `existed` is never
+    // out of sync with the returned id.
+    let (page_id, existed) = find_or_create_page(&state, &name)?;
     let dto = read_page_dto(&state, &page_id)?;
     let status = if existed {
         StatusCode::OK
@@ -374,17 +437,48 @@ async fn upsert_page(
 ///
 /// Responses:
 /// - `201 Created` with the new child's `BlockDto`
+/// Validate that `:date` matches the canonical `YYYY-MM-DD` shape. Required
+/// to keep daily notes addressable by the `GET /api/v1/daily/:date` sibling —
+/// a typo like `/daily/26-4-19/append` would otherwise silently create a
+/// malformed orphan page. Only the shape is validated; any `YYYY-MM-DD` that
+/// matches is accepted (leap-day calendar checks are out of scope).
+fn is_valid_date_shape(date: &str) -> bool {
+    let bytes = date.as_bytes();
+    if bytes.len() != 10 {
+        return false;
+    }
+    let is_digit = |b: u8| b.is_ascii_digit();
+    is_digit(bytes[0])
+        && is_digit(bytes[1])
+        && is_digit(bytes[2])
+        && is_digit(bytes[3])
+        && bytes[4] == b'-'
+        && is_digit(bytes[5])
+        && is_digit(bytes[6])
+        && bytes[7] == b'-'
+        && is_digit(bytes[8])
+        && is_digit(bytes[9])
+}
+
 #[tracing::instrument(skip(state, req), fields(route_family = "semantic", handler = "append_to_daily_note"), err)]
 async fn append_to_daily_note(
     State(state): State<AppState>,
     Path(date): Path<String>,
     Json(req): Json<DailyAppendRequest>,
 ) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
-    if date.trim().is_empty() {
-        return Err(ApiError::InvalidRequest("Date cannot be empty".to_string()));
+    if !is_valid_date_shape(&date) {
+        return Err(ApiError::InvalidRequest(format!(
+            "Date must be YYYY-MM-DD (got '{}') — mis-shaped dates would create unreachable pages that GET /api/v1/daily/:date cannot resolve",
+            date
+        )));
+    }
+    if req.content.trim().is_empty() {
+        return Err(ApiError::InvalidRequest(
+            "Content cannot be empty — appending an empty block under a daily note is almost never the intent".to_string(),
+        ));
     }
 
-    let daily_id = find_or_create_page(&state, &date)?;
+    let (daily_id, _existed) = find_or_create_page(&state, &date)?;
 
     let dto = crate::block_service::create_block(
         &state.store,

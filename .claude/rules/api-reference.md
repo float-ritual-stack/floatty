@@ -102,6 +102,8 @@ Idempotent. Body is currently empty (`{}`). Responses:
 
 Returns a `BlockDto` — same shape as `GET /api/v1/blocks/:id`. Page content is written as `# ${name}` (CommonMark heading) so it renders correctly when zoomed.
 
+Concurrency-safe: a per-process `semantic_cache` mutex in `AppState` serialises the find-or-create path so simultaneous POSTs for the same name return the same page id and the same 200/201 classification. Cache also bridges the async `PageNameIndex` hook-update window.
+
 ```bash
 curl -X POST -H "Authorization: Bearer $KEY" \
   -H "Content-Type: application/json" -d '{}' \
@@ -116,7 +118,9 @@ Body: `{ "content": "..." }` — the child block's content.
 
 Responses:
 - **201 Created** with the new child's `BlockDto`
-- **400 Bad Request** when date is empty / content field missing
+- **400 Bad Request** when:
+  - `:date` isn't `YYYY-MM-DD` shape — prevents creating orphan pages that `GET /api/v1/daily/:date` cannot resolve
+  - `content` is empty / whitespace-only — empty appends are almost never intentional
 
 ```bash
 curl -X POST -H "Authorization: Bearer $KEY" \
