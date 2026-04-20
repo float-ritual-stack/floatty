@@ -55,7 +55,9 @@ layout the skill ships in:
 
 ```bash
 # Install layouts (first match wins):
-#   Plugin marketplace cache:  ~/.claude/plugins/cache/*/floatty-backend
+#   Plugin marketplace cache:  ~/.claude/plugins/cache/<marketplace>/floatty-backend/<version>/
+#                              (Claude Code interposes a semver directory;
+#                              the scripts/ dir lives one level deeper.)
 #   Claude Code --plugin-dir:  any path containing scripts/floatty-api.sh
 #   Legacy skill:              ~/.claude/skills/floatty-backend
 #   claude.ai:                 /mnt/skills/user/floatty-backend
@@ -64,10 +66,13 @@ layout the skill ships in:
 
 if [[ -z "$FLOATTY_SKILL_DIR" ]]; then
   for d in \
+    "$HOME"/.claude/plugins/cache/*/floatty-backend/*/ \
     "$HOME"/.claude/plugins/cache/*/floatty-backend \
     "$HOME/.claude/skills/floatty-backend" \
     /mnt/skills/user/floatty-backend \
     /mnt/skills/private/floatty-backend; do
+    # Strip trailing slash so FLOATTY_SKILL_DIR doesn't have a double-slash
+    d="${d%/}"
     [[ -d "$d/scripts" ]] && { FLOATTY_SKILL_DIR="$d"; break; }
   done
 fi
