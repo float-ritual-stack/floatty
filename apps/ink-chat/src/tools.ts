@@ -953,13 +953,13 @@ export const floattyDailyAdd = tool({
       const today = new Date().toISOString().split("T")[0]!;
 
       // Resolve today's daily note via the dedicated endpoint. GET /api/v1/daily/:date
-      // goes through PageNameIndex and returns the page block regardless of whether
-      // it's a stub, real, or needs creation — the caller doesn't have to know that
-      // pages live under `pages::` (FLO-636, "semantic endpoints for outline conventions").
+      // goes through PageNameIndex and returns the page block when the daily note
+      // exists, without the caller needing to know that pages live under `pages::`
+      // (FLO-636, "semantic endpoints for outline conventions").
       //
       // The old search-based lookup fell through to creating a bare root block when
       // the heading `# YYYY-MM-DD` didn't match — the CodeRabbit-Critical symptom on
-      // PR #237. Now an unresolved daily note fails explicitly instead of silently
+      // PR `#237`. Now an unresolved daily note fails explicitly instead of silently
       // rooting the new block.
       let parentId = parent_id;
       if (!parentId) {
