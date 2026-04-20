@@ -7,6 +7,21 @@ semver ([semver.org](https://semver.org/)). The authoritative version lives
 in `marketplace.json` (per Claude Code's
 [relative-path plugin guidance](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels)).
 
+## [0.7.1] — 2026-04-20
+
+Hot-fix for 0.7.0's retry logic. 0.7.0 broke floatty_curl in zsh (user's login shell) — caught the first time the user opened the skill from their actual shell, not my bash-only test harness.
+
+### Fixed
+
+- `floatty_curl` is now portable across bash AND zsh:
+  - `local status=...` → `local http_code=...`. In zsh, `$status` is an alias for `$?` and is read-only; assigning to it throws `read-only variable: status`.
+  - `trap "rm -f ..." RETURN` → explicit `rm -f "$tmpbody"` before each `return`. zsh has no RETURN signal, only EXIT; the trap threw `undefined signal: RETURN` immediately on source.
+- Verified in both shells this time: zsh + bash both return clean v0.11.10 health, bash retry path still exhausts correctly on `httpbin.org/status/503`.
+
+### Lesson
+
+My test harness ran `bash -c ...` subshells for cross-shell validation. Bash tests missed the zsh breakage because the shell was hardcoded. Going forward: when touching `floatty-api.sh`, verify with **both** `zsh -c` and `bash -c` before shipping. User's login shell matters more than my harness shell.
+
 ## [0.7.0] — 2026-04-20
 
 Desktop Daddy sandbox session exposed a follow-on ngrok behaviour: even with the `ngrok-skip-browser-warning` header from 0.6.0 set, ngrok 3.37.6's edge fires the interstitial **intermittently** under sequential POST traffic (Daddy observed 7/16 POSTs bounce with 503 "DNS cache overflow" during a single tree-creation run). The fix can't live per-script — has to be baked into `floatty_curl` so every helper gets it.
