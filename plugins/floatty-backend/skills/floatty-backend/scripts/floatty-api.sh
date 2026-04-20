@@ -88,25 +88,82 @@ if [[ -z "$AUTH_DISABLED" ]]; then
   fi
 fi
 
-# Core curl wrapper with auth headers (or without if auth disabled).
+# Core curl wrapper with auth + ngrok-aware retry.
 #
-# The `ngrok-skip-browser-warning` header bypasses the agent-interstitial
-# that ngrok 3.37.6+ serves to free-tier tunnels. Without it, requests
-# through https://<subdomain>.ngrok.app get a 503 "DNS cache overflow"
-# body that is actually ngrok's anti-bot page, not a real server error.
-# The header is ignored when talking to localhost, so it's safe to always
-# send. (Discovered 2026-04-20 against floatty.ngrok.app.)
+# Two ngrok gotchas protect against here (both discovered 2026-04-20 against
+# https://floatty.ngrok.app):
+#
+# 1. Consistent interstitial (3.37.6+): free-tier tunnels serve a 503 with
+#    body literal "DNS cache overflow" unless `ngrok-skip-browser-warning: 1`
+#    is set. Harmless on localhost — always send it.
+#
+# 2. Intermittent interstitials: even WITH the header, ngrok edge fires the
+#    interstitial inconsistently under sequential POST traffic. Daddy's
+#    sandbox saw 7/16 POSTs bounce with 503 "DNS cache overflow" in a single
+#    tree-creation run; retry with 0.5s backoff cleared all transient failures
+#    within 2-3 attempts. A retry wrapper has to live in this helper so every
+#    caller is protected without reinventing `mk()` per script.
+#
+# Only 5xx (and curl connection errors) retry — 4xx is the caller's fault,
+# retrying won't help and would hide the real error. POST retries are safe
+# here because ngrok's 503 interstitial is an EDGE response (the tunnel
+# rejected the request; the backend never saw it). A real 5xx from the
+# backend is rare and worth surfacing via the exhausted-retries return code.
+#
+# Tuning:
+#   FLOATTY_CURL_RETRIES   (default: 5)     max attempts including the first
+#   FLOATTY_CURL_BACKOFF   (default: 0.5)   initial delay in seconds; ×1.5 per retry
+#
+# Exit codes:
+#   0  success (2xx/3xx/4xx — body written to stdout)
+#   1  exhausted retries (final body written to stdout for debugging)
 floatty_curl() {
-  if [[ -n "$AUTH_DISABLED" ]]; then
-    curl -s -H "Content-Type: application/json" \
-         -H "ngrok-skip-browser-warning: 1" \
-         "$@"
-  else
-    curl -s -H "Authorization: Bearer $FLOATTY_API_KEY" \
-         -H "Content-Type: application/json" \
-         -H "ngrok-skip-browser-warning: 1" \
-         "$@"
+  local max_attempts="${FLOATTY_CURL_RETRIES:-5}"
+  local delay="${FLOATTY_CURL_BACKOFF:-0.5}"
+  local tmpbody
+  tmpbody=$(mktemp -t floatty-curl.XXXXXX)
+  # shellcheck disable=SC2064  # Intentional: $tmpbody resolves now, not on trap
+  trap "rm -f '$tmpbody'" RETURN
+
+  local auth_args=()
+  if [[ -z "$AUTH_DISABLED" ]]; then
+    auth_args=(-H "Authorization: Bearer $FLOATTY_API_KEY")
   fi
+
+  local attempt=1 status curl_rc
+  while (( attempt <= max_attempts )); do
+    curl_rc=0
+    status=$(curl -sS -o "$tmpbody" -w "%{http_code}" \
+      "${auth_args[@]}" \
+      -H "Content-Type: application/json" \
+      -H "ngrok-skip-browser-warning: 1" \
+      "$@" 2>/dev/null) || curl_rc=$?
+
+    # Success path: 2xx/3xx/4xx return the body and exit. 4xx is a client
+    # error (bad request, 404, etc.) — retrying won't fix it, surface it.
+    case "$status" in
+      2*|3*|4*)
+        cat "$tmpbody"
+        return 0
+        ;;
+    esac
+
+    # Transient: 5xx (includes ngrok 503 interstitial) OR curl network error.
+    # Retry with exponential-ish backoff, log to stderr on attempts >1 so a
+    # caller watching the stream sees the flake without parsing curl output.
+    if (( attempt < max_attempts )); then
+      [[ $attempt -ge 2 ]] && echo "floatty_curl: retry $attempt/$max_attempts after ${delay}s (status=$status, curl_rc=$curl_rc)" >&2
+      sleep "$delay"
+      delay=$(awk "BEGIN{printf \"%.2f\", $delay * 1.5}")
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  # Exhausted — emit the last body (likely ngrok's 503 page or server error)
+  # so the caller can inspect, and return nonzero to signal failure.
+  cat "$tmpbody"
+  echo "floatty_curl: exhausted $max_attempts attempts (last status=$status, curl_rc=$curl_rc)" >&2
+  return 1
 }
 
 # Health check

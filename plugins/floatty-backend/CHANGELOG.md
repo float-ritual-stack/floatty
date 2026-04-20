@@ -7,6 +7,23 @@ semver ([semver.org](https://semver.org/)). The authoritative version lives
 in `marketplace.json` (per Claude Code's
 [relative-path plugin guidance](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels)).
 
+## [0.7.0] — 2026-04-20
+
+Desktop Daddy sandbox session exposed a follow-on ngrok behaviour: even with the `ngrok-skip-browser-warning` header from 0.6.0 set, ngrok 3.37.6's edge fires the interstitial **intermittently** under sequential POST traffic (Daddy observed 7/16 POSTs bounce with 503 "DNS cache overflow" during a single tree-creation run). The fix can't live per-script — has to be baked into `floatty_curl` so every helper gets it.
+
+### Added
+
+- **Retry loop in `floatty_curl`**: 5-attempt default with 0.5s initial backoff × 1.5 per retry, retries on any 5xx or curl connection error, never retries 4xx (client errors surface immediately). Tunable via `FLOATTY_CURL_RETRIES` and `FLOATTY_CURL_BACKOFF` env vars. Retry attempts log to stderr starting at attempt 2 so flakes are visible without parsing output.
+- Non-zero exit code on exhausted retries — callers can now `if ! floatty_curl ...; then handle_failure; fi` to detect persistent failures. Existing callers that ignore exit codes still work because the last body is written to stdout.
+
+### Why POST retries are safe here
+
+ngrok's 503 interstitial is an **edge** response — the tunnel rejects the request before the floatty-server backend ever sees it. Retrying cannot cause duplicate block creates. A real 5xx from the backend IS rare and WOULD be a duplicate risk, but it's worth the trade-off versus Daddy's "7/16 silent POST failures → orphan child blocks in the outline" failure mode.
+
+### Daddy's pebble
+
+Documented both pebbles in an outline doctrine page at `02ebd823` — "outline formatting — write shape matches read shape" — built entirely via this skill with the retry wrapper active. Every block that initially failed landed on retry 2 or 3. Page IS the doctrine; self-exemplifying.
+
 ## [0.6.0] — 2026-04-20
 
 ngrok browser-warning interstitial workaround. Discovered by a parallel kitty session probing `floatty.ngrok.app` from a sandbox environment — ngrok 3.37.6+ serves a 503 "DNS cache overflow" interstitial to agent UAs unless `ngrok-skip-browser-warning: 1` is set.
