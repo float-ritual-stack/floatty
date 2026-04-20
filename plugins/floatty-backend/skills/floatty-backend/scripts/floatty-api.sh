@@ -117,23 +117,26 @@ fi
 # Exit codes:
 #   0  success (2xx/3xx/4xx — body written to stdout)
 #   1  exhausted retries (final body written to stdout for debugging)
+# zsh-compat notes (0.7.1):
+# - $status is read-only in zsh (alias for $?). Use $http_code instead.
+# - trap ... RETURN is bash-only. Use an explicit rm after each exit path,
+#   OR keep the trap but scope it with EXIT inside a subshell. We use
+#   explicit cleanup because it's portable and unambiguous.
 floatty_curl() {
   local max_attempts="${FLOATTY_CURL_RETRIES:-5}"
   local delay="${FLOATTY_CURL_BACKOFF:-0.5}"
   local tmpbody
   tmpbody=$(mktemp -t floatty-curl.XXXXXX)
-  # shellcheck disable=SC2064  # Intentional: $tmpbody resolves now, not on trap
-  trap "rm -f '$tmpbody'" RETURN
 
   local auth_args=()
   if [[ -z "$AUTH_DISABLED" ]]; then
     auth_args=(-H "Authorization: Bearer $FLOATTY_API_KEY")
   fi
 
-  local attempt=1 status curl_rc
+  local attempt=1 http_code curl_rc
   while (( attempt <= max_attempts )); do
     curl_rc=0
-    status=$(curl -sS -o "$tmpbody" -w "%{http_code}" \
+    http_code=$(curl -sS -o "$tmpbody" -w "%{http_code}" \
       "${auth_args[@]}" \
       -H "Content-Type: application/json" \
       -H "ngrok-skip-browser-warning: 1" \
@@ -141,9 +144,10 @@ floatty_curl() {
 
     # Success path: 2xx/3xx/4xx return the body and exit. 4xx is a client
     # error (bad request, 404, etc.) — retrying won't fix it, surface it.
-    case "$status" in
+    case "$http_code" in
       2*|3*|4*)
         cat "$tmpbody"
+        rm -f "$tmpbody"
         return 0
         ;;
     esac
@@ -152,7 +156,7 @@ floatty_curl() {
     # Retry with exponential-ish backoff, log to stderr on attempts >1 so a
     # caller watching the stream sees the flake without parsing curl output.
     if (( attempt < max_attempts )); then
-      [[ $attempt -ge 2 ]] && echo "floatty_curl: retry $attempt/$max_attempts after ${delay}s (status=$status, curl_rc=$curl_rc)" >&2
+      [[ $attempt -ge 2 ]] && echo "floatty_curl: retry $attempt/$max_attempts after ${delay}s (http=$http_code, curl_rc=$curl_rc)" >&2
       sleep "$delay"
       delay=$(awk "BEGIN{printf \"%.2f\", $delay * 1.5}")
     fi
@@ -162,7 +166,8 @@ floatty_curl() {
   # Exhausted — emit the last body (likely ngrok's 503 page or server error)
   # so the caller can inspect, and return nonzero to signal failure.
   cat "$tmpbody"
-  echo "floatty_curl: exhausted $max_attempts attempts (last status=$status, curl_rc=$curl_rc)" >&2
+  rm -f "$tmpbody"
+  echo "floatty_curl: exhausted $max_attempts attempts (last http=$http_code, curl_rc=$curl_rc)" >&2
   return 1
 }
 
