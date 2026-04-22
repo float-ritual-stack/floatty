@@ -280,7 +280,7 @@ async function main(filePath: string, port: number, batchSize: number, continueF
   for (const block of batch) {
     try {
       // Handle depth jumps: if parent doesn't exist, use closest ancestor
-      let effectiveDepth = block.depth;
+      const effectiveDepth = block.depth;
       let parentId: string | undefined = undefined;
 
       if (effectiveDepth > 0) {

@@ -199,7 +199,7 @@ describe('outline scope', () => {
   it('fan-out: map to create multiple blocks', () => {
     const ids: string[] = [];
     let counter = 0;
-    const afterFn = vi.fn().mockImplementation((content: string) => {
+    const afterFn = vi.fn().mockImplementation(() => {
       const id = `block-${counter++}`;
       ids.push(id);
       return id;

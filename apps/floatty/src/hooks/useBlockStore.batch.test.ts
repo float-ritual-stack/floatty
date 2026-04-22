@@ -323,7 +323,7 @@ describe('batchCreateBlocksAfter', () => {
     });
 
     let capturedOrigin: unknown = null;
-    const handler = (events: Y.YEvent<any>[]) => {
+    const handler = (events: Y.YEvent<unknown>[]) => {
       capturedOrigin = events[0]?.transaction.origin;
     };
     blocksMap.observeDeep(handler);
