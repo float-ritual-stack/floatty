@@ -39,7 +39,7 @@ export const weeklyTrackerSpec: Spec = {
 |------|--------|-------|
 | [[Issue #2123]] | **IN PROGRESS** | Admin order detail ~33s with assessment responses. Alex's lane. |
 | **Basket bug (W17)** | **IN PROGRESS** — Jordan | Kai-flagged. 3 divergent \`createGuestBasket\` fns. **03:06 PM correction**: may not match code. |
-| [[PR #2292]] | **MERGED but INCOMPLETE** ⚠ | Windsor Framework HS-codes — awaiting Yuri+Stephen approval |
+| [[PR #2292]] | **MERGED but INCOMPLETE** ⚠ | customs HS-codes — awaiting Yara+Shay approval |
 | Admin debug view | Proposal | Alex, unticketed — UI over follow-up-email cron source table |
 | [[Issue #2218]] / [[#2219]] | Pending | Perf follow-ups filed W16 |`,
       },

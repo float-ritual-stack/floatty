@@ -51,7 +51,7 @@ export const meetingNotesSpec: Spec = {
         title: '"Complete assessment warning" — Sam digging offline',
         type: 'decision',
         confidence: 'hypothesis',
-        content: "Backlog ticket refers to a red warning on the MedX form: *\"Showing unmatched assessments for this order. Some may not be related to the selected item.\"*\n\nSam walked production live during the sync and couldn't reproduce from the ticket text alone — not enough detail to act on.\n\n**Hypothesis**: dynamic assessment updates mid-flow cause the submission to stop matching the current definition. Sam to reproduce on staging offline.",
+        content: "Backlog ticket refers to a red warning on the prescription form: *\"Showing unmatched assessments for this order. Some may not be related to the selected item.\"*\n\nSam walked production live during the sync and couldn't reproduce from the ticket text alone — not enough detail to act on.\n\n**Hypothesis**: dynamic assessment updates mid-flow cause the submission to stop matching the current definition. Sam to reproduce on staging offline.",
       },
     },
 
