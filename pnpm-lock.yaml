@@ -269,6 +269,9 @@ importers:
 
   apps/render-reference:
     dependencies:
+      '@floatty/render-door':
+        specifier: workspace:*
+        version: link:../../packages/render-door
       '@json-render/core':
         specifier: ^0.18.0
         version: 0.18.0(zod@4.3.6)
@@ -297,6 +300,31 @@ importers:
       vite-plugin-solid:
         specifier: ^2.11.0
         version: 2.11.12(@testing-library/jest-dom@6.9.1)(solid-js@1.9.12)(vite@6.4.2(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+
+  packages/render-door:
+    dependencies:
+      '@json-render/core':
+        specifier: ^0.18.0
+        version: 0.18.0(zod@4.3.6)
+      '@json-render/solid':
+        specifier: ^0.18.0
+        version: 0.18.0(solid-js@1.9.12)(zod@4.3.6)
+      dompurify:
+        specifier: ^3.3.3
+        version: 3.3.3
+      solid-js:
+        specifier: ^1.9.3
+        version: 1.9.12
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/dompurify':
+        specifier: ^3.0.5
+        version: 3.2.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
 packages:
 

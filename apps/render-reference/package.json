@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@floatty/render-door": "workspace:*",
     "@json-render/core": "^0.18.0",
     "@json-render/devtools-solid": "^0.18.0",
     "@json-render/solid": "^0.18.0",
