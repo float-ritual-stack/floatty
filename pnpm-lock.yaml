@@ -319,12 +319,24 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@eslint/js':
+        specifier: ^9.39.2
+        version: 9.39.4
       '@types/dompurify':
         specifier: ^3.0.5
         version: 3.2.0
+      eslint:
+        specifier: ^9.39.1
+        version: 9.39.4(jiti@2.6.1)
+      globals:
+        specifier: ^16.5.0
+        version: 16.5.0
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.46.4
+        version: 8.58.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
 
 packages:
 

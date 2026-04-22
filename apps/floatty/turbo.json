@@ -3,9 +3,16 @@
   "extends": ["//"],
   "tasks": {
     "build": {
+      "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
     "typecheck": {},
-    "lint": {}
+    "lint": {},
+    "test": {
+      "outputs": []
+    },
+    "test:run": {
+      "outputs": []
+    }
   }
 }

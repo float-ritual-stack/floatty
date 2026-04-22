@@ -2989,7 +2989,10 @@ export function KanbanCard(
     index?: number;
   }>,
 ) {
-  const [valueRaw, setValue] = useBoundProp(props.props.content, props.bindings?.content);
+  // KanbanCard is read-only at the renderer layer — content edits flow back
+  // through chirp events handled by the parent block, not via useBoundProp's
+  // setter. Setter intentionally discarded.
+  const [valueRaw, _setValue] = useBoundProp(props.props.content, props.bindings?.content);
   const localValue = typeof valueRaw === 'function' ? (valueRaw as () => unknown) : () => valueRaw;
   const [editing, setEditing] = createSignal(false);
   const [focused, setFocused] = createSignal(false);

@@ -18,7 +18,7 @@
  *   node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
  */
 
-import { createSignal, Show, For } from 'solid-js';
+import { createSignal, Show } from 'solid-js';
 import {
   Renderer,
   StateProvider,
@@ -26,12 +26,87 @@ import {
   VisibilityProvider,
   ValidationProvider,
 } from '@json-render/solid';
+import type { Spec, UIElement } from '@json-render/core';
+
+// The render door extends UIElement with `bindings` — a map of prop-name →
+// JSON Pointer state path that useBoundProp() in components.tsx reads at
+// runtime to wire two-way state binding (e.g. KanbanCard content edits flow
+// back through `bindings: { content: '/cards/<id>/content' }`). Not part of
+// @json-render's official UIElement type.
+type DoorUIElement = UIElement & {
+  bindings?: Record<string, string>;
+};
 
 import { bbsCatalog } from './catalog';
 import { registry as bbsRegistry } from './registry';
 import { LAYOUT_PATTERNS } from './patterns';
 
-function getOllamaConfig(ctx: any) {
+// ═══════════════════════════════════════════════════════════════
+// Door runtime contract — what `ctx` looks like inside execute().
+// Mirrors the shape the floatty door host passes; broader than the
+// minimal `apps/floatty/doors/door-types.ts` DoorContext because the
+// render door also needs `actions` (block CRUD + output write) and
+// `server.subscribeBlockChanges` (Y.Doc subscription for re-projection
+// after kanban drag-drop / FLO-587).
+// ═══════════════════════════════════════════════════════════════
+
+interface DoorBlockActions {
+  getBlock: (id: string) => unknown;
+  getChildren: (id: string) => string[];
+  rootIds?: () => readonly string[];
+  setBlockOutput: (
+    blockId: string,
+    envelope: { kind: string; doorId: string; schema: number; data: unknown; error?: string },
+    outputType: string,
+  ) => void;
+  setBlockStatus: (blockId: string, status: string) => void;
+}
+
+interface DoorServer {
+  fetch: (path: string, init?: RequestInit) => Promise<Response>;
+  subscribeBlockChanges: (
+    callback: () => void,
+    opts: { fields: string[] },
+  ) => () => void;
+}
+
+interface DoorContext {
+  settings: Record<string, string | undefined> & {
+    ollama_endpoint?: string;
+    ollama_model?: string;
+    model?: string;
+    anthropic_api_key?: string;
+    agent_binary?: string;
+    agent_cwd?: string;
+  };
+  log: (...args: unknown[]) => void;
+  server: DoorServer;
+  actions: DoorBlockActions;
+}
+
+// Errors thrown by spec generation paths can carry the model's raw output
+// for debugging. Augmented Error type — narrower than `any` and grep-friendly.
+interface SpecGenerationError extends Error {
+  raw?: string;
+}
+
+/** Narrow unknown caught value to a printable message string. */
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  return String(e);
+}
+
+/** Read the optional `.raw` field a SpecGenerationError may carry. */
+function errRaw(e: unknown): string | undefined {
+  if (e && typeof e === 'object' && 'raw' in e) {
+    const raw = (e as { raw?: unknown }).raw;
+    return typeof raw === 'string' ? raw : undefined;
+  }
+  return undefined;
+}
+
+function getOllamaConfig(ctx: DoorContext) {
   return {
     url: ctx.settings?.ollama_endpoint || 'http://float-box:11434',
     model: ctx.settings?.ollama_model || 'qwen2.5:7b',
@@ -68,13 +143,13 @@ async function statsSpec(serverFetch: (path: string) => Promise<Response>) {
   if (!resp.ok) throw new Error(`Stats fetch failed: ${resp.status}`);
   const stats = await resp.json();
 
-  const typeEntries = Object.entries(stats.typeDistribution || {})
-    .sort((a: any, b: any) => b[1] - a[1])
+  const typeEntries = (Object.entries(stats.typeDistribution || {}) as [string, number][])
+    .sort((a, b) => b[1] - a[1])
     .slice(0, 6);
 
-  const typeElements: Record<string, any> = {};
+  const typeElements: Record<string, DoorUIElement> = {};
   const typeChildren: string[] = [];
-  typeEntries.forEach(([type, count]: [string, any], i) => {
+  typeEntries.forEach(([type, count], i) => {
     const id = `type-${i}`;
     typeChildren.push(id);
     typeElements[id] = { type: 'Metric', props: { label: type || '(plain)', value: String(count) }, children: [] };
@@ -164,7 +239,14 @@ function detectBlockStatus(content: string): string | undefined {
   return undefined;
 }
 
-function blockToTreeNode(block: LocalBlock, actions: BlockActions): any {
+interface TreeNode {
+  id: string;
+  label: string;
+  status?: string;
+  children?: TreeNode[];
+}
+
+function blockToTreeNode(block: LocalBlock, actions: BlockActions): TreeNode {
   const childIds = actions.getChildren(block.id);
   const children = childIds
     .map(id => actions.getBlock(id) as LocalBlock | undefined)
@@ -191,11 +273,12 @@ function expandSpec(blockRef: string, actions: BlockActions) {
   const directChildIds = actions.getChildren(root.id);
   const allDescendants = walkTree(root.id, actions);
 
-  const elements: Record<string, any> = {};
+  const elements: Record<string, DoorUIElement> = {};
   const rootChildKeys: string[] = [];
 
   // Separate ctx:: entries from regular children
-  const ctxCaptures: any[] = [];
+  interface CtxCapture { time: string; project: string; mode: string; text: string; }
+  const ctxCaptures: CtxCapture[] = [];
   const nonCtxChildren: LocalBlock[] = [];
 
   for (const cid of directChildIds) {
@@ -272,7 +355,7 @@ export function kanbanSpec(blockRef: string, actions: BlockActions) {
   const columns = actions.getChildren(root.id);
   if (columns.length === 0) throw new Error('No children to use as columns');
 
-  const elements: Record<string, any> = {};
+  const elements: Record<string, DoorUIElement> = {};
   const columnKeys: string[] = [];
 
   // FLO-587 — state.cards[blockId].content is the binding surface for
@@ -407,8 +490,28 @@ const CLAUDE_SYSTEM_PROMPT = [
   LAYOUT_PATTERNS,
 ].join('\n');
 
-function normalizeSpec(spec: any, ctx: any): any {
-  for (const el of Object.values(spec.elements || {}) as any[]) {
+// Spec shape coming in from LLM/agent before normalization. Permissive —
+// allows legacy `component` key (translated to `type` below) and arbitrary
+// props because we haven't validated against the catalog yet.
+interface LooseElement {
+  type?: string;
+  component?: string;
+  props?: Record<string, unknown>;
+  children?: unknown;
+  bindings?: Record<string, unknown>;
+}
+
+interface LooseSpec {
+  root?: string;
+  elements?: Record<string, LooseElement>;
+  state?: Record<string, unknown>;
+  // Agent responses sometimes embed a title alongside the spec; we extract
+  // it before normalization. Not part of @json-render's Spec.
+  title?: string;
+}
+
+function normalizeSpec(spec: LooseSpec, ctx: DoorContext): Spec {
+  for (const el of Object.values(spec.elements || {})) {
     // Translate legacy "component" field → "type" (json-render resolver uses el.type)
     if (el.component && !el.type) {
       el.type = el.component;
@@ -428,21 +531,29 @@ function normalizeSpec(spec: any, ctx: any): any {
       ctx.log('[render] auto-fixed root to:', spec.root);
     }
   }
-  for (const [id, el] of Object.entries(spec.elements) as [string, any][]) {
+  for (const [id, el] of Object.entries(spec.elements)) {
     if (!Array.isArray(el.children)) { el.children = []; continue; }
-    const before = el.children.length;
-    el.children = el.children.filter((childId: string) => {
+    const rawChildren = el.children as unknown[];
+    const before = rawChildren.length;
+    const filtered = rawChildren.filter((childId): childId is string => {
       if (typeof childId !== 'string') return false;
-      return !!spec.elements[childId];
+      return !!spec.elements?.[childId];
     });
-    if (el.children.length < before) {
-      ctx.log(`[render] dropped ${before - el.children.length} dangling child refs from ${id}`);
+    el.children = filtered;
+    if (filtered.length < before) {
+      ctx.log(`[render] dropped ${before - filtered.length} dangling child refs from ${id}`);
     }
   }
-  return spec;
+  // Cast is the boundary: spec was loose on entry; the validation above
+  // ensures root + elements are present, and Stack.gap normalization
+  // matches the catalog's expected shape. Downstream Renderer can trust it.
+  // `as unknown as Spec` because LooseSpec.root is `string | undefined` (narrowed
+  // by the throw above) and LooseElement.children is `unknown` (narrowed by
+  // the filter loop). Single-step `as Spec` would error on the type widening.
+  return spec as unknown as Spec;
 }
 
-async function generateSpecViaClaude(userPrompt: string, apiKey: string, ctx: any): Promise<any> {
+async function generateSpecViaClaude(userPrompt: string, apiKey: string, ctx: DoorContext): Promise<Spec> {
   const model = ctx.settings?.model || 'claude-haiku-4-5-20251001';
   ctx.log('Generating UI via Claude:', model, userPrompt);
 
@@ -469,17 +580,21 @@ async function generateSpecViaClaude(userPrompt: string, apiKey: string, ctx: an
   }
 
   const result = await resp.json();
-  const toolBlock = result.content?.find((b: any) => b.type === 'tool_use');
-  if (!toolBlock?.input) {
+  // Anthropic content blocks: text, tool_use, tool_result, etc. We need
+  // the tool_use block whose name matches our render_spec tool.
+  interface ClaudeContentBlock { type: string; input?: unknown; }
+  const toolBlock = (result.content as ClaudeContentBlock[] | undefined)
+    ?.find((b) => b.type === 'tool_use');
+  if (!toolBlock?.input || typeof toolBlock.input !== 'object') {
     throw new Error('No tool_use block in Claude response');
   }
 
-  const spec = toolBlock.input;
+  const spec = toolBlock.input as LooseSpec;
   ctx.log('Claude spec:', Object.keys(spec.elements || {}).length, 'elements');
   return normalizeSpec(spec, ctx);
 }
 
-async function generateSpecViaOllama(userPrompt: string, ctx: any): Promise<any> {
+async function generateSpecViaOllama(userPrompt: string, ctx: DoorContext): Promise<Spec> {
   ctx.log('Generating UI via ollama:', userPrompt);
 
   const systemPrompt = [
@@ -543,7 +658,7 @@ async function generateSpecViaOllama(userPrompt: string, ctx: any): Promise<any>
 // TITLE GENERATION
 // ═══════════════════════════════════════════════════════════════
 
-async function generateTitle(content: string, ctx: any): Promise<string | null> {
+async function generateTitle(content: string, ctx: DoorContext): Promise<string | null> {
   try {
     const ollama = getOllamaConfig(ctx);
 
@@ -572,10 +687,21 @@ async function generateTitle(content: string, ctx: any): Promise<string | null> 
 // AGENT-BASED GENERATION
 // ═══════════════════════════════════════════════════════════════
 
+// Tauri injects these at runtime depending on which API surface is enabled.
+// Each is a function that invokes a registered Rust command by name.
+type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<string>;
+declare global {
+  interface Window {
+    __TAURI_INTERNALS__?: { invoke?: TauriInvoke };
+    __TAURI__?: { core?: { invoke?: TauriInvoke } };
+    __TAURI_INVOKE__?: TauriInvoke;
+  }
+}
+
 async function tauriShellExec(command: string): Promise<string> {
-  const invoke = (window as any).__TAURI_INTERNALS__?.invoke
-    || (window as any).__TAURI__?.core?.invoke
-    || (window as any).__TAURI_INVOKE__;
+  const invoke = window.__TAURI_INTERNALS__?.invoke
+    || window.__TAURI__?.core?.invoke
+    || window.__TAURI_INVOKE__;
   if (!invoke) {
     throw new Error(
       'Tauri invoke not available. Keys on window: ' +
@@ -625,7 +751,7 @@ function buildAgentSystemPrompt(): string {
 }
 
 interface AgentResult {
-  spec: any;
+  spec: Spec;
   raw: string;
   sessionId?: string;
   title?: string;
@@ -636,7 +762,7 @@ interface AgentOptions {
   resumeSessionId?: string;
 }
 
-async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: AgentOptions): Promise<AgentResult> {
+async function generateSpecViaAgent(userPrompt: string, ctx: DoorContext, options?: AgentOptions): Promise<AgentResult> {
   ctx.log('[render::agent] generating:', userPrompt);
 
   let contextBlock = '';
@@ -651,11 +777,12 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
     if (searchResults.hits?.length > 0) {
       contextBlock += '\nRelevant outline blocks:\n';
       for (const hit of searchResults.hits.slice(0, 10)) {
+        // eslint-disable-next-line no-control-regex -- intentional: strip NUL bytes from server response
         contextBlock += `- [${hit.blockId?.slice(0, 8)}] ${(hit.content?.slice(0, 200) || '').replace(/\x00/g, '')}\n`;
       }
     }
-  } catch (e: any) {
-    ctx.log('[render::agent] context fetch failed (continuing without):', e.message);
+  } catch (e) {
+    ctx.log('[render::agent] context fetch failed (continuing without):', errMsg(e));
   }
 
   const agentBinary = ctx.settings?.agent_binary || 'claude';
@@ -663,7 +790,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
     throw new Error(`Invalid agent_binary: must be a simple command name`);
   }
   const rawCwd = ctx.settings?.agent_cwd || '~/.floatty/doors/render/agent';
-  if (!/^[a-zA-Z0-9_.~\/-]+$/.test(rawCwd)) {
+  if (!/^[a-zA-Z0-9_.~/-]+$/.test(rawCwd)) {
     throw new Error(`Invalid agent_cwd: contains unsafe characters`);
   }
   const agentCwd = rawCwd.startsWith('~/') ? `$HOME/${rawCwd.slice(2)}` : rawCwd;
@@ -691,7 +818,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   ctx.log('[render::agent] response length:', raw.length);
 
   if (!raw || raw.trim().length === 0) {
-    const err = new Error('Agent returned empty response — check if claude CLI is in PATH') as any;
+    const err = new Error('Agent returned empty response — check if claude CLI is in PATH') as SpecGenerationError;
     err.raw = '(empty)';
     throw err;
   }
@@ -715,17 +842,17 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   const start = jsonStr.indexOf('{');
   const end = jsonStr.lastIndexOf('}');
   if (start < 0 || end < 0) {
-    const err = new Error('No JSON object in agent response') as any;
+    const err = new Error('No JSON object in agent response') as SpecGenerationError;
     err.raw = raw;
     throw err;
   }
   jsonStr = jsonStr.slice(start, end + 1);
 
-  let spec: any;
+  let spec: LooseSpec;
   try {
     spec = JSON.parse(jsonStr);
-  } catch (parseErr: any) {
-    const err = new Error(`JSON parse failed: ${parseErr.message}`) as any;
+  } catch (parseErr) {
+    const err = new Error(`JSON parse failed: ${errMsg(parseErr)}`) as SpecGenerationError;
     err.raw = raw;
     throw err;
   }
@@ -734,10 +861,15 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
   const agentTitle = typeof spec.title === 'string' ? spec.title.trim() : undefined;
   delete spec.title;
 
+  // Capture normalized spec — typed as Spec (narrowed) instead of LooseSpec.
+  // Bug fix: prior code called normalizeSpec for side effects only, then
+  // returned the still-loosely-typed `spec`, which silently passed when the
+  // agent path was `any`-typed but errors under strict mode.
+  let normalized: Spec;
   try {
-    normalizeSpec(spec, ctx);
-  } catch (e: any) {
-    const err = new Error(e.message) as any;
+    normalized = normalizeSpec(spec, ctx);
+  } catch (e) {
+    const err = new Error(errMsg(e)) as SpecGenerationError;
     err.raw = raw;
     throw err;
   }
@@ -766,7 +898,7 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
     } catch { /* ignore */ }
   }
 
-  return { spec, raw, sessionId, title: agentTitle };
+  return { spec: normalized, raw, sessionId, title: agentTitle };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -774,9 +906,9 @@ async function generateSpecViaAgent(userPrompt: string, ctx: any, options?: Agen
 // ═══════════════════════════════════════════════════════════════
 
 interface RenderViewData {
-  spec: any;
+  spec: Spec | null;
   title?: string;
-  generatedVia?: 'demo' | 'stats' | 'prompt' | 'claude' | 'ollama' | 'agent' | 'raw-json';
+  generatedVia?: 'demo' | 'stats' | 'prompt' | 'claude' | 'ollama' | 'agent' | 'raw-json' | 'expand' | 'kanban';
   agentRaw?: string;
   agentSessionId?: string;
 }
@@ -941,7 +1073,11 @@ function RenderView(props: DoorViewProps) {
   );
 }
 
-function RenderViewInner(props: { spec: any; onNavigate?: (target: string, opts?: any) => void; onChirp?: (message: string, data?: unknown) => void }) {
+function RenderViewInner(props: {
+  spec: Spec;
+  onNavigate?: (target: string, opts?: { type?: 'page' | 'block' }) => void;
+  onChirp?: (message: string, data?: unknown) => void;
+}) {
   const actionHandlers = {
     navigate: async (params: Record<string, unknown>) => {
       const target = params.target as string;
@@ -983,7 +1119,7 @@ function extractTitle(content: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-function setOutput(blockId: string, ctx: any, data: RenderViewData, error?: string) {
+function setOutput(blockId: string, ctx: DoorContext, data: RenderViewData, error?: string) {
   const envelope = { kind: 'view', doorId: 'render', schema: 1, data, error };
   ctx.actions.setBlockOutput(blockId, envelope, 'door');
   ctx.actions.setBlockStatus(blockId, error ? 'error' : 'complete');
@@ -1014,7 +1150,7 @@ export const door = {
   kind: 'view' as const,
   prefixes: ['render::'],
 
-  async execute(blockId: string, content: string, ctx: any) {
+  async execute(blockId: string, content: string, ctx: DoorContext) {
     const nonce = (executionNonces.get(blockId) ?? 0) + 1;
     executionNonces.set(blockId, nonce);
     const thisExecution = nonce;
@@ -1058,9 +1194,9 @@ export const door = {
       try {
         const spec = await statsSpec(ctx.server.fetch);
         setOutputWithTitle({ spec, generatedVia: 'stats', title: 'outline stats' });
-      } catch (e: any) {
-        ctx.log('stats fetch failed:', e.message);
-        setOutputWithTitle({ spec: null }, e.message);
+      } catch (e) {
+        ctx.log('stats fetch failed:', errMsg(e));
+        setOutputWithTitle({ spec: null }, errMsg(e));
       }
       return;
     }
@@ -1074,7 +1210,11 @@ export const door = {
         return;
       }
 
-      const storeActions = { getBlock: (id: string) => ctx.actions.getBlock(id) as any, getChildren: (id: string) => ctx.actions.getChildren(id), rootIds: () => ctx.actions.rootIds?.() ?? [] };
+      const storeActions: BlockActions = {
+        getBlock: (id: string) => ctx.actions.getBlock(id) as LocalBlock | undefined,
+        getChildren: (id: string) => ctx.actions.getChildren(id),
+        rootIds: () => ctx.actions.rootIds?.() ?? [],
+      };
       const generate = isKanban ? kanbanSpec : expandSpec;
 
       const refresh = () => {
@@ -1082,19 +1222,19 @@ export const door = {
           const spec = generate(blockRef, storeActions);
           const elementCount = Object.keys(spec.elements ?? {}).length;
           ctx.log(`[render::${cmd}] refresh fired — ${elementCount} elements`);
-          setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd as any, title: `${cmd}: ${blockRef}` });
-        } catch (e: any) {
-          ctx.log(`[render::${cmd}] refresh failed:`, e.message);
+          setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd, title: `${cmd}: ${blockRef}` });
+        } catch (e) {
+          ctx.log(`[render::${cmd}] refresh failed:`, errMsg(e));
         }
       };
 
       // Initial render
       try {
         const spec = generate(blockRef, storeActions);
-        setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd as any, title: `${cmd}: ${blockRef}` });
-      } catch (e: any) {
-        ctx.log(`[render::${cmd}] failed:`, e.message);
-        setOutputWithTitle({ spec: null }, e.message);
+        setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: cmd, title: `${cmd}: ${blockRef}` });
+      } catch (e) {
+        ctx.log(`[render::${cmd}] failed:`, errMsg(e));
+        setOutputWithTitle({ spec: null }, errMsg(e));
         return;
       }
 
@@ -1155,8 +1295,8 @@ export const door = {
           const spec = await generateSpecViaClaude(userPrompt, anthropicKey, ctx);
           setOutputWithTitle({ spec, generatedVia: 'claude' });
           return;
-        } catch (e: any) {
-          ctx.log('[render::ai] Claude API failed, falling back to ollama:', e.message);
+        } catch (e) {
+          ctx.log('[render::ai] Claude API failed, falling back to ollama:', errMsg(e));
         }
       } else {
         ctx.log('[render::ai] no API key found, going straight to ollama');
@@ -1166,9 +1306,9 @@ export const door = {
         ctx.log('[render::ai] using: ollama', ctx.settings?.ollama_model || 'qwen2.5:7b');
         const spec = await generateSpecViaOllama(userPrompt, ctx);
         setOutputWithTitle({ spec, generatedVia: 'ollama' });
-      } catch (e: any) {
-        ctx.log('[render::ai] ollama also failed:', e.message);
-        setOutputWithTitle({ spec: null }, `AI generation failed: ${e.message}`);
+      } catch (e) {
+        ctx.log('[render::ai] ollama also failed:', errMsg(e));
+        setOutputWithTitle({ spec: null }, `AI generation failed: ${errMsg(e)}`);
       }
       return;
     }
@@ -1218,9 +1358,9 @@ export const door = {
           agentSessionId: result.sessionId,
           title: result.title,
         });
-      } catch (e: any) {
-        ctx.log('[render::agent] failed:', e.message);
-        setOutputWithTitle({ spec: null, agentRaw: e.raw || null }, `Agent generation failed: ${e.message}`);
+      } catch (e) {
+        ctx.log('[render::agent] failed:', errMsg(e));
+        setOutputWithTitle({ spec: null, agentRaw: errRaw(e) }, `Agent generation failed: ${errMsg(e)}`);
       }
       return;
     }

@@ -21,6 +21,7 @@
     "deploy:dev": "pnpm run build && mkdir -p ~/.floatty-dev/doors/render && cp dist/index.js ~/.floatty-dev/doors/render/index.js && cp dist/door.json ~/.floatty-dev/doors/render/door.json",
     "deploy:all": "pnpm run build && mkdir -p ~/.floatty-dev/doors/render ~/.floatty/doors/render && cp dist/index.js ~/.floatty-dev/doors/render/index.js && cp dist/door.json ~/.floatty-dev/doors/render/door.json && cp dist/index.js ~/.floatty/doors/render/index.js && cp dist/door.json ~/.floatty/doors/render/door.json",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
     "transit": "true"
   },
   "dependencies": {
@@ -31,7 +32,11 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/dompurify": "^3.0.5",
-    "typescript": "^5.7.0"
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.46.4"
   }
 }
