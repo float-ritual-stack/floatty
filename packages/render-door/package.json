@@ -22,7 +22,7 @@
     "deploy:all": "pnpm run build && mkdir -p ~/.floatty-dev/doors/render ~/.floatty/doors/render && cp dist/index.js ~/.floatty-dev/doors/render/index.js && cp dist/door.json ~/.floatty-dev/doors/render/door.json && cp dist/index.js ~/.floatty/doors/render/index.js && cp dist/door.json ~/.floatty/doors/render/door.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "transit": "true"
+    "transit": "node -e \"process.exit(0)\""
   },
   "dependencies": {
     "@json-render/core": "^0.18.0",

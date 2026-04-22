@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "transit": "true",
+    "transit": "node -e \"process.exit(0)\"",
     "mcp:build": "vite build --config src/mcp/app/vite.config.ts",
     "mcp:server": "tsx src/mcp/server.ts",
     "mcp:dev": "pnpm run mcp:build && pnpm run mcp:server"

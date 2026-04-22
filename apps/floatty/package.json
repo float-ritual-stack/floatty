@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "transit": "true",
+    "transit": "node -e \"process.exit(0)\"",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "lsof -ti :8766 | xargs kill 2>/dev/null || true; RUST_LOG=debug FLOATTY_DATA_DIR=$HOME/.floatty-dev tauri dev --config src-tauri/tauri.dev.conf.json",

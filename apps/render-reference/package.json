@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "transit": "true"
+    "transit": "node -e \"process.exit(0)\""
   },
   "dependencies": {
     "@floatty/render-door": "workspace:*",
