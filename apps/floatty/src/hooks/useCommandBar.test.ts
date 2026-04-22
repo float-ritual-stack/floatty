@@ -20,7 +20,7 @@ vi.mock('./useWikilinkAutocomplete', () => ({
   ]),
 }));
 
-import { useCommandBar, sortPages, PINNED_RECENT_COUNT, BUILT_IN_COMMANDS } from './useCommandBar';
+import { useCommandBar, sortPages, BUILT_IN_COMMANDS } from './useCommandBar';
 
 describe('sortPages', () => {
   it('pins top 3 by recency, rest alphabetical', () => {
