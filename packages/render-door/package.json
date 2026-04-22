@@ -1,0 +1,36 @@
+{
+  "name": "@floatty/render-door",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Render door for floatty — @json-render/solid catalog + registry + components. Consumed by the floatty Tauri app at runtime (loaded from ~/.floatty{,-dev}/doors/render/index.js) and by the render-reference contract harness at compile time.",
+  "type": "module",
+  "exports": {
+    "./catalog": "./src/catalog.ts",
+    "./registry": "./src/registry.ts",
+    "./components": "./src/components.tsx",
+    "./patterns": "./src/patterns.ts",
+    "./door.json": "./door.json"
+  },
+  "files": [
+    "src",
+    "door.json",
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../apps/floatty/scripts/compile-door-bundle.mjs src/render.tsx dist/index.js && cp door.json dist/door.json",
+    "deploy:dev": "pnpm run build && mkdir -p ~/.floatty-dev/doors/render && cp dist/index.js ~/.floatty-dev/doors/render/index.js && cp dist/door.json ~/.floatty-dev/doors/render/door.json",
+    "deploy:all": "pnpm run build && mkdir -p ~/.floatty-dev/doors/render ~/.floatty/doors/render && cp dist/index.js ~/.floatty-dev/doors/render/index.js && cp dist/door.json ~/.floatty-dev/doors/render/door.json && cp dist/index.js ~/.floatty/doors/render/index.js && cp dist/door.json ~/.floatty/doors/render/door.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@json-render/core": "^0.18.0",
+    "@json-render/solid": "^0.18.0",
+    "dompurify": "^3.3.3",
+    "solid-js": "^1.9.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/dompurify": "^3.0.5",
+    "typescript": "^5.7.0"
+  }
+}
