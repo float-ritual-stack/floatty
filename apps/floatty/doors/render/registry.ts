@@ -132,6 +132,11 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     navigate: async () => {},
     createChild: async () => {},
     upsertChild: async () => {},
+    // setState is required by @json-render/solid 0.18's Actions contract;
+    // actual state mutation in the render door happens via useBoundProp's
+    // setter and chirp-bubbled events, not through this action. Stub kept
+    // to satisfy the type signature.
+    setState: async () => {},
   },
 });
 

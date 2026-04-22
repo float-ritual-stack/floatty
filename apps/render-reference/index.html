@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>render:: reference — authoritative layouts</title>
+    <style>
+      :root {
+        --bg: #0d0d0d;
+        --bg2: #161616;
+        --bg3: #1e1e1e;
+        --border: #2a2a2a;
+        --text: #ccc;
+        --text-dim: #666;
+        --cyan: #00e5ff;
+        --amber: #ffb300;
+        --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        --font-mono: 'SF Mono', 'Fira Code', monospace;
+      }
+      /* Scope the reset to box-sizing only — render-reference shows
+         authoritative pipeline output, so we don't want a universal
+         margin/padding wipe skewing how components render internally.
+         CodeRabbit: 3114163516 */
+      *, *::before, *::after { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        font-size: 13px;
+        line-height: 1.55;
+        min-height: 100vh;
+      }
+      .app { display: flex; min-height: 100vh; }
+      .tabs {
+        width: 220px;
+        background: var(--bg2);
+        border-right: 1px solid var(--border);
+        padding: 16px 0;
+        position: sticky; top: 0;
+        height: 100vh;
+        overflow-y: auto;
+      }
+      .tabs-brand { padding: 0 16px 14px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+      .tabs-brand h1 { font-size: 12px; color: var(--cyan); font-family: var(--font-mono); }
+      .tabs-brand p { font-size: 10px; color: var(--text-dim); margin-top: 4px; line-height: 1.4; }
+      .tab {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 8px 16px;
+        background: transparent;
+        border: none;
+        border-left: 2px solid transparent;
+        color: var(--text-dim);
+        font-size: 12px;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .tab:hover { color: var(--text); background: var(--bg3); }
+      .tab.active { color: var(--cyan); border-left-color: var(--cyan); background: var(--bg3); }
+      .main { flex: 1; padding: 20px 28px; overflow-x: auto; max-width: 1100px; }
+      .main-header {
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 18px;
+      }
+      .main-header h2 { color: var(--text); font-size: 16px; }
+      .main-header .meta {
+        color: var(--text-dim);
+        font-size: 11px;
+        font-family: var(--font-mono);
+        margin-top: 4px;
+      }
+      .pipeline-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        background: #00e5ff22;
+        color: var(--cyan);
+        border-radius: 10px;
+        font-size: 10px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-left: 8px;
+      }
+      details { margin-top: 20px; }
+      summary {
+        cursor: pointer;
+        padding: 8px 12px;
+        background: var(--bg2);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-dim);
+        font-size: 11px;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      summary:hover { color: var(--text); }
+      pre.spec {
+        background: var(--bg2);
+        border: 1px solid var(--border);
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        padding: 14px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text);
+        overflow-x: auto;
+        line-height: 1.55;
+      }
+      .render-area {
+        padding: 20px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        min-height: 200px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
