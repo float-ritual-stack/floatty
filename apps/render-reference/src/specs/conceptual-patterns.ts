@@ -164,7 +164,7 @@ export const conceptualPatternsSpec: Spec = {
       props: {
         language: 'json',
         content:
-          '{\n  "state": { "tab": "overview" },\n  "tabs": {\n    "type": "TabNav",\n    "props": {\n      "tabs": [\n        { "id": "overview", "label": "Overview" },\n        { "id": "details",  "label": "Details"  }\n      ],\n      "active": { "$bindState": "/tab" },\n      "variant": "pills"\n    }\n  },\n  "overview-section": {\n    "type": "Text",\n    "props": { "content": "Overview content" },\n    // first tab: visible when /tab=overview OR not set\n    "visible": { "$or": [\n      { "$state": "/tab", "eq": "overview" },\n      { "$state": "/tab", "not": true }\n    ]}\n  },\n  "details-section": {\n    "type": "Text",\n    "props": { "content": "Details content" },\n    "visible": { "$state": "/tab", "eq": "details" }\n  }\n}',
+          '{\n  "state": { "demo_tab": "overview" },\n  "tabs": {\n    "type": "TabNav",\n    "props": {\n      "tabs": [\n        { "id": "overview", "label": "Overview" },\n        { "id": "details",  "label": "Details"  }\n      ],\n      "active": { "$bindState": "/demo_tab" },\n      "variant": "pills"\n    }\n  },\n  "overview-section": {\n    "type": "Text",\n    "props": { "content": "Overview content" },\n    // first tab: visible when /demo_tab=overview OR not set\n    "visible": { "$or": [\n      { "$state": "/demo_tab", "eq": "overview" },\n      { "$state": "/demo_tab", "not": true }\n    ]}\n  },\n  "details-section": {\n    "type": "Text",\n    "props": { "content": "Details content" },\n    "visible": { "$state": "/demo_tab", "eq": "details" }\n  }\n}',
       },
     },
     'p-tabnav-demo': {
@@ -232,7 +232,7 @@ export const conceptualPatternsSpec: Spec = {
       props: {
         language: 'json',
         content:
-          '{\n  "state": { "role": "admin" },\n  "ctrl": {\n    "type": "TabNav",\n    "props": {\n      "tabs": [\n        { "id": "admin", "label": "role: admin" },\n        { "id": "user",  "label": "role: user"  }\n      ],\n      "active": { "$bindState": "/role" },\n      "variant": "pills"\n    }\n  },\n  "title-admin": {\n    "type": "Text",\n    "props": { "content": "Admin Dashboard", "size": "xl", "weight": "bold" },\n    "visible": { "$state": "/role", "eq": "admin" }\n  },\n  "title-user": {\n    "type": "Text",\n    "props": { "content": "User Dashboard",  "size": "xl", "weight": "bold" },\n    "visible": { "$state": "/role", "eq": "user"  }\n  }\n}',
+          '{\n  "state": { "cond_role": "admin" },\n  "ctrl": {\n    "type": "TabNav",\n    "props": {\n      "tabs": [\n        { "id": "admin", "label": "role: admin" },\n        { "id": "user",  "label": "role: user"  }\n      ],\n      "active": { "$bindState": "/cond_role" },\n      "variant": "pills"\n    }\n  },\n  "title-admin": {\n    "type": "Text",\n    "props": { "content": "Admin Dashboard", "size": "xl", "weight": "bold" },\n    "visible": { "$state": "/cond_role", "eq": "admin" }\n  },\n  "title-user": {\n    "type": "Text",\n    "props": { "content": "User Dashboard",  "size": "xl", "weight": "bold" },\n    "visible": { "$state": "/cond_role", "eq": "user"  }\n  }\n}',
       },
     },
     'p-dynamic-demo': {
@@ -285,7 +285,7 @@ export const conceptualPatternsSpec: Spec = {
       props: {
         language: 'json',
         content:
-          '// One element, one prop varies by state\n{\n  "title": {\n    "type": "Text",\n    "props": {\n      "size": "xl",\n      "weight": "bold",\n      "content": {\n        "$cond": { "$state": "/role", "eq": "admin" },\n        "$then": "Admin Dashboard",\n        "$else": "User Dashboard"\n      }\n    }\n  }\n}',
+          '// One element, one prop varies by state\n{\n  "title": {\n    "type": "Text",\n    "props": {\n      "size": "xl",\n      "weight": "bold",\n      "content": {\n        "$cond": { "$state": "/cond_role", "eq": "admin" },\n        "$then": "Admin Dashboard",\n        "$else": "User Dashboard"\n      }\n    }\n  }\n}',
       },
     },
     'p-cond-demo': {
