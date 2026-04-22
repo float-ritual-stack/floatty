@@ -49,4 +49,4 @@ Runs `tsc --noEmit` in strict mode. Also runs from the root via `turbo run typec
 
 ## History
 
-Extracted from `apps/floatty/doors/render/` in [[PR #???]] after `apps/render-reference` (the contract harness) grew into a regular consumer of the door's types. Phase 1 of the monorepo colocated apps under `apps/*`; this is phase 2 — the first real cross-project package.
+Extracted from `apps/floatty/doors/render/` in [[PR #262]] after `apps/render-reference` (the contract harness) grew into a regular consumer of the door's types. Phase 1 of the monorepo colocated apps under `apps/*`; this is phase 2 — the first real cross-project package.

@@ -20,7 +20,8 @@
     "build": "node ../../apps/floatty/scripts/compile-door-bundle.mjs src/render.tsx dist/index.js && cp door.json dist/door.json",
     "deploy:dev": "pnpm run build && mkdir -p ~/.floatty-dev/doors/render && cp dist/index.js ~/.floatty-dev/doors/render/index.js && cp dist/door.json ~/.floatty-dev/doors/render/door.json",
     "deploy:all": "pnpm run build && mkdir -p ~/.floatty-dev/doors/render ~/.floatty/doors/render && cp dist/index.js ~/.floatty-dev/doors/render/index.js && cp dist/door.json ~/.floatty-dev/doors/render/door.json && cp dist/index.js ~/.floatty/doors/render/index.js && cp dist/door.json ~/.floatty/doors/render/door.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "transit": "true"
   },
   "dependencies": {
     "@json-render/core": "^0.18.0",
