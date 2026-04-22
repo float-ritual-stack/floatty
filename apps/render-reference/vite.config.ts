@@ -6,8 +6,14 @@ export default defineConfig({
   plugins: [solid()],
   resolve: {
     alias: {
-      // Reuse catalog/registry/components from the floatty render door
-      '@render-door': path.resolve(__dirname, '../floatty/doors/render'),
+      // Render-door source now lives as its own workspace package
+      // (@floatty/render-door). Alias kept for import-path stability —
+      // existing specs use '@render-door/catalog' etc., and swapping to
+      // '@floatty/render-door/catalog' everywhere is pure churn. The
+      // workspace dependency is declared in package.json so pnpm knows
+      // about the relationship; this alias just gives vite the on-disk
+      // path for its module resolver.
+      '@render-door': path.resolve(__dirname, '../../packages/render-door/src'),
     },
     // Force single instance — @json-render/solid's StateContext must be one
     // identity or useStateStore() throws across component boundaries

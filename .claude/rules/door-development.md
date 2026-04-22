@@ -65,32 +65,44 @@ selfRender doors fire `execute` when user presses Enter (command handler pattern
 
 The door loader reads `{doorDir}/index.js`. NOT `render.js`, NOT `{id}.js`.
 
-### Monorepo paths (post-monorepo shift)
+### Monorepo paths
 
-Source and script now live under `apps/floatty/`. The deploy target didn't change — it's still the user-level `~/.floatty{,-dev}/doors/` dir. Only the source/script paths shifted.
+Doors split into two source layouts depending on whether they have peer-app consumers:
+
+- **Single-consumer doors** (most): source under `apps/floatty/doors/{id}/`. Compiled via `apps/floatty/scripts/compile-door-bundle.mjs` and deployed to `~/.floatty{,-dev}/doors/{id}/index.js`.
+- **Multi-consumer doors** (currently just `render`): source extracted to `packages/{id}-door/src/`, with a `package.json` build script that wraps the same compile script. Consumed by the floatty Tauri app at runtime AND by `apps/render-reference` (or other peer apps) at compile time via workspace dependency.
+
+The deploy target — `~/.floatty{,-dev}/doors/{id}/index.js` — is the same in both layouts. Only where the source lives differs.
 
 ```bash
-# ✅ CORRECT — run from apps/floatty/
-cd apps/floatty && node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
+# ✅ render door (now a package — phase-2 monorepo)
+pnpm --filter @floatty/render-door run deploy:dev    # debug only
+pnpm --filter @floatty/render-door run deploy:all    # debug + release
+
+# ✅ Single-consumer doors (still under apps/floatty/doors/)
+cd apps/floatty && node scripts/compile-door-bundle.mjs doors/{id}/{id}.tsx ~/.floatty-dev/doors/{id}/index.js
 
 # OR from repo root, with full paths
-node apps/floatty/scripts/compile-door-bundle.mjs apps/floatty/doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
+node apps/floatty/scripts/compile-door-bundle.mjs apps/floatty/doors/{id}/{id}.tsx ~/.floatty-dev/doors/{id}/index.js
 
 # Deploy to BOTH dev and release (user runs release daily)
-cp ~/.floatty-dev/doors/render/index.js ~/.floatty/doors/render/index.js
+cp ~/.floatty-dev/doors/{id}/index.js ~/.floatty/doors/{id}/index.js
 
 # ❌ WRONG — pre-monorepo path, script no longer at repo root
-node scripts/compile-door-bundle.mjs doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
+node scripts/compile-door-bundle.mjs doors/{id}/{id}.tsx ~/.floatty-dev/doors/{id}/index.js
 
 # ❌ WRONG — loader ignores this file entirely (wrong filename)
-node apps/floatty/scripts/compile-door-bundle.mjs apps/floatty/doors/render/render.tsx ~/.floatty/doors/render/render.js
+node apps/floatty/scripts/compile-door-bundle.mjs apps/floatty/doors/{id}/{id}.tsx ~/.floatty/doors/{id}/{id}.js
+
+# ❌ WRONG — old render-door path, source moved to packages/render-door/src/
+node apps/floatty/scripts/compile-door-bundle.mjs apps/floatty/doors/render/render.tsx ~/.floatty-dev/doors/render/index.js
 ```
 
 ### Deploy target paths
 
 | Profile | Source of truth | Deploy target |
 |---|---|---|
-| Debug (`tauri dev`) | `apps/floatty/doors/{id}/*.tsx` | `~/.floatty-dev/doors/{id}/index.js` |
+| Debug (`tauri dev`) | `packages/{id}-door/src/` (extracted) OR `apps/floatty/doors/{id}/` (single-consumer) | `~/.floatty-dev/doors/{id}/index.js` |
 | Release (`tauri build`) | Same source | `~/.floatty/doors/{id}/index.js` |
 
 Path resolution: `paths.rs → default_root()` uses `#[cfg(debug_assertions)]` to pick `.floatty-dev` vs `.floatty`. The doors dir is always `{root}/doors/`.
@@ -98,6 +110,8 @@ Path resolution: `paths.rs → default_root()` uses `#[cfg(debug_assertions)]` t
 **Burned 2026-03-27**: Deployed all session to `render.js` instead of `index.js`. Release build ran stale 7:50 AM code while we thought fixes were live. Every "it's not working" was this bug.
 
 **Burned 2026-04-15**: Ran `node scripts/compile-door-bundle.mjs ...` from repo root after the monorepo shift. Script lives at `apps/floatty/scripts/` now — old path errors out with `Cannot find module`. Update the rule when you move files.
+
+**Phase 2 (2026-04-22)**: render-door extracted from `apps/floatty/doors/render/` to `packages/render-door/` after `apps/render-reference` (the contract harness) became a regular consumer. Pattern: when a door grows a peer-app consumer, promote it to `packages/`. The compile script (`apps/floatty/scripts/compile-door-bundle.mjs`) stays put — it's shared infrastructure, not door-specific. The package's `pnpm build` calls it via relative path.
 
 ## Hot-Reload
 
