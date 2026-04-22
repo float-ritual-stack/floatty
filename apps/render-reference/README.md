@@ -2,7 +2,7 @@
 
 Authoritative reference renders for common floatty content types — rendered **through the real pipeline**, not hand-rolled CSS approximations.
 
-```
+```bash
 cd apps/render-reference
 pnpm install --filter render-reference...
 pnpm dev                          # :5199 interactive
@@ -26,6 +26,10 @@ Unlike Storybook, the specs here are **real content** — the bbs-post spec is a
 import { bbsCatalog } from '@render-door/catalog';
 import { registry as bbsRegistry } from '@render-door/registry';
 ```
+
+### Dependency notes
+
+`dompurify` is a runtime dependency even though render-reference's own sources never import it directly. The render-door components (`@render-door/*`, aliased in via vite) call `DOMPurify.sanitize()` on every `innerHTML` path — EntryBody markdown, CodeBlock highlighted output, the Image component's attachment URLs, etc. Removing it would break every render-reference spec the moment it exercises one of those paths. (Greptile: 3114158086)
 
 ## Specs
 

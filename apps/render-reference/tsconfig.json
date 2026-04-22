@@ -5,7 +5,7 @@
     "moduleResolution": "bundler",
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
-    "strict": false,
+    "strict": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,

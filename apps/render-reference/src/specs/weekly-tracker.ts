@@ -1,6 +1,6 @@
 /**
  * Weekly Tracker — generi-co-weekly style.
- * MetadataHeader + EntryBody (tables) + MeetingDiff/DecisionLog for meeting state.
+ * MetadataHeader + EntryBody (tables) + DecisionLog for meeting state.
  */
 import type { Spec } from '@json-render/core';
 

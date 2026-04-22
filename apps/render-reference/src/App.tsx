@@ -9,6 +9,7 @@
  */
 
 import { createSignal, For } from 'solid-js';
+import { Key } from '@solid-primitives/keyed';
 import { Renderer, JSONUIProvider } from '@json-render/solid';
 import { JsonRenderDevtools } from '@json-render/devtools-solid';
 import { markDevtoolsActive } from '@json-render/core';
@@ -41,7 +42,7 @@ markDevtoolsActive();
 import { bbsCatalog } from '@render-door/catalog';
 import { registry as bbsRegistry } from '@render-door/registry';
 
-// Our 5 reference specs
+// Our 8 reference specs
 import { dailyNoteSpec } from './specs/daily-note';
 import { weeklyTrackerSpec } from './specs/weekly-tracker';
 import { meetingNotesSpec } from './specs/meeting-notes';
@@ -146,21 +147,31 @@ export function App() {
         </div>
 
         <div class="render-area">
-          <JSONUIProvider
-            initialState={(active().spec as any).state ?? {}}
-            handlers={{}}
-          >
-            <Renderer
-              spec={active().spec}
-              registry={bbsRegistry}
-              catalog={bbsCatalog}
-            />
-            <JsonRenderDevtools
-              spec={active().spec}
-              catalog={bbsCatalog as any}
-              position="right"
-            />
-          </JSONUIProvider>
+          {/*
+            Re-key the provider stack on activeId so StateProvider reads
+            `initialState` anew on every layout switch. Without this, state
+            mutations from one spec persist silently into the next because
+            @json-render's StateProvider captures initialState once at mount
+            (see node_modules/@json-render/solid/dist/index.mjs:17-22).
+
+            Greptile: 3114157962 | CodeRabbit: 3120946042
+          */}
+          <Key each={[activeId()]} by={(id) => id}>
+            {(id) => (
+              <JSONUIProvider
+                registry={bbsRegistry}
+                initialState={active().spec.state ?? {}}
+                handlers={{}}
+              >
+                <Renderer spec={active().spec} registry={bbsRegistry} />
+                <JsonRenderDevtools
+                  spec={active().spec}
+                  catalog={bbsCatalog as any}
+                  position="right"
+                />
+              </JSONUIProvider>
+            )}
+          </Key>
         </div>
       </main>
     </div>

@@ -278,6 +278,9 @@ importers:
       '@json-render/solid':
         specifier: ^0.18.0
         version: 0.18.0(solid-js@1.9.12)(zod@4.3.6)
+      '@solid-primitives/keyed':
+        specifier: ^1.5.0
+        version: 1.5.3(solid-js@1.9.12)
       dompurify:
         specifier: ^3.2.0
         version: 3.3.3

@@ -419,7 +419,10 @@ export const catalogAtomsSpec: Spec = {
     'pc-image-demo': {
       type: 'Image',
       props: {
-        src: 'https://via.placeholder.com/400x120/161616/00e5ff?text=placeholder',
+        // Inline SVG data URI — keeps the reference app offline-safe and
+        // dist/index.html truly standalone (no external fetch).
+        // CodeRabbit: 3120901906
+        src: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="120" viewBox="0 0 400 120"><rect width="400" height="120" fill="%23161616"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%2300e5ff" font-family="monospace" font-size="18">placeholder</text></svg>',
         alt: 'Placeholder image demonstrating Image atom',
         maxWidth: 400,
         borderRadius: 6,

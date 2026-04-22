@@ -16,6 +16,17 @@ import DOMPurify from 'dompurify';
 // module. The singleton clientInstance is never initialized in the bundle context.
 // Use window.__FLOATTY_SERVER_URL__ / __FLOATTY_API_KEY__ globals instead.
 
+// The floatty shell sets these via Tauri's initialization script; render-reference's
+// standalone build runs without them, so both fields are optional. Declared inline
+// here so any consumer of components.tsx (including the render-reference harness)
+// sees the types without needing to reach for a separate .d.ts.
+declare global {
+  interface Window {
+    __FLOATTY_SERVER_URL__?: string;
+    __FLOATTY_API_KEY__?: string;
+  }
+}
+
 const sanitize = (html: string) => DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 
 function emitChirpNavigate(el: HTMLElement, target: string, sourceEvent: MouseEvent): void {
@@ -2162,7 +2173,12 @@ export function CollapsibleSection(props: BaseComponentProps<{
 
 export function FilterButtons(props: BaseComponentProps<{
   filters: Array<{ id: string; label: string; count?: number }>;
-  active: string;
+  // Matches the catalog union: string literal OR a $bindState/$computed ref object.
+  // useBoundProp resolves to a string at runtime; the widened type keeps the
+  // registry inference happy without forcing DynamicString through the
+  // ComponentFn contract (json-render's inferrer flattens unknown unions to
+  // an index signature which drops the key entirely).
+  active: string | Record<string, unknown>;
 }>) {
   const [activeRaw, setActive] = useBoundProp(props.props.active, props.bindings?.active);
   const active = typeof activeRaw === 'function' ? activeRaw as () => unknown : () => activeRaw;
