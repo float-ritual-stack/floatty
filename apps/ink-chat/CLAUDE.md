@@ -35,4 +35,6 @@ AI_GATEWAY_API_KEY=your-gateway-key-here
 
 ## json-render
 
-Uses `@json-render/core` and `@json-render/ink` from npm (currently `^0.17.0`). Future: these may move to workspace packages in `packages/` for shared development with outline-explorer and floatty doors.
+Uses `@json-render/core` and `@json-render/ink` from npm (currently `^0.17.0`).
+
+**Cross-package precedent (PR #262)**: `packages/render-door/` extracted from `apps/floatty/doors/render/` after `apps/render-reference` became a contract harness consuming the door's catalog. Same pattern applies here when ink-chat's catalog grows a peer-app consumer (or vice-versa). Playbook in `.claude/rules/door-development.md` "Monorepo paths" section.
