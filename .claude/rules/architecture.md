@@ -63,7 +63,7 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | File | Purpose |
 |------|---------|
 | `Terminal.tsx` | Tab orchestration, keybinds, layout |
-| `Outliner.tsx` | Block tree with zoom |
+| `Outliner.tsx` | Block tree with zoom. Standalone-mountable (FLO-668) — paneId-keyed, no PaneLayout DOM coupling; works in tabs, sidebar shelf, or future floating hosts. |
 | `BlockItem.tsx` | Individual block (keybinds, rendering) |
 | `BlockDisplay.tsx` | Inline formatting overlay + wikilink clicks |
 | `Breadcrumb.tsx` | Navigation trail |

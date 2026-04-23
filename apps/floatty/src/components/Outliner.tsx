@@ -1,3 +1,18 @@
+/**
+ * Outliner — paneId-keyed block-tree renderer.
+ *
+ * RENDERING + STATE CONTRACT (FLO-668): Rendering and state (collapsed, zoom,
+ * focus, history) are decoupled from the PaneLayout DOM — they route through
+ * paneStore keyed by `props.paneId`. The component mounts in any flow-layout
+ * container without DOM coupling.
+ *
+ * CAVEAT — tab-hosted assumptions remain: some document-level keybinds below
+ * (Cmd+Shift+F full-width, Cmd+L link overlay) still gate on
+ * findTabIdByPaneId(props.paneId) resolving to the active tab. A host whose
+ * pane registers as { kind: 'sidebar' } or { kind: 'floating' } will render
+ * and manage state correctly but will lose those specific shortcuts until
+ * the keybind paths are generalized (see FLO-669 for the call-site audit).
+ */
 import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';

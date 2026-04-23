@@ -56,7 +56,10 @@ function createLayoutStore() {
 
   const initLayout = (tabId: string): string => {
     const layout = createInitialLayout(tabId);
-    setState('layouts', tabId, layout);
+    batch(() => {
+      setState('layouts', tabId, layout);
+      paneStore.registerPane(layout.activePaneId, { kind: 'tab', tabId });
+    });
     bumpPersistenceVersion();
     return layout.activePaneId;
   };
@@ -150,8 +153,12 @@ function createLayoutStore() {
     // Replace the active pane with the split
     const newRoot = replaceNode(currentLayout.root, activePane.id, newSplit);
 
-    // Atomic update - batch prevents partial state during tree mutation
+    // Atomic update - batch prevents partial state during tree mutation.
+    // FLO-668: Register the new pane inside the batch so the registry entry
+    // appears atomically with the layout tree update (no observer window where
+    // the pane is in one store but not the other).
     batch(() => {
+      paneStore.registerPane(newPaneId, { kind: 'tab', tabId });
       setState('layouts', tabId, 'root', newRoot);
       setState('layouts', tabId, 'activePaneId', newPaneId);
       // FLO-136: Track ephemeral pane by direction
@@ -458,9 +465,42 @@ function createLayoutStore() {
   /**
    * Hydrate layouts from persisted state
    * Replaces current layouts with restored data
+   *
+   * FLO-668: Also reconciles the host registry — removes any tab-hosted pane
+   * entries that are absent from the restored layouts (so findTabIdByPaneId
+   * doesn't keep returning stale tabIds), then registers every restored pane
+   * as { kind: 'tab', tabId }. Sidebar/floating registrations from other
+   * sources are left untouched.
+   *
+   * Addresses PR #265 review (CodeRabbit 🟠 Major / Greptile P1): plain
+   * `setState('layouts', restoredLayouts)` replaces the layouts map atomically
+   * but leaves the registry out of sync when called on a non-empty store.
    */
   const hydrateLayouts = (restoredLayouts: Record<string, TabLayout>) => {
-    setState('layouts', restoredLayouts);
+    // Collect the set of paneIds that SHOULD be tab-hosted after hydration
+    const expectedPaneIds = new Set<string>();
+    for (const layout of Object.values(restoredLayouts)) {
+      for (const paneId of collectPaneIds(layout.root)) {
+        expectedPaneIds.add(paneId);
+      }
+    }
+
+    // Batch both stores together so consumers see a single consistent update,
+    // not N+1 invalidations (N panes * registerPane + 1 layouts replacement).
+    batch(() => {
+      // Drop tab-hosted registry entries that aren't in the restored set.
+      for (const id of paneStore.getTabHostedPaneIds()) {
+        if (!expectedPaneIds.has(id)) {
+          paneStore.removePane(id);
+        }
+      }
+      setState('layouts', restoredLayouts);
+      for (const [tabId, layout] of Object.entries(restoredLayouts)) {
+        for (const paneId of collectPaneIds(layout.root)) {
+          paneStore.registerPane(paneId, { kind: 'tab', tabId });
+        }
+      }
+    });
   };
 
   /**
@@ -518,16 +558,18 @@ export const layoutStore = createRoot(createLayoutStore);
 
 /**
  * Find the tabId that contains a given paneId.
- * Searches all layouts in layoutStore.
- * Returns null if pane not found in any tab.
+ *
+ * FLO-668: Reads from paneStore's host registry (O(1)) instead of scanning
+ * every tab's layout tree. Returns the tabId for tab-hosted panes; returns
+ * null for sidebar/floating panes and for panes that aren't registered
+ * (deleted or pre-registry-era).
+ *
+ * The null contract has two legitimate meanings at call sites:
+ *   (a) pane is sidebar/floating → callers should fall back to tabStore.activeTabId()
+ *   (b) pane was deleted / never valid → callers should bail
+ * See FLO-669 for the per-call-site audit that documents which stance each site takes.
  */
 export function findTabIdByPaneId(paneId: string): string | null {
-  const layouts = layoutStore.layouts;
-  for (const [tabId, layout] of Object.entries(layouts)) {
-    const paneIds = collectPaneIds(layout.root);
-    if (paneIds.includes(paneId)) {
-      return tabId;
-    }
-  }
-  return null;
+  const host = paneStore.getPaneHost(paneId);
+  return host?.kind === 'tab' ? host.tabId : null;
 }
