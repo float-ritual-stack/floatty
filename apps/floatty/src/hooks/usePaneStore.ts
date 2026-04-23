@@ -32,6 +32,22 @@ const historyNavigationPending = new Set<string>();
 // Re-export types for consumers
 export type { NavigationState, NavigationEntry };
 
+/**
+ * FLO-668: Where a pane lives.
+ *
+ * Today every pane is tab-hosted via layoutStore.initLayout/splitPane.
+ * After FLO-502 lands, sidebar-pinned outline panes live outside any tab's
+ * layout tree and register with { kind: 'sidebar' }. A future floating-panel
+ * feature (today spiked behind togglePanel/Cmd+Shift+P) uses { kind: 'floating' }.
+ *
+ * New pane creators MUST call registerPane. Deletion piggybacks on the
+ * existing removePane / removePanes cleanup — no extra call needed.
+ */
+export type PaneHost =
+  | { kind: 'tab'; tabId: string }
+  | { kind: 'sidebar' }
+  | { kind: 'floating' };
+
 interface PaneState {
   // Map of paneId -> Set of collapsed block IDs
   // Since Sets aren't easily serializable/reactive in stores, we use an array or object
@@ -45,6 +61,9 @@ interface PaneState {
   navigationHistory: Record<string, NavigationState>;
   // Unit 12.0: Map of paneId -> blocks toggled to full-width mode
   fullWidth: Record<string, Record<string, boolean>>;
+  // FLO-668: Map of paneId -> PaneHost (where the pane lives)
+  // Ephemeral (not persisted). Cleared by removePane.
+  paneHost: Record<string, PaneHost>;
 }
 
 function createPaneStore() {
@@ -54,6 +73,7 @@ function createPaneStore() {
     focusedBlockId: {},
     navigationHistory: {},
     fullWidth: {},
+    paneHost: {},
   });
   const [persistenceVersion, setPersistenceVersion] = createSignal(0);
 
@@ -404,6 +424,29 @@ function createPaneStore() {
   };
 
   /**
+   * FLO-668: Register a pane with its host kind.
+   *
+   * MUST be called when a new pane is created:
+   *   - layoutStore.initLayout / splitPane / hydrateLayouts → { kind: 'tab', tabId }
+   *   - Future sidebar pin shelf → { kind: 'sidebar' }
+   *   - Future floating pane feature → { kind: 'floating' }
+   *
+   * Deletion piggybacks on removePane / removePanes — no unregisterPane call needed.
+   */
+  const registerPane = (paneId: string, host: PaneHost) => {
+    setState('paneHost', paneId, host);
+  };
+
+  /**
+   * FLO-668: Look up a pane's host.
+   * Returns undefined for panes that were never registered (deleted or
+   * pre-registry-era). Registered panes always have a non-null object.
+   */
+  const getPaneHost = (paneId: string): PaneHost | undefined => {
+    return state.paneHost[paneId];
+  };
+
+  /**
    * Clean up state for a deleted pane (prevents memory leak)
    * Should be called when a pane is closed to remove orphaned view state
    */
@@ -436,6 +479,11 @@ function createPaneStore() {
     // Unit 12.0: Clean up full-width state
     if (state.fullWidth[paneId]) {
       setState('fullWidth', paneId, undefined!);
+      changed = true;
+    }
+    // FLO-668: Clean up host registry entry
+    if (state.paneHost[paneId] !== undefined) {
+      setState('paneHost', paneId, undefined!);
       changed = true;
     }
 
@@ -572,6 +620,9 @@ function createPaneStore() {
     consumeHistoryNavigation,
     // Clone state
     clonePaneState,
+    // FLO-668: Host registry
+    registerPane,
+    getPaneHost,
     // Cleanup
     removePane,
     removePanes,

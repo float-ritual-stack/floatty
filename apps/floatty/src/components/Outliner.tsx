@@ -1,3 +1,13 @@
+/**
+ * Outliner — standalone paneId-keyed block-tree renderer.
+ *
+ * MOUNT CONTRACT (FLO-668): The component is decoupled from the PaneLayout DOM.
+ * `paneId` is the sole identity input; all reactive state reads/writes go through
+ * paneStore (collapsed, zoom, focus, history) keyed by that id. The Outliner
+ * mounts correctly in any flow-layout container, including the future sidebar
+ * pin shelf (FLO-502) — its caller just needs to register the paneId with
+ * paneStore.registerPane(id, { kind: 'sidebar' }) first.
+ */
 import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';

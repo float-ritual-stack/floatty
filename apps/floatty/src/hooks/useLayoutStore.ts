@@ -57,6 +57,8 @@ function createLayoutStore() {
   const initLayout = (tabId: string): string => {
     const layout = createInitialLayout(tabId);
     setState('layouts', tabId, layout);
+    // FLO-668: Register the initial pane with the host registry
+    paneStore.registerPane(layout.activePaneId, { kind: 'tab', tabId });
     bumpPersistenceVersion();
     return layout.activePaneId;
   };
@@ -128,6 +130,8 @@ function createLayoutStore() {
 
     // Create new pane and split - inherit cwd from active pane
     const newPaneId = generatePaneId();
+    // FLO-668: Register the new pane with the host registry
+    paneStore.registerPane(newPaneId, { kind: 'tab', tabId });
     const newSplit: PaneSplit = {
       type: 'split',
       id: generateSplitId(),
@@ -458,9 +462,18 @@ function createLayoutStore() {
   /**
    * Hydrate layouts from persisted state
    * Replaces current layouts with restored data
+   *
+   * FLO-668: Also registers every restored pane with the host registry as
+   * { kind: 'tab', tabId }. Without this, navigation from a restored pane
+   * would see findTabIdByPaneId return null and fall back to the active tab.
    */
   const hydrateLayouts = (restoredLayouts: Record<string, TabLayout>) => {
     setState('layouts', restoredLayouts);
+    for (const [tabId, layout] of Object.entries(restoredLayouts)) {
+      for (const paneId of collectPaneIds(layout.root)) {
+        paneStore.registerPane(paneId, { kind: 'tab', tabId });
+      }
+    }
   };
 
   /**
@@ -518,16 +531,18 @@ export const layoutStore = createRoot(createLayoutStore);
 
 /**
  * Find the tabId that contains a given paneId.
- * Searches all layouts in layoutStore.
- * Returns null if pane not found in any tab.
+ *
+ * FLO-668: Reads from paneStore's host registry (O(1)) instead of scanning
+ * every tab's layout tree. Returns the tabId for tab-hosted panes; returns
+ * null for sidebar/floating panes and for panes that aren't registered
+ * (deleted or pre-registry-era).
+ *
+ * The null contract has two legitimate meanings at call sites:
+ *   (a) pane is sidebar/floating → callers should fall back to tabStore.activeTabId()
+ *   (b) pane was deleted / never valid → callers should bail
+ * See FLO-669 for the per-call-site audit that documents which stance each site takes.
  */
 export function findTabIdByPaneId(paneId: string): string | null {
-  const layouts = layoutStore.layouts;
-  for (const [tabId, layout] of Object.entries(layouts)) {
-    const paneIds = collectPaneIds(layout.root);
-    if (paneIds.includes(paneId)) {
-      return tabId;
-    }
-  }
-  return null;
+  const host = paneStore.getPaneHost(paneId);
+  return host?.kind === 'tab' ? host.tabId : null;
 }
