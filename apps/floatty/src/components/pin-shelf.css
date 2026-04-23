@@ -11,6 +11,24 @@
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Always-visible slim scrollbar — macOS's auto-hide default makes the
+   * stack feel unscrollable even when it isn't. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.pin-shelf::-webkit-scrollbar {
+  width: 8px;
+}
+.pin-shelf::-webkit-scrollbar-track {
+  background: transparent;
+}
+.pin-shelf::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+.pin-shelf::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary, var(--color-text));
 }
 
 .pin-shelf-item {
@@ -18,10 +36,13 @@
   border-radius: 4px;
   background: var(--color-bg);
   overflow: hidden;
-  /* Each pin gets a bounded height so many pins stack without any single
-   * one dominating. Internal scrolling handled by the Outliner itself. */
-  max-height: 60vh;
+  /* Start each pin at a reasonable default. The native `resize: vertical`
+   * grip lets the user drag the bottom-right corner to adjust — shrink or
+   * grow any individual pin. Min-height prevents accidental zero-size;
+   * no max-height cap so heavy pins can expand as needed. */
+  height: 40vh;
   min-height: 120px;
+  resize: vertical;
   display: flex;
   flex-direction: column;
 }
