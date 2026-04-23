@@ -20,7 +20,7 @@
  */
 
 import { Key } from '@solid-primitives/keyed';
-import { createMemo, createEffect, onMount, onCleanup } from 'solid-js';
+import { createMemo, createEffect, createSignal, onMount, onCleanup } from 'solid-js';
 import { Outliner } from './Outliner';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
@@ -97,11 +97,31 @@ export function PinShelfView() {
   );
 }
 
+/**
+ * Per-pin height floor (px). Below this any drag clamps — prevents the
+ * Outliner from collapsing to a useless sliver.
+ */
+const PIN_MIN_HEIGHT = 120;
+
+/**
+ * Default pin height (px). ~40vh equivalent at a 1000px viewport; chosen
+ * as a static pixel value so initial render doesn't have to measure the
+ * container. Drag resizes each pin freely above this.
+ */
+const PIN_DEFAULT_HEIGHT = 400;
+
 function PinItem(props: { pin: () => Pin }) {
   // Stable paneId per child-block. Edits to the child's [[target]] reuse the
   // same paneId so the Outliner keeps its scroll/collapse state across a
   // target swap — we just re-point the zoom via the effect below.
   const paneId = `pin-${props.pin().childBlockId}`;
+
+  // Per-pin height signal. Native `resize: vertical` was attempted but
+  // WKWebView's `::-webkit-resizer` pseudo-element only paints when the
+  // element has a visible scrollbar — and .pin-shelf-item uses overflow:
+  // hidden so its inner Outliner owns scrolling. Result: no visible grip.
+  // Custom drag handle + signal-driven height is fully reliable.
+  const [height, setHeight] = createSignal(PIN_DEFAULT_HEIGHT);
 
   onMount(() => {
     paneStore.registerPane(paneId, { kind: 'sidebar' });
@@ -116,9 +136,52 @@ function PinItem(props: { pin: () => Pin }) {
     paneStore.setZoomedRoot(paneId, props.pin().resolvedBlockId);
   });
 
+  // Pointer-capture drag pattern. Listeners attach to the handle itself
+  // (not window) so capture keeps them live even if the cursor wanders off
+  // the handle during a fast drag. Self-contained cleanup in pointerup /
+  // pointercancel — no lifecycle hazards.
+  //
+  // setPointerCapture is wrapped in try/catch: it can throw InvalidStateError
+  // on synthetic PointerEvents (the error bit observed in the self-verify
+  // simulated-drag run). Real drags via hardware are unaffected. Either way,
+  // listener setup must not depend on capture succeeding.
+  const onHandlePointerDown = (e: PointerEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = height();
+    const handle = e.currentTarget as HTMLElement;
+    try { handle.setPointerCapture(e.pointerId); } catch { /* synthetic / already captured */ }
+
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.max(PIN_MIN_HEIGHT, startHeight + (ev.clientY - startY));
+      setHeight(next);
+    };
+    const onUp = (ev: PointerEvent) => {
+      try { handle.releasePointerCapture(ev.pointerId); } catch { /* not captured */ }
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+    };
+
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
+
   return (
-    <div class="pin-shelf-item" data-pin-child-id={props.pin().childBlockId}>
+    <div
+      class="pin-shelf-item"
+      data-pin-child-id={props.pin().childBlockId}
+      style={{ height: `${height()}px` }}
+    >
       <Outliner paneId={paneId} />
+      <div
+        class="pin-shelf-item-handle"
+        role="separator"
+        aria-label="Resize pin"
+        aria-orientation="horizontal"
+        onPointerDown={onHandlePointerDown}
+      />
     </div>
   );
 }

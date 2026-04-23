@@ -37,38 +37,15 @@
   background: var(--color-text-secondary, var(--color-text));
 }
 
-/* Make the native `resize: vertical` grip visible against dark themes.
- * WKWebView's default renderer is a ~14px dark-grey triangle that
- * disappears against theme backgrounds — theme the handle explicitly. */
-.pin-shelf-item::-webkit-resizer {
-  background-color: var(--color-border);
-  background-image: linear-gradient(
-    135deg,
-    transparent 0%,
-    transparent 40%,
-    var(--color-text-secondary, var(--color-text)) 40%,
-    var(--color-text-secondary, var(--color-text)) 55%,
-    transparent 55%,
-    transparent 70%,
-    var(--color-text-secondary, var(--color-text)) 70%,
-    var(--color-text-secondary, var(--color-text)) 85%,
-    transparent 85%
-  );
-  border-radius: 0 0 4px 0;
-}
-
 .pin-shelf-item {
   border: 1px solid var(--color-border);
   border-radius: 4px;
   background: var(--color-bg);
   overflow: hidden;
-  /* Start each pin at a reasonable default. The native `resize: vertical`
-   * grip lets the user drag the bottom-right corner to adjust — shrink or
-   * grow any individual pin. Min-height prevents accidental zero-size;
-   * no max-height cap so heavy pins can expand as needed. */
-  height: 40vh;
+  /* Height is driven inline by PinItem's signal — this min-height acts as
+   * a CSS floor if the inline style is ever missing; PIN_MIN_HEIGHT in
+   * PinShelfView.tsx is the authoritative clamp during drag. */
   min-height: 120px;
-  resize: vertical;
   display: flex;
   flex-direction: column;
   /* Flex-shrink:0 is load-bearing — without it, the parent flex column
@@ -78,11 +55,55 @@
   flex-shrink: 0;
 }
 
-/* Outliner fills the pin item */
-.pin-shelf-item > * {
+/* Outliner fills the pin item, leaving 6px at the bottom for the handle */
+.pin-shelf-item > .outliner-container,
+.pin-shelf-item > *:not(.pin-shelf-item-handle) {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+/* Custom drag handle — always-visible horizontal bar at the bottom of each
+ * pin. Replaces the native `resize: vertical` grip, which WKWebView only
+ * paints when the element has a visible scrollbar (.pin-shelf-item has
+ * overflow:hidden, so the native grip never rendered).
+ *
+ * Hover / active states give unmistakable affordance. Pointer events are
+ * owned by the handle itself via setPointerCapture in the JSX handler. */
+.pin-shelf-item-handle {
+  flex: 0 0 auto;
+  height: 6px;
+  cursor: ns-resize;
+  background: var(--color-bg-dark);
+  border-top: 1px solid var(--color-border);
+  position: relative;
+  transition: background 120ms ease, height 120ms ease;
+  touch-action: none; /* prevent scroll gestures during drag on touch */
+}
+.pin-shelf-item-handle::before {
+  /* Small centered grip texture — makes the bar read as a handle, not a
+   * decorative border. */
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 2px;
+  background: var(--color-text-secondary, var(--color-text));
+  opacity: 0.5;
+  border-radius: 1px;
+  pointer-events: none;
+}
+.pin-shelf-item-handle:hover {
+  background: var(--color-border);
+  height: 8px;
+}
+.pin-shelf-item-handle:hover::before {
+  opacity: 0.9;
+}
+.pin-shelf-item-handle:active {
+  background: var(--color-accent, var(--color-border));
 }
 
 .pin-shelf-hint {
