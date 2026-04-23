@@ -1,12 +1,17 @@
 /**
- * Outliner — standalone paneId-keyed block-tree renderer.
+ * Outliner — paneId-keyed block-tree renderer.
  *
- * MOUNT CONTRACT (FLO-668): The component is decoupled from the PaneLayout DOM.
- * `paneId` is the sole identity input; all reactive state reads/writes go through
- * paneStore (collapsed, zoom, focus, history) keyed by that id. The Outliner
- * mounts correctly in any flow-layout container, including the future sidebar
- * pin shelf (FLO-502) — its caller just needs to register the paneId with
- * paneStore.registerPane(id, { kind: 'sidebar' }) first.
+ * RENDERING + STATE CONTRACT (FLO-668): Rendering and state (collapsed, zoom,
+ * focus, history) are decoupled from the PaneLayout DOM — they route through
+ * paneStore keyed by `props.paneId`. The component mounts in any flow-layout
+ * container without DOM coupling.
+ *
+ * CAVEAT — tab-hosted assumptions remain: some document-level keybinds below
+ * (Cmd+Shift+F full-width, Cmd+L link overlay) still gate on
+ * findTabIdByPaneId(props.paneId) resolving to the active tab. A host whose
+ * pane registers as { kind: 'sidebar' } or { kind: 'floating' } will render
+ * and manage state correctly but will lose those specific shortcuts until
+ * the keybind paths are generalized (see FLO-669 for the call-site audit).
  */
 import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';

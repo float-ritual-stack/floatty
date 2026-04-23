@@ -455,6 +455,20 @@ function createPaneStore() {
   };
 
   /**
+   * FLO-668: Enumerate every paneId currently registered as { kind: 'tab' }.
+   * Used by layoutStore.hydrateLayouts to reconcile stale registry entries
+   * when the layouts map is replaced wholesale. Sidebar/floating entries are
+   * intentionally excluded so hydration of tab layouts doesn't clobber them.
+   */
+  const getTabHostedPaneIds = (): string[] => {
+    const ids: string[] = [];
+    for (const [paneId, host] of Object.entries(state.paneHost)) {
+      if (host?.kind === 'tab') ids.push(paneId);
+    }
+    return ids;
+  };
+
+  /**
    * Clean up state for a deleted pane (prevents memory leak)
    * Should be called when a pane is closed to remove orphaned view state
    */
@@ -489,10 +503,12 @@ function createPaneStore() {
       setState('fullWidth', paneId, undefined!);
       changed = true;
     }
-    // FLO-668: Clean up host registry entry
+    // FLO-668: Clean up host registry entry.
+    // Does NOT flip `changed` — paneHost is session-ephemeral (excluded from
+    // getPaneStateForPersistence), so clearing it shouldn't trigger a
+    // persistence write. Addresses PR #265 review (Greptile P2).
     if (state.paneHost[paneId] !== undefined) {
       setState('paneHost', paneId, undefined!);
-      changed = true;
     }
 
     if (changed) {
@@ -631,6 +647,7 @@ function createPaneStore() {
     // FLO-668: Host registry
     registerPane,
     getPaneHost,
+    getTabHostedPaneIds,
     // Cleanup
     removePane,
     removePanes,

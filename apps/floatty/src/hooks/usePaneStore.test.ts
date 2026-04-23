@@ -128,3 +128,30 @@ describe('findTabIdByPaneId — registry-backed lookup (FLO-668)', () => {
     expect(findTabIdByPaneId('flo668-unknown')).toBeNull();
   });
 });
+
+describe('getTabHostedPaneIds — registry enumeration (FLO-668)', () => {
+  const cleanupIds: string[] = [];
+
+  afterEach(() => {
+    for (const id of cleanupIds.splice(0)) paneStore.removePane(id);
+  });
+
+  it('returns only panes registered as { kind: "tab" }', () => {
+    const tabA = 'flo668-enum-tab-a';
+    const tabB = 'flo668-enum-tab-b';
+    const sidebar = 'flo668-enum-sidebar';
+    const floating = 'flo668-enum-floating';
+    cleanupIds.push(tabA, tabB, sidebar, floating);
+
+    paneStore.registerPane(tabA, { kind: 'tab', tabId: 't1' });
+    paneStore.registerPane(tabB, { kind: 'tab', tabId: 't2' });
+    paneStore.registerPane(sidebar, { kind: 'sidebar' });
+    paneStore.registerPane(floating, { kind: 'floating' });
+
+    const ids = new Set(paneStore.getTabHostedPaneIds());
+    expect(ids.has(tabA)).toBe(true);
+    expect(ids.has(tabB)).toBe(true);
+    expect(ids.has(sidebar)).toBe(false);
+    expect(ids.has(floating)).toBe(false);
+  });
+});

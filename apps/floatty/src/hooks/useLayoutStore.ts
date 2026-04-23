@@ -466,14 +466,34 @@ function createLayoutStore() {
    * Hydrate layouts from persisted state
    * Replaces current layouts with restored data
    *
-   * FLO-668: Also registers every restored pane with the host registry as
-   * { kind: 'tab', tabId }. Without this, navigation from a restored pane
-   * would see findTabIdByPaneId return null and fall back to the active tab.
+   * FLO-668: Also reconciles the host registry — removes any tab-hosted pane
+   * entries that are absent from the restored layouts (so findTabIdByPaneId
+   * doesn't keep returning stale tabIds), then registers every restored pane
+   * as { kind: 'tab', tabId }. Sidebar/floating registrations from other
+   * sources are left untouched.
+   *
+   * Addresses PR #265 review (CodeRabbit 🟠 Major / Greptile P1): plain
+   * `setState('layouts', restoredLayouts)` replaces the layouts map atomically
+   * but leaves the registry out of sync when called on a non-empty store.
    */
   const hydrateLayouts = (restoredLayouts: Record<string, TabLayout>) => {
+    // Collect the set of paneIds that SHOULD be tab-hosted after hydration
+    const expectedPaneIds = new Set<string>();
+    for (const layout of Object.values(restoredLayouts)) {
+      for (const paneId of collectPaneIds(layout.root)) {
+        expectedPaneIds.add(paneId);
+      }
+    }
+
     // Batch both stores together so consumers see a single consistent update,
     // not N+1 invalidations (N panes * registerPane + 1 layouts replacement).
     batch(() => {
+      // Drop tab-hosted registry entries that aren't in the restored set.
+      for (const id of paneStore.getTabHostedPaneIds()) {
+        if (!expectedPaneIds.has(id)) {
+          paneStore.removePane(id);
+        }
+      }
       setState('layouts', restoredLayouts);
       for (const [tabId, layout] of Object.entries(restoredLayouts)) {
         for (const paneId of collectPaneIds(layout.root)) {
