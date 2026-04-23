@@ -47,6 +47,9 @@ function createPaneLinkStore() {
   function getLinkedPaneForBlock(blockId: string): string | null {
     const paneId = blockLinks().get(blockId);
     if (!paneId) return null;
+    // FLO-668 null contract: null → linked pane was deleted OR is no longer
+    // tab-hosted (sidebar/floating). Block links target outliner panes in
+    // tabs; clean up stale entries and bail.
     const tabId = findTabIdByPaneId(paneId);
     if (!tabId) {
       updateBlockLinks(m => m.delete(blockId));
@@ -72,6 +75,8 @@ function createPaneLinkStore() {
   function getLinkedPaneForPane(sourcePaneId: string): string | null {
     const targetId = paneLinks().get(sourcePaneId);
     if (!targetId) return null;
+    // FLO-668 null contract: null → target pane was deleted OR is no longer
+    // tab-hosted. Pane links point at outliner panes in tabs; clean up + bail.
     const tabId = findTabIdByPaneId(targetId);
     if (!tabId) {
       updatePaneLinks(m => m.delete(sourcePaneId));
@@ -136,7 +141,9 @@ function createPaneLinkStore() {
   function hasSidebarLink(tabId: string): boolean {
     const linked = sidebarLinks().get(tabId);
     if (!linked) return false;
-    // Validate it still exists in this tab
+    // Validate it still exists in this tab.
+    // FLO-668 null contract: null → linked pane gone or moved to a non-tab
+    // host; `checkTab !== tabId` is true in both cases, triggering cleanup.
     const checkTab = findTabIdByPaneId(linked);
     if (checkTab !== tabId) {
       clearSidebarLink(tabId);
@@ -153,7 +160,10 @@ function createPaneLinkStore() {
     // Check explicit link first
     const linked = sidebarLinks().get(tabId);
     if (linked) {
-      // Validate it still exists
+      // Validate it still exists.
+      // FLO-668 null contract: null → link is stale (pane gone) OR the pane
+      // migrated to a non-tab host. Either way, clean up and fall back to
+      // "first outliner pane in the tab" below.
       const checkTab = findTabIdByPaneId(linked);
       if (checkTab === tabId) return linked;
       // Stale — clean up
@@ -203,6 +213,8 @@ function createPaneLinkStore() {
    * Get candidate outliner panes for linking (excludes source pane).
    */
   function getCandidatePanes(sourcePaneId: string): { paneId: string; label: string }[] {
+    // FLO-668 null contract: null → source pane isn't tab-hosted; the link
+    // overlay only makes sense within a tab's pane layout, so empty list.
     const tabId = findTabIdByPaneId(sourcePaneId);
     if (!tabId) return [];
     const layout = layoutStore.layouts[tabId];
@@ -221,6 +233,8 @@ function createPaneLinkStore() {
    * Get ALL panes for focus overlay (includes all leaf types).
    */
   function getAllPanes(anyPaneId: string): { paneId: string; label: string; leafType: string }[] {
+    // FLO-668 null contract: null → source pane isn't tab-hosted; focus
+    // overlay enumerates panes in a tab's layout, so empty list.
     const tabId = findTabIdByPaneId(anyPaneId);
     if (!tabId) return [];
     const layout = layoutStore.layouts[tabId];

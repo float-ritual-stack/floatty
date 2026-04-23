@@ -738,7 +738,12 @@ export function Outliner(props: OutlinerProps) {
         exportToBinary();
       }
       // Unit 12.0: Cmd+Shift+F - Toggle full-width on focused block
-      // Guard: active tab AND active pane (all outliners register on document)
+      // Guard: active tab AND active pane (all outliners register on document).
+      // FLO-668 null contract: null → this outliner is sidebar/floating, so
+      // `myTab !== activeTabId()` short-circuits and the keybind doesn't fire
+      // for non-tab-hosted panes. See FLO-669 for the broader audit; this is
+      // one of the sites the Outliner header explicitly calls out as still
+      // gated on tab hosting.
       else if (isMod && isShift && e.key === 'f') {
         const myTab = findTabIdByPaneId(props.paneId);
         if (myTab !== tabStore.activeTabId()) return;
@@ -751,7 +756,9 @@ export function Outliner(props: OutlinerProps) {
         }
       }
       // FLO-223 R9: Cmd+L - Open pane link overlay (always, even if already linked — re-link)
-      // Guard: active tab AND active pane (all outliners register on document, only focused one fires)
+      // Guard: active tab AND active pane (all outliners register on document, only focused one fires).
+      // FLO-668 null contract: null → non-tab-hosted pane; same short-circuit
+      // as the Cmd+Shift+F guard above.
       else if (isMod && !isShift && e.key === 'l') {
         const myTab = findTabIdByPaneId(props.paneId);
         if (myTab !== tabStore.activeTabId()) return;

@@ -75,6 +75,9 @@ export function LinkedReferences(props: LinkedReferencesProps) {
 
     if (modKey) {
       const splitDir = e.shiftKey ? 'vertical' : 'horizontal';
+      // FLO-668 null contract: null → this LinkedReferences panel is attached
+      // to a non-tab-hosted pane (sidebar/floating); fall through to the
+      // zoomTo path below, which handles any host kind.
       const tabId = findTabIdByPaneId(props.paneId);
       if (tabId) {
         const newPaneId = layoutStore.splitPane(tabId, splitDir, 'outliner');

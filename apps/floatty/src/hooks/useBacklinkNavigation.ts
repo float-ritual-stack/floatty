@@ -238,7 +238,9 @@ export function navigateToPage(
   let targetPaneId = paneId;
 
   if (splitDirection !== 'none') {
-    // Derive tabId from paneId for split operation
+    // Derive tabId from paneId for split operation.
+    // FLO-668 null contract: null → sidebar/floating or deleted pane; no tab
+    // to split within, fall back to current pane without splitting.
     const tabId = findTabIdByPaneId(paneId);
     if (!tabId) {
       logger.warn('Could not find tabId for pane, using current pane');

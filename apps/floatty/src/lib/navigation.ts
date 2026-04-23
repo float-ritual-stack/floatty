@@ -57,6 +57,9 @@ export interface NavigateResult {
 export function resolveSameTabLink(sourcePaneId: string, blockId?: string): string {
   const linked = paneLinkStore.resolveLink(sourcePaneId, blockId);
   if (!linked) return sourcePaneId;
+  // FLO-668 null contract: null here means the source or linked pane isn't
+  // tab-hosted (sidebar/floating) — the `sourceTab && …` short-circuit falls
+  // back to the source pane, which is the right "no same-tab link" answer.
   const sourceTab = findTabIdByPaneId(sourcePaneId);
   const linkedTab = findTabIdByPaneId(linked);
   return sourceTab && sourceTab === linkedTab ? linked : sourcePaneId;
@@ -86,7 +89,8 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   let targetPaneId = paneId;
 
   if (splitDirection) {
-    // Find tab for this pane to do split
+    // FLO-668 null contract: null → sidebar/floating or deleted pane; split
+    // isn't possible, fall back to current pane without splitting.
     const tabId = findTabIdByPaneId(paneId);
     if (!tabId) {
       logger.warn('Could not find tabId for pane, using current pane');
@@ -121,6 +125,8 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   paneStore.setFocusedBlockId(targetPaneId, blockId);
 
   // Update active pane so Cmd+J overlay knows where we landed (Gap 6)
+  // FLO-668 null contract: null → sidebar/floating; no tab-scoped activePaneId
+  // to set, silent no-op is correct.
   const navTabId = findTabIdByPaneId(targetPaneId);
   if (navTabId) {
     layoutStore.setActivePaneId(navTabId, targetPaneId);
@@ -167,6 +173,8 @@ export function navigateToPage(pageName: string, options: NavigateOptions = {}):
 
   // Update active pane so Cmd+J overlay knows where we landed (Gap 6)
   if (result.targetPaneId) {
+    // FLO-668 null contract: null → sidebar/floating; no tab-scoped
+    // activePaneId to set, silent no-op is correct.
     const navTabId = findTabIdByPaneId(result.targetPaneId);
     if (navTabId) {
       layoutStore.setActivePaneId(navTabId, result.targetPaneId);

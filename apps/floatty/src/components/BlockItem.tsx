@@ -140,6 +140,8 @@ export function BlockItem(props: BlockItemProps) {
     cursor,
     onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref),
     onContentChange: () => {
+      // FLO-668 null contract: null → this block lives in a non-tab-hosted
+      // pane (sidebar/floating); pinPane is tab-scoped, silent no-op.
       const tabId = findTabIdByPaneId(props.paneId);
       if (tabId) layoutStore.pinPane(tabId, props.paneId);
     },
@@ -328,6 +330,8 @@ export function BlockItem(props: BlockItemProps) {
 
     // FLO-135: Focus + active pane in the CORRECT pane
     if (result.targetPaneId) {
+      // FLO-668 null contract: null → target pane is sidebar/floating;
+      // setActivePaneId is tab-scoped, silent no-op.
       const tabId = findTabIdByPaneId(result.targetPaneId);
       if (tabId) {
         layoutStore.setActivePaneId(tabId, result.targetPaneId);
