@@ -11,6 +11,11 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { buildQmdEnv, checkQmdAvailable } from "../lib/tools/qmd-shared.js";
+
+const execFileAsync = promisify(execFile);
 
 // ── Floatty HTTP client (standalone, no Next.js deps) ──────────────
 
@@ -276,17 +281,24 @@ export function registerDataTools(server: McpServer) {
       collection?: string;
       limit?: number;
     }) => {
+      const unavailable = await checkQmdAvailable();
+      if (unavailable) {
+        return textResult({
+          total: 0,
+          hits: [],
+          error: unavailable,
+          unavailable: true,
+          query,
+          collection: collection ?? null,
+        });
+      }
       try {
-        const { execFile } = await import("child_process");
-        const { promisify } = await import("util");
-        const execFileAsync = promisify(execFile);
-
         const args = ["query", query, "--limit", String(limit), "--json"];
         if (collection) args.push("--collection", collection);
 
         const { stdout } = await execFileAsync("qmd", args, {
           timeout: 30000,
-          env: { ...process.env, NO_COLOR: "1" },
+          env: buildQmdEnv(),
         });
 
         const results = JSON.parse(stdout);
@@ -321,6 +333,93 @@ export function registerDataTools(server: McpServer) {
           collection: collection ?? null,
           timedOut,
         });
+      }
+    }
+  );
+
+  // 7. qmd_get — retrieve a single qmd document as plain text
+  server.tool(
+    "qmd_get",
+    "Retrieve a single qmd document by file path (or docid). Returns plain markdown text. Use after qmd_search to pull the full body of a hit. This is the text-content adapter for the cowork bridge — use instead of mcp__qmd__get when working inside cowork artifacts.",
+    {
+      file: z
+        .string()
+        .describe(
+          "File path (as returned by qmd_search .source) or docid. May include :line suffix to start at a specific line."
+        ),
+      maxLines: z
+        .number()
+        .optional()
+        .describe("Maximum lines to return (default: full document)."),
+    },
+    async ({ file, maxLines }: { file: string; maxLines?: number }) => {
+      const unavailable = await checkQmdAvailable();
+      if (unavailable) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: unavailable }],
+        };
+      }
+      try {
+        const args = ["get", file];
+        if (maxLines !== undefined) args.push("-l", String(maxLines));
+
+        const { stdout } = await execFileAsync("qmd", args, {
+          timeout: 30000,
+          env: buildQmdEnv(),
+        });
+
+        return { content: [{ type: "text" as const, text: stdout }] };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "qmd get failed";
+        return {
+          isError: true,
+          content: [
+            { type: "text" as const, text: `qmd get failed: ${message}` },
+          ],
+        };
+      }
+    }
+  );
+
+  // 8. qmd_multi_get — batch retrieve qmd documents as plain text
+  server.tool(
+    "qmd_multi_get",
+    "Batch retrieve qmd documents by glob pattern or comma-separated list. Returns documents concatenated as plain markdown. Use instead of mcp__qmd__multi_get when working inside cowork artifacts.",
+    {
+      pattern: z
+        .string()
+        .describe(
+          "Glob pattern (e.g. 'sysops-log/2026-04-*') or comma-separated file list."
+        ),
+    },
+    async ({ pattern }: { pattern: string }) => {
+      const unavailable = await checkQmdAvailable();
+      if (unavailable) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: unavailable }],
+        };
+      }
+      try {
+        const { stdout } = await execFileAsync(
+          "qmd",
+          ["multi-get", pattern],
+          {
+            timeout: 30000,
+            env: buildQmdEnv(),
+          }
+        );
+
+        return { content: [{ type: "text" as const, text: stdout }] };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "qmd multi-get failed";
+        return {
+          isError: true,
+          content: [
+            { type: "text" as const, text: `qmd multi-get failed: ${message}` },
+          ],
+        };
       }
     }
   );
