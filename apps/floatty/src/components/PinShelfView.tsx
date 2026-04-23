@@ -27,7 +27,7 @@ import { paneStore } from '../hooks/usePaneStore';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { extractAllWikilinkTargets } from '../lib/wikilinkUtils';
 import { resolveBlockIdPrefix } from '../lib/blockTypes';
-import { findPage } from '../hooks/useBacklinkNavigation';
+import { findPage, findRootBlockByPrefix } from '../hooks/useBacklinkNavigation';
 import './pin-shelf.css';
 
 const PINNED_PREFIX = 'pinned::';
@@ -41,19 +41,11 @@ interface Pin {
   target: string;
 }
 
-function findPinnedContainer() {
-  for (const rootId of blockStore.rootIds) {
-    const block = blockStore.blocks[rootId];
-    if (block && block.content.trim() === PINNED_PREFIX) return block;
-  }
-  return null;
-}
-
 export function PinShelfView() {
   const { shortHashIndex } = useWorkspace();
 
   const pins = createMemo<Pin[]>(() => {
-    const container = findPinnedContainer();
+    const container = findRootBlockByPrefix(PINNED_PREFIX);
     if (!container) return [];
 
     const out: Pin[] = [];
