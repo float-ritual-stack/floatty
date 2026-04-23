@@ -18,7 +18,12 @@ export function createSidebarDoorStore() {
   const [activeDoorId, setActiveDoorId] = createSignal('ctx');
 
   // Hardcoded built-in tabs (always present)
-  const BUILTIN: SidebarDoorInfo[] = [{ id: 'ctx', label: 'ctx' }];
+  const BUILTIN: SidebarDoorInfo[] = [
+    { id: 'ctx', label: 'ctx' },
+    // FLO-502: Pin shelf — renders a stack of Outliners zoomed at whatever
+    // block each child of the `pinned::` root block references via [[...]].
+    { id: 'pins', label: 'pins' },
+  ];
 
   // Merge built-in + registry sidebar doors (reactive via registry version signal)
   const allDoors = createMemo((): SidebarDoorInfo[] => {

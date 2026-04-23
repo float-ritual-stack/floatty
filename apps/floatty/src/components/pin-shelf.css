@@ -1,0 +1,49 @@
+/* FLO-502: Pin shelf — vertical stack of Outliner instances, one per child
+ * of the `pinned::` root block. Each item renders a full Outliner zoomed at
+ * its resolved block. Uses theme CSS variables for color consistency with
+ * the rest of the sidebar. */
+
+.pin-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.pin-shelf-item {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  overflow: hidden;
+  /* Each pin gets a bounded height so many pins stack without any single
+   * one dominating. Internal scrolling handled by the Outliner itself. */
+  max-height: 60vh;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Outliner fills the pin item */
+.pin-shelf-item > * {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pin-shelf-hint {
+  padding: 12px;
+  font-size: 12px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  color: var(--color-text-secondary, var(--color-text));
+  line-height: 1.5;
+}
+
+.pin-shelf-hint code {
+  background: var(--color-bg-dark);
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 11px;
+}

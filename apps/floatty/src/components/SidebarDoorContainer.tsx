@@ -10,6 +10,7 @@
 import { Show, For, createMemo, onMount, onCleanup, ErrorBoundary } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { ContextSidebar } from './ContextSidebar';
+import { PinShelfView } from './PinShelfView';
 import { createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
 import { doorRegistry } from '../lib/handlers/doorRegistry';
 import { getServerAccess } from './views/DoorHost';
@@ -52,16 +53,17 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
     onCleanup(() => window.removeEventListener('message', handler));
   });
 
-  // Get the view component for the active door (if it's a registry door, not built-in ctx)
+  // Get the view component for the active door (if it's a registry door, not a built-in)
+  const BUILTIN_IDS = new Set(['ctx', 'pins']);
   const activeView = createMemo(() => {
     const id = store.activeDoorId();
-    if (id === 'ctx') return null; // Built-in, rendered directly
+    if (BUILTIN_IDS.has(id)) return null; // Built-in, rendered directly
     return doorRegistry.getView(id) ?? null;
   });
 
   const activeSettings = createMemo(() => {
     const id = store.activeDoorId();
-    if (id === 'ctx') return {};
+    if (BUILTIN_IDS.has(id)) return {};
     return doorRegistry.getSettings(id);
   });
 
@@ -97,8 +99,13 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
           <ContextSidebar visible={props.visible} />
         </Show>
 
+        {/* Built-in: FLO-502 pin shelf */}
+        <Show when={store.activeDoorId() === 'pins'}>
+          <PinShelfView />
+        </Show>
+
         {/* Registry doors: render via Dynamic */}
-        <Show when={store.activeDoorId() !== 'ctx' && activeView()}>
+        <Show when={!BUILTIN_IDS.has(store.activeDoorId()) && activeView()}>
           <ErrorBoundary fallback={(err) => (
             <div style={{ padding: '12px', color: 'var(--color-error)', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace' }}>
               <div style={{ 'font-weight': 'bold', 'margin-bottom': '4px' }}>Sidebar door error</div>
