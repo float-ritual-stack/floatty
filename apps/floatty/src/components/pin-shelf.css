@@ -1,0 +1,122 @@
+/* FLO-502: Pin shelf — vertical stack of Outliner instances, one per child
+ * of the `pinned::` root block. Each item renders a full Outliner zoomed at
+ * its resolved block. Uses theme CSS variables for color consistency with
+ * the rest of the sidebar. */
+
+.pin-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px;
+  height: 100%;
+  /* `scroll` (not `auto`) reserves a stable gutter so the bar is always
+   * visibly present; required because macOS WKWebView's OS overlay
+   * scrollbars auto-hide + take zero gutter and hide the fact that the
+   * pane is scrollable. */
+  overflow-y: scroll;
+  overflow-x: hidden;
+}
+
+/* Explicit `::-webkit-scrollbar` dimensions opt OUT of WKWebView's
+ * OS-managed overlay scrollbar (which ignores custom styling). Do NOT
+ * add `scrollbar-width: thin` — it silently re-enables the overlay
+ * path and clobbers these rules. */
+.pin-shelf::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.pin-shelf::-webkit-scrollbar-track {
+  background: var(--color-bg-dark);
+}
+.pin-shelf::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 5px;
+  border: 2px solid var(--color-bg-dark);
+}
+.pin-shelf::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary, var(--color-text));
+}
+
+.pin-shelf-item {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  overflow: hidden;
+  /* Height is driven inline by PinItem's signal — this min-height acts as
+   * a CSS floor if the inline style is ever missing; PIN_MIN_HEIGHT in
+   * PinShelfView.tsx is the authoritative clamp during drag. */
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  /* Flex-shrink:0 is load-bearing — without it, the parent flex column
+   * silently squashes pins to fit container height, hiding the overflow
+   * that the scrollbar needs to appear. Keep declared heights, let the
+   * shelf overflow, let the scrollbar do its job. */
+  flex-shrink: 0;
+}
+
+/* Outliner fills the pin item, leaving 6px at the bottom for the handle */
+.pin-shelf-item > .outliner-container,
+.pin-shelf-item > *:not(.pin-shelf-item-handle) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Custom drag handle — always-visible horizontal bar at the bottom of each
+ * pin. Replaces the native `resize: vertical` grip, which WKWebView only
+ * paints when the element has a visible scrollbar (.pin-shelf-item has
+ * overflow:hidden, so the native grip never rendered).
+ *
+ * Hover / active states give unmistakable affordance. Pointer events are
+ * owned by the handle itself via setPointerCapture in the JSX handler. */
+.pin-shelf-item-handle {
+  flex: 0 0 auto;
+  height: 6px;
+  cursor: ns-resize;
+  background: var(--color-bg-dark);
+  border-top: 1px solid var(--color-border);
+  position: relative;
+  transition: background 120ms ease, height 120ms ease;
+  touch-action: none; /* prevent scroll gestures during drag on touch */
+}
+.pin-shelf-item-handle::before {
+  /* Small centered grip texture — makes the bar read as a handle, not a
+   * decorative border. */
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 2px;
+  background: var(--color-text-secondary, var(--color-text));
+  opacity: 0.5;
+  border-radius: 1px;
+  pointer-events: none;
+}
+.pin-shelf-item-handle:hover {
+  background: var(--color-border);
+  height: 8px;
+}
+.pin-shelf-item-handle:hover::before {
+  opacity: 0.9;
+}
+.pin-shelf-item-handle:active {
+  background: var(--color-accent, var(--color-border));
+}
+
+.pin-shelf-hint {
+  padding: 12px;
+  font-size: 12px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  color: var(--color-text-secondary, var(--color-text));
+  line-height: 1.5;
+}
+
+.pin-shelf-hint code {
+  background: var(--color-bg-dark);
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 11px;
+}

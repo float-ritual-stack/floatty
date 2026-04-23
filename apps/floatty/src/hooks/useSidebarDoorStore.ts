@@ -14,11 +14,20 @@ export interface SidebarDoorInfo {
   label: string;
 }
 
+// Hardcoded built-in tabs (always present). Module-level so the set of
+// built-in ids can be consumed by SidebarDoorContainer without duplication.
+const BUILTIN: SidebarDoorInfo[] = [
+  { id: 'ctx', label: 'ctx' },
+  // FLO-502: Pin shelf — renders a stack of Outliners zoomed at whatever
+  // block each child of the `pinned::` root block references via [[...]].
+  { id: 'pins', label: 'pins' },
+];
+
+/** Set of builtin door ids — single source of truth shared with SidebarDoorContainer. */
+export const BUILTIN_DOOR_IDS = new Set(BUILTIN.map(d => d.id));
+
 export function createSidebarDoorStore() {
   const [activeDoorId, setActiveDoorId] = createSignal('ctx');
-
-  // Hardcoded built-in tabs (always present)
-  const BUILTIN: SidebarDoorInfo[] = [{ id: 'ctx', label: 'ctx' }];
 
   // Merge built-in + registry sidebar doors (reactive via registry version signal)
   const allDoors = createMemo((): SidebarDoorInfo[] => {

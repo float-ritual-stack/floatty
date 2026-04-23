@@ -45,20 +45,32 @@ export function getPageTitle(content: string): string {
 }
 
 /**
- * Find the pages:: container block.
- * Searches root-level blocks for one starting with "pages::"
+ * Find a root-level container block whose trimmed content exactly matches
+ * the given prefix (e.g., `pages::`, `pinned::`). Returns null if no such
+ * container exists.
+ *
+ * Shared helper — callers should use this rather than iterating
+ * `blockStore.rootIds` + `blockStore.blocks` inline.
  */
-export function findPagesContainer(): Block | null {
+export function findRootBlockByPrefix(prefix: string): Block | null {
   const { blocks, rootIds } = blockStore;
 
   for (const rootId of rootIds) {
     const block = blocks[rootId];
-    if (block && block.content.trim() === PAGES_PREFIX) {
+    if (block && block.content.trim() === prefix) {
       return block;
     }
   }
 
   return null;
+}
+
+/**
+ * Find the pages:: container block.
+ * Searches root-level blocks for one starting with "pages::"
+ */
+export function findPagesContainer(): Block | null {
+  return findRootBlockByPrefix(PAGES_PREFIX);
 }
 
 /**
