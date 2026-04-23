@@ -11,6 +11,11 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { buildQmdEnv } from "../lib/tools/qmd-shared.js";
+
+const execFileAsync = promisify(execFile);
 
 // ── Floatty HTTP client (standalone, no Next.js deps) ──────────────
 
@@ -277,16 +282,12 @@ export function registerDataTools(server: McpServer) {
       limit?: number;
     }) => {
       try {
-        const { execFile } = await import("child_process");
-        const { promisify } = await import("util");
-        const execFileAsync = promisify(execFile);
-
         const args = ["query", query, "--limit", String(limit), "--json"];
         if (collection) args.push("--collection", collection);
 
         const { stdout } = await execFileAsync("qmd", args, {
           timeout: 30000,
-          env: { ...process.env, NO_COLOR: "1" },
+          env: buildQmdEnv(),
         });
 
         const results = JSON.parse(stdout);
@@ -342,16 +343,12 @@ export function registerDataTools(server: McpServer) {
     },
     async ({ file, maxLines }: { file: string; maxLines?: number }) => {
       try {
-        const { execFile } = await import("child_process");
-        const { promisify } = await import("util");
-        const execFileAsync = promisify(execFile);
-
         const args = ["get", file];
         if (maxLines !== undefined) args.push("-l", String(maxLines));
 
         const { stdout } = await execFileAsync("qmd", args, {
           timeout: 30000,
-          env: { ...process.env, NO_COLOR: "1" },
+          env: buildQmdEnv(),
         });
 
         return { content: [{ type: "text" as const, text: stdout }] };
@@ -380,16 +377,12 @@ export function registerDataTools(server: McpServer) {
     },
     async ({ pattern }: { pattern: string }) => {
       try {
-        const { execFile } = await import("child_process");
-        const { promisify } = await import("util");
-        const execFileAsync = promisify(execFile);
-
         const { stdout } = await execFileAsync(
           "qmd",
           ["multi-get", pattern],
           {
             timeout: 30000,
-            env: { ...process.env, NO_COLOR: "1" },
+            env: buildQmdEnv(),
           }
         );
 
