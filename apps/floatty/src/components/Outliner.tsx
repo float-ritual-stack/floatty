@@ -780,6 +780,10 @@ export function Outliner(props: OutlinerProps) {
       // target consumed by all sidebar-origin wikilink clicks (see
       // resolveSameTabLink in lib/navigation.ts).
       else if (isMod && !isShift && e.key === 'l') {
+        // `activeElement` is null OR `document.body` when the page has no
+        // focused element (OS-level shortcut fired, stage just loaded, etc.).
+        // Both produce `ownsFocus === false` via the optional chain +
+        // null-coerced !!; the handler bails correctly in every no-focus case.
         const activeEl = document.activeElement as Element | null;
         const ownsFocus = !!activeEl?.closest(
           `[data-pane-id="${CSS.escape(props.paneId)}"]`
