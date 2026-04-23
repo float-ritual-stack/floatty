@@ -9,26 +9,52 @@
   gap: 12px;
   padding: 8px;
   height: 100%;
-  overflow-y: auto;
+  /* `scroll` (not `auto`) reserves a stable gutter so the bar is always
+   * visibly present; required because macOS WKWebView's OS overlay
+   * scrollbars auto-hide + take zero gutter and hide the fact that the
+   * pane is scrollable. */
+  overflow-y: scroll;
   overflow-x: hidden;
-  /* Always-visible slim scrollbar — macOS's auto-hide default makes the
-   * stack feel unscrollable even when it isn't. */
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-border) transparent;
 }
 
+/* Explicit `::-webkit-scrollbar` dimensions opt OUT of WKWebView's
+ * OS-managed overlay scrollbar (which ignores custom styling). Do NOT
+ * add `scrollbar-width: thin` — it silently re-enables the overlay
+ * path and clobbers these rules. */
 .pin-shelf::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
+  height: 10px;
 }
 .pin-shelf::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--color-bg-dark);
 }
 .pin-shelf::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: 5px;
+  border: 2px solid var(--color-bg-dark);
 }
 .pin-shelf::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-secondary, var(--color-text));
+}
+
+/* Make the native `resize: vertical` grip visible against dark themes.
+ * WKWebView's default renderer is a ~14px dark-grey triangle that
+ * disappears against theme backgrounds — theme the handle explicitly. */
+.pin-shelf-item::-webkit-resizer {
+  background-color: var(--color-border);
+  background-image: linear-gradient(
+    135deg,
+    transparent 0%,
+    transparent 40%,
+    var(--color-text-secondary, var(--color-text)) 40%,
+    var(--color-text-secondary, var(--color-text)) 55%,
+    transparent 55%,
+    transparent 70%,
+    var(--color-text-secondary, var(--color-text)) 70%,
+    var(--color-text-secondary, var(--color-text)) 85%,
+    transparent 85%
+  );
+  border-radius: 0 0 4px 0;
 }
 
 .pin-shelf-item {
@@ -45,6 +71,11 @@
   resize: vertical;
   display: flex;
   flex-direction: column;
+  /* Flex-shrink:0 is load-bearing — without it, the parent flex column
+   * silently squashes pins to fit container height, hiding the overflow
+   * that the scrollbar needs to appear. Keep declared heights, let the
+   * shelf overflow, let the scrollbar do its job. */
+  flex-shrink: 0;
 }
 
 /* Outliner fills the pin item */
