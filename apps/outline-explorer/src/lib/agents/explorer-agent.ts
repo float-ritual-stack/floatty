@@ -7,6 +7,8 @@ import { getInboundTool } from "../tools/get-inbound";
 import { suggestWalksTool } from "../tools/suggest-walks";
 import { getBlockTool } from "../tools/get-block";
 import { qmdSearchTool } from "../tools/qmd-search";
+import { qmdGetTool } from "../tools/qmd-get";
+import { qmdMultiGetTool } from "../tools/qmd-multi-get";
 
 export const EXPLORER_INSTRUCTIONS = `You are analyzing nodes in a 21,000+ block knowledge graph called floatty — a terminal outliner used as a cognitive prosthetic.
 
@@ -36,6 +38,8 @@ TOOLS:
 - search_blocks: full-text search across all blocks
 - get_inbound: find blocks linking TO a target via [[wikilinks]]
 - qmd_search: search external knowledge base (4900+ docs). Collections: linear-issues, bbs-daily, sysops-log, techcraft, patterns, consciousness-tech
+- qmd_get: pull the full body of a single qmd doc by path (after qmd_search returns a hit)
+- qmd_multi_get: batch-pull bodies for a glob pattern or comma-separated list (e.g. a week of sysops-log posts)
 - suggest_walks: recommend pages to explore next (call at end of analysis)
 
 Don't guess — look things up. Use qmd_search for [[FLO-NNN]] references or unfamiliar terms.
@@ -57,6 +61,8 @@ export const EXPLORER_TOOLS = {
   get_inbound: getInboundTool,
   suggest_walks: suggestWalksTool,
   qmd_search: qmdSearchTool,
+  qmd_get: qmdGetTool,
+  qmd_multi_get: qmdMultiGetTool,
 };
 
 // Cached at module level — filesystem reads happen once, merged tools object reused

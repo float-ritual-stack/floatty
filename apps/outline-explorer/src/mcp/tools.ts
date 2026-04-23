@@ -324,4 +324,85 @@ export function registerDataTools(server: McpServer) {
       }
     }
   );
+
+  // 7. qmd_get — retrieve a single qmd document as plain text
+  server.tool(
+    "qmd_get",
+    "Retrieve a single qmd document by file path (or docid). Returns plain markdown text. Use after qmd_search to pull the full body of a hit. This is the text-content adapter for the cowork bridge — use instead of mcp__qmd__get when working inside cowork artifacts.",
+    {
+      file: z
+        .string()
+        .describe(
+          "File path (as returned by qmd_search .source) or docid. May include :line suffix to start at a specific line."
+        ),
+      maxLines: z
+        .number()
+        .optional()
+        .describe("Maximum lines to return (default: full document)."),
+    },
+    async ({ file, maxLines }: { file: string; maxLines?: number }) => {
+      try {
+        const { execFile } = await import("child_process");
+        const { promisify } = await import("util");
+        const execFileAsync = promisify(execFile);
+
+        const args = ["get", file];
+        if (maxLines !== undefined) args.push("-l", String(maxLines));
+
+        const { stdout } = await execFileAsync("qmd", args, {
+          timeout: 30000,
+          env: { ...process.env, NO_COLOR: "1" },
+        });
+
+        return { content: [{ type: "text" as const, text: stdout }] };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "qmd get failed";
+        return {
+          isError: true,
+          content: [
+            { type: "text" as const, text: `qmd get failed: ${message}` },
+          ],
+        };
+      }
+    }
+  );
+
+  // 8. qmd_multi_get — batch retrieve qmd documents as plain text
+  server.tool(
+    "qmd_multi_get",
+    "Batch retrieve qmd documents by glob pattern or comma-separated list. Returns documents concatenated as plain markdown. Use instead of mcp__qmd__multi_get when working inside cowork artifacts.",
+    {
+      pattern: z
+        .string()
+        .describe(
+          "Glob pattern (e.g. 'sysops-log/2026-04-*') or comma-separated file list."
+        ),
+    },
+    async ({ pattern }: { pattern: string }) => {
+      try {
+        const { execFile } = await import("child_process");
+        const { promisify } = await import("util");
+        const execFileAsync = promisify(execFile);
+
+        const { stdout } = await execFileAsync(
+          "qmd",
+          ["multi-get", pattern],
+          {
+            timeout: 30000,
+            env: { ...process.env, NO_COLOR: "1" },
+          }
+        );
+
+        return { content: [{ type: "text" as const, text: stdout }] };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "qmd multi-get failed";
+        return {
+          isError: true,
+          content: [
+            { type: "text" as const, text: `qmd multi-get failed: ${message}` },
+          ],
+        };
+      }
+    }
+  );
 }
