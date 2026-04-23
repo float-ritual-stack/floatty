@@ -76,7 +76,9 @@ export function PaneLinkOverlay() {
       const currentMode = mode();
 
       if (currentMode === 'focus') {
-        // Focus mode: jump to the selected pane
+        // Focus mode: jump to the selected pane.
+        // FLO-668 null contract: null → selected pane is sidebar/floating or
+        // just got deleted; setActivePaneId is tab-scoped, silent no-op.
         const tabId = findTabIdByPaneId(match.paneId);
         if (tabId) {
           layoutStore.setActivePaneId(tabId, match.paneId);
