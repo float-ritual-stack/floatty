@@ -739,11 +739,15 @@ export function Outliner(props: OutlinerProps) {
       }
       // Unit 12.0: Cmd+Shift+F - Toggle full-width on focused block
       // Guard: active tab AND active pane (all outliners register on document).
-      // FLO-668 null contract: null → this outliner is sidebar/floating, so
-      // `myTab !== activeTabId()` short-circuits and the keybind doesn't fire
-      // for non-tab-hosted panes. See FLO-669 for the broader audit; this is
-      // one of the sites the Outliner header explicitly calls out as still
-      // gated on tab hosting.
+      // FLO-668 null contract: null → this outliner is sidebar/floating. When
+      // there's also no active tab (activeTabId() is null), the `myTab !==
+      // activeTabId()` identity check can pass (null === null); the downstream
+      // `layoutStore.layouts[myTab]` lookup returns undefined and the
+      // `layout?.activePaneId !== props.paneId` guard catches the keybind there.
+      // In the common case (active tab exists), the identity check catches it.
+      // Either way the keybind no-ops cleanly for non-tab-hosted panes.
+      // See FLO-669 audit + the Outliner header, which flags this as one of the
+      // sites still gated on tab hosting.
       else if (isMod && isShift && e.key === 'f') {
         const myTab = findTabIdByPaneId(props.paneId);
         if (myTab !== tabStore.activeTabId()) return;
@@ -757,8 +761,9 @@ export function Outliner(props: OutlinerProps) {
       }
       // FLO-223 R9: Cmd+L - Open pane link overlay (always, even if already linked — re-link)
       // Guard: active tab AND active pane (all outliners register on document, only focused one fires).
-      // FLO-668 null contract: null → non-tab-hosted pane; same short-circuit
-      // as the Cmd+Shift+F guard above.
+      // FLO-668 null contract: same two-step guard as the Cmd+Shift+F block
+      // above — null myTab is caught by either the identity check (common case)
+      // or the downstream layouts[myTab] undefined check (no-active-tab corner).
       else if (isMod && !isShift && e.key === 'l') {
         const myTab = findTabIdByPaneId(props.paneId);
         if (myTab !== tabStore.activeTabId()) return;
