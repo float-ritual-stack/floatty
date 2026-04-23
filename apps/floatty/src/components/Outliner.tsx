@@ -760,15 +760,31 @@ export function Outliner(props: OutlinerProps) {
         }
       }
       // FLO-223 R9: Cmd+L - Open pane link overlay (always, even if already linked — re-link)
-      // Guard: active tab AND active pane (all outliners register on document, only focused one fires).
-      // FLO-668 null contract: same two-step guard as the Cmd+Shift+F block
-      // above — null myTab is caught by either the identity check (common case)
-      // or the downstream layouts[myTab] undefined check (no-active-tab corner).
+      //
+      // Guard: DOM focus containment. Every Outliner registers this handler on
+      // document; only the instance whose pane actually contains the focused
+      // element should handle Cmd+L. Works uniformly for tab-hosted panes and
+      // sidebar-hosted pins (FLO-671) without special-casing by host kind.
+      //
+      // FLO-671: the OLD guard (myTab===activeTab && layout.activePaneId===paneId)
+      // was wrong when DOM focus moved into the sidebar — layout.activePaneId
+      // keeps the LAST tab-active pane, so that pane's Outliner would fire too
+      // and `startLinking` would be overwritten by whichever handler ran last.
+      // The last-active tab pane was then excluded from the overlay as the
+      // "source" (can't link to yourself), making the pane the user wanted to
+      // target invisible. DOM-focus containment gives the pin the keybind
+      // unambiguously when focus is inside it.
+      //
+      // PaneLinkOverlay writes sidebarLinks[activeTab] as a side-effect of
+      // every link action, so one Cmd+L from inside a pin sets the shared
+      // target consumed by all sidebar-origin wikilink clicks (see
+      // resolveSameTabLink in lib/navigation.ts).
       else if (isMod && !isShift && e.key === 'l') {
-        const myTab = findTabIdByPaneId(props.paneId);
-        if (myTab !== tabStore.activeTabId()) return;
-        const layout = layoutStore.layouts[myTab];
-        if (layout?.activePaneId !== props.paneId) return;
+        const activeEl = document.activeElement as Element | null;
+        const ownsFocus = !!activeEl?.closest(
+          `[data-pane-id="${CSS.escape(props.paneId)}"]`
+        );
+        if (!ownsFocus) return;
         e.preventDefault();
         paneLinkStore.startLinking(props.paneId);
       }

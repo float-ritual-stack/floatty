@@ -56,7 +56,25 @@ export interface NavigateResult {
  */
 export function resolveSameTabLink(sourcePaneId: string, blockId?: string): string {
   const linked = paneLinkStore.resolveLink(sourcePaneId, blockId);
-  if (!linked) return sourcePaneId;
+  if (!linked) {
+    // FLO-671: sidebar-hosted sources (pin shelf) have no tab of their own,
+    // so paneLinks/blockLinks can't carry a useful mapping for them. Fall
+    // back to the active tab's sidebarLinks target — the same target that
+    // chirp navigation (SidebarDoorContainer) has always consumed. One
+    // shared target per tab, settable via Cmd+L from anywhere in that tab
+    // (PaneLinkOverlay writes sidebarLinks[activeTab] on every link action).
+    const host = paneStore.getPaneHost(sourcePaneId);
+    if (host?.kind === 'sidebar') {
+      const activeTab = tabStore.activeTabId();
+      if (activeTab) {
+        const sidebarTarget = paneLinkStore.resolveSidebarTarget(activeTab);
+        if (sidebarTarget && sidebarTarget !== sourcePaneId) {
+          return sidebarTarget;
+        }
+      }
+    }
+    return sourcePaneId;
+  }
   // FLO-668 null contract: null here means the source or linked pane isn't
   // tab-hosted (sidebar/floating) — the `sourceTab && …` short-circuit falls
   // back to the source pane, which is the right "no same-tab link" answer.

@@ -12,6 +12,7 @@
 
 import { createRoot, createSignal } from 'solid-js';
 import { layoutStore, findTabIdByPaneId } from './useLayoutStore';
+import { tabStore } from './useTabStore';
 import { collectLeaves } from '../lib/layoutTypes';
 
 function createPaneLinkStore() {
@@ -211,11 +212,13 @@ function createPaneLinkStore() {
 
   /**
    * Get candidate outliner panes for linking (excludes source pane).
+   *
+   * FLO-671: sidebar-hosted sources (pin shelf panes) have no tab of their
+   * own; they fall back to the active tab's layout so the Cmd+L overlay can
+   * populate candidates. Tab-hosted sources still resolve to their own tab.
    */
   function getCandidatePanes(sourcePaneId: string): { paneId: string; label: string }[] {
-    // FLO-668 null contract: null → source pane isn't tab-hosted; the link
-    // overlay only makes sense within a tab's pane layout, so empty list.
-    const tabId = findTabIdByPaneId(sourcePaneId);
+    const tabId = findTabIdByPaneId(sourcePaneId) ?? tabStore.activeTabId();
     if (!tabId) return [];
     const layout = layoutStore.layouts[tabId];
     if (!layout) return [];
