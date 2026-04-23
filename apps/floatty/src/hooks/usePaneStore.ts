@@ -432,8 +432,16 @@ function createPaneStore() {
    *   - Future floating pane feature → { kind: 'floating' }
    *
    * Deletion piggybacks on removePane / removePanes — no unregisterPane call needed.
+   * Idempotent: re-registering with an equivalent host is a no-op (matches the
+   * setZoomedRoot / setFocusedBlockId guard pattern).
    */
   const registerPane = (paneId: string, host: PaneHost) => {
+    const existing = state.paneHost[paneId];
+    if (existing && existing.kind === host.kind) {
+      if (host.kind !== 'tab' || existing.kind === 'tab' && existing.tabId === host.tabId) {
+        return;
+      }
+    }
     setState('paneHost', paneId, host);
   };
 

@@ -56,9 +56,10 @@ function createLayoutStore() {
 
   const initLayout = (tabId: string): string => {
     const layout = createInitialLayout(tabId);
-    setState('layouts', tabId, layout);
-    // FLO-668: Register the initial pane with the host registry
-    paneStore.registerPane(layout.activePaneId, { kind: 'tab', tabId });
+    batch(() => {
+      setState('layouts', tabId, layout);
+      paneStore.registerPane(layout.activePaneId, { kind: 'tab', tabId });
+    });
     bumpPersistenceVersion();
     return layout.activePaneId;
   };
@@ -130,8 +131,6 @@ function createLayoutStore() {
 
     // Create new pane and split - inherit cwd from active pane
     const newPaneId = generatePaneId();
-    // FLO-668: Register the new pane with the host registry
-    paneStore.registerPane(newPaneId, { kind: 'tab', tabId });
     const newSplit: PaneSplit = {
       type: 'split',
       id: generateSplitId(),
@@ -154,8 +153,12 @@ function createLayoutStore() {
     // Replace the active pane with the split
     const newRoot = replaceNode(currentLayout.root, activePane.id, newSplit);
 
-    // Atomic update - batch prevents partial state during tree mutation
+    // Atomic update - batch prevents partial state during tree mutation.
+    // FLO-668: Register the new pane inside the batch so the registry entry
+    // appears atomically with the layout tree update (no observer window where
+    // the pane is in one store but not the other).
     batch(() => {
+      paneStore.registerPane(newPaneId, { kind: 'tab', tabId });
       setState('layouts', tabId, 'root', newRoot);
       setState('layouts', tabId, 'activePaneId', newPaneId);
       // FLO-136: Track ephemeral pane by direction
@@ -468,12 +471,16 @@ function createLayoutStore() {
    * would see findTabIdByPaneId return null and fall back to the active tab.
    */
   const hydrateLayouts = (restoredLayouts: Record<string, TabLayout>) => {
-    setState('layouts', restoredLayouts);
-    for (const [tabId, layout] of Object.entries(restoredLayouts)) {
-      for (const paneId of collectPaneIds(layout.root)) {
-        paneStore.registerPane(paneId, { kind: 'tab', tabId });
+    // Batch both stores together so consumers see a single consistent update,
+    // not N+1 invalidations (N panes * registerPane + 1 layouts replacement).
+    batch(() => {
+      setState('layouts', restoredLayouts);
+      for (const [tabId, layout] of Object.entries(restoredLayouts)) {
+        for (const paneId of collectPaneIds(layout.root)) {
+          paneStore.registerPane(paneId, { kind: 'tab', tabId });
+        }
       }
-    }
+    });
   };
 
   /**
