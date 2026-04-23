@@ -13,7 +13,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { buildQmdEnv } from "../lib/tools/qmd-shared.js";
+import { buildQmdEnv, checkQmdAvailable } from "../lib/tools/qmd-shared.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -281,6 +281,17 @@ export function registerDataTools(server: McpServer) {
       collection?: string;
       limit?: number;
     }) => {
+      const unavailable = await checkQmdAvailable();
+      if (unavailable) {
+        return textResult({
+          total: 0,
+          hits: [],
+          error: unavailable,
+          unavailable: true,
+          query,
+          collection: collection ?? null,
+        });
+      }
       try {
         const args = ["query", query, "--limit", String(limit), "--json"];
         if (collection) args.push("--collection", collection);
@@ -342,6 +353,13 @@ export function registerDataTools(server: McpServer) {
         .describe("Maximum lines to return (default: full document)."),
     },
     async ({ file, maxLines }: { file: string; maxLines?: number }) => {
+      const unavailable = await checkQmdAvailable();
+      if (unavailable) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: unavailable }],
+        };
+      }
       try {
         const args = ["get", file];
         if (maxLines !== undefined) args.push("-l", String(maxLines));
@@ -376,6 +394,13 @@ export function registerDataTools(server: McpServer) {
         ),
     },
     async ({ pattern }: { pattern: string }) => {
+      const unavailable = await checkQmdAvailable();
+      if (unavailable) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: unavailable }],
+        };
+      }
       try {
         const { stdout } = await execFileAsync(
           "qmd",
