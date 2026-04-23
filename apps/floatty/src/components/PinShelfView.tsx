@@ -132,8 +132,11 @@ function PinItem(props: { pin: () => Pin }) {
 
   // Track the current resolved block — if the pin's child content is edited
   // to point at a different block, follow the new target without remounting.
+  // Uses paneStore.zoomTo with skipHistory per CLAUDE.md canonical-paths: we
+  // don't want this external-state-driven retargeting to pollute nav history
+  // (Cmd+[/Cmd+] are for user-initiated navigation only).
   createEffect(() => {
-    paneStore.setZoomedRoot(paneId, props.pin().resolvedBlockId);
+    paneStore.zoomTo(paneId, props.pin().resolvedBlockId, { skipHistory: true });
   });
 
   // Pointer-capture drag pattern. Listeners attach to the handle itself

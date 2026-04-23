@@ -11,7 +11,7 @@ import { Show, For, createMemo, onMount, onCleanup, ErrorBoundary } from 'solid-
 import { Dynamic } from 'solid-js/web';
 import { ContextSidebar } from './ContextSidebar';
 import { PinShelfView } from './PinShelfView';
-import { createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
+import { BUILTIN_DOOR_IDS, createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
 import { doorRegistry } from '../lib/handlers/doorRegistry';
 import { getServerAccess } from './views/DoorHost';
 import { paneLinkStore } from '../hooks/usePaneLinkStore';
@@ -54,16 +54,15 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
   });
 
   // Get the view component for the active door (if it's a registry door, not a built-in)
-  const BUILTIN_IDS = new Set(['ctx', 'pins']);
   const activeView = createMemo(() => {
     const id = store.activeDoorId();
-    if (BUILTIN_IDS.has(id)) return null; // Built-in, rendered directly
+    if (BUILTIN_DOOR_IDS.has(id)) return null; // Built-in, rendered directly
     return doorRegistry.getView(id) ?? null;
   });
 
   const activeSettings = createMemo(() => {
     const id = store.activeDoorId();
-    if (BUILTIN_IDS.has(id)) return {};
+    if (BUILTIN_DOOR_IDS.has(id)) return {};
     return doorRegistry.getSettings(id);
   });
 
@@ -99,13 +98,19 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
           <ContextSidebar visible={props.visible} />
         </Show>
 
-        {/* Built-in: FLO-502 pin shelf */}
-        <Show when={store.activeDoorId() === 'pins'}>
+        {/* Built-in: FLO-502 pin shelf. Kept MOUNTED across tab switches so
+         * each pin's Outliner preserves its paneStore registration, zoom
+         * history, collapse state, focused block, and nav history — those are
+         * stated features of the shelf per the PR description. Per CLAUDE.md
+         * SolidJS rule #4: `<Show>` unmounts, CSS `display:none` hides.
+         * PinShelfView itself is always-on once the sidebar exists; its cost
+         * is proportional to the pinned:: block's child count, bounded. */}
+        <div style={{ display: store.activeDoorId() === 'pins' ? 'contents' : 'none' }}>
           <PinShelfView />
-        </Show>
+        </div>
 
         {/* Registry doors: render via Dynamic */}
-        <Show when={!BUILTIN_IDS.has(store.activeDoorId()) && activeView()}>
+        <Show when={!BUILTIN_DOOR_IDS.has(store.activeDoorId()) && activeView()}>
           <ErrorBoundary fallback={(err) => (
             <div style={{ padding: '12px', color: 'var(--color-error)', 'font-size': '12px', 'font-family': 'JetBrains Mono, monospace' }}>
               <div style={{ 'font-weight': 'bold', 'margin-bottom': '4px' }}>Sidebar door error</div>
