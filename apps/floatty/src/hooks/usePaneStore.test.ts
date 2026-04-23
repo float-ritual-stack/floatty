@@ -9,7 +9,8 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { paneStore } from './usePaneStore';
-import { findTabIdByPaneId } from './useLayoutStore';
+import { findTabIdByPaneId, layoutStore } from './useLayoutStore';
+import type { TabLayout } from '../lib/layoutTypes';
 
 describe('paneStore — PaneHost registry (FLO-668)', () => {
   const cleanupIds: string[] = [];
@@ -52,7 +53,7 @@ describe('paneStore — PaneHost registry (FLO-668)', () => {
   });
 
   it('removePane clears the registry entry', () => {
-    const id = 'flo668-remove'; // not tracked — we remove inside the test
+    const id = track('flo668-remove');
     paneStore.registerPane(id, { kind: 'tab', tabId: 't' });
     expect(paneStore.getPaneHost(id)).toBeDefined();
 
@@ -64,7 +65,7 @@ describe('paneStore — PaneHost registry (FLO-668)', () => {
     // setFocusedBlockId is deliberately skipped — it broadcasts presence via
     // fetch and touches window globals, which complicates environment setup.
     // Cross-field cleanup is adequately covered by zoomedRoot + collapsed.
-    const id = 'flo668-remove-mixed';
+    const id = track('flo668-remove-mixed');
     paneStore.registerPane(id, { kind: 'tab', tabId: 't' });
     paneStore.setZoomedRoot(id, 'some-block');
     paneStore.setCollapsed(id, 'some-block', true);
@@ -77,7 +78,7 @@ describe('paneStore — PaneHost registry (FLO-668)', () => {
   });
 
   it('removePanes clears multiple registry entries', () => {
-    const ids = ['flo668-bulk-a', 'flo668-bulk-b', 'flo668-bulk-c'];
+    const ids = [track('flo668-bulk-a'), track('flo668-bulk-b'), track('flo668-bulk-c')];
     for (const id of ids) paneStore.registerPane(id, { kind: 'tab', tabId: 't' });
     for (const id of ids) expect(paneStore.getPaneHost(id)).toBeDefined();
 
@@ -153,5 +154,60 @@ describe('getTabHostedPaneIds — registry enumeration (FLO-668)', () => {
     expect(ids.has(tabB)).toBe(true);
     expect(ids.has(sidebar)).toBe(false);
     expect(ids.has(floating)).toBe(false);
+  });
+});
+
+describe('layoutStore.hydrateLayouts — registry reconciliation (FLO-668)', () => {
+  // Cleanup: remove every test-created pane AND clear all layouts the tests touch
+  const cleanupIds: string[] = [];
+  const tabIdsToClear: string[] = [];
+
+  afterEach(() => {
+    for (const id of cleanupIds.splice(0)) paneStore.removePane(id);
+    // Drain any layouts the tests set — keeps the layoutStore singleton clean
+    for (const tabId of tabIdsToClear.splice(0)) layoutStore.removeLayout(tabId);
+  });
+
+  const leaf = (id: string): TabLayout => ({
+    tabId: `flo668-hy-tab-${id}`,
+    root: { type: 'leaf', id },
+    activePaneId: id,
+  });
+
+  it('prunes tab-hosted entries absent from the restored set, preserves sidebar/floating', () => {
+    // Seed: one tab pane soon-to-be stale, plus a sidebar and a floating pane
+    // registered from "elsewhere" (simulating FLO-502's pin shelf).
+    const staleTabPane = 'flo668-hy-stale-tab';
+    const sidebarPane = 'flo668-hy-sidebar';
+    const floatingPane = 'flo668-hy-floating';
+    cleanupIds.push(staleTabPane, sidebarPane, floatingPane);
+
+    paneStore.registerPane(staleTabPane, { kind: 'tab', tabId: 'flo668-hy-tab-stale' });
+    paneStore.registerPane(sidebarPane, { kind: 'sidebar' });
+    paneStore.registerPane(floatingPane, { kind: 'floating' });
+
+    // Restored layouts contain a DIFFERENT pane. `staleTabPane` is absent.
+    const restoredPane = 'flo668-hy-restored';
+    cleanupIds.push(restoredPane);
+    const restoredLayout = leaf(restoredPane);
+    tabIdsToClear.push(restoredLayout.tabId);
+    const restoredLayouts: Record<string, TabLayout> = { [restoredLayout.tabId]: restoredLayout };
+
+    layoutStore.hydrateLayouts(restoredLayouts);
+
+    // Contract 1: stale tab-hosted entry gone
+    expect(paneStore.getPaneHost(staleTabPane)).toBeUndefined();
+    // Contract 2: sidebar/floating untouched
+    expect(paneStore.getPaneHost(sidebarPane)).toEqual({ kind: 'sidebar' });
+    expect(paneStore.getPaneHost(floatingPane)).toEqual({ kind: 'floating' });
+    // Contract 3: the restored pane is registered against the restored tabId
+    expect(paneStore.getPaneHost(restoredPane)).toEqual({
+      kind: 'tab',
+      tabId: restoredLayout.tabId,
+    });
+    // Contract 4: findTabIdByPaneId reflects reality after hydration
+    expect(findTabIdByPaneId(staleTabPane)).toBeNull();
+    expect(findTabIdByPaneId(restoredPane)).toBe(restoredLayout.tabId);
+    expect(findTabIdByPaneId(sidebarPane)).toBeNull(); // sidebar is not tab-hosted
   });
 });
