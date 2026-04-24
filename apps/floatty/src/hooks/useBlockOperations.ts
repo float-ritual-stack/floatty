@@ -14,18 +14,6 @@ export function useBlockOperations() {
   const store = blockStore;
 
   /**
-   * Check if a block is editable (has contentEditable)
-   * Blocks with outputType (like daily-view) render custom views, not contentEditable
-   */
-  const isEditableBlock = (blockId: string): boolean => {
-    const b = store.getBlock(blockId);
-    if (!b) return false;
-    // Output blocks (daily-view, daily-error, etc.) are not editable
-    if (b.outputType) return false;
-    return true;
-  };
-
-  /**
    * Check if a block is navigable (can receive focus via arrow keys)
    * Output blocks aren't editable but ARE navigable — they have outputFocusRef
    */

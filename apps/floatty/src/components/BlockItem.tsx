@@ -118,7 +118,8 @@ export function BlockItem(props: BlockItemProps) {
   const [tableShowRaw, setTableShowRaw] = createSignal(false);
 
   let contentRef: HTMLDivElement | undefined;
-  let outputFocusRef: HTMLDivElement | undefined;
+  // outputFocusRef previously lived here; moved into BlockOutputView when the
+  // output-block focus contract was extracted. See output-block-patterns.md.
   let renderTitleRef: HTMLDivElement | undefined;
   let wrapperRef: HTMLDivElement | undefined;
   const [inlineDoorRef, setInlineDoorRef] = createSignal<HTMLElement | undefined>(undefined);
@@ -148,8 +149,8 @@ export function BlockItem(props: BlockItemProps) {
   });
   const {
     displayContent, setDisplayContent,
-    isComposing, setIsComposing,
-    hasLocalChanges, setHasLocalChanges,
+    setIsComposing,
+    setHasLocalChanges,
     cancelContentUpdate, flushContentUpdate,
     handleInput, handleBlurSync, updateContentFromDom,
   } = contentSync;

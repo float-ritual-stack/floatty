@@ -15,7 +15,7 @@
  *   node scripts/compile-door-bundle.mjs doors/session-garden/session-garden.tsx ~/.floatty-dev/doors/session-garden/index.js
  */
 
-import { createSignal, createMemo, createEffect, on, Show, batch, onMount, onCleanup } from 'solid-js';
+import { createSignal, createMemo, createEffect, on, Show, batch } from 'solid-js';
 import {
   Renderer,
   StateProvider,
@@ -24,7 +24,6 @@ import {
   ValidationProvider,
 } from '@json-render/solid';
 import { registry } from './registry';
-import { injectBodyStyles } from './components';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES

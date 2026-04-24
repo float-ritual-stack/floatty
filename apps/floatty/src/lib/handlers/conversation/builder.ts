@@ -89,7 +89,6 @@ export function buildConversation(
   currentBlockId: string,
   getBlock: (id: string) => ConversationBlock | undefined,
   getParentId: (id: string) => string | undefined,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _config: ConversationConfig
 ): ConversationMessage[] {
   // Find root

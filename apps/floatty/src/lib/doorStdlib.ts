@@ -99,7 +99,7 @@ export async function exec(command: string): Promise<string> {
 /** Run a shell command, find the first `[` or `{`, and JSON.parse from there */
 export async function execJSON(command: string): Promise<unknown> {
   const raw = await exec(command);
-  const start = raw.search(/[\[{]/);
+  const start = raw.search(/[[{]/);
   if (start < 0) throw new Error(`No JSON in output: ${raw.slice(0, 120)}`);
   return JSON.parse(raw.slice(start));
 }

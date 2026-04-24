@@ -29,7 +29,7 @@ const { registry } = defineRegistry(catalog, {
   },
 });
 
-function RenderTestView(props: { data: unknown }) {
+function RenderTestView(_props: { data: unknown }) {
   const spec = {
     root: 'greeting',
     elements: {

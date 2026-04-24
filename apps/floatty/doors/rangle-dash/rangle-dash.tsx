@@ -187,7 +187,7 @@ async function loadMeetingDetails(weekDir: string, meeting: MeetingItem): Promis
     for (const line of lines) {
       // Frontmatter parsing
       if (line.startsWith('participants:')) {
-        participants = line.replace('participants:', '').replace(/[\[\]]/g, '').split(',').map(s => s.trim());
+        participants = line.replace('participants:', '').replace(/[[\]]/g, '').split(',').map(s => s.trim());
       }
       if (line.startsWith('duration:')) {
         duration = line.replace('duration:', '').trim();
@@ -663,7 +663,7 @@ function RangleDashView(props: DoorViewProps<DashData>) {
 export const door = {
   kind: 'view' as const,
   prefixes: ['rd::'],
-  async execute(blockId: string, content: string, ctx: any) {
+  async execute(_blockId: string, content: string, _ctx: unknown) {
     const arg = content.replace(/^rd::\s*/i, '').trim();
     const days = parseInt(arg) || 7;
     return { data: { dateRange: String(days) } };

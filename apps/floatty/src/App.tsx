@@ -417,7 +417,6 @@ function App() {
 
     // Access version signals to trigger effect on persisted-state changes.
     // This avoids deep JSON.stringify reads on large layout/pane trees.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const _ = [
       tabStore.persistenceVersion(),
       layoutStore.persistenceVersion(),
