@@ -158,7 +158,11 @@ impl BatchedChangeCollector {
 
         // Check threshold
         if pending.changes.len() >= self.threshold {
-            debug!(pending = pending.changes.len(), threshold = self.threshold, "Threshold flush triggered");
+            debug!(
+                pending = pending.changes.len(),
+                threshold = self.threshold,
+                "Threshold flush triggered"
+            );
             let batch = Self::take_batch(&mut pending);
             drop(pending);
             if !batch.is_empty() {
@@ -340,7 +344,12 @@ impl BatchedChangeCollector {
             },
 
             // Anything + Deleted = Deleted (supersedes prior changes)
-            (_, BlockChange::Deleted { content, origin, .. }) => Deleted { content, origin },
+            (
+                _,
+                BlockChange::Deleted {
+                    content, origin, ..
+                },
+            ) => Deleted { content, origin },
 
             // Cancelled stays cancelled
             (Cancelled, _) => Cancelled,

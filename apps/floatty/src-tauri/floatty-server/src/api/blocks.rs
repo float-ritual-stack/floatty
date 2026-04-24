@@ -93,8 +93,12 @@ pub struct BlockContextQuery {
     pub max_depth: usize,
 }
 
-fn default_sibling_radius() -> usize { 2 }
-fn default_max_depth() -> usize { 50 }
+fn default_sibling_radius() -> usize {
+    2
+}
+fn default_max_depth() -> usize {
+    50
+}
 
 /// Lightweight block reference for context (ancestors, siblings, children)
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -227,7 +231,9 @@ pub struct UpdateBlockRequest {
 /// - field absent: returns None (don't change)
 /// - field present with null: returns Some(None) (move to root)
 /// - field present with value: returns Some(Some(value)) (move under parent)
-fn deserialize_optional_parent_id<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+fn deserialize_optional_parent_id<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -301,7 +307,10 @@ async fn resolve_block_prefix(
         match value {
             yrs::Out::YMap(block_map) => {
                 let inherited_markers = {
-                    let index = state.inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+                    let index = state
+                        .inheritance_index
+                        .read()
+                        .map_err(|_| ApiError::LockPoisoned)?;
                     lookup_inherited(&index, &full_id)
                 };
                 let dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
@@ -326,11 +335,8 @@ async fn get_blocks(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<BlocksQuery>,
 ) -> Result<Json<BlocksResponse>, ApiError> {
-    let result = crate::block_service::get_blocks(
-        &state.store,
-        Some(&state.inheritance_index),
-        &query,
-    )?;
+    let result =
+        crate::block_service::get_blocks(&state.store, Some(&state.inheritance_index), &query)?;
     Ok(Json(result))
 }
 
@@ -340,12 +346,8 @@ async fn get_block(
     Path(id): Path<String>,
     axum::extract::Query(ctx_query): axum::extract::Query<BlockContextQuery>,
 ) -> Result<Json<BlockWithContextResponse>, ApiError> {
-    let mut result = crate::block_service::get_block(
-        &state.store,
-        &state.inheritance_index,
-        &id,
-        &ctx_query,
-    )?;
+    let mut result =
+        crate::block_service::get_block(&state.store, &state.inheritance_index, &id, &ctx_query)?;
     inject_rendered_markdown(&mut result.block, &state.projection_cache);
     Ok(Json(result))
 }
@@ -399,17 +401,13 @@ pub(crate) fn inject_rendered_markdown(dto: &mut BlockDto, cache: &super::Projec
     // `catch_unwind` on a closure that borrows `&Value` is fine: serde_json::Value
     // is RefUnwindSafe, so no clone is required — AssertUnwindSafe is kept because
     // `dto.id` (the warn! field) does not carry an UnwindSafe bound through axum.
-    let mut computed = run_walker_protected(
-        "spec",
-        &dto.id,
-        || floatty_core::projections::walk_spec_to_markdown(output_data),
-    );
+    let mut computed = run_walker_protected("spec", &dto.id, || {
+        floatty_core::projections::walk_spec_to_markdown(output_data)
+    });
     if computed.trim().is_empty() {
-        computed = run_walker_protected(
-            "generic",
-            &dto.id,
-            || floatty_core::projections::walk_generic_json_to_markdown(output_data),
-        );
+        computed = run_walker_protected("generic", &dto.id, || {
+            floatty_core::projections::walk_generic_json_to_markdown(output_data)
+        });
     }
 
     // Still empty? Leave metadata untouched (null stays null — no worse than before).
@@ -428,7 +426,11 @@ pub(crate) fn inject_rendered_markdown(dto: &mut BlockDto, cache: &super::Projec
 
 /// Run a walker closure under `catch_unwind`. On panic, log a warning and
 /// return empty string so the caller can fall through to the next tier.
-fn run_walker_protected<F: FnOnce() -> String>(tier: &'static str, block_id: &str, walker: F) -> String {
+fn run_walker_protected<F: FnOnce() -> String>(
+    tier: &'static str,
+    block_id: &str,
+    walker: F,
+) -> String {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(walker)) {
         Ok(s) => s,
         Err(_) => {
@@ -475,11 +477,18 @@ fn write_rendered_markdown(dto: &mut BlockDto, markdown: String) {
     metadata
         .as_object_mut()
         .expect("metadata normalized to object above")
-        .insert("renderedMarkdown".to_string(), serde_json::Value::String(markdown));
+        .insert(
+            "renderedMarkdown".to_string(),
+            serde_json::Value::String(markdown),
+        );
 }
 
 /// POST /api/v1/blocks - Create block
-#[tracing::instrument(skip(state, req), fields(route_family = "blocks", handler = "create_block"), err)]
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "blocks", handler = "create_block"),
+    err
+)]
 async fn create_block(
     State(state): State<AppState>,
     Json(req): Json<CreateBlockRequest>,
@@ -497,7 +506,11 @@ async fn create_block(
 ///
 /// Accepts a caller-supplied UUID. Distinct from the normal create endpoint so that
 /// identity preservation is an explicit, auditable operation — not ambient behavior.
-#[tracing::instrument(skip(state, req), fields(route_family = "blocks", handler = "import_block"), err)]
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "blocks", handler = "import_block"),
+    err
+)]
 async fn import_block(
     State(state): State<AppState>,
     Json(req): Json<ImportBlockRequest>,
@@ -527,7 +540,11 @@ async fn put_not_supported(Path(id): Path<String>) -> (StatusCode, Json<ErrorRes
 }
 
 /// PATCH /api/v1/blocks/:id - Update content, metadata, and/or parent
-#[tracing::instrument(skip(state, req), fields(route_family = "blocks", handler = "update_block"), err)]
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "blocks", handler = "update_block"),
+    err
+)]
 async fn update_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -544,17 +561,16 @@ async fn update_block(
 }
 
 /// DELETE /api/v1/blocks/:id - Delete block and entire subtree
-#[tracing::instrument(skip(state), fields(route_family = "blocks", handler = "delete_block"), err)]
+#[tracing::instrument(
+    skip(state),
+    fields(route_family = "blocks", handler = "delete_block"),
+    err
+)]
 async fn delete_block(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    crate::block_service::delete_block(
-        &state.store,
-        &state.broadcaster,
-        &state.hook_system,
-        &id,
-    )?;
+    crate::block_service::delete_block(&state.store, &state.broadcaster, &state.hook_system, &id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -585,7 +601,11 @@ mod projection_injection_tests {
             .to_string()
     }
 
-    fn door_dto_with_output(id: &str, output: serde_json::Value, metadata: Option<serde_json::Value>) -> BlockDto {
+    fn door_dto_with_output(
+        id: &str,
+        output: serde_json::Value,
+        metadata: Option<serde_json::Value>,
+    ) -> BlockDto {
         BlockDto {
             id: id.to_string(),
             content: String::new(),
@@ -636,7 +656,11 @@ mod projection_injection_tests {
             Some(json!({ "renderedMarkdown": prior })),
         );
         inject_rendered_markdown(&mut dto, &cache);
-        assert_eq!(rendered_md(&dto), prior, "should not overwrite hook markdown");
+        assert_eq!(
+            rendered_md(&dto),
+            prior,
+            "should not overwrite hook markdown"
+        );
     }
 
     #[test]
@@ -704,8 +728,16 @@ mod projection_injection_tests {
         let mut dto2 = door_dto_with_output("b7", minimal_spec_output(), None);
         inject_rendered_markdown(&mut dto2, &cache);
 
-        assert_eq!(rendered_md(&dto1), rendered_md(&dto2), "cache hit should produce identical output");
-        assert_eq!(cache.lock().unwrap().len(), 1, "single cache entry for matching id+hash");
+        assert_eq!(
+            rendered_md(&dto1),
+            rendered_md(&dto2),
+            "cache hit should produce identical output"
+        );
+        assert_eq!(
+            cache.lock().unwrap().len(),
+            1,
+            "single cache entry for matching id+hash"
+        );
     }
 
     #[test]
@@ -728,7 +760,10 @@ mod projection_injection_tests {
         let mut dto2 = door_dto_with_output("b8", mutated, None);
         inject_rendered_markdown(&mut dto2, &cache);
         let md2 = rendered_md(&dto2);
-        assert!(md2.contains("Mutated Doc"), "different output → different hash → recompute");
+        assert!(
+            md2.contains("Mutated Doc"),
+            "different output → different hash → recompute"
+        );
         assert!(md2.contains("different"));
         // Two distinct cache entries (same id, different hash).
         assert_eq!(cache.lock().unwrap().len(), 2);

@@ -9,7 +9,6 @@
 ///     ├── door.json   # { "id": "daily", "prefixes": ["daily::"], "name": "Daily Notes" }
 ///     └── index.js    # Pre-compiled SolidJS component
 /// ```
-
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -100,9 +99,8 @@ pub fn read_door_file(doors_dir: &Path, door_id: &str) -> Result<String, String>
 
     let entry_path = doors_dir.join(door_id).join("index.js");
 
-    std::fs::read_to_string(&entry_path).map_err(|e| {
-        format!("Failed to read door '{}': {}", door_id, e)
-    })
+    std::fs::read_to_string(&entry_path)
+        .map_err(|e| format!("Failed to read door '{}': {}", door_id, e))
 }
 
 #[cfg(test)]
@@ -119,7 +117,8 @@ mod tests {
         fs::write(
             daily.join("door.json"),
             r#"{"id":"daily","prefixes":["daily::"],"name":"Daily Notes","version":"0.1.0"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         fs::write(daily.join("index.js"), "export default function Daily() {}").unwrap();
 
         // Create a door without index.js
@@ -128,7 +127,8 @@ mod tests {
         fs::write(
             stub.join("door.json"),
             r#"{"id":"stub","prefixes":["stub::"],"name":"Stub Door"}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Create a directory without door.json (should be skipped)
         let junk = dir.path().join("not-a-door");

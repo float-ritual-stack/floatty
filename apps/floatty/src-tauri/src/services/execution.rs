@@ -1,9 +1,8 @@
 /// Shell and AI command execution services
-/// 
+///
 /// Pure business logic for executing commands - minimal external dependencies.
 /// Uses tokio for async execution. Testable without Tauri runtime.
-
-use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
+use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
 use std::time::Instant;
 
 /// Execute a shell command and return stdout/stderr
@@ -26,7 +25,7 @@ pub async fn execute_shell(command: String, max_bytes: usize) -> Result<(String,
 
     let start = Instant::now();
     let command_len = command.len();
-    
+
     tracing::info!(command_len = command_len, "Shell command requested");
 
     let result = tokio::task::spawn_blocking(move || {
@@ -48,7 +47,7 @@ pub async fn execute_shell(command: String, max_bytes: usize) -> Result<(String,
         };
 
         let output = std::process::Command::new(&shell)
-            .arg("-lc")  // Login shell + command (non-interactive, no TTY needed)
+            .arg("-lc") // Login shell + command (non-interactive, no TTY needed)
             .arg(format!("{}{}", rc_source, &command))
             .output()
             .map_err(|e| {
@@ -72,12 +71,14 @@ pub async fn execute_shell(command: String, max_bytes: usize) -> Result<(String,
         } else {
             result
         };
-        
+
         Ok::<(String, i32), String>((final_result, exit_code))
-    }).await.map_err(|e| e.to_string())??;
-    
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
     let duration_ms = start.elapsed().as_millis() as u64;
-    
+
     if result.1 == 0 {
         tracing::info!(
             exit_code = result.1,
@@ -92,7 +93,7 @@ pub async fn execute_shell(command: String, max_bytes: usize) -> Result<(String,
             "Shell command failed"
         );
     }
-    
+
     Ok(result)
 }
 
@@ -144,14 +145,14 @@ pub async fn execute_ai(
         Ok(res) => {
             let duration_ms = start.elapsed().as_millis() as u64;
             let response_bytes = res.response.len();
-            
+
             tracing::info!(
                 model = %model,
                 duration_ms = duration_ms,
                 response_bytes = response_bytes,
                 "AI command succeeded"
             );
-            
+
             let result = res.response;
             // Truncate if output exceeds limit
             if result.len() > max_bytes {
@@ -159,7 +160,7 @@ pub async fn execute_ai(
             } else {
                 Ok(result)
             }
-        },
+        }
         Err(e) => {
             let duration_ms = start.elapsed().as_millis() as u64;
             tracing::error!(
@@ -169,7 +170,7 @@ pub async fn execute_ai(
                 "AI command failed"
             );
             Err(format!("Ollama error: {}", e))
-        },
+        }
     }
 }
 
@@ -183,10 +184,10 @@ fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> String {
     while safe_max > 0 && !text.is_char_boundary(safe_max) {
         safe_max -= 1;
     }
-    
+
     // Find last newline to avoid cutting mid-line
     let cut_point = text[..safe_max].rfind('\n').unwrap_or(safe_max);
-    
+
     format!(
         "{}\n\n... [truncated: {} → {} bytes]",
         &text[..cut_point],
@@ -217,7 +218,9 @@ pub async fn execute_ai_conversation(
     system: Option<String>,
     max_bytes: usize,
 ) -> Result<String, String> {
-    use ollama_rs::generation::chat::{ChatMessage as OllamaChatMessage, request::ChatMessageRequest};
+    use ollama_rs::generation::chat::{
+        request::ChatMessageRequest, ChatMessage as OllamaChatMessage,
+    };
     use ollama_rs::models::ModelOptions;
 
     let start = Instant::now();
@@ -291,7 +294,7 @@ pub async fn execute_ai_conversation(
             } else {
                 Ok(response)
             }
-        },
+        }
         Err(e) => {
             let duration_ms = start.elapsed().as_millis() as u64;
             tracing::error!(
@@ -301,7 +304,7 @@ pub async fn execute_ai_conversation(
                 "AI conversation failed"
             );
             Err(format!("Ollama error: {}", e))
-        },
+        }
     }
 }
 
@@ -320,7 +323,7 @@ mod tests {
     fn test_truncate_at_char_boundary() {
         let text = "Hello\nWorld\nThis is a long line";
         let truncated = truncate_at_char_boundary(text, 15);
-        
+
         // Should truncate at newline before "This"
         assert!(truncated.contains("Hello\nWorld"));
         assert!(truncated.contains("[truncated:"));
@@ -331,8 +334,8 @@ mod tests {
     fn test_truncate_preserves_emoji() {
         let text = "Hello 👋 World";
         let result = truncate_at_char_boundary(text, 10);
-        
+
         // Should not panic on multi-byte emoji
-        assert!(result.len() > 0);
+        assert!(!result.is_empty());
     }
 }

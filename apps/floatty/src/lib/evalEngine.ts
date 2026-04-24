@@ -49,7 +49,6 @@ export function evaluate(
   scope: EvalScope
 ): EvalResult {
   try {
-    // eslint-disable-next-line no-new-func
     const fn = new Function(...SCOPE_PARAM_NAMES, `return (${expression})`);
     const result = fn(
       scope.$ref, scope.$block, scope.$siblings, scope.$children, scope.$parent,

@@ -45,7 +45,10 @@ pub struct TantivyIndexHook {
 impl TantivyIndexHook {
     /// Create a new TantivyIndexHook with the given writer handle and inheritance index.
     pub fn new(writer: WriterHandle, inheritance_index: Arc<RwLock<InheritanceIndex>>) -> Self {
-        Self { writer, inheritance_index }
+        Self {
+            writer,
+            inheritance_index,
+        }
     }
 }
 
@@ -83,7 +86,9 @@ impl BlockHook for TantivyIndexHook {
                 BlockChange::Created { id, content, .. } => {
                     self.index_block(&writer, id, content, &store);
                 }
-                BlockChange::ContentChanged { id, new_content, .. } => {
+                BlockChange::ContentChanged {
+                    id, new_content, ..
+                } => {
                     self.index_block(&writer, id, new_content, &store);
                 }
                 BlockChange::MetadataChanged { id, .. } => {
@@ -142,13 +147,18 @@ impl TantivyIndexHook {
             .unwrap_or_default();
 
         // Own marker types and values
-        let mut m_types_own: Vec<String> = own_markers.iter().map(|m| m.marker_type.clone()).collect();
+        let mut m_types_own: Vec<String> =
+            own_markers.iter().map(|m| m.marker_type.clone()).collect();
         m_types_own.sort();
         m_types_own.dedup();
 
         let m_values_own: Vec<String> = own_markers
             .iter()
-            .filter_map(|m| m.value.as_ref().map(|v| format!("{}::{}", m.marker_type, v)))
+            .filter_map(|m| {
+                m.value
+                    .as_ref()
+                    .map(|v| format!("{}::{}", m.marker_type, v))
+            })
             .collect();
 
         // Format own markers for full-text search
@@ -216,7 +226,9 @@ impl TantivyIndexHook {
             let mut d: u32 = 0;
             let mut current_parent = parent_id.clone();
             while let Some(ref pid) = current_parent {
-                if d >= 50 { break; }
+                if d >= 50 {
+                    break;
+                }
                 d += 1;
                 current_parent = store.get_block(pid).and_then(|b| b.parent_id.clone());
             }

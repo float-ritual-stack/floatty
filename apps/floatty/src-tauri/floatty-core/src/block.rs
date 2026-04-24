@@ -320,14 +320,26 @@ mod tests {
         assert_eq!(parse_block_type("- Bullet"), BlockType::Bullet);
         assert_eq!(parse_block_type("- [ ] Todo unchecked"), BlockType::Todo);
         assert_eq!(parse_block_type("- [x] Todo checked"), BlockType::Todo);
-        assert_eq!(parse_block_type("- [X] Todo checked upper"), BlockType::Todo);
+        assert_eq!(
+            parse_block_type("- [X] Todo checked upper"),
+            BlockType::Todo
+        );
     }
 
     #[test]
     fn test_parse_block_type_artifact() {
-        assert_eq!(parse_block_type("artifact:: ~/file.jsx"), BlockType::Artifact);
-        assert_eq!(parse_block_type("Artifact:: ~/file.jsx"), BlockType::Artifact);
-        assert_eq!(parse_block_type("  artifact:: foo.tsx"), BlockType::Artifact);
+        assert_eq!(
+            parse_block_type("artifact:: ~/file.jsx"),
+            BlockType::Artifact
+        );
+        assert_eq!(
+            parse_block_type("Artifact:: ~/file.jsx"),
+            BlockType::Artifact
+        );
+        assert_eq!(
+            parse_block_type("  artifact:: foo.tsx"),
+            BlockType::Artifact
+        );
     }
 
     #[test]

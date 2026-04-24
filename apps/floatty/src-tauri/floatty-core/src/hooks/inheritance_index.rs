@@ -23,9 +23,7 @@
 //! Accepts: User, Agent, BulkImport, Remote
 //! Ignores: Hook (metadata writes)
 
-use crate::{
-    events::BlockChange, hooks::BlockHook, BlockChangeBatch, Origin, YDocStore,
-};
+use crate::{events::BlockChange, hooks::BlockHook, BlockChangeBatch, Origin, YDocStore};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tracing::{debug, instrument};
@@ -346,16 +344,22 @@ impl BlockHook for InheritanceIndexHook {
     }
 
     fn accepts_origins(&self) -> Option<Vec<Origin>> {
-        Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])
+        Some(vec![
+            Origin::User,
+            Origin::Agent,
+            Origin::BulkImport,
+            Origin::Remote,
+        ])
     }
 
     #[instrument(skip(self, batch, store), fields(batch_size = batch.changes.len()))]
     fn process(&self, batch: &BlockChangeBatch, store: Arc<YDocStore>) {
         // Check if any change could affect inheritance
         // (content, metadata, structure changes — skip collapsed-only changes)
-        let affects_inheritance = batch.changes.iter().any(|c| {
-            !matches!(c, BlockChange::CollapsedChanged { .. })
-        });
+        let affects_inheritance = batch
+            .changes
+            .iter()
+            .any(|c| !matches!(c, BlockChange::CollapsedChanged { .. }));
 
         if !affects_inheritance {
             return;
@@ -364,10 +368,8 @@ impl BlockHook for InheritanceIndexHook {
         let mut index = self.index.write().expect("lock poisoned");
 
         // Cold start rehydration or very large batches: full rebuild
-        let is_cold_start = batch
-            .transaction_id
-            .as_deref()
-            == Some(crate::events::COLD_START_REHYDRATION_TX_ID);
+        let is_cold_start =
+            batch.transaction_id.as_deref() == Some(crate::events::COLD_START_REHYDRATION_TX_ID);
 
         if is_cold_start {
             index.rebuild(&store);
@@ -741,8 +743,16 @@ mod tests {
         let depth = 55;
         for i in 0..=depth {
             let id = format!("block-{}", i);
-            let parent = if i == 0 { None } else { Some(format!("block-{}", i - 1)) };
-            let child = if i == depth { vec![] } else { vec![format!("block-{}", i + 1)] };
+            let parent = if i == 0 {
+                None
+            } else {
+                Some(format!("block-{}", i - 1))
+            };
+            let child = if i == depth {
+                vec![]
+            } else {
+                vec![format!("block-{}", i + 1)]
+            };
             let child_refs: Vec<&str> = child.iter().map(|s| s.as_str()).collect();
 
             insert_block(

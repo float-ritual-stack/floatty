@@ -184,12 +184,7 @@ impl ChangeBuilder {
     }
 
     /// Record a content change.
-    pub fn content_changed(
-        mut self,
-        id: String,
-        old_content: String,
-        new_content: String,
-    ) -> Self {
+    pub fn content_changed(mut self, id: String, old_content: String, new_content: String) -> Self {
         self.changes.push(BlockChange::ContentChanged {
             id,
             old_content,

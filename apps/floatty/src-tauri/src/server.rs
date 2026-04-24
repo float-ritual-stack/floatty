@@ -182,7 +182,10 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
         // Distinguish benign race from real delivery failure by re-checking.
         if !pid_is_alive(pid) {
             let _ = std::fs::remove_file(pid_path);
-            tracing::info!(pid = pid, "Stale server exited before SIGTERM was delivered");
+            tracing::info!(
+                pid = pid,
+                "Stale server exited before SIGTERM was delivered"
+            );
             return true;
         }
         tracing::warn!(pid = pid, "SIGTERM delivery failed, escalating immediately");
@@ -202,7 +205,10 @@ fn kill_stale_server(pid_path: &PathBuf) -> bool {
     if !send_signal(pid, "-KILL") {
         if !pid_is_alive(pid) {
             let _ = std::fs::remove_file(pid_path);
-            tracing::info!(pid = pid, "Stale server exited before SIGKILL was delivered");
+            tracing::info!(
+                pid = pid,
+                "Stale server exited before SIGKILL was delivered"
+            );
             return true;
         }
         tracing::error!(pid = pid, "SIGKILL delivery failed — cannot recover");
@@ -331,7 +337,8 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
     } else {
         cmd.stderr(std::process::Stdio::inherit());
     }
-    let child = cmd.spawn()
+    let child = cmd
+        .spawn()
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to spawn floatty-server");
             e
@@ -490,7 +497,16 @@ fn probe_server_health(base_url: &str, timeout_secs: u32) -> bool {
     let health_url = format!("{}/api/v1/health", base_url);
     let timeout_str = timeout_secs.to_string();
     match std::process::Command::new("curl")
-        .args(["-s", "-m", &timeout_str, "-o", "/dev/null", "-w", "%{http_code}", &health_url])
+        .args([
+            "-s",
+            "-m",
+            &timeout_str,
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            &health_url,
+        ])
         .output()
     {
         Ok(output) => String::from_utf8_lossy(&output.stdout).trim() == "200",

@@ -35,7 +35,10 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 use tracing::{debug, trace};
-use yrs::{any, Array, Doc, Map, MapPrelim, Out, ReadTxn, StateVector, Transact, Update, WriteTxn, updates::decoder::Decode, updates::encoder::Encode};
+use yrs::{
+    any, updates::decoder::Decode, updates::encoder::Encode, Array, Doc, Map, MapPrelim, Out,
+    ReadTxn, StateVector, Transact, Update, WriteTxn,
+};
 
 use crate::metadata::BlockMetadata;
 
@@ -58,17 +61,19 @@ const COMPACT_THRESHOLD: i64 = 100;
 /// - `Out::YMap(map)` — nested Y.Map (if metadata stored as collaborative type)
 fn parse_metadata_from_out<T: ReadTxn>(value: Out, txn: &T) -> Option<BlockMetadata> {
     match value {
-        Out::Any(yrs::Any::String(s)) => {
-            serde_json::from_str::<BlockMetadata>(&s)
-                .map_err(|e| tracing::warn!("parse_metadata_from_out: Any::String failed: {e}"))
-                .ok()
-        }
+        Out::Any(yrs::Any::String(s)) => serde_json::from_str::<BlockMetadata>(&s)
+            .map_err(|e| tracing::warn!("parse_metadata_from_out: Any::String failed: {e}"))
+            .ok(),
         Out::Any(yrs::Any::Map(map)) => {
             // Convert Any::Map to JSON, then deserialize
             let json = yrs_any_map_to_json(&map);
             let key_count = map.len();
             serde_json::from_value::<BlockMetadata>(json)
-                .map_err(|e| tracing::warn!("parse_metadata_from_out: Any::Map failed: {e}, keys={key_count}"))
+                .map_err(|e| {
+                    tracing::warn!(
+                        "parse_metadata_from_out: Any::Map failed: {e}, keys={key_count}"
+                    )
+                })
                 .ok()
         }
         Out::YMap(map) => {
@@ -76,7 +81,9 @@ fn parse_metadata_from_out<T: ReadTxn>(value: Out, txn: &T) -> Option<BlockMetad
             let json = yrs_ymap_to_json(&map, txn);
             let key_count = map.len(txn);
             serde_json::from_value::<BlockMetadata>(json)
-                .map_err(|e| tracing::warn!("parse_metadata_from_out: YMap failed: {e}, keys={key_count}"))
+                .map_err(|e| {
+                    tracing::warn!("parse_metadata_from_out: YMap failed: {e}, keys={key_count}")
+                })
                 .ok()
         }
         Out::Any(yrs::Any::Undefined | yrs::Any::Null) => None,
@@ -110,7 +117,8 @@ fn yrs_out_to_json<T: ReadTxn>(out: Out, txn: &T) -> serde_json::Value {
     match out {
         Out::YMap(map) => yrs_ymap_to_json(&map, txn),
         Out::YArray(arr) => {
-            let items: Vec<serde_json::Value> = arr.iter(txn).map(|v| yrs_out_to_json(v, txn)).collect();
+            let items: Vec<serde_json::Value> =
+                arr.iter(txn).map(|v| yrs_out_to_json(v, txn)).collect();
             serde_json::Value::Array(items)
         }
         Out::Any(any) => yrs_any_to_json(&any),
@@ -166,11 +174,7 @@ fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
         .collect();
 
     // Convert outlinks Vec<String> to array of strings
-    let outlinks_array: Vec<yrs::Any> = metadata
-        .outlinks
-        .iter()
-        .map(|s| any!(s.clone()))
-        .collect();
+    let outlinks_array: Vec<yrs::Any> = metadata.outlinks.iter().map(|s| any!(s.clone())).collect();
 
     // extractedAt: store as BigInt (i64) — NOT f64.
     // yrs::Any::Number is f64 which serde rejects for Option<i64> on read-back.
@@ -190,7 +194,10 @@ fn metadata_to_ymap(metadata: &BlockMetadata) -> MapPrelim {
     };
     MapPrelim::from([
         ("markers".to_owned(), yrs::Any::Array(markers_array.into())),
-        ("outlinks".to_owned(), yrs::Any::Array(outlinks_array.into())),
+        (
+            "outlinks".to_owned(),
+            yrs::Any::Array(outlinks_array.into()),
+        ),
         ("isStub".to_owned(), any!(metadata.is_stub)),
         ("extractedAt".to_owned(), extracted_at),
         ("summary".to_owned(), summary),
@@ -377,7 +384,10 @@ impl YDocStore {
                 *cb = Some(Arc::new(callback));
                 Ok(())
             }
-            Err(e) => Err(format!("Failed to set change callback (lock poisoned): {}", e)),
+            Err(e) => Err(format!(
+                "Failed to set change callback (lock poisoned): {}",
+                e
+            )),
         }
     }
 
@@ -528,7 +538,10 @@ impl YDocStore {
             return;
         }
 
-        debug!(change_count = changes.len(), "Emitting block changes from Y.Doc update");
+        debug!(
+            change_count = changes.len(),
+            "Emitting block changes from Y.Doc update"
+        );
 
         if let Ok(cb_guard) = self.change_callback.read() {
             if let Some(callback) = cb_guard.as_ref() {
@@ -576,7 +589,7 @@ impl YDocStore {
     /// Returns None if the block doesn't exist.
     /// Used by hooks to read block data (e.g., metadata, parent_id).
     pub fn get_block(&self, block_id: &str) -> Option<crate::block::Block> {
-        use yrs::{Out, Array};
+        use yrs::{Array, Out};
 
         let doc = self.doc.read().ok()?;
         let txn = doc.transact();
@@ -597,12 +610,10 @@ impl YDocStore {
             })
             .unwrap_or_default();
 
-        let parent_id = block_map
-            .get(&txn, "parentId")
-            .and_then(|v| match v {
-                Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                _ => None,
-            });
+        let parent_id = block_map.get(&txn, "parentId").and_then(|v| match v {
+            Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+            _ => None,
+        });
 
         let child_ids = block_map
             .get(&txn, "childIds")
@@ -680,12 +691,13 @@ impl YDocStore {
     /// 4. Invoke the callback with BlockChange events
     pub fn apply_update(&self, update_bytes: &[u8]) -> Result<i64, StoreError> {
         // Validate update format before any mutations
-        let update = Update::decode_v1(update_bytes)
-            .map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
+        let update =
+            Update::decode_v1(update_bytes).map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
 
         // PERSIST FIRST: Write to DB before applying to memory
         // Returns the sequence number assigned to this update
-        let seq = self.persistence
+        let seq = self
+            .persistence
             .append_update(&self.doc_key, update_bytes)?;
 
         // Now apply to in-memory doc
@@ -698,11 +710,17 @@ impl YDocStore {
             .map(|cb| cb.is_some())
             .unwrap_or(false);
 
-        trace!(has_callback = has_callback, "apply_update: checking for change callback");
+        trace!(
+            has_callback = has_callback,
+            "apply_update: checking for change callback"
+        );
 
         let before_snapshot = if has_callback {
             let snap = self.snapshot_blocks(&doc);
-            trace!(block_count = snap.len(), "apply_update: took before snapshot");
+            trace!(
+                block_count = snap.len(),
+                "apply_update: took before snapshot"
+            );
             Some(snap)
         } else {
             None
@@ -721,12 +739,19 @@ impl YDocStore {
         // Compute and emit changes if callback is registered
         if let Some(before) = before_snapshot {
             let after = self.snapshot_blocks(&doc);
-            trace!(before_count = before.len(), after_count = after.len(), "apply_update: comparing snapshots");
+            trace!(
+                before_count = before.len(),
+                after_count = after.len(),
+                "apply_update: comparing snapshots"
+            );
             // apply_update() consumes updates sent from external clients over sync APIs.
             // Tag emitted changes as Remote so hook origin filters behave correctly.
             let changes = self.compute_changes(&before, &after, Origin::Remote);
             if !changes.is_empty() {
-                debug!(change_count = changes.len(), "apply_update: detected changes, emitting to hooks");
+                debug!(
+                    change_count = changes.len(),
+                    "apply_update: detected changes, emitting to hooks"
+                );
             }
             drop(doc); // Release lock before callback
             self.emit_changes(changes);
@@ -743,11 +768,12 @@ impl YDocStore {
     /// Returns the sequence number assigned to this update.
     pub fn persist_update(&self, update_bytes: &[u8]) -> Result<i64, StoreError> {
         // Validate update format
-        let _ = Update::decode_v1(update_bytes)
-            .map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
+        let _ =
+            Update::decode_v1(update_bytes).map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
 
         // Persist only - memory already has the changes
-        let seq = self.persistence
+        let seq = self
+            .persistence
             .append_update(&self.doc_key, update_bytes)?;
 
         // Check for compaction using current doc state
@@ -852,8 +878,8 @@ impl YDocStore {
     /// * `Err(StoreError)` - If decode/apply fails
     pub fn reset_from_state(&self, state_bytes: &[u8]) -> Result<usize, StoreError> {
         // 1. Decode and validate first (before any destructive ops)
-        let update = Update::decode_v1(state_bytes)
-            .map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
+        let update =
+            Update::decode_v1(state_bytes).map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
 
         // 2. Create a fresh Y.Doc and apply the state
         let new_doc = Doc::new();
@@ -910,26 +936,18 @@ impl YDocStore {
             _ => return None,
         };
 
-        block_map
-            .get(&txn, "metadata")
-            .and_then(|v| match v {
-                Out::Any(yrs::Any::String(s)) => {
-                    serde_json::from_str::<serde_json::Value>(&s)
-                        .map_err(|e| tracing::warn!("get_block_metadata_json: parse failed: {e}"))
-                        .ok()
-                }
-                Out::Any(yrs::Any::Map(map)) => {
-                    Some(yrs_any_map_to_json(&map))
-                }
-                Out::YMap(map) => {
-                    Some(yrs_ymap_to_json(&map, &txn))
-                }
-                Out::Any(yrs::Any::Undefined | yrs::Any::Null) => None,
-                other => {
-                    tracing::warn!("get_block_metadata_json: unhandled variant: {other:?}");
-                    None
-                }
-            })
+        block_map.get(&txn, "metadata").and_then(|v| match v {
+            Out::Any(yrs::Any::String(s)) => serde_json::from_str::<serde_json::Value>(&s)
+                .map_err(|e| tracing::warn!("get_block_metadata_json: parse failed: {e}"))
+                .ok(),
+            Out::Any(yrs::Any::Map(map)) => Some(yrs_any_map_to_json(&map)),
+            Out::YMap(map) => Some(yrs_ymap_to_json(&map, &txn)),
+            Out::Any(yrs::Any::Undefined | yrs::Any::Null) => None,
+            other => {
+                tracing::warn!("get_block_metadata_json: unhandled variant: {other:?}");
+                None
+            }
+        })
     }
 
     /// Update metadata for multiple blocks in a single Y.Doc transaction.
@@ -960,7 +978,7 @@ impl YDocStore {
                 .map(|(id, _)| {
                     let old = blocks_map
                         .as_ref()
-                        .and_then(|bm| bm.get(&txn, *id))
+                        .and_then(|bm| bm.get(&txn, id))
                         .and_then(|v| match v {
                             Out::YMap(block_map) => block_map.get(&txn, "metadata"),
                             _ => None,
@@ -981,14 +999,17 @@ impl YDocStore {
             let blocks = txn.get_or_insert_map("blocks");
 
             for (block_id, metadata) in updates {
-                match blocks.get(&txn, *block_id) {
+                match blocks.get(&txn, block_id) {
                     Some(Out::YMap(block_map)) => {
                         let metadata_map = metadata_to_ymap(metadata);
                         block_map.insert(&mut txn, "metadata", metadata_map);
                         written_ids.push((block_id.to_string(), metadata.clone()));
                     }
                     _ => {
-                        debug!("batch_update_metadata: block {} not found, skipping", block_id);
+                        debug!(
+                            "batch_update_metadata: block {} not found, skipping",
+                            block_id
+                        );
                     }
                 }
             }
@@ -1533,7 +1554,7 @@ mod tests {
         assert!(matches!(
             &changes[0],
             BlockChange::CollapsedChanged { id, collapsed, .. }
-                if id == "b1" && *collapsed == true
+                if id == "b1" && *collapsed
         ));
     }
 
@@ -1647,24 +1668,45 @@ mod tests {
         }
 
         // Build metadata as Any::Map (how yjs serializes plain JS objects)
-        let markers_any: Box<[yrs::Any]> = metadata.markers.iter().map(|m| {
-            let mut map = HashMap::new();
-            map.insert("markerType".to_string(), yrs::Any::String(m.marker_type.clone().into()));
-            if let Some(ref v) = m.value {
-                map.insert("value".to_string(), yrs::Any::String(v.clone().into()));
-            }
-            yrs::Any::Map(std::sync::Arc::new(map))
-        }).collect::<Vec<_>>().into_boxed_slice();
+        let markers_any: Box<[yrs::Any]> = metadata
+            .markers
+            .iter()
+            .map(|m| {
+                let mut map = HashMap::new();
+                map.insert(
+                    "markerType".to_string(),
+                    yrs::Any::String(m.marker_type.clone().into()),
+                );
+                if let Some(ref v) = m.value {
+                    map.insert("value".to_string(), yrs::Any::String(v.clone().into()));
+                }
+                yrs::Any::Map(std::sync::Arc::new(map))
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
 
-        let outlinks_any: Box<[yrs::Any]> = metadata.outlinks.iter().map(|o| {
-            yrs::Any::String(o.clone().into())
-        }).collect::<Vec<_>>().into_boxed_slice();
+        let outlinks_any: Box<[yrs::Any]> = metadata
+            .outlinks
+            .iter()
+            .map(|o| yrs::Any::String(o.clone().into()))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
 
         let mut meta_map = HashMap::new();
-        meta_map.insert("markers".to_string(), yrs::Any::Array(std::sync::Arc::from(markers_any)));
-        meta_map.insert("outlinks".to_string(), yrs::Any::Array(std::sync::Arc::from(outlinks_any)));
+        meta_map.insert(
+            "markers".to_string(),
+            yrs::Any::Array(std::sync::Arc::from(markers_any)),
+        );
+        meta_map.insert(
+            "outlinks".to_string(),
+            yrs::Any::Array(std::sync::Arc::from(outlinks_any)),
+        );
 
-        block_map.insert(&mut txn, "metadata", yrs::Any::Map(std::sync::Arc::new(meta_map)));
+        block_map.insert(
+            &mut txn,
+            "metadata",
+            yrs::Any::Map(std::sync::Arc::new(meta_map)),
+        );
     }
 
     #[test]
@@ -1697,10 +1739,16 @@ mod tests {
         insert_block_with_map_metadata(&store, "b1", "ctx:: [project::floatty]", None, &meta);
 
         let block = store.get_block("b1").unwrap();
-        assert!(block.metadata.is_some(), "metadata should be parsed from Any::Map");
+        assert!(
+            block.metadata.is_some(),
+            "metadata should be parsed from Any::Map"
+        );
         let m = block.metadata.unwrap();
         assert_eq!(m.markers.len(), 2);
-        assert!(m.markers.iter().any(|mk| mk.marker_type == "project" && mk.value.as_deref() == Some("floatty")));
+        assert!(m
+            .markers
+            .iter()
+            .any(|mk| mk.marker_type == "project" && mk.value.as_deref() == Some("floatty")));
         assert!(m.markers.iter().any(|mk| mk.marker_type == "ctx"));
     }
 
@@ -1715,9 +1763,8 @@ mod tests {
             let doc_guard = doc.write().unwrap();
             let mut txn = doc_guard.transact_mut();
             let blocks = txn.get_or_insert_map("blocks");
-            let block_prelim: MapPrelim = MapPrelim::from([
-                ("content", yrs::Any::String("plain text".into())),
-            ]);
+            let block_prelim: MapPrelim =
+                MapPrelim::from([("content", yrs::Any::String("plain text".into()))]);
             blocks.insert(&mut txn, "b1", block_prelim);
         }
 
@@ -1746,9 +1793,21 @@ mod tests {
             let doc_guard = doc.write().unwrap();
             let mut txn = doc_guard.transact_mut();
             let blocks = txn.get_or_insert_map("blocks");
-            blocks.insert(&mut txn, "b1", MapPrelim::from([("content", yrs::Any::String("one".into()))]));
-            blocks.insert(&mut txn, "b2", MapPrelim::from([("content", yrs::Any::String("two".into()))]));
-            blocks.insert(&mut txn, "b3", MapPrelim::from([("content", yrs::Any::String("three".into()))]));
+            blocks.insert(
+                &mut txn,
+                "b1",
+                MapPrelim::from([("content", yrs::Any::String("one".into()))]),
+            );
+            blocks.insert(
+                &mut txn,
+                "b2",
+                MapPrelim::from([("content", yrs::Any::String("two".into()))]),
+            );
+            blocks.insert(
+                &mut txn,
+                "b3",
+                MapPrelim::from([("content", yrs::Any::String("three".into()))]),
+            );
         }
 
         let mut ids = store.get_all_block_ids();
@@ -1766,9 +1825,8 @@ mod tests {
         let doc_guard = doc.write().unwrap();
         let mut txn = doc_guard.transact_mut();
         let blocks = txn.get_or_insert_map("blocks");
-        let block_prelim: MapPrelim = MapPrelim::from([
-            ("content", yrs::Any::String(content.into())),
-        ]);
+        let block_prelim: MapPrelim =
+            MapPrelim::from([("content", yrs::Any::String(content.into()))]);
         blocks.insert(&mut txn, block_id, block_prelim);
     }
 
@@ -1789,13 +1847,16 @@ mod tests {
         insert_test_block(&store, "b2", "world");
 
         let meta = crate::metadata::BlockMetadata::new();
-        store.batch_update_metadata(
-            &[("b1", meta.clone()), ("b2", meta)],
-            crate::Origin::Hook,
-        ).unwrap();
+        store
+            .batch_update_metadata(&[("b1", meta.clone()), ("b2", meta)], crate::Origin::Hook)
+            .unwrap();
 
         let recorded = calls.lock().unwrap();
-        assert_eq!(recorded.len(), 1, "batch_update_metadata should fire broadcast once");
+        assert_eq!(
+            recorded.len(),
+            1,
+            "batch_update_metadata should fire broadcast once"
+        );
         assert!(recorded[0].0 > 0, "broadcast bytes should be non-empty");
         assert!(recorded[0].1 > 0, "broadcast seq should be positive");
     }
@@ -1816,10 +1877,16 @@ mod tests {
         insert_test_block(&store, "b1", "ctx:: test");
 
         let meta = crate::metadata::BlockMetadata::new();
-        store.update_block_metadata("b1", meta, crate::Origin::Hook).unwrap();
+        store
+            .update_block_metadata("b1", meta, crate::Origin::Hook)
+            .unwrap();
 
         let recorded = calls.lock().unwrap();
-        assert_eq!(recorded.len(), 1, "update_block_metadata should fire broadcast once");
+        assert_eq!(
+            recorded.len(),
+            1,
+            "update_block_metadata should fire broadcast once"
+        );
         assert!(recorded[0].0 > 0);
         assert!(recorded[0].1 > 0);
     }
@@ -1849,6 +1916,9 @@ mod tests {
         store.persist_update(&update).unwrap();
 
         let recorded = calls.lock().unwrap();
-        assert!(recorded.is_empty(), "persist_update should NOT fire broadcast callback");
+        assert!(
+            recorded.is_empty(),
+            "persist_update should NOT fire broadcast callback"
+        );
     }
 }

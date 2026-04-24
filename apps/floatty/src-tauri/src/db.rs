@@ -1,7 +1,7 @@
-use rusqlite::{Connection, Result, params};
+use parking_lot::Mutex;
+use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use parking_lot::Mutex;
 
 /// Status of a ctx:: marker parsing
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -48,11 +48,11 @@ pub struct ParsedCtx {
 /// JSONL metadata extracted at insert time (no Ollama needed)
 #[derive(Debug, Clone, Default)]
 pub struct JsonlMetadata {
-    pub sort_key: Option<String>,      // JSONL timestamp
-    pub cwd: Option<String>,           // Working directory
-    pub git_branch: Option<String>,    // Git branch
-    pub session_id: Option<String>,    // Session ID
-    pub msg_type: Option<String>,      // user/assistant
+    pub sort_key: Option<String>,   // JSONL timestamp
+    pub cwd: Option<String>,        // Working directory
+    pub git_branch: Option<String>, // Git branch
+    pub session_id: Option<String>, // Session ID
+    pub msg_type: Option<String>,   // user/assistant
 }
 
 /// Full ctx:: marker record from database
@@ -104,7 +104,7 @@ impl FloattyDb {
                 log::error!("Failed to create database directory {:?}: {}", parent, e);
                 return Err(rusqlite::Error::SqliteFailure(
                     rusqlite::ffi::Error::new(14), // SQLITE_CANTOPEN
-                    Some(format!("Cannot create directory {:?}: {}", parent, e))
+                    Some(format!("Cannot create directory {:?}: {}", parent, e)),
                 ));
             }
         }
@@ -114,7 +114,9 @@ impl FloattyDb {
         // Enable WAL mode for better concurrency
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
 
-        let db = Self { conn: Mutex::new(conn) };
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
         db.init_schema()?;
         Ok(db)
     }
@@ -123,7 +125,9 @@ impl FloattyDb {
     #[allow(dead_code)]
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let db = Self { conn: Mutex::new(conn) };
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
         db.init_schema()?;
         Ok(db)
     }
@@ -133,7 +137,8 @@ impl FloattyDb {
         let conn = self.conn.lock();
 
         // Create tables first (without sort_key index)
-        conn.execute_batch(r#"
+        conn.execute_batch(
+            r#"
             CREATE TABLE IF NOT EXISTS ctx_markers (
                 id TEXT PRIMARY KEY,
                 session_file TEXT NOT NULL,
@@ -187,7 +192,8 @@ impl FloattyDb {
                 updated_at INTEGER NOT NULL,
                 save_seq INTEGER NOT NULL DEFAULT 0
             );
-        "#)?;
+        "#,
+        )?;
 
         // Migrations: add columns if they don't exist (for existing DBs)
         // Expected error: "duplicate column name" when column already exists
@@ -196,7 +202,11 @@ impl FloattyDb {
         Self::migrate_add_column(&conn, "ctx_markers", "git_branch TEXT")?;
         Self::migrate_add_column(&conn, "ctx_markers", "session_id TEXT")?;
         Self::migrate_add_column(&conn, "ctx_markers", "msg_type TEXT")?;
-        Self::migrate_add_column(&conn, "workspace_state", "save_seq INTEGER NOT NULL DEFAULT 0")?;
+        Self::migrate_add_column(
+            &conn,
+            "workspace_state",
+            "save_seq INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         // Create indexes (after columns definitely exist)
         Self::migrate_create_index(&conn, "idx_sort_key", "ctx_markers(sort_key DESC)")?;
@@ -231,12 +241,18 @@ impl FloattyDb {
                 Ok(())
             }
             Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
-                if msg.contains("duplicate column") => {
+                if msg.contains("duplicate column") =>
+            {
                 // Expected for existing databases - column already exists
                 Ok(())
             }
             Err(e) => {
-                log::error!("Migration failed for column {}.{}: {}", table, column_def, e);
+                log::error!(
+                    "Migration failed for column {}.{}: {}",
+                    table,
+                    column_def,
+                    e
+                );
                 Err(e)
             }
         }
@@ -269,7 +285,13 @@ impl FloattyDb {
     /// Insert a new raw marker (status = pending)
     /// Metadata comes from JSONL fields - authoritative source of truth
     #[allow(dead_code)]
-    pub fn insert_raw(&self, id: &str, session_file: &str, raw_line: &str, meta: &JsonlMetadata) -> Result<()> {
+    pub fn insert_raw(
+        &self,
+        id: &str,
+        session_file: &str,
+        raw_line: &str,
+        meta: &JsonlMetadata,
+    ) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
             "INSERT OR IGNORE INTO ctx_markers (id, session_file, raw_line, status, sort_key, cwd, git_branch, session_id, msg_type)
@@ -471,8 +493,8 @@ impl FloattyDb {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM ctx_markers", [])?;
         conn.execute("DELETE FROM file_positions", [])?;
-        // We do not delete system_state (Yjs doc) on clear_all unless explicitly requested, 
-        // as that destroys user notes. 
+        // We do not delete system_state (Yjs doc) on clear_all unless explicitly requested,
+        // as that destroys user notes.
         // If we want to support clearing notes, we should add a separate method.
         Ok(())
     }
@@ -482,7 +504,7 @@ impl FloattyDb {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM system_state WHERE key = ?")?;
         let mut rows = stmt.query([key])?;
-        
+
         if let Some(row) = rows.next()? {
             Ok(Some(row.get(0)?))
         } else {
@@ -524,9 +546,8 @@ impl FloattyDb {
     #[allow(dead_code)]
     pub fn get_ydoc_updates(&self, doc_key: &str) -> Result<Vec<Vec<u8>>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT update_data FROM ydoc_updates WHERE doc_key = ? ORDER BY id ASC"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT update_data FROM ydoc_updates WHERE doc_key = ? ORDER BY id ASC")?;
         let rows = stmt.query_map([doc_key], |row| row.get(0))?;
         rows.collect()
     }
@@ -574,9 +595,8 @@ impl FloattyDb {
     /// Get workspace state JSON + sequence (returns None if not found)
     pub fn get_workspace_state(&self, key: &str) -> Result<Option<WorkspaceStateRecord>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT state_json, save_seq FROM workspace_state WHERE key = ?"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT state_json, save_seq FROM workspace_state WHERE key = ?")?;
         let mut rows = stmt.query([key])?;
 
         if let Some(row) = rows.next()? {
@@ -640,11 +660,14 @@ mod tests {
     fn workspace_state_rejects_stale_save_seq() {
         let db = FloattyDb::open_in_memory().expect("open in-memory db");
 
-        assert!(db.set_workspace_state("default", r#"{"v":1}"#, 1)
+        assert!(db
+            .set_workspace_state("default", r#"{"v":1}"#, 1)
             .expect("initial save"));
-        assert!(db.set_workspace_state("default", r#"{"v":2}"#, 2)
+        assert!(db
+            .set_workspace_state("default", r#"{"v":2}"#, 2)
             .expect("newer save"));
-        assert!(!db.set_workspace_state("default", r#"{"v":1.5}"#, 1)
+        assert!(!db
+            .set_workspace_state("default", r#"{"v":1.5}"#, 1)
             .expect("stale save should return false"));
 
         let stored = db
@@ -659,9 +682,11 @@ mod tests {
     fn workspace_state_allows_idempotent_same_seq_retry() {
         let db = FloattyDb::open_in_memory().expect("open in-memory db");
 
-        assert!(db.set_workspace_state("default", r#"{"v":2}"#, 2)
+        assert!(db
+            .set_workspace_state("default", r#"{"v":2}"#, 2)
             .expect("initial save"));
-        assert!(db.set_workspace_state("default", r#"{"v":2}"#, 2)
+        assert!(db
+            .set_workspace_state("default", r#"{"v":2}"#, 2)
             .expect("idempotent retry"));
 
         let stored = db
@@ -676,9 +701,11 @@ mod tests {
     fn workspace_state_rejects_conflicting_same_seq_write() {
         let db = FloattyDb::open_in_memory().expect("open in-memory db");
 
-        assert!(db.set_workspace_state("default", r#"{"v":2}"#, 2)
+        assert!(db
+            .set_workspace_state("default", r#"{"v":2}"#, 2)
             .expect("initial save"));
-        assert!(!db.set_workspace_state("default", r#"{"v":"conflict"}"#, 2)
+        assert!(!db
+            .set_workspace_state("default", r#"{"v":"conflict"}"#, 2)
             .expect("conflicting same-seq save should return false"));
 
         let stored = db

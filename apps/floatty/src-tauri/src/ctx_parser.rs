@@ -120,7 +120,11 @@ pub struct CtxParser {
 }
 
 impl CtxParser {
-    pub fn new(db: Arc<FloattyDb>, config: ParserConfig, doc: Arc<RwLock<Doc>>) -> Result<Self, String> {
+    pub fn new(
+        db: Arc<FloattyDb>,
+        config: ParserConfig,
+        doc: Arc<RwLock<Doc>>,
+    ) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms))
             .build()
@@ -180,33 +184,33 @@ impl CtxParser {
                         tracing::info!(marker_count = marker_count, "Processing pending markers");
 
                         for marker in markers {
-                            let marker_span = tracing::info_span!("parse_marker", marker_id = %marker.id);
+                            let marker_span =
+                                tracing::info_span!("parse_marker", marker_id = %marker.id);
                             let _guard = marker_span.enter();
-                            
-                            let result = rt.block_on(parse_marker(&client, &config, &marker.raw_line));
+
+                            let result =
+                                rt.block_on(parse_marker(&client, &config, &marker.raw_line));
 
                             match result {
-                                Ok(parsed) => {
-                                    match serde_json::to_string(&parsed) {
-                                        Ok(json) => {
-                                            if let Err(e) = db.update_parsed(&marker.id, &json) {
-                                                tracing::error!(error = %e, "Failed to update marker");
-                                            } else {
-                                                tracing::debug!(
-                                                    timestamp = ?parsed.timestamp,
-                                                    project = ?parsed.project,
-                                                    "Marker parsed successfully"
-                                                );
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::error!(error = %e, "Failed to serialize parsed ctx");
-                                            if let Err(e) = db.mark_error(&marker.id) {
-                                                tracing::error!(error = %e, "Failed to mark error");
-                                            }
+                                Ok(parsed) => match serde_json::to_string(&parsed) {
+                                    Ok(json) => {
+                                        if let Err(e) = db.update_parsed(&marker.id, &json) {
+                                            tracing::error!(error = %e, "Failed to update marker");
+                                        } else {
+                                            tracing::debug!(
+                                                timestamp = ?parsed.timestamp,
+                                                project = ?parsed.project,
+                                                "Marker parsed successfully"
+                                            );
                                         }
                                     }
-                                }
+                                    Err(e) => {
+                                        tracing::error!(error = %e, "Failed to serialize parsed ctx");
+                                        if let Err(e) = db.mark_error(&marker.id) {
+                                            tracing::error!(error = %e, "Failed to mark error");
+                                        }
+                                    }
+                                },
                                 Err(e) => {
                                     tracing::warn!(error = %e, "Failed to parse marker");
                                     if let Err(e) = db.mark_error(&marker.id) {
@@ -250,7 +254,12 @@ impl Drop for CtxParser {
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
 
         // Join the thread if it's running (thread checks running flag every poll_interval_ms)
-        if let Some(handle) = self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some(handle) = self
+            .thread_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             tracing::info!("Joining ctx parser thread on drop");
             if handle.join().is_err() {
                 tracing::warn!("ctx parser thread panicked during join");
@@ -268,16 +277,36 @@ async fn parse_marker(
     let format = OllamaFormat {
         type_: "object".to_string(),
         properties: OllamaProperties {
-            timestamp: OllamaProperty { type_: "string".to_string() },
-            time: OllamaProperty { type_: "string".to_string() },
-            project: OllamaProperty { type_: "string".to_string() },
-            mode: OllamaProperty { type_: "string".to_string() },
-            meeting: OllamaProperty { type_: "string".to_string() },
-            issue: OllamaProperty { type_: "string".to_string() },
-            summary: OllamaProperty { type_: "string".to_string() },
-            message: OllamaProperty { type_: "string".to_string() },
+            timestamp: OllamaProperty {
+                type_: "string".to_string(),
+            },
+            time: OllamaProperty {
+                type_: "string".to_string(),
+            },
+            project: OllamaProperty {
+                type_: "string".to_string(),
+            },
+            mode: OllamaProperty {
+                type_: "string".to_string(),
+            },
+            meeting: OllamaProperty {
+                type_: "string".to_string(),
+            },
+            issue: OllamaProperty {
+                type_: "string".to_string(),
+            },
+            summary: OllamaProperty {
+                type_: "string".to_string(),
+            },
+            message: OllamaProperty {
+                type_: "string".to_string(),
+            },
         },
-        required: vec!["timestamp".to_string(), "time".to_string(), "summary".to_string()],
+        required: vec![
+            "timestamp".to_string(),
+            "time".to_string(),
+            "summary".to_string(),
+        ],
     };
 
     let request = OllamaRequest {
@@ -289,20 +318,21 @@ async fn parse_marker(
     };
 
     let url = format!("{}/api/generate", config.endpoint);
-    let resp = client
-        .post(&url)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_connect() {
-                format!("Cannot connect to Ollama at {}: {} (is it running?)", url, e)
-            } else if e.is_timeout() {
-                format!("Timeout connecting to Ollama at {} (try increasing timeout_ms)", url)
-            } else {
-                format!("HTTP error calling Ollama: {}", e)
-            }
-        })?;
+    let resp = client.post(&url).json(&request).send().await.map_err(|e| {
+        if e.is_connect() {
+            format!(
+                "Cannot connect to Ollama at {}: {} (is it running?)",
+                url, e
+            )
+        } else if e.is_timeout() {
+            format!(
+                "Timeout connecting to Ollama at {} (try increasing timeout_ms)",
+                url
+            )
+        } else {
+            format!("HTTP error calling Ollama: {}", e)
+        }
+    })?;
 
     // Check HTTP status before parsing
     if !resp.status().is_success() {
@@ -311,21 +341,22 @@ async fn parse_marker(
         return Err(format!("Ollama returned HTTP {}: {}", status, body).into());
     }
 
-    let resp_text = resp.text().await.map_err(|e| format!("Failed to read response body: {}", e))?;
+    let resp_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     // Try to parse as OllamaResponse
-    let ollama_resp: OllamaResponse = serde_json::from_str(&resp_text)
-        .map_err(|e| {
-            let preview: String = resp_text.chars().take(500).collect();
-            format!("Failed to parse Ollama response: {}. Raw: {}", e, preview)
-        })?;
+    let ollama_resp: OllamaResponse = serde_json::from_str(&resp_text).map_err(|e| {
+        let preview: String = resp_text.chars().take(500).collect();
+        format!("Failed to parse Ollama response: {}. Raw: {}", e, preview)
+    })?;
 
     // Parse the JSON response from Ollama
-    let raw: RawParsedCtx = serde_json::from_str(&ollama_resp.response)
-        .map_err(|e| {
-            let preview: String = ollama_resp.response.chars().take(500).collect();
-            format!("Failed to parse ctx JSON: {}. Raw: {}", e, preview)
-        })?;
+    let raw: RawParsedCtx = serde_json::from_str(&ollama_resp.response).map_err(|e| {
+        let preview: String = ollama_resp.response.chars().take(500).collect();
+        format!("Failed to parse ctx JSON: {}. Raw: {}", e, preview)
+    })?;
 
     // Convert to our ParsedCtx type (simple 1:1 mapping now)
     let parsed = ParsedCtx {

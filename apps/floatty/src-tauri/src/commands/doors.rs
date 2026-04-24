@@ -1,7 +1,6 @@
-/// Door discovery commands — thin Tauri wrappers over services::doors
-
-use crate::services::doors;
 use crate::paths::DataPaths;
+/// Door discovery commands — thin Tauri wrappers over services::doors
+use crate::services::doors;
 
 /// List all discovered doors in the doors directory.
 ///

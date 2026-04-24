@@ -121,7 +121,11 @@ async fn spawn(
     let real_pid = child.process_id();
     let child_killer = child.clone_killer();
     let handler = state.session_id.fetch_add(1, Ordering::Relaxed);
-    log::info!("[PTY] Spawned session {} with OS PID {:?}", handler, real_pid);
+    log::info!(
+        "[PTY] Spawned session {} with OS PID {:?}",
+        handler,
+        real_pid
+    );
 
     // Create internal channels for reader -> batcher communication
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
@@ -315,7 +319,12 @@ async fn resize(
     rows: u16,
     state: tauri::State<'_, PluginState>,
 ) -> Result<(), String> {
-    log::debug!("PTY resize requested: pid={}, cols={}, rows={}", pid, cols, rows);
+    log::debug!(
+        "PTY resize requested: pid={}, cols={}, rows={}",
+        pid,
+        cols,
+        rows
+    );
     let session = state
         .sessions
         .read()
@@ -359,7 +368,11 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
     // Use direct SIGKILL via libc instead of portable-pty's child_killer
     // (child_killer only sends SIGHUP which shells can ignore)
     if let Some(real_pid) = session.real_pid {
-        log::info!("[PTY] kill: sending SIGKILL to OS PID {} (session {})", real_pid, pid);
+        log::info!(
+            "[PTY] kill: sending SIGKILL to OS PID {} (session {})",
+            real_pid,
+            pid
+        );
 
         // Kill the process group (negative PID) to also kill child processes
         #[cfg(unix)]
@@ -382,21 +395,35 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
                 if result != 0 {
                     let err = std::io::Error::last_os_error();
                     if err.raw_os_error() != Some(libc::ESRCH) {
-                        log::warn!("[PTY] kill: SIGKILL to process group failed for PID {}: {}", real_pid, err);
+                        log::warn!(
+                            "[PTY] kill: SIGKILL to process group failed for PID {}: {}",
+                            real_pid,
+                            err
+                        );
                         // Fall back to killing just the process
                         let result = unsafe { libc::kill(safe_pid, libc::SIGKILL) };
                         if result != 0 {
                             let err = std::io::Error::last_os_error();
                             if err.raw_os_error() != Some(libc::ESRCH) {
-                                log::error!("[PTY] kill: SIGKILL failed for PID {}: {}", real_pid, err);
+                                log::error!(
+                                    "[PTY] kill: SIGKILL failed for PID {}: {}",
+                                    real_pid,
+                                    err
+                                );
                             }
                         }
                     }
                 } else {
-                    log::info!("[PTY] kill: SIGKILL sent successfully to process group for OS PID {}", real_pid);
+                    log::info!(
+                        "[PTY] kill: SIGKILL sent successfully to process group for OS PID {}",
+                        real_pid
+                    );
                 }
             } else {
-                log::warn!("[PTY] kill: PID {} too large for i32, using child_killer", real_pid);
+                log::warn!(
+                    "[PTY] kill: PID {} too large for i32, using child_killer",
+                    real_pid
+                );
                 if let Err(e) = session.child_killer.lock().await.kill() {
                     log::error!("[PTY] kill: child_killer fallback failed: {}", e);
                 }
@@ -411,7 +438,10 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
             }
         }
     } else {
-        log::warn!("[PTY] kill: no real_pid for session {}, using child_killer", pid);
+        log::warn!(
+            "[PTY] kill: no real_pid for session {}, using child_killer",
+            pid
+        );
         if let Err(e) = session.child_killer.lock().await.kill() {
             log::error!("[PTY] kill: child_killer failed for session {}: {}", pid, e);
         }
@@ -425,7 +455,10 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
 
 #[tauri::command]
 async fn dispose(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(), String> {
-    log::info!("[PTY] dispose command invoked for pid {} (cleanup only, no kill)", pid);
+    log::info!(
+        "[PTY] dispose command invoked for pid {} (cleanup only, no kill)",
+        pid
+    );
     // Remove session from map without killing (for already-exited PTYs)
     state.sessions.write().await.remove(&pid);
     Ok(())
@@ -434,7 +467,10 @@ async fn dispose(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Resul
 /// Deprecated: Exit status is now delivered via the on_exit channel event.
 /// This command is kept for API compatibility but will return an error.
 #[tauri::command]
-async fn exitstatus(_pid: PtyHandler, _state: tauri::State<'_, PluginState>) -> Result<u32, String> {
+async fn exitstatus(
+    _pid: PtyHandler,
+    _state: tauri::State<'_, PluginState>,
+) -> Result<u32, String> {
     Err("exitstatus command is deprecated: exit code is now delivered via the on_exit channel event".to_string())
 }
 
@@ -461,19 +497,29 @@ async fn kill_all(state: tauri::State<'_, PluginState>) -> Result<u32, String> {
                 if result != 0 {
                     let err = std::io::Error::last_os_error();
                     if err.raw_os_error() != Some(libc::ESRCH) {
-                        log::warn!("[PTY] Failed to kill session {} (OS PID {}): {}", handler, real_pid, err);
+                        log::warn!(
+                            "[PTY] Failed to kill session {} (OS PID {}): {}",
+                            handler,
+                            real_pid,
+                            err
+                        );
                     }
                 }
             } else {
-                log::warn!("[PTY] kill_all: PID {} too large for i32, using child_killer", real_pid);
+                log::warn!(
+                    "[PTY] kill_all: PID {} too large for i32, using child_killer",
+                    real_pid
+                );
                 if let Err(e) = session.child_killer.lock().await.kill() {
-                    log::warn!("[PTY] kill_all: child_killer fallback failed for session {}: {}", handler, e);
+                    log::warn!(
+                        "[PTY] kill_all: child_killer fallback failed for session {}: {}",
+                        handler,
+                        e
+                    );
                 }
             }
-        } else {
-            if let Err(e) = session.child_killer.lock().await.kill() {
-                log::warn!("[PTY] Failed to kill session {}: {}", handler, e);
-            }
+        } else if let Err(e) = session.child_killer.lock().await.kill() {
+            log::warn!("[PTY] Failed to kill session {}: {}", handler, e);
         }
 
         #[cfg(windows)]
@@ -545,7 +591,10 @@ mod tests {
     fn test_extract_selection_complex_path() {
         // Path with spaces and special characters
         let data = b"\x1b[?1049l/Users/test/My Documents/file (1).txt\n";
-        assert_eq!(extract_selection(data), "/Users/test/My Documents/file (1).txt");
+        assert_eq!(
+            extract_selection(data),
+            "/Users/test/My Documents/file (1).txt"
+        );
     }
 
     #[test]

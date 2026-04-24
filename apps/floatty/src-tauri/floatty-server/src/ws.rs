@@ -41,6 +41,7 @@
 //! sequence number when no updates have been sent, allowing clients to detect
 //! gaps that may have occurred during the non-atomic persist-broadcast window.
 
+use crate::{OutlineContext, OutlineManager};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -48,7 +49,6 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
-use crate::{OutlineContext, OutlineManager};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use floatty_core::YDocStore;
 use futures_util::{SinkExt, StreamExt};
@@ -125,13 +125,23 @@ impl WsBroadcaster {
             presence: None,
         };
         // Mark that we sent an update (heartbeat will skip if true)
-        self.update_sent_since_heartbeat.store(true, Ordering::Relaxed);
+        self.update_sent_since_heartbeat
+            .store(true, Ordering::Relaxed);
         match self.tx.send(msg) {
             Ok(receiver_count) => {
                 if let Some(s) = seq {
-                    tracing::debug!("Broadcast {} bytes (seq={}) to {} client(s)", update_len, s, receiver_count);
+                    tracing::debug!(
+                        "Broadcast {} bytes (seq={}) to {} client(s)",
+                        update_len,
+                        s,
+                        receiver_count
+                    );
                 } else {
-                    tracing::debug!("Broadcast {} bytes to {} client(s)", update_len, receiver_count);
+                    tracing::debug!(
+                        "Broadcast {} bytes to {} client(s)",
+                        update_len,
+                        receiver_count
+                    );
                 }
             }
             Err(_) => {
@@ -183,7 +193,8 @@ impl WsBroadcaster {
     /// Check and reset the update-sent flag.
     /// Returns true if an update was sent since last check.
     fn check_and_reset_update_flag(&self) -> bool {
-        self.update_sent_since_heartbeat.swap(false, Ordering::Relaxed)
+        self.update_sent_since_heartbeat
+            .swap(false, Ordering::Relaxed)
     }
 
     /// Subscribe to updates (called by each WebSocket connection)
@@ -223,7 +234,10 @@ pub fn start_heartbeat(broadcaster: Arc<WsBroadcaster>, store: Arc<YDocStore>) {
             }
         }
     });
-    tracing::info!("Heartbeat task started (interval: {}s)", HEARTBEAT_INTERVAL_SECS);
+    tracing::info!(
+        "Heartbeat task started (interval: {}s)",
+        HEARTBEAT_INTERVAL_SECS
+    );
 }
 
 /// Shared state for the WebSocket route — needs both default broadcaster and OutlineManager
@@ -297,7 +311,7 @@ async fn handle_socket(
                             continue;
                         }
                     };
-                    if sender.send(Message::Text(json.into())).await.is_err() {
+                    if sender.send(Message::Text(json)).await.is_err() {
                         break; // Client disconnected
                     }
                 }
@@ -361,7 +375,10 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
 
         assert!(json.contains("\"seq\":525"), "Should have seq field");
-        assert!(!json.contains("\"data\""), "Should NOT have data field (skip_serializing_if)");
+        assert!(
+            !json.contains("\"data\""),
+            "Should NOT have data field (skip_serializing_if)"
+        );
         assert!(!json.contains("\"txId\""), "Should NOT have txId field");
 
         // Verify it parses as expected JSON shape

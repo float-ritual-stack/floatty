@@ -8,9 +8,9 @@
 //! - Use hide() not close() for panel lifecycle
 //! - Lazy init to avoid race with main window
 
-use tauri::{AppHandle, Manager, WebviewUrl};
-use tauri_nspanel::{tauri_panel, ManagerExt, WebviewWindowExt, PanelLevel};
 use std::sync::{Once, OnceLock};
+use tauri::{AppHandle, Manager, WebviewUrl};
+use tauri_nspanel::{tauri_panel, ManagerExt, PanelLevel, WebviewWindowExt};
 
 // Define our panel type using the tauri_panel! macro
 tauri_panel! {
@@ -50,8 +50,9 @@ fn ensure_panel_exists(app: &AppHandle) -> Result<(), String> {
         )
         .title("Test Panel")
         .inner_size(300.0, 200.0)
-        .visible(false)  // Start hidden
-        .build() {
+        .visible(false) // Start hidden
+        .build()
+        {
             Ok(w) => w,
             Err(e) => {
                 let err = format!("Failed to create window: {}", e);

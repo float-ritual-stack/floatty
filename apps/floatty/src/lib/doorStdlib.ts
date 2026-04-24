@@ -184,7 +184,6 @@ export const filterBy = (pred: (x: any) => boolean) => (arr: any[]) =>
 export const take = (n: number) => (arr: any[]) =>
   arr.slice(0, n);
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const groupBy = <T>(fn: (item: T) => string) => (arr: T[]): Map<string, T[]> =>
   arr.reduce((map, item) => {
     const key = fn(item);

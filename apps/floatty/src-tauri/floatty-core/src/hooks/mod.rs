@@ -447,7 +447,12 @@ mod tests {
                 true
             }
             fn accepts_origins(&self) -> Option<Vec<Origin>> {
-                Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])
+                Some(vec![
+                    Origin::User,
+                    Origin::Agent,
+                    Origin::BulkImport,
+                    Origin::Remote,
+                ])
             }
             fn process(&self, _batch: &BlockChangeBatch, _store: Arc<YDocStore>) {}
         }
@@ -975,8 +980,20 @@ mod tests {
         registry.dispatch(&batch, store);
 
         // Verify execution order: first(10) < second(50) < third(100)
-        assert_eq!(FIRST_ORDER.load(Ordering::SeqCst), 0, "first should execute 0th");
-        assert_eq!(SECOND_ORDER.load(Ordering::SeqCst), 1, "second should execute 1st");
-        assert_eq!(THIRD_ORDER.load(Ordering::SeqCst), 2, "third should execute 2nd");
+        assert_eq!(
+            FIRST_ORDER.load(Ordering::SeqCst),
+            0,
+            "first should execute 0th"
+        );
+        assert_eq!(
+            SECOND_ORDER.load(Ordering::SeqCst),
+            1,
+            "second should execute 1st"
+        );
+        assert_eq!(
+            THIRD_ORDER.load(Ordering::SeqCst),
+            2,
+            "third should execute 2nd"
+        );
     }
 }

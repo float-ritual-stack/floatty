@@ -68,13 +68,20 @@ pub fn data_dir() -> PathBuf {
 
 // Re-exports for convenience
 pub use batcher::BatchedChangeCollector;
-pub use block::{Block, BlockType, parse_block_type};
-pub use emitter::{ChangeEmitter, ChangeBuilder, parse_origin};
+pub use block::{parse_block_type, Block, BlockType};
+pub use emitter::{parse_origin, ChangeBuilder, ChangeEmitter};
 pub use events::{BlockChange, BlockChangeBatch};
-pub use hooks::{BlockHook, HookRegistry, HookSystem, InheritanceIndex, InheritanceIndexHook, InheritedMarker, MetadataExtractionHook, PageNameIndex, PageNameIndexHook, PageSuggestion, should_process, parsing};
+pub use hooks::{
+    parsing, should_process, BlockHook, HookRegistry, HookSystem, InheritanceIndex,
+    InheritanceIndexHook, InheritedMarker, MetadataExtractionHook, PageNameIndex,
+    PageNameIndexHook, PageSuggestion,
+};
 pub use metadata::{BlockMetadata, Marker};
 pub use origin::Origin;
 pub use outline::{OutlineError, OutlineInfo, OutlineName};
-pub use persistence::{PersistenceError, YDocPersistence, default_db_path};
-pub use search::{IndexManager, SchemaFields, SearchError, SearchFilters, SearchHit, SearchService, TantivyWriter, WriterHandle, WriterMessage};
+pub use persistence::{default_db_path, PersistenceError, YDocPersistence};
+pub use search::{
+    IndexManager, SchemaFields, SearchError, SearchFilters, SearchHit, SearchService,
+    TantivyWriter, WriterHandle, WriterMessage,
+};
 pub use store::{ChangeCallback, StoreError, YDocStore, DEFAULT_DOC_KEY};

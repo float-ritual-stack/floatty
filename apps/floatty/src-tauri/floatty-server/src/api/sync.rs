@@ -178,7 +178,11 @@ async fn get_state_hash(
     }))
 }
 
-#[tracing::instrument(skip(state, req), fields(route_family = "sync", handler = "apply_update"), err)]
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "sync", handler = "apply_update"),
+    err
+)]
 async fn apply_update(
     State(state): State<AppState>,
     Json(req): Json<UpdateRequest>,
@@ -195,7 +199,11 @@ async fn apply_update(
     Ok(StatusCode::OK)
 }
 
-#[tracing::instrument(skip(state, headers, req), fields(route_family = "sync", handler = "restore_state"), err)]
+#[tracing::instrument(
+    skip(state, headers, req),
+    fields(route_family = "sync", handler = "restore_state"),
+    err
+)]
 async fn restore_state(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -247,7 +255,11 @@ async fn restore_state(
     }))
 }
 
-#[tracing::instrument(skip(state, query), fields(route_family = "sync", handler = "get_updates_since"), err)]
+#[tracing::instrument(
+    skip(state, query),
+    fields(route_family = "sync", handler = "get_updates_since"),
+    err
+)]
 async fn get_updates_since(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<UpdatesQuery>,

@@ -2,7 +2,6 @@
 ///
 /// Pure business logic for ctx:: markers and app configuration.
 /// Testable without Tauri runtime.
-
 use crate::config::{AggregatorConfig, MarkerCounts};
 use crate::db::{CtxMarker, FloattyDb};
 use std::path::Path;
@@ -14,11 +13,7 @@ use std::sync::Arc;
 /// * `db` - Database handle
 /// * `limit` - Maximum number of markers to return
 /// * `offset` - Offset for pagination
-pub fn get_markers(
-    db: &Arc<FloattyDb>,
-    limit: i32,
-    offset: i32,
-) -> Result<Vec<CtxMarker>, String> {
+pub fn get_markers(db: &Arc<FloattyDb>, limit: i32, offset: i32) -> Result<Vec<CtxMarker>, String> {
     db.get_all(limit, offset).map_err(|e| e.to_string())
 }
 

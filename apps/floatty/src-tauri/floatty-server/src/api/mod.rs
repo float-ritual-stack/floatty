@@ -17,18 +17,14 @@ pub mod outlines;
 pub mod search;
 pub mod sync;
 
-use axum::{
-    http::StatusCode,
-    response::IntoResponse,
-    Json, Router,
-};
+use axum::{http::StatusCode, response::IntoResponse, Json, Router};
 use floatty_core::{HookSystem, InheritanceIndex, PageNameIndex, YDocStore};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
-use yrs::{Array, Map, ReadTxn, Transact};
+use yrs::{Array, Map, ReadTxn};
 
 /// Cache key for computed door-block markdown projections.
 /// `(block_id, hash(output.data))` — hash change = automatic invalidation.
@@ -44,7 +40,10 @@ use crate::WsBroadcaster;
 /// - New: Embedded Y.Map (from MapPrelim insertion)
 /// - Any::Map: JSON-like map value
 /// - Legacy: JSON string (for backwards compatibility)
-pub(crate) fn extract_metadata_from_yrs<T: ReadTxn>(value: yrs::Out, txn: &T) -> Option<serde_json::Value> {
+pub(crate) fn extract_metadata_from_yrs<T: ReadTxn>(
+    value: yrs::Out,
+    txn: &T,
+) -> Option<serde_json::Value> {
     match value {
         // New format: Embedded Y.Map (created by MapPrelim)
         yrs::Out::YMap(map) => {
@@ -79,7 +78,8 @@ pub(crate) fn yrs_out_to_json<T: ReadTxn>(out: yrs::Out, txn: &T) -> serde_json:
             serde_json::Value::Object(json_map)
         }
         yrs::Out::YArray(arr) => {
-            let items: Vec<serde_json::Value> = arr.iter(txn).map(|v| yrs_out_to_json(v, txn)).collect();
+            let items: Vec<serde_json::Value> =
+                arr.iter(txn).map(|v| yrs_out_to_json(v, txn)).collect();
             serde_json::Value::Array(items)
         }
         yrs::Out::Any(any) => yrs_any_to_json(any),
@@ -93,7 +93,7 @@ pub(crate) fn yrs_any_to_json(any: yrs::Any) -> serde_json::Value {
         yrs::Any::Null => serde_json::Value::Null,
         yrs::Any::Bool(b) => serde_json::Value::Bool(b),
         yrs::Any::Number(n) => serde_json::Value::Number(
-            serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))
+            serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0)),
         ),
         yrs::Any::BigInt(n) => serde_json::Value::Number(n.into()),
         yrs::Any::String(s) => serde_json::Value::String(s.to_string()),
@@ -147,12 +147,15 @@ pub use sync::{
 // Search DTOs re-exported (used by outline handlers, block_service, tests)
 pub use search::{BlockSearchHit, BlockSearchQuery, BlockSearchResponse};
 // Export DTOs re-exported (used by outline handlers, tests)
-pub use export::{ExportedBlock, ExportedOutline, TopologyNode, TopologyResponse, TopologyMeta, DailyEntry, TopologyQuery, PageContentResponse};
+pub use export::{
+    DailyEntry, ExportedBlock, ExportedOutline, PageContentResponse, TopologyMeta, TopologyNode,
+    TopologyQuery, TopologyResponse,
+};
 // Block DTOs re-exported (used by block_service, outline handlers, discovery, tests)
 pub use blocks::{
-    BlockDto, BlocksResponse, BlockContextQuery, BlockRef, BlockWithContextResponse,
-    BlocksQuery, CreateBlockRequest, ImportBlockRequest, InheritedMarkerDto,
-    ResolveResponse, SiblingContext, TokenEstimate, TreeNode, UpdateBlockRequest,
+    BlockContextQuery, BlockDto, BlockRef, BlockWithContextResponse, BlocksQuery, BlocksResponse,
+    CreateBlockRequest, ImportBlockRequest, InheritedMarkerDto, ResolveResponse, SiblingContext,
+    TokenEstimate, TreeNode, UpdateBlockRequest,
 };
 
 /// Standard error response
@@ -188,7 +191,9 @@ pub enum ApiError {
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
 
-    #[error("Updates compacted: requested since {requested}, compacted through {compacted_through}")]
+    #[error(
+        "Updates compacted: requested since {requested}, compacted through {compacted_through}"
+    )]
     UpdatesCompacted {
         requested: i64,
         compacted_through: i64,
@@ -211,7 +216,9 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status = match &self {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
-            ApiError::InvalidBase64(_) | ApiError::InvalidParent(_) | ApiError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidBase64(_)
+            | ApiError::InvalidParent(_)
+            | ApiError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::SearchUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Search(_) => StatusCode::BAD_REQUEST,
             ApiError::Store(_) | ApiError::LockPoisoned => StatusCode::INTERNAL_SERVER_ERROR,
@@ -222,7 +229,11 @@ impl IntoResponse for ApiError {
         };
 
         // For UpdatesCompacted, return structured JSON with compaction info
-        if let ApiError::UpdatesCompacted { requested, compacted_through } = &self {
+        if let ApiError::UpdatesCompacted {
+            requested,
+            compacted_through,
+        } = &self
+        {
             let body = Json(UpdatesCompactedResponse {
                 error: self.to_string(),
                 compacted_through: *compacted_through,
@@ -292,12 +303,25 @@ mod tests {
     use http_body_util::BodyExt;
     use tempfile::tempdir;
     use tower::{Service, ServiceExt};
+    use yrs::Transact;
 
-    fn test_outline_manager(dir: &std::path::Path, store: &Arc<YDocStore>, hook_system: &Arc<floatty_core::HookSystem>, broadcaster: &Arc<crate::WsBroadcaster>) -> Arc<crate::OutlineManager> {
+    fn test_outline_manager(
+        dir: &std::path::Path,
+        store: &Arc<YDocStore>,
+        hook_system: &Arc<floatty_core::HookSystem>,
+        broadcaster: &Arc<crate::WsBroadcaster>,
+    ) -> Arc<crate::OutlineManager> {
         let ctx = Arc::new(crate::OutlineContext::new_default(
-            Arc::clone(store), Arc::clone(hook_system), Arc::clone(broadcaster), None, None,
+            Arc::clone(store),
+            Arc::clone(hook_system),
+            Arc::clone(broadcaster),
+            None,
+            None,
         ));
-        let no_backup = crate::config::BackupConfig { enabled: false, ..Default::default() };
+        let no_backup = crate::config::BackupConfig {
+            enabled: false,
+            ..Default::default()
+        };
         Arc::new(crate::OutlineManager::new_with_default(dir, ctx, no_backup))
     }
 
@@ -308,7 +332,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let outline_manager = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let router = create_router(Arc::clone(&store), broadcaster, hook_system, None, outline_manager);
+        let router = create_router(
+            Arc::clone(&store),
+            broadcaster,
+            hook_system,
+            None,
+            outline_manager,
+        );
         (router, dir, store)
     }
 
@@ -323,7 +353,13 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let health: HealthResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(health.status, "ok");
     }
@@ -333,19 +369,32 @@ mod tests {
         let (app, _dir, _store) = test_app();
 
         let response = app
-            .oneshot(Request::get("/api/v1/state/hash").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/v1/state/hash")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let hash_resp: StateHashResponse = serde_json::from_slice(&body).unwrap();
 
         // SHA256 hash should be 64 hex characters
         assert_eq!(hash_resp.hash.len(), 64, "Hash should be 64 hex chars");
         // Timestamp should be reasonable (after year 2024)
-        assert!(hash_resp.timestamp > 1_700_000_000_000, "Timestamp should be recent");
+        assert!(
+            hash_resp.timestamp > 1_700_000_000_000,
+            "Timestamp should be recent"
+        );
     }
 
     #[tokio::test]
@@ -364,7 +413,13 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block: BlockDto = serde_json::from_slice(&body).unwrap();
         assert_eq!(block.content, "Test block");
         assert!(block.parent_id.is_none());
@@ -382,11 +437,19 @@ mod tests {
             .body(Body::from(r#"{"content": "Parent"}"#))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let parent: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Create child block
@@ -396,26 +459,42 @@ mod tests {
             .body(Body::from(child_req))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let child: BlockDto = serde_json::from_slice(&body).unwrap();
         assert_eq!(child.parent_id, Some(parent.id.clone()));
 
         // Verify parent's childIds was updated
-        let request = Request::get(&format!("/api/v1/blocks/{}", parent.id))
+        let request = Request::get(format!("/api/v1/blocks/{}", parent.id))
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let updated_parent: BlockDto = serde_json::from_slice(&body).unwrap();
         assert!(updated_parent.child_ids.contains(&child.id));
     }
@@ -428,7 +507,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create parent
         let response = app
@@ -441,7 +526,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let parent: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Create child
@@ -456,14 +547,20 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let child: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Delete child
         let response = app
             .clone()
             .oneshot(
-                Request::delete(&format!("/api/v1/blocks/{}", child.id))
+                Request::delete(format!("/api/v1/blocks/{}", child.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -474,13 +571,19 @@ mod tests {
         // Verify parent's childIds no longer contains child
         let response = app
             .oneshot(
-                Request::get(&format!("/api/v1/blocks/{}", parent.id))
+                Request::get(format!("/api/v1/blocks/{}", parent.id))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let updated_parent: BlockDto = serde_json::from_slice(&body).unwrap();
         assert!(!updated_parent.child_ids.contains(&child.id));
     }
@@ -509,7 +612,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create block
         let response = app
@@ -522,14 +631,20 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Update block
         let response = app
             .clone()
             .oneshot(
-                Request::patch(&format!("/api/v1/blocks/{}", block.id))
+                Request::patch(format!("/api/v1/blocks/{}", block.id))
                     .header("Content-Type", "application/json")
                     .body(Body::from(r#"{"content": "Updated"}"#))
                     .unwrap(),
@@ -538,7 +653,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let updated: BlockDto = serde_json::from_slice(&body).unwrap();
         assert_eq!(updated.content, "Updated");
     }
@@ -557,7 +678,13 @@ mod tests {
             .await
             .unwrap();
 
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block: BlockDto = serde_json::from_slice(&body).unwrap();
         assert_eq!(block.block_type, "sh");
     }
@@ -573,27 +700,41 @@ mod tests {
             .body(Body::from(r#"{"content": "Test"}"#))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Now GET that same block
         let url = format!("/api/v1/blocks/{}", block.id);
         eprintln!("GET URL: {}", url);
-        let request = Request::get(&url)
-            .body(Body::empty())
-            .unwrap();
+        let request = Request::get(&url).body(Body::empty()).unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         let status = response.status();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         eprintln!("Response status: {}, body len: {}", status, body.len());
         assert_eq!(status, StatusCode::OK, "GET should return 200");
     }
@@ -615,7 +756,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Check store directly - is the block in the Y.Doc?
@@ -629,7 +776,11 @@ mod tests {
 
         let blocks_map = blocks_map.unwrap();
         let block_in_doc = blocks_map.get(&txn, &block.id);
-        assert!(block_in_doc.is_some(), "created block should be in Y.Doc. Block ID: {}", block.id);
+        assert!(
+            block_in_doc.is_some(),
+            "created block should be in Y.Doc. Block ID: {}",
+            block.id
+        );
     }
 
     #[tokio::test]
@@ -655,9 +806,18 @@ mod tests {
         );
 
         if status == StatusCode::OK {
-            let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+            let body: Vec<u8> = response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec();
             let result: BlockSearchResponse = serde_json::from_slice(&body).unwrap();
-            assert!(result.hits.is_empty(), "Empty query should return no results");
+            assert!(
+                result.hits.is_empty(),
+                "Empty query should return no results"
+            );
         }
     }
 
@@ -669,7 +829,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let router = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let router = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
         let mut app = router.into_service();
 
         // Create a block with searchable content
@@ -678,7 +844,8 @@ mod tests {
             .body(Body::from(r#"{"content": "floatty search test"}"#))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
             .await
             .unwrap();
@@ -691,7 +858,8 @@ mod tests {
             attempts += 1;
 
             let response = ServiceExt::<Request<Body>>::ready(&mut app)
-                .await.unwrap()
+                .await
+                .unwrap()
                 .call(
                     Request::get("/api/v1/search?q=floatty")
                         .body(Body::empty())
@@ -712,14 +880,23 @@ mod tests {
             assert_eq!(status, StatusCode::OK);
 
             // When search IS available, verify it actually returns the created block
-            let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+            let body: Vec<u8> = response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec();
             let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let hits = result["hits"].as_array();
-            if hits.map_or(true, |h| h.is_empty()) && attempts < 20 {
+            if hits.is_none_or(|h| h.is_empty()) && attempts < 20 {
                 continue; // Index commit hasn't happened yet, retry
             }
             if let Some(h) = hits {
-                assert!(!h.is_empty(), "search returned 200 but no hits after indexing");
+                assert!(
+                    !h.is_empty(),
+                    "search returned 200 but no hits after indexing"
+                );
             }
             break;
         }
@@ -733,7 +910,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create parent A
         let response = app
@@ -746,7 +929,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let parent_a: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Create parent B
@@ -760,7 +949,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let parent_b: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Create child under parent A
@@ -775,7 +970,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let child: BlockDto = serde_json::from_slice(&body).unwrap();
         assert_eq!(child.parent_id, Some(parent_a.id.clone()));
 
@@ -784,7 +985,7 @@ mod tests {
         let response = app
             .clone()
             .oneshot(
-                Request::patch(&format!("/api/v1/blocks/{}", child.id))
+                Request::patch(format!("/api/v1/blocks/{}", child.id))
                     .header("Content-Type", "application/json")
                     .body(Body::from(reparent_req))
                     .unwrap(),
@@ -792,7 +993,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let updated_child: BlockDto = serde_json::from_slice(&body).unwrap();
         assert_eq!(updated_child.parent_id, Some(parent_b.id.clone()));
 
@@ -800,28 +1007,46 @@ mod tests {
         let response = app
             .clone()
             .oneshot(
-                Request::get(&format!("/api/v1/blocks/{}", parent_a.id))
+                Request::get(format!("/api/v1/blocks/{}", parent_a.id))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let updated_parent_a: BlockDto = serde_json::from_slice(&body).unwrap();
-        assert!(!updated_parent_a.child_ids.contains(&child.id), "Parent A should no longer have child");
+        assert!(
+            !updated_parent_a.child_ids.contains(&child.id),
+            "Parent A should no longer have child"
+        );
 
         // Verify parent B now has child
         let response = app
             .oneshot(
-                Request::get(&format!("/api/v1/blocks/{}", parent_b.id))
+                Request::get(format!("/api/v1/blocks/{}", parent_b.id))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let updated_parent_b: BlockDto = serde_json::from_slice(&body).unwrap();
-        assert!(updated_parent_b.child_ids.contains(&child.id), "Parent B should now have child");
+        assert!(
+            updated_parent_b.child_ids.contains(&child.id),
+            "Parent B should now have child"
+        );
     }
 
     #[tokio::test]
@@ -832,7 +1057,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create parent
         let response = app
@@ -845,7 +1076,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let parent: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Create child under parent
@@ -860,14 +1097,20 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let child: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Move child to root (parentId: null)
         let response = app
             .clone()
             .oneshot(
-                Request::patch(&format!("/api/v1/blocks/{}", child.id))
+                Request::patch(format!("/api/v1/blocks/{}", child.id))
                     .header("Content-Type", "application/json")
                     .body(Body::from(r#"{"parentId": null}"#))
                     .unwrap(),
@@ -875,36 +1118,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let updated_child: BlockDto = serde_json::from_slice(&body).unwrap();
-        assert!(updated_child.parent_id.is_none(), "Child should now be root");
+        assert!(
+            updated_child.parent_id.is_none(),
+            "Child should now be root"
+        );
 
         // Verify parent no longer has child
         let response = app
             .clone()
             .oneshot(
-                Request::get(&format!("/api/v1/blocks/{}", parent.id))
+                Request::get(format!("/api/v1/blocks/{}", parent.id))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let updated_parent: BlockDto = serde_json::from_slice(&body).unwrap();
         assert!(!updated_parent.child_ids.contains(&child.id));
 
         // Verify child is now in rootIds
         let response = app
-            .oneshot(
-                Request::get("/api/v1/blocks")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/v1/blocks").body(Body::empty()).unwrap())
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let blocks: BlocksResponse = serde_json::from_slice(&body).unwrap();
-        assert!(blocks.root_ids.contains(&child.id), "Child should now be in rootIds");
+        assert!(
+            blocks.root_ids.contains(&child.id),
+            "Child should now be in rootIds"
+        );
     }
 
     #[tokio::test]
@@ -915,7 +1178,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create two root blocks
         let response = app
@@ -928,7 +1197,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block_a: BlockDto = serde_json::from_slice(&body).unwrap();
 
         let response = app
@@ -941,7 +1216,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block_b: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Verify both are roots
@@ -950,7 +1231,13 @@ mod tests {
             .oneshot(Request::get("/api/v1/blocks").body(Body::empty()).unwrap())
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let blocks: BlocksResponse = serde_json::from_slice(&body).unwrap();
         assert!(blocks.root_ids.contains(&block_a.id));
         assert!(blocks.root_ids.contains(&block_b.id));
@@ -960,7 +1247,7 @@ mod tests {
         let response = app
             .clone()
             .oneshot(
-                Request::patch(&format!("/api/v1/blocks/{}", block_b.id))
+                Request::patch(format!("/api/v1/blocks/{}", block_b.id))
                     .header("Content-Type", "application/json")
                     .body(Body::from(reparent_req))
                     .unwrap(),
@@ -975,22 +1262,43 @@ mod tests {
             .oneshot(Request::get("/api/v1/blocks").body(Body::empty()).unwrap())
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let blocks: BlocksResponse = serde_json::from_slice(&body).unwrap();
-        assert!(blocks.root_ids.contains(&block_a.id), "Block A should still be root");
-        assert!(!blocks.root_ids.contains(&block_b.id), "Block B should no longer be root");
+        assert!(
+            blocks.root_ids.contains(&block_a.id),
+            "Block A should still be root"
+        );
+        assert!(
+            !blocks.root_ids.contains(&block_b.id),
+            "Block B should no longer be root"
+        );
 
         let response = app
             .oneshot(
-                Request::get(&format!("/api/v1/blocks/{}", block_a.id))
+                Request::get(format!("/api/v1/blocks/{}", block_a.id))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block_a_updated: BlockDto = serde_json::from_slice(&body).unwrap();
-        assert!(block_a_updated.child_ids.contains(&block_b.id), "Block A should have Block B as child");
+        assert!(
+            block_a_updated.child_ids.contains(&block_b.id),
+            "Block A should have Block B as child"
+        );
     }
 
     #[tokio::test]
@@ -1008,14 +1316,20 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let block: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Try to parent block under itself
         let reparent_req = format!(r#"{{"parentId": "{}"}}"#, block.id);
         let response = app
             .oneshot(
-                Request::patch(&format!("/api/v1/blocks/{}", block.id))
+                Request::patch(format!("/api/v1/blocks/{}", block.id))
                     .header("Content-Type", "application/json")
                     .body(Body::from(reparent_req))
                     .unwrap(),
@@ -1023,7 +1337,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "Self-parenting should be rejected");
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "Self-parenting should be rejected"
+        );
     }
 
     #[tokio::test]
@@ -1034,7 +1352,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create parent -> child hierarchy
         let response = app
@@ -1047,7 +1371,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let parent: BlockDto = serde_json::from_slice(&body).unwrap();
 
         let child_req = format!(r#"{{"content": "Child", "parentId": "{}"}}"#, parent.id);
@@ -1061,14 +1391,20 @@ mod tests {
             )
             .await
             .unwrap();
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let child: BlockDto = serde_json::from_slice(&body).unwrap();
 
         // Try to parent parent under child (would create cycle)
         let reparent_req = format!(r#"{{"parentId": "{}"}}"#, child.id);
         let response = app
             .oneshot(
-                Request::patch(&format!("/api/v1/blocks/{}", parent.id))
+                Request::patch(format!("/api/v1/blocks/{}", parent.id))
                     .header("Content-Type", "application/json")
                     .body(Body::from(reparent_req))
                     .unwrap(),
@@ -1076,7 +1412,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "Cycle should be rejected");
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "Cycle should be rejected"
+        );
     }
 
     #[tokio::test]
@@ -1087,7 +1427,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create a block first
         let _response = app
@@ -1103,7 +1449,11 @@ mod tests {
 
         // Get binary export
         let response = app
-            .oneshot(Request::get("/api/v1/export/binary").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/v1/export/binary")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -1116,11 +1466,23 @@ mod tests {
         // Check Content-Disposition has .ydoc filename
         let disposition = response.headers().get("content-disposition").unwrap();
         let disposition_str = disposition.to_str().unwrap();
-        assert!(disposition_str.contains("floatty-"), "Should have floatty prefix");
-        assert!(disposition_str.contains(".ydoc"), "Should have .ydoc extension");
+        assert!(
+            disposition_str.contains("floatty-"),
+            "Should have floatty prefix"
+        );
+        assert!(
+            disposition_str.contains(".ydoc"),
+            "Should have .ydoc extension"
+        );
 
         // Body should be non-empty binary data
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         assert!(!body.is_empty(), "Binary export should not be empty");
     }
 
@@ -1132,7 +1494,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create a block first
         let _response = app
@@ -1148,7 +1516,11 @@ mod tests {
 
         // Get JSON export
         let response = app
-            .oneshot(Request::get("/api/v1/export/json").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/v1/export/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -1161,11 +1533,23 @@ mod tests {
         // Check Content-Disposition has .json filename
         let disposition = response.headers().get("content-disposition").unwrap();
         let disposition_str = disposition.to_str().unwrap();
-        assert!(disposition_str.contains("floatty-"), "Should have floatty prefix");
-        assert!(disposition_str.contains(".json"), "Should have .json extension");
+        assert!(
+            disposition_str.contains("floatty-"),
+            "Should have floatty prefix"
+        );
+        assert!(
+            disposition_str.contains(".json"),
+            "Should have .json extension"
+        );
 
         // Parse and validate JSON structure
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let export: ExportedOutline = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(export.version, 1);
@@ -1187,7 +1571,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create some updates via API (creates blocks which generate Y.Doc updates)
         for i in 0..5 {
@@ -1221,12 +1611,28 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::GONE, "Should return 410 Gone");
+        assert_eq!(
+            response.status(),
+            StatusCode::GONE,
+            "Should return 410 Gone"
+        );
 
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(error.get("compactedThrough").is_some(), "Should include compactedThrough");
-        assert!(error.get("requestedSince").is_some(), "Should include requestedSince");
+        assert!(
+            error.get("compactedThrough").is_some(),
+            "Should include compactedThrough"
+        );
+        assert!(
+            error.get("requestedSince").is_some(),
+            "Should include requestedSince"
+        );
     }
 
     #[tokio::test]
@@ -1239,7 +1645,13 @@ mod tests {
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
         let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(Arc::clone(&store), Arc::clone(&broadcaster), hook_system, None, om);
+        let app = create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            hook_system,
+            None,
+            om,
+        );
 
         // Create initial updates
         for i in 0..3 {
@@ -1277,21 +1689,34 @@ mod tests {
         // Request since=boundary_seq (exactly at boundary) — should work
         let response = app
             .oneshot(
-                Request::get(&format!("/api/v1/updates?since={}", boundary_seq))
+                Request::get(format!("/api/v1/updates?since={}", boundary_seq))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK, "Boundary exact match should return 200");
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "Boundary exact match should return 200"
+        );
 
-        let body: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let body: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: UpdatesResponse = serde_json::from_slice(&body).unwrap();
 
         // Should return at least the post-compaction update
         // Note: may also include the compaction snapshot itself
-        assert!(!result.updates.is_empty(), "Should have updates after boundary");
+        assert!(
+            !result.updates.is_empty(),
+            "Should have updates after boundary"
+        );
     }
 
     // ========================================================================
@@ -1299,7 +1724,11 @@ mod tests {
     // ========================================================================
 
     /// Helper: create a block via POST, return its BlockDto
-    async fn create_test_block(app: &mut axum::routing::RouterIntoService<Body>, content: &str, parent_id: Option<&str>) -> BlockDto {
+    async fn create_test_block(
+        app: &mut axum::routing::RouterIntoService<Body>,
+        content: &str,
+        parent_id: Option<&str>,
+    ) -> BlockDto {
         let body = match parent_id {
             Some(pid) => format!(r#"{{"content": "{}", "parentId": "{}"}}"#, content, pid),
             None => format!(r#"{{"content": "{}"}}"#, content),
@@ -1309,40 +1738,64 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         serde_json::from_slice(&bytes).unwrap()
     }
 
     /// Helper: GET a block, return Option<BlockDto> (None if 404)
-    async fn get_test_block(app: &mut axum::routing::RouterIntoService<Body>, id: &str) -> Option<BlockDto> {
-        let request = Request::get(&format!("/api/v1/blocks/{}", id))
+    async fn get_test_block(
+        app: &mut axum::routing::RouterIntoService<Body>,
+        id: &str,
+    ) -> Option<BlockDto> {
+        let request = Request::get(format!("/api/v1/blocks/{}", id))
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
         if response.status() == StatusCode::NOT_FOUND {
             return None;
         }
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         Some(serde_json::from_slice(&bytes).unwrap())
     }
 
     /// Helper: DELETE a block
-    async fn delete_test_block(app: &mut axum::routing::RouterIntoService<Body>, id: &str) -> StatusCode {
-        let request = Request::delete(&format!("/api/v1/blocks/{}", id))
+    async fn delete_test_block(
+        app: &mut axum::routing::RouterIntoService<Body>,
+        id: &str,
+    ) -> StatusCode {
+        let request = Request::delete(format!("/api/v1/blocks/{}", id))
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
         response.status()
     }
 
@@ -1375,10 +1828,22 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
 
         // All blocks should be gone
-        assert!(get_test_block(&mut app, &parent.id).await.is_none(), "Parent should be deleted");
-        assert!(get_test_block(&mut app, &child1.id).await.is_none(), "Child 1 should be deleted");
-        assert!(get_test_block(&mut app, &child2.id).await.is_none(), "Child 2 should be deleted");
-        assert!(get_test_block(&mut app, &child3.id).await.is_none(), "Child 3 should be deleted");
+        assert!(
+            get_test_block(&mut app, &parent.id).await.is_none(),
+            "Parent should be deleted"
+        );
+        assert!(
+            get_test_block(&mut app, &child1.id).await.is_none(),
+            "Child 1 should be deleted"
+        );
+        assert!(
+            get_test_block(&mut app, &child2.id).await.is_none(),
+            "Child 2 should be deleted"
+        );
+        assert!(
+            get_test_block(&mut app, &child3.id).await.is_none(),
+            "Child 3 should be deleted"
+        );
     }
 
     #[tokio::test]
@@ -1396,10 +1861,22 @@ mod tests {
         let status = delete_test_block(&mut app, &grandparent.id).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
-        assert!(get_test_block(&mut app, &grandparent.id).await.is_none(), "Grandparent gone");
-        assert!(get_test_block(&mut app, &parent.id).await.is_none(), "Parent gone");
-        assert!(get_test_block(&mut app, &child.id).await.is_none(), "Child gone");
-        assert!(get_test_block(&mut app, &sibling.id).await.is_none(), "Sibling gone");
+        assert!(
+            get_test_block(&mut app, &grandparent.id).await.is_none(),
+            "Grandparent gone"
+        );
+        assert!(
+            get_test_block(&mut app, &parent.id).await.is_none(),
+            "Parent gone"
+        );
+        assert!(
+            get_test_block(&mut app, &child.id).await.is_none(),
+            "Child gone"
+        );
+        assert!(
+            get_test_block(&mut app, &sibling.id).await.is_none(),
+            "Sibling gone"
+        );
     }
 
     #[tokio::test]
@@ -1416,11 +1893,25 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
 
         // child1 gone, parent and child2 intact
-        assert!(get_test_block(&mut app, &child1.id).await.is_none(), "Deleted child gone");
-        let parent_after = get_test_block(&mut app, &parent.id).await.expect("Parent should survive");
-        assert!(!parent_after.child_ids.contains(&child1.id), "Removed from parent's childIds");
-        assert!(parent_after.child_ids.contains(&child2.id), "Sibling still in childIds");
-        assert!(get_test_block(&mut app, &child2.id).await.is_some(), "Sibling survives");
+        assert!(
+            get_test_block(&mut app, &child1.id).await.is_none(),
+            "Deleted child gone"
+        );
+        let parent_after = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should survive");
+        assert!(
+            !parent_after.child_ids.contains(&child1.id),
+            "Removed from parent's childIds"
+        );
+        assert!(
+            parent_after.child_ids.contains(&child2.id),
+            "Sibling still in childIds"
+        );
+        assert!(
+            get_test_block(&mut app, &child2.id).await.is_some(),
+            "Sibling survives"
+        );
     }
 
     #[tokio::test]
@@ -1438,14 +1929,31 @@ mod tests {
         let status = delete_test_block(&mut app, &branch_a.id).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
-        assert!(get_test_block(&mut app, &branch_a.id).await.is_none(), "Branch A gone");
-        assert!(get_test_block(&mut app, &leaf.id).await.is_none(), "Leaf under A gone");
+        assert!(
+            get_test_block(&mut app, &branch_a.id).await.is_none(),
+            "Branch A gone"
+        );
+        assert!(
+            get_test_block(&mut app, &leaf.id).await.is_none(),
+            "Leaf under A gone"
+        );
 
         // Root and branch_b survive
-        let root_after = get_test_block(&mut app, &root.id).await.expect("Root survives");
-        assert!(!root_after.child_ids.contains(&branch_a.id), "Branch A removed from root childIds");
-        assert!(root_after.child_ids.contains(&branch_b.id), "Branch B still in root childIds");
-        assert!(get_test_block(&mut app, &branch_b.id).await.is_some(), "Branch B survives");
+        let root_after = get_test_block(&mut app, &root.id)
+            .await
+            .expect("Root survives");
+        assert!(
+            !root_after.child_ids.contains(&branch_a.id),
+            "Branch A removed from root childIds"
+        );
+        assert!(
+            root_after.child_ids.contains(&branch_b.id),
+            "Branch B still in root childIds"
+        );
+        assert!(
+            get_test_block(&mut app, &branch_b.id).await.is_some(),
+            "Branch B survives"
+        );
     }
 
     // FLO-283: Positional Block Insertion Tests
@@ -1471,16 +1979,26 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let second: BlockDto = serde_json::from_slice(&bytes).unwrap();
 
         // Verify order
-        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        let parent_updated = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should exist");
         assert_eq!(parent_updated.child_ids, vec![first.id.clone(), second.id]);
     }
 
@@ -1505,17 +2023,30 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let prepended: BlockDto = serde_json::from_slice(&bytes).unwrap();
 
         // Verify order (prepended should be first)
-        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
-        assert_eq!(parent_updated.child_ids, vec![prepended.id, first.id.clone()]);
+        let parent_updated = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should exist");
+        assert_eq!(
+            parent_updated.child_ids,
+            vec![prepended.id, first.id.clone()]
+        );
     }
 
     #[tokio::test]
@@ -1540,17 +2071,30 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let b: BlockDto = serde_json::from_slice(&bytes).unwrap();
 
         // Verify order (A, B, C)
-        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
-        assert_eq!(parent_updated.child_ids, vec![a.id.clone(), b.id, c.id.clone()]);
+        let parent_updated = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should exist");
+        assert_eq!(
+            parent_updated.child_ids,
+            vec![a.id.clone(), b.id, c.id.clone()]
+        );
     }
 
     #[tokio::test]
@@ -1571,16 +2115,26 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let clamped: BlockDto = serde_json::from_slice(&bytes).unwrap();
 
         // Verify it was added (clamped to end = index 0 for empty parent)
-        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        let parent_updated = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should exist");
         assert_eq!(parent_updated.child_ids, vec![clamped.id]);
     }
 
@@ -1603,13 +2157,21 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         // Should return 400 Bad Request
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(error.error.contains("Cannot specify both"));
     }
@@ -1632,13 +2194,21 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         // Should return 404 Not Found
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(error.error.contains("afterId not found"));
     }
@@ -1665,13 +2235,21 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         // Should return 400 Bad Request
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(error.error.contains("not a sibling"));
     }
@@ -1690,25 +2268,37 @@ mod tests {
         let child3 = create_test_block(&mut app, "Child 3", Some(&parent.id)).await;
 
         // Initial order: [child1, child2, child3]
-        let parent_before = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
-        assert_eq!(parent_before.child_ids, vec![child1.id.clone(), child2.id.clone(), child3.id.clone()]);
+        let parent_before = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should exist");
+        assert_eq!(
+            parent_before.child_ids,
+            vec![child1.id.clone(), child2.id.clone(), child3.id.clone()]
+        );
 
         // Move child3 after child1 (new order: child1, child3, child2)
         let body = format!(r#"{{"afterId": "{}"}}"#, child1.id);
-        let request = Request::patch(&format!("/api/v1/blocks/{}", child3.id))
+        let request = Request::patch(format!("/api/v1/blocks/{}", child3.id))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
 
         // Verify new order
-        let parent_after = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
-        assert_eq!(parent_after.child_ids, vec![child1.id.clone(), child3.id.clone(), child2.id.clone()]);
+        let parent_after = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should exist");
+        assert_eq!(
+            parent_after.child_ids,
+            vec![child1.id.clone(), child3.id.clone(), child2.id.clone()]
+        );
     }
 
     #[tokio::test]
@@ -1724,20 +2314,27 @@ mod tests {
 
         // Move child3 to index 0 (new order: child3, child1, child2)
         let body = r#"{"atIndex": 0}"#;
-        let request = Request::patch(&format!("/api/v1/blocks/{}", child3.id))
+        let request = Request::patch(format!("/api/v1/blocks/{}", child3.id))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
 
         // Verify new order
-        let parent_after = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
-        assert_eq!(parent_after.child_ids, vec![child3.id.clone(), child1.id.clone(), child2.id.clone()]);
+        let parent_after = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should exist");
+        assert_eq!(
+            parent_after.child_ids,
+            vec![child3.id.clone(), child1.id.clone(), child2.id.clone()]
+        );
     }
 
     #[tokio::test]
@@ -1757,25 +2354,37 @@ mod tests {
         let child2b = create_test_block(&mut app, "Child 2b", Some(&parent2.id)).await;
 
         // Move child1 from parent1 to parent2, insert after child2a
-        let body = format!(r#"{{"parentId": "{}", "afterId": "{}"}}"#, parent2.id, child2a.id);
-        let request = Request::patch(&format!("/api/v1/blocks/{}", child1.id))
+        let body = format!(
+            r#"{{"parentId": "{}", "afterId": "{}"}}"#,
+            parent2.id, child2a.id
+        );
+        let request = Request::patch(format!("/api/v1/blocks/{}", child1.id))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
 
         // Verify child1 removed from parent1
-        let parent1_after = get_test_block(&mut app, &parent1.id).await.expect("Parent1 should exist");
+        let parent1_after = get_test_block(&mut app, &parent1.id)
+            .await
+            .expect("Parent1 should exist");
         assert_eq!(parent1_after.child_ids, Vec::<String>::new());
 
         // Verify child1 added to parent2 in correct position
-        let parent2_after = get_test_block(&mut app, &parent2.id).await.expect("Parent2 should exist");
-        assert_eq!(parent2_after.child_ids, vec![child2a.id.clone(), child1.id.clone(), child2b.id.clone()]);
+        let parent2_after = get_test_block(&mut app, &parent2.id)
+            .await
+            .expect("Parent2 should exist");
+        assert_eq!(
+            parent2_after.child_ids,
+            vec![child2a.id.clone(), child1.id.clone(), child2b.id.clone()]
+        );
     }
 
     #[tokio::test]
@@ -1790,18 +2399,26 @@ mod tests {
 
         // Try to specify both afterId AND atIndex
         let body = format!(r#"{{"afterId": "{}", "atIndex": 0}}"#, child1.id);
-        let request = Request::patch(&format!("/api/v1/blocks/{}", child2.id))
+        let request = Request::patch(format!("/api/v1/blocks/{}", child2.id))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         // Should return 400 Bad Request
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(error.error.contains("Cannot specify both"));
     }
@@ -1816,19 +2433,29 @@ mod tests {
 
         // Try afterId == the block being moved
         let body = format!(r#"{{"afterId": "{}"}}"#, child.id);
-        let request = Request::patch(&format!("/api/v1/blocks/{}", child.id))
+        let request = Request::patch(format!("/api/v1/blocks/{}", child.id))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
-        assert!(error.error.contains("afterId cannot reference the block being moved"));
+        assert!(error
+            .error
+            .contains("afterId cannot reference the block being moved"));
     }
 
     #[tokio::test]
@@ -1842,18 +2469,26 @@ mod tests {
 
         // Try to reposition after nonexistent block
         let body = r#"{"afterId": "nonexistent-uuid"}"#;
-        let request = Request::patch(&format!("/api/v1/blocks/{}", child.id))
+        let request = Request::patch(format!("/api/v1/blocks/{}", child.id))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         // Should return 404 Not Found
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(error.error.contains("afterId not found"));
     }
@@ -1873,18 +2508,26 @@ mod tests {
 
         // Try to reposition child2 after child1 (different parents, without reparenting)
         let body = format!(r#"{{"afterId": "{}"}}"#, child1.id);
-        let request = Request::patch(&format!("/api/v1/blocks/{}", child2.id))
+        let request = Request::patch(format!("/api/v1/blocks/{}", child2.id))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         // Should return 400 Bad Request
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let error: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(error.error.contains("not a sibling"));
     }
@@ -1901,29 +2544,40 @@ mod tests {
 
         // Move root3 to beginning (atIndex: 0)
         let body = r#"{"atIndex": 0}"#;
-        let request = Request::patch(&format!("/api/v1/blocks/{}", root3.id))
+        let request = Request::patch(format!("/api/v1/blocks/{}", root3.id))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
 
         // Verify root order via GET /api/v1/blocks
-        let request = Request::get("/api/v1/blocks")
-            .body(Body::empty())
-            .unwrap();
+        let request = Request::get("/api/v1/blocks").body(Body::empty()).unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+            .await
+            .unwrap();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let list: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
 
-        assert_eq!(list.root_ids, vec![root3.id.clone(), root1.id.clone(), root2.id.clone()]);
+        assert_eq!(
+            list.root_ids,
+            vec![root3.id.clone(), root1.id.clone(), root2.id.clone()]
+        );
     }
 
     #[tokio::test]
@@ -1935,32 +2589,43 @@ mod tests {
         let first = create_test_block(&mut app, "First Root", None).await;
 
         // Insert second root after first (no parent)
-        let body = format!(
-            r#"{{"content": "Second Root", "afterId": "{}"}}"#,
-            first.id
-        );
+        let body = format!(r#"{{"content": "Second Root", "afterId": "{}"}}"#, first.id);
         let request = Request::post("/api/v1/blocks")
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let second: BlockDto = serde_json::from_slice(&bytes).unwrap();
 
         // Verify root order via GET /api/v1/blocks
-        let request = Request::get("/api/v1/blocks")
-            .body(Body::empty())
-            .unwrap();
+        let request = Request::get("/api/v1/blocks").body(Body::empty()).unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+            .await
+            .unwrap();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let list: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
 
         // Should have both roots in order
@@ -1982,7 +2647,9 @@ mod tests {
         let second = create_test_block(&mut app, "Second", Some(&parent.id)).await;
 
         // Verify order (backward compatible append behavior)
-        let parent_updated = get_test_block(&mut app, &parent.id).await.expect("Parent should exist");
+        let parent_updated = get_test_block(&mut app, &parent.id)
+            .await
+            .expect("Parent should exist");
         assert_eq!(parent_updated.child_ids, vec![first.id.clone(), second.id]);
     }
 
@@ -1995,12 +2662,22 @@ mod tests {
         let (app, _dir, _store) = test_app();
 
         let response = app
-            .oneshot(Request::get("/api/v1/topology").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/v1/topology")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let topo: TopologyResponse = serde_json::from_slice(&bytes).unwrap();
 
         assert!(topo.nodes.is_empty());
@@ -2033,12 +2710,20 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let topo: TopologyResponse = serde_json::from_slice(&bytes).unwrap();
 
         // Should have 2 page nodes (alpha, beta)
@@ -2048,12 +2733,20 @@ mod tests {
         assert_eq!(topo.meta.blocks, 4);
 
         // Alpha should have subtree count of 2 (itself + child)
-        let alpha_node = topo.nodes.iter().find(|n| n.id == "alpha").expect("Alpha node");
+        let alpha_node = topo
+            .nodes
+            .iter()
+            .find(|n| n.id == "alpha")
+            .expect("Alpha node");
         assert_eq!(alpha_node.b, 2);
         assert_eq!(alpha_node.is_ref, 0); // exists in pages::
         assert_eq!(alpha_node.orp, 1); // no inlinks → orphan
 
-        let beta_node = topo.nodes.iter().find(|n| n.id == "beta").expect("Beta node");
+        let beta_node = topo
+            .nodes
+            .iter()
+            .find(|n| n.id == "beta")
+            .expect("Beta node");
         assert_eq!(beta_node.b, 1); // just itself
         assert_eq!(beta_node.orp, 1); // no inlinks → orphan
     }
@@ -2068,11 +2761,19 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let topo: TopologyResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(topo.content.is_empty());
     }
@@ -2094,12 +2795,20 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let content: PageContentResponse = serde_json::from_slice(&bytes).unwrap();
 
         assert_eq!(content.name, "testpage");
@@ -2113,7 +2822,11 @@ mod tests {
         let (app, _dir, _store) = test_app();
 
         let response = app
-            .oneshot(Request::get("/api/v1/topology/content/nonexistent").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/v1/topology/content/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -2133,12 +2846,20 @@ mod tests {
         create_test_block(&mut app, "Block B", None).await;
 
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(Request::get("/api/v1/blocks").body(Body::empty()).unwrap())
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.blocks.len(), 2);
     }
@@ -2152,18 +2873,28 @@ mod tests {
         // Small sleep to separate timestamps
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let midpoint = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let _block_b = create_test_block(&mut app, "Block B", None).await;
 
         // since=midpoint should only return Block B
         let url = format!("/api/v1/blocks?since={}", midpoint);
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(Request::get(&url).body(Body::empty()).unwrap())
-            .await.unwrap();
+            .await
+            .unwrap();
 
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.blocks.len(), 1);
         assert_eq!(result.blocks[0].content, "Block B");
@@ -2171,23 +2902,43 @@ mod tests {
         // until=midpoint should only return Block A
         let url = format!("/api/v1/blocks?until={}", midpoint);
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(Request::get(&url).body(Body::empty()).unwrap())
-            .await.unwrap();
+            .await
+            .unwrap();
 
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.blocks.len(), 1);
         assert_eq!(result.blocks[0].content, "Block A");
 
         // since + until covering everything
-        let url = format!("/api/v1/blocks?since={}&until={}", block_a.created_at, midpoint + 100000);
+        let url = format!(
+            "/api/v1/blocks?since={}&until={}",
+            block_a.created_at,
+            midpoint + 100000
+        );
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(Request::get(&url).body(Body::empty()).unwrap())
-            .await.unwrap();
+            .await
+            .unwrap();
 
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.blocks.len(), 2);
     }
@@ -2201,27 +2952,40 @@ mod tests {
         let _block_b = create_test_block(&mut app, "plain block", None).await;
 
         // PATCH block_a to add ctx marker metadata
-        let patch_body = format!(
-            r#"{{"metadata": {{"markers": [{{"markerType": "ctx", "value": "work"}}]}}}}"#
-        );
+        let patch_body =
+            r#"{"metadata": {"markers": [{"markerType": "ctx", "value": "work"}]}}"#.to_string();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(
-                Request::patch(&format!("/api/v1/blocks/{}", block_a.id))
+                Request::patch(format!("/api/v1/blocks/{}", block_a.id))
                     .header("Content-Type", "application/json")
                     .body(Body::from(patch_body))
                     .unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         // Filter by marker_type=ctx
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
-            .call(Request::get("/api/v1/blocks?marker_type=ctx").body(Body::empty()).unwrap())
-            .await.unwrap();
+            .await
+            .unwrap()
+            .call(
+                Request::get("/api/v1/blocks?marker_type=ctx")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
 
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.blocks.len(), 1);
         assert_eq!(result.blocks[0].id, block_a.id);
@@ -2242,32 +3006,58 @@ mod tests {
                 val
             );
             let response = ServiceExt::<Request<Body>>::ready(&mut app)
-                .await.unwrap()
+                .await
+                .unwrap()
                 .call(
-                    Request::patch(&format!("/api/v1/blocks/{}", id))
+                    Request::patch(format!("/api/v1/blocks/{}", id))
                         .header("Content-Type", "application/json")
                         .body(Body::from(patch_body))
                         .unwrap(),
                 )
-                .await.unwrap();
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
         }
 
         // marker_type=ctx returns both
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
-            .call(Request::get("/api/v1/blocks?marker_type=ctx").body(Body::empty()).unwrap())
-            .await.unwrap();
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+            .await
+            .unwrap()
+            .call(
+                Request::get("/api/v1/blocks?marker_type=ctx")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.blocks.len(), 2);
 
         // marker_type=ctx&marker_value=work returns only block_a
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
-            .call(Request::get("/api/v1/blocks?marker_type=ctx&marker_value=work").body(Body::empty()).unwrap())
-            .await.unwrap();
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+            .await
+            .unwrap()
+            .call(
+                Request::get("/api/v1/blocks?marker_type=ctx&marker_value=work")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlocksResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.blocks.len(), 1);
         assert_eq!(result.blocks[0].id, block_a.id);
@@ -2286,16 +3076,24 @@ mod tests {
         // Use first 8 chars of UUID (dash-stripped)
         let prefix: String = block.id.chars().filter(|c| *c != '-').take(8).collect();
 
-        let request = Request::get(&format!("/api/v1/blocks/{}", prefix))
+        let request = Request::get(format!("/api/v1/blocks/{}", prefix))
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.id, block.id);
     }
@@ -2322,9 +3120,11 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -2338,17 +3138,25 @@ mod tests {
         let prefix: String = block.id.chars().filter(|c| *c != '-').take(8).collect();
 
         let body = r#"{"content": "updated via prefix"}"#;
-        let request = Request::patch(&format!("/api/v1/blocks/{}", prefix))
+        let request = Request::patch(format!("/api/v1/blocks/{}", prefix))
             .header("Content-Type", "application/json")
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.content, "updated via prefix");
         assert_eq!(result.id, block.id);
@@ -2362,13 +3170,15 @@ mod tests {
         let block = create_test_block(&mut app, "to delete", None).await;
         let prefix: String = block.id.chars().filter(|c| *c != '-').take(8).collect();
 
-        let request = Request::delete(&format!("/api/v1/blocks/{}", prefix))
+        let request = Request::delete(format!("/api/v1/blocks/{}", prefix))
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
@@ -2391,12 +3201,20 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.parent_id, Some(parent.id));
     }
@@ -2410,16 +3228,24 @@ mod tests {
         let prefix: String = block.id.chars().filter(|c| *c != '-').take(8).collect();
         let upper_prefix = prefix.to_uppercase();
 
-        let request = Request::get(&format!("/api/v1/blocks/{}", upper_prefix))
+        let request = Request::get(format!("/api/v1/blocks/{}", upper_prefix))
             .body(Body::empty())
             .unwrap();
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(request)
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let bytes: Vec<u8> = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+        let bytes: Vec<u8> = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
         let result: BlockDto = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(result.id, block.id);
     }
@@ -2446,14 +3272,25 @@ mod tests {
                 .body(Body::empty())
                 .unwrap();
             let response = ServiceExt::<Request<Body>>::ready(&mut app)
-                .await.unwrap()
+                .await
+                .unwrap()
                 .call(request)
-                .await.unwrap();
+                .await
+                .unwrap();
             if response.status() == StatusCode::OK {
-                response_bytes = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+                response_bytes = response
+                    .into_body()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .to_bytes()
+                    .to_vec();
                 break;
             }
-            assert!(attempt < 19, "PageNameIndex never indexed the daily note page");
+            assert!(
+                attempt < 19,
+                "PageNameIndex never indexed the daily note page"
+            );
         }
         let result: serde_json::Value = serde_json::from_slice(&response_bytes).unwrap();
 
@@ -2461,7 +3298,9 @@ mod tests {
         assert_eq!(result["content"], "# 2026-03-31");
 
         // Default includes children
-        let children = result["children"].as_array().expect("Should include children by default");
+        let children = result["children"]
+            .as_array()
+            .expect("Should include children by default");
         assert_eq!(children.len(), 1);
         assert_eq!(children[0]["id"], child.id);
     }
@@ -2471,7 +3310,11 @@ mod tests {
         let (app, _dir, _store) = test_app();
 
         let response = app
-            .oneshot(Request::get("/api/v1/daily/2099-12-31").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/v1/daily/2099-12-31")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -2530,8 +3373,11 @@ mod tests {
         assert_eq!(page["content"], "# Spec Draft");
 
         // Upserted page must live under a pages:: container, not at root.
-        let parent_id = page["parentId"].as_str().expect("page must have a parentId");
-        let (pstatus, parent) = get_json_oneshot(&router, &format!("/api/v1/blocks/{}", parent_id)).await;
+        let parent_id = page["parentId"]
+            .as_str()
+            .expect("page must have a parentId");
+        let (pstatus, parent) =
+            get_json_oneshot(&router, &format!("/api/v1/blocks/{}", parent_id)).await;
         assert_eq!(pstatus, StatusCode::OK);
         assert_eq!(parent["content"], "pages::");
     }
@@ -2550,12 +3396,16 @@ mod tests {
         for attempt in 0..20 {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             let (status2, page2) =
-                post_json_oneshot(&router, "/api/v1/pages/Shell%20Lite", serde_json::json!({})).await;
+                post_json_oneshot(&router, "/api/v1/pages/Shell%20Lite", serde_json::json!({}))
+                    .await;
             if status2 == StatusCode::OK {
                 assert_eq!(page2["id"], first_id, "upsert must return the same page id");
                 return;
             }
-            assert!(attempt < 19, "PageNameIndex never caught up for upsert idempotency");
+            assert!(
+                attempt < 19,
+                "PageNameIndex never caught up for upsert idempotency"
+            );
         }
     }
 
@@ -2577,18 +3427,25 @@ mod tests {
             &router,
             "/api/v1/daily/2026-04-19/append",
             serde_json::json!({ "content": "ctx::quick test note" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(child["content"], "ctx::quick test note");
 
         // Child -> daily note (# YYYY-MM-DD) -> pages:: container (root).
-        let parent_id = child["parentId"].as_str().expect("appended block must have a parentId");
-        let (pstatus, parent) = get_json_oneshot(&router, &format!("/api/v1/blocks/{}", parent_id)).await;
+        let parent_id = child["parentId"]
+            .as_str()
+            .expect("appended block must have a parentId");
+        let (pstatus, parent) =
+            get_json_oneshot(&router, &format!("/api/v1/blocks/{}", parent_id)).await;
         assert_eq!(pstatus, StatusCode::OK);
         assert_eq!(parent["content"], "# 2026-04-19");
 
-        let grandparent_id = parent["parentId"].as_str().expect("daily note must live under pages::");
-        let (gpstatus, gp) = get_json_oneshot(&router, &format!("/api/v1/blocks/{}", grandparent_id)).await;
+        let grandparent_id = parent["parentId"]
+            .as_str()
+            .expect("daily note must live under pages::");
+        let (gpstatus, gp) =
+            get_json_oneshot(&router, &format!("/api/v1/blocks/{}", grandparent_id)).await;
         assert_eq!(gpstatus, StatusCode::OK);
         assert_eq!(gp["content"], "pages::");
     }
@@ -2603,18 +3460,24 @@ mod tests {
             &router,
             "/api/v1/daily/26-4-19/append",
             serde_json::json!({ "content": "typo'd date" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         // Error surface should mention the shape requirement.
         let err_str = err["error"].as_str().unwrap_or("");
-        assert!(err_str.contains("YYYY-MM-DD"), "error message should cite the canonical shape: {}", err_str);
+        assert!(
+            err_str.contains("YYYY-MM-DD"),
+            "error message should cite the canonical shape: {}",
+            err_str
+        );
 
         // Also reject non-digit characters masquerading as a date.
         let (s2, _) = post_json_oneshot(
             &router,
             "/api/v1/daily/notadate/append",
             serde_json::json!({ "content": "still invalid" }),
-        ).await;
+        )
+        .await;
         assert_eq!(s2, StatusCode::BAD_REQUEST);
     }
 
@@ -2626,7 +3489,8 @@ mod tests {
             &router,
             "/api/v1/daily/2026-04-19/append",
             serde_json::json!({ "content": "" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
         // Whitespace-only also rejected — the trim() is intentional.
@@ -2634,7 +3498,8 @@ mod tests {
             &router,
             "/api/v1/daily/2026-04-19/append",
             serde_json::json!({ "content": "   \n\t  " }),
-        ).await;
+        )
+        .await;
         assert_eq!(s2, StatusCode::BAD_REQUEST);
     }
 
@@ -2646,7 +3511,8 @@ mod tests {
             &router,
             "/api/v1/daily/2026-04-20/append",
             serde_json::json!({ "content": "first entry" }),
-        ).await;
+        )
+        .await;
         let first_parent = first["parentId"].as_str().unwrap().to_string();
 
         // Poll for PageNameIndex to catch up, then verify second append
@@ -2657,14 +3523,17 @@ mod tests {
                 &router,
                 "/api/v1/daily/2026-04-20/append",
                 serde_json::json!({ "content": "second entry" }),
-            ).await;
+            )
+            .await;
             if second["parentId"].as_str() == Some(first_parent.as_str()) {
                 return;
             }
-            assert!(attempt < 19, "second append created a new daily note instead of reusing");
+            assert!(
+                attempt < 19,
+                "second append created a new daily note instead of reusing"
+            );
         }
     }
-
 
     #[tokio::test]
     async fn test_create_block_with_supplied_id() {
@@ -2685,7 +3554,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(created["id"], supplied_id, "Import should preserve caller-supplied ID");
+        assert_eq!(
+            created["id"], supplied_id,
+            "Import should preserve caller-supplied ID"
+        );
     }
 
     #[tokio::test]
@@ -2699,14 +3571,16 @@ mod tests {
         // Try to import with the same ID — should be rejected as conflict
         let body = serde_json::json!({ "content": "duplicate", "id": existing.id });
         let response = ServiceExt::<Request<Body>>::ready(&mut app)
-            .await.unwrap()
+            .await
+            .unwrap()
             .call(
                 Request::post("/api/v1/blocks/import")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
     }
@@ -2747,21 +3621,35 @@ mod tests {
                 .body(Body::empty())
                 .unwrap();
             let response = ServiceExt::<Request<Body>>::ready(&mut app)
-                .await.unwrap()
+                .await
+                .unwrap()
                 .call(request)
-                .await.unwrap();
+                .await
+                .unwrap();
             if response.status() == StatusCode::OK {
-                response_bytes = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+                response_bytes = response
+                    .into_body()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .to_bytes()
+                    .to_vec();
                 break;
             }
-            assert!(attempt < 19, "PageNameIndex never indexed the daily note page");
+            assert!(
+                attempt < 19,
+                "PageNameIndex never indexed the daily note page"
+            );
         }
 
         let result: serde_json::Value = serde_json::from_slice(&response_bytes).unwrap();
 
         // Tree should include the subtree
         let tree = result["tree"].as_array().expect("Should include tree");
-        assert!(tree.len() >= 2, "Tree should have at least child + grandchild");
+        assert!(
+            tree.len() >= 2,
+            "Tree should have at least child + grandchild"
+        );
 
         // Token estimate should be present
         assert!(result.get("tokenEstimate").is_some());

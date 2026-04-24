@@ -38,10 +38,7 @@ const BUILD_PROFILE: &str = "release";
 fn otel_resource() -> Resource {
     Resource::builder()
         .with_service_name("floatty-server")
-        .with_attribute(KeyValue::new(
-            "service.version",
-            env!("CARGO_PKG_VERSION"),
-        ))
+        .with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
         .with_attribute(KeyValue::new("deployment.environment", BUILD_PROFILE))
         .build()
 }
@@ -97,9 +94,7 @@ fn init_otlp_traces(endpoint: Option<&str>) -> Option<SdkTracerProvider> {
         .filter(|e| !e.contains("/v1/logs"))
         .map(String::from);
 
-    let resolved = trace_endpoint
-        .or(general_endpoint)
-        .or(config_endpoint);
+    let resolved = trace_endpoint.or(general_endpoint).or(config_endpoint);
 
     let resolved = resolved.as_deref()?;
 
@@ -367,11 +362,7 @@ async fn main() {
             tracing::error!("Failed to create backup directory: {}", e);
             None
         } else {
-            let daemon = BackupDaemon::new(
-                Arc::clone(&store),
-                backup_config.clone(),
-                backup_dir,
-            );
+            let daemon = BackupDaemon::new(Arc::clone(&store), backup_config.clone(), backup_dir);
             let daemon_arc = Arc::new(daemon);
 
             // Use the same Arc for both API and background task
@@ -401,24 +392,49 @@ async fn main() {
         Some(data_dir.join("search_index")),
         backup_daemon.clone(),
     ));
-    let outline_manager = Arc::new(OutlineManager::new_with_default(&data_dir, default_context, backup_config.clone()));
+    let outline_manager = Arc::new(OutlineManager::new_with_default(
+        &data_dir,
+        default_context,
+        backup_config.clone(),
+    ));
     tracing::info!("Outline manager initialized");
 
     // CORS layer - allow requests from Tauri webview (localhost origins)
     let cors = CorsLayer::new()
         .allow_origin(Any) // Tauri uses tauri://localhost or http://localhost
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers(Any);
 
     // Build router with CORS and optional auth middleware
     let api_routes = if config.auth_enabled {
         let auth_state = auth::ApiKeyAuth::new(api_key.clone());
         tracing::info!("API authentication enabled");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone(), Arc::clone(&outline_manager))
-            .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
+        api::create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            Arc::clone(&hook_system),
+            backup_daemon.clone(),
+            Arc::clone(&outline_manager),
+        )
+        .layer(middleware::from_fn_with_state(
+            auth_state,
+            auth::auth_middleware,
+        ))
     } else {
         tracing::warn!("API authentication DISABLED (auth_enabled = false in config)");
-        api::create_router(Arc::clone(&store), Arc::clone(&broadcaster), Arc::clone(&hook_system), backup_daemon.clone(), Arc::clone(&outline_manager))
+        api::create_router(
+            Arc::clone(&store),
+            Arc::clone(&broadcaster),
+            Arc::clone(&hook_system),
+            backup_daemon.clone(),
+            Arc::clone(&outline_manager),
+        )
     };
 
     // WebSocket route — supports ?outline={name} for per-outline subscriptions
@@ -494,7 +510,12 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await {
+    if let Err(e) = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    {
         tracing::error!(error = %e, "axum::serve terminated with error");
         std::process::exit(1);
     }

@@ -217,7 +217,11 @@ mod tests {
         let blocks = vec![
             block("root", None, "Root"),
             block("orphan-parent", Some("deleted"), "My parent was deleted"),
-            block("orphan-child", Some("orphan-parent"), "My parent is orphaned but exists"),
+            block(
+                "orphan-child",
+                Some("orphan-parent"),
+                "My parent is orphaned but exists",
+            ),
         ];
         let root_ids = vec!["root".to_string()];
 

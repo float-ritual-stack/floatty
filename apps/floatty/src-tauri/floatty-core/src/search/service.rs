@@ -63,8 +63,8 @@ fn escape_tantivy_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len() + 8);
     for ch in input.chars() {
         match ch {
-            ':' | '[' | ']' | '(' | ')' | '{' | '}' | '"' | '*' | '?' | '~' | '^' | '!'
-            | '+' | '\\' | '/' => {
+            ':' | '[' | ']' | '(' | ')' | '{' | '}' | '"' | '*' | '?' | '~' | '^' | '!' | '+'
+            | '\\' | '/' => {
                 result.push('\\');
                 result.push(ch);
             }
@@ -157,7 +157,11 @@ impl SearchService {
     /// ```rust,ignore
     /// let (_total, hits) = service.search("project meeting", 10)?;
     /// ```
-    pub fn search(&self, query: &str, limit: usize) -> Result<(usize, Vec<SearchHit>), SearchError> {
+    pub fn search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<(usize, Vec<SearchHit>), SearchError> {
         self.search_with_filters(query, SearchFilters::default(), limit)
     }
 
@@ -214,7 +218,8 @@ impl SearchService {
         let exclude_queries = self.build_exclude_queries(&filters);
 
         // Combine base query with filters (AND logic) + exclusions (MustNot)
-        let final_query: Box<dyn Query> = if filter_queries.is_empty() && exclude_queries.is_empty() {
+        let final_query: Box<dyn Query> = if filter_queries.is_empty() && exclude_queries.is_empty()
+        {
             base_query
         } else {
             let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, base_query)];
@@ -228,7 +233,8 @@ impl SearchService {
         };
 
         // Execute search (Count collector gives true total, TopDocs gives limited results)
-        let (total_count, top_docs) = searcher.search(&final_query, &(Count, TopDocs::with_limit(limit)))?;
+        let (total_count, top_docs) =
+            searcher.search(&final_query, &(Count, TopDocs::with_limit(limit)))?;
 
         // Create snippet generator for text queries (not filter-only)
         let snippet_gen = if !query_trimmed.is_empty() {
@@ -246,7 +252,11 @@ impl SearchService {
                     let snippet = snippet_gen.as_ref().and_then(|gen| {
                         let s = gen.snippet_from_doc(&doc);
                         let html = s.to_html();
-                        if html.is_empty() { None } else { Some(html) }
+                        if html.is_empty() {
+                            None
+                        } else {
+                            Some(html)
+                        }
                     });
                     hits.push(SearchHit {
                         block_id: id_str.to_string(),
@@ -306,14 +316,22 @@ impl SearchService {
         // marker_type filter — use own-only fields when include_inherited=false
         let use_own_only = filters.include_inherited == Some(false);
         if let Some(ref mt) = filters.marker_type {
-            let field = if use_own_only { fields.marker_types_own } else { fields.marker_types };
+            let field = if use_own_only {
+                fields.marker_types_own
+            } else {
+                fields.marker_types
+            };
             let term = Term::from_field_text(field, mt);
             queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
         }
 
         // marker_value filter ("type::value" pair)
         if let Some(ref mv) = filters.marker_value {
-            let field = if use_own_only { fields.marker_values_own } else { fields.marker_values };
+            let field = if use_own_only {
+                fields.marker_values_own
+            } else {
+                fields.marker_values
+            };
             let term = Term::from_field_text(field, mv);
             queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
         }
@@ -370,11 +388,15 @@ mod tests {
 
     /// Helper to create an index with test documents.
     /// Returns (TempDir, Arc<IndexManager>) - caller must hold TempDir to keep index alive.
-    fn create_test_index(docs: &[(&str, &str, &str, bool)]) -> (tempfile::TempDir, Arc<IndexManager>) {
+    fn create_test_index(
+        docs: &[(&str, &str, &str, bool)],
+    ) -> (tempfile::TempDir, Arc<IndexManager>) {
         // Convert to extended format with empty markers
         let extended: Vec<_> = docs
             .iter()
-            .map(|(id, content, block_type, has_markers)| (*id, *content, *block_type, *has_markers, ""))
+            .map(|(id, content, block_type, has_markers)| {
+                (*id, *content, *block_type, *has_markers, "")
+            })
             .collect();
         create_test_index_with_markers(&extended)
     }
@@ -390,7 +412,10 @@ mod tests {
 
         // Create writer and add documents
         let fields = manager.fields();
-        let mut writer = manager.index().writer::<tantivy::TantivyDocument>(15_000_000).unwrap();
+        let mut writer = manager
+            .index()
+            .writer::<tantivy::TantivyDocument>(15_000_000)
+            .unwrap();
 
         for (id, content, block_type, has_markers, markers) in docs {
             let mut doc = tantivy::TantivyDocument::new();
@@ -398,7 +423,10 @@ mod tests {
             doc.add_text(fields.content, *content);
             doc.add_text(fields.block_type, *block_type);
             doc.add_text(fields.parent_id, ""); // Empty parent
-            doc.add_text(fields.has_markers, if *has_markers { "true" } else { "false" });
+            doc.add_text(
+                fields.has_markers,
+                if *has_markers { "true" } else { "false" },
+            );
             doc.add_text(fields.markers, *markers);
             writer.add_document(doc).unwrap();
         }
@@ -465,7 +493,10 @@ mod tests {
         // Limit to 2 results — total should reflect all 3 matches
         let (total, hits) = service.search("floatty", 2).unwrap();
         assert_eq!(hits.len(), 2);
-        assert_eq!(total, 3, "total should be true match count, not truncated len");
+        assert_eq!(
+            total, 3,
+            "total should be true match count, not truncated len"
+        );
     }
 
     #[test]
@@ -610,7 +641,13 @@ mod tests {
     fn test_search_by_marker_value() {
         // Test searching by extracted marker values (e.g., "project::floatty")
         let (_dir, manager) = create_test_index_with_markers(&[
-            ("b1", "working today", "text", true, "project::floatty mode::dev"),
+            (
+                "b1",
+                "working today",
+                "text",
+                true,
+                "project::floatty mode::dev",
+            ),
             ("b2", "other work", "text", true, "project::pharmacy"),
             ("b3", "no markers", "text", false, ""),
         ]);
@@ -677,7 +714,10 @@ mod tests {
         let manager = Arc::new(IndexManager::open_or_create_at(index_path).unwrap());
 
         let fields = manager.fields();
-        let mut writer = manager.index().writer::<tantivy::TantivyDocument>(15_000_000).unwrap();
+        let mut writer = manager
+            .index()
+            .writer::<tantivy::TantivyDocument>(15_000_000)
+            .unwrap();
 
         for d in docs {
             let mut doc = tantivy::TantivyDocument::new();
@@ -685,7 +725,10 @@ mod tests {
             doc.add_text(fields.content, d.content);
             doc.add_text(fields.block_type, d.block_type);
             doc.add_text(fields.parent_id, "");
-            doc.add_text(fields.has_markers, if d.has_markers { "true" } else { "false" });
+            doc.add_text(
+                fields.has_markers,
+                if d.has_markers { "true" } else { "false" },
+            );
             doc.add_text(fields.markers, d.markers);
             for outlink in &d.outlinks {
                 doc.add_text(fields.outlinks, *outlink);
@@ -770,10 +813,14 @@ mod tests {
         let service = SearchService::new(manager);
 
         let (_total, hits) = service
-            .search_with_filters("project meeting fixing text", SearchFilters {
-                outlink: Some("Daily Page".into()),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "project meeting fixing text",
+                SearchFilters {
+                    outlink: Some("Daily Page".into()),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
 
         assert_eq!(hits.len(), 1);
@@ -787,10 +834,14 @@ mod tests {
 
         // Filter by marker_type=mode → only b2 has mode
         let (_total, hits) = service
-            .search_with_filters("project meeting fixing text", SearchFilters {
-                marker_type: Some("mode".into()),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "project meeting fixing text",
+                SearchFilters {
+                    marker_type: Some("mode".into()),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
 
         assert_eq!(hits.len(), 1);
@@ -803,10 +854,14 @@ mod tests {
         let service = SearchService::new(manager);
 
         let (_total, hits) = service
-            .search_with_filters("project meeting fixing text", SearchFilters {
-                marker_value: Some("project::pharmacy".into()),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "project meeting fixing text",
+                SearchFilters {
+                    marker_value: Some("project::pharmacy".into()),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
 
         assert_eq!(hits.len(), 1);
@@ -820,10 +875,14 @@ mod tests {
 
         // created_after Mar 12 → b2 and b3
         let (_total, hits) = service
-            .search_with_filters("project meeting fixing text", SearchFilters {
-                created_after: Some(1773300000),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "project meeting fixing text",
+                SearchFilters {
+                    created_after: Some(1773300000),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
 
         assert_eq!(hits.len(), 2);
@@ -839,11 +898,15 @@ mod tests {
 
         // Between Mar 11 and Mar 12 (inclusive) → b1 and b2
         let (_total, hits) = service
-            .search_with_filters("project meeting fixing text", SearchFilters {
-                created_after: Some(1773220000),
-                created_before: Some(1773300000),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "project meeting fixing text",
+                SearchFilters {
+                    created_after: Some(1773220000),
+                    created_before: Some(1773300000),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
 
         assert_eq!(hits.len(), 2);
@@ -859,10 +922,14 @@ mod tests {
 
         // Only b1 has ctx_at set
         let (_total, hits) = service
-            .search_with_filters("project meeting fixing text", SearchFilters {
-                ctx_after: Some(1773200000),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "project meeting fixing text",
+                SearchFilters {
+                    ctx_after: Some(1773200000),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
 
         assert_eq!(hits.len(), 1);
@@ -876,10 +943,14 @@ mod tests {
 
         // Empty text query + filter = should use AllQuery as base
         let (_total, hits) = service
-            .search_with_filters("", SearchFilters {
-                marker_type: Some("project".into()),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "",
+                SearchFilters {
+                    marker_type: Some("project".into()),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
 
         // b1 and b2 both have marker_type=project
@@ -896,31 +967,43 @@ mod tests {
 
         // Default (inherited=true): marker_type=repo matches b1 (inherited from ancestor)
         let (_total, hits) = service
-            .search_with_filters("", SearchFilters {
-                marker_type: Some("repo".into()),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "",
+                SearchFilters {
+                    marker_type: Some("repo".into()),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].block_id, "b1");
 
         // inherited=false: marker_type=repo returns 0 (b1 doesn't OWN repo marker)
         let (_total, hits) = service
-            .search_with_filters("", SearchFilters {
-                marker_type: Some("repo".into()),
-                include_inherited: Some(false),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "",
+                SearchFilters {
+                    marker_type: Some("repo".into()),
+                    include_inherited: Some(false),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
         assert_eq!(hits.len(), 0);
 
         // inherited=false: marker_type=project still returns b1 (it OWNS project)
         let (_total, hits) = service
-            .search_with_filters("", SearchFilters {
-                marker_type: Some("project".into()),
-                include_inherited: Some(false),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "",
+                SearchFilters {
+                    marker_type: Some("project".into()),
+                    include_inherited: Some(false),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
         assert_eq!(hits.len(), 2); // b1 and b2 both own project
     }
@@ -932,11 +1015,15 @@ mod tests {
 
         // marker_type=project AND outlink="Issue #264" → only b2
         let (_total, hits) = service
-            .search_with_filters("project meeting fixing text", SearchFilters {
-                marker_type: Some("project".into()),
-                outlink: Some("Issue #264".into()),
-                ..Default::default()
-            }, 10)
+            .search_with_filters(
+                "project meeting fixing text",
+                SearchFilters {
+                    marker_type: Some("project".into()),
+                    outlink: Some("Issue #264".into()),
+                    ..Default::default()
+                },
+                10,
+            )
             .unwrap();
 
         assert_eq!(hits.len(), 1);

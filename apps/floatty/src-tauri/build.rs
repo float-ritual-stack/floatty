@@ -19,7 +19,10 @@ fn main() {
         .add_instructions(&gix)
         .and_then(|e| e.emit())
     {
-        eprintln!("Warning: Failed to emit git info: {}. Continuing without.", e);
+        eprintln!(
+            "Warning: Failed to emit git info: {}. Continuing without.",
+            e
+        );
     }
 
     // Run tauri build (generates bindings, etc.)

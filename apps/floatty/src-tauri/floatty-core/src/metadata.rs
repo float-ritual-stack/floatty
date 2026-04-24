@@ -119,7 +119,11 @@ pub struct BlockMetadata {
     /// Timestamp of last metadata extraction.
     /// Used to skip re-extraction if content unchanged.
     /// Accepts both i64 and f64 on deserialization (yrs stores as f64 in legacy data).
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_timestamp_lenient")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_timestamp_lenient"
+    )]
     #[ts(type = "number | null")]
     pub extracted_at: Option<i64>,
 
@@ -144,7 +148,11 @@ impl BlockMetadata {
 
     /// Check if metadata is empty (no markers, no outlinks, not a stub).
     pub fn is_empty(&self) -> bool {
-        self.markers.is_empty() && self.outlinks.is_empty() && !self.is_stub && self.summary.is_none() && self.rendered_markdown.is_none()
+        self.markers.is_empty()
+            && self.outlinks.is_empty()
+            && !self.is_stub
+            && self.summary.is_none()
+            && self.rendered_markdown.is_none()
     }
 
     /// Add a marker.

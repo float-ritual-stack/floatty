@@ -7,7 +7,10 @@
 //! **No route-awareness.** BlockService doesn't know whether the caller is
 //! a legacy route or an outline route. Route-specific behavior belongs in handlers.
 
-use crate::api::{self, ApiError, BlockDto, BlockRef, BlockSearchHit, BlockSearchQuery, BlockSearchResponse, BlocksResponse, InheritedMarkerDto, SiblingContext, TokenEstimate, TreeNode};
+use crate::api::{
+    self, ApiError, BlockDto, BlockRef, BlockSearchHit, BlockSearchQuery, BlockSearchResponse,
+    BlocksResponse, InheritedMarkerDto, SiblingContext, TokenEstimate, TreeNode,
+};
 use crate::WsBroadcaster;
 use floatty_core::events::BlockChange;
 use floatty_core::hooks::InheritanceIndex;
@@ -46,10 +49,16 @@ pub(crate) fn resolve_block_id<T: ReadTxn>(
 
     let is_full_uuid = trimmed.len() == 36 && {
         let b = trimmed.as_bytes();
-        b[8] == b'-' && b[13] == b'-' && b[18] == b'-' && b[23] == b'-'
+        b[8] == b'-'
+            && b[13] == b'-'
+            && b[18] == b'-'
+            && b[23] == b'-'
             && trimmed.chars().enumerate().all(|(i, c)| {
-                if i == 8 || i == 13 || i == 18 || i == 23 { c == '-' }
-                else { c.is_ascii_hexdigit() }
+                if i == 8 || i == 13 || i == 18 || i == 23 {
+                    c == '-'
+                } else {
+                    c.is_ascii_hexdigit()
+                }
             })
     };
 
@@ -87,7 +96,10 @@ pub(crate) fn resolve_block_id<T: ReadTxn>(
     }
 
     match matches.len() {
-        0 => Err(ApiError::NotFound(format!("No block matches prefix '{}'", trimmed))),
+        0 => Err(ApiError::NotFound(format!(
+            "No block matches prefix '{}'",
+            trimmed
+        ))),
         1 => Ok(matches.into_iter().next().unwrap()),
         n => Err(ApiError::Ambiguous(n)),
     }
@@ -101,18 +113,19 @@ pub(crate) fn resolve_body_field<T: ReadTxn>(
     txn: &T,
 ) -> Result<String, ApiError> {
     resolve_block_id(id_or_prefix, blocks_map, txn).map_err(|e| match e {
-        ApiError::Ambiguous(n) => ApiError::InvalidRequest(
-            format!("Ambiguous prefix in {}: {} matches", field_name, n),
-        ),
-        ApiError::NotFound(msg) => ApiError::NotFound(
-            format!("{} not found: {}", field_name, msg),
-        ),
+        ApiError::Ambiguous(n) => {
+            ApiError::InvalidRequest(format!("Ambiguous prefix in {}: {} matches", field_name, n))
+        }
+        ApiError::NotFound(msg) => ApiError::NotFound(format!("{} not found: {}", field_name, msg)),
         other => other,
     })
 }
 
 /// Map InheritanceIndex results to InheritedMarkerDto for API responses.
-pub(crate) fn lookup_inherited(index: &InheritanceIndex, block_id: &str) -> Option<Vec<InheritedMarkerDto>> {
+pub(crate) fn lookup_inherited(
+    index: &InheritanceIndex,
+    block_id: &str,
+) -> Option<Vec<InheritedMarkerDto>> {
     let inherited = index.get(block_id);
     if inherited.is_empty() {
         None
@@ -185,12 +198,10 @@ pub(crate) fn read_block_dto<T: ReadTxn>(
     let created_at = extract_timestamp(block_map.get(txn, "createdAt"));
     let updated_at = extract_timestamp(block_map.get(txn, "updatedAt"));
 
-    let output_type = block_map
-        .get(txn, "outputType")
-        .and_then(|v| match v {
-            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-            _ => None,
-        });
+    let output_type = block_map.get(txn, "outputType").and_then(|v| match v {
+        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+        _ => None,
+    });
 
     let output = if include_output {
         block_map
@@ -223,21 +234,27 @@ pub(crate) fn read_block_dto<T: ReadTxn>(
 // =========================================================================
 
 /// Read a block's content from a Y.Map within a transaction.
-pub(crate) fn read_block_content<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Option<String> {
+pub(crate) fn read_block_content<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+) -> Option<String> {
     let block_map = match blocks_map.get(txn, block_id)? {
         yrs::Out::YMap(map) => map,
         _ => return None,
     };
-    block_map
-        .get(txn, "content")
-        .and_then(|v| match v {
-            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-            _ => None,
-        })
+    block_map.get(txn, "content").and_then(|v| match v {
+        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+        _ => None,
+    })
 }
 
 /// Read a block's parentId from Y.Doc.
-pub(crate) fn read_block_parent_id<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Option<String> {
+pub(crate) fn read_block_parent_id<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+) -> Option<String> {
     let block_map = match blocks_map.get(txn, block_id)? {
         yrs::Out::YMap(map) => map,
         _ => return None,
@@ -249,7 +266,11 @@ pub(crate) fn read_block_parent_id<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T
 }
 
 /// Read a block's childIds from Y.Doc.
-pub(crate) fn read_block_child_ids<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<String> {
+pub(crate) fn read_block_child_ids<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+) -> Vec<String> {
     let block_map = match blocks_map.get(txn, block_id) {
         Some(yrs::Out::YMap(map)) => map,
         _ => return Vec::new(),
@@ -284,14 +305,21 @@ pub(crate) fn parse_includes(include: &Option<String>) -> HashSet<String> {
 
 /// Walk the parent chain up to root, returning ancestor BlockRefs (nearest first).
 /// Max 10 ancestors to prevent runaway.
-pub(crate) fn get_ancestors<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<BlockRef> {
+pub(crate) fn get_ancestors<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+) -> Vec<BlockRef> {
     let mut ancestors = Vec::new();
     let mut current_id = block_id.to_string();
     for _ in 0..10 {
         match read_block_parent_id(blocks_map, txn, &current_id) {
             Some(pid) => {
                 let content = read_block_content(blocks_map, txn, &pid).unwrap_or_default();
-                ancestors.push(BlockRef { id: pid.clone(), content });
+                ancestors.push(BlockRef {
+                    id: pid.clone(),
+                    content,
+                });
                 current_id = pid;
             }
             None => break,
@@ -307,7 +335,10 @@ pub(crate) fn get_siblings<T: ReadTxn>(
     block_id: &str,
     radius: usize,
 ) -> SiblingContext {
-    let empty = SiblingContext { before: vec![], after: vec![] };
+    let empty = SiblingContext {
+        before: vec![],
+        after: vec![],
+    };
 
     let parent_id = match read_block_parent_id(blocks_map, txn, block_id) {
         Some(id) => id,
@@ -329,7 +360,10 @@ pub(crate) fn get_siblings<T: ReadTxn>(
         })
         .collect();
 
-    let after_end = pos.saturating_add(1).saturating_add(radius).min(sibling_ids.len());
+    let after_end = pos
+        .saturating_add(1)
+        .saturating_add(radius)
+        .min(sibling_ids.len());
     let after: Vec<BlockRef> = sibling_ids[(pos + 1)..after_end]
         .iter()
         .map(|id| BlockRef {
@@ -342,7 +376,11 @@ pub(crate) fn get_siblings<T: ReadTxn>(
 }
 
 /// Get direct children as BlockRefs.
-pub(crate) fn get_children_refs<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, block_id: &str) -> Vec<BlockRef> {
+pub(crate) fn get_children_refs<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+) -> Vec<BlockRef> {
     read_block_child_ids(blocks_map, txn, block_id)
         .iter()
         .map(|id| BlockRef {
@@ -370,7 +408,9 @@ pub(crate) fn get_subtree<T: ReadTxn>(
     }
 
     while let Some((id, depth)) = stack.pop() {
-        if result.len() >= 1000 { break; }
+        if result.len() >= 1000 {
+            break;
+        }
 
         let content = read_block_content(blocks_map, txn, &id).unwrap_or_default();
         let child_ids = read_block_child_ids(blocks_map, txn, &id);
@@ -417,13 +457,17 @@ pub(crate) fn compute_token_estimate<T: ReadTxn>(
     }
 
     while let Some((id, depth)) = stack.pop() {
-        if block_count >= 5000 { break; } // Safety cap
+        if block_count >= 5000 {
+            break;
+        } // Safety cap
 
         if let Some(content) = read_block_content(blocks_map, txn, &id) {
             total_chars += content.chars().count();
         }
         block_count += 1;
-        if depth > deepest { deepest = depth; }
+        if depth > deepest {
+            deepest = depth;
+        }
 
         if depth < max_depth {
             let child_ids = read_block_child_ids(blocks_map, txn, &id);
@@ -459,11 +503,21 @@ pub(crate) fn build_block_context_response<T: ReadTxn>(
 
     api::BlockWithContextResponse {
         block: block_dto,
-        ancestors: includes.contains("ancestors").then(|| get_ancestors(blocks_map, txn, block_id)),
-        siblings: includes.contains("siblings").then(|| get_siblings(blocks_map, txn, block_id, sibling_radius)),
-        children: includes.contains("children").then(|| get_children_refs(blocks_map, txn, block_id)),
-        tree: includes.contains("tree").then(|| get_subtree(blocks_map, txn, block_id, max_depth)),
-        token_estimate: includes.contains("token_estimate").then(|| compute_token_estimate(blocks_map, txn, block_id, max_depth)),
+        ancestors: includes
+            .contains("ancestors")
+            .then(|| get_ancestors(blocks_map, txn, block_id)),
+        siblings: includes
+            .contains("siblings")
+            .then(|| get_siblings(blocks_map, txn, block_id, sibling_radius)),
+        children: includes
+            .contains("children")
+            .then(|| get_children_refs(blocks_map, txn, block_id)),
+        tree: includes
+            .contains("tree")
+            .then(|| get_subtree(blocks_map, txn, block_id, max_depth)),
+        token_estimate: includes
+            .contains("token_estimate")
+            .then(|| compute_token_estimate(blocks_map, txn, block_id, max_depth)),
     }
 }
 
@@ -553,26 +607,38 @@ pub(crate) fn get_blocks(
 
                 // Apply query filters
                 if let Some(since) = query.since {
-                    if dto.created_at < since { continue; }
+                    if dto.created_at < since {
+                        continue;
+                    }
                 }
                 if let Some(until) = query.until {
-                    if dto.created_at >= until { continue; }
+                    if dto.created_at >= until {
+                        continue;
+                    }
                 }
                 if let Some(ref mt) = query.marker_type {
-                    let has_marker = dto.metadata.as_ref()
+                    let has_marker = dto
+                        .metadata
+                        .as_ref()
                         .and_then(|m| m.get("markers"))
                         .and_then(|arr| arr.as_array())
                         .map(|markers| {
                             markers.iter().any(|marker| {
-                                let type_match = marker.get("markerType").and_then(|v| v.as_str()) == Some(mt.as_str());
+                                let type_match = marker.get("markerType").and_then(|v| v.as_str())
+                                    == Some(mt.as_str());
                                 if let Some(ref mv) = query.marker_value {
-                                    type_match && marker.get("value").and_then(|v| v.as_str()) == Some(mv.as_str())
+                                    type_match
+                                        && marker.get("value").and_then(|v| v.as_str())
+                                            == Some(mv.as_str())
                                 } else {
                                     type_match
                                 }
                             })
-                        }).unwrap_or(false);
-                    if !has_marker { continue; }
+                        })
+                        .unwrap_or(false);
+                    if !has_marker {
+                        continue;
+                    }
                 }
 
                 blocks.push(dto);
@@ -607,13 +673,19 @@ pub(crate) fn get_block(
 
     if let yrs::Out::YMap(block_map) = value {
         let inherited_markers = {
-            let index = inheritance_index.read().map_err(|_| ApiError::LockPoisoned)?;
+            let index = inheritance_index
+                .read()
+                .map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, &id)
         };
         let block_dto = read_block_dto(&block_map, &txn, &id, inherited_markers, true);
 
         Ok(build_block_context_response(
-            &blocks_map, &txn, &id, block_dto, ctx_query,
+            &blocks_map,
+            &txn,
+            &id,
+            block_dto,
+            ctx_query,
         ))
     } else {
         Err(ApiError::NotFound(id))
@@ -697,7 +769,7 @@ fn create_block_inner(
         // 1. Check mutual exclusivity
         if req.after_id.is_some() && req.at_index.is_some() {
             return Err(ApiError::InvalidRequest(
-                "Cannot specify both afterId and atIndex".to_string()
+                "Cannot specify both afterId and atIndex".to_string(),
             ));
         }
 
@@ -706,14 +778,13 @@ fn create_block_inner(
             match blocks.get(&txn, after_id) {
                 Some(yrs::Out::YMap(after_map)) => {
                     // Check afterId block shares same parent
-                    let after_parent = after_map.get(&txn, "parentId")
-                        .and_then(|v| match v {
-                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                            _ => None,
-                        });
+                    let after_parent = after_map.get(&txn, "parentId").and_then(|v| match v {
+                        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    });
 
-                    let expected_parent = req.parent_id.as_ref().map(|s| s.as_str());
-                    let actual_parent = after_parent.as_ref().map(|s| s.as_str());
+                    let expected_parent = req.parent_id.as_deref();
+                    let actual_parent = after_parent.as_deref();
 
                     if actual_parent != expected_parent {
                         return Err(ApiError::InvalidRequest(format!(
@@ -757,7 +828,6 @@ fn create_block_inner(
             // Add to parent's childIds array (already validated parent exists above)
             if let Some(yrs::Out::YMap(parent_map)) = blocks.get(&txn, parent_id) {
                 if let Some(yrs::Out::YArray(child_ids)) = parent_map.get(&txn, "childIds") {
-
                     // Determine insertion index
                     let insert_idx = if let Some(ref after_id) = req.after_id {
                         // Find position of afterId sibling, insert after it
@@ -771,9 +841,12 @@ fn create_block_inner(
 
                         match child_ids_vec.iter().position(|x| x == after_id) {
                             Some(idx) => idx + 1,
-                            None => return Err(ApiError::InvalidRequest(format!(
-                                "afterId '{}' not found in parent's childIds", after_id
-                            ))),
+                            None => {
+                                return Err(ApiError::InvalidRequest(format!(
+                                    "afterId '{}' not found in parent's childIds",
+                                    after_id
+                                )))
+                            }
                         }
                     } else if let Some(at_index) = req.at_index {
                         // Clamp to valid range (0..=length)
@@ -802,9 +875,12 @@ fn create_block_inner(
 
                 match root_vec.iter().position(|x| x == after_id) {
                     Some(idx) => idx + 1,
-                    None => return Err(ApiError::InvalidRequest(format!(
-                        "afterId '{}' not found in rootIds", after_id
-                    ))),
+                    None => {
+                        return Err(ApiError::InvalidRequest(format!(
+                            "afterId '{}' not found in rootIds",
+                            after_id
+                        )))
+                    }
                 }
             } else if let Some(at_index) = req.at_index {
                 at_index.min(root_ids.len(&txn) as usize)
@@ -840,7 +916,7 @@ fn create_block_inner(
         child_ids: vec![],
         collapsed: false,
         block_type: format!("{:?}", block_type).to_lowercase(),
-        metadata: None, // Hooks will populate async
+        metadata: None,          // Hooks will populate async
         inherited_markers: None, // Computed on read
         created_at,
         updated_at,
@@ -865,9 +941,8 @@ pub(crate) fn import_block(
     // Validate and canonicalise to lowercase — resolve_block_id() normalises lookups
     // to lowercase, so importing the same UUID with different casing would bypass
     // the collision check without this step.
-    let parsed_id = uuid::Uuid::parse_str(&req.id).map_err(|_| {
-        ApiError::InvalidRequest(format!("id '{}' is not a valid UUID", req.id))
-    })?;
+    let parsed_id = uuid::Uuid::parse_str(&req.id)
+        .map_err(|_| ApiError::InvalidRequest(format!("id '{}' is not a valid UUID", req.id)))?;
     req.id = parsed_id.hyphenated().to_string();
 
     let now = std::time::SystemTime::now()
@@ -887,7 +962,8 @@ pub(crate) fn import_block(
             // Collision check — reject before any mutation
             if blocks_map.contains_key(&txn, req.id.as_str()) {
                 return Err(ApiError::Conflict(format!(
-                    "Block '{}' already exists in this outline", req.id
+                    "Block '{}' already exists in this outline",
+                    req.id
                 )));
             }
             if let Some(ref parent_id) = req.parent_id {
@@ -932,7 +1008,6 @@ pub(crate) fn import_block(
         Some(updated_at),
     )
 }
-
 
 /// Update an existing block. Handles content changes, metadata updates,
 /// reparenting, and repositioning. Owns the full mutation pipeline.
@@ -1022,13 +1097,21 @@ pub(crate) fn update_block(
                 })
                 .unwrap_or_default();
 
-            let existing_metadata = block_map.get(&txn, "metadata")
+            let existing_metadata = block_map
+                .get(&txn, "metadata")
                 .and_then(|v| api::extract_metadata_from_yrs(v, &txn));
 
             // Extract created_at (doesn't change on update)
             let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
 
-            (parent_id, child_ids, collapsed, existing_content, existing_metadata, created_at)
+            (
+                parent_id,
+                child_ids,
+                collapsed,
+                existing_content,
+                existing_metadata,
+                created_at,
+            )
         } else {
             return Err(ApiError::NotFound(id));
         }
@@ -1047,14 +1130,14 @@ pub(crate) fn update_block(
     // Validate positional insertion parameters
     if req.after_id.is_some() && req.at_index.is_some() {
         return Err(ApiError::InvalidRequest(
-            "Cannot specify both afterId and atIndex".to_string()
+            "Cannot specify both afterId and atIndex".to_string(),
         ));
     }
 
     // Reject self-referential afterId (block removed first → afterId not found → silent append)
     if req.after_id.as_deref() == Some(id.as_str()) {
         return Err(ApiError::InvalidRequest(
-            "afterId cannot reference the block being moved".to_string()
+            "afterId cannot reference the block being moved".to_string(),
         ));
     }
 
@@ -1082,7 +1165,7 @@ pub(crate) fn update_block(
                 // Prevent self-parenting
                 if new_parent_id == &id {
                     return Err(ApiError::InvalidParent(
-                        "Cannot reparent block under itself".to_string()
+                        "Cannot reparent block under itself".to_string(),
                     ));
                 }
 
@@ -1100,19 +1183,18 @@ pub(crate) fn update_block(
                     depth += 1;
                     if depth > MAX_ANCESTOR_DEPTH {
                         return Err(ApiError::InvalidParent(
-                            "Ancestor chain exceeds depth limit — possible data corruption".to_string()
+                            "Ancestor chain exceeds depth limit — possible data corruption"
+                                .to_string(),
                         ));
                     }
-                    cursor = blocks
-                        .get(&txn, &pid)
-                        .and_then(|v| match v {
-                            yrs::Out::YMap(m) => m.get(&txn, "parentId").and_then(|v| match v {
-                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                                yrs::Out::Any(yrs::Any::Null) => None,
-                                _ => None,
-                            }),
+                    cursor = blocks.get(&txn, &pid).and_then(|v| match v {
+                        yrs::Out::YMap(m) => m.get(&txn, "parentId").and_then(|v| match v {
+                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                            yrs::Out::Any(yrs::Any::Null) => None,
                             _ => None,
-                        });
+                        }),
+                        _ => None,
+                    });
                 }
 
                 // Validate new parent exists
@@ -1155,15 +1237,15 @@ pub(crate) fn update_block(
                     match blocks.get(&txn, after_id) {
                         Some(yrs::Out::YMap(after_map)) => {
                             // Check afterId block shares same parent (or will share after reparenting)
-                            let after_parent = after_map.get(&txn, "parentId")
-                                .and_then(|v| match v {
+                            let after_parent =
+                                after_map.get(&txn, "parentId").and_then(|v| match v {
                                     yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                                     yrs::Out::Any(yrs::Any::Null) => None,
                                     _ => None,
                                 });
 
-                            let expected_parent = final_parent_id.as_ref().map(|s| s.as_str());
-                            let actual_parent = after_parent.as_ref().map(|s| s.as_str());
+                            let expected_parent = final_parent_id.as_deref();
+                            let actual_parent = after_parent.as_deref();
 
                             if actual_parent != expected_parent {
                                 return Err(ApiError::InvalidRequest(format!(
@@ -1184,7 +1266,9 @@ pub(crate) fn update_block(
                 // Remove from old parent's childIds (or rootIds if was root)
                 if let Some(ref old_pid) = old_parent_id {
                     if let Some(yrs::Out::YMap(old_parent_map)) = blocks.get(&txn, old_pid) {
-                        if let Some(yrs::Out::YArray(child_ids_arr)) = old_parent_map.get(&txn, "childIds") {
+                        if let Some(yrs::Out::YArray(child_ids_arr)) =
+                            old_parent_map.get(&txn, "childIds")
+                        {
                             let mut remove_idx: Option<u32> = None;
                             for (i, value) in child_ids_arr.iter(&txn).enumerate() {
                                 if let yrs::Out::Any(yrs::Any::String(s)) = value {
@@ -1219,7 +1303,9 @@ pub(crate) fn update_block(
                 // Add to new parent's childIds (or rootIds if moving to root)
                 if let Some(ref new_pid) = final_parent_id {
                     if let Some(yrs::Out::YMap(new_parent_map)) = blocks.get(&txn, new_pid) {
-                        if let Some(yrs::Out::YArray(child_ids_arr)) = new_parent_map.get(&txn, "childIds") {
+                        if let Some(yrs::Out::YArray(child_ids_arr)) =
+                            new_parent_map.get(&txn, "childIds")
+                        {
                             // Determine insertion index
                             let insert_idx = if let Some(ref after_id) = req.after_id {
                                 let child_ids_vec: Vec<String> = child_ids_arr
@@ -1230,7 +1316,8 @@ pub(crate) fn update_block(
                                     })
                                     .collect();
 
-                                child_ids_vec.iter()
+                                child_ids_vec
+                                    .iter()
                                     .position(|x| x == after_id)
                                     .map(|idx| idx + 1)
                                     .unwrap_or(child_ids_arr.len(&txn) as usize)
@@ -1256,7 +1343,8 @@ pub(crate) fn update_block(
                             })
                             .collect();
 
-                        root_vec.iter()
+                        root_vec
+                            .iter()
                             .position(|x| x == after_id)
                             .map(|idx| idx + 1)
                             .unwrap_or(root_ids.len(&txn) as usize)
@@ -1322,7 +1410,7 @@ pub(crate) fn update_block(
         metadata: final_metadata,
         inherited_markers: None, // Computed on read
         created_at,
-        updated_at: now as i64,
+        updated_at: now,
         output_type: None,
         output: None,
     })
@@ -1440,7 +1528,11 @@ pub(crate) fn search_blocks(
     let has_explicit_types = query.types.is_some();
     let filters = SearchFilters {
         block_types: query.types.as_ref().map(|t| {
-            t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
+            t.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
         }),
         has_markers: query.has_markers,
         parent_id: query.parent_id.clone(),
@@ -1457,7 +1549,12 @@ pub(crate) fn search_blocks(
         ctx_before: query.ctx_before,
         include_inherited: query.inherited,
         exclude_types: Some(match &query.exclude_types {
-            Some(t) => t.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
+            Some(t) => t
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
             None if !has_explicit_types => vec!["picker".into(), "output".into(), "ran".into()],
             None => vec![],
         }),
@@ -1479,7 +1576,8 @@ pub(crate) fn search_blocks(
 
         hits.into_iter()
             .map(|h| {
-                let (content, breadcrumb, metadata, block_type) = if let Some(ref bmap) = blocks_map {
+                let (content, breadcrumb, metadata, block_type) = if let Some(ref bmap) = blocks_map
+                {
                     let content = bmap
                         .get(&txn, &h.block_id)
                         .and_then(|v| match v {
@@ -1503,27 +1601,31 @@ pub(crate) fn search_blocks(
 
                     let breadcrumb = if want_breadcrumb {
                         let ancestors = get_ancestors(bmap, &txn, &h.block_id);
-                        let crumbs: Vec<String> = ancestors.into_iter().take(5).map(|a| a.content).collect();
-                        if crumbs.is_empty() { None } else { Some(crumbs) }
+                        let crumbs: Vec<String> =
+                            ancestors.into_iter().take(5).map(|a| a.content).collect();
+                        if crumbs.is_empty() {
+                            None
+                        } else {
+                            Some(crumbs)
+                        }
                     } else {
                         None
                     };
 
                     let metadata = if want_metadata {
-                        bmap.get(&txn, &h.block_id)
-                            .and_then(|v| match v {
-                                yrs::Out::YMap(block_map) => block_map
-                                    .get(&txn, "metadata")
-                                    .and_then(|m| api::extract_metadata_from_yrs(m, &txn)),
-                                _ => None,
-                            })
+                        bmap.get(&txn, &h.block_id).and_then(|v| match v {
+                            yrs::Out::YMap(block_map) => block_map
+                                .get(&txn, "metadata")
+                                .and_then(|m| api::extract_metadata_from_yrs(m, &txn)),
+                            _ => None,
+                        })
                     } else {
                         None
                     };
 
-                    let block_type = content.as_ref().map(|c| {
-                        floatty_core::parse_block_type(c).as_str().to_string()
-                    });
+                    let block_type = content
+                        .as_ref()
+                        .map(|c| floatty_core::parse_block_type(c).as_str().to_string());
 
                     (content, breadcrumb, metadata, block_type)
                 } else {

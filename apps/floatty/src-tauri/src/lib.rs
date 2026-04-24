@@ -21,18 +21,18 @@ use commands::{
     uninstall_shell_hooks,
 };
 use config::{AggregatorConfig, ServerInfo};
-use paths::DataPaths;
-use server::{spawn_server, ServerState};
 use ctx_parser::{CtxParser, ParserConfig};
 use ctx_watcher::{CtxWatcher, WatcherConfig};
 use db::FloattyDb;
 use floatty_core::YDocStore;
+use paths::DataPaths;
+use server::{spawn_server, ServerState};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
-use tauri::menu::{Menu, SubmenuBuilder, MenuItemBuilder};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Inner state when ctx:: system is available
 struct AppStateInner {
@@ -61,7 +61,9 @@ pub struct AppState {
 /// Called once on app startup to initialize the HTTP client.
 #[tauri::command]
 fn get_server_info(state: State<AppState>) -> Result<ServerInfo, String> {
-    state.server.as_ref()
+    state
+        .server
+        .as_ref()
         .map(|s| s.info.clone())
         .ok_or_else(|| "Server not running".to_string())
 }
@@ -122,7 +124,10 @@ async fn run_orphan_check(server_url: &str, api_key: &str, app_handle: &tauri::A
     let orphans = orphan_detector::find_orphans(&data.blocks, &data.root_ids);
 
     if orphans.is_empty() {
-        tracing::debug!(block_count = data.blocks.len(), "Orphan check: no orphans found");
+        tracing::debug!(
+            block_count = data.blocks.len(),
+            "Orphan check: no orphans found"
+        );
         return;
     }
 
@@ -140,8 +145,13 @@ async fn run_orphan_check(server_url: &str, api_key: &str, app_handle: &tauri::A
 
 /// Manual trigger for orphan detection (for testing/debugging).
 #[tauri::command]
-async fn check_orphans_now(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<String, String> {
-    let server = state.server.as_ref()
+async fn check_orphans_now(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    let server = state
+        .server
+        .as_ref()
         .ok_or_else(|| "Server not running".to_string())?;
 
     run_orphan_check(&server.info.url, &server.info.api_key, &app_handle).await;
@@ -161,20 +171,21 @@ fn setup_logging(log_dir: &std::path::Path) {
         eprintln!("Failed to create log directory: {}", e);
         return;
     }
-    
+
     // File appender: ~/.floatty/logs/floatty-{date}.jsonl
     let file_appender = match RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .filename_prefix("floatty")
         .filename_suffix("jsonl")
-        .build(log_dir) {
-            Ok(appender) => appender,
-            Err(e) => {
-                eprintln!("Failed to create log appender: {}", e);
-                return;
-            }
-        };
-    
+        .build(log_dir)
+    {
+        Ok(appender) => appender,
+        Err(e) => {
+            eprintln!("Failed to create log appender: {}", e);
+            return;
+        }
+    };
+
     // Structured JSON logs to file (always enabled)
     let file_layer = fmt::layer()
         .json()
@@ -184,19 +195,21 @@ fn setup_logging(log_dir: &std::path::Path) {
         .with_thread_names(true)
         .with_file(true)
         .with_line_number(true);
-    
+
     // Human-readable logs to stdout (dev only)
     let stdout_layer = if cfg!(debug_assertions) {
-        Some(fmt::layer()
-            .with_writer(std::io::stdout)
-            .with_target(true)
-            .with_level(true)
-            .with_ansi(true)
-            .pretty())
+        Some(
+            fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_target(true)
+                .with_level(true)
+                .with_ansi(true)
+                .pretty(),
+        )
     } else {
         None
     };
-    
+
     // ENV filter: RUST_LOG=debug or default to info.
     //
     // tauri_plugin_pty floods ~80 lines/session with PTY spawn details — demote to warn.
@@ -208,11 +221,13 @@ fn setup_logging(log_dir: &std::path::Path) {
     // now prevents anyone adding OTLP later from hitting that trap. See
     // .claude/rules/logging-discipline.md "Filter defaults".
     let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new(
-            "info,tauri_plugin_pty=warn,hyper=warn,reqwest=warn,opentelemetry=off"
-        ))
+        .or_else(|_| {
+            EnvFilter::try_new(
+                "info,tauri_plugin_pty=warn,hyper=warn,reqwest=warn,opentelemetry=off",
+            )
+        })
         .unwrap();
-    
+
     // Initialize tracing subscriber
     tracing_subscriber::registry()
         .with(filter)
@@ -270,7 +285,8 @@ pub fn run() {
             const MAX_MIGRATION_ATTEMPTS: u32 = 3;
 
             let has_updates = db.get_ydoc_update_count(YDOC_KEY).unwrap_or(0) > 0;
-            let migration_attempts: u32 = db.get_system_state("ydoc_migration_attempts")
+            let migration_attempts: u32 = db
+                .get_system_state("ydoc_migration_attempts")
                 .ok()
                 .flatten()
                 .and_then(|bytes| String::from_utf8(bytes).ok())
@@ -291,9 +307,14 @@ pub fn run() {
                                 e, migration_attempts + 1, MAX_MIGRATION_ATTEMPTS
                             );
                             let new_attempts = migration_attempts + 1;
-                            let _ = db.set_system_state("ydoc_migration_attempts", new_attempts.to_string().as_bytes());
+                            let _ = db.set_system_state(
+                                "ydoc_migration_attempts",
+                                new_attempts.to_string().as_bytes(),
+                            );
                         } else {
-                            log::info!("Successfully migrated Y.Doc from legacy to append-only format");
+                            log::info!(
+                                "Successfully migrated Y.Doc from legacy to append-only format"
+                            );
                             // Clear legacy entry to prevent re-migration after schema upgrades
                             let _ = db.set_system_state("ydoc", b"");
                             let _ = db.set_system_state("ydoc_migration_attempts", b"0");
@@ -357,7 +378,9 @@ pub fn run() {
                 }
                 Err(e) => {
                     log::error!("Failed to create ctx:: parser: {}", e);
-                    log::error!("ctx:: sidebar will show errors. Check Ollama/network configuration.");
+                    log::error!(
+                        "ctx:: sidebar will show errors. Check Ollama/network configuration."
+                    );
                     None
                 }
             }
@@ -381,7 +404,11 @@ pub fn run() {
     let server_url_for_orphan = server_state.as_ref().map(|s| s.info.url.clone());
     let server_api_key_for_orphan = server_state.as_ref().map(|s| s.info.api_key.clone());
 
-    let state = AppState { inner, server: server_state, config_path: paths.config.clone() };
+    let state = AppState {
+        inner,
+        server: server_state,
+        config_path: paths.config.clone(),
+    };
 
     // Build app with platform-specific plugins and commands
     let mut builder = tauri::Builder::default()
@@ -662,7 +689,9 @@ async fn fetch_outline_names(server_url: &str, api_key: &str) -> Result<Vec<Stri
     }
 
     #[derive(serde::Deserialize)]
-    struct OutlineInfo { name: String }
+    struct OutlineInfo {
+        name: String,
+    }
 
     let outlines: Vec<OutlineInfo> = resp.json().await.map_err(|e| format!("parse: {}", e))?;
     Ok(outlines.into_iter().map(|o| o.name).collect())
@@ -674,8 +703,7 @@ fn rebuild_outlines_menu(app: &tauri::AppHandle, names: &[String]) -> Result<(),
     let default_item = MenuItemBuilder::with_id("outline:default", "Default")
         .build(app)
         .map_err(|e| format!("default item: {}", e))?;
-    let mut submenu = SubmenuBuilder::with_id(app, "outlines", "Outlines")
-        .item(&default_item);
+    let mut submenu = SubmenuBuilder::with_id(app, "outlines", "Outlines").item(&default_item);
 
     for name in names {
         if name == "default" {

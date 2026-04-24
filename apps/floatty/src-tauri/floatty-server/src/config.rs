@@ -151,7 +151,10 @@ impl BackupConfig {
     pub fn load() -> Self {
         let config_path = ServerConfig::config_path();
 
-        let backup_config = if config_path.exists() {
+        // Note: FLOATTY_BACKUP_INTERVAL_SECS env var is handled in backup.rs run() method
+        // for testing/development. The config.interval_hours value is always in hours.
+
+        if config_path.exists() {
             std::fs::read_to_string(&config_path)
                 .ok()
                 .and_then(|contents| toml::from_str::<Config>(&contents).ok())
@@ -159,12 +162,7 @@ impl BackupConfig {
                 .unwrap_or_default()
         } else {
             Self::default()
-        };
-
-        // Note: FLOATTY_BACKUP_INTERVAL_SECS env var is handled in backup.rs run() method
-        // for testing/development. The config.interval_hours value is always in hours.
-
-        backup_config
+        }
     }
 }
 
@@ -269,7 +267,10 @@ impl ServerConfig {
             .as_table_mut();
 
         if let Some(server) = server {
-            server.insert("api_key".to_string(), toml::Value::String(api_key.to_string()));
+            server.insert(
+                "api_key".to_string(),
+                toml::Value::String(api_key.to_string()),
+            );
         }
 
         // Ensure directory exists

@@ -32,24 +32,20 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
 /// Regex for `prefix::value` patterns (word chars before ::, anything non-whitespace after).
-static COLONCOLON_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"([a-zA-Z_]\w*)::(\S+)").expect("valid regex")
-});
+static COLONCOLON_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"([a-zA-Z_]\w*)::(\S+)").expect("valid regex"));
 
 /// Regex for bare `prefix::` (word:: with nothing after, or at end of string).
-static BARE_PREFIX_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"([a-zA-Z_]\w*)::(?:\s|$)").expect("valid regex")
-});
+static BARE_PREFIX_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"([a-zA-Z_]\w*)::(?:\s|$)").expect("valid regex"));
 
 /// Regex for `[[wikilinks]]` — matches `[[anything]]` including nested brackets.
-static WIKILINK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[\[([^\]]+)\]\]").expect("valid regex")
-});
+static WIKILINK_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([^\]]+)\]\]").expect("valid regex"));
 
 /// Regex for `[inline::markers]` — single square brackets around prefix::value.
-static INLINE_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[([a-zA-Z_]\w*::\S*)\]").expect("valid regex")
-});
+static INLINE_MARKER_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[([a-zA-Z_]\w*::\S*)\]").expect("valid regex"));
 
 /// Preprocess block content before Tantivy indexing.
 ///
@@ -99,7 +95,8 @@ pub fn preprocess_content_for_index(content: &str) -> String {
             let full = cap[0].to_string();
             let value = &cap[2];
             // Split value on non-word chars for individual tokens
-            let value_parts: Vec<&str> = value.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+            let value_parts: Vec<&str> = value
+                .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
                 .filter(|s| !s.is_empty())
                 .collect();
             // Replace compound with just the value parts
@@ -428,8 +425,14 @@ impl TantivyWriter {
         doc.add_text(self.fields.content, &preprocessed);
         doc.add_text(self.fields.block_type, &d.block_type);
         doc.add_text(self.fields.parent_id, d.parent_id.as_deref().unwrap_or(""));
-        doc.add_date(self.fields.updated_at, DateTime::from_timestamp_secs(d.updated_at));
-        doc.add_text(self.fields.has_markers, if d.has_markers { "true" } else { "false" });
+        doc.add_date(
+            self.fields.updated_at,
+            DateTime::from_timestamp_secs(d.updated_at),
+        );
+        doc.add_text(
+            self.fields.has_markers,
+            if d.has_markers { "true" } else { "false" },
+        );
         doc.add_text(self.fields.markers, &d.markers);
 
         // Multi-value fields: each value added separately
@@ -461,7 +464,9 @@ impl TantivyWriter {
         // Depth field (always set)
         doc.add_i64(self.fields.depth, d.depth as i64);
 
-        self.writer.add_document(doc).map_err(SearchError::Tantivy)?;
+        self.writer
+            .add_document(doc)
+            .map_err(SearchError::Tantivy)?;
         Ok(())
     }
 
@@ -487,7 +492,14 @@ mod tests {
     }
 
     /// Helper: create a minimal BlockIndexData for tests.
-    fn simple_data(block_id: &str, content: &str, block_type: &str, parent_id: Option<&str>, has_markers: bool, markers: &str) -> BlockIndexData {
+    fn simple_data(
+        block_id: &str,
+        content: &str,
+        block_type: &str,
+        parent_id: Option<&str>,
+        has_markers: bool,
+        markers: &str,
+    ) -> BlockIndexData {
         BlockIndexData {
             block_id: block_id.to_string(),
             content: content.to_string(),
@@ -559,7 +571,7 @@ mod tests {
     #[test]
     fn test_preprocess_mixed_content() {
         let result = preprocess_content_for_index(
-            "ctx::2026-03-11 discussed [[FLO-368]] eval::https://thing.com"
+            "ctx::2026-03-11 discussed [[FLO-368]] eval::https://thing.com",
         );
         // Compounds removed — prefixes live in markers field
         assert!(!result.contains("ctx::"));
@@ -619,7 +631,16 @@ mod tests {
     #[tokio::test]
     async fn test_add_or_update() {
         let (handle, _dir) = setup_writer().await;
-        let result = handle.add_or_update(simple_data("block_1", "Hello world", "text", None, false, "")).await;
+        let result = handle
+            .add_or_update(simple_data(
+                "block_1",
+                "Hello world",
+                "text",
+                None,
+                false,
+                "",
+            ))
+            .await;
         assert!(result.is_ok());
         handle.shutdown().await.ok();
     }
@@ -627,7 +648,17 @@ mod tests {
     #[tokio::test]
     async fn test_delete() {
         let (handle, _dir) = setup_writer().await;
-        handle.add_or_update(simple_data("block_2", "To be deleted", "text", None, false, "")).await.unwrap();
+        handle
+            .add_or_update(simple_data(
+                "block_2",
+                "To be deleted",
+                "text",
+                None,
+                false,
+                "",
+            ))
+            .await
+            .unwrap();
         let result = handle.delete("block_2".to_string()).await;
         assert!(result.is_ok());
         handle.shutdown().await.ok();
@@ -636,7 +667,17 @@ mod tests {
     #[tokio::test]
     async fn test_commit() {
         let (handle, _dir) = setup_writer().await;
-        handle.add_or_update(simple_data("block_3", "Commit me", "text", Some("parent_1"), true, "project::test")).await.unwrap();
+        handle
+            .add_or_update(simple_data(
+                "block_3",
+                "Commit me",
+                "text",
+                Some("parent_1"),
+                true,
+                "project::test",
+            ))
+            .await
+            .unwrap();
         let result = handle.commit().await;
         assert!(result.is_ok());
         handle.shutdown().await.ok();
@@ -662,8 +703,28 @@ mod tests {
     #[tokio::test]
     async fn test_update_replaces_existing() {
         let (handle, _dir) = setup_writer().await;
-        handle.add_or_update(simple_data("block_4", "Original content", "text", None, false, "")).await.unwrap();
-        handle.add_or_update(simple_data("block_4", "Updated content", "text", None, true, "project::floatty mode::dev")).await.unwrap();
+        handle
+            .add_or_update(simple_data(
+                "block_4",
+                "Original content",
+                "text",
+                None,
+                false,
+                "",
+            ))
+            .await
+            .unwrap();
+        handle
+            .add_or_update(simple_data(
+                "block_4",
+                "Updated content",
+                "text",
+                None,
+                true,
+                "project::floatty mode::dev",
+            ))
+            .await
+            .unwrap();
         handle.commit().await.unwrap();
         handle.shutdown().await.ok();
     }
