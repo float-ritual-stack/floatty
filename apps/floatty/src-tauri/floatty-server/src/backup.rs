@@ -139,8 +139,7 @@ impl BackupDaemon {
         }
 
         // Find most recent backup
-        let most_recent = backups.iter()
-            .max_by_key(|b| b.created);
+        let most_recent = backups.iter().max_by_key(|b| b.created);
 
         match most_recent {
             Some(backup) => {
@@ -171,7 +170,8 @@ impl BackupDaemon {
 
             if path.extension().map(|e| e == "ydoc").unwrap_or(false) {
                 let metadata = entry.metadata()?;
-                let filename = path.file_name()
+                let filename = path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("")
                     .to_string();
@@ -238,7 +238,11 @@ impl BackupDaemon {
         // Delete expired and filtered backups
         let mut deleted_count = 0;
 
-        for backup in expired.iter().chain(daily_to_delete.iter()).chain(weekly_to_delete.iter()) {
+        for backup in expired
+            .iter()
+            .chain(daily_to_delete.iter())
+            .chain(weekly_to_delete.iter())
+        {
             if let Err(e) = std::fs::remove_file(&backup.path) {
                 tracing::warn!(
                     target: "floatty_server::backup",
@@ -268,7 +272,11 @@ impl BackupDaemon {
         let mut by_date: HashMap<String, Vec<&'a BackupInfo>> = HashMap::new();
         for backup in backups {
             // Extract date from filename: floatty-YYYY-MM-DD-HHmmss.ydoc
-            if let Some(date) = backup.filename.strip_prefix("floatty-").and_then(|s| s.get(0..10)) {
+            if let Some(date) = backup
+                .filename
+                .strip_prefix("floatty-")
+                .and_then(|s| s.get(0..10))
+            {
                 by_date.entry(date.to_string()).or_default().push(backup);
             }
         }
@@ -277,7 +285,7 @@ impl BackupDaemon {
         let mut to_delete = Vec::new();
         for (_date, mut day_backups) in by_date {
             day_backups.sort_by(|a, b| a.created.cmp(&b.created)); // Oldest first
-            // Skip first (keep it), delete rest
+                                                                   // Skip first (keep it), delete rest
             to_delete.extend(day_backups.into_iter().skip(1));
         }
 
@@ -292,7 +300,11 @@ impl BackupDaemon {
         let mut by_week: HashMap<String, Vec<&'a BackupInfo>> = HashMap::new();
         for backup in backups {
             // Parse date from filename and compute week
-            if let Some(date_str) = backup.filename.strip_prefix("floatty-").and_then(|s| s.get(0..10)) {
+            if let Some(date_str) = backup
+                .filename
+                .strip_prefix("floatty-")
+                .and_then(|s| s.get(0..10))
+            {
                 let week_key = Self::date_to_week_key(date_str);
                 by_week.entry(week_key).or_default().push(backup);
             }
@@ -381,14 +393,17 @@ impl BackupDaemon {
     pub async fn trigger_backup(&self) -> Result<BackupInfo, String> {
         let start = Instant::now();
 
-        let state = self.store.get_full_state()
+        let state = self
+            .store
+            .get_full_state()
             .map_err(|e| format!("Failed to get state: {}", e))?;
 
         let timestamp = Self::timestamp();
         let filename = format!("floatty-{}.ydoc", timestamp);
         let path = self.backup_dir.join(&filename);
 
-        tokio::fs::write(&path, &state).await
+        tokio::fs::write(&path, &state)
+            .await
             .map_err(|e| format!("Failed to write backup: {}", e))?;
 
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -429,7 +444,10 @@ pub fn backup_dir_for(outline_name: &str) -> PathBuf {
     if outline_name == "default" {
         data_dir().join("backups")
     } else {
-        data_dir().join("outlines").join(outline_name).join("backups")
+        data_dir()
+            .join("outlines")
+            .join(outline_name)
+            .join("backups")
     }
 }
 

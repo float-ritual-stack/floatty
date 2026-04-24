@@ -40,7 +40,9 @@ use std::collections::HashSet;
 /// should fall through to [`walk_generic_json_to_markdown`] in that case.
 pub fn walk_spec_to_markdown(output_data: &Value) -> String {
     let spec = output_data.get("spec").or_else(|| output_data.get("Spec"));
-    let Some(spec) = spec else { return String::new(); };
+    let Some(spec) = spec else {
+        return String::new();
+    };
 
     let Some(root_key) = spec.get("root").and_then(Value::as_str) else {
         return String::new();
@@ -121,8 +123,12 @@ fn emit_element(el_type: &str, props: Option<&Value>, lines: &mut Vec<String>) {
         // Well-known types with nice rendering (ported loosely from TS).
         "EntryHeader" | "MetadataHeader" => {
             if let Some(title) = string_prop(p, "title") {
-                let date = string_prop(p, "date").map(|d| format!(" ({})", d)).unwrap_or_default();
-                let author = string_prop(p, "author").map(|a| format!(" — {}", a)).unwrap_or_default();
+                let date = string_prop(p, "date")
+                    .map(|d| format!(" ({})", d))
+                    .unwrap_or_default();
+                let author = string_prop(p, "author")
+                    .map(|a| format!(" — {}", a))
+                    .unwrap_or_default();
                 lines.push(format!("## {}{}{}", title, date, author));
                 lines.push(String::new());
             }
@@ -146,14 +152,21 @@ fn emit_element(el_type: &str, props: Option<&Value>, lines: &mut Vec<String>) {
         }
         "PatternCard" => {
             let title = string_prop(p, "title").unwrap_or_else(|| "Pattern".to_string());
-            let ty = string_prop(p, "type").map(|t| format!(" [{}]", t)).unwrap_or_default();
-            let conf = string_prop(p, "confidence").map(|c| format!(" ({})", c)).unwrap_or_default();
+            let ty = string_prop(p, "type")
+                .map(|t| format!(" [{}]", t))
+                .unwrap_or_default();
+            let conf = string_prop(p, "confidence")
+                .map(|c| format!(" ({})", c))
+                .unwrap_or_default();
             lines.push(format!("### {}{}{}", title, ty, conf));
             if let Some(content) = string_prop(p, "content") {
                 lines.push(String::new());
                 lines.push(content);
             }
-            if let Some(connects) = p.and_then(|p| p.get("connectsTo")).and_then(Value::as_array) {
+            if let Some(connects) = p
+                .and_then(|p| p.get("connectsTo"))
+                .and_then(Value::as_array)
+            {
                 let refs: Vec<String> = connects
                     .iter()
                     .filter_map(Value::as_str)
@@ -182,7 +195,9 @@ fn emit_element(el_type: &str, props: Option<&Value>, lines: &mut Vec<String>) {
         }
         "WikilinkChip" => {
             if let Some(target) = string_prop(p, "target") {
-                let label = string_prop(p, "label").map(|l| format!(" {}", l)).unwrap_or_default();
+                let label = string_prop(p, "label")
+                    .map(|l| format!(" {}", l))
+                    .unwrap_or_default();
                 lines.push(format!("- [[{}]]{}", target, label));
             }
         }
@@ -209,7 +224,16 @@ fn emit_element(el_type: &str, props: Option<&Value>, lines: &mut Vec<String>) {
         // any string-valued text-bearing props.
         _ => {
             let mut harvested: Vec<String> = Vec::new();
-            for key in ["title", "label", "content", "text", "description", "subtitle", "value", "markdown"] {
+            for key in [
+                "title",
+                "label",
+                "content",
+                "text",
+                "description",
+                "subtitle",
+                "value",
+                "markdown",
+            ] {
                 if let Some(s) = string_prop(p, key) {
                     if !s.trim().is_empty() {
                         harvested.push(s);
@@ -239,7 +263,10 @@ fn emit_link_list(
     label: &str,
     lines: &mut Vec<String>,
 ) {
-    let Some(arr) = props.and_then(|p| p.get(prop_key)).and_then(Value::as_array) else {
+    let Some(arr) = props
+        .and_then(|p| p.get(prop_key))
+        .and_then(Value::as_array)
+    else {
         return;
     };
     let refs: Vec<String> = arr
@@ -255,14 +282,12 @@ fn emit_link_list(
 
 /// Read a string prop, returning `None` for missing or non-string values.
 fn string_prop(props: Option<&serde_json::Map<String, Value>>, key: &str) -> Option<String> {
-    props
-        .and_then(|p| p.get(key))
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            Value::Number(n) => Some(n.to_string()),
-            Value::Bool(b) => Some(b.to_string()),
-            _ => None,
-        })
+    props.and_then(|p| p.get(key)).and_then(|v| match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    })
 }
 
 /// Last-resort fallback: walk an arbitrary JSON value and flatten to readable
@@ -356,9 +381,17 @@ mod tests {
 
         assert!(!md.is_empty(), "walker should produce non-empty output");
         // Title from data envelope
-        assert!(md.contains("Monday Apr 13 At a Glance"), "should contain title; got:\n{}", md);
+        assert!(
+            md.contains("Monday Apr 13 At a Glance"),
+            "should contain title; got:\n{}",
+            md
+        );
         // At least one Section header appears — spec has 22 elements
-        assert!(md.contains("## "), "should contain at least one section header; got:\n{}", md);
+        assert!(
+            md.contains("## "),
+            "should contain at least one section header; got:\n{}",
+            md
+        );
         // Token reduction sanity: walker output should be meaningfully smaller than raw JSON
         assert!(
             md.len() < FIXTURE_7F5EF11C.len(),
@@ -407,9 +440,21 @@ mod tests {
             }
         });
         let md = walk_spec_to_markdown(&output);
-        assert!(md.contains("# Doc Title"), "should render data.title; got:\n{}", md);
-        assert!(md.contains("## Intro"), "should render Section heading; got:\n{}", md);
-        assert!(md.contains("Hello world"), "should render Text content; got:\n{}", md);
+        assert!(
+            md.contains("# Doc Title"),
+            "should render data.title; got:\n{}",
+            md
+        );
+        assert!(
+            md.contains("## Intro"),
+            "should render Section heading; got:\n{}",
+            md
+        );
+        assert!(
+            md.contains("Hello world"),
+            "should render Text content; got:\n{}",
+            md
+        );
     }
 
     #[test]
@@ -440,7 +485,11 @@ mod tests {
             }
         });
         let md = walk_spec_to_markdown(&output);
-        assert!(!md.starts_with("#"), "dirty title should be skipped; got:\n{}", md);
+        assert!(
+            !md.starts_with("#"),
+            "dirty title should be skipped; got:\n{}",
+            md
+        );
         assert!(md.contains("ok"));
     }
 
@@ -458,7 +507,11 @@ mod tests {
             }
         });
         let md = walk_spec_to_markdown(&output);
-        assert!(md.contains("MysteryComponent"), "should emit type hint; got:\n{}", md);
+        assert!(
+            md.contains("MysteryComponent"),
+            "should emit type hint; got:\n{}",
+            md
+        );
         assert!(md.contains("Mystery"));
         assert!(md.contains("unknown type"));
     }
@@ -473,7 +526,11 @@ mod tests {
             "flag": true
         });
         let md = walk_generic_json_to_markdown(&value);
-        assert!(md.contains("deep value"), "should surface nested string; got:\n{}", md);
+        assert!(
+            md.contains("deep value"),
+            "should surface nested string; got:\n{}",
+            md
+        );
         assert!(md.contains("42"), "should surface nested number");
         assert!(md.contains("flag"), "should surface top-level key");
     }

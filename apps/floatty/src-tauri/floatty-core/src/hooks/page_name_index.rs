@@ -16,9 +16,7 @@
 //! Accepts: User, Agent, BulkImport, Remote
 //! Ignores: Hook (metadata writes)
 
-use crate::{
-    events::BlockChange, hooks::BlockHook, BlockChangeBatch, Origin, YDocStore,
-};
+use crate::{events::BlockChange, hooks::BlockHook, BlockChangeBatch, Origin, YDocStore};
 use nucleo_matcher::{
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
     Config, Matcher, Utf32Str,
@@ -156,7 +154,9 @@ impl PageNameIndex {
             .filter_map(|name| {
                 let mut buf = Vec::new();
                 let haystack = Utf32Str::new(name.as_str(), &mut buf);
-                pattern.score(haystack, &mut matcher).map(|s| (s, true, name.clone()))
+                pattern
+                    .score(haystack, &mut matcher)
+                    .map(|s| (s, true, name.clone()))
             })
             .collect();
 
@@ -168,14 +168,20 @@ impl PageNameIndex {
             .filter_map(|name| {
                 let mut buf = Vec::new();
                 let haystack = Utf32Str::new(name.as_str(), &mut buf);
-                pattern.score(haystack, &mut matcher).map(|s| (s, false, name.clone()))
+                pattern
+                    .score(haystack, &mut matcher)
+                    .map(|s| (s, false, name.clone()))
             })
             .collect();
 
         scored.extend(stub_scores);
 
         // Sort: highest score first; existing before stubs at equal scores; name as final tie-breaker
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then_with(|| a.2.cmp(&b.2)));
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(b.1.cmp(&a.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
 
         scored
             .into_iter()
@@ -241,7 +247,9 @@ impl PageNameIndex {
     /// `block_id` is the Y.Doc block ID of the page block.
     pub fn add_existing_page(&mut self, name: &str, block_id: &str) {
         let normalized = name.to_lowercase();
-        let prev = self.existing.insert(normalized.clone(), block_id.to_string());
+        let prev = self
+            .existing
+            .insert(normalized.clone(), block_id.to_string());
         if prev.is_none() {
             trace!("Added existing page: {} ({})", name, block_id);
         }
@@ -372,24 +380,50 @@ impl PageNameIndexHook {
     /// Process a block change: update index based on change type.
     fn process_change(&self, change: &BlockChange, store: &YDocStore) {
         match change {
-            BlockChange::Created { id, content, parent_id, .. } => {
+            BlockChange::Created {
+                id,
+                content,
+                parent_id,
+                ..
+            } => {
                 self.handle_block_created(id, content, parent_id.as_deref(), store);
             }
-            BlockChange::ContentChanged { id, old_content, new_content, .. } => {
+            BlockChange::ContentChanged {
+                id,
+                old_content,
+                new_content,
+                ..
+            } => {
                 self.handle_content_changed(id, old_content, new_content, store);
             }
             BlockChange::Deleted { id, content, .. } => {
                 self.handle_block_deleted(id, content);
             }
-            BlockChange::Moved { id, old_parent_id, new_parent_id, .. } => {
-                self.handle_block_moved(id, old_parent_id.as_deref(), new_parent_id.as_deref(), store);
+            BlockChange::Moved {
+                id,
+                old_parent_id,
+                new_parent_id,
+                ..
+            } => {
+                self.handle_block_moved(
+                    id,
+                    old_parent_id.as_deref(),
+                    new_parent_id.as_deref(),
+                    store,
+                );
             }
             // Metadata and collapsed changes don't affect page name index
             BlockChange::MetadataChanged { .. } | BlockChange::CollapsedChanged { .. } => {}
         }
     }
 
-    fn handle_block_created(&self, id: &str, content: &str, parent_id: Option<&str>, store: &YDocStore) {
+    fn handle_block_created(
+        &self,
+        id: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        store: &YDocStore,
+    ) {
         let mut index = self.index.write().expect("lock poisoned");
 
         // Check if this is the pages:: container (must be a root block — no parent)
@@ -419,7 +453,13 @@ impl PageNameIndexHook {
         }
     }
 
-    fn handle_content_changed(&self, id: &str, old_content: &str, new_content: &str, store: &YDocStore) {
+    fn handle_content_changed(
+        &self,
+        id: &str,
+        old_content: &str,
+        new_content: &str,
+        store: &YDocStore,
+    ) {
         let mut index = self.index.write().expect("lock poisoned");
 
         // Check if this became or stopped being pages:: container
@@ -473,10 +513,8 @@ impl PageNameIndexHook {
         let mut index = self.index.write().expect("lock poisoned");
 
         // If this was the pages:: container, clear it
-        if Self::is_pages_container(content) {
-            if index.pages_container_id() == Some(id) {
-                index.set_pages_container_id(None);
-            }
+        if Self::is_pages_container(content) && index.pages_container_id() == Some(id) {
+            index.set_pages_container_id(None);
         }
 
         // Remove from existing pages if it was one
@@ -548,7 +586,13 @@ impl PageNameIndexHook {
         );
     }
 
-    fn handle_block_moved(&self, id: &str, old_parent_id: Option<&str>, new_parent_id: Option<&str>, store: &YDocStore) {
+    fn handle_block_moved(
+        &self,
+        id: &str,
+        old_parent_id: Option<&str>,
+        new_parent_id: Option<&str>,
+        store: &YDocStore,
+    ) {
         let mut index = self.index.write().expect("lock poisoned");
 
         let container_id = index.pages_container_id().map(String::from);
@@ -601,7 +645,12 @@ impl BlockHook for PageNameIndexHook {
 
     fn accepts_origins(&self) -> Option<Vec<Origin>> {
         // Same as MetadataExtractionHook - exclude Hook only
-        Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])
+        Some(vec![
+            Origin::User,
+            Origin::Agent,
+            Origin::BulkImport,
+            Origin::Remote,
+        ])
     }
 
     #[instrument(skip(self, batch, store), fields(batch_size = batch.changes.len()))]
@@ -752,10 +801,19 @@ mod tests {
 
     #[test]
     fn test_strip_heading_prefix() {
-        assert_eq!(PageNameIndexHook::strip_heading_prefix("# My Page"), "My Page");
-        assert_eq!(PageNameIndexHook::strip_heading_prefix("## Nested"), "Nested");
+        assert_eq!(
+            PageNameIndexHook::strip_heading_prefix("# My Page"),
+            "My Page"
+        );
+        assert_eq!(
+            PageNameIndexHook::strip_heading_prefix("## Nested"),
+            "Nested"
+        );
         assert_eq!(PageNameIndexHook::strip_heading_prefix("### Deep"), "Deep");
-        assert_eq!(PageNameIndexHook::strip_heading_prefix("No prefix"), "No prefix");
+        assert_eq!(
+            PageNameIndexHook::strip_heading_prefix("No prefix"),
+            "No prefix"
+        );
 
         // FLO-573: bare "#name" (no whitespace) is a page name, not a heading.
         // Without this, [[#2817]] normalizes to "2817" on lookup but stored
@@ -770,7 +828,9 @@ mod tests {
     #[test]
     fn test_is_pages_container() {
         assert!(PageNameIndexHook::is_pages_container("pages::"));
-        assert!(PageNameIndexHook::is_pages_container("pages:: with content"));
+        assert!(PageNameIndexHook::is_pages_container(
+            "pages:: with content"
+        ));
         assert!(PageNameIndexHook::is_pages_container("PAGES::")); // Case-insensitive
         assert!(!PageNameIndexHook::is_pages_container("page::"));
         assert!(!PageNameIndexHook::is_pages_container("# pages::"));
@@ -854,7 +914,9 @@ mod tests {
         insert_block(&store, "page-b", "# Notes", Some("container-1"));
 
         let hook = PageNameIndexHook::new();
-        let batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
+        let batch = BlockChangeBatch::with_transaction_id(
+            crate::events::COLD_START_REHYDRATION_TX_ID.to_string(),
+        );
         hook.process(&batch, store);
 
         let index = hook.index.read().unwrap();
@@ -877,12 +939,20 @@ mod tests {
         insert_block(&store, "container-1", "pages::", None);
 
         let hook = PageNameIndexHook::new();
-        let batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
+        let batch = BlockChangeBatch::with_transaction_id(
+            crate::events::COLD_START_REHYDRATION_TX_ID.to_string(),
+        );
         hook.process(&batch, store);
 
         let index = hook.index.read().unwrap();
-        assert!(index.page_exists("home"), "page 'home' should exist even when container inserted last");
-        assert!(index.page_exists("notes"), "page 'notes' should exist even when container inserted last");
+        assert!(
+            index.page_exists("home"),
+            "page 'home' should exist even when container inserted last"
+        );
+        assert!(
+            index.page_exists("notes"),
+            "page 'notes' should exist even when container inserted last"
+        );
         assert_eq!(index.page_block_id("home"), Some("page-a"));
         assert_eq!(index.page_block_id("notes"), Some("page-b"));
     }
@@ -895,11 +965,16 @@ mod tests {
         insert_block(&store, "block-2", "Regular content [[Some Heading]]", None);
 
         let hook = PageNameIndexHook::new();
-        let batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
+        let batch = BlockChangeBatch::with_transaction_id(
+            crate::events::COLD_START_REHYDRATION_TX_ID.to_string(),
+        );
         hook.process(&batch, store);
 
         let index = hook.index.read().unwrap();
-        assert!(index.existing_pages().is_empty(), "no pages:: container → no existing pages");
+        assert!(
+            index.existing_pages().is_empty(),
+            "no pages:: container → no existing pages"
+        );
         assert!(index.pages_container_id().is_none());
     }
 
@@ -912,11 +987,16 @@ mod tests {
         insert_block(&store, "child-of-nested", "# Home", Some("nested-pages"));
 
         let hook = PageNameIndexHook::new();
-        let batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
+        let batch = BlockChangeBatch::with_transaction_id(
+            crate::events::COLD_START_REHYDRATION_TX_ID.to_string(),
+        );
         hook.process(&batch, store);
 
         let index = hook.index.read().unwrap();
-        assert!(index.pages_container_id().is_none(), "nested pages:: should not become container");
+        assert!(
+            index.pages_container_id().is_none(),
+            "nested pages:: should not become container"
+        );
         assert!(index.existing_pages().is_empty());
     }
 }

@@ -19,7 +19,7 @@ use super::{
     ApiError, AppState, BlockDto, BlockSearchQuery, BlockSearchResponse, BlocksQuery,
     BlocksResponse, CreateBlockRequest, ErrorResponse, ImportBlockRequest, StateHashResponse,
     StateResponse, StateVectorResponse, UpdateBlockRequest, UpdateEntry, UpdateRequest,
-    UpdatesResponse, UpdatesQuery,
+    UpdatesQuery, UpdatesResponse,
 };
 
 pub fn router() -> Router<AppState> {
@@ -39,10 +39,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/outlines/:name/state/hash",
             get(outline_get_state_hash),
         )
-        .route(
-            "/api/v1/outlines/:name/update",
-            post(outline_apply_update),
-        )
+        .route("/api/v1/outlines/:name/update", post(outline_apply_update))
         .route(
             "/api/v1/outlines/:name/updates",
             get(outline_get_updates_since),
@@ -71,10 +68,7 @@ pub fn router() -> Router<AppState> {
                 .delete(outline_delete_block),
         )
         .route("/api/v1/outlines/:name/stats", get(outline_get_stats))
-        .route(
-            "/api/v1/outlines/:name/search",
-            get(outline_search_blocks),
-        )
+        .route("/api/v1/outlines/:name/search", get(outline_search_blocks))
         .route(
             "/api/v1/outlines/:name/pages/search",
             get(outline_page_search_not_impl),
@@ -105,37 +99,45 @@ fn reject_default_mutation(name: &str) -> Result<(), ApiError> {
 }
 
 fn resolve_outline(state: &AppState, name: &str) -> Result<Arc<YDocStore>, ApiError> {
-    state.outline_manager.get_or_default(name).map_err(|e| match &e {
-        floatty_core::OutlineError::NotFound(_) => {
-            ApiError::NotFound(format!("outline '{}' not found", name))
-        }
-        floatty_core::OutlineError::InvalidName(_)
-        | floatty_core::OutlineError::ReservedName => ApiError::InvalidRequest(format!("{}", e)),
-        _ => ApiError::Internal(format!("Failed to resolve outline: {}", e)),
-    })
+    state
+        .outline_manager
+        .get_or_default(name)
+        .map_err(|e| match &e {
+            floatty_core::OutlineError::NotFound(_) => {
+                ApiError::NotFound(format!("outline '{}' not found", name))
+            }
+            floatty_core::OutlineError::InvalidName(_)
+            | floatty_core::OutlineError::ReservedName => {
+                ApiError::InvalidRequest(format!("{}", e))
+            }
+            _ => ApiError::Internal(format!("Failed to resolve outline: {}", e)),
+        })
 }
 
 fn resolve_outline_context(
     state: &AppState,
     name: &str,
 ) -> Result<Arc<crate::OutlineContext>, ApiError> {
-    state.outline_manager.get_context(name).map_err(|e| match &e {
-        floatty_core::OutlineError::NotFound(_) => {
-            ApiError::NotFound(format!("outline '{}' not found", name))
-        }
-        floatty_core::OutlineError::InvalidName(_)
-        | floatty_core::OutlineError::ReservedName => ApiError::InvalidRequest(format!("{}", e)),
-        _ => ApiError::Internal(format!("Failed to resolve outline: {}", e)),
-    })
+    state
+        .outline_manager
+        .get_context(name)
+        .map_err(|e| match &e {
+            floatty_core::OutlineError::NotFound(_) => {
+                ApiError::NotFound(format!("outline '{}' not found", name))
+            }
+            floatty_core::OutlineError::InvalidName(_)
+            | floatty_core::OutlineError::ReservedName => {
+                ApiError::InvalidRequest(format!("{}", e))
+            }
+            _ => ApiError::Internal(format!("Failed to resolve outline: {}", e)),
+        })
 }
 
 // ============================================================================
 // Outline management handlers
 // ============================================================================
 
-async fn list_outlines(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<OutlineInfo>>, ApiError> {
+async fn list_outlines(State(state): State<AppState>) -> Result<Json<Vec<OutlineInfo>>, ApiError> {
     let outlines = state
         .outline_manager
         .list_outlines()
@@ -153,9 +155,7 @@ async fn create_outline_handler(
         .outline_manager
         .create_outline(&name)
         .map_err(|e| match &e {
-            floatty_core::OutlineError::AlreadyExists(_) => {
-                ApiError::Conflict(format!("{}", e))
-            }
+            floatty_core::OutlineError::AlreadyExists(_) => ApiError::Conflict(format!("{}", e)),
             floatty_core::OutlineError::InvalidName(_)
             | floatty_core::OutlineError::ReservedName => {
                 ApiError::InvalidRequest(format!("{}", e))
@@ -245,7 +245,11 @@ async fn outline_get_state_hash(
     }))
 }
 
-#[tracing::instrument(skip(state, req), fields(route_family = "outlines", handler = "outline_apply_update"), err)]
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "outlines", handler = "outline_apply_update"),
+    err
+)]
 async fn outline_apply_update(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -342,7 +346,11 @@ async fn outline_get_blocks(
     Ok(Json(result))
 }
 
-#[tracing::instrument(skip(state, req), fields(route_family = "outlines", handler = "outline_create_block"), err)]
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "outlines", handler = "outline_create_block"),
+    err
+)]
 async fn outline_create_block(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -438,7 +446,11 @@ async fn outline_update_block(
     Ok(Json(block))
 }
 
-#[tracing::instrument(skip(state), fields(route_family = "outlines", handler = "outline_delete_block"), err)]
+#[tracing::instrument(
+    skip(state),
+    fields(route_family = "outlines", handler = "outline_delete_block"),
+    err
+)]
 async fn outline_delete_block(
     State(state): State<AppState>,
     Path((name, id)): Path<(String, String)>,

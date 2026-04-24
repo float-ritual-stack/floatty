@@ -18,9 +18,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use yrs::{Map, ReadTxn, Transact};
 
+use super::{ApiError, AppState, BlockContextQuery, BlockWithContextResponse};
 use crate::api::{self, BlockDto};
 use crate::block_service::{lookup_inherited, read_block_dto};
-use super::{ApiError, AppState, BlockContextQuery, BlockWithContextResponse};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -30,10 +30,7 @@ pub fn router() -> Router<AppState> {
             get(list_marker_values),
         )
         .route("/api/v1/stats", get(get_block_stats))
-        .route(
-            "/api/v1/presence",
-            get(get_presence).post(post_presence),
-        )
+        .route("/api/v1/presence", get(get_presence).post(post_presence))
         .route("/api/v1/daily/:date", get(get_daily_note))
         .route("/api/v1/daily/:date/append", post(append_to_daily_note))
         .route("/api/v1/pages/:name", post(upsert_page))
@@ -105,7 +102,11 @@ async fn get_block_stats(
     Ok(Json(state.store.get_stats()))
 }
 
-#[tracing::instrument(skip(state), fields(route_family = "discovery", handler = "get_daily_note"), err)]
+#[tracing::instrument(
+    skip(state),
+    fields(route_family = "discovery", handler = "get_daily_note"),
+    err
+)]
 async fn get_daily_note(
     State(state): State<AppState>,
     Path(date): Path<String>,
@@ -125,7 +126,7 @@ async fn get_daily_note(
     if ctx_query
         .include
         .as_deref()
-        .map_or(true, |s| s.trim().is_empty())
+        .is_none_or(|s| s.trim().is_empty())
     {
         ctx_query.include = Some("children".to_string());
     }
@@ -392,7 +393,13 @@ fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
                 .map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, id)
         };
-        Ok(read_block_dto(&block_map, &txn, id, inherited_markers, true))
+        Ok(read_block_dto(
+            &block_map,
+            &txn,
+            id,
+            inherited_markers,
+            true,
+        ))
     } else {
         Err(ApiError::NotFound(id.to_string()))
     }
@@ -407,14 +414,20 @@ fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
 /// Responses:
 /// - `200 OK` when the page already existed
 /// - `201 Created` when the page was freshly created
-#[tracing::instrument(skip(state, _req), fields(route_family = "semantic", handler = "upsert_page"), err)]
+#[tracing::instrument(
+    skip(state, _req),
+    fields(route_family = "semantic", handler = "upsert_page"),
+    err
+)]
 async fn upsert_page(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(_req): Json<UpsertPageRequest>,
 ) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
     if name.trim().is_empty() {
-        return Err(ApiError::InvalidRequest("Page name cannot be empty".to_string()));
+        return Err(ApiError::InvalidRequest(
+            "Page name cannot be empty".to_string(),
+        ));
     }
 
     // Single atomic resolve — find_or_create_page holds the semantic lock
@@ -460,7 +473,11 @@ fn is_valid_date_shape(date: &str) -> bool {
         && is_digit(bytes[9])
 }
 
-#[tracing::instrument(skip(state, req), fields(route_family = "semantic", handler = "append_to_daily_note"), err)]
+#[tracing::instrument(
+    skip(state, req),
+    fields(route_family = "semantic", handler = "append_to_daily_note"),
+    err
+)]
 async fn append_to_daily_note(
     State(state): State<AppState>,
     Path(date): Path<String>,

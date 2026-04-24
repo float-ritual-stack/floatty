@@ -84,7 +84,10 @@ impl YDocPersistence {
 
     /// Initialize the database schema.
     fn init_schema(&self) -> Result<(), PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         conn.execute_batch(
             r#"
             -- Append-only Y.Doc updates for efficient persistence
@@ -122,7 +125,10 @@ impl YDocPersistence {
 
     /// Get the current schema version (0 if not set).
     pub fn get_schema_version(&self) -> Result<i32, PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         let result: Result<String, _> = conn.query_row(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'",
             [],
@@ -137,7 +143,10 @@ impl YDocPersistence {
 
     /// Set the schema version.
     pub fn set_schema_version(&self, version: i32) -> Result<(), PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         conn.execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
             [version.to_string()],
@@ -147,7 +156,10 @@ impl YDocPersistence {
 
     /// Clear all updates for a document (for schema upgrades that require fresh start).
     pub fn clear_updates(&self, doc_key: &str) -> Result<(), PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         conn.execute("DELETE FROM ydoc_updates WHERE doc_key = ?", [doc_key])?;
         log::info!("Cleared all Y.Doc updates for '{}'", doc_key);
         Ok(())
@@ -167,7 +179,10 @@ impl YDocPersistence {
             .unwrap_or_default()
             .as_secs() as i64;
 
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
 
         // Use transaction to guarantee last_insert_rowid returns our insert
         let tx = conn.unchecked_transaction()?;
@@ -185,10 +200,12 @@ impl YDocPersistence {
     ///
     /// Returns updates in order (oldest first) for correct replay.
     pub fn get_updates(&self, doc_key: &str) -> Result<Vec<Vec<u8>>, PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
-        let mut stmt = conn.prepare(
-            "SELECT update_data FROM ydoc_updates WHERE doc_key = ? ORDER BY id ASC",
-        )?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
+        let mut stmt =
+            conn.prepare("SELECT update_data FROM ydoc_updates WHERE doc_key = ? ORDER BY id ASC")?;
         let rows = stmt.query_map([doc_key], |row| row.get(0))?;
         rows.collect::<SqliteResult<Vec<_>>>()
             .map_err(PersistenceError::from)
@@ -198,7 +215,10 @@ impl YDocPersistence {
     ///
     /// Use this to decide when to compact.
     pub fn get_update_count(&self, doc_key: &str) -> Result<i64, PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         conn.query_row(
             "SELECT COUNT(*) FROM ydoc_updates WHERE doc_key = ?",
             [doc_key],
@@ -214,7 +234,10 @@ impl YDocPersistence {
     ///
     /// Returns the sequence number of the snapshot row.
     pub fn compact(&self, doc_key: &str, snapshot: &[u8]) -> Result<i64, PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         let tx = conn.unchecked_transaction()?;
 
         // Get the max seq before deletion (this is what we're compacting away)
@@ -263,7 +286,10 @@ impl YDocPersistence {
 
     /// Check if any updates exist for a document.
     pub fn has_updates(&self, doc_key: &str) -> Result<bool, PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM ydoc_updates WHERE doc_key = ? LIMIT 1",
             [doc_key],
@@ -286,13 +312,20 @@ impl YDocPersistence {
         since_seq: i64,
         limit: usize,
     ) -> Result<Vec<(i64, Vec<u8>, i64)>, PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         let mut stmt = conn.prepare(
             "SELECT id, update_data, created_at FROM ydoc_updates \
              WHERE doc_key = ? AND id > ? ORDER BY id ASC LIMIT ?",
         )?;
         let rows = stmt.query_map(params![doc_key, since_seq, limit as i64], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, i64>(2)?))
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
         })?;
         rows.collect::<SqliteResult<Vec<_>>>()
             .map_err(PersistenceError::from)
@@ -302,7 +335,10 @@ impl YDocPersistence {
     ///
     /// Returns None if no updates exist.
     pub fn get_latest_seq(&self, doc_key: &str) -> Result<Option<i64>, PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         // MAX(id) returns NULL when table is empty (still returns a row, just with NULL value)
         // Use Option<i64> in the row mapper to handle NULL, then flatten
         let result: Option<Option<i64>> = conn
@@ -322,7 +358,10 @@ impl YDocPersistence {
     /// Clients requesting since < compacted_through are too far behind
     /// and should do a full state resync instead of incremental.
     pub fn get_compacted_through(&self, doc_key: &str) -> Result<Option<i64>, PersistenceError> {
-        let conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         let result: Result<i64, _> = conn.query_row(
             "SELECT value FROM sync_meta WHERE doc_key = ? AND key = 'compacted_through'",
             [doc_key],
@@ -427,7 +466,9 @@ mod tests {
         assert!(updates_since_0[0].0 > seq3); // Snapshot seq is higher
 
         // Requesting since seq1 should also just return the snapshot
-        let updates_since_1 = persistence.get_updates_since("test-doc", seq1, 100).unwrap();
+        let updates_since_1 = persistence
+            .get_updates_since("test-doc", seq1, 100)
+            .unwrap();
         assert_eq!(updates_since_1.len(), 1);
     }
 
@@ -467,13 +508,17 @@ mod tests {
         assert_eq!(all[4].0, seq5);
 
         // Get updates since seq2 (should return 3, 4, 5)
-        let since_2 = persistence.get_updates_since("test-doc", seq2, 100).unwrap();
+        let since_2 = persistence
+            .get_updates_since("test-doc", seq2, 100)
+            .unwrap();
         assert_eq!(since_2.len(), 3);
         assert_eq!(since_2[0].0, seq3);
         assert_eq!(since_2[0].1, b"update3".to_vec());
 
         // Get updates since seq5 (should return empty)
-        let since_5 = persistence.get_updates_since("test-doc", seq5, 100).unwrap();
+        let since_5 = persistence
+            .get_updates_since("test-doc", seq5, 100)
+            .unwrap();
         assert_eq!(since_5.len(), 0);
 
         // Test limit
@@ -518,10 +563,16 @@ mod tests {
         persistence.compact("test-doc", b"snapshot").unwrap();
 
         // Now we have a boundary
-        assert_eq!(persistence.get_compacted_through("test-doc").unwrap(), Some(seq3));
+        assert_eq!(
+            persistence.get_compacted_through("test-doc").unwrap(),
+            Some(seq3)
+        );
 
         // Different doc has no boundary
-        assert_eq!(persistence.get_compacted_through("other-doc").unwrap(), None);
+        assert_eq!(
+            persistence.get_compacted_through("other-doc").unwrap(),
+            None
+        );
     }
 
     #[test]

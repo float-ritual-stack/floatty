@@ -158,7 +158,9 @@ mod tests {
     #[test]
     fn test_block_id_is_stored() {
         let schema = build_schema();
-        let field = schema.get_field("block_id").expect("block_id field should exist");
+        let field = schema
+            .get_field("block_id")
+            .expect("block_id field should exist");
         let entry = schema.get_field_entry(field);
 
         // block_id should be stored (for retrieval after search)
@@ -168,7 +170,9 @@ mod tests {
     #[test]
     fn test_content_is_text() {
         let schema = build_schema();
-        let field = schema.get_field("content").expect("content field should exist");
+        let field = schema
+            .get_field("content")
+            .expect("content field should exist");
         let entry = schema.get_field_entry(field);
 
         // content should be indexed (TEXT implies indexing)

@@ -66,7 +66,10 @@ impl Origin {
     /// Remote is included because the server is the sole metadata extractor —
     /// GUI edits arrive via WS as Remote and need extraction here.
     pub fn triggers_metadata_hooks(&self) -> bool {
-        matches!(self, Origin::User | Origin::Agent | Origin::BulkImport | Origin::Remote)
+        matches!(
+            self,
+            Origin::User | Origin::Agent | Origin::BulkImport | Origin::Remote
+        )
     }
 
     /// Returns true if this origin should trigger search index updates.
@@ -74,7 +77,10 @@ impl Origin {
     /// All origins except Hook should update the local search index.
     /// Remote changes are indexed locally for search coverage.
     pub fn triggers_index_hooks(&self) -> bool {
-        matches!(self, Origin::User | Origin::Remote | Origin::Agent | Origin::BulkImport)
+        matches!(
+            self,
+            Origin::User | Origin::Remote | Origin::Agent | Origin::BulkImport
+        )
     }
 }
 

@@ -1,7 +1,6 @@
 /// Tauri command wrappers for hooks services
-/// 
+///
 /// Thin adapters that get HOME dir and delegate to services.
-
 use crate::services::hooks;
 use std::path::PathBuf;
 

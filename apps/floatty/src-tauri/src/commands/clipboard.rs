@@ -1,7 +1,6 @@
 /// Tauri command wrapper for clipboard service
 ///
 /// Thin adapter that gets temp dir and delegates to service.
-
 use crate::services::clipboard;
 use serde::Serialize;
 

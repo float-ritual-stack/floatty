@@ -14,7 +14,7 @@ use std::time::Duration;
 pub struct WatcherConfig {
     pub watch_path: PathBuf,
     pub poll_interval_ms: u64,
-    pub max_age_hours: u64,  // Only process files modified within this window
+    pub max_age_hours: u64, // Only process files modified within this window
 }
 
 impl Default for WatcherConfig {
@@ -27,7 +27,7 @@ impl Default for WatcherConfig {
         Self {
             watch_path,
             poll_interval_ms: 5000,
-            max_age_hours: 72,  // Default: last 3 days
+            max_age_hours: 72, // Default: last 3 days
         }
     }
 }
@@ -64,30 +64,37 @@ impl CtxWatcher {
         *running.lock().unwrap_or_else(|e| e.into_inner()) = true;
 
         let handle = thread::spawn(move || {
-            tracing::info!("Starting ctx:: watcher on {:?} (max age: {} hours)",
-                       config.watch_path, config.max_age_hours);
+            tracing::info!(
+                "Starting ctx:: watcher on {:?} (max age: {} hours)",
+                config.watch_path,
+                config.max_age_hours
+            );
 
             // Initial scan of existing files (only recent ones)
-            if let Err(e) = scan_directory(&config.watch_path, &db, &file_positions, config.max_age_hours) {
+            if let Err(e) = scan_directory(
+                &config.watch_path,
+                &db,
+                &file_positions,
+                config.max_age_hours,
+            ) {
                 tracing::error!("Initial scan failed: {}", e);
             }
 
             // Set up file watcher
             let (tx, rx) = mpsc::channel();
             let mut watcher: RecommendedWatcher = match Watcher::new(
-                move |res: Result<Event, notify::Error>| {
-                    match res {
-                        Ok(event) => {
-                            if let Err(e) = tx.send(event) {
-                                tracing::error!("File watcher channel disconnected: {}", e);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("File watcher error: {:?}", e);
+                move |res: Result<Event, notify::Error>| match res {
+                    Ok(event) => {
+                        if let Err(e) = tx.send(event) {
+                            tracing::error!("File watcher channel disconnected: {}", e);
                         }
                     }
+                    Err(e) => {
+                        tracing::error!("File watcher error: {:?}", e);
+                    }
                 },
-                notify::Config::default().with_poll_interval(Duration::from_millis(config.poll_interval_ms)),
+                notify::Config::default()
+                    .with_poll_interval(Duration::from_millis(config.poll_interval_ms)),
             ) {
                 Ok(w) => w,
                 Err(e) => {
@@ -111,7 +118,7 @@ impl CtxWatcher {
                 match rx.recv_timeout(Duration::from_secs(1)) {
                     Ok(event) => {
                         for path in event.paths {
-                            if path.extension().map_or(false, |ext| ext == "jsonl") {
+                            if path.extension().is_some_and(|ext| ext == "jsonl") {
                                 if let Err(e) = process_file(&path, &db, &file_positions) {
                                     tracing::error!("Failed to process {:?}: {}", path, e);
                                 }
@@ -143,7 +150,12 @@ impl Drop for CtxWatcher {
         *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
 
         // Join the thread if it's running (thread checks running flag every ~1 second)
-        if let Some(handle) = self.thread_handle.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some(handle) = self
+            .thread_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             tracing::info!("[CtxWatcher] Joining watcher thread on drop...");
             if handle.join().is_err() {
                 tracing::warn!("[CtxWatcher] Watcher thread panicked during join");
@@ -177,13 +189,13 @@ fn scan_directory(
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "jsonl") {
+        if path.extension().is_some_and(|ext| ext == "jsonl") {
             // Check file modification time
             if let Ok(metadata) = path.metadata() {
                 if let Ok(modified) = metadata.modified() {
                     if modified < cutoff {
                         skipped += 1;
-                        continue;  // Skip old files
+                        continue; // Skip old files
                     }
                 }
             }
@@ -192,8 +204,12 @@ fn scan_directory(
         }
     }
 
-    tracing::info!("Scanned {} recent files, skipped {} old files (>{} hours)",
-               processed, skipped, max_age_hours);
+    tracing::info!(
+        "Scanned {} recent files, skipped {} old files (>{} hours)",
+        processed,
+        skipped,
+        max_age_hours
+    );
 
     Ok(())
 }
@@ -209,9 +225,10 @@ fn process_file(
     // Get last known position
     let last_pos = {
         let positions = file_positions.lock().unwrap_or_else(|e| e.into_inner());
-        positions.get(path).copied().unwrap_or_else(|| {
-            db.get_file_position(&path_str).unwrap_or(0) as u64
-        })
+        positions
+            .get(path)
+            .copied()
+            .unwrap_or_else(|| db.get_file_position(&path_str).unwrap_or(0) as u64)
     };
 
     // Open file and seek to last position
@@ -247,11 +264,8 @@ fn process_file(
 
     // Insert all markers and update position atomically
     if !markers_to_insert.is_empty() || current_pos != last_pos {
-        let new_markers = db.insert_markers_with_position(
-            &path_str,
-            &markers_to_insert,
-            current_pos as i64,
-        )?;
+        let new_markers =
+            db.insert_markers_with_position(&path_str, &markers_to_insert, current_pos as i64)?;
 
         // Only update in-memory position AFTER database commit succeeds
         {
@@ -280,36 +294,41 @@ fn extract_ctx_content(jsonl_line: &str) -> Option<(String, JsonlMetadata)> {
 
     // Extract all JSONL metadata
     let metadata = JsonlMetadata {
-        sort_key: json.get("timestamp")
+        sort_key: json
+            .get("timestamp")
             .and_then(|t| t.as_str())
             .map(|s| s.to_string()),
-        cwd: json.get("cwd")
+        cwd: json
+            .get("cwd")
             .and_then(|t| t.as_str())
             .map(|s| s.to_string()),
-        git_branch: json.get("gitBranch")
+        git_branch: json
+            .get("gitBranch")
             .and_then(|t| t.as_str())
             .map(|s| s.to_string()),
-        session_id: json.get("sessionId")
+        session_id: json
+            .get("sessionId")
             .and_then(|t| t.as_str())
             .map(|s| s.to_string()),
-        msg_type: json.get("type")
+        msg_type: json
+            .get("type")
             .and_then(|t| t.as_str())
             .map(|s| s.to_string()),
     };
 
     // Extract text content from various JSONL structures
-    let content = json.get("message")
+    let content = json
+        .get("message")
         .and_then(|m| m.get("content"))
         .or_else(|| json.get("content"));
 
     let text = match content? {
         serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(arr) => {
-            arr.iter()
-                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => return None,
     };
 
@@ -327,7 +346,8 @@ fn extract_ctx_content(jsonl_line: &str) -> Option<(String, JsonlMetadata)> {
     // Truncate to ~2000 chars for Ollama (enough for summary + markers)
     // Use char_indices to find safe UTF-8 boundary
     let truncated = if text.len() > 2000 {
-        let boundary = text.char_indices()
+        let boundary = text
+            .char_indices()
             .take_while(|(i, _)| *i < 2000)
             .last()
             .map(|(i, c)| i + c.len_utf8())

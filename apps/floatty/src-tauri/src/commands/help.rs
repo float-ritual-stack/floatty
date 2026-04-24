@@ -1,7 +1,6 @@
 /// Help command - reads documentation files for help:: handler
 ///
 /// Reads markdown files from the docs/ directory relative to the app bundle.
-
 use std::path::PathBuf;
 
 /// Read a help file from the docs directory
@@ -31,9 +30,9 @@ pub fn read_help_file(relative_path: String) -> Result<String, String> {
     };
 
     // Security: ensure path doesn't escape docs directory
-    let canonical = docs_path.canonicalize().map_err(|e| {
-        format!("File not found: {} ({})", relative_path, e)
-    })?;
+    let canonical = docs_path
+        .canonicalize()
+        .map_err(|e| format!("File not found: {} ({})", relative_path, e))?;
 
     // Must be under docs/ - use starts_with to prevent path traversal
     // (e.g., "../../etc/passwd/docs/evil" would bypass contains() check)
@@ -42,16 +41,15 @@ pub fn read_help_file(relative_path: String) -> Result<String, String> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
         .join("docs");
-    let canonical_base = base_dir.canonicalize().map_err(|e| {
-        format!("Docs directory not found: {}", e)
-    })?;
+    let canonical_base = base_dir
+        .canonicalize()
+        .map_err(|e| format!("Docs directory not found: {}", e))?;
 
     if !canonical.starts_with(&canonical_base) {
         return Err(format!("Access denied: {} is outside docs/", relative_path));
     }
 
     // Read the file
-    std::fs::read_to_string(&canonical).map_err(|e| {
-        format!("Failed to read {}: {}", relative_path, e)
-    })
+    std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("Failed to read {}: {}", relative_path, e))
 }

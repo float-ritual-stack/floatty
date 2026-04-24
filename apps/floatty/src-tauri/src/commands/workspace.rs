@@ -1,7 +1,6 @@
 /// Tauri command wrappers for workspace services
 ///
 /// Thin adapters that extract state and delegate to services.
-
 use crate::db::WorkspaceStateRecord;
 use crate::services::workspace;
 use crate::AppState;

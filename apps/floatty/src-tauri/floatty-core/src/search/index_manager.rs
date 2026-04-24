@@ -190,7 +190,6 @@ fn get_index_path() -> Result<PathBuf, SearchError> {
     Ok(crate::data_dir().join(INDEX_DIR_NAME))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,10 +244,19 @@ mod tests {
         let schema = manager.schema();
         assert_eq!(schema.get_field_entry(fields.block_id).name(), "block_id");
         assert_eq!(schema.get_field_entry(fields.content).name(), "content");
-        assert_eq!(schema.get_field_entry(fields.block_type).name(), "block_type");
+        assert_eq!(
+            schema.get_field_entry(fields.block_type).name(),
+            "block_type"
+        );
         assert_eq!(schema.get_field_entry(fields.parent_id).name(), "parent_id");
-        assert_eq!(schema.get_field_entry(fields.updated_at).name(), "updated_at");
-        assert_eq!(schema.get_field_entry(fields.has_markers).name(), "has_markers");
+        assert_eq!(
+            schema.get_field_entry(fields.updated_at).name(),
+            "updated_at"
+        );
+        assert_eq!(
+            schema.get_field_entry(fields.has_markers).name(),
+            "has_markers"
+        );
         assert_eq!(schema.get_field_entry(fields.markers).name(), "markers");
     }
 

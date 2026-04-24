@@ -187,18 +187,16 @@ impl AggregatorConfig {
     pub fn load_from(path: &std::path::Path) -> Self {
         let mut config = if path.exists() {
             match std::fs::read_to_string(path) {
-                Ok(contents) => {
-                    match toml::from_str::<AggregatorConfig>(&contents) {
-                        Ok(config) => {
-                            log::info!("Loaded config from {:?}", path);
-                            config
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to parse config: {}, using defaults", e);
-                            Self::default()
-                        }
+                Ok(contents) => match toml::from_str::<AggregatorConfig>(&contents) {
+                    Ok(config) => {
+                        log::info!("Loaded config from {:?}", path);
+                        config
                     }
-                }
+                    Err(e) => {
+                        log::warn!("Failed to parse config: {}, using defaults", e);
+                        Self::default()
+                    }
+                },
                 Err(e) => {
                     log::warn!("Failed to read config file: {}, using defaults", e);
                     Self::default()
@@ -211,7 +209,8 @@ impl AggregatorConfig {
 
         // Populate runtime-only fields (skipped by serde)
         config.is_dev_build = cfg!(debug_assertions);
-        config.data_dir = path.parent()
+        config.data_dir = path
+            .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
@@ -237,8 +236,8 @@ impl AggregatorConfig {
         };
 
         // Merge our fields into the existing doc
-        let self_str = toml::to_string(self)
-            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        let self_str =
+            toml::to_string(self).map_err(|e| format!("Failed to serialize config: {}", e))?;
         let self_table: toml::Table = self_str
             .parse()
             .map_err(|e| format!("Failed to parse serialized config: {}", e))?;

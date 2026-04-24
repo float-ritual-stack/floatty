@@ -124,8 +124,12 @@ pub struct TopologyQuery {
     pub max_line_len: usize,
 }
 
-fn default_max_lines() -> usize { 30 }
-fn default_max_line_len() -> usize { 90 }
+fn default_max_lines() -> usize {
+    30
+}
+fn default_max_line_len() -> usize {
+    90
+}
 
 /// Response for GET /api/v1/topology/content/:pageName
 #[derive(Serialize, Deserialize)]
@@ -157,8 +161,14 @@ async fn export_binary(State(state): State<AppState>) -> Result<impl IntoRespons
     Ok((
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, header::HeaderValue::from_static("application/octet-stream")),
-            (header::CONTENT_DISPOSITION, header::HeaderValue::from_str(&content_disposition).unwrap()),
+            (
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/octet-stream"),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                header::HeaderValue::from_str(&content_disposition).unwrap(),
+            ),
         ],
         full_state,
     ))
@@ -169,7 +179,11 @@ async fn export_binary(State(state): State<AppState>) -> Result<impl IntoRespons
 /// Returns structured JSON with all blocks. Note: This is a LOSSY export -
 /// CRDT metadata (vector clocks, tombstones) is NOT preserved.
 /// Use /api/v1/export/binary for perfect restore.
-#[tracing::instrument(skip(state), fields(route_family = "export", handler = "export_json"), err)]
+#[tracing::instrument(
+    skip(state),
+    fields(route_family = "export", handler = "export_json"),
+    err
+)]
 async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
@@ -285,8 +299,14 @@ async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse,
     Ok((
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, header::HeaderValue::from_static("application/json")),
-            (header::CONTENT_DISPOSITION, header::HeaderValue::from_str(&content_disposition).unwrap()),
+            (
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/json"),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                header::HeaderValue::from_str(&content_disposition).unwrap(),
+            ),
         ],
         json,
     ))
@@ -300,14 +320,21 @@ async fn export_json(State(state): State<AppState>) -> Result<impl IntoResponse,
 /// Query params: ?maxLines=30&maxLineLen=90 (defaults shown)
 ///
 /// Data sources: PageNameIndex (existing pages, stubs, reference counts) + Y.Doc (blocks).
-#[tracing::instrument(skip(state, query), fields(route_family = "export", handler = "get_topology"), err)]
+#[tracing::instrument(
+    skip(state, query),
+    fields(route_family = "export", handler = "get_topology"),
+    err
+)]
 async fn get_topology(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<TopologyQuery>,
 ) -> Result<Json<TopologyResponse>, ApiError> {
     let max_lines = query.max_lines;
     let max_line_len = query.max_line_len;
-    let page_index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
+    let page_index = state
+        .page_name_index
+        .read()
+        .map_err(|_| ApiError::LockPoisoned)?;
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
@@ -317,13 +344,17 @@ async fn get_topology(
     let pages_container_id = page_index.pages_container_id().map(String::from);
 
     // Build page_name → page_block_id map from pages:: container children
-    let mut page_name_to_id: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    if let (Some(ref container_id), Some(blocks_map)) = (&pages_container_id, txn.get_map("blocks")) {
+    let mut page_name_to_id: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if let (Some(ref container_id), Some(blocks_map)) = (&pages_container_id, txn.get_map("blocks"))
+    {
         if let Some(yrs::Out::YMap(container)) = blocks_map.get(&txn, container_id.as_str()) {
             if let Some(yrs::Out::YArray(child_ids_arr)) = container.get(&txn, "childIds") {
                 for val in child_ids_arr.iter(&txn) {
                     if let yrs::Out::Any(yrs::Any::String(child_id)) = val {
-                        if let Some(yrs::Out::YMap(child_block)) = blocks_map.get(&txn, child_id.as_ref()) {
+                        if let Some(yrs::Out::YMap(child_block)) =
+                            blocks_map.get(&txn, child_id.as_ref())
+                        {
                             let content = child_block
                                 .get(&txn, "content")
                                 .and_then(|v| match v {
@@ -344,7 +375,8 @@ async fn get_topology(
 
     // Get root IDs and build root territory map
     let mut root_ids: Vec<String> = Vec::new();
-    let mut root_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut root_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     if let Some(root_ids_arr) = txn.get_array("rootIds") {
         for value in root_ids_arr.iter(&txn) {
             if let yrs::Out::Any(yrs::Any::String(id)) = value {
@@ -384,9 +416,12 @@ async fn get_topology(
     // - parent_map: block_id → parent_id (for depth calc)
     // - daily_counts: "MM-DD" → count
     // - per-page subtree counts + outlinks + content lines
-    let mut block_to_root: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut parent_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut daily_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut block_to_root: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut parent_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut daily_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut total_blocks: usize = 0;
 
     // For per-page data, we need to walk subtrees. Collect all blocks first.
@@ -395,7 +430,8 @@ async fn get_topology(
         child_ids: Vec<String>,
         outlinks: Vec<String>,
     }
-    let mut all_blocks: std::collections::HashMap<String, BlockInfo> = std::collections::HashMap::new();
+    let mut all_blocks: std::collections::HashMap<String, BlockInfo> =
+        std::collections::HashMap::new();
 
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
@@ -461,11 +497,14 @@ async fn get_topology(
                     parent_map.insert(block_id.clone(), pid.clone());
                 }
 
-                all_blocks.insert(block_id, BlockInfo {
-                    content,
-                    child_ids,
-                    outlinks,
-                });
+                all_blocks.insert(
+                    block_id,
+                    BlockInfo {
+                        content,
+                        child_ids,
+                        outlinks,
+                    },
+                );
             }
         }
     }
@@ -513,10 +552,17 @@ async fn get_topology(
     for (bid, info) in &all_blocks {
         if !info.outlinks.is_empty() {
             let root_id = block_to_root.get(bid.as_str()).cloned().unwrap_or_default();
-            let territory = root_names.get(&root_id).cloned().unwrap_or_else(|| "other".to_string());
+            let territory = root_names
+                .get(&root_id)
+                .cloned()
+                .unwrap_or_else(|| "other".to_string());
             for link in &info.outlinks {
                 let link_lower = link.to_lowercase();
-                *inlinks.entry(link_lower.clone()).or_default().entry(territory.clone()).or_insert(0) += 1;
+                *inlinks
+                    .entry(link_lower.clone())
+                    .or_default()
+                    .entry(territory.clone())
+                    .or_insert(0) += 1;
                 // Collect backlink snippets for ref-only nodes
                 if !page_name_to_id.contains_key(&link_lower) {
                     let snippets = backlink_snippets.entry(link_lower).or_default();
@@ -614,16 +660,28 @@ async fn get_topology(
         d.saturating_sub(1)
     }
 
-    let mut page_subtree_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut page_subtree_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut page_outlinks: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
-    let mut content_map: std::collections::HashMap<String, Vec<(u8, String)>> = std::collections::HashMap::new();
+    let mut content_map: std::collections::HashMap<String, Vec<(u8, String)>> =
+        std::collections::HashMap::new();
 
     for (page_name, page_id) in &page_name_to_id {
         let mut count = 0usize;
         let mut outlinks = std::collections::HashSet::new();
         let mut lines = Vec::new();
-        walk_subtree(page_id, &all_blocks, &mut count, &mut outlinks, &mut lines, page_id, &parent_map, max_lines, max_line_len);
+        walk_subtree(
+            page_id,
+            &all_blocks,
+            &mut count,
+            &mut outlinks,
+            &mut lines,
+            page_id,
+            &parent_map,
+            max_lines,
+            max_line_len,
+        );
         page_subtree_counts.insert(page_name.clone(), count);
         page_outlinks.insert(page_name.clone(), outlinks);
         let truncated_id: String = page_name.chars().take(55).collect();
@@ -643,7 +701,8 @@ async fn get_topology(
     }
 
     // Build edges: page → target (both in entity set)
-    let mut edges_set: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut edges_set: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
     for (page_name, ols) in &page_outlinks {
         for link in ols {
             if entity_set.contains(link) && link != page_name {
@@ -663,7 +722,11 @@ async fn get_topology(
         let total_inlinks: usize = src.values().sum();
         nodes.push(TopologyNode {
             id: truncated_id.clone(),
-            b: page_subtree_counts.get(name).copied().unwrap_or(0).min(3000),
+            b: page_subtree_counts
+                .get(name)
+                .copied()
+                .unwrap_or(0)
+                .min(3000),
             i: total_inlinks,
             rc: src.len(),
             orp: if orphan_set.contains(name) { 1 } else { 0 },
@@ -713,7 +776,10 @@ async fn get_page_content(
     State(state): State<AppState>,
     Path(page_name): Path<String>,
 ) -> Result<Json<PageContentResponse>, ApiError> {
-    let page_index = state.page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
+    let page_index = state
+        .page_name_index
+        .read()
+        .map_err(|_| ApiError::LockPoisoned)?;
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
     let txn = doc_guard.transact();
@@ -724,12 +790,15 @@ async fn get_page_content(
     let pages_container_id = page_index.pages_container_id().map(String::from);
     let mut page_block_id: Option<String> = None;
 
-    if let (Some(ref container_id), Some(blocks_map)) = (&pages_container_id, txn.get_map("blocks")) {
+    if let (Some(ref container_id), Some(blocks_map)) = (&pages_container_id, txn.get_map("blocks"))
+    {
         if let Some(yrs::Out::YMap(container)) = blocks_map.get(&txn, container_id.as_str()) {
             if let Some(yrs::Out::YArray(child_ids_arr)) = container.get(&txn, "childIds") {
                 for val in child_ids_arr.iter(&txn) {
                     if let yrs::Out::Any(yrs::Any::String(child_id)) = val {
-                        if let Some(yrs::Out::YMap(child_block)) = blocks_map.get(&txn, child_id.as_ref()) {
+                        if let Some(yrs::Out::YMap(child_block)) =
+                            blocks_map.get(&txn, child_id.as_ref())
+                        {
                             let content = child_block
                                 .get(&txn, "content")
                                 .and_then(|v| match v {
@@ -749,11 +818,14 @@ async fn get_page_content(
         }
     }
 
-    let page_id = page_block_id.ok_or_else(|| ApiError::NotFound(format!("Page not found: {}", page_name)))?;
+    let page_id = page_block_id
+        .ok_or_else(|| ApiError::NotFound(format!("Page not found: {}", page_name)))?;
 
     // Collect all blocks for subtree walk
-    let mut all_blocks: std::collections::HashMap<String, (String, Vec<String>)> = std::collections::HashMap::new();
-    let mut parent_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut all_blocks: std::collections::HashMap<String, (String, Vec<String>)> =
+        std::collections::HashMap::new();
+    let mut parent_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
@@ -779,7 +851,8 @@ async fn get_page_content(
                         _ => None,
                     })
                     .unwrap_or_default();
-                if let Some(yrs::Out::Any(yrs::Any::String(pid))) = block_map.get(&txn, "parentId") {
+                if let Some(yrs::Out::Any(yrs::Any::String(pid))) = block_map.get(&txn, "parentId")
+                {
                     parent_map.insert(key.to_string(), pid.to_string());
                 }
                 all_blocks.insert(key.to_string(), (content, child_ids));
@@ -807,7 +880,10 @@ async fn get_page_content(
                     let mut cur = block_id.clone();
                     while cur != page_id && d < 20 {
                         match parent_map.get(&cur) {
-                            Some(pid) => { cur = pid.clone(); d += 1; }
+                            Some(pid) => {
+                                cur = pid.clone();
+                                d += 1;
+                            }
                             None => break,
                         }
                     }

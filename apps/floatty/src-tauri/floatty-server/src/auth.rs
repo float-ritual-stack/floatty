@@ -66,7 +66,11 @@ pub async fn auth_middleware(
                 (StatusCode::UNAUTHORIZED, "Invalid API key").into_response()
             }
         }
-        Some(_) => (StatusCode::UNAUTHORIZED, "Invalid Authorization header format").into_response(),
+        Some(_) => (
+            StatusCode::UNAUTHORIZED,
+            "Invalid Authorization header format",
+        )
+            .into_response(),
         None => (StatusCode::UNAUTHORIZED, "Missing Authorization header").into_response(),
     }
 }

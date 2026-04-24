@@ -14,10 +14,10 @@
 use floatty_core::hooks::HookSystem;
 use floatty_core::outline::{OutlineError, OutlineInfo, OutlineName};
 use floatty_core::YDocStore;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use tracing::{info, warn};
 
@@ -31,10 +31,7 @@ const MAX_LOADED_WARNING: usize = 20;
 const MAX_LOADED_OUTLINES: usize = 16;
 
 fn lock_poisoned() -> OutlineError {
-    OutlineError::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        "lock poisoned",
-    ))
+    OutlineError::Io(std::io::Error::other("lock poisoned"))
 }
 
 /// Per-outline runtime context: store + lazy hooks + broadcaster + backup daemon.
@@ -87,24 +84,34 @@ impl OutlineContext {
         // Wire store callbacks on first hook_system init (change_callback + broadcast_callback).
         // Flag is set AFTER registration completes to prevent race where another thread
         // sees callbacks_wired=true before callbacks are actually installed.
-        if !self.callbacks_wired.load(std::sync::atomic::Ordering::Acquire) {
+        if !self
+            .callbacks_wired
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
             let hs_clone = Arc::clone(hs);
             let bc_clone = Arc::clone(&self.broadcaster);
-            let change_ok = self.store.set_change_callback(move |changes| {
-                for change in changes {
-                    if let Err(e) = hs_clone.emit_change(change) {
-                        tracing::error!("Hook emission failed: {}", e);
+            let change_ok = self
+                .store
+                .set_change_callback(move |changes| {
+                    for change in changes {
+                        if let Err(e) = hs_clone.emit_change(change) {
+                            tracing::error!("Hook emission failed: {}", e);
+                        }
                     }
-                }
-            }).is_ok();
+                })
+                .is_ok();
             self.store.set_broadcast_callback(move |update, seq| {
                 bc_clone.broadcast(update, None, Some(seq));
             });
-            self.callbacks_wired.store(true, std::sync::atomic::Ordering::Release);
+            self.callbacks_wired
+                .store(true, std::sync::atomic::Ordering::Release);
             if change_ok {
                 info!("Wired callbacks for outline '{}'", self.name);
             } else {
-                warn!("Wired broadcast_callback for '{}' but change_callback failed", self.name);
+                warn!(
+                    "Wired broadcast_callback for '{}' but change_callback failed",
+                    self.name
+                );
             }
         }
 
@@ -137,7 +144,13 @@ impl OutlineContext {
     }
 
     /// Create a context for the default outline with pre-initialized hooks.
-    pub fn new_default(store: Arc<YDocStore>, hook_system: Arc<HookSystem>, broadcaster: Arc<WsBroadcaster>, search_index_path: Option<PathBuf>, backup_daemon: Option<Arc<BackupDaemon>>) -> Self {
+    pub fn new_default(
+        store: Arc<YDocStore>,
+        hook_system: Arc<HookSystem>,
+        broadcaster: Arc<WsBroadcaster>,
+        search_index_path: Option<PathBuf>,
+        backup_daemon: Option<Arc<BackupDaemon>>,
+    ) -> Self {
         let lock = OnceLock::new();
         let _ = lock.set(hook_system);
         Self {
@@ -154,7 +167,12 @@ impl OutlineContext {
     }
 
     /// Create a context for a non-default outline with lazy hooks and a fresh backup daemon.
-    fn new_outline(name: &str, store: Arc<YDocStore>, search_index_path: Option<PathBuf>, backup_config: &BackupConfig) -> Self {
+    fn new_outline(
+        name: &str,
+        store: Arc<YDocStore>,
+        search_index_path: Option<PathBuf>,
+        backup_config: &BackupConfig,
+    ) -> Self {
         let (backup_daemon, backup_daemon_handle) = if backup_config.enabled {
             let backup_dir = backup_dir_for(name);
             if let Err(e) = std::fs::create_dir_all(&backup_dir) {
@@ -206,7 +224,11 @@ pub struct OutlineManager {
 
 impl OutlineManager {
     /// Create a new manager with a pre-initialized default context and backup config.
-    pub fn new_with_default(data_dir: &Path, default_context: Arc<OutlineContext>, backup_config: BackupConfig) -> Self {
+    pub fn new_with_default(
+        data_dir: &Path,
+        default_context: Arc<OutlineContext>,
+        backup_config: BackupConfig,
+    ) -> Self {
         let outlines_dir = data_dir.join("outlines");
         let default_db_path = data_dir.join("ctx_markers.db");
 
@@ -264,8 +286,13 @@ impl OutlineManager {
         }
 
         let store = Arc::new(YDocStore::open(&db_path, name.as_str())?);
-        let search_path = self.search_index_path(&name);
-        let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path), &self.backup_config));
+        let search_path = self.search_index_path(name);
+        let ctx = Arc::new(OutlineContext::new_outline(
+            name.as_str(),
+            store,
+            Some(search_path),
+            &self.backup_config,
+        ));
         contexts.insert(name.as_str().to_string(), Arc::clone(&ctx));
 
         // Evict idle outlines when cache exceeds limit. Not true LRU — evicts
@@ -273,7 +300,8 @@ impl OutlineManager {
         // active_connections only tracks WS subscribers, not HTTP requests.
         if contexts.len() > MAX_LOADED_OUTLINES {
             let slots_to_free = contexts.len() - MAX_LOADED_OUTLINES;
-            let evictable: Vec<String> = contexts.iter()
+            let evictable: Vec<String> = contexts
+                .iter()
                 .filter(|(k, ctx)| {
                     *k != "default"
                         && k.as_str() != name.as_str()
@@ -287,7 +315,11 @@ impl OutlineManager {
                 if let Some(evicted) = contexts.remove(&evict_name) {
                     evicted.stop_backup_daemon();
                     evicted.flush();
-                    info!("Evicted idle outline '{}' (cache size: {})", evict_name, contexts.len());
+                    info!(
+                        "Evicted idle outline '{}' (cache size: {})",
+                        evict_name,
+                        contexts.len()
+                    );
                 }
             }
 
@@ -300,7 +332,8 @@ impl OutlineManager {
         if contexts.len() > MAX_LOADED_WARNING {
             warn!(
                 "OutlineManager: {} outlines loaded (exceeds {} warning threshold)",
-                contexts.len(), MAX_LOADED_WARNING
+                contexts.len(),
+                MAX_LOADED_WARNING
             );
         }
         info!("Opened outline '{}' from {:?}", name, db_path);
@@ -362,13 +395,17 @@ impl OutlineManager {
             return Err(OutlineError::AlreadyExists(name.to_string()));
         }
 
-        let store = Arc::new(YDocStore::open(&db_path, name.as_str()).map_err(|e| {
+        let store = Arc::new(YDocStore::open(&db_path, name.as_str()).inspect_err(|e| {
             // Clean up partial .sqlite file if SQLite created it before failing
             let _ = std::fs::remove_file(&db_path);
-            e
         })?);
-        let search_path = self.search_index_path(&name);
-        let ctx = Arc::new(OutlineContext::new_outline(name.as_str(), store, Some(search_path), &self.backup_config));
+        let search_path = self.search_index_path(name);
+        let ctx = Arc::new(OutlineContext::new_outline(
+            name.as_str(),
+            store,
+            Some(search_path),
+            &self.backup_config,
+        ));
         contexts.insert(name.as_str().to_string(), ctx);
 
         info!("Created outline '{}' at {:?}", name, db_path);
@@ -473,7 +510,10 @@ mod tests {
             outlines_dir: dir.path().join("outlines"),
             default_context,
             default_db_path: db_path,
-            backup_config: BackupConfig { enabled: false, ..BackupConfig::default() },
+            backup_config: BackupConfig {
+                enabled: false,
+                ..BackupConfig::default()
+            },
         };
         (dir, mgr)
     }

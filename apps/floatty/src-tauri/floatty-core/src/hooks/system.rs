@@ -85,7 +85,10 @@ impl HookSystem {
     /// 6. Spawns dispatch task (emitter → registry)
     /// 7. Spawns periodic commit task for search index
     /// 8. Rehydrates existing blocks (cold start)
-    pub fn initialize_at(store: Arc<YDocStore>, search_index_path: Option<std::path::PathBuf>) -> Self {
+    pub fn initialize_at(
+        store: Arc<YDocStore>,
+        search_index_path: Option<std::path::PathBuf>,
+    ) -> Self {
         let init_start = std::time::Instant::now();
         info!("Initializing hook system...");
 
@@ -175,7 +178,10 @@ impl HookSystem {
         if index_path.exists() {
             info!("Nuking search index at {:?} for clean rebuild", index_path);
             if let Err(e) = std::fs::remove_dir_all(&index_path) {
-                warn!("Failed to remove search index dir: {}. Continuing with open_or_create.", e);
+                warn!(
+                    "Failed to remove search index dir: {}. Continuing with open_or_create.",
+                    e
+                );
             }
         }
 
@@ -193,7 +199,10 @@ impl HookSystem {
         }
 
         // Register TantivyIndexHook
-        registry.register(Arc::new(TantivyIndexHook::new(writer_handle.clone(), inheritance_index)));
+        registry.register(Arc::new(TantivyIndexHook::new(
+            writer_handle.clone(),
+            inheritance_index,
+        )));
         info!("TantivyIndexHook registered with priority 50");
 
         // Spawn periodic commit task (every 5 seconds)
@@ -325,12 +334,17 @@ fn spawn_dispatch_task(
                     let store_clone = Arc::clone(&store);
                     if let Err(e) = tokio::task::spawn_blocking(move || {
                         registry.dispatch(&batch, store_clone);
-                    }).await {
+                    })
+                    .await
+                    {
                         warn!("Hook dispatch task panicked: {}", e);
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("Hook dispatch lagged by {} messages - some changes may have been skipped", n);
+                    warn!(
+                        "Hook dispatch lagged by {} messages - some changes may have been skipped",
+                        n
+                    );
                     // Continue processing - lagged messages are lost but we can still process future ones
                 }
                 Err(broadcast::error::RecvError::Closed) => {
@@ -402,7 +416,9 @@ fn rehydrate_existing_blocks(emitter: &ChangeEmitter, store: &YDocStore) -> usiz
 
     if count > 0 {
         // Emit as a single batch for efficiency
-        let mut batch = BlockChangeBatch::with_transaction_id(crate::events::COLD_START_REHYDRATION_TX_ID.to_string());
+        let mut batch = BlockChangeBatch::with_transaction_id(
+            crate::events::COLD_START_REHYDRATION_TX_ID.to_string(),
+        );
         for change in changes {
             batch.push(change);
         }
@@ -440,9 +456,8 @@ mod tests {
 
                 for (id, content) in blocks {
                     // Create a MapPrelim with content field using array syntax
-                    let block_prelim: MapPrelim = MapPrelim::from([
-                        ("content", (*content).to_string()),
-                    ]);
+                    let block_prelim: MapPrelim =
+                        MapPrelim::from([("content", (*content).to_string())]);
                     let _ = blocks_map.insert(&mut txn, *id, block_prelim);
                 }
 
@@ -493,10 +508,10 @@ mod tests {
         assert_eq!(count, 3);
 
         // Should receive batch with 3 changes
-        let batch = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            rx.recv()
-        ).await.expect("timeout").expect("recv error");
+        let batch = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv())
+            .await
+            .expect("timeout")
+            .expect("recv error");
 
         assert_eq!(batch.len(), 3);
 
@@ -520,10 +535,10 @@ mod tests {
         let count = rehydrate_existing_blocks(&emitter, &store);
         assert_eq!(count, 1); // Only non-empty block
 
-        let batch = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            rx.recv()
-        ).await.expect("timeout").expect("recv error");
+        let batch = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv())
+            .await
+            .expect("timeout")
+            .expect("recv error");
 
         assert_eq!(batch.len(), 1);
     }
@@ -539,10 +554,18 @@ mod tests {
         // Create a counting hook
         struct CountingHook;
         impl crate::hooks::BlockHook for CountingHook {
-            fn name(&self) -> &'static str { "counting" }
-            fn priority(&self) -> i32 { 0 }
-            fn is_sync(&self) -> bool { true }
-            fn accepts_origins(&self) -> Option<Vec<Origin>> { None }
+            fn name(&self) -> &'static str {
+                "counting"
+            }
+            fn priority(&self) -> i32 {
+                0
+            }
+            fn is_sync(&self) -> bool {
+                true
+            }
+            fn accepts_origins(&self) -> Option<Vec<Origin>> {
+                None
+            }
             fn process(&self, batch: &BlockChangeBatch, _store: Arc<YDocStore>) {
                 DISPATCH_COUNT.fetch_add(batch.len(), Ordering::SeqCst);
             }
@@ -564,12 +587,14 @@ mod tests {
         let _handle = spawn_dispatch_task(rx, Arc::clone(&registry), Arc::clone(&store));
 
         // Emit some changes
-        emitter.emit(BlockChange::Created {
-            id: "b1".to_string(),
-            content: "test".to_string(),
-            parent_id: None,
-            origin: Origin::User,
-        }).unwrap();
+        emitter
+            .emit(BlockChange::Created {
+                id: "b1".to_string(),
+                content: "test".to_string(),
+                parent_id: None,
+                origin: Origin::User,
+            })
+            .unwrap();
 
         // Give dispatch task time to process
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -580,9 +605,8 @@ mod tests {
     #[tokio::test]
     async fn test_full_integration_metadata_populated() {
         // Create store with a block that has markers
-        let (_dir, store) = create_store_with_blocks(&[
-            ("b1", "ctx:: test block [project::floatty]"),
-        ]);
+        let (_dir, store) =
+            create_store_with_blocks(&[("b1", "ctx:: test block [project::floatty]")]);
 
         // Initialize hook system (will rehydrate)
         let _system = HookSystem::initialize(Arc::clone(&store));

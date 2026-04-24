@@ -1,17 +1,19 @@
+use crate::config::AggregatorConfig;
+use crate::services::execution;
 /// Tauri command wrappers for execution services
 ///
 /// Thin adapters (3-10 lines each) that extract state and delegate to services.
-
 use crate::AppState;
-use crate::config::AggregatorConfig;
-use crate::services::execution;
 use tauri::State;
 
 /// Execute a shell command and return stdout/stderr
 ///
 /// Tauri command wrapper - delegates to services::execution::execute_shell
 #[tauri::command]
-pub async fn execute_shell_command(state: State<'_, AppState>, command: String) -> Result<String, String> {
+pub async fn execute_shell_command(
+    state: State<'_, AppState>,
+    command: String,
+) -> Result<String, String> {
     let config = AggregatorConfig::load_from(&state.config_path);
     let max_bytes = config.max_shell_output_bytes;
 
@@ -19,7 +21,10 @@ pub async fn execute_shell_command(state: State<'_, AppState>, command: String) 
 
     // Log exit code for debugging (output already contains errors if non-zero)
     if exit_code != 0 {
-        tracing::debug!(exit_code = exit_code, "Shell command returned non-zero exit code");
+        tracing::debug!(
+            exit_code = exit_code,
+            "Shell command returned non-zero exit code"
+        );
     }
 
     Ok(output)
@@ -29,7 +34,10 @@ pub async fn execute_shell_command(state: State<'_, AppState>, command: String) 
 ///
 /// Tauri command wrapper - delegates to services::execution::execute_ai
 #[tauri::command]
-pub async fn execute_ai_command(state: State<'_, AppState>, prompt: String) -> Result<String, String> {
+pub async fn execute_ai_command(
+    state: State<'_, AppState>,
+    prompt: String,
+) -> Result<String, String> {
     let config = AggregatorConfig::load_from(&state.config_path);
 
     execution::execute_ai(
@@ -37,7 +45,8 @@ pub async fn execute_ai_command(state: State<'_, AppState>, prompt: String) -> R
         config.ollama_endpoint,
         config.ollama_model,
         config.max_shell_output_bytes,
-    ).await
+    )
+    .await
 }
 
 /// Open a URL in the default browser
@@ -83,5 +92,6 @@ pub async fn execute_ai_conversation(
         temperature,
         system,
         config.max_shell_output_bytes,
-    ).await
+    )
+    .await
 }

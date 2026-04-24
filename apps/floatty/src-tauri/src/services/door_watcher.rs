@@ -4,7 +4,6 @@
 /// Tauri event so the frontend can reload that specific door.
 ///
 /// Uses `notify` crate with debouncing to handle editor multi-write patterns.
-
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -32,17 +31,20 @@ pub fn start_door_watcher(doors_dir: PathBuf, app_handle: tauri::AppHandle) {
         tracing::info!(?doors_dir, "Starting door watcher");
 
         if !doors_dir.exists() {
-            tracing::warn!(?doors_dir, "Doors directory does not exist, watcher will not start");
+            tracing::warn!(
+                ?doors_dir,
+                "Doors directory does not exist, watcher will not start"
+            );
             return;
         }
 
         let (tx, rx) = mpsc::channel();
         let mut watcher: RecommendedWatcher = match Watcher::new(
-            move |res: Result<Event, notify::Error>| {
-                match res {
-                    Ok(event) => { let _ = tx.send(event); }
-                    Err(e) => tracing::warn!(error = %e, "Door watcher error"),
+            move |res: Result<Event, notify::Error>| match res {
+                Ok(event) => {
+                    let _ = tx.send(event);
                 }
+                Err(e) => tracing::warn!(error = %e, "Door watcher error"),
             },
             notify::Config::default(),
         ) {
@@ -108,11 +110,7 @@ pub fn start_door_watcher(doors_dir: PathBuf, app_handle: tauri::AppHandle) {
 }
 
 /// Extract door_id from a changed file path and update pending map.
-fn process_event(
-    event: &Event,
-    doors_dir: &PathBuf,
-    pending: &mut HashMap<String, Instant>,
-) {
+fn process_event(event: &Event, doors_dir: &PathBuf, pending: &mut HashMap<String, Instant>) {
     // Only care about modifications, creates, and removes
     match event.kind {
         EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {}

@@ -53,7 +53,12 @@ impl BlockHook for MetadataExtractionHook {
         // Exclude Hook only (prevents infinite loops).
         // Remote is included because the server is the sole metadata extractor —
         // the frontend does NOT extract markers before syncing.
-        Some(vec![Origin::User, Origin::Agent, Origin::BulkImport, Origin::Remote])
+        Some(vec![
+            Origin::User,
+            Origin::Agent,
+            Origin::BulkImport,
+            Origin::Remote,
+        ])
     }
 
     #[instrument(skip(self, batch, store), fields(batch_size = batch.changes.len()))]
@@ -96,7 +101,8 @@ impl BlockHook for MetadataExtractionHook {
             warn!(
                 batch_size = updates.len(),
                 "Failed to batch update metadata (all {} blocks in batch lost metadata): {}",
-                updates.len(), e
+                updates.len(),
+                e
             );
         }
     }
@@ -106,7 +112,10 @@ impl MetadataExtractionHook {
     /// Extract metadata from content (pure computation, no store access).
     fn extract_metadata(id: &str, content: &str) -> Option<BlockMetadata> {
         let preview: String = content.chars().take(50).collect();
-        debug!("MetadataExtractionHook: processing block {} with content: {}", id, preview);
+        debug!(
+            "MetadataExtractionHook: processing block {} with content: {}",
+            id, preview
+        );
 
         let markers = parsing::extract_all_markers(content);
 

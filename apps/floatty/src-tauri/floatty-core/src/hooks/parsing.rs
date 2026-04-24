@@ -13,16 +13,60 @@ use std::sync::LazyLock;
 
 /// Known prefix marker types (block type declarations).
 const PREFIX_MARKERS: &[&str] = &[
-    "sh", "term", "ai", "chat", "ctx", "dispatch", "pages", "web", "link", "img", "daily",
-    "reminder", "meeting", "brain-boot", "door", "embed", "file", "ask", "media",
+    "sh",
+    "term",
+    "ai",
+    "chat",
+    "ctx",
+    "dispatch",
+    "pages",
+    "web",
+    "link",
+    "img",
+    "daily",
+    "reminder",
+    "meeting",
+    "brain-boot",
+    "door",
+    "embed",
+    "file",
+    "ask",
+    "media",
 ];
 
 /// Code namespace patterns to exclude from standalone marker extraction.
 /// These are Rust/code patterns like `std::string`, `tokio::spawn` that aren't semantic markers.
 const CODE_NAMESPACES: &[&str] = &[
-    "std", "core", "tauri", "tokio", "serde", "crate", "self", "super", "yrs", "log", "anyhow",
-    "thiserror", "fs", "io", "env", "http", "tracing", "chrono", "regex", "tantivy", "async",
-    "sync", "collections", "fmt", "path", "result", "option", "vec", "str", "string",
+    "std",
+    "core",
+    "tauri",
+    "tokio",
+    "serde",
+    "crate",
+    "self",
+    "super",
+    "yrs",
+    "log",
+    "anyhow",
+    "thiserror",
+    "fs",
+    "io",
+    "env",
+    "http",
+    "tracing",
+    "chrono",
+    "regex",
+    "tantivy",
+    "async",
+    "sync",
+    "collections",
+    "fmt",
+    "path",
+    "result",
+    "option",
+    "vec",
+    "str",
+    "string",
 ];
 
 /// Extract prefix marker from block content (e.g., "sh::", "ctx::").
@@ -131,9 +175,7 @@ pub fn extract_standalone_markers(content: &str) -> Vec<Marker> {
             // Skip prefix markers — their "values" are command content, not metadata.
             // Exception: ctx:: values are dates/timestamps we want to capture.
             let marker_type_lower = marker_type.to_lowercase();
-            if PREFIX_MARKERS.contains(&marker_type_lower.as_str())
-                && marker_type_lower != "ctx"
-            {
+            if PREFIX_MARKERS.contains(&marker_type_lower.as_str()) && marker_type_lower != "ctx" {
                 return None;
             }
 
@@ -331,10 +373,8 @@ pub fn has_wikilink_patterns(content: &str) -> bool {
 /// Handles: `ctx::2026-03-11`, `ctx::2026-03-11 @ 04:42:47 AM`, `ctx::2026-03-11 @ 4:42 PM`
 /// Case-insensitive for AM/PM (accepts am/pm/Am/Pm).
 static CTX_DATETIME: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)ctx::(\d{4}-\d{2}-\d{2})(?:\s*@\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?))?",
-    )
-    .expect("valid regex")
+    Regex::new(r"(?i)ctx::(\d{4}-\d{2}-\d{2})(?:\s*@\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?))?")
+        .expect("valid regex")
 });
 
 /// Extract ISO datetime from a ctx:: marker.
@@ -449,8 +489,14 @@ mod tests {
 
     #[test]
     fn test_prefix_marker_case_insensitive() {
-        assert_eq!(extract_prefix_marker("SH:: uppercase"), Some("sh".to_string()));
-        assert_eq!(extract_prefix_marker("Ctx:: mixed"), Some("ctx".to_string()));
+        assert_eq!(
+            extract_prefix_marker("SH:: uppercase"),
+            Some("sh".to_string())
+        );
+        assert_eq!(
+            extract_prefix_marker("Ctx:: mixed"),
+            Some("ctx".to_string())
+        );
     }
 
     #[test]

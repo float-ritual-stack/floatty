@@ -199,8 +199,8 @@ mod tests {
 
         // Files where hardcoded .floatty paths are expected/allowed
         let allowlist: Vec<&str> = vec![
-            "paths.rs",                // canonical location for DataPaths::default_root()
-            "hooks.rs",                // shell hooks hardcoded to ~/.floatty (documented exception)
+            "paths.rs", // canonical location for DataPaths::default_root()
+            "hooks.rs", // shell hooks hardcoded to ~/.floatty (documented exception)
         ];
 
         let mut violations = Vec::new();
@@ -211,12 +211,10 @@ mod tests {
             }
             for entry in walkdir(dir) {
                 let path = entry;
-                let filename = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
                 // Skip allowlisted files
-                if allowlist.iter().any(|a| filename == *a) {
+                if allowlist.contains(&filename) {
                     continue;
                 }
 
@@ -232,20 +230,21 @@ mod tests {
 
                 for (line_num, line) in contents.lines().enumerate() {
                     // Look for .join(".floatty") or .join(".floatty-dev")
-                    if (line.contains(r#".join(".floatty")"#) || line.contains(r#".join(".floatty-dev")"#))
+                    if (line.contains(r#".join(".floatty")"#)
+                        || line.contains(r#".join(".floatty-dev")"#))
                         && !line.trim_start().starts_with("//")
                     {
                         // Check if there's a #[cfg] within the preceding 5 lines
-                        let start = if line_num >= 5 { line_num - 5 } else { 0 };
-                        let context: Vec<&str> = contents.lines()
+                        let start = line_num.saturating_sub(5);
+                        let context: Vec<&str> = contents
+                            .lines()
                             .skip(start)
                             .take(line_num - start + 1)
                             .collect();
                         let has_cfg = context.iter().any(|l| l.contains("#[cfg("));
 
                         if !has_cfg {
-                            let rel_path = path.strip_prefix(&workspace_root)
-                                .unwrap_or(&path);
+                            let rel_path = path.strip_prefix(&workspace_root).unwrap_or(&path);
                             violations.push(format!(
                                 "{}:{} → {}",
                                 rel_path.display(),

@@ -12,8 +12,8 @@ use ollama_rs::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::AppState;
 use crate::config::AggregatorConfig;
+use crate::AppState;
 use tauri::State;
 
 /// PR reference with status.
@@ -95,11 +95,9 @@ pub struct DailyNoteData {
 pub fn resolve_daily_path(date_arg: &str) -> String {
     let date = match date_arg.to_lowercase().as_str() {
         "today" => Local::now().format("%Y-%m-%d").to_string(),
-        "yesterday" => {
-            (Local::now() - Duration::days(1))
-                .format("%Y-%m-%d")
-                .to_string()
-        }
+        "yesterday" => (Local::now() - Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string(),
         other => other.to_string(),
     };
 
@@ -112,7 +110,11 @@ pub fn resolve_daily_path(date_arg: &str) -> String {
 }
 
 /// Extract structured data from daily note content using Ollama.
-async fn extract_daily_data(content: &str, date: &str, config: &AggregatorConfig) -> Result<DailyNoteData, String> {
+async fn extract_daily_data(
+    content: &str,
+    date: &str,
+    config: &AggregatorConfig,
+) -> Result<DailyNoteData, String> {
     // Parse endpoint
     let url = url::Url::parse(&config.ollama_endpoint).map_err(|e| e.to_string())?;
     let scheme = url.scheme();
@@ -177,10 +179,9 @@ Return JSON matching the schema. Use {} for day_of_week.",
     );
 
     // Create request with structured JSON output
-    let request = GenerationRequest::new(config.ollama_model.clone(), prompt)
-        .format(FormatType::StructuredJson(Box::new(
-            JsonStructure::new::<DailyNoteData>(),
-        )));
+    let request = GenerationRequest::new(config.ollama_model.clone(), prompt).format(
+        FormatType::StructuredJson(Box::new(JsonStructure::new::<DailyNoteData>())),
+    );
 
     tracing::info!("daily:: sending request to Ollama...");
 
@@ -210,14 +211,17 @@ Return JSON matching the schema. Use {} for day_of_week.",
 /// Takes a date argument (e.g., "2026-01-03", "today", "yesterday")
 /// Returns structured JSON with timelogs and scattered thoughts.
 #[tauri::command]
-pub async fn execute_daily_command(state: State<'_, AppState>, date_arg: String) -> Result<DailyNoteData, String> {
+pub async fn execute_daily_command(
+    state: State<'_, AppState>,
+    date_arg: String,
+) -> Result<DailyNoteData, String> {
     // Resolve date to file path
     let path = resolve_daily_path(&date_arg);
     tracing::info!("daily:: resolved {} -> {}", date_arg, path);
 
     // Read file content
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
 
     // Extract date from path for metadata
     let date = std::path::Path::new(&path)

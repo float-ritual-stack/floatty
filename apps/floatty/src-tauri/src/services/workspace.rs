@@ -1,17 +1,13 @@
 /// Workspace persistence and Y.Doc operations
 ///
 /// Business logic for workspace state management and Y.Doc clearing.
-
 use crate::db::{FloattyDb, WorkspaceStateRecord};
 use floatty_core::YDocStore;
 use std::sync::Arc;
 use yrs::{Array, Map, ReadTxn, Transact};
 
 /// Get persisted workspace layout state (JSON + save sequence)
-pub fn get_state(
-    db: &Arc<FloattyDb>,
-    key: &str,
-) -> Result<Option<WorkspaceStateRecord>, String> {
+pub fn get_state(db: &Arc<FloattyDb>, key: &str) -> Result<Option<WorkspaceStateRecord>, String> {
     db.get_workspace_state(key).map_err(|e| e.to_string())
 }
 
