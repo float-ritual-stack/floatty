@@ -36,6 +36,20 @@ interface DailyData {
   stats: { sessions: number; hours: string; prs: number };
 }
 
+// API response shapes — hoisted to module scope so tests / future callers can
+// assert against the same structure without re-declaring it.
+interface ApiMarker {
+  markerType: string;
+  value?: string;
+}
+interface ApiBlock {
+  createdAt: number | string;
+  content?: string;
+  metadata?: {
+    markers?: ApiMarker[];
+  };
+}
+
 interface DoorViewProps<T = unknown> {
   data: T;
   settings: Record<string, unknown>;
@@ -75,17 +89,6 @@ async function fetchDailyData(
   const resp = await serverFetch(`/api/v1/blocks?${params}`);
   if (!resp.ok) {
     throw new Error(`API error: ${resp.status} ${resp.statusText}`);
-  }
-  interface ApiMarker {
-    markerType: string;
-    value?: string;
-  }
-  interface ApiBlock {
-    createdAt: number | string;
-    content?: string;
-    metadata?: {
-      markers?: ApiMarker[];
-    };
   }
   const { blocks } = (await resp.json()) as { blocks: ApiBlock[] };
 

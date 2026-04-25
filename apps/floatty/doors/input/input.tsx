@@ -168,7 +168,7 @@ interface InputDoorCtx {
   actions: {
     setBlockOutput?(id: string, output: unknown, outputType: string): void;
     setBlockStatus?(id: string, status: 'idle' | 'running' | 'complete' | 'error'): void;
-    getBlock?(id: string): unknown | undefined;
+    getBlock?(id: string): unknown;
     getChildren?(id: string): string[];
     rootIds?(): readonly string[];
   };
