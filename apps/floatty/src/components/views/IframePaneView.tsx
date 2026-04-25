@@ -5,7 +5,7 @@
  * Escape zooms out (handled by Outliner's existing keybind).
  */
 
-import { createSignal, Show, onMount, onCleanup } from 'solid-js';
+import { createSignal, onMount, onCleanup } from 'solid-js';
 import type { Component } from 'solid-js/web';
 import { Breadcrumb } from '../Breadcrumb';
 

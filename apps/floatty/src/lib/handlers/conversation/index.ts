@@ -103,7 +103,6 @@ async function executeConversationTurn(
   actions: ExecutorActions,
   getBlock: (id: string) => ConversationBlock | undefined,
   getParentId: (id: string) => string | undefined,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _getChildren: (id: string) => string[]
 ): Promise<void> {
   const startTime = performance.now();

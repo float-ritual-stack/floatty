@@ -1468,7 +1468,6 @@ export interface UseSyncedYDocReturn {
 }
 
 export function useSyncedYDoc(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _options: UseSyncedYDocOptions = {}
 ): UseSyncedYDocReturn {
   // Note: syncDebounce option is now ignored - module-level DEFAULT_SYNC_DEBOUNCE is used

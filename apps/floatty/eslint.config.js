@@ -17,6 +17,21 @@ export default defineConfig([
     },
     rules: {
       'no-console': ['error'],
+      // Honour the standard `_`-prefix convention for intentionally-unused
+      // params/vars (callback signatures, hook contracts, etc).
+      // Without this, `_event: MouseEvent` in an xterm `activate(ev)` link
+      // callback or `_paneId` matching a hook's expected signature gets
+      // flagged even though the underscore IS the marker that says
+      // "I know it's unused, don't warn me."
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        },
+      ],
     },
   },
   {
