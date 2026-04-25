@@ -564,11 +564,9 @@ mod tests {
         batcher.flush().await;
 
         // Should emit empty batch (cancelled)
-        let result = rx.try_recv();
-        // Either no batch or empty batch
-        match result {
-            Ok(batch) => assert!(batch.changes.is_empty()),
-            Err(_) => {} // No batch emitted is also valid
+        // Either no batch or empty batch is acceptable
+        if let Ok(batch) = rx.try_recv() {
+            assert!(batch.changes.is_empty());
         }
     }
 

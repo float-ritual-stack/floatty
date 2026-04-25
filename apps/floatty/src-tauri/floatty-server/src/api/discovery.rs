@@ -450,6 +450,7 @@ async fn upsert_page(
 ///
 /// Responses:
 /// - `201 Created` with the new child's `BlockDto`
+///
 /// Validate that `:date` matches the canonical `YYYY-MM-DD` shape. Required
 /// to keep daily notes addressable by the `GET /api/v1/daily/:date` sibling —
 /// a typo like `/daily/26-4-19/append` would otherwise silently create a
