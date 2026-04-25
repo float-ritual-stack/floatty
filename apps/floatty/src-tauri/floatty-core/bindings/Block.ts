@@ -11,4 +11,4 @@ export type Block = { id: string, parentId: string | null, childIds: Array<strin
  * Block metadata for markers, wikilinks, and other extracted data.
  * Populated by hooks, exposed via API for external agent integration.
  */
-metadata: BlockMetadata | null, };
+metadata?: BlockMetadata | null, };

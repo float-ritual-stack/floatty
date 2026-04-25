@@ -18,4 +18,4 @@ markerType: string,
  * For `[project::floatty]`, value is "floatty".
  * For bare `ctx::`, value is None.
  */
-value: string | null, };
+value?: string | null, };
