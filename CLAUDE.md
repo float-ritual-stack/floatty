@@ -38,33 +38,35 @@ See @.claude/rules/architecture.md for full file inventory, data flows, and comp
 ## Commands
 
 ```bash
-npm install           # Install JS dependencies
-npm run tauri dev     # Dev mode (hot reload frontend, rebuilds Rust)
-npm run lint          # ESLint
-npm run test          # Run vitest (1120+ tests)
-npm run test:watch    # Watch mode for TDD
+pnpm install                              # Install JS deps (workspace-aware)
+pnpm --filter float-pty tauri:dev         # Dev mode (hot reload, rebuilds Rust)
+pnpm lint --force                         # ESLint across all packages via turbo
+pnpm --filter float-pty typecheck         # tsc --noEmit
+pnpm --filter float-pty test:run          # vitest run (1210+ tests)
+pnpm --filter float-pty test              # vitest watch (TDD mode)
 ```
 
 ### Rust Tests (IMPORTANT)
 
-Cargo.toml is in `src-tauri/`, not the project root. The package name is `float-pty`, not `floatty`.
+Cargo workspace lives at `apps/floatty/src-tauri/`, NOT the repo root. The package name is `float-pty`, not `floatty`.
 
 ```bash
-# Run from src-tauri/ — test filter goes AFTER `--`
-cd src-tauri && cargo test -p float-pty -- test_name_here
+# From repo root — test filter goes AFTER `--`
+cd apps/floatty/src-tauri && cargo test -p float-pty -- test_name_here
 
 # Multiple test filters
-cd src-tauri && cargo test -p float-pty -- test_one test_two
+cd apps/floatty/src-tauri && cargo test -p float-pty -- test_one test_two
 
-# All Rust tests
-cd src-tauri && cargo test -p float-pty
+# All Rust tests across the workspace
+cd apps/floatty/src-tauri && cargo test --workspace
 ```
 
 **Common mistakes** (do NOT do these):
 ```bash
-cargo test -p floatty ...              # Wrong package name (it's float-pty)
-cargo test -p float-pty test_name      # Missing `--` before test filter
-cargo test ...                         # No Cargo.toml in project root
+cargo test -p floatty ...                 # Wrong package name (it's float-pty)
+cargo test -p float-pty test_name         # Missing `--` before test filter
+cargo test ...                            # No Cargo.toml at repo root anymore (monorepo shift moved it under apps/floatty/src-tauri)
+cd src-tauri && cargo test ...            # Stale path — pre-monorepo. Use apps/floatty/src-tauri.
 ```
 
 ### Version Bumping

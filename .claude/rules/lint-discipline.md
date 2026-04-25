@@ -116,9 +116,10 @@ Reference implementations in the codebase:
 
 Discoverable problems with the surrounding tooling that this rule **does not** fix but that future work should:
 
-- The repo root `CLAUDE.md` "Commands" section documents stale `npm run lint` and `cd src-tauri && cargo test` invocations from before the monorepo shift. Real commands are `pnpm lint --force` and `cd apps/floatty/src-tauri && cargo test --workspace`. Fixing this is a separate PR (don't propagate the staleness when copying examples from CLAUDE.md).
 - No CI is configured. The completion gate (§4) is the only mechanical enforcement until CI exists.
 - No `.husky/pre-push` hook is set up. Recommended, opt-in (see §5).
+
+(The stale `npm run lint` / `cd src-tauri && cargo test` invocations in repo-root `CLAUDE.md` got fixed in this PR — the rule's own §2 "we'll file a follow-up = forbidden" applied to itself when Desktop Daddy reviewed the draft and pointed out that naming the gap without acting on it was the exact pattern §2 forbids. Fixed in the same commit; no follow-up needed.)
 
 ## See also
 
