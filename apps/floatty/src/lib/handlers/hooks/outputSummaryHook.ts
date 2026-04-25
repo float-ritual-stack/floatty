@@ -23,13 +23,56 @@ import { createLogger } from '../../logger';
 const logger = createLogger('outputSummaryHook');
 
 // ═══════════════════════════════════════════════════════════════
+// TYPES — door output envelope shape
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Props on a json-render spec element. Each component type (EntryHeader,
+ * EntryBody, PatternCard, ...) has its own prop schema defined in its
+ * catalog; we don't enumerate them here. Use `unknown` for value access
+ * and narrow at the use site (`typeof p.title === 'string'` etc.).
+ *
+ * The string-indexed signature lets us read arbitrary props without
+ * adding each one to the type — necessary because the catalog is
+ * extensible and this hook handles every door's output.
+ */
+type SpecElementProps = Record<string, unknown>;
+
+interface SpecElement {
+  type: string;
+  props?: SpecElementProps;
+  children?: string[];
+}
+
+interface DoorSpec {
+  root?: string;
+  elements?: Record<string, SpecElement>;
+}
+
+interface DoorOutputData {
+  title?: unknown;
+  spec?: DoorSpec;
+  // doors emit other fields here (entries, week, etc.); accessed only when
+  // the surrounding code has narrowed via type guards.
+}
+
+interface DoorOutputEnvelope {
+  data?: DoorOutputData;
+  spec?: DoorSpec;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // SUMMARY EXTRACTION
 // ═══════════════════════════════════════════════════════════════
 
 /** Unwrap door output envelope to get data + spec. */
-function unwrapDoorOutput(output: any): { data: any; spec: any } {
-  const data = output?.data;
-  const spec = data?.spec ?? output?.spec;
+function unwrapDoorOutput(output: unknown): { data: DoorOutputData | undefined; spec: DoorSpec | undefined } {
+  // Trusted at this boundary: door outputs go through setBlockOutput which
+  // shapes the envelope. Cast is honest given the contract; downstream
+  // accessors still narrow each field before use.
+  const env = output as DoorOutputEnvelope | undefined;
+  const data = env?.data;
+  const spec = data?.spec ?? env?.spec;
   return { data, spec };
 }
 
@@ -38,36 +81,34 @@ function unwrapDoorOutput(output: any): { data: any; spec: any } {
  * Pulls title from EntryHeader, section headings from EntryBody markdown,
  * and key component types used.
  */
-function extractRenderSummary(output: any): string | null {
+function extractRenderSummary(output: unknown): string | null {
   const { data, spec } = unwrapDoorOutput(output);
 
   const parts: string[] = [];
 
   // Use data.title as lead if it's clean (not a JSON blob or too long)
-  if (data?.title && typeof data.title === 'string' && data.title.length < 120 && !data.title.trimStart().startsWith('{')) {
+  if (typeof data?.title === 'string' && data.title.length < 120 && !data.title.trimStart().startsWith('{')) {
     parts.push(data.title);
   }
 
   // Scan spec elements for section structure
   if (spec?.elements) {
-    for (const el of Object.values(spec.elements as Record<string, any>)) {
-      if (el.type === 'EntryHeader' && el.props?.title) {
-        const t = el.props.title;
-        if (!parts.includes(t)) parts.push(t);
-      } else if (el.type === 'MetadataHeader' && el.props?.title) {
-        const t = el.props.title;
-        if (!parts.includes(t)) parts.push(t);
-      } else if (el.type === 'EntryBody' && el.props?.markdown) {
-        const headings = (el.props.markdown as string)
+    for (const el of Object.values(spec.elements)) {
+      const title = el.props?.title;
+      if (el.type === 'EntryHeader' && typeof title === 'string') {
+        if (!parts.includes(title)) parts.push(title);
+      } else if (el.type === 'MetadataHeader' && typeof title === 'string') {
+        if (!parts.includes(title)) parts.push(title);
+      } else if (el.type === 'EntryBody' && typeof el.props?.markdown === 'string') {
+        const headings = el.props.markdown
           .split('\n')
           .filter((line: string) => line.startsWith('## '))
           .map((line: string) => line.replace(/^##\s+/, '').trim());
         for (const h of headings) {
           if (!parts.includes(h)) parts.push(h);
         }
-      } else if (el.type === 'PatternCard' && el.props?.title) {
-        const t = el.props.title;
-        if (!parts.includes(t)) parts.push(t);
+      } else if (el.type === 'PatternCard' && typeof title === 'string') {
+        if (!parts.includes(title)) parts.push(title);
       }
     }
   }
@@ -83,16 +124,16 @@ function extractRenderSummary(output: any): string | null {
  * Walks the element tree in document order (following children refs),
  * extracting text content from each component type.
  */
-export function flattenSpecToMarkdown(output: any): string | null {
+export function flattenSpecToMarkdown(output: unknown): string | null {
   const { data, spec } = unwrapDoorOutput(output);
   if (!spec?.elements || !spec?.root) return null;
 
-  const elements = spec.elements as Record<string, any>;
+  const elements = spec.elements;
   const lines: string[] = [];
   const visiting = new Set<string>();
 
   // Title from data envelope
-  if (data?.title && typeof data.title === 'string' && !data.title.trimStart().startsWith('{')) {
+  if (typeof data?.title === 'string' && !data.title.trimStart().startsWith('{')) {
     lines.push(`# ${data.title}`, '');
   }
 
@@ -187,7 +228,7 @@ export function flattenSpecToMarkdown(output: any): string | null {
 /**
  * Extract summary from any block output based on outputType.
  */
-function extractSummary(output: any, outputType: string): string | null {
+function extractSummary(output: unknown, outputType: string): string | null {
   if (outputType === 'door') {
     return extractRenderSummary(output);
   }
@@ -197,7 +238,7 @@ function extractSummary(output: any, outputType: string): string | null {
 /**
  * Extract rendered markdown from any block output based on outputType.
  */
-function extractRenderedMarkdown(output: any, outputType: string): string | null {
+function extractRenderedMarkdown(output: unknown, outputType: string): string | null {
   if (outputType === 'door') {
     return flattenSpecToMarkdown(output);
   }
