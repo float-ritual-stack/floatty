@@ -595,3 +595,75 @@ info!(field = "value", "Something happened");
 - `RUST_MODULARIZATION_GUIDE.md` - Service layer is perfect for structured logging
 - `HANDLER_REGISTRY_IMPLEMENTATION.md` - Handlers should log request_id
 - `ARCHITECTURE_REVIEW_2026_01_08.md` - Observability for scaling
+
+---
+
+## Tier-of-INFO Audit — 2026-04-24 ([[FLO-675]])
+
+Loki query of release floatty-server for 2026-04-24 returned only 9 events (all `floatty_server::backup` hourly ticks) despite the server running all day. Audit reviewed every `tracing::info!` call site in `floatty-server/src` and `floatty-core/src` against the Tier-of-INFO definition below to confirm the surface is correct and identify silent code paths.
+
+### Tier-of-INFO Definition
+
+A `tracing::info!` event must satisfy ALL of:
+
+1. **Lifecycle, not hot-path.** Fires < 10× per minute under normal release usage. Per-block, per-keystroke, per-broadcast events stay at DEBUG.
+2. **Diagnostic value.** Pairs with an outcome (success/failure, count, duration_ms) — not a placeholder ping. "Backup completed" with no fields is fine for an hourly daemon; "tick" with no fields is not.
+3. **Sibling-agent useful.** Answers "what is release doing?" or "did X complete?" when read out of context.
+4. **Bounded cardinality on Loki labels.** Structured fields that get mapped to Loki labels (per the OTLP→Loki default) must not include high-cardinality values like `block_id`, `request_id`, or per-update `tx_id`. See `.claude/rules/do-not.md` "Tracing / OTLP" — promote those to span attributes or Loki-side allowlist rather than into the event.
+
+### Existing INFO Surface (Audit Confirmed Correct)
+
+| Source | Event | Frequency |
+|---|---|---|
+| `floatty-server/main.rs` | `phase=ydoc_store_ready` / `hook_system_ready` / `server_ready` (target=`floatty_startup`) | startup only |
+| `floatty-server/main.rs` | API auth state, server startup, backup daemon enabled/disabled | startup only |
+| `floatty-server/ws.rs:298` | `WebSocket client connected (outline: ...)` | per client connect |
+| `floatty-server/ws.rs:355` | `WebSocket client disconnected (outline: ...)` | per client disconnect |
+| `floatty-server/ws.rs:237` | `Heartbeat task started (interval: 30s)` | startup only |
+| `floatty-server/api/sync.rs:235` | `Rehydrated N blocks after restore` | per restore (rare, destructive) |
+| `floatty-server/api/sync.rs:246` | `Y.Doc restored from binary backup` (block_count, root_count) | per restore |
+| `floatty-server/api/backup.rs` | `Rehydrated N blocks after backup restore` | per backup-restore |
+| `floatty-server/api/search.rs:196` | `Reindex triggered: N blocks rehydrated` | manual reindex |
+| `floatty-server/backup.rs` | `Backup completed`, `Retention pruned old backups`, `Last backup is stale, running immediate` | hourly |
+| `floatty-server/block_service.rs:980` | `Importing block with preserved identity` (target=`floatty_server::import`, block_id, identity_source) | per binary-import block |
+| `floatty-server/outline_manager.rs` | `Created outline '...'`, `Deleted outline '...'`, `Backup daemon started for outline '...'`, `Wired callbacks for outline '...'`, `Initializing hook system for outline '...'` | per outline lifecycle |
+| `floatty-core/hooks/system.rs` | `search_init_complete`, `cold_start_rehydration_complete`, `hook_system_init_complete` (target=`floatty_startup`) | startup only |
+| `floatty-core/search/index_manager.rs:144` | `Creating new search index at ...` | startup or rebuild |
+| `floatty-core/search/writer.rs` | `Writer actor stopped`, `All documents cleared from index`, `Writer actor shutting down` | shutdown / reset |
+
+**The surface is mostly right.** Today's release stream looks empty because the canonical operational state for an always-on release floatty hits NONE of these conditions: no restart (no startup events), no client reconnects (no WS connect/disconnect events), no restore, no outline lifecycle. Just the hourly backup daemon.
+
+### Known Gaps (Silent at INFO, Need Future Instrumentation)
+
+These are NOT promotion candidates — they're code paths that currently emit nothing at any tracing level, or only fire on warn/error. Filed for future work:
+
+| Path | Gap | Volume Risk | Notes |
+|---|---|---|---|
+| `floatty-server/api/sync.rs::apply_update` | Every Y.Doc update from clients goes through here silently. `#[tracing::instrument]` creates a span but no event log line. | High — could be 100s/min during active editing. Don't log per-call; design an aggregated periodic summary event. | The single biggest reason release looks empty during steady-state usage. |
+| `floatty-server/ws.rs` sync gap detection | When a client reconnects with stale `seq`, server detects gap and sends backfill via `GET /api/v1/updates?after=N`. No INFO log marks the gap event. | Low — happens on reconnect after disconnect/sleep. | Pair with gap-fill outcome (filled N updates) for a complete diagnostic. |
+| Periodic activity summary | No INFO event reports steady-state throughput. Sibling agents querying "is the server doing anything?" get false-empty between hourly backups. | Cap to 1/min. Aggregate counters: blocks_created, blocks_updated, ws_broadcasts, apply_updates. | Cardinality-safe: counts only, no ids. |
+
+### Promotion Candidates Considered, Rejected
+
+| Source | Current | Why NOT promote |
+|---|---|---|
+| `floatty_core::hooks::metadata_extraction` per-block events | DEBUG | Hot-path flood (2262 events per dev cold-start). Aggregate at INFO instead, per "Periodic activity summary" gap above. |
+| `hyper_util::client::legacy::pool` keepalives | DEBUG | Filtered at source via `hyper=warn`. Promotion would defeat the silencer that prevents OTLP telemetry-induced-telemetry loops. |
+| `floatty_server::ws` per-broadcast events (lines 133, 140, 148) | DEBUG | Per-update frequency. Aggregate, don't promote. |
+| `floatty_server::ws` heartbeat tick (line 165) | DEBUG | 2880 events/day at one-per-30s. Tick liveness is implicit in any other event firing. |
+| `floatty_core::search::writer` per-write events | DEBUG | Per-block write frequency. Already INFO at lifecycle (start, stop, clear). |
+
+### Verification Query
+
+```bash
+LOKI_URL="https://float-bbs.ngrok.io/loki"
+START=$(date -d '24 hours ago' +%s)000000000
+END=$(date +%s)000000000
+curl -sG "$LOKI_URL/loki/api/v1/query_range" \
+  --data-urlencode 'query={service_name="floatty-server", deployment_environment="release"}' \
+  --data-urlencode "start=$START" --data-urlencode "end=$END" \
+  --data-urlencode 'limit=5000' \
+  | jq -r '.data.result[].values[] | .[1] | .[0:80]' | sort | uniq -c | sort -rn
+```
+
+Healthy release stream over 24h should show: backup × ~24, retention × ~24, plus any restart-driven phase events (if reboots happened) and any restore/outline-create events (if those operations occurred).

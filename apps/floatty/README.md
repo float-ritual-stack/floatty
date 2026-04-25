@@ -248,7 +248,7 @@ jq 'select(.target == "js")' ~/.floatty-dev/logs/floatty.*.jsonl
 jq 'select(.fields.duration_ms > 1000)' ~/.floatty-dev/logs/floatty.*.jsonl
 ```
 
-Verbose logging: `RUST_LOG=debug` (enabled automatically in dev mode).
+Verbose logging: dev mode auto-enables `floatty_server=debug,floatty_core=debug` while keeping `hyper`/`reqwest`/`opentelemetry` silenced (prevents OTLP exporter telemetry-induced-telemetry loops). Override via `RUST_LOG` env var if you need broader scope.
 
 ## Tech Stack
 
