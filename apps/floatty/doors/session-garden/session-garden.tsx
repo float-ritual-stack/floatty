@@ -51,6 +51,19 @@ interface GardenData {
 }
 
 /**
+ * Tauri's `invoke` API. The door runs in the webview context which can't
+ * read the filesystem directly — we cross the bridge via Tauri's injected
+ * window globals. Two shapes exist depending on Tauri version: v2 uses
+ * `__TAURI_INTERNALS__.invoke`, older surfaces use `__TAURI__.core.invoke`.
+ */
+type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+interface TauriWindowGlobals {
+  __TAURI_INTERNALS__?: { invoke?: TauriInvoke };
+  __TAURI__?: { core?: { invoke?: TauriInvoke } };
+}
+
+/**
  * One node in a json-render spec. Component identity ("type") + arbitrary
  * props/event-handlers; we don't constrain those further at this layer because
  * each component (NavBrand, EntryHeader, RefCard, ...) has its own prop shape
@@ -643,12 +656,7 @@ export const door = {
 
         const basePath = `~/float-hub/float.dispatch/boards/rangle-weekly/${year}-${week}`;
 
-        // Read files via Tauri shell (door runs in webview, can't read fs directly)
-        type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-        interface TauriWindowGlobals {
-          __TAURI_INTERNALS__?: { invoke?: TauriInvoke };
-          __TAURI__?: { core?: { invoke?: TauriInvoke } };
-        }
+        // Read files via Tauri shell — see TauriWindowGlobals at module scope.
         const tauri = window as unknown as TauriWindowGlobals;
         const invoke = tauri.__TAURI_INTERNALS__?.invoke
           || tauri.__TAURI__?.core?.invoke;

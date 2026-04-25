@@ -114,6 +114,22 @@ export interface ContentSyncDeps {
   cursor?: CursorState;
 }
 
+/**
+ * Window augmentation used by the E2E test harness. The harness installs
+ * `window.__floattyTestHooks = { onConflictDetected: (id) => ... }` before
+ * the test run so it can observe LWW conflicts (we can't spy on
+ * `console.warn` because logger.ts captures `originalConsole` at module
+ * load time, before any spy is installed).
+ *
+ * Module-scoped so test-setup utilities can import it directly and so the
+ * IDE language service / refactor tools can see the augmentation.
+ */
+export interface FloattyTestHookGlobals {
+  __floattyTestHooks?: {
+    onConflictDetected?: (blockId: string) => void;
+  };
+}
+
 export interface ContentSyncReturn {
   displayContent: Accessor<string>;
   setDisplayContent: Setter<string>;
@@ -217,15 +233,7 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
         `(focus len=${snapshot.length}, pre-commit store len=${block.content.length}, ` +
         `local len=${content.length}) — LWW applied`
       );
-      // E2E test hook — no-op in production (window.__floattyTestHooks is never set).
-      // The harness installs { onConflictDetected: (id) => ... } before the test run.
-      // We can't spy on console.warn because logger.ts captures originalConsole at
-      // module load time, before any spy is installed.
-      interface FloattyTestHookGlobals {
-        __floattyTestHooks?: {
-          onConflictDetected?: (blockId: string) => void;
-        };
-      }
+      // E2E test hook — see FloattyTestHookGlobals at module scope for the contract.
       (window as unknown as FloattyTestHookGlobals).__floattyTestHooks
         ?.onConflictDetected?.(block.id);
     }
