@@ -22,7 +22,7 @@ interface ScopedActions {
   updateBlockContent(id: string, content: string): void;
   deleteBlock(id: string): boolean;
   moveBlock(blockId: string, targetParentId: string | null, targetIndex: number): boolean;
-  getBlock(id: string): any;
+  getBlock(id: string): unknown;
   getParentId(id: string): string | undefined;
   getChildren(id: string): string[];
   rootIds(): readonly string[];
@@ -39,9 +39,13 @@ interface DoorContext {
   content: string;
   doorId: string;
   log: (...args: unknown[]) => void;
-  fs: any;
-  fetch: any;
-  invoke: any;
+  // Tier 2 capabilities — present on the framework context but unused by this door.
+  // Typed as `unknown` so the door doesn't accidentally call into them without
+  // declaring the capability, and so this file doesn't take a dependency on the
+  // framework's specific Scoped* interfaces.
+  fs: unknown;
+  fetch: unknown;
+  invoke: unknown;
 }
 
 interface BlockDoor {

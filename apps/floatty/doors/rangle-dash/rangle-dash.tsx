@@ -1,4 +1,5 @@
 import { createSignal, onMount, onCleanup, For, Show } from 'solid-js';
+import type { JSX } from 'solid-js';
 import { exec } from '@floatty/stdlib';
 import type { DoorViewProps } from '../door-types';
 
@@ -233,7 +234,12 @@ async function loadMeetingDetails(weekDir: string, meeting: MeetingItem): Promis
 
 // ── Parse ctx:: timeline from search hits ──
 
-function extractTimeline(hits: any[]): TimelineEntry[] {
+interface SearchHit {
+  content?: string;
+  // search results may carry other fields (id, score, etc.) — only `content` is used here
+}
+
+function extractTimeline(hits: SearchHit[]): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
   const seen = new Set<string>();
 
@@ -293,7 +299,7 @@ function StatusBadge(props: { status: string }) {
   );
 }
 
-function Section(props: { title: string; count?: number; children: any }) {
+function Section(props: { title: string; count?: number; children: JSX.Element }) {
   return (
     <div style={{ 'margin-bottom': '1.5rem' }}>
       <div style={{
@@ -349,7 +355,7 @@ function PRCard(props: { pr: PRItem; onNavigate?: (target: string) => void }) {
   );
 }
 
-function MeetingCard(props: { meeting: MeetingItem; weekDir: string; onNavigate: any }) {
+function MeetingCard(props: { meeting: MeetingItem; weekDir: string; onNavigate: (target: string) => void }) {
   const [expanded, setExpanded] = createSignal(false);
   const [details, setDetails] = createSignal<MeetingDetails | null>(null);
   const [loadingDetails, setLoadingDetails] = createSignal(false);
@@ -512,8 +518,9 @@ function RangleDashView(props: DoorViewProps<DashData>) {
 
       setData({ prs, meetings, timeline, headlines, week: weekStr, weekFocus });
       setLoading(false);
-    } catch (e: any) {
-      setData(d => ({ ...(d || {} as DashData), week: weekStr, weekFocus: `Error: ${e.message}` }));
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setData(d => ({ ...(d || {} as DashData), week: weekStr, weekFocus: `Error: ${message}` }));
       setLoading(false);
     }
   };
