@@ -31,7 +31,7 @@ The following rationalizations are **forbidden** (named explicitly so future-Cla
 | "Not related to our changes" | The lint output landed on YOUR PR. Your PR is the reason this is being looked at. |
 | "Predates this branch" | Discipline is forward-only; the past doesn't get a pass. |
 | "Out of scope for this ticket" | The ticket is "code that lands"; lint is part of code. |
-| "We'll file a follow-up" | Follow-ups for sub-hour work are backlog rot. See [feedback_default_to_bundling.md](../../../../.claude/projects/-Users-evan-projects--float-float-substrate-floatty/memory/feedback_default_to_bundling.md). |
+| "We'll file a follow-up" | Follow-ups for sub-hour work are backlog rot — the cost of filing + re-contextualising the ticket later usually exceeds doing it now. If genuinely large, the §3 escape hatch applies. |
 | "Should be a separate PR" | If the fix is small AND mechanical, no. If genuinely large, escape hatch in §3 applies. |
 
 ## 3. Bounded-scope escape hatch
@@ -57,7 +57,7 @@ The rule above is absolute, with one explicit escape hatch.
 
 The gate's required output for any task that touches code:
 
-```
+```text
 Verified clean:
 - pnpm lint --force         → 0 errors, 0 warnings
 - pnpm --filter float-pty typecheck    → clean
@@ -80,7 +80,7 @@ Quote the actual stdout/stderr in completion summaries — not "tests pass" but 
 | ✅ Completion gate (Claude-side) | **Mandatory, always-on** | Discipline that survives across sessions and context loss. |
 | ✅ Pre-push gate (manual or `.husky/pre-push`) | Recommended, opt-in | Catches gaps the completion gate missed. Setup is a separate decision; not auto-installed by adopting this rule. |
 | ✅ CI gate | Deferred until CI exists | Outside this rule's scope; will inherit the surfaces in §1 when CI lands. |
-| ❌ Edit-time hooks (`PostToolUse: Edit → lint`, save-on-lint) | **Forbidden** | Interrupts iteration flow. User has tried this, hates it. The right enforcement boundary is HANDOFF (push, completion), not iteration (edit). See [feedback_no_edit_time_lint_hooks.md](../../../../.claude/projects/-Users-evan-projects--float-float-substrate-floatty/memory/feedback_no_edit_time_lint_hooks.md). |
+| ❌ Edit-time hooks (`PostToolUse: Edit → lint`, save-on-lint) | **Forbidden** | Interrupts iteration flow. The right enforcement boundary is HANDOFF (push, completion), not iteration (edit). User has tried this, rejected it; do not propose it again under any framing. |
 | ❌ Pre-commit hooks that lint or auto-fix | **Forbidden** | Same reason — commit is still an iteration boundary, not a handoff. |
 
 When designing future automation, the menu is the ✅ rows. The ❌ rows are not "skip for now" — they are doctrine. **Do not propose them, do not list them as "options to weigh."**
