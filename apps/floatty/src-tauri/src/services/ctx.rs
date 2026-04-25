@@ -81,8 +81,10 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let config_path = dir.path().join("config.toml");
 
-        let mut config = AggregatorConfig::default();
-        config.theme = "test-theme".to_string();
+        let config = AggregatorConfig {
+            theme: "test-theme".to_string(),
+            ..Default::default()
+        };
         config.save_to(&config_path).unwrap();
 
         let loaded = get_config(&config_path);

@@ -1,7 +1,9 @@
 //! Minimal NSPanel spike - testing show/hide/toggle without complex features.
 //!
-//! macOS only - this entire module is gated by cfg(target_os = "macos").
-#![cfg(target_os = "macos")]
+//! macOS only — gated by `#[cfg(target_os = "macos")]` on `mod panel;` in
+//! `lib.rs`. Don't re-add the inner `#![cfg(...)]` attribute here; clippy
+//! flags it as a duplicated-attribute warning since the parent already
+//! enforces the gate.
 //!
 //! Learnings from Dec 22 attempt:
 //! - Remove .closable() to avoid foreign exception crash

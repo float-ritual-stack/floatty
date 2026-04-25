@@ -84,6 +84,11 @@ fn safe_pid_to_i32(pid: u32) -> Option<i32> {
     i32::try_from(pid).ok()
 }
 
+// Tauri IPC command — argument list is part of the frontend↔backend contract
+// (`invoke('plugin:pty|spawn', { file, args, cols, ... })`). Refactoring into
+// a struct would change the wire shape and break every caller. Accept the
+// clippy threshold violation explicitly.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn spawn(
     file: String,
@@ -218,13 +223,9 @@ async fn spawn(
             None
         };
 
-        loop {
-            // 1. Blocking wait for first chunk (0 CPU when idle)
-            let first_chunk = match rx.recv() {
-                Ok(d) => d,
-                Err(_) => break, // All senders disconnected
-            };
-
+        // 1. Blocking wait for first chunk (0 CPU when idle).
+        //    `while let Ok(...)` exits cleanly when all senders disconnect.
+        while let Ok(first_chunk) = rx.recv() {
             // Append to capture buffer if capturing (with size cap)
             if let Some(ref mut buf) = capture_buffer {
                 buf.extend(first_chunk.iter().copied());

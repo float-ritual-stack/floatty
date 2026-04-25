@@ -603,6 +603,12 @@ async fn get_topology(
 
     // Subtree walk for each page: block count + content lines + outlinks
     // Iterative with visited set for cycle safety (matches collect_descendants pattern)
+    // Recursive helper with 9 args — 2 over clippy's default-7 threshold.
+    // Refactoring to a struct would force all the `&mut` accumulators
+    // (`count`, `outlinks`, `content_lines`) into a single context type,
+    // which adds boilerplate without changing semantics. Accept the
+    // threshold violation for this private helper.
+    #[allow(clippy::too_many_arguments)]
     fn walk_subtree(
         start_id: &str,
         all_blocks: &std::collections::HashMap<String, BlockInfo>,

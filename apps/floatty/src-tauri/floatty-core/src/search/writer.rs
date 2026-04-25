@@ -166,10 +166,15 @@ pub struct BlockIndexData {
 }
 
 /// Messages that can be sent to the writer actor.
+///
+/// `AddOrUpdate` carries a boxed `BlockIndexData` (~hundreds of bytes per
+/// block) so the enum's stack size is dominated by the smallest variants
+/// rather than the largest — clippy's `large_enum_variant` lint. Hot path
+/// sends the box across the channel; the receiver derefs transparently.
 #[derive(Debug)]
 pub enum WriterMessage {
     /// Add or update a document (delete by ID first, then add).
-    AddOrUpdate(BlockIndexData),
+    AddOrUpdate(Box<BlockIndexData>),
     /// Delete a document by block ID.
     Delete { block_id: String },
     /// Delete all documents from the index (fire-and-forget).
@@ -206,7 +211,7 @@ impl WriterHandle {
     /// This is atomic: deletes any existing doc with the ID, then adds new.
     pub async fn add_or_update(&self, data: BlockIndexData) -> Result<(), SearchError> {
         self.tx
-            .send(WriterMessage::AddOrUpdate(data))
+            .send(WriterMessage::AddOrUpdate(Box::new(data)))
             .await
             .map_err(|_| SearchError::WriterClosed)
     }

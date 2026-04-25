@@ -395,7 +395,7 @@ impl OutlineManager {
             return Err(OutlineError::AlreadyExists(name.to_string()));
         }
 
-        let store = Arc::new(YDocStore::open(&db_path, name.as_str()).inspect_err(|e| {
+        let store = Arc::new(YDocStore::open(&db_path, name.as_str()).inspect_err(|_e| {
             // Clean up partial .sqlite file if SQLite created it before failing
             let _ = std::fs::remove_file(&db_path);
         })?);
