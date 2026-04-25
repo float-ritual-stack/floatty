@@ -19,6 +19,7 @@ import {
 } from '../../events';
 import { blockStore } from '../../../hooks/useBlockStore';
 import { createLogger } from '../../logger';
+import type { DoorEnvelope } from '../doorTypes';
 
 const logger = createLogger('outputSummaryHook');
 
@@ -49,6 +50,12 @@ interface DoorSpec {
   elements?: Record<string, SpecElement>;
 }
 
+/**
+ * Door-specific data shape we expect when `kind === 'view'` and the door
+ * emits json-render output. The framework's `DoorViewOutput.data` is just
+ * `JsonValue | null` (intentionally — each door's data is its own); this
+ * interface is the contract render-style doors follow inside that envelope.
+ */
 interface DoorOutputData {
   title?: unknown;
   spec?: DoorSpec;
@@ -56,24 +63,30 @@ interface DoorOutputData {
   // the surrounding code has narrowed via type guards.
 }
 
-interface DoorOutputEnvelope {
-  data?: DoorOutputData;
-  spec?: DoorSpec;
-}
-
 // ═══════════════════════════════════════════════════════════════
 // SUMMARY EXTRACTION
 // ═══════════════════════════════════════════════════════════════
 
-/** Unwrap door output envelope to get data + spec. */
+/**
+ * Unwrap door output envelope to get data + spec.
+ *
+ * Routes via the framework's discriminated union (`DoorEnvelope =
+ * DoorViewOutput | DoorExecOutput`, keyed on `kind`). Exec doors carry no
+ * spec — they short-circuit to `undefined / undefined`, which is what
+ * downstream extractors expect (they early-return on missing spec).
+ */
 function unwrapDoorOutput(output: unknown): { data: DoorOutputData | undefined; spec: DoorSpec | undefined } {
-  // Trusted at this boundary: door outputs go through setBlockOutput which
-  // shapes the envelope. Cast is honest given the contract; downstream
-  // accessors still narrow each field before use.
-  const env = output as DoorOutputEnvelope | undefined;
-  const data = env?.data;
-  const spec = data?.spec ?? env?.spec;
-  return { data, spec };
+  if (!output || typeof output !== 'object') return { data: undefined, spec: undefined };
+  const env = output as DoorEnvelope;
+  // Only view doors emit specs; exec doors have a different envelope shape.
+  if (env.kind !== 'view') return { data: undefined, spec: undefined };
+  // env.data is JsonValue | null; narrow to a record before accessing fields.
+  const rawData = env.data;
+  if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) {
+    return { data: undefined, spec: undefined };
+  }
+  const data = rawData as unknown as DoorOutputData;
+  return { data, spec: data.spec };
 }
 
 /**

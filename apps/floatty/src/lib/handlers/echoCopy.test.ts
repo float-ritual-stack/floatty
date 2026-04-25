@@ -118,6 +118,12 @@ describe('echoCopyHandler', () => {
         id: targetId,
         metadata: {},
         output: {
+          // Match the DoorViewOutput envelope shape produced by doorAdapter
+          // and direct setBlockOutput calls — `kind`/`doorId`/`schema` are
+          // required for the unwrapDoorOutput discriminated-union check.
+          kind: 'view',
+          doorId: 'render',
+          schema: 1,
           data: {
             title: 'Test Doc',
             spec: {
