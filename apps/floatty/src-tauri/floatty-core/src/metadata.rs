@@ -119,6 +119,14 @@ pub struct BlockMetadata {
     /// Timestamp of last metadata extraction.
     /// Used to skip re-extraction if content unchanged.
     /// Accepts both i64 and f64 on deserialization (yrs stores as f64 in legacy data).
+    ///
+    /// NOTE: ts-rs (v12) emits "failed to parse serde attribute" for the
+    /// `deserialize_with = "..."` line below. That's expected — deserializers
+    /// are a runtime concept ts-rs can't reflect into TypeScript output. The
+    /// `#[ts(type = "number | null")]` attribute below covers the TS shape
+    /// explicitly. The warning is harmless noise; no upstream suppression
+    /// mechanism exists. See `.claude/rules/lint-discipline.md` "Accepted
+    /// noise" section for the carve-out rationale.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

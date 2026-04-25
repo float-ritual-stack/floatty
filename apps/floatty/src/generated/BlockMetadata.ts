@@ -15,33 +15,41 @@ export type BlockMetadata = {
  * All :: markers found in this block.
  * Includes both prefix markers (sh::, ai::, ctx::) and tag markers ([project::X]).
  */
-markers: Array<Marker>, 
+markers?: Array<Marker>, 
 /**
  * [[wikilink]] targets found in this block.
  * For `[[Target|Alias]]`, stores only "Target".
  * For nested `[[outer [[inner]]]]`, stores both "outer [[inner]]" and "inner".
  */
-outlinks: Array<string>, 
+outlinks?: Array<string>, 
 /**
  * True if this block is a stub (referenced by wikilink but not yet created).
  * Stubs are blocks under pages:: with no real content yet.
  */
-isStub: boolean, 
+isStub?: boolean, 
 /**
  * Timestamp of last metadata extraction.
  * Used to skip re-extraction if content unchanged.
  * Accepts both i64 and f64 on deserialization (yrs stores as f64 in legacy data).
+ *
+ * NOTE: ts-rs (v12) emits "failed to parse serde attribute" for the
+ * `deserialize_with = "..."` line below. That's expected — deserializers
+ * are a runtime concept ts-rs can't reflect into TypeScript output. The
+ * `#[ts(type = "number | null")]` attribute below covers the TS shape
+ * explicitly. The warning is harmless noise; no upstream suppression
+ * mechanism exists. See `.claude/rules/lint-discipline.md` "Accepted
+ * noise" section for the carve-out rationale.
  */
-extractedAt: number | null, 
+extractedAt?: number | null, 
 /**
  * Short summary extracted from block output (render doors, etc.).
  * Populated by frontend outputSummaryHook when a door produces structured output.
  * Makes rich door content discoverable via search without exposing full spec.
  */
-summary: string | null, 
+summary?: string | null, 
 /**
  * Full markdown projection of a render door's spec elements.
  * Populated by frontend outputSummaryHook alongside summary.
  * Used by echoCopy:: handler to materialize render output as outline blocks.
  */
-renderedMarkdown: string | null, };
+renderedMarkdown?: string | null, };
