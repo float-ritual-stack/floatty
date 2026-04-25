@@ -46,6 +46,28 @@ interface GardenData {
   title?: string;
   subtitle?: string;
   footer?: string;
+  /** Escape hatch: pre-built spec passed straight through (showcase mode). */
+  _directSpec?: SpecRoot;
+}
+
+/**
+ * One node in a json-render spec. Component identity ("type") + arbitrary
+ * props/event-handlers; we don't constrain those further at this layer because
+ * each component (NavBrand, EntryHeader, RefCard, ...) has its own prop shape
+ * defined in the catalog.
+ */
+interface SpecElement {
+  type: string;
+  props?: Record<string, unknown>;
+  children?: string[];
+  on?: Record<string, { action: string; params?: Record<string, unknown> }>;
+}
+
+type SpecElements = Record<string, SpecElement>;
+
+interface SpecRoot {
+  elements: SpecElements;
+  rootChildren: string[];
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -67,8 +89,8 @@ function buildSidebarSpec(
   title: string,
   subtitle?: string,
   footer?: string,
-): { elements: Record<string, any>; rootChildren: string[] } {
-  const elements: Record<string, any> = {};
+): SpecRoot {
+  const elements: SpecElements = {};
   const rootChildren: string[] = ['nav-brand'];
 
   elements['nav-brand'] = {
@@ -124,8 +146,8 @@ function buildEntrySpec(
   entryMap: Map<string, Entry>,
   backLabel: string | null,
   tagFilter: string | null,
-): { elements: Record<string, any>; rootChildren: string[] } {
-  const elements: Record<string, any> = {};
+): SpecRoot {
+  const elements: SpecElements = {};
   const rootChildren: string[] = [];
 
   // Back breadcrumb
@@ -223,8 +245,8 @@ function buildEntrySpec(
 function buildTagFilterSpec(
   tag: string,
   matches: Entry[],
-): { elements: Record<string, any>; rootChildren: string[] } {
-  const elements: Record<string, any> = {};
+): SpecRoot {
+  const elements: SpecElements = {};
   const rootChildren: string[] = [];
 
   elements['back'] = {
@@ -271,7 +293,7 @@ function buildFullSpec(
 ) {
   const sidebar = buildSidebarSpec(entries, currentId, title, subtitle, footer);
 
-  let main: { elements: Record<string, any>; rootChildren: string[] };
+  let main: SpecRoot;
   if (tagFilter) {
     const matches = entries.filter((e) => e.tags.includes(tagFilter));
     main = buildTagFilterSpec(tagFilter, matches);
@@ -282,7 +304,7 @@ function buildFullSpec(
   }
 
   // Compose into DocLayout
-  const elements: Record<string, any> = {
+  const elements: SpecElements = {
     ...sidebar.elements,
     ...main.elements,
     'sidebar-stack': {
@@ -366,7 +388,7 @@ function GardenView(props: DoorViewProps) {
 
   const spec = createMemo(() => {
     // Direct spec mode — bypass entry system (used by showcase)
-    const direct = (props.data as any)?._directSpec;
+    const direct = props.data?._directSpec;
     if (direct) return direct;
 
     return buildFullSpec(
@@ -477,11 +499,16 @@ function GardenView(props: DoorViewProps) {
 // DOOR EXPORT
 // ═══════════════════════════════════════════════════════════════
 
+interface GardenDoorCtx {
+  log?: (...args: unknown[]) => void;
+  server?: { fetch(path: string, init?: RequestInit): Promise<Response> };
+}
+
 export const door = {
   kind: 'view' as const,
   prefixes: ['garden::'],
 
-  async execute(blockId: string, content: string, ctx: any) {
+  async execute(blockId: string, content: string, ctx: GardenDoorCtx) {
     const arg = content.replace(/^garden::\s*/i, '').trim();
 
     if (arg === 'demo' || arg === '') {
@@ -572,8 +599,9 @@ export const door = {
             footer: `${entries.length} sections<br>block::${blockId.substring(0, 8)}`,
           },
         };
-      } catch (e: any) {
-        return { data: { entries: [] }, error: `Block fetch failed: ${e.message}` };
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        return { data: { entries: [] }, error: `Block fetch failed: ${message}` };
       }
     }
 
@@ -616,8 +644,14 @@ export const door = {
         const basePath = `~/float-hub/float.dispatch/boards/rangle-weekly/${year}-${week}`;
 
         // Read files via Tauri shell (door runs in webview, can't read fs directly)
-        const invoke = (window as any).__TAURI_INTERNALS__?.invoke
-          || (window as any).__TAURI__?.core?.invoke;
+        type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+        interface TauriWindowGlobals {
+          __TAURI_INTERNALS__?: { invoke?: TauriInvoke };
+          __TAURI__?: { core?: { invoke?: TauriInvoke } };
+        }
+        const tauri = window as unknown as TauriWindowGlobals;
+        const invoke = tauri.__TAURI_INTERNALS__?.invoke
+          || tauri.__TAURI__?.core?.invoke;
         if (!invoke) {
           return { data: { entries: [] }, error: 'Tauri invoke not available' };
         }
@@ -654,9 +688,10 @@ export const door = {
             footer: `project::rangle/pharmacy<br>${week} \u00b7 ${entries.length - 1} headlines`,
           },
         };
-      } catch (e: any) {
-        ctx.log?.('rangle weekly failed:', e.message);
-        return { data: { entries: [] }, error: `Rangle weekly failed: ${e.message}` };
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        ctx.log?.('rangle weekly failed:', message);
+        return { data: { entries: [] }, error: `Rangle weekly failed: ${message}` };
       }
     }
 

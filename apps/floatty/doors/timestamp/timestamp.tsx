@@ -138,7 +138,7 @@ export const door = {
     };
   },
 
-  view: TimestampView as Component<any>,
+  view: TimestampView as Component<DoorViewProps<TsData>>,
 };
 
 export const meta = {

@@ -76,19 +76,30 @@ async function fetchDailyData(
   if (!resp.ok) {
     throw new Error(`API error: ${resp.status} ${resp.statusText}`);
   }
-  const { blocks } = (await resp.json()) as { blocks: Array<Record<string, any>> };
+  interface ApiMarker {
+    markerType: string;
+    value?: string;
+  }
+  interface ApiBlock {
+    createdAt: number | string;
+    content?: string;
+    metadata?: {
+      markers?: ApiMarker[];
+    };
+  }
+  const { blocks } = (await resp.json()) as { blocks: ApiBlock[] };
 
   const entries: TimelogEntry[] = blocks
-    .map((b: any) => ({
+    .map((b) => ({
       time: new Date(b.createdAt).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
       }),
       summary: b.content?.slice(0, 120) || '',
-      project: b.metadata?.markers?.find((m: any) => m.markerType === 'project')?.value,
-      mode: b.metadata?.markers?.find((m: any) => m.markerType === 'mode')?.value,
-      issue: b.metadata?.markers?.find((m: any) => m.markerType === 'issue')?.value,
-      meeting: b.metadata?.markers?.find((m: any) => m.markerType === 'meeting')?.value,
+      project: b.metadata?.markers?.find((m) => m.markerType === 'project')?.value,
+      mode: b.metadata?.markers?.find((m) => m.markerType === 'mode')?.value,
+      issue: b.metadata?.markers?.find((m) => m.markerType === 'issue')?.value,
+      meeting: b.metadata?.markers?.find((m) => m.markerType === 'meeting')?.value,
       details: [],
       phases: [],
       prs: [],
@@ -285,7 +296,7 @@ export const door = {
     }
   },
 
-  view: DailyView as Component<any>,
+  view: DailyView as Component<DoorViewProps<DailyData>>,
 };
 
 export const meta = {

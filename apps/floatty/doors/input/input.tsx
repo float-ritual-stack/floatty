@@ -164,7 +164,17 @@ function InputView(props: { data: InputViewData; server: ServerAccess }) {
 
 // ─── Door export ──────────────────────────────────────────────────
 
-function resolveTargetId(arg: string, ctx: any): { id?: string; error?: string } {
+interface InputDoorCtx {
+  actions: {
+    setBlockOutput?(id: string, output: unknown, outputType: string): void;
+    setBlockStatus?(id: string, status: 'idle' | 'running' | 'complete' | 'error'): void;
+    getBlock?(id: string): unknown | undefined;
+    getChildren?(id: string): string[];
+    rootIds?(): readonly string[];
+  };
+}
+
+function resolveTargetId(arg: string, ctx: InputDoorCtx): { id?: string; error?: string } {
   const trimmed = arg.trim();
   if (!trimmed) {
     return { error: 'usage: input:: [[blockId]] (or bare id)' };
@@ -196,7 +206,7 @@ export const door = {
   kind: 'view' as const,
   prefixes: ['input::'],
 
-  async execute(blockId: string, content: string, ctx: any) {
+  async execute(blockId: string, content: string, ctx: InputDoorCtx) {
     ctx.actions.setBlockStatus?.(blockId, 'running');
     const arg = content.replace(/^input::\s*/i, '').trim();
     console.log(LOG, 'execute', { blockId: blockId.slice(0, 8), arg });

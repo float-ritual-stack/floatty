@@ -25,7 +25,7 @@ const catalog = schema.createCatalog({
 
 const { registry } = defineRegistry(catalog, {
   components: {
-    Text: (props: any) => <p style={{ color: '#8ec07c' }}>{props.props.content}</p>,
+    Text: (props: { props: { content: string } }) => <p style={{ color: '#8ec07c' }}>{props.props.content}</p>,
   },
 });
 
@@ -59,10 +59,17 @@ export const meta = {
   selfRender: true,
 };
 
+interface RenderTestCtx {
+  actions: {
+    setBlockOutput(id: string, output: unknown, outputType: string): void;
+    setBlockStatus(id: string, status: 'idle' | 'running' | 'complete' | 'error'): void;
+  };
+}
+
 export const door = {
   kind: 'view' as const,
   prefixes: ['render-test::'],
-  async execute(blockId: string, content: string, ctx: any) {
+  async execute(blockId: string, _content: string, ctx: RenderTestCtx) {
     ctx.actions.setBlockOutput(blockId, { kind: 'view', doorId: 'render-test', schema: 1, data: {} }, 'door');
     ctx.actions.setBlockStatus(blockId, 'complete');
   },
