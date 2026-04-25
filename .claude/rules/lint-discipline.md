@@ -1,3 +1,20 @@
+<!--
+Maintainer note (stripped from context per the Claude Code rules-loading
+docs — block-level HTML comments outside code fences don't burn tokens):
+
+This rule has no `paths:` frontmatter intentionally. Lint discipline is
+repo-wide — it applies whenever any code is touched, regardless of which
+file. Path-scoping it would create gaps (e.g. someone touches a Rust file
+without the rule loading because the path glob excluded it).
+
+Per https://code.claude.com/docs/en/memory#organize-rules-with-claude-rules,
+rules without `paths:` "are loaded at launch with the same priority as
+.claude/CLAUDE.md" — exactly what we want here. Keep this rule unscoped.
+
+If this file ever grows past ~200 lines, the docs warn that adherence
+drops; split a sub-topic into its own rule rather than scoping this one.
+-->
+
 # Lint Discipline
 
 **Lint output you witnessed is lint output you own.** No more "predates this branch / not our problem / out of scope." Every PR keeps every surface at zero (with the documented carve-outs in §6).
