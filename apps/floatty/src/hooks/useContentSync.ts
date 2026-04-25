@@ -221,7 +221,13 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
       // The harness installs { onConflictDetected: (id) => ... } before the test run.
       // We can't spy on console.warn because logger.ts captures originalConsole at
       // module load time, before any spy is installed.
-      (window as any).__floattyTestHooks?.onConflictDetected?.(block.id);
+      interface FloattyTestHookGlobals {
+        __floattyTestHooks?: {
+          onConflictDetected?: (blockId: string) => void;
+        };
+      }
+      (window as unknown as FloattyTestHookGlobals).__floattyTestHooks
+        ?.onConflictDetected?.(block.id);
     }
 
     deps.store.updateBlockContent(block.id, content);
