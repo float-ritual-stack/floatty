@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import { defineCatalog } from '@json-render/core';
 import { schema } from '@json-render/solid/schema';
 
 // ═══════════════════════════════════════════════════════════════
@@ -20,7 +21,7 @@ const accentEnum = z.enum(['magenta', 'cyan', 'coral', 'amber', 'muted']);
 // CATALOG
 // ═══════════════════════════════════════════════════════════════
 
-export const bbsCatalog = schema.createCatalog({
+export const bbsCatalog = defineCatalog(schema, {
   components: {
     // ─── Layout ───────────────────────────────────────────
     DocLayout: {
