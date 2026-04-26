@@ -78,10 +78,10 @@ export const visualizationRenderers = {
             );
           })}
         </div>
-        <div className="flex justify-between px-1 mt-0.5">
-          <span className="text-dim text-[8px] font-mono">{data[0]?.label}</span>
-          <span className="text-dim text-[8px] font-mono">peak: {maxVal}</span>
-          <span className="text-dim text-[8px] font-mono">{data[data.length - 1]?.label}</span>
+        <div className="flex items-center justify-between gap-2 px-1 mt-0.5">
+          <span className="text-dim text-[8px] font-mono truncate min-w-0">{data[0]?.label}</span>
+          <span className="text-dim text-[8px] font-mono shrink-0">peak: {maxVal}</span>
+          <span className="text-dim text-[8px] font-mono truncate min-w-0 text-right">{data[data.length - 1]?.label}</span>
         </div>
       </div>
     );
@@ -110,10 +110,10 @@ export const visualizationRenderers = {
                     {step.source}
                   </span>
                   {step.docId && <span className="text-dim text-[9px] font-mono">#{step.docId}</span>}
-                  {step.confidence != null && (
+                  {Number.isFinite(step.confidence) && (
                     <span className="text-[9px] font-mono ml-auto" style={{
-                      color: step.confidence > 0.8 ? colors.green : step.confidence > 0.5 ? colors.amber : colors.coral,
-                    }}>{Math.round(step.confidence * 100)}%</span>
+                      color: step.confidence! > 0.8 ? colors.green : step.confidence! > 0.5 ? colors.amber : colors.coral,
+                    }}>{Math.round(step.confidence! * 100)}%</span>
                   )}
                 </div>
                 <div className="text-text text-[11px] font-mono leading-snug">{step.content}</div>
