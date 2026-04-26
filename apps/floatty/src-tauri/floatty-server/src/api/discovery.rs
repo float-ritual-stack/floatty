@@ -151,7 +151,30 @@ async fn get_daily_note(
                 .map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, &page_id)
         };
-        let block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
+        let mut block_dto =
+            read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
+
+        // FLO-679 PR 2: AncestorContext on daily-note response (singleton
+        // path — effective_markers always-on).
+        let inh = state
+            .inheritance_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let pni = state
+            .page_name_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let opts = crate::block_service::AncestorContextOpts::from_query(&ctx_query)
+            .always_effective();
+        crate::block_service::attach_ancestor_context(
+            &mut block_dto,
+            &blocks_map,
+            &txn,
+            Some(&inh),
+            Some(&pni),
+            opts,
+        );
+
         Ok(Json(crate::block_service::build_block_context_response(
             &blocks_map,
             &txn,
@@ -372,6 +395,11 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), A
 /// Read a page block as a `BlockDto` for returning from the upsert handler.
 /// Scoped to this module — the full `get_block` in `block_service` builds a
 /// context response (ancestors, siblings, etc.) that we don't need here.
+///
+/// FLO-679 PR 2: the returned BlockDto carries `ancestorContext` (always-on
+/// for singleton paths, mirrors `/blocks/:id`). For a freshly-upserted page
+/// the ancestor chain is just the `pages::` container; for an existing page
+/// the chain reflects whatever the outline has materialised.
 fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
@@ -393,13 +421,28 @@ fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
                 .map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, id)
         };
-        Ok(read_block_dto(
-            &block_map,
+        let mut dto = read_block_dto(&block_map, &txn, id, inherited_markers, true);
+
+        // FLO-679 PR 2: always-on AncestorContext on the upsert response.
+        let inh = state
+            .inheritance_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let pni = state
+            .page_name_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let opts = crate::block_service::AncestorContextOpts::default().always_effective();
+        crate::block_service::attach_ancestor_context(
+            &mut dto,
+            &blocks_map,
             &txn,
-            id,
-            inherited_markers,
-            true,
-        ))
+            Some(&inh),
+            Some(&pni),
+            opts,
+        );
+
+        Ok(dto)
     } else {
         Err(ApiError::NotFound(id.to_string()))
     }
@@ -498,7 +541,7 @@ async fn append_to_daily_note(
 
     let (daily_id, _existed) = find_or_create_page(&state, &date)?;
 
-    let dto = crate::block_service::create_block(
+    let mut dto = crate::block_service::create_block(
         &state.store,
         &state.broadcaster,
         &state.hook_system,
@@ -509,6 +552,40 @@ async fn append_to_daily_note(
             at_index: None,
         },
     )?;
+
+    // FLO-679 PR 2: attach AncestorContext to the newly-created child
+    // (always-on for singleton paths). The hook system is async so the
+    // PageNameIndex / InheritanceIndex lookups reflect at-call-time state —
+    // for a fresh append under an existing daily note, the daily note is
+    // already in PageNameIndex so nearestPage* populates correctly.
+    let block_id_for_attach = dto.id.clone();
+    {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
+        let blocks_map = txn
+            .get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+        if blocks_map.get(&txn, &block_id_for_attach).is_some() {
+            let inh = state
+                .inheritance_index
+                .read()
+                .map_err(|_| ApiError::LockPoisoned)?;
+            let pni = state
+                .page_name_index
+                .read()
+                .map_err(|_| ApiError::LockPoisoned)?;
+            let opts = crate::block_service::AncestorContextOpts::default().always_effective();
+            crate::block_service::attach_ancestor_context(
+                &mut dto,
+                &blocks_map,
+                &txn,
+                Some(&inh),
+                Some(&pni),
+                opts,
+            );
+        }
+    }
 
     Ok((StatusCode::CREATED, Json(dto)))
 }

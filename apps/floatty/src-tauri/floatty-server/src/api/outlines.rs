@@ -324,7 +324,7 @@ async fn outline_export_json(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let store = resolve_outline(&state, &name)?;
-    let result = crate::block_service::get_blocks(&store, None, &BlocksQuery::default())?;
+    let result = crate::block_service::get_blocks(&store, None, None, &BlocksQuery::default())?;
 
     Ok((
         StatusCode::OK,
@@ -342,7 +342,7 @@ async fn outline_get_blocks(
     Path(name): Path<String>,
 ) -> Result<Json<BlocksResponse>, ApiError> {
     let store = resolve_outline(&state, &name)?;
-    let result = crate::block_service::get_blocks(&store, None, &BlocksQuery::default())?;
+    let result = crate::block_service::get_blocks(&store, None, None, &BlocksQuery::default())?;
     Ok(Json(result))
 }
 

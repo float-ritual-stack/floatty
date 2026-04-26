@@ -63,6 +63,12 @@ pub struct BlockDto {
     /// Block output data (door envelope, eval result, etc.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<serde_json::Value>,
+    /// FLO-679 PR 2: navigation-layer surface — uniform across every block-
+    /// returning endpoint. Populated by handler-side shaping helpers; left
+    /// `None` when no fields would be set (e.g., a bare root block in a
+    /// rebuild-mid-flight state).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor_context: Option<AncestorContext>,
 }
 
 /// A marker inherited from an ancestor block.
@@ -377,6 +383,11 @@ pub struct BlocksQuery {
     pub marker_type: Option<String>,
     /// Filter: marker value (requires marker_type)
     pub marker_value: Option<String>,
+    /// FLO-679 PR 2: opt-in `ancestorContext` per block in the bulk
+    /// response. Off by default to keep the bulk cost calculus unchanged
+    /// (one walk per block × N blocks). Enable on small filtered sets.
+    #[serde(default)]
+    pub ancestor_context: Option<bool>,
 }
 
 /// Response for GET /api/v1/blocks/resolve/:prefix
@@ -435,7 +446,29 @@ async fn resolve_block_prefix(
                         .map_err(|_| ApiError::LockPoisoned)?;
                     lookup_inherited(&index, &full_id)
                 };
-                let dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+                let mut dto =
+                    read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+
+                // FLO-679 PR 2: same always-on AncestorContext shape as
+                // /blocks/:id (singletons get effective_markers always-on).
+                let inh = state
+                    .inheritance_index
+                    .read()
+                    .map_err(|_| ApiError::LockPoisoned)?;
+                let pni = state
+                    .page_name_index
+                    .read()
+                    .map_err(|_| ApiError::LockPoisoned)?;
+                let opts = crate::block_service::AncestorContextOpts::default()
+                    .always_effective();
+                crate::block_service::attach_ancestor_context(
+                    &mut dto,
+                    &blocks_map,
+                    &txn,
+                    Some(&inh),
+                    Some(&pni),
+                    opts,
+                );
                 (full_id, dto)
             }
             _ => return Err(ApiError::NotFound(full_id)),
@@ -457,8 +490,12 @@ async fn get_blocks(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<BlocksQuery>,
 ) -> Result<Json<BlocksResponse>, ApiError> {
-    let result =
-        crate::block_service::get_blocks(&state.store, Some(&state.inheritance_index), &query)?;
+    let result = crate::block_service::get_blocks(
+        &state.store,
+        Some(&state.inheritance_index),
+        Some(&state.page_name_index),
+        &query,
+    )?;
     Ok(Json(result))
 }
 
@@ -468,8 +505,13 @@ async fn get_block(
     Path(id): Path<String>,
     axum::extract::Query(ctx_query): axum::extract::Query<BlockContextQuery>,
 ) -> Result<Json<BlockWithContextResponse>, ApiError> {
-    let mut result =
-        crate::block_service::get_block(&state.store, &state.inheritance_index, &id, &ctx_query)?;
+    let mut result = crate::block_service::get_block(
+        &state.store,
+        &state.inheritance_index,
+        Some(&state.page_name_index),
+        &id,
+        &ctx_query,
+    )?;
     inject_rendered_markdown(&mut result.block, &state.projection_cache);
     Ok(Json(result))
 }
@@ -741,6 +783,7 @@ mod projection_injection_tests {
             updated_at: 0,
             output_type: Some("door".to_string()),
             output: Some(output),
+            ancestor_context: None,
         }
     }
 
