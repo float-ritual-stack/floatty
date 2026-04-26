@@ -1922,9 +1922,16 @@ pub(crate) fn delete_block(
 
 /// Full-text + filtered search over a Tantivy index, hydrated from Y.Doc.
 /// Used by both legacy and per-outline search handlers.
+///
+/// `inheritance_index` and `page_name_index` are optional — the per-outline
+/// path passes `None` (per-outline endpoints don't share the legacy default
+/// outline's indices). When absent, `ancestorContext.effectiveMarkers` and
+/// `ancestorContext.inbound*` stay empty.
 pub(crate) fn search_blocks(
     store: &Arc<YDocStore>,
     index_manager: &Arc<IndexManager>,
+    inheritance_index: Option<&RwLock<InheritanceIndex>>,
+    page_name_index: Option<&RwLock<PageNameIndex>>,
     query: &BlockSearchQuery,
 ) -> Result<BlockSearchResponse, ApiError> {
     let service = SearchService::new(Arc::clone(index_manager));
@@ -1971,99 +1978,193 @@ pub(crate) fn search_blocks(
 
     let want_breadcrumb = query.include_breadcrumb.unwrap_or(false);
     let want_metadata = query.include_metadata.unwrap_or(false);
+    let includes = parse_includes(&query.include);
+    let inbound_sample_count = query.inbound_sample_count.unwrap_or(5);
+    let ac_opts = AncestorContextOpts::from_raw(&includes, inbound_sample_count);
 
-    // Hydrate content from Y.Doc for each hit
+    // Hydrate content from Y.Doc for each hit. Single read txn for the
+    // whole batch — cheap, no lock thrash.
     let hits: Vec<BlockSearchHit> = {
         let doc = store.doc();
         let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
         let txn = doc_guard.transact();
         let blocks_map = txn.get_map("blocks");
+        // Acquire optional indices ONCE for the whole batch.
+        let inh_guard = match inheritance_index {
+            Some(rw) => Some(rw.read().map_err(|_| ApiError::LockPoisoned)?),
+            None => None,
+        };
+        let pni_guard = match page_name_index {
+            Some(rw) => Some(rw.read().map_err(|_| ApiError::LockPoisoned)?),
+            None => None,
+        };
 
         hits.into_iter()
             .map(|h| {
-                let (content, breadcrumb, metadata, block_type) = if let Some(ref bmap) = blocks_map
-                {
-                    let content = bmap
-                        .get(&txn, &h.block_id)
-                        .and_then(|v| match v {
-                            yrs::Out::YMap(block_map) => Some(block_map),
-                            _ => None,
-                        })
-                        .and_then(|block_map| {
-                            block_map.get(&txn, "content").and_then(|v| match v {
-                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                                _ => None,
-                            })
-                        })
-                        .map(|c| {
-                            if c.chars().count() > 200 {
-                                let truncated: String = c.chars().take(200).collect();
-                                format!("{}...", truncated)
-                            } else {
-                                c
-                            }
-                        });
-
-                    let breadcrumb = if want_breadcrumb {
-                        // Take the nearest 5 ancestors, then reverse for ROOTMOST-FIRST
-                        // display order — matches the contract documented in
-                        // .claude/rules/api-reference.md ("breadcrumb is parent chain
-                        // ... ancestor block content (nearest parent last)") and the
-                        // floatty-backend SKILL.md helper which joins with " → " as
-                        // root → leaf. Per CodeRabbit Major review on PR #281: the
-                        // walker keeps its nearest-first programmatic contract; only
-                        // the breadcrumb projection (a presentation surface) is
-                        // reversed at the composer.
-                        let ancestors = get_ancestors(bmap, &txn, &h.block_id);
-                        let crumbs: Vec<String> = ancestors
-                            .into_iter()
-                            .take(5)
-                            .rev()
-                            .map(|a| a.content)
-                            .collect();
-                        if crumbs.is_empty() {
-                            None
-                        } else {
-                            Some(crumbs)
-                        }
-                    } else {
-                        None
-                    };
-
-                    let metadata = if want_metadata {
-                        bmap.get(&txn, &h.block_id).and_then(|v| match v {
-                            yrs::Out::YMap(block_map) => block_map
-                                .get(&txn, "metadata")
-                                .and_then(|m| api::extract_metadata_from_yrs(m, &txn)),
-                            _ => None,
-                        })
-                    } else {
-                        None
-                    };
-
-                    let block_type = content
-                        .as_ref()
-                        .map(|c| floatty_core::parse_block_type(c).as_str().to_string());
-
-                    (content, breadcrumb, metadata, block_type)
-                } else {
-                    (None, None, None, None)
-                };
-
-                BlockSearchHit {
-                    block_id: h.block_id,
-                    score: h.score,
-                    content,
-                    breadcrumb,
-                    metadata,
-                    snippet: h.snippet,
-                    block_type,
-                }
+                shape_search_hit(
+                    h,
+                    blocks_map.as_ref(),
+                    &txn,
+                    inh_guard.as_deref(),
+                    pni_guard.as_deref(),
+                    want_breadcrumb,
+                    want_metadata,
+                    ac_opts,
+                )
             })
             .collect()
     };
 
     Ok(BlockSearchResponse { hits, total })
+}
+
+/// Convert a `SearchHit` (Tantivy result) into a `BlockSearchHit` (wire DTO).
+///
+/// Extracted from `search_blocks` so the per-outline search handler can call
+/// it with the same shape (FLO-679 PR 2 — symmetry-fix for the `/outlines/`
+/// drift surfaced by the planning-time inventory).
+///
+/// Always emits `block_type` (via parse_block_type on content); emits
+/// `breadcrumb` / `metadata` only when the caller opted in via the
+/// corresponding `include_*` flags. AncestorContext is attached when any
+/// cheap fields fire (always-on tier) — see `compute_ancestor_context`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn shape_search_hit<T: ReadTxn>(
+    hit: floatty_core::search::SearchHit,
+    blocks_map: Option<&yrs::MapRef>,
+    txn: &T,
+    inheritance_index: Option<&InheritanceIndex>,
+    page_name_index: Option<&PageNameIndex>,
+    want_breadcrumb: bool,
+    want_metadata: bool,
+    ac_opts: AncestorContextOpts,
+) -> BlockSearchHit {
+    let Some(bmap) = blocks_map else {
+        return BlockSearchHit {
+            block_id: hit.block_id,
+            score: hit.score,
+            content: None,
+            breadcrumb: None,
+            metadata: None,
+            snippet: hit.snippet,
+            block_type: None,
+            ancestor_context: None,
+        };
+    };
+
+    // Read content (truncated for wire — same 200-char ceiling as before).
+    let content = bmap
+        .get(txn, &hit.block_id)
+        .and_then(|v| match v {
+            yrs::Out::YMap(block_map) => Some(block_map),
+            _ => None,
+        })
+        .and_then(|block_map| {
+            block_map.get(txn, "content").and_then(|v| match v {
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+        })
+        .map(|c| {
+            if c.chars().count() > 200 {
+                let truncated: String = c.chars().take(200).collect();
+                format!("{}...", truncated)
+            } else {
+                c
+            }
+        });
+
+    let breadcrumb = if want_breadcrumb {
+        // Take the nearest 5 ancestors, then reverse for ROOTMOST-FIRST
+        // display order — matches the contract documented in
+        // .claude/rules/api-reference.md ("breadcrumb is parent chain
+        // ... ancestor block content (nearest parent last)") and the
+        // floatty-backend SKILL.md helper which joins with " → " as
+        // root → leaf. Per CodeRabbit Major review on PR #281: the
+        // walker keeps its nearest-first programmatic contract; only
+        // the breadcrumb projection (a presentation surface) is
+        // reversed at the composer.
+        let ancestors = get_ancestors(bmap, txn, &hit.block_id);
+        let crumbs: Vec<String> = ancestors
+            .into_iter()
+            .take(5)
+            .rev()
+            .map(|a| a.content)
+            .collect();
+        if crumbs.is_empty() {
+            None
+        } else {
+            Some(crumbs)
+        }
+    } else {
+        None
+    };
+
+    let metadata = if want_metadata {
+        bmap.get(txn, &hit.block_id).and_then(|v| match v {
+            yrs::Out::YMap(block_map) => block_map
+                .get(txn, "metadata")
+                .and_then(|m| api::extract_metadata_from_yrs(m, txn)),
+            _ => None,
+        })
+    } else {
+        None
+    };
+
+    let block_type = content
+        .as_ref()
+        .map(|c| floatty_core::parse_block_type(c).as_str().to_string());
+
+    // FLO-679 PR 2: ancestor_context — needs a temporary BlockDto to
+    // satisfy `compute_ancestor_context`'s `own_block` parameter (it reads
+    // `own_block.metadata.outlinks` and `own_block.metadata.markers` for
+    // the `ancestor_outlinks` and `effective_markers` shapes). Build a
+    // skeletal DTO with metadata and id — the rest is unused by the helper.
+    let metadata_for_ac = metadata.clone().or_else(|| {
+        // Even when want_metadata=false we need metadata (markers + outlinks)
+        // for the ancestor-context computation. Read it cheaply here.
+        bmap.get(txn, &hit.block_id).and_then(|v| match v {
+            yrs::Out::YMap(block_map) => block_map
+                .get(txn, "metadata")
+                .and_then(|m| api::extract_metadata_from_yrs(m, txn)),
+            _ => None,
+        })
+    });
+    let skeletal = BlockDto {
+        id: hit.block_id.clone(),
+        content: String::new(),
+        parent_id: None,
+        child_ids: vec![],
+        collapsed: false,
+        block_type: String::new(),
+        metadata: metadata_for_ac,
+        inherited_markers: None,
+        created_at: 0,
+        updated_at: 0,
+        output_type: None,
+        output: None,
+        ancestor_context: None,
+    };
+    let ancestor_context = compute_ancestor_context(
+        bmap,
+        txn,
+        &hit.block_id,
+        &skeletal,
+        inheritance_index,
+        page_name_index,
+        ac_opts,
+    );
+
+    BlockSearchHit {
+        block_id: hit.block_id,
+        score: hit.score,
+        content,
+        breadcrumb,
+        metadata,
+        snippet: hit.snippet,
+        block_type,
+        ancestor_context,
+    }
 }
 
 // =========================================================================

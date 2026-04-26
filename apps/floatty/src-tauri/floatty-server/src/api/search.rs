@@ -9,6 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use super::{ApiError, AppState};
+use crate::api::AncestorContext;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -83,6 +84,15 @@ pub struct BlockSearchQuery {
     pub inherited: Option<bool>,
     #[serde(default)]
     pub exclude_types: Option<String>,
+    /// FLO-679 PR 2: comma-separated `?include=` directives for AncestorContext.
+    /// Recognised: `effective_markers`, `inbound_samples`. Cheap fields are
+    /// always-on regardless of this parameter.
+    #[serde(default)]
+    pub include: Option<String>,
+    /// FLO-679 PR 2: cap for `inbound_samples` (default 5; max 50). Only
+    /// honoured when `include=inbound_samples`.
+    #[serde(default)]
+    pub inbound_sample_count: Option<usize>,
 }
 
 fn default_search_limit() -> usize {
@@ -104,6 +114,11 @@ pub struct BlockSearchHit {
     pub snippet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_type: Option<String>,
+    /// FLO-679 PR 2: navigation-layer surface. Always-on cheap fields;
+    /// `effective_markers` and `inbound_samples` populated only when the
+    /// caller passed the corresponding `?include=` directive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor_context: Option<AncestorContext>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -162,7 +177,13 @@ async fn search_blocks(
         .hook_system
         .index_manager()
         .ok_or_else(|| ApiError::SearchUnavailable)?;
-    let result = crate::block_service::search_blocks(&state.store, &index_manager, &query)?;
+    let result = crate::block_service::search_blocks(
+        &state.store,
+        &index_manager,
+        Some(&state.inheritance_index),
+        Some(&state.page_name_index),
+        &query,
+    )?;
     Ok(Json(result))
 }
 
