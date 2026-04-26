@@ -239,9 +239,39 @@ async fn get_presence(
     // always-on; effective_markers + inbound_samples gated by `?include=`.
     // Reads the block's metadata directly — compute_ancestor_context now
     // takes `Option<&serde_json::Value>` rather than a full DTO scaffold.
+    //
+    // Lock-poisoning policy: presence is poll-based (every ~2s) and used
+    // as an orientation hint, so we degrade to "no ancestor_context" rather
+    // than failing the whole presence call. `tracing::warn!` makes the
+    // degradation visible (Pattern 5 — silent degradation prohibited; the
+    // sibling `doc.read()` failure above ALREADY returns 500, so a true
+    // poisoned-lock state will surface there too — this branch only fires
+    // when `doc` is healthy but one of the index locks is poisoned).
     let ancestor_context = (|| -> Option<AncestorContext> {
-        let inh = state.inheritance_index.read().ok()?;
-        let pni = state.page_name_index.read().ok()?;
+        let inh = match state.inheritance_index.read() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!(
+                    block_id = %info.block_id,
+                    error = %e,
+                    "InheritanceIndex lock poisoned during presence — \
+                     ancestorContext.effectiveMarkers will be empty"
+                );
+                return None;
+            }
+        };
+        let pni = match state.page_name_index.read() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!(
+                    block_id = %info.block_id,
+                    error = %e,
+                    "PageNameIndex lock poisoned during presence — \
+                     ancestorContext.nearestPage* + inboundCount will be empty"
+                );
+                return None;
+            }
+        };
         let block_map = match blocks_map.get(&txn, &info.block_id)? {
             yrs::Out::YMap(m) => m,
             _ => return None,

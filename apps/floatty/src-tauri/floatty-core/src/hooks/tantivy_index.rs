@@ -260,9 +260,26 @@ impl TantivyIndexHook {
         // (the `AncestorContext` wire-surface cap). Page-name lookup
         // short-circuits at first match, so the deeper walk doesn't add
         // cost when a page-ancestor sits near the block.
+        //
+        // Lock-poisoning policy: indexing is best-effort, so a poisoned
+        // PageNameIndex degrades to "no nearest_page_* fields" rather than
+        // aborting the index. We `warn!` so the degradation is visible —
+        // silently dropping search-quality fields would let a single
+        // upstream panic invisibly corrupt every subsequent index entry.
         let walk_full = {
             let lookup = StoreParentLookup::new(store);
-            let page_index_guard = self.page_name_index.as_ref().and_then(|p| p.read().ok());
+            let page_index_guard = self.page_name_index.as_ref().and_then(|p| match p.read() {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    warn!(
+                        block_id = %id,
+                        error = %e,
+                        "PageNameIndex lock poisoned during indexing — \
+                         nearest_page_* fields will be empty for this block"
+                    );
+                    None
+                }
+            });
             walk_ancestors(&lookup, id, 50, page_index_guard.as_deref())
         };
 
@@ -282,10 +299,25 @@ impl TantivyIndexHook {
         // page name (or this block itself if it IS a registered page).
         // Single read-guard scope, single reverse-index lookup — no linear
         // scans (Fix 3 + Fix 9 in the simplify pass).
+        //
+        // Lock-poisoning policy: same as the walk above — `warn!` and
+        // degrade to (0, vec![]) rather than silently dropping the
+        // inbound-count field for every subsequent block.
         let (inbound_count, inbound_block_ids) = self
             .page_name_index
             .as_ref()
-            .and_then(|idx_arc| idx_arc.read().ok())
+            .and_then(|idx_arc| match idx_arc.read() {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    warn!(
+                        block_id = %id,
+                        error = %e,
+                        "PageNameIndex lock poisoned during indexing — \
+                         inbound_count + inbound_block_ids will be zero for this block"
+                    );
+                    None
+                }
+            })
             .and_then(|g| {
                 // If THIS block IS a registered page, use its own name; else
                 // fall back to the nearest ancestor page from the walk.
