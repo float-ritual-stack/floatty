@@ -76,13 +76,128 @@ pub struct InheritedMarkerDto {
 }
 
 // ============================================================================
+// FLO-679 PR 2 — AncestorContext (the navigation-layer surface)
+// ============================================================================
+
+/// Single inbound reference sample: a block linking TO this hit's page.
+///
+/// Surfaced via `?include=inbound_samples` on search/presence/blocks
+/// endpoints. Top-N (default 5) deterministically id-sorted at index time
+/// so the wire surface stays stable across rebuilds. Content preview is
+/// looked up at response time — content changes more than reverse-edges,
+/// so denormalising it would just guarantee staleness.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct InboundSampleDto {
+    /// The source block ID (the block whose `[[wikilink]]` points at this hit).
+    pub block_id: String,
+    /// Truncated content preview (≤200 chars) read from the source block.
+    /// Empty string when the source block has been deleted since indexing.
+    pub content: String,
+}
+
+/// Provenance source for an effective marker — own (on the block itself)
+/// vs inherited from a named ancestor.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum MarkerSource {
+    /// Marker is set on the block itself (no inheritance walk needed).
+    Own,
+    /// Marker was inherited from `sourceBlockId` further up the parent chain.
+    Inherited {
+        #[serde(rename = "sourceBlockId")]
+        source_block_id: String,
+    },
+}
+
+/// Effective marker — own + inherited collapsed into a single set, with
+/// provenance. Read on demand from `InheritanceIndex` at response time;
+/// NOT denormalised into Tantivy (the index already serves search; this
+/// surface is for response shaping).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectiveMarkerDto {
+    pub marker_type: String,
+    pub value: String,
+    pub source: MarkerSource,
+}
+
+/// Ancestor-context surface — uniform across every block-returning endpoint.
+///
+/// Always-on fields (cheap, read from Tantivy FAST/STORED columns):
+/// - `nearestPageBlockId` / `nearestPageName` — document identity
+/// - `ancestorBlockIds` — capped parent chain (nearest-first up to depth 10)
+/// - `subtreeSize` — capped descendant count for navigate-vs-read hints
+/// - `inboundCount` — load-bearing signal
+/// - `ancestorOutlinks` — deduped union of `[[wikilink]]`s across walked
+///   ancestors (assembled at response time from the walk + `outlinks` field)
+///
+/// Opt-in fields (cost-tiered):
+/// - `effectiveMarkers` — `?include=effective_markers` (search + presence;
+///   always-on for `/blocks/:id` since slow-context path already)
+/// - `inboundSamples` — `?include=inbound_samples` (top-5 default,
+///   `&inbound_sample_count=N` to override; ~500B per hit when present)
+///
+/// Resolved per the plan's open-questions table (2026-04-25):
+/// - presence DTO is always-on (DTO is small, one-call orientation is the win)
+/// - `ancestorOutlinks` is a deduped union of all walked ancestors
+/// - WS presence enrichment deferred (REST-only this round)
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AncestorContext {
+    /// Block ID of the nearest registered-page ancestor, when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nearest_page_block_id: Option<String>,
+    /// Page name of the nearest registered-page ancestor, when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nearest_page_name: Option<String>,
+    /// Ancestor block IDs, nearest-first, capped at 10 by the walker.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ancestor_block_ids: Vec<String>,
+    /// Effective markers — only present when `?include=effective_markers`
+    /// (or always for `/blocks/:id`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effective_markers: Vec<EffectiveMarkerDto>,
+    /// Deduped union of `[[wikilink]]` targets across all walked ancestors
+    /// (depth-capped at 10 by the walker). Assembled at response time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ancestor_outlinks: Vec<String>,
+    /// Approximate descendant count (capped — see TantivyIndexHook constants).
+    pub subtree_size: u32,
+    /// Number of inbound `[[wikilink]]` references to this block's nearest page.
+    pub inbound_count: u32,
+    /// Top-N inbound source samples — only present when
+    /// `?include=inbound_samples`. Default top-5 (`&inbound_sample_count=N`
+    /// to override).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inbound_samples: Vec<InboundSampleDto>,
+}
+
+impl AncestorContext {
+    /// True when no field is populated — used by callers to skip the
+    /// `ancestorContext` field entirely on bare-bones blocks.
+    pub fn is_empty(&self) -> bool {
+        self.nearest_page_block_id.is_none()
+            && self.nearest_page_name.is_none()
+            && self.ancestor_block_ids.is_empty()
+            && self.effective_markers.is_empty()
+            && self.ancestor_outlinks.is_empty()
+            && self.subtree_size == 0
+            && self.inbound_count == 0
+            && self.inbound_samples.is_empty()
+    }
+}
+
+// ============================================================================
 // Block Context Retrieval (FLO-338)
 // ============================================================================
 
 /// Query parameters for GET /api/v1/blocks/:id
 #[derive(Deserialize, Debug, Default)]
 pub struct BlockContextQuery {
-    /// Comma-separated include directives: ancestors, siblings, children, tree, token_estimate
+    /// Comma-separated include directives. Recognised:
+    /// `ancestors`, `siblings`, `children`, `tree`, `token_estimate`,
+    /// and (FLO-679 PR 2) `effective_markers`, `inbound_samples`.
     #[serde(default)]
     pub include: Option<String>,
     /// Number of siblings before/after to include (default: 2)
@@ -91,6 +206,10 @@ pub struct BlockContextQuery {
     /// Max depth for tree traversal (default: 50, prevents runaway on huge subtrees)
     #[serde(default = "default_max_depth")]
     pub max_depth: usize,
+    /// FLO-679 PR 2: cap for `inbound_samples` (default 5; max 50). Only
+    /// honoured when `?include=inbound_samples` is present in `include`.
+    #[serde(default = "default_inbound_sample_count")]
+    pub inbound_sample_count: usize,
 }
 
 fn default_sibling_radius() -> usize {
@@ -98,6 +217,9 @@ fn default_sibling_radius() -> usize {
 }
 fn default_max_depth() -> usize {
     50
+}
+fn default_inbound_sample_count() -> usize {
+    5
 }
 
 /// Lightweight block reference for context (ancestors, siblings, children)

@@ -153,9 +153,10 @@ pub use export::{
 };
 // Block DTOs re-exported (used by block_service, outline handlers, discovery, tests)
 pub use blocks::{
-    BlockContextQuery, BlockDto, BlockRef, BlockWithContextResponse, BlocksQuery, BlocksResponse,
-    CreateBlockRequest, ImportBlockRequest, InheritedMarkerDto, ResolveResponse, SiblingContext,
-    TokenEstimate, TreeNode, UpdateBlockRequest,
+    AncestorContext, BlockContextQuery, BlockDto, BlockRef, BlockWithContextResponse, BlocksQuery,
+    BlocksResponse, CreateBlockRequest, EffectiveMarkerDto, ImportBlockRequest, InboundSampleDto,
+    InheritedMarkerDto, MarkerSource, ResolveResponse, SiblingContext, TokenEstimate, TreeNode,
+    UpdateBlockRequest,
 };
 
 /// Standard error response
