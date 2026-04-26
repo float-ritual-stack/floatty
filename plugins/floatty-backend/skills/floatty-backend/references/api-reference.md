@@ -489,6 +489,7 @@ Track the user's focused block in the outliner. Used by agents to know where the
 Returns the last focused block, or `204 No Content` if no presence set or the block was deleted.
 
 **Query parameters (FLO-679 PR 2 / [[FLO-680]]):**
+
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `include` | string | | Comma-separated AncestorContext opt-ins: `effective_markers`, `inbound_samples` |

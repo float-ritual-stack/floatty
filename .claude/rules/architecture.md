@@ -60,6 +60,7 @@ Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates
 | `server.rs` | Spawns floatty-server subprocess |
 
 ### Rust — Projections layer (FLO-368 intermediary surface)
+
 | Path | Purpose |
 |------|---------|
 | `apps/floatty/src-tauri/floatty-core/src/projections/ancestor_walk.rs` | THE canonical parent-chain walker. Use `walk_ancestors(...)` for any ancestor traversal — do NOT add a parallel inline `while let Some(parent) = ...` loop. See `apps/floatty/docs/architecture/PROJECTIONS_LAYER.md`. |

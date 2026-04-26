@@ -1,7 +1,7 @@
 # Projections Layer (FLO-368 intermediary surface)
 
 > Created during FLO-679 PR 2 (2026-04-25). Reads from the consolidated
-> `walk_ancestors` foundation that landed in PR #281.
+> `walk_ancestors` foundation that landed in [[PR #281]].
 
 ## What this layer is
 
@@ -11,7 +11,7 @@ read primitives (`get_block`, `get_array`, `Map::iter`) and the API-facing
 shaping helpers in `block_service`, providing **pure, read-time, side-effect-
 free** functions that other layers compose.
 
-```
+```text
             ┌─────────────────────────────────────────┐
             │  Handlers (api/blocks.rs, search.rs,    │
             │  discovery.rs, outlines.rs)             │
@@ -43,7 +43,7 @@ free** functions that other layers compose.
 
 | Module | Purpose | Source |
 |---|---|---|
-| `ancestor_walk` | THE canonical parent-chain walker (id-collecting, depth-capped, cycle-safe). Returns `AncestorWalk { ids, nearest_page, depth, termination }`. | PR #281 |
+| `ancestor_walk` | THE canonical parent-chain walker (id-collecting, depth-capped, cycle-safe). Returns `AncestorWalk { ids, nearest_page, depth, termination }`. | [[PR #281]] |
 | `walk_spec_to_markdown` | Door-block JSON spec → markdown projection (cached at the response layer). | FLO-633 |
 | `walk_generic_json_to_markdown` | Last-resort generic JSON → markdown walker. Used when spec walker returns empty. | FLO-633 |
 
@@ -59,7 +59,7 @@ The boundary is **read-time vs write-time**.
 | Multiple endpoints want the same shape. | One write site needs the side effect. |
 | You'd otherwise write the walk inline in 6 different handlers. | The work belongs in the hook system's async pipeline. |
 
-**Concrete example.** PR 1 (PR #281) had two flavours of work in flight:
+**Concrete example.** PR 1 ([[PR #281]]) had two flavours of work in flight:
 
 - **Projection candidate**: 6 inline ancestor-walk implementations across
   handlers, search composer, cycle detection, export, and Tantivy indexing.

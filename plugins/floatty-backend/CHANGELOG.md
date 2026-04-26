@@ -40,7 +40,10 @@ in [[PR #281]] (FLO-679 PR 1).
   chain. Single `floatty_presence` returns the AncestorContext.
 - The "page-search → first-result → block-get" expand_page chain when
   the user only needs orientation (page identity + size + inbound count).
-  The page-search hit now carries `ancestorContext` directly.
+  Non-stub page-search hits now carry `ancestorContext` directly. Stubs
+  (page names referenced by `[[wikilink]]` but with no backing block)
+  still appear in `/pages/search` results without `ancestorContext` —
+  there's no block to walk.
 - A separate inheritance lookup to surface project markers — pass
   `?include=effective_markers` on search/presence and the markers
   arrive (with `{kind:"own"}` vs `{kind:"inherited", sourceBlockId}`
