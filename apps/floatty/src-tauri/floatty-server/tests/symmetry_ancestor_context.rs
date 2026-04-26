@@ -150,7 +150,7 @@ fn ancestor_block_ids_is_rootmost_first() {
         &blocks_map,
         &txn,
         "leaf",
-        &dto,
+        dto.metadata.as_ref(),
         None,
         None,
         AncestorContextOpts::default(),
@@ -191,7 +191,7 @@ fn ancestor_outlinks_is_deduped_union() {
         &blocks_map,
         &txn,
         "leaf",
-        &dto,
+        dto.metadata.as_ref(),
         None,
         None,
         AncestorContextOpts::default(),
@@ -224,7 +224,7 @@ fn compute_and_attach_agree_on_same_block() {
         &blocks_map,
         &txn,
         "leaf",
-        &dto,
+        dto.metadata.as_ref(),
         None,
         None,
         AncestorContextOpts::default(),
@@ -266,12 +266,29 @@ fn shape_search_hit_matches_compute_ancestor_context() {
     let dto = read_skeletal_dto(&blocks_map, &txn, "leaf");
 
     let opts = AncestorContextOpts::default();
-    let from_compute = compute_ancestor_context(&blocks_map, &txn, "leaf", &dto, None, None, opts);
+    let from_compute = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts,
+    );
 
     let synthetic_hit = floatty_core::search::SearchHit {
         block_id: "leaf".to_string(),
         score: 1.0,
         snippet: None,
+        // Symmetry test exercises the no-hint fallback path so search-shape
+        // and singleton-shape produce IDENTICAL ancestorContext for the
+        // same fixture. The Tantivy STORED hints (subtree_size_hint etc.)
+        // are wiring-only — they don't change the shape of the produced
+        // AncestorContext, only skip recomputing fields the indexer already
+        // populated. Default to None here (no hints available) so the
+        // shaping helper falls back to the same Y.Doc walks the singleton
+        // path uses.
+        ..Default::default()
     };
     let from_search = shape_search_hit(
         synthetic_hit,
@@ -295,19 +312,23 @@ fn shape_search_hit_matches_compute_ancestor_context() {
     );
 }
 
-/// CONTRACT 5: bare-root block produces a context whose only populated
-/// field is `subtree_size: 1` (the block counts itself). All ancestor /
-/// outlink / inbound / marker fields stay empty. Documents the
-/// `is_empty()` semantic precisely — "empty" means none of the navigation
-/// signals fired, NOT that subtree_size is zero (subtree_size is always
-/// at least 1 for an existing block).
+/// CONTRACT 5: bare-root block (no chain, no outlinks, no markers, no
+/// inbound) returns `None` from `compute_ancestor_context` — keeps the
+/// wire surface terse on blocks with no navigation signal.
 ///
-/// Wire-shape consequence: bare roots ship the smallest possible
-/// `AncestorContext` (just `subtreeSize: 1`); they do not ship `None`.
-/// This is consistent across endpoints because every shaping helper
-/// passes through the same `compute_ancestor_context`.
+/// `subtree_size` is intentionally NOT a navigation signal here: every
+/// existing block trivially has `subtree_size >= 1` (it counts itself), so
+/// gating `None` on `subtree_size == 0` would make every block surface a
+/// `Some(ctx)` with just `subtreeSize: 1` — pure noise. The `is_empty()`
+/// docstring matches: "empty" = no navigation signal fired, regardless of
+/// `subtree_size`.
+///
+/// Wire-shape consequence: bare roots ship `ancestorContext: None`
+/// (suppressed by `#[serde(skip_serializing_if = "Option::is_none")]`).
+/// Once any signal fires (own outlinks, inbound, an ancestor chain),
+/// the context surfaces with `subtreeSize` populated alongside.
 #[test]
-fn bare_root_returns_minimal_context() {
+fn bare_root_returns_none() {
     let doc = build_doc(&[("root", None, "root", &[])]);
     let txn = doc.transact();
     let blocks_map = txn.get_map("blocks").expect("blocks map");
@@ -317,24 +338,18 @@ fn bare_root_returns_minimal_context() {
         &blocks_map,
         &txn,
         "root",
-        &dto,
+        dto.metadata.as_ref(),
         None,
         None,
         AncestorContextOpts::default(),
-    )
-    .expect("subtree_size = 1 ≠ empty — context surfaces");
-
-    assert!(ctx.nearest_page_block_id.is_none());
-    assert!(ctx.nearest_page_name.is_none());
-    assert!(ctx.ancestor_block_ids.is_empty());
-    assert!(ctx.effective_markers.is_empty());
-    assert!(ctx.ancestor_outlinks.is_empty());
-    assert_eq!(
-        ctx.subtree_size, 1,
-        "bare root counts itself in subtree_size — minimum is 1, not 0"
     );
-    assert_eq!(ctx.inbound_count, 0);
-    assert!(ctx.inbound_samples.is_empty());
+
+    assert!(
+        ctx.is_none(),
+        "bare root with no navigation signal must return None — keeps the wire \
+         surface terse. If this fails, every block in the outline will ship a \
+         pointless ancestorContext payload."
+    );
 }
 
 /// CONTRACT 6: walker depth cap (10) is honoured. A 15-deep chain caps at
@@ -365,7 +380,7 @@ fn ancestor_block_ids_caps_at_walker_max() {
         &blocks_map,
         &txn,
         "b15",
-        &dto,
+        dto.metadata.as_ref(),
         None,
         None,
         AncestorContextOpts::default(),
@@ -413,7 +428,7 @@ fn effective_markers_opt_in_respected() {
         &blocks_map,
         &txn,
         "leaf",
-        &dto,
+        dto.metadata.as_ref(),
         None,
         None,
         AncestorContextOpts::default(),
@@ -432,8 +447,16 @@ fn effective_markers_opt_in_respected() {
     let mut includes = HashSet::new();
     includes.insert("effective_markers".to_string());
     let opts_on = AncestorContextOpts::from_raw(&includes, 5);
-    let ctx_on = compute_ancestor_context(&blocks_map, &txn, "leaf", &dto, None, None, opts_on)
-        .expect("chain present → some ctx");
+    let ctx_on = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("chain present → some ctx");
     assert!(
         ctx_on.effective_markers.is_empty(),
         "with index=None even when opted-in, no effective markers (degrades cleanly)"
@@ -474,7 +497,7 @@ fn root_with_outlink_returns_empty_ancestor_block_ids() {
         &blocks_map,
         &txn,
         "root",
-        &dto,
+        dto.metadata.as_ref(),
         None,
         None,
         AncestorContextOpts::default(),

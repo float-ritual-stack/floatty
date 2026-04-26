@@ -205,8 +205,8 @@ impl HookSystem {
             return Err(e);
         }
 
-        // Register TantivyIndexHook (FLO-679 PR 2: page_name_index threaded
-        // through so the indexer can derive nearest_page_* and inbound_count).
+        // Register TantivyIndexHook with page_name_index threaded through so
+        // the indexer can derive nearest_page_* and inbound_count.
         registry.register(Arc::new(TantivyIndexHook::with_page_index(
             writer_handle.clone(),
             inheritance_index,

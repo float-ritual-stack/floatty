@@ -41,9 +41,9 @@ use crate::WsBroadcaster;
 /// - Any::Map: JSON-like map value
 /// - Legacy: JSON string (for backwards compatibility)
 ///
-/// `pub` (not `pub(crate)`) so the FLO-679 PR 2 symmetry harness in
-/// `tests/symmetry_ancestor_context.rs` can build skeletal `BlockDto`s
-/// from a Y.Doc fixture without reaching back into private API surface.
+/// `pub` (not `pub(crate)`) so the symmetry harness in
+/// `tests/symmetry_ancestor_context.rs` can read metadata directly from
+/// Y.Doc fixtures without reaching back into private API surface.
 pub fn extract_metadata_from_yrs<T: ReadTxn>(
     value: yrs::Out,
     txn: &T,
@@ -162,7 +162,7 @@ pub use blocks::{
     InheritedMarkerDto, MarkerSource, ResolveResponse, SiblingContext, TokenEstimate, TreeNode,
     UpdateBlockRequest,
 };
-// Discovery DTOs re-exported (FLO-679 PR 2 / FLO-680 — presence struct-ified)
+// Discovery DTOs re-exported (FLO-680 — presence struct-ified)
 pub use discovery::PresenceResponse;
 
 /// Standard error response

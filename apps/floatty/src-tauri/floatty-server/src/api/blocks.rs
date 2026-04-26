@@ -63,10 +63,10 @@ pub struct BlockDto {
     /// Block output data (door envelope, eval result, etc.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<serde_json::Value>,
-    /// FLO-679 PR 2: navigation-layer surface — uniform across every block-
-    /// returning endpoint. Populated by handler-side shaping helpers; left
-    /// `None` when no fields would be set (e.g., a bare root block in a
-    /// rebuild-mid-flight state).
+    /// Navigation-layer surface — uniform across every block-returning
+    /// endpoint. Populated by handler-side shaping helpers; left `None`
+    /// when no fields would be set (e.g., a bare root block with no chain,
+    /// outlinks, inbound, or markers).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ancestor_context: Option<AncestorContext>,
 }
@@ -82,7 +82,7 @@ pub struct InheritedMarkerDto {
 }
 
 // ============================================================================
-// FLO-679 PR 2 — AncestorContext (the navigation-layer surface)
+// AncestorContext (the navigation-layer surface)
 // ============================================================================
 
 /// Single inbound reference sample: a block linking TO this hit's page.
@@ -186,15 +186,20 @@ pub struct AncestorContext {
 }
 
 impl AncestorContext {
-    /// True when no field is populated — used by callers to skip the
+    /// True when no navigation signal fired — used by callers to skip the
     /// `ancestorContext` field entirely on bare-bones blocks.
+    ///
+    /// `subtree_size` is intentionally NOT part of this check: every existing
+    /// block has `subtree_size >= 1` (it counts itself), so including it would
+    /// make `is_empty()` always false. Bare roots with no chain, no outlinks,
+    /// no markers, and no inbound references should ship as `None` to keep the
+    /// wire surface terse — `subtree_size: 1` alone is not a navigation signal.
     pub fn is_empty(&self) -> bool {
         self.nearest_page_block_id.is_none()
             && self.nearest_page_name.is_none()
             && self.ancestor_block_ids.is_empty()
             && self.effective_markers.is_empty()
             && self.ancestor_outlinks.is_empty()
-            && self.subtree_size == 0
             && self.inbound_count == 0
             && self.inbound_samples.is_empty()
     }
@@ -209,7 +214,7 @@ impl AncestorContext {
 pub struct BlockContextQuery {
     /// Comma-separated include directives. Recognised:
     /// `ancestors`, `siblings`, `children`, `tree`, `token_estimate`,
-    /// and (FLO-679 PR 2) `effective_markers`, `inbound_samples`.
+    /// `effective_markers`, `inbound_samples`.
     #[serde(default)]
     pub include: Option<String>,
     /// Number of siblings before/after to include (default: 2)
@@ -218,8 +223,8 @@ pub struct BlockContextQuery {
     /// Max depth for tree traversal (default: 50, prevents runaway on huge subtrees)
     #[serde(default = "default_max_depth")]
     pub max_depth: usize,
-    /// FLO-679 PR 2: cap for `inbound_samples` (default 5; max 50). Only
-    /// honoured when `?include=inbound_samples` is present in `include`.
+    /// Cap for `inbound_samples` (default 5; max 50). Only honoured when
+    /// `?include=inbound_samples` is present in `include`.
     #[serde(default = "default_inbound_sample_count")]
     pub inbound_sample_count: usize,
 }
@@ -389,9 +394,9 @@ pub struct BlocksQuery {
     pub marker_type: Option<String>,
     /// Filter: marker value (requires marker_type)
     pub marker_value: Option<String>,
-    /// FLO-679 PR 2: opt-in `ancestorContext` per block in the bulk
-    /// response. Off by default to keep the bulk cost calculus unchanged
-    /// (one walk per block × N blocks). Enable on small filtered sets.
+    /// Opt-in `ancestorContext` per block in the bulk response. Off by
+    /// default to keep the bulk cost calculus unchanged (one walk per
+    /// block × N blocks). Enable on small filtered sets.
     #[serde(default)]
     pub ancestor_context: Option<bool>,
 }
@@ -445,21 +450,17 @@ async fn resolve_block_prefix(
 
         match value {
             yrs::Out::YMap(block_map) => {
-                let inherited_markers = {
-                    let index = state
-                        .inheritance_index
-                        .read()
-                        .map_err(|_| ApiError::LockPoisoned)?;
-                    lookup_inherited(&index, &full_id)
-                };
-                let mut dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
-
-                // FLO-679 PR 2: same always-on AncestorContext shape as
-                // /blocks/:id (singletons get effective_markers always-on).
+                // Single inheritance_index read guard for lookup_inherited
+                // and attach_ancestor_context (Fix 6 in the simplify pass).
                 let inh = state
                     .inheritance_index
                     .read()
                     .map_err(|_| ApiError::LockPoisoned)?;
+                let inherited_markers = lookup_inherited(&inh, &full_id);
+                let mut dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+
+                // Same always-on AncestorContext shape as /blocks/:id
+                // (singletons get effective_markers always-on).
                 let pni = state
                     .page_name_index
                     .read()

@@ -16,12 +16,12 @@
 //! | created_at | I64 | FAST, STORED | Block creation timestamp |
 //! | ctx_at | I64 | FAST, STORED | ctx:: event timestamp |
 //! | depth | I64 | FAST, STORED | Block tree depth (for ranking boost) |
-//! | nearest_page_block_id | TEXT | STRING, STORED | Nearest ancestor that is a registered page (FLO-679 PR 2) |
-//! | nearest_page_name | TEXT | STRING, STORED | Page name for `nearest_page_block_id` (FLO-679 PR 2) |
-//! | ancestor_block_ids | TEXT | STRING, STORED (multi-value) | Capped ancestor chain (FLO-679 PR 2) |
-//! | subtree_size | I64 | FAST, STORED | Approximate descendant count cap (FLO-679 PR 2) |
-//! | inbound_count | I64 | FAST, STORED | Number of `outlinks` referencing this block's page name (FLO-679 PR 2) |
-//! | inbound_block_ids | TEXT | STRING, STORED (multi-value) | Top-N inbound block IDs (FLO-679 PR 2) |
+//! | nearest_page_block_id | TEXT | STRING, STORED | Nearest ancestor that is a registered page |
+//! | nearest_page_name | TEXT | STRING, STORED | Page name for `nearest_page_block_id` |
+//! | ancestor_block_ids | TEXT | STRING, STORED (multi-value) | Capped ancestor chain |
+//! | subtree_size | I64 | FAST, STORED | Approximate descendant count cap |
+//! | inbound_count | I64 | FAST, STORED | Number of `outlinks` referencing this block's page name |
+//! | inbound_block_ids | TEXT | STRING, STORED (multi-value) | Top-N inbound block IDs |
 //!
 //! # Why block_id is Indexed STRING
 //!
@@ -113,7 +113,7 @@ pub fn build_schema() -> Schema {
     // Used for ranking boost: shallow blocks rank higher for same query terms
     builder.add_i64_field("depth", i64_options.clone());
 
-    // ----- FLO-679 PR 2: ancestor context fields -----
+    // ----- ancestor context fields -----
     // The "always-on" wire surface for `AncestorContext`. Populated by
     // TantivyIndexHook from a single `walk_ancestors` pass per block.
     // Schema additions are FREE per Tantivy ephemerality (the index is
@@ -181,7 +181,7 @@ mod tests {
         assert!(schema.get_field("ctx_at").is_ok());
         assert!(schema.get_field("marker_types_own").is_ok());
         assert!(schema.get_field("marker_values_own").is_ok());
-        // FLO-679 PR 2: ancestor context fields
+        // ancestor context fields
         assert!(schema.get_field("nearest_page_block_id").is_ok());
         assert!(schema.get_field("nearest_page_name").is_ok());
         assert!(schema.get_field("ancestor_block_ids").is_ok());
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn test_schema_field_count() {
         let schema = build_schema();
-        // 15 original + 6 ancestor-context fields (FLO-679 PR 2)
+        // 15 original + 6 ancestor-context fields
         let field_count = schema.fields().count();
         assert_eq!(field_count, 21);
     }

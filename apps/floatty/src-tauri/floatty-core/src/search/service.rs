@@ -80,7 +80,15 @@ fn escape_tantivy_query(input: &str) -> String {
 }
 
 /// A search result with block ID and relevance score.
-#[derive(Debug, Clone)]
+///
+/// The `*_hint` fields are denormalised from the Tantivy STORED ancestor-
+/// context columns populated at index time. Response-shaping helpers
+/// (`block_service::shape_search_hit`) prefer the hint when present and
+/// fall back to a fresh walk only when absent (e.g., singleton paths
+/// constructing a synthetic SearchHit). This eliminates the per-hit
+/// subtree-size BFS and the per-hit `existing_pages().find(...)` scan
+/// that previously fired for every search hit.
+#[derive(Debug, Clone, Default)]
 pub struct SearchHit {
     /// The block ID - use to hydrate full block from Y.Doc.
     pub block_id: String,
@@ -88,6 +96,19 @@ pub struct SearchHit {
     pub score: f32,
     /// Optional highlighted snippet (future enhancement).
     pub snippet: Option<String>,
+    /// Pre-computed `subtree_size` from the indexer (Fix 2 in the simplify
+    /// pass). When `Some`, response shaping skips the per-hit BFS over
+    /// Y.Doc child pointers.
+    pub subtree_size_hint: Option<u32>,
+    /// Pre-computed `inbound_count` from the indexer. When `Some`, response
+    /// shaping skips the PageNameIndex `referencing_blocks` lookup for the
+    /// count value (samples may still need a fresh lookup if requested).
+    pub inbound_count_hint: Option<u32>,
+    /// Pre-computed inbound block IDs from the indexer. When `Some`,
+    /// response shaping uses these directly (already deterministically
+    /// id-sorted + capped to the indexer's `INBOUND_SAMPLES_CAP`) instead
+    /// of pulling from PageNameIndex at response time.
+    pub inbound_block_ids_hint: Option<Vec<String>>,
 }
 
 /// Filters for narrowing search results.
@@ -243,7 +264,9 @@ impl SearchService {
             None
         };
 
-        // Map results to SearchHit
+        // Map results to SearchHit. Pull the STORED ancestor-context fields
+        // off the Tantivy doc so response-shaping helpers can skip per-hit
+        // BFS / index scans.
         let mut hits = Vec::with_capacity(top_docs.len());
         for (score, doc_address) in top_docs {
             let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
@@ -258,10 +281,36 @@ impl SearchService {
                             Some(html)
                         }
                     });
+                    let subtree_size_hint = doc
+                        .get_first(fields.subtree_size)
+                        .and_then(|v| v.as_i64())
+                        .map(|n| n.max(0) as u32);
+                    let inbound_count_hint = doc
+                        .get_first(fields.inbound_count)
+                        .and_then(|v| v.as_i64())
+                        .map(|n| n.max(0) as u32);
+                    let inbound_block_ids_hint: Vec<String> = doc
+                        .get_all(fields.inbound_block_ids)
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect();
+                    let inbound_block_ids_hint = if inbound_block_ids_hint.is_empty() {
+                        // Distinguish "no STORED entries — could be no
+                        // inbounds OR could be a stale doc" from "STORED
+                        // entries present but empty". The indexer always
+                        // writes when populating, so an empty vec almost
+                        // certainly means no inbounds — pass it through as
+                        // the canonical "zero" hint.
+                        Some(Vec::new())
+                    } else {
+                        Some(inbound_block_ids_hint)
+                    };
                     hits.push(SearchHit {
                         block_id: id_str.to_string(),
                         score,
                         snippet,
+                        subtree_size_hint,
+                        inbound_count_hint,
+                        inbound_block_ids_hint,
                     });
                 }
             }

@@ -344,9 +344,9 @@ async fn outline_get_blocks(
 ) -> Result<Json<BlocksResponse>, ApiError> {
     let ctx = resolve_outline_context(&state, &name)?;
     let store = Arc::clone(&ctx.store);
-    // FLO-679 PR 2 — per-outline /blocks now honours ?ancestor_context=true
-    // identical to the top-level endpoint. Closes the asymmetry-fix called
-    // out in the plan §"Per-outline asymmetry fix".
+    // Per-outline /blocks honours ?ancestor_context=true identical to the
+    // top-level endpoint — closes the per-outline asymmetry surfaced in
+    // the planning-time inventory.
     let hs = ctx.ensure_hook_system();
     let inheritance_index = hs.inheritance_index();
     let page_name_index = hs.page_name_index();
@@ -429,9 +429,9 @@ async fn outline_get_block(
             _ => return Err(ApiError::NotFound(format!("block '{}' not found", id))),
         };
 
-        // FLO-679 PR 2: per-outline /blocks/:id mirrors /api/v1/blocks/:id —
-        // always-on AncestorContext including effective_markers. Closes the
-        // asymmetry-fix called out in the plan §"Per-outline asymmetry fix".
+        // Per-outline /blocks/:id mirrors /api/v1/blocks/:id — always-on
+        // AncestorContext including effective_markers. Closes the
+        // per-outline asymmetry surfaced in planning.
         let inh = inheritance_index
             .read()
             .map_err(|_| ApiError::LockPoisoned)?;
@@ -537,9 +537,9 @@ async fn outline_search_blocks(
     let index_manager = hs
         .index_manager()
         .ok_or_else(|| ApiError::SearchUnavailable)?;
-    // FLO-679 PR 2 — per-outline hits get the SAME shape as top-level hits.
-    // Threading the per-outline indices closes the asymmetry called out in
-    // the planning-time inventory (per-outline endpoints didn't even support
+    // Per-outline hits get the SAME shape as top-level hits. Threading the
+    // per-outline indices closes the asymmetry called out in the
+    // planning-time inventory (per-outline endpoints didn't even support
     // ?include= before this PR).
     let inheritance_index = hs.inheritance_index();
     let page_name_index = hs.page_name_index();

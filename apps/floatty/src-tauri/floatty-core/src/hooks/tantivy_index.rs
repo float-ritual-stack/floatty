@@ -31,11 +31,15 @@ use super::BlockHook;
 
 /// Cap for `subtree_size` traversal — keeps populating cost bounded on huge
 /// subtrees (a 25K-block daily note shouldn't dominate index time).
-const SUBTREE_SIZE_CAP: u32 = 1000;
+///
+/// `pub` so the response-shape helpers in `floatty-server::block_service`
+/// can reuse the same cap when falling back to a live BFS (singleton
+/// paths that don't have a Tantivy STORED hint).
+pub const SUBTREE_SIZE_CAP: u32 = 1000;
 
 /// Top-N `inbound_block_ids` cap. Surfaces the most recent blocks that link
 /// to this block's nearest page name.
-const INBOUND_SAMPLES_CAP: usize = 5;
+pub const INBOUND_SAMPLES_CAP: usize = 5;
 
 /// Hook that indexes blocks in Tantivy for full-text search.
 ///
@@ -49,9 +53,9 @@ pub struct TantivyIndexHook {
     writer: WriterHandle,
     /// Pre-computed inheritance index (populated by InheritanceIndexHook at priority 15).
     inheritance_index: Arc<RwLock<InheritanceIndex>>,
-    /// Page name index — used to derive `nearest_page_name` and `inbound_count`
-    /// (FLO-679 PR 2). Optional: tests / boot-time configurations can omit it
-    /// and the new fields will simply be empty/zero.
+    /// Page name index — used to derive `nearest_page_name` and
+    /// `inbound_count`. Optional: tests / boot-time configurations can omit
+    /// it and the ancestor-context fields will simply be empty/zero.
     page_name_index: Option<Arc<RwLock<PageNameIndex>>>,
 }
 
@@ -66,9 +70,9 @@ impl TantivyIndexHook {
     }
 
     /// Variant that takes the PageNameIndex used to derive ancestor-context
-    /// page fields (FLO-679 PR 2). Production callers should use this — the
-    /// `new` constructor is kept for legacy / boot-time paths that wire the
-    /// page index in later.
+    /// page fields. Production callers should use this — the `new`
+    /// constructor is kept for legacy / boot-time paths that wire the page
+    /// index in later.
     pub fn with_page_index(
         writer: WriterHandle,
         inheritance_index: Arc<RwLock<InheritanceIndex>>,
@@ -249,27 +253,21 @@ impl TantivyIndexHook {
             "Indexing block"
         );
 
-        // FLO-679 PR 2: single walker call populates depth, ancestor IDs,
-        // and (when a PageNameIndex is wired) nearest_page_*. Cap at 50 —
-        // the documented walker cap for the indexing path. Ancestor IDs cap
-        // at 10 (the `AncestorContext` wire surface cap) so we re-walk only
-        // far enough for the depth value.
+        // Single walker call populates depth, ancestor IDs, and (when a
+        // PageNameIndex is wired) nearest_page_*. Walk to depth=50 (the
+        // documented indexing cap) so `walk.depth` matches the pre-PR2
+        // 50-cap value; slice `walk.ids[..10]` for `ancestor_block_ids`
+        // (the `AncestorContext` wire-surface cap). Page-name lookup
+        // short-circuits at first match, so the deeper walk doesn't add
+        // cost when a page-ancestor sits near the block.
         let walk_full = {
             let lookup = StoreParentLookup::new(store);
-            // First walk: capped at 10 — feeds ancestor_block_ids + nearest_page.
-            // The depth field uses a separate walk capped at 50 for backwards
-            // parity with the pre-PR2 indexing logic.
             let page_index_guard = self.page_name_index.as_ref().and_then(|p| p.read().ok());
-            walk_ancestors(&lookup, id, 10, page_index_guard.as_deref())
+            walk_ancestors(&lookup, id, 50, page_index_guard.as_deref())
         };
 
-        // Depth uses the historic 50-cap (parity with FLO-679 PR 1).
-        let depth = {
-            let lookup = StoreParentLookup::new(store);
-            walk_ancestors(&lookup, id, 50, None).depth
-        };
-
-        let ancestor_block_ids = walk_full.ids.clone();
+        let depth = walk_full.depth;
+        let ancestor_block_ids: Vec<String> = walk_full.ids.iter().take(10).cloned().collect();
         let (nearest_page_block_id, nearest_page_name) = match walk_full.nearest_page {
             Some((bid, name)) => (Some(bid), Some(name)),
             None => (None, None),
@@ -282,47 +280,27 @@ impl TantivyIndexHook {
         // Inbound count + samples: derived from PageNameIndex if available.
         // Inbound = blocks whose `outlinks` reference this block's nearest
         // page name (or this block itself if it IS a registered page).
-        let (inbound_count, inbound_block_ids) =
-            match (self.page_name_index.as_ref(), nearest_page_name.as_ref()) {
-                (Some(idx_arc), _) => {
-                    // Decide which page name to look up:
-                    // - If THIS block IS a page (e.g., walk_full.nearest_page may
-                    //   include the block itself? — actually walk_ancestors starts
-                    //   from the parent so it never returns the start block; we
-                    //   check separately whether this block IS a page below).
-                    // - Otherwise, use the nearest page name from the walk.
-                    let target_name = {
-                        let g = idx_arc.read().ok();
-                        let self_is_page = g.as_ref().and_then(|g| {
-                            g.existing_pages()
-                                .into_iter()
-                                .find(|n| g.page_block_id(n).map(|b| b == id).unwrap_or(false))
-                        });
-                        self_is_page.or_else(|| nearest_page_name.clone())
-                    };
-
-                    if let Some(name) = target_name {
-                        let g = idx_arc.read().ok();
-                        if let Some(g) = g {
-                            let refs = g.referencing_blocks(&name);
-                            let count = refs.map(|s| s.len()).unwrap_or(0) as u32;
-                            // Top-N samples: deterministic order (sort by id) so
-                            // the wire surface stays stable across rebuilds.
-                            let mut samples: Vec<String> = refs
-                                .map(|s| s.iter().cloned().collect())
-                                .unwrap_or_default();
-                            samples.sort();
-                            samples.truncate(INBOUND_SAMPLES_CAP);
-                            (count, samples)
-                        } else {
-                            (0, vec![])
-                        }
-                    } else {
-                        (0, vec![])
-                    }
-                }
-                _ => (0, vec![]),
-            };
+        // Single read-guard scope, single reverse-index lookup — no linear
+        // scans (Fix 3 + Fix 9 in the simplify pass).
+        let (inbound_count, inbound_block_ids) = self
+            .page_name_index
+            .as_ref()
+            .and_then(|idx_arc| idx_arc.read().ok())
+            .and_then(|g| {
+                // If THIS block IS a registered page, use its own name; else
+                // fall back to the nearest ancestor page from the walk.
+                let target_name = g
+                    .page_name_for_block(id)
+                    .map(String::from)
+                    .or_else(|| nearest_page_name.clone())?;
+                let refs = g.referencing_blocks(&target_name)?;
+                let count = refs.len() as u32;
+                let mut samples: Vec<String> = refs.iter().cloned().collect();
+                samples.sort();
+                samples.truncate(INBOUND_SAMPLES_CAP);
+                Some((count, samples))
+            })
+            .unwrap_or((0, vec![]));
 
         // Build BlockIndexData and send to writer
         let data = BlockIndexData {

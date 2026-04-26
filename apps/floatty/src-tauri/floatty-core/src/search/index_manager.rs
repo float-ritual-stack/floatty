@@ -81,7 +81,7 @@ pub struct SchemaFields {
     pub ctx_at: Field,
     /// Block tree depth (0 = root, 1 = direct child, etc.). For ranking boost.
     pub depth: Field,
-    // ----- FLO-679 PR 2: ancestor context fields -----
+    // ----- ancestor context fields -----
     /// Block ID of the nearest registered-page ancestor, when present.
     pub nearest_page_block_id: Field,
     /// Page name of the nearest registered-page ancestor, when present.
@@ -229,7 +229,7 @@ mod tests {
         // Index directory should now exist
         assert!(index_path.exists());
 
-        // Schema should have 21 fields (15 original + 6 ancestor-context fields, FLO-679 PR 2)
+        // Schema should have 21 fields (15 original + 6 ancestor-context fields)
         assert_eq!(manager.schema().fields().count(), 21);
     }
 

@@ -163,7 +163,7 @@ pub struct BlockIndexData {
     pub ctx_at: i64,
     /// Block depth in tree (0 = root/page, 1 = direct child, etc.).
     pub depth: u32,
-    // ----- FLO-679 PR 2: ancestor context fields -----
+    // ----- ancestor context fields -----
     /// Block ID of the nearest registered-page ancestor, when present.
     pub nearest_page_block_id: Option<String>,
     /// Page name of the nearest registered-page ancestor, when present.
@@ -482,7 +482,7 @@ impl TantivyWriter {
         // Depth field (always set)
         doc.add_i64(self.fields.depth, d.depth as i64);
 
-        // ----- FLO-679 PR 2: ancestor context fields -----
+        // ----- ancestor context fields -----
         if let Some(ref id) = d.nearest_page_block_id {
             doc.add_text(self.fields.nearest_page_block_id, id);
         }

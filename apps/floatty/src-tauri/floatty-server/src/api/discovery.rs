@@ -48,7 +48,7 @@ struct PresenceRequest {
     pane_id: Option<String>,
 }
 
-/// FLO-679 PR 2 / [[FLO-680]]: presence response, struct-ified.
+/// Presence response, struct-ified ([[FLO-680]]).
 ///
 /// Replaces the inline `serde_json::json!` literal previously emitted by
 /// `get_presence`. Adds `ancestorContext` so a single GET orients an agent
@@ -176,21 +176,17 @@ async fn get_daily_note(
         .ok_or_else(|| ApiError::NotFound(page_id.clone()))?;
 
     if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state
-                .inheritance_index
-                .read()
-                .map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, &page_id)
-        };
-        let mut block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
-
-        // FLO-679 PR 2: AncestorContext on daily-note response (singleton
-        // path — effective_markers always-on).
+        // Single inheritance_index read guard for lookup_inherited +
+        // attach_ancestor_context (Fix 6 in the simplify pass).
         let inh = state
             .inheritance_index
             .read()
             .map_err(|_| ApiError::LockPoisoned)?;
+        let inherited_markers = lookup_inherited(&inh, &page_id);
+        let mut block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
+
+        // AncestorContext on daily-note response (singleton path —
+        // effective_markers always-on).
         let pni = state
             .page_name_index
             .read()
@@ -239,20 +235,20 @@ async fn get_presence(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    // FLO-679 PR 2 / [[FLO-680]]: shape the AncestorContext for the focused
-    // block. Cheap fields always-on; effective_markers + inbound_samples
-    // gated by `?include=`.
+    // Shape the AncestorContext for the focused block. Cheap fields
+    // always-on; effective_markers + inbound_samples gated by `?include=`.
+    // Reads the block's metadata directly — compute_ancestor_context now
+    // takes `Option<&serde_json::Value>` rather than a full DTO scaffold.
     let ancestor_context = (|| -> Option<AncestorContext> {
-        // Build the minimal BlockDto needed by compute_ancestor_context
-        // (markers + outlinks for ancestor_outlinks + effective_markers).
         let inh = state.inheritance_index.read().ok()?;
         let pni = state.page_name_index.read().ok()?;
-        let inherited_markers = lookup_inherited(&inh, &info.block_id);
         let block_map = match blocks_map.get(&txn, &info.block_id)? {
             yrs::Out::YMap(m) => m,
             _ => return None,
         };
-        let dto = read_block_dto(&block_map, &txn, &info.block_id, inherited_markers, false);
+        let metadata = block_map
+            .get(&txn, "metadata")
+            .and_then(|m| crate::api::extract_metadata_from_yrs(m, &txn));
         let includes = crate::block_service::parse_includes(&query.include);
         let opts = crate::block_service::AncestorContextOpts::from_raw(
             &includes,
@@ -262,7 +258,7 @@ async fn get_presence(
             &blocks_map,
             &txn,
             &info.block_id,
-            &dto,
+            metadata.as_ref(),
             Some(&inh),
             Some(&pni),
             opts,
@@ -460,10 +456,10 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), A
 /// Scoped to this module — the full `get_block` in `block_service` builds a
 /// context response (ancestors, siblings, etc.) that we don't need here.
 ///
-/// FLO-679 PR 2: the returned BlockDto carries `ancestorContext` (always-on
-/// for singleton paths, mirrors `/blocks/:id`). For a freshly-upserted page
-/// the ancestor chain is just the `pages::` container; for an existing page
-/// the chain reflects whatever the outline has materialised.
+/// The returned BlockDto carries `ancestorContext` (always-on for singleton
+/// paths, mirrors `/blocks/:id`). For a freshly-upserted page the ancestor
+/// chain is just the `pages::` container; for an existing page the chain
+/// reflects whatever the outline has materialised.
 fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
@@ -478,20 +474,16 @@ fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
         .ok_or_else(|| ApiError::NotFound(id.to_string()))?;
 
     if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state
-                .inheritance_index
-                .read()
-                .map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, id)
-        };
-        let mut dto = read_block_dto(&block_map, &txn, id, inherited_markers, true);
-
-        // FLO-679 PR 2: always-on AncestorContext on the upsert response.
+        // Single inheritance_index read guard for lookup_inherited +
+        // attach_ancestor_context (Fix 6 in the simplify pass).
         let inh = state
             .inheritance_index
             .read()
             .map_err(|_| ApiError::LockPoisoned)?;
+        let inherited_markers = lookup_inherited(&inh, id);
+        let mut dto = read_block_dto(&block_map, &txn, id, inherited_markers, true);
+
+        // Always-on AncestorContext on the upsert response.
         let pni = state
             .page_name_index
             .read()
@@ -617,11 +609,11 @@ async fn append_to_daily_note(
         },
     )?;
 
-    // FLO-679 PR 2: attach AncestorContext to the newly-created child
-    // (always-on for singleton paths). The hook system is async so the
-    // PageNameIndex / InheritanceIndex lookups reflect at-call-time state —
-    // for a fresh append under an existing daily note, the daily note is
-    // already in PageNameIndex so nearestPage* populates correctly.
+    // Attach AncestorContext to the newly-created child (always-on for
+    // singleton paths). The hook system is async so the PageNameIndex /
+    // InheritanceIndex lookups reflect at-call-time state — for a fresh
+    // append under an existing daily note, the daily note is already in
+    // PageNameIndex so nearestPage* populates correctly.
     let block_id_for_attach = dto.id.clone();
     {
         let doc = state.store.doc();

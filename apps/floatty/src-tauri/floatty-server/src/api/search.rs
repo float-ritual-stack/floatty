@@ -32,7 +32,7 @@ pub struct PageSearchQuery {
     pub limit: usize,
     #[serde(default)]
     pub fuzzy: bool,
-    /// FLO-679 PR 2: comma-separated `?include=` directives for AncestorContext.
+    /// Comma-separated `?include=` directives for AncestorContext.
     /// Recognised: `effective_markers`, `inbound_samples`. Always-on cheap
     /// fields populate regardless. Stubs (no block_id) skip ancestor_context.
     #[serde(default)]
@@ -51,7 +51,7 @@ pub struct PageSearchResult {
     pub name: String,
     pub is_stub: bool,
     pub block_id: Option<String>,
-    /// FLO-679 PR 2: navigation-layer surface for the page block.
+    /// Navigation-layer surface for the page block.
     /// Populated only for non-stub pages (a stub has no `block_id`, so no
     /// ancestors / inbound shape to compute). Always-on for cheap fields;
     /// effective_markers and inbound_samples respect the same `?include=`
@@ -99,13 +99,13 @@ pub struct BlockSearchQuery {
     pub inherited: Option<bool>,
     #[serde(default)]
     pub exclude_types: Option<String>,
-    /// FLO-679 PR 2: comma-separated `?include=` directives for AncestorContext.
+    /// Comma-separated `?include=` directives for AncestorContext.
     /// Recognised: `effective_markers`, `inbound_samples`. Cheap fields are
     /// always-on regardless of this parameter.
     #[serde(default)]
     pub include: Option<String>,
-    /// FLO-679 PR 2: cap for `inbound_samples` (default 5; max 50). Only
-    /// honoured when `include=inbound_samples`.
+    /// Cap for `inbound_samples` (default 5; max 50). Only honoured when
+    /// `include=inbound_samples`.
     #[serde(default)]
     pub inbound_sample_count: Option<usize>,
 }
@@ -129,7 +129,7 @@ pub struct BlockSearchHit {
     pub snippet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_type: Option<String>,
-    /// FLO-679 PR 2: navigation-layer surface. Always-on cheap fields;
+    /// Navigation-layer surface. Always-on cheap fields;
     /// `effective_markers` and `inbound_samples` populated only when the
     /// caller passed the corresponding `?include=` directive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -176,9 +176,9 @@ async fn search_pages(
     let suggestions: Vec<floatty_core::PageSuggestion> =
         results.into_iter().take(query.limit).collect();
 
-    // FLO-679 PR 2 — short-circuits the documented "expand_page" 2-call tax
-    // (caller can read AncestorContext from the page-search hit instead of
-    // a follow-up GET on the page block).
+    // Short-circuits the documented "expand_page" 2-call tax — caller can
+    // read AncestorContext from the page-search hit instead of a follow-up
+    // GET on the page block.
     let inh = state
         .inheritance_index
         .read()
@@ -199,28 +199,23 @@ async fn search_pages(
         .map(|s| {
             let ancestor_context = match (&blocks_map, &s.block_id) {
                 (Some(bmap), Some(block_id)) => {
-                    // Build a minimal DTO via read_block_dto so
-                    // compute_ancestor_context has metadata for outlinks/
-                    // markers shaping.
-                    let dto = match bmap.get(&txn, block_id) {
-                        Some(yrs::Out::YMap(block_map)) => {
-                            Some(crate::block_service::read_block_dto(
-                                &block_map, &txn, block_id, None, false,
-                            ))
-                        }
+                    // Read metadata directly — compute_ancestor_context takes
+                    // `Option<&serde_json::Value>` so no skeletal DTO scaffold.
+                    let metadata = match bmap.get(&txn, block_id) {
+                        Some(yrs::Out::YMap(block_map)) => block_map
+                            .get(&txn, "metadata")
+                            .and_then(|m| crate::api::extract_metadata_from_yrs(m, &txn)),
                         _ => None,
                     };
-                    dto.and_then(|dto| {
-                        crate::block_service::compute_ancestor_context(
-                            bmap,
-                            &txn,
-                            block_id,
-                            &dto,
-                            Some(&inh),
-                            Some(&pni),
-                            ac_opts,
-                        )
-                    })
+                    crate::block_service::compute_ancestor_context(
+                        bmap,
+                        &txn,
+                        block_id,
+                        metadata.as_ref(),
+                        Some(&inh),
+                        Some(&pni),
+                        ac_opts,
+                    )
                 }
                 _ => None,
             };
