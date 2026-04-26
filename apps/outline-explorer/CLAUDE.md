@@ -37,7 +37,7 @@ ANTHROPIC_API_KEY=sk-ant-...          # for AI chat features
 
 ## json-render
 
-Uses `@json-render/core`, `@json-render/react`, `@json-render/mcp` from npm (currently `^0.17.0`).
+Uses `@json-render/core`, `@json-render/react`, `@json-render/mcp` from npm (currently `^0.18.0`).
 
 **Cross-package precedent (PR #262)**: `packages/render-door/` extracted from `apps/floatty/doors/render/` after `apps/render-reference` (the contract harness) became a regular consumer of the door's catalog + components. The same pattern applies here whenever outline-explorer's catalog grows a peer-app consumer — the playbook is in `~/.claude/projects/-Users-evan-projects--float-float-substrate-floatty/memory/feedback_door_extraction_pattern.md` and `.claude/rules/door-development.md` "Monorepo paths" section.
 

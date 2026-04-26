@@ -188,14 +188,14 @@ importers:
         specifier: ^3.0.151
         version: 3.0.164(react@19.2.4)(zod@4.3.6)
       '@json-render/core':
-        specifier: ^0.17.0
-        version: 0.17.0(zod@4.3.6)
+        specifier: ^0.18.0
+        version: 0.18.0(zod@4.3.6)
       '@json-render/mcp':
-        specifier: ^0.17.0
-        version: 0.17.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)
+        specifier: ^0.18.0
+        version: 0.18.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)
       '@json-render/react':
-        specifier: ^0.17.0
-        version: 0.17.0(react@19.2.4)(zod@4.3.6)
+        specifier: ^0.18.0
+        version: 0.18.0(react@19.2.4)(zod@4.3.6)
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.29.0(zod@4.3.6)
@@ -1135,8 +1135,8 @@ packages:
       ink: ^6.0.0
       react: ^19.0.0
 
-  '@json-render/mcp@0.17.0':
-    resolution: {integrity: sha512-lDeZsWpKvH8E0IRtq1ODf3G8zAQQeJL2O4ZRMm1N4UB8mkM0fMmvc0JlDVI6TWidFXsSBYYk4q6ug+N8nVeuJA==}
+  '@json-render/mcp@0.18.0':
+    resolution: {integrity: sha512-uI6lLhzN5/w26qT4As5B3FP0/fgFASkkUCIXNWhYpcpZmcinkd6e1XNnEMyb0JVoNyzmhD3mGGPPR57SJwx4XQ==}
     peerDependencies:
       react: ^19.0.0
       react-dom: ^19.0.0
@@ -1146,8 +1146,8 @@ packages:
       react-dom:
         optional: true
 
-  '@json-render/react@0.17.0':
-    resolution: {integrity: sha512-MEQ+Id5ZpqfgzASvRqFIJnNJJrqsyozve8jDQzsAKasm4kU6dQ4Jrp2q3fAkSS0duk33n4JfgzKlKCqEy2Xr8A==}
+  '@json-render/react@0.18.0':
+    resolution: {integrity: sha512-rT0hJ9mK2BGfLxZ/ztS4UF1XqAz/o+FNtFgii7hea7VjD4u0wJYyRphe4a5DetS/dSMZFECXkmida+xi3wKl9A==}
     peerDependencies:
       react: ^19.2.3
 
@@ -5878,9 +5878,9 @@ snapshots:
     transitivePeerDependencies:
       - zod
 
-  '@json-render/mcp@0.17.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)':
+  '@json-render/mcp@0.18.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)':
     dependencies:
-      '@json-render/core': 0.17.0(zod@4.3.6)
+      '@json-render/core': 0.18.0(zod@4.3.6)
       '@modelcontextprotocol/ext-apps': 1.6.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
     optionalDependencies:
@@ -5891,9 +5891,9 @@ snapshots:
       - supports-color
       - zod
 
-  '@json-render/react@0.17.0(react@19.2.4)(zod@4.3.6)':
+  '@json-render/react@0.18.0(react@19.2.4)(zod@4.3.6)':
     dependencies:
-      '@json-render/core': 0.17.0(zod@4.3.6)
+      '@json-render/core': 0.18.0(zod@4.3.6)
       react: 19.2.4
     transitivePeerDependencies:
       - zod
