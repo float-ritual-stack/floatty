@@ -204,7 +204,13 @@ export function registerDataTools(server: McpServer) {
     "Full-text search across all blocks in the knowledge graph. Returns matching blocks with breadcrumb context AND ancestorContext (nearestPageName, effectiveMarkers, inboundCount) — usually no follow-up call needed for orientation.",
     {
       query: z.string().describe("Search query"),
-      limit: z.number().optional().describe("Max results (default 15)"),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(200)
+        .optional()
+        .describe("Max results (default 15, max 200)."),
     },
     async ({ query, limit = 15 }: { query: string; limit?: number }) => {
       try {
