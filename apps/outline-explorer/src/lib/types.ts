@@ -9,7 +9,7 @@ export interface InheritedMarker extends Marker {
   sourceBlockId: string;
 }
 
-// FLO-679 PR 2 — AncestorContext (the navigation-layer surface)
+// AncestorContext (the navigation-layer surface).
 //
 // Mirrors the Rust DTO in `floatty-server/src/api/blocks.rs`. Surfaced on
 // every block-returning endpoint (BlockDto, BlockSearchHit, PresenceResponse,
@@ -18,7 +18,7 @@ export interface InheritedMarker extends Marker {
 // (always-on for `/blocks/:id` since slow-context path already).
 //
 // `ancestorBlockIds` is ROOTMOST-FIRST per the wire contract — matches the
-// breadcrumb composer's `take(5).rev()` shape established by PR 1.
+// breadcrumb composer's `take(5).rev()` shape.
 export type EffectiveMarkerSource =
   | { kind: "own" }
   | { kind: "inherited"; sourceBlockId: string };
@@ -73,9 +73,10 @@ export interface Block {
   outputType: string | null;
   output: unknown | null;
   /**
-   * FLO-679 PR 2 — populated by `/blocks/:id` (always-on with effectiveMarkers),
-   * by `/blocks/resolve/:prefix`, and by `/blocks` when `?ancestorContext=true`.
-   * May be null/absent for bulk responses or root blocks with no chain.
+   * Navigation-layer surface — populated by `/blocks/:id` (always-on with
+   * effectiveMarkers), by `/blocks/resolve/:prefix`, and by `/blocks` when
+   * `?ancestorContext=true`. May be null/absent for bulk responses or root
+   * blocks with no chain.
    */
   ancestorContext?: AncestorContext;
 }
@@ -104,8 +105,9 @@ export interface SearchHit {
   metadata?: BlockMetadata;
   blockType?: string;
   /**
-   * FLO-679 PR 2 — populated on every hit. Cheap fields always-on; opt-in
-   * fields (`effectiveMarkers`, `inboundSamples`) gated by `?include=`.
+   * Navigation-layer surface — populated on every hit. Cheap fields
+   * always-on; opt-in fields (`effectiveMarkers`, `inboundSamples`) gated
+   * by `?include=`.
    */
   ancestorContext?: AncestorContext;
 }
@@ -128,16 +130,16 @@ export interface SearchOptions {
   includeBreadcrumb?: boolean;
   includeMetadata?: boolean;
   /**
-   * FLO-679 PR 2: comma-separated `?include=` directives for AncestorContext.
+   * Comma-separated `?include=` directives for AncestorContext.
    * Recognised: `effective_markers`, `inbound_samples`. Cheap fields are
    * always-on regardless of this parameter.
    */
   include?: string;
-  /** FLO-679 PR 2: cap for `inbound_samples` (default 5; max 50). */
+  /** Cap for `inbound_samples` (default 5; max 50). */
   inboundSampleCount?: number;
 }
 
-// FLO-679 PR 2 — Page search response (mirrors PageSearchResult on the wire)
+// Page search response (mirrors PageSearchResult on the wire)
 export interface PageSearchHit {
   name: string;
   isStub: boolean;
@@ -146,7 +148,7 @@ export interface PageSearchHit {
   ancestorContext?: AncestorContext;
 }
 
-// FLO-679 PR 2 / FLO-680 — presence response shape
+// Presence response shape ([[FLO-680]])
 export interface PresenceResponse {
   blockId: string;
   paneId?: string;
