@@ -105,6 +105,28 @@ export interface SearchHit {
   metadata?: BlockMetadata;
   blockType?: string;
   /**
+   * Block creation timestamp (ms since epoch). Mirrors `BlockDto.createdAt`.
+   * Omitted when the source block was deleted between indexing and response
+   * (in that case the field serializes as 0 server-side and is dropped via
+   * `skip_serializing_if`). FLO-684.
+   */
+  createdAt?: number;
+  /**
+   * Block last-update timestamp (ms since epoch). Single source of truth is
+   * the block's `updatedAt` Y.Map field — frontend stamps on every local
+   * edit; REST mutations stamp on PATCH/POST. Use for recency sorting on
+   * inbound/search hits without an N+1 follow-up `get_block` per result.
+   * FLO-684.
+   */
+  updatedAt?: number;
+  /**
+   * Block output type when set (e.g., `"door"`, `"eval-result"`,
+   * `"search-results"`). Mirrors `BlockDto.outputType` so MCP/agent
+   * consumers can distinguish a door spec from a plain text block without
+   * a follow-up GET. FLO-684.
+   */
+  outputType?: string;
+  /**
    * Navigation-layer surface — populated on every hit. Cheap fields
    * always-on; opt-in fields (`effectiveMarkers`, `inboundSamples`) gated
    * by `?include=`.

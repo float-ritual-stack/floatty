@@ -129,11 +129,37 @@ pub struct BlockSearchHit {
     pub snippet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_type: Option<String>,
+    /// Block creation timestamp (ms since epoch). Read from Y.Doc at response
+    /// time alongside `content`/`metadata`. `0` when the block is no longer
+    /// in the store (deleted-but-still-indexed race during eventual-consistency
+    /// window). Matches `BlockDto.createdAt` for the same block — the symmetry
+    /// harness asserts this. Added in FLO-684.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub created_at: i64,
+    /// Block last-update timestamp (ms since epoch). Single source of truth is
+    /// the block's `updatedAt` Y.Map field — frontend stamps on every local
+    /// edit, REST mutations stamp on PATCH/POST. Tantivy's `updated_at` STORED
+    /// column is downstream (seconds-resolution, recency-sort key); the
+    /// canonical wire surface here echoes Y.Doc's ms-resolution value. Added
+    /// in FLO-684.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub updated_at: i64,
+    /// Block output type when set (e.g., `"door"`, `"eval-result"`,
+    /// `"search-results"`). Mirrors `BlockDto.outputType`. Lets MCP/agent
+    /// consumers distinguish a door spec from a plain text block without a
+    /// follow-up `/blocks/:id` GET. Added in FLO-684.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_type: Option<String>,
     /// Navigation-layer surface. Always-on cheap fields;
     /// `effective_markers` and `inbound_samples` populated only when the
     /// caller passed the corresponding `?include=` directive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ancestor_context: Option<AncestorContext>,
+}
+
+#[inline]
+fn is_zero_i64(v: &i64) -> bool {
+    *v == 0
 }
 
 #[derive(Serialize, Deserialize)]

@@ -102,9 +102,14 @@ export function registerDataTools(server: McpServer) {
           return textResult({ error: `Page "${match.name}" is a stub (referenced but not created)` });
         }
 
-        const block = await floattyFetch<{ tree?: TreeNode[] }>(
-          `/api/v1/blocks/${match.blockId}?include=tree`,
-        );
+        // FLO-684: pull tree AND the page block's own createdAt/updatedAt/
+        // outputType so consumers can answer "when was this page last
+        // touched" without a third call. The Block type already carries
+        // createdAt/updatedAt; outputType is optional and skip-serialized
+        // when absent.
+        const block = await floattyFetch<
+          Block & { tree?: TreeNode[] }
+        >(`/api/v1/blocks/${match.blockId}?include=tree`);
 
         const lines: string[] = [];
         if (block.tree) {
@@ -118,6 +123,9 @@ export function registerDataTools(server: McpServer) {
           blockId: match.blockId,
           blockCount: block.tree?.length ?? 0,
           tree: lines.join("\n"),
+          createdAt: block.createdAt ?? null,
+          updatedAt: block.updatedAt ?? null,
+          outputType: block.outputType ?? null,
           // Inline orientation — the agent gets page identity, ancestor
           // chain, effective markers, and inbound count without a third
           // API call.
@@ -224,6 +232,14 @@ export function registerDataTools(server: McpServer) {
             breadcrumb: h.breadcrumb,
             markers: h.metadata?.markers,
             outlinks: h.metadata?.outlinks,
+            // FLO-684: timestamps + outputType passed through. `?? null` is
+            // the established idiom across this file for optional fields
+            // (ancestorContext, renderedMarkdown, outputType pre-FLO-684) —
+            // explicit absence handling for deleted-block / pre-684-server
+            // responses. Same projection applies to get_inbound below.
+            createdAt: h.createdAt ?? null,
+            updatedAt: h.updatedAt ?? null,
+            outputType: h.outputType ?? null,
             ancestorContext: h.ancestorContext ?? null,
           })),
         });
@@ -234,15 +250,47 @@ export function registerDataTools(server: McpServer) {
   );
 
   // 4. get_inbound — find blocks linking TO a target page via [[wikilinks]]
+  //
+  // Parameterized in FLO-684: `limit` (was hardcoded 15) and `metaFilter`
+  // (server-side `?has_markers=` shortcut) so artifact/agent consumers can
+  // ask for "only refs with metadata" or "only refs without" without paging
+  // through the whole list and filtering client-side.
+  //
+  // Hits also surface `createdAt`/`updatedAt`/`outputType` (FLO-684) so
+  // recency sort and door-vs-text classification work without an N+1
+  // `get_block` per result.
   server.tool(
     "get_inbound",
-    "Find blocks that link TO a target page via [[wikilinks]]. Use to discover what references or connects to a page. Each result includes the block's markers and outgoing outlinks for further graph traversal.",
-    { target: z.string().describe("Page or link name to find backlinks for") },
-    async ({ target }: { target: string }) => {
+    "Find blocks that link TO a target page via [[wikilinks]]. Use to discover what references or connects to a page. Each result includes the block's markers, outgoing outlinks, timestamps, and outputType for further graph traversal and recency sorting.",
+    {
+      target: z.string().describe("Page or link name to find backlinks for"),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(200)
+        .optional()
+        .describe("Max results (default 15, max 200)."),
+      metaFilter: z
+        .enum(["all", "with-meta", "without-meta"])
+        .optional()
+        .describe(
+          "Restrict to refs with/without metadata markers. Default 'all'."
+        ),
+    },
+    async ({
+      target,
+      limit = 15,
+      metaFilter = "all",
+    }: {
+      target: string;
+      limit?: number;
+      metaFilter?: "all" | "with-meta" | "without-meta";
+    }) => {
       try {
         const params = new URLSearchParams({
           outlink: target,
-          limit: "15",
+          limit: String(limit),
           include_breadcrumb: "true",
           include_metadata: "true",
           // Match search_blocks: opt into effective_markers so inherited
@@ -250,6 +298,11 @@ export function registerDataTools(server: McpServer) {
           // 2026-04-26 ancestor-context test pass flagged the gap.
           include: "effective_markers",
         });
+        if (metaFilter === "with-meta") {
+          params.set("has_markers", "true");
+        } else if (metaFilter === "without-meta") {
+          params.set("has_markers", "false");
+        }
 
         // NOTE: `score` is omitted from this projection. `get_inbound` uses
         // an outlink= filter with empty `q`, which the backend serves via
@@ -271,6 +324,9 @@ export function registerDataTools(server: McpServer) {
             breadcrumb: h.breadcrumb,
             markers: h.metadata?.markers,
             outlinks: h.metadata?.outlinks,
+            createdAt: h.createdAt ?? null,
+            updatedAt: h.updatedAt ?? null,
+            outputType: h.outputType ?? null,
             // Surfaces nearestPageName + subtreeSize so the caller knows
             // which page the inbound source lives in without a follow-up
             // navigate.
