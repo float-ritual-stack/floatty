@@ -71,7 +71,7 @@ describe('BBS_SPEC_JSON_SCHEMA_STRICT', () => {
     });
   });
 
-  it('declares root + elements + (extension) state at top level, both required', () => {
+  it('declares root + elements at top level, both required', () => {
     expect(strict.required).toEqual(expect.arrayContaining(['root', 'elements']));
     expect(Object.keys(strict.properties || {}).sort()).toEqual(['elements', 'root']);
   });
