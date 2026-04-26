@@ -187,6 +187,9 @@ importers:
       '@ai-sdk/react':
         specifier: ^3.0.151
         version: 3.0.164(react@19.2.4)(zod@4.3.6)
+      '@float/render-catalog':
+        specifier: workspace:*
+        version: link:../../packages/render-catalog
       '@json-render/core':
         specifier: ^0.18.0
         version: 0.18.0(zod@4.3.6)
@@ -325,6 +328,9 @@ importers:
 
   packages/render-door:
     dependencies:
+      '@float/render-catalog':
+        specifier: workspace:*
+        version: link:../render-catalog
       '@json-render/core':
         specifier: ^0.18.0
         version: 0.18.0(zod@4.3.6)

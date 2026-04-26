@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { defineCatalog } from '@json-render/core';
 import { schema } from '@json-render/solid/schema';
+import { sharedComponentDefinitions } from '@float/render-catalog/components';
 
 // ═══════════════════════════════════════════════════════════════
 // SHARED ENUMS
@@ -23,7 +24,14 @@ const accentEnum = z.enum(['magenta', 'cyan', 'coral', 'amber', 'muted']);
 
 export const bbsCatalog = defineCatalog(schema, {
   components: {
-    // ─── Layout ───────────────────────────────────────────
+    // ─── Shared FLOAT vocabulary (Set A — 12 components) ──
+    // Sourced from @float/render-catalog. Per FLO-657 — Section, Divider,
+    // PatternCard, GapItem, StatPill, TimelineEvent, WikilinkChip,
+    // LinkGraph, ActivityHeatmap, ProvenanceChain, RiskMatrix, TimelineDiff.
+    // Door-specific components below.
+    ...sharedComponentDefinitions,
+
+    // ─── Door-specific Layout ─────────────────────────────
     DocLayout: {
       props: z.strictObject({}),
       slots: ['sidebar', 'main'],
@@ -168,12 +176,6 @@ export const bbsCatalog = defineCatalog(schema, {
       }),
       slots: [],
       description: 'Text display',
-    },
-
-    Divider: {
-      props: z.object({}),
-      slots: [],
-      description: 'Horizontal divider line',
     },
 
     Card: {
@@ -328,15 +330,6 @@ export const bbsCatalog = defineCatalog(schema, {
       description: 'Green asterisk bullet item for shipped/completed work',
     },
 
-    WikilinkChip: {
-      props: z.object({
-        target: z.string(),
-        label: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Clickable [[bracket-wrapped]] cyan link that navigates to outline page',
-    },
-
     BacklinksFooter: {
       props: z.object({
         inbound: z.array(z.string()),
@@ -344,16 +337,6 @@ export const bbsCatalog = defineCatalog(schema, {
       }),
       slots: [],
       description: 'Bidirectional link footer: "referenced by" inbound + "links to" outbound',
-    },
-
-    PatternCard: {
-      props: z.object({
-        label: z.string(),
-        description: z.string(),
-        confidence: z.enum(['high', 'medium', 'low']).optional(),
-      }),
-      slots: ['default'],
-      description: 'A card showing a discovered pattern, theme, or recurring element. Use for surfacing one named insight; description body renders as markdown. Confidence renders as a colored uppercase badge (high=green, medium=amber, low=muted).',
     },
 
     ArcTimeline: {
@@ -507,123 +490,6 @@ export const bbsCatalog = defineCatalog(schema, {
       }),
       slots: [],
       description: 'Horizontal tab bar. "horizontal" uses underline, "pills" uses pill background. Use $bindState on active to sync with spec state for view switching.',
-    },
-
-    // ─── Visualizations (ported from explorer) ───────────
-    LinkGraph: {
-      props: z.object({
-        nodes: z.array(z.object({
-          id: z.string(),
-          label: z.string(),
-          color: z.string().optional(),
-          weight: z.number().optional(),
-          center: z.boolean().optional(),
-          ring: z.number().optional(),
-          type: z.string().optional(),
-        })),
-        edges: z.array(z.tuple([z.string(), z.string()])),
-        title: z.string().optional(),
-      }),
-      slots: [],
-      description: 'SVG radial link graph. One node with center:true at origin, others placed by ring distance (1-3). Edges as [fromId, toId] pairs. Weight affects node size. type:"stub" makes dashed edges and small dots. Good for page topology, dependency graphs, outline neighborhoods.',
-    },
-
-    ActivityHeatmap: {
-      props: z.object({
-        data: z.array(z.object({
-          label: z.string(),
-          value: z.number(),
-        })),
-        color: z.string().optional(),
-        title: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Grid of colored squares showing intensity. Each cell label+value, brightness scales with value. Good for session activity over time, block counts by day, commit frequency.',
-    },
-
-    ProvenanceChain: {
-      props: z.object({
-        steps: z.array(z.object({
-          source: z.string(),
-          content: z.string(),
-          docId: z.string().optional(),
-          confidence: z.number().optional(),
-          lines: z.string().optional(),
-        })),
-        title: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Vertical provenance chain showing source trail. Each step has source type (qmd/conversation/bbs/outline/loki/autorag) with colored dot, content, optional docId and confidence %. Good for showing how information was found, archaeology trails.',
-    },
-
-    RiskMatrix: {
-      props: z.object({
-        items: z.array(z.object({
-          label: z.string(),
-          severity: z.enum(['high', 'medium', 'low']),
-          impact: z.enum(['structural', 'content', 'cosmetic']),
-        })),
-        title: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Severity × impact grid. Rows: high/medium/low. Columns: structural/content/cosmetic. Items placed in matching cell. Good for gap analysis, risk assessment, issue triage.',
-    },
-
-    TimelineDiff: {
-      props: z.object({
-        before: z.object({
-          date: z.string(),
-          items: z.array(z.object({ text: z.string(), removed: z.boolean().optional() })),
-        }),
-        after: z.object({
-          date: z.string(),
-          items: z.array(z.object({ text: z.string(), added: z.boolean().optional() })),
-        }),
-        title: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Side-by-side before/after diff. Before items with removed:true get red strikethrough, after items with added:true get green highlight. Good for meeting diffs, process changes, status transitions.',
-    },
-
-    // ─── Layout Sections ─────────────────────────────────
-    Section: {
-      props: z.object({
-        title: z.string().optional(),
-        variant: z.enum(['default', 'highlight', 'warning']).optional(),
-      }),
-      slots: ['default'],
-      description: 'Titled section container. variant: highlight=cyan accent, warning=amber accent, default=gray. Children stacked below title. Good for grouping related content blocks.',
-    },
-
-    TimelineEvent: {
-      props: z.object({
-        time: z.string(),
-        label: z.string(),
-        color: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Single timeline event: right-aligned time, colored dot on vertical spine, label text. Use color to distinguish workstreams (e.g. cyan=float, amber=pharmacy). Stack multiple TimelineEvents inside a Section or Stack.',
-    },
-
-    StatPill: {
-      props: z.object({
-        label: z.string(),
-        value: z.string(),
-        color: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Inline pill-shaped stat: label half (dark) + value half (colored). More compact than TuiStat. Good for stat rows inside a horizontal Stack.',
-    },
-
-    GapItem: {
-      props: z.object({
-        description: z.string(),
-        severity: z.enum(['critical', 'warning', 'info']).optional(),
-        gapType: z.string().optional(),
-        target: z.string().optional(),
-      }),
-      slots: [],
-      description: 'Action item with severity indicator. severity: critical=red border+⏺, warning=amber+◆, info=cyan+◇. Optional target label shown below. Good for next-actions lists, gap analysis, issue triage.',
     },
 
     // ─── Tree ────────────────────────────────────────────

@@ -1,34 +1,16 @@
 import { defineCatalog } from "@json-render/core";
 import { schema } from "@json-render/react/schema";
+import { sharedComponentDefinitions } from "@float/render-catalog/components";
 import { z } from "zod";
 
 export const explorerCatalog = defineCatalog(schema, {
   components: {
-    Section: {
-      props: z.object({
-        title: z.string().describe("Section heading"),
-        variant: z
-          .enum(["default", "highlight", "warning"])
-          .optional()
-          .describe("Visual style"),
-      }),
-      slots: ["default"],
-      description:
-        "A collapsible analysis section with a heading. Use for major findings.",
-    },
+    // Shared FLOAT vocabulary (Set A — 12 components) sourced from
+    // @float/render-catalog per FLO-657: Section, Divider, PatternCard,
+    // GapItem, StatPill, TimelineEvent, WikilinkChip, LinkGraph,
+    // ActivityHeatmap, ProvenanceChain, RiskMatrix, TimelineDiff.
+    ...sharedComponentDefinitions,
 
-    PatternCard: {
-      props: z.object({
-        label: z.string().describe("Pattern name"),
-        description: z.string().describe("What this pattern means"),
-        confidence: z
-          .enum(["high", "medium", "low"])
-          .optional()
-          .describe("How confident you are"),
-      }),
-      description:
-        "A card showing a discovered pattern, theme, or recurring element.",
-    },
 
     BlockRef: {
       props: z.object({
@@ -38,30 +20,6 @@ export const explorerCatalog = defineCatalog(schema, {
       }),
       description:
         "A clickable reference to a block or page in the graph. Renders as a wikilink-style chip.",
-    },
-
-    GapItem: {
-      props: z.object({
-        description: z.string().describe("What's missing or incomplete"),
-        severity: z
-          .enum(["info", "warning", "critical"])
-          .optional()
-          .describe("How important this gap is"),
-        gapType: z
-          .enum(["stub", "orphan", "empty", "asymmetric", "unanswered"])
-          .optional()
-          .describe("Classification of the gap"),
-        evidence: z
-          .string()
-          .optional()
-          .describe("Supporting evidence or context for the gap"),
-        target: z
-          .string()
-          .optional()
-          .describe("Target page or issue to link to"),
-      }),
-      description:
-        "An identified gap: missing content, orphan link, unanswered question, empty stub.",
     },
 
     WalkChip: {
@@ -150,32 +108,6 @@ export const explorerCatalog = defineCatalog(schema, {
       }),
       description:
         "Numbered, expandable observation card for bridge walks. Severity determines left border color.",
-    },
-
-    StatPill: {
-      props: z.object({
-        label: z.string().describe("Stat label (e.g. 'blocks')"),
-        value: z.string().describe("Stat value (e.g. '539')"),
-        color: z
-          .string()
-          .optional()
-          .describe("Color token name"),
-      }),
-      description:
-        "Numeric stat counter with label. Use in summary responses.",
-    },
-
-    TimelineEvent: {
-      props: z.object({
-        time: z.string().describe("Timestamp label (e.g. '10:33')"),
-        label: z.string().describe("Event description"),
-        color: z
-          .string()
-          .optional()
-          .describe("Color token name for the dot"),
-      }),
-      description:
-        "Timeline dot + timestamp + label for session arc visualization.",
     },
 
     PatternCluster: {
@@ -269,11 +201,6 @@ export const explorerCatalog = defineCatalog(schema, {
         "Colored ▸ LABEL: prefix followed by body text. Use for cold-start briefing status lines.",
     },
 
-    Divider: {
-      props: z.object({}),
-      description: "Horizontal rule / visual separator.",
-    },
-
     Row: {
       props: z.object({}),
       slots: ["default"],
@@ -290,124 +217,6 @@ export const explorerCatalog = defineCatalog(schema, {
 
     // ── Rich visualizations (interactive data views) ─────────────────
 
-    LinkGraph: {
-      props: z.object({
-        nodes: z
-          .array(
-            z.object({
-              id: z.string(),
-              label: z.string(),
-              color: z.string().optional().describe("Color token name"),
-              weight: z.number().optional().describe("Node importance/size"),
-              center: z.boolean().optional().describe("Is this the focal node"),
-              ring: z.number().optional().describe("Distance ring from center (1-3)"),
-              type: z.string().optional().describe("'stub' for missing pages"),
-            })
-          )
-          .describe("Graph nodes"),
-        edges: z
-          .array(z.array(z.string()).min(2).max(2))
-          .describe("Edges as [fromId, toId] pairs"),
-      }),
-      description:
-        "SVG radial link graph with hover interactions. Visualizes page neighborhoods and wikilink connections.",
-    },
-
-    ActivityHeatmap: {
-      props: z.object({
-        data: z
-          .array(
-            z.object({
-              label: z.string().describe("Date or time label"),
-              value: z.number().describe("Activity count"),
-            })
-          )
-          .describe("Activity data points"),
-        color: z
-          .string()
-          .optional()
-          .describe("Color token for intensity gradient"),
-      }),
-      description:
-        "Block activity heatmap grid. Brighter cells = more activity.",
-    },
-
-    ProvenanceChain: {
-      props: z.object({
-        steps: z
-          .array(
-            z.object({
-              source: z
-                .string()
-                .describe("Source type: qmd, conversation, bbs, outline, loki, autorag"),
-              content: z.string().describe("What was found"),
-              docId: z.string().optional().describe("Source document ID"),
-              confidence: z
-                .number()
-                .min(0)
-                .max(1)
-                .optional()
-                .describe("Confidence score 0-1"),
-              lines: z
-                .string()
-                .optional()
-                .describe("Line range in source document"),
-            })
-          )
-          .describe("Provenance chain steps from most to least relevant"),
-      }),
-      description:
-        "Vertical provenance chain showing where a claim came from. Each step is a source with confidence.",
-    },
-
-    RiskMatrix: {
-      props: z.object({
-        items: z
-          .array(
-            z.object({
-              label: z.string().describe("Risk item description"),
-              severity: z
-                .enum(["high", "medium", "low"])
-                .describe("Severity level (rows)"),
-              impact: z
-                .enum(["structural", "content", "cosmetic"])
-                .describe("Impact type (columns)"),
-            })
-          )
-          .describe("Items to place in the matrix"),
-      }),
-      description:
-        "Severity × Impact risk matrix grid. Items placed by AI assessment. Use for gap audits.",
-    },
-
-    TimelineDiff: {
-      props: z.object({
-        before: z.object({
-          date: z.string().describe("Before state label"),
-          items: z
-            .array(
-              z.object({
-                text: z.string(),
-                removed: z.boolean().optional().describe("Was this removed"),
-              })
-            )
-            .describe("Before state items"),
-        }),
-        after: z.object({
-          date: z.string().describe("After state label"),
-          items: z
-            .array(
-              z.object({
-                text: z.string(),
-                added: z.boolean().optional().describe("Was this added"),
-              })
-            )
-            .describe("After state items"),
-        }),
-      }),
-      description:
-        "Side-by-side before/after comparison. Highlights added and removed items.",
-    },
 
     // ── Block primitives (outline tree rendering) ──────────────────────
 
@@ -464,14 +273,6 @@ export const explorerCatalog = defineCatalog(schema, {
           .describe("Number of results found"),
       }),
       description: "search:: or pick:: executable query block",
-    },
-
-    WikilinkChip: {
-      props: z.object({
-        target: z.string().describe("Wikilink target page name"),
-      }),
-      description:
-        "Inline [[wikilink]] — clickable reference to another page",
     },
 
     OutlinerBlock: {

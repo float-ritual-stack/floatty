@@ -26,6 +26,7 @@
     "transit": "node -e \"process.exit(0)\""
   },
   "dependencies": {
+    "@float/render-catalog": "workspace:*",
     "@json-render/core": "^0.18.0",
     "@json-render/solid": "^0.18.0",
     "dompurify": "^3.3.3",

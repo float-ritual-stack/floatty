@@ -16,6 +16,7 @@
   "dependencies": {
     "@ai-sdk/devtools": "^0.0.15",
     "@ai-sdk/react": "^3.0.151",
+    "@float/render-catalog": "workspace:*",
     "@json-render/core": "^0.18.0",
     "@json-render/mcp": "^0.18.0",
     "@json-render/react": "^0.18.0",
