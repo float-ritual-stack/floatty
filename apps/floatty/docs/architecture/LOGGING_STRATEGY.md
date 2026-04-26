@@ -656,7 +656,10 @@ These are NOT promotion candidates — they're code paths that currently emit no
 ### Verification Query
 
 ```bash
-LOKI_URL="https://float-bbs.ngrok.io/loki"
+# LOKI_URL points at the team's Loki query frontend.
+# Set via env var; the actual address lives in the internal infra runbook,
+# not this repo. Do NOT hardcode the ngrok / production URL here.
+LOKI_URL="${LOKI_URL:?set LOKI_URL to the team's Loki endpoint (see internal runbook)}"
 START=$(date -d '24 hours ago' +%s)000000000
 END=$(date +%s)000000000
 curl -sG "$LOKI_URL/loki/api/v1/query_range" \
