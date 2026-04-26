@@ -71,7 +71,7 @@ export const explorerComponentDefinitions = {
         .describe("Color token name"),
       icon: z.string().optional().describe("Lucide icon name"),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description:
       "Section header with icon, label, and divider line. Groups related content.",
   },
@@ -197,14 +197,14 @@ export const explorerComponentDefinitions = {
 
   Row: {
     props: z.object({}),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description:
       "Horizontal flex row — wraps chip children with gap. Use for metadata chip rows and link rows.",
   },
 
   Timeline: {
     props: z.object({}),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description:
       "Vertical container for TimelineEvent children. Use to group ordered ctx:: events, session arcs, or milestone sequences.",
   },
@@ -216,7 +216,7 @@ export const explorerComponentDefinitions = {
       level: z.enum(["h1", "h2", "h3"]).describe("Heading depth"),
       content: z.string().describe("Heading text"),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "Page/section heading block",
   },
 
@@ -239,7 +239,7 @@ export const explorerComponentDefinitions = {
         .optional()
         .describe("Whether this block has output children"),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "sh:: executable shell command block",
   },
 
@@ -273,8 +273,8 @@ export const explorerComponentDefinitions = {
       depth: z.number().optional().describe("Nesting depth"),
       blockId: z.string().optional().describe("Block UUID"),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description:
       "Generic outliner block — fallback for unrecognized types",
   },
-} as const;
+};

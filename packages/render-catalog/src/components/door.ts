@@ -14,7 +14,7 @@ export const doorComponentDefinitions = {
   // ─── Door-specific Layout ─────────────────────────────
   DocLayout: {
     props: z.strictObject({}),
-    slots: ["sidebar", "main"] as string[],
+    slots: ["sidebar", "main"],
     description: "Two-column layout: fixed sidebar + scrollable main content area",
   },
 
@@ -24,7 +24,7 @@ export const doorComponentDefinitions = {
       title: z.string(),
       subtitle: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Sidebar header with title and optional subtitle",
   },
 
@@ -33,7 +33,7 @@ export const doorComponentDefinitions = {
       label: z.string(),
       accent: accentEnum.optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "Sidebar section header (e.g. SYNTHESIS, ARCHAEOLOGY)",
   },
 
@@ -43,7 +43,7 @@ export const doorComponentDefinitions = {
       label: z.string(),
       active: z.boolean().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Sidebar navigation item with dot indicator",
   },
 
@@ -51,7 +51,7 @@ export const doorComponentDefinitions = {
     props: z.object({
       content: z.string(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Sidebar footer with metadata (dates, counts)",
   },
 
@@ -64,7 +64,7 @@ export const doorComponentDefinitions = {
       date: z.string(),
       author: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Entry header: type badge, title (serif), date/author",
   },
 
@@ -72,13 +72,13 @@ export const doorComponentDefinitions = {
     props: z.object({
       markdown: z.string(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Renders markdown content with session-garden styling (serif body, mono code)",
   },
 
   Ellipsis: {
     props: z.object({}),
-    slots: [] as string[],
+    slots: [],
     description: "Centered · · · separator indicating truncated content",
   },
 
@@ -87,7 +87,7 @@ export const doorComponentDefinitions = {
     props: z.object({
       gap: z.number().optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "Horizontal flex container for tag chips",
   },
 
@@ -96,7 +96,7 @@ export const doorComponentDefinitions = {
       name: z.string(),
       active: z.boolean().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Clickable tag chip with active state",
   },
 
@@ -105,7 +105,7 @@ export const doorComponentDefinitions = {
     props: z.object({
       label: z.string().optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "Connected references section with header",
   },
 
@@ -115,7 +115,7 @@ export const doorComponentDefinitions = {
       type: z.string(),
       title: z.string(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Clickable reference card linking to another entry",
   },
 
@@ -124,7 +124,7 @@ export const doorComponentDefinitions = {
     props: z.object({
       label: z.string(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Back navigation breadcrumb (← label)",
   },
 
@@ -142,7 +142,7 @@ export const doorComponentDefinitions = {
       borderRight: z.string().optional(),
       padding: z.string().optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "Layout container, stacks children vertically or horizontally. Supports width/flex for column layouts.",
   },
 
@@ -154,7 +154,7 @@ export const doorComponentDefinitions = {
       color: z.string().optional(),
       mono: z.boolean().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Text display",
   },
 
@@ -163,7 +163,7 @@ export const doorComponentDefinitions = {
       title: z.string().optional(),
       subtitle: z.string().optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "A card container with optional title",
   },
 
@@ -172,7 +172,7 @@ export const doorComponentDefinitions = {
       label: z.string(),
       value: z.string(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "A labeled metric value",
   },
 
@@ -181,7 +181,7 @@ export const doorComponentDefinitions = {
       label: z.string(),
       variant: z.enum(["primary", "secondary", "danger"]).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Clickable button that emits press event",
   },
 
@@ -191,7 +191,7 @@ export const doorComponentDefinitions = {
       placeholder: z.string().optional(),
       value: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Single-line text input with optional label. Use $bindState for two-way state binding.",
   },
 
@@ -202,7 +202,7 @@ export const doorComponentDefinitions = {
       rows: z.number().optional(),
       value: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Multi-line text area with optional label. Use $bindState for two-way state binding.",
   },
 
@@ -211,7 +211,7 @@ export const doorComponentDefinitions = {
       content: z.string(),
       language: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Code block display",
   },
 
@@ -221,7 +221,7 @@ export const doorComponentDefinitions = {
       title: z.string().optional(),
       titleColor: z.string().optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "Bordered container with title floating on top border edge",
   },
 
@@ -233,7 +233,7 @@ export const doorComponentDefinitions = {
       parentId: z.string().nullable().optional(),
       index: z.number().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "FLO-587 — draggable card used inside KanbanColumn. Binds to /cards/<blockId>/content for two-way sync. On drop, emits a move-block chirp the host routes to useBlockStore.moveBlock.",
   },
 
@@ -244,7 +244,7 @@ export const doorComponentDefinitions = {
       blockId: z.string().optional(),
       childCount: z.number().optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "FLO-587 — drop-target column that wraps a stack of KanbanCards. Accepts drops to append to the end (e.g. empty column or drop below last card).",
   },
 
@@ -254,7 +254,7 @@ export const doorComponentDefinitions = {
       value: z.string(),
       color: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Centered metric card: label above, bold value below",
   },
 
@@ -264,7 +264,7 @@ export const doorComponentDefinitions = {
       maxHeight: z.number().optional(),
       max: z.number().optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "Normalized vertical bar chart. Children are BarItem components. Auto-scales from children values. IMPORTANT: only compare similar-magnitude values — if one value is 10x the rest, the small bars become invisible. For skewed data, exclude outliers or use StatsBar instead.",
   },
 
@@ -275,7 +275,7 @@ export const doorComponentDefinitions = {
       max: z.number().optional(),
       color: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Single bar in a BarChart. Height = value/max * 100%. Inherits max from parent BarChart if not set on individual item.",
   },
 
@@ -285,7 +285,7 @@ export const doorComponentDefinitions = {
       label: z.string().optional(),
       content: z.string(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Monospace pre block with optional floating label",
   },
 
@@ -298,7 +298,7 @@ export const doorComponentDefinitions = {
       borderRadius: z.number().optional(),
       caption: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Image display. src = filename for attachments or full URL. Omit maxWidth for full-width.",
   },
 
@@ -306,7 +306,7 @@ export const doorComponentDefinitions = {
     props: z.object({
       content: z.string(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Green asterisk bullet item for shipped/completed work",
   },
 
@@ -315,7 +315,7 @@ export const doorComponentDefinitions = {
       inbound: z.array(z.string()),
       outbound: z.array(z.string()),
     }),
-    slots: [] as string[],
+    slots: [],
     description: 'Bidirectional link footer: "referenced by" inbound + "links to" outbound',
   },
 
@@ -334,7 +334,7 @@ export const doorComponentDefinitions = {
       })),
       title: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: 'Collapsible arc timeline for timelogs. Groups entries into arcs (work sessions) with colored left borders. Click arc to expand entry list. Shows DONE milestones, duration, entry count. Entries have time + dot + label. Orphan entries shown separately. Project colors: floatty=cyan, float-hub=green, rangle=amber, json-render=magenta. Times as "HH:MM" (24h). Good for daily note timelogs.',
   },
 
@@ -347,7 +347,7 @@ export const doorComponentDefinitions = {
       newDecisions: z.array(z.string()).optional(),
       actions: z.array(z.object({ who: z.string(), what: z.string(), status: z.string(), blocker: z.string().optional() })).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Before/after grid showing process changes from a meeting. Steps colored by status (red=removed, green=added, gray=unchanged). Includes new decisions list and action items with assignee/status/blocker. Good for post-meeting synthesis.",
   },
 
@@ -356,7 +356,7 @@ export const doorComponentDefinitions = {
       decisions: z.array(z.object({ date: z.string(), meeting: z.string(), text: z.string(), status: z.string(), source: z.string().optional(), project: z.string().optional() })),
       title: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Filterable list of project decisions with date, meeting source, and status (active/superseded). Filter tabs at top. Active decisions have cyan border, superseded are dimmed with strikethrough. Good for tracking decisions across meetings.",
   },
 
@@ -365,7 +365,7 @@ export const doorComponentDefinitions = {
       nodes: z.array(z.object({ id: z.string(), title: z.string(), assignee: z.string(), status: z.string(), deps: z.array(z.string()) })),
       blocker: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Horizontal linked-card chain showing issue dependencies. Cards connected by → arrows with id/title/assignee/status. Colors: todo=cyan, blocked=amber, done=green. Optional blocker callout below. Good for sprint planning, blocked-work viz.",
   },
 
@@ -374,7 +374,7 @@ export const doorComponentDefinitions = {
       captures: z.array(z.object({ time: z.string(), project: z.string(), mode: z.string(), text: z.string() })),
       title: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Filterable timeline of ctx:: captures with project color coding, mode badges, and context-switch markers. Click to expand entries. Project filter chips at top. Good for daily dashboards, session archaeology views.",
   },
 
@@ -385,7 +385,7 @@ export const doorComponentDefinitions = {
       count: z.number().optional(),
       size: z.enum(["sm", "md"]).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Colored mode badge. work=cyan, float=magenta, life=green, pebble=amber, rent=coral, spike=coral.",
   },
 
@@ -395,7 +395,7 @@ export const doorComponentDefinitions = {
       attribution: z.string().optional(),
       type: z.enum(["quote", "insight", "note"]).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Styled quote block with left border accent and optional attribution line. quote=gray, insight=cyan, note=amber.",
   },
 
@@ -407,7 +407,7 @@ export const doorComponentDefinitions = {
       tags: z.array(z.string()).optional(),
       color: z.string().optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Timeline entry row: time dot on left spine, title + optional body + tags on right. Good for timelogs, session entries, daily notes.",
   },
 
@@ -420,7 +420,7 @@ export const doorComponentDefinitions = {
       })),
       layout: z.enum(["row", "grid"]).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Horizontal row (or grid) of labeled stat values with optional per-stat colors. Good for dashboards, summaries.",
   },
 
@@ -431,7 +431,7 @@ export const doorComponentDefinitions = {
       date: z.string().optional(),
       stats: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Document header with title, optional subtitle, date, and inline stats row.",
   },
 
@@ -442,7 +442,7 @@ export const doorComponentDefinitions = {
       color: z.string().optional(),
       count: z.number().optional(),
     }),
-    slots: ["default"] as string[],
+    slots: ["default"],
     description: "Collapsible section with colored title bar and item count. Click header to toggle. Good for grouping entries, day sections, category lists.",
   },
 
@@ -455,7 +455,7 @@ export const doorComponentDefinitions = {
       })),
       active: z.union([z.string(), z.record(z.string(), z.unknown())]),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Horizontal row of filter buttons. Active button is highlighted. Use $bindState on active to sync with spec state for visibility switching.",
   },
 
@@ -468,7 +468,7 @@ export const doorComponentDefinitions = {
       active: z.union([z.string(), z.record(z.string(), z.unknown())]),
       variant: z.enum(["horizontal", "pills"]).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: 'Horizontal tab bar. "horizontal" uses underline, "pills" uses pill background. Use $bindState on active to sync with spec state for view switching.',
   },
 
@@ -497,7 +497,7 @@ export const doorComponentDefinitions = {
       defaultExpanded: z.boolean().optional(),
       connectsTo: z.array(z.string()).optional(),
     }),
-    slots: [] as string[],
+    slots: [],
     description: "Hierarchical tree with expand/collapse, status-colored nodes, and optional detail text. Up to 3 levels deep. Status colors: done=green, active=cyan, pending=dimmed, deferred=amber. Nodes with children are collapsible. Good for work breakdowns, dependency trees, outline structure, step lists with sub-items. connectsTo adds wikilink footer.",
   },
-} as const;
+};
