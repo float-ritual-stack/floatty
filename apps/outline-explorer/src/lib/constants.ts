@@ -1,4 +1,6 @@
 // Color palette — matches the artifact's C object, exposed as Tailwind theme tokens
+import type { Marker } from "./types.js";
+
 export const colors = {
   bg: "#0d0d0d",
   surface: "#141414",
@@ -36,7 +38,7 @@ export const typeColors: Record<string, string> = {
 };
 
 export function getProject(block: {
-  metadata?: { markers?: { markerType: string; value: string }[] } | null;
+  metadata?: { markers?: Marker[] } | null;
 }): string | null {
   return (
     block?.metadata?.markers?.find((m) => m.markerType === "project")?.value?.trim() || null
