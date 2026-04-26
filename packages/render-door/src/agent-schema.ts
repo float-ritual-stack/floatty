@@ -2,12 +2,12 @@
  * Agent-side primitives for the render:: door — JSON Schema export and the
  * system prompt builder used by the `claude -p` agent path.
  *
- * Phase 1 of the render-agent refactor (see /Users/evan/.claude/plans/
- * eventual-inventing-pond.md) — these are pure additions / verbatim moves.
- * Behavior is unchanged from the prior inline definitions in render.tsx.
+ * Landed as Phase 1 of the render-agent refactor — pure additions /
+ * verbatim moves. Behavior is unchanged from the prior inline definitions
+ * in render.tsx. See the originating PR for phase breakdown and rationale.
  *
- * See `apps/floatty/.claude/rules/render-door-agent.md` for the operational
- * rule (which sources to read before editing this file).
+ * See `.claude/rules/render-door-agent.md` for the operational rule
+ * (which sources to read before editing this file).
  */
 
 import { bbsCatalog } from './catalog';
@@ -78,7 +78,7 @@ let _cachedCatalogPrompt: string | null = null;
 export function buildAgentSystemPrompt(): string {
   const catalogPrompt = _cachedCatalogPrompt ??= bbsCatalog.prompt();
   const stateIdx = catalogPrompt.indexOf('INITIAL STATE');
-  const componentSection = stateIdx > 0 ? catalogPrompt.substring(stateIdx) : catalogPrompt;
+  const componentSection = stateIdx !== -1 ? catalogPrompt.substring(stateIdx) : catalogPrompt;
 
   return [
     'You generate JSON render specs for floatty, a dark-themed terminal outliner.',

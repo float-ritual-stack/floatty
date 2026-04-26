@@ -2,7 +2,7 @@
 paths:
   - "packages/render-door/src/render.tsx"
   - "packages/render-door/src/catalog.ts"
-  - "packages/render-door/src/agent-prompt*"
+  - "packages/render-door/src/agent-*"
   - "packages/render-catalog/src/**/*"
   - "apps/floatty/doors/render-test/**/*"
 ---
@@ -53,7 +53,7 @@ If you need per-element validation, use **non-strict mode** (`bbsCatalog.jsonSch
 
 ### `--json-schema` requires `--output-format json`
 
-The current agent path uses `--output-format text` and extracts the spec via fenced-block regex (`render.tsx:836-845`). When wiring `--json-schema`, switch to `--output-format json` so the parsed result IS the spec — the fence-extraction heuristic becomes dead code and should be deleted. Don't keep both: they're alternatives, not a fallback chain.
+The agent path uses `--output-format json` with `--json-schema` — the parsed result IS the spec, and `wrapper.structured_output` carries it directly (already-parsed object alongside the string-encoded `wrapper.result`). The prior text-mode + fenced-block extraction path was removed in the 2026-04-26 refactor. **Don't add fence-extraction heuristics as a fallback** — structured output replaces them entirely. The two are alternatives, not a fallback chain.
 
 ### `catalog.prompt()` is the canonical system prompt
 
@@ -68,7 +68,7 @@ The docs describe a JSONL streaming format (RFC 6902 patches) for progressive re
 - **Don't write a JSON Schema next to `catalog.ts`.** Call `bbsCatalog.jsonSchema(...)` and serialize at use-site.
 - **Don't grep `node_modules/.../dist/*.d.ts` first.** Go to `~/projects/_reference/json-render/packages/*/src/`. Bundled `.d.ts` flattens module structure; source preserves it.
 - **Don't copy the doc URLs into a CLAUDE.md.** Refresh `~/float-hub/float.dispatch/references/json-render-docs.md` (it has dated frontmatter). Update its `snapshot_date` when you do.
-- **Don't keep the fenced-block extractor when `--json-schema` is wired.** Delete `render.tsx:836-845` heuristic. Structured output replaces it.
+- **Don't reintroduce the fenced-block extractor.** The prior `render.tsx` heuristic was deleted with the 2026-04-26 refactor; `--json-schema` + `wrapper.structured_output` replaces it entirely.
 - **Don't hand-write a system prompt that re-lists components.** Use `bbsCatalog.prompt()`. Pass project-specific guidance via `customRules` only.
 - **Don't assume `react/src/schema.ts` shape applies.** The render door uses `@json-render/solid/schema`. Verify against `solid/src/schema.ts:10-95`.
 

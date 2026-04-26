@@ -706,8 +706,8 @@ async function tauriShellExec(command: string): Promise<string> {
 }
 
 // `buildAgentSystemPrompt` and the catalog-prompt cache moved to ./agent-schema
-// in Phase 1 of the render-agent refactor. See /Users/evan/.claude/plans/
-// eventual-inventing-pond.md and apps/floatty/.claude/rules/render-door-agent.md.
+// in Phase 1 of the render-agent refactor. See `.claude/rules/render-door-agent.md`
+// for the operational rule and the originating PR for phase rationale.
 
 interface AgentResult {
   spec: Spec;
@@ -782,11 +782,18 @@ async function generateSpecViaAgent(userPrompt: string, ctx: DoorContext, option
   // `.claude/rules/render-door-agent.md` for the operational rule.
   const escapedPrompt = fullPrompt.replace(/'/g, "'\\''");
   const escapedSchema = JSON.stringify(BBS_AGENT_REQUEST_SCHEMA).replace(/'/g, "'\\''");
+  // Note: do NOT redirect stderr (`2>&1`) into stdout. With --output-format json
+  // the entire stdout must be a single JSON wrapper; any stderr noise from the
+  // claude CLI (rate-limit notices, model-selection messages, etc.) would
+  // corrupt JSON.parse. The Rust `execute_shell` helper appends stderr only on
+  // non-zero exit (`format!("{}\nError: {}", stdout, stderr)` in
+  // apps/floatty/src-tauri/src/services/execution.rs:62-66) — that's diagnostic
+  // info we want to keep, and it'll fail JSON.parse loudly with the raw output.
   const command = `cd "${agentCwd}" && ${agentBinary} -p${sessionFlag}`
     + ` --dangerously-skip-permissions`
     + ` --output-format json`
     + ` --json-schema '${escapedSchema}'`
-    + ` '${escapedPrompt}' 2>&1`;
+    + ` '${escapedPrompt}'`;
   ctx.log('[render::agent] command:', agentBinary, sessionFlag || '(new session)', '+ --json-schema (structured output)');
 
   const raw = await tauriShellExec(command);
