@@ -1168,32 +1168,34 @@ pub(crate) fn update_block(
                     ));
                 }
 
-                // Walk ancestor chain to prevent cycles (can't parent under a descendant)
-                let mut cursor = Some(new_parent_id.clone());
-                let mut depth = 0;
+                // Walk ancestor chain to prevent cycles (can't parent under a descendant).
+                // Migrated to `walk_ancestors` (FLO-679 PR 1, commit 4). Pre-migration this
+                // was an inline `while let` loop that:
+                //   1. checked `pid == id` on each step → reject as "descendant cycle"
+                //   2. counted iterations and rejected at depth 1001 → "data corruption"
+                //
+                // The walker terminates on natural cycles already (visited-set), so the
+                // cycle check collapses to `walk.ids.contains(&id)`. The "deep tree =
+                // data corruption" guard is reproduced by walking with `MAX + 1` and
+                // rejecting when the cap saturates — matches the pre-migration error
+                // exactly. Self-parenting is caught by the explicit guard above; the
+                // walker starts from `new_parent_id`'s parent so it would not catch
+                // `new_parent_id == id` on its own.
                 const MAX_ANCESTOR_DEPTH: usize = 1000;
-                while let Some(pid) = cursor {
-                    if pid == id {
-                        return Err(ApiError::InvalidParent(format!(
-                            "Cannot reparent block {} under its own descendant",
-                            id
-                        )));
-                    }
-                    depth += 1;
-                    if depth > MAX_ANCESTOR_DEPTH {
-                        return Err(ApiError::InvalidParent(
-                            "Ancestor chain exceeds depth limit — possible data corruption"
-                                .to_string(),
-                        ));
-                    }
-                    cursor = blocks.get(&txn, &pid).and_then(|v| match v {
-                        yrs::Out::YMap(m) => m.get(&txn, "parentId").and_then(|v| match v {
-                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                            yrs::Out::Any(yrs::Any::Null) => None,
-                            _ => None,
-                        }),
-                        _ => None,
-                    });
+                let lookup = YDocParentLookup::new(&blocks, &txn);
+                let walk =
+                    walk_ancestors(&lookup, new_parent_id, MAX_ANCESTOR_DEPTH + 1, None);
+                if walk.depth as usize > MAX_ANCESTOR_DEPTH {
+                    return Err(ApiError::InvalidParent(
+                        "Ancestor chain exceeds depth limit — possible data corruption"
+                            .to_string(),
+                    ));
+                }
+                if walk.ids.iter().any(|aid| aid == &id) {
+                    return Err(ApiError::InvalidParent(format!(
+                        "Cannot reparent block {} under its own descendant",
+                        id
+                    )));
                 }
 
                 // Validate new parent exists
@@ -1770,6 +1772,91 @@ mod ancestor_migration_tests {
         // hit's chain is f → e → d → c → b → a → root (7 ancestors, capped to 10
         // by get_ancestors, then trimmed to 5 by the composer).
         assert_eq!(crumbs, vec!["f", "e", "d", "c", "b"]);
+    }
+
+    /// Cycle detection (commit 4 of PR 1) replaces an inline parent-walk with
+    /// `walk_ancestors(...).ids.contains(&id)` plus a depth-saturation check.
+    /// This test reproduces the predicate against a Y.Doc — proves the
+    /// `YDocParentLookup` adapter wiring catches the same descendant-cycle
+    /// case the pre-migration loop caught.
+    #[test]
+    fn cycle_detection_rejects_descendant_as_new_parent() {
+        // Existing tree: root → mid → leaf.
+        // Attempt: reparent `root` under `leaf` (creates a cycle).
+        // walk_ancestors(leaf) = [mid, root] → contains(root) → reject.
+        let doc = build_doc(&[
+            ("root", None, "root"),
+            ("mid", Some("root"), "mid"),
+            ("leaf", Some("mid"), "leaf"),
+        ]);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "leaf", 1001, None);
+        assert!(walk.ids.iter().any(|aid| aid == "root"));
+        assert!(walk.depth as usize <= 1000, "no false positive on depth cap");
+    }
+
+    #[test]
+    fn cycle_detection_allows_unrelated_subtree_reparent() {
+        // Two branches: A→A1, B→B1. Reparenting A1 under B is legal.
+        let doc = build_doc(&[
+            ("a", None, "a"),
+            ("a1", Some("a"), "a1"),
+            ("b", None, "b"),
+            ("b1", Some("b"), "b1"),
+        ]);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "b", 1001, None);
+        // Walking b's ancestors: b → none. b is a root.
+        assert!(walk.ids.is_empty());
+        // The cycle predicate would be: walk.ids.contains(&"a1") → false.
+        assert!(!walk.ids.iter().any(|aid| aid == "a1"));
+    }
+
+    #[test]
+    fn cycle_detection_depth_saturation_signals_corruption() {
+        // Build a 1002-deep chain. Walking with cap MAX+1 (1001) should saturate
+        // at depth 1001 → triggers the "data corruption" rejection branch.
+        let mut seeds: Vec<(String, Option<String>, String)> = Vec::new();
+        for i in 0..1003 {
+            let parent = if i == 0 { None } else { Some(format!("b{}", i - 1)) };
+            seeds.push((format!("b{}", i), parent, String::new()));
+        }
+        let seed_refs: Vec<(&str, Option<&str>, &str)> = seeds
+            .iter()
+            .map(|(id, p, c)| (id.as_str(), p.as_deref(), c.as_str()))
+            .collect();
+        let doc = build_doc(&seed_refs);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "b1002", 1001, None);
+        assert_eq!(walk.depth, 1001, "saturated at MAX_ANCESTOR_DEPTH + 1");
+        assert!(walk.depth as usize > 1000, "triggers corruption branch");
+    }
+
+    #[test]
+    fn cycle_detection_natural_cycle_terminates_safely() {
+        // Synthetic cycle x ↔ y. The walker must terminate without running
+        // away — pre-migration this hit the depth-1001 corruption branch;
+        // post-migration the visited-set short-circuits.
+        let doc = build_doc(&[("x", Some("y"), "x"), ("y", Some("x"), "y")]);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "x", 1001, None);
+        assert_eq!(walk.ids, vec!["y"]);
+        assert!(
+            (walk.depth as usize) <= 1000,
+            "cycle terminates well under the cap"
+        );
     }
 
     #[test]
