@@ -6,6 +6,29 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.13.2] - 2026-04-26
+
+Catch-all patch from Desktop Daddy's full ancestor-context test pass against the live outline ([[PR #284]], merged as 26ca959). Five mechanical fixes + one pre-existing PR #283 gap caught during the lint sweep, bundled because they were all mentally-loaded right then and the cognitive-overhead cost of triaging into separate tickets exceeded the cost of doing them in one motion. Two bot-review findings on the PR itself were also resolved in the same merge (greptile P1, coderabbit Minor).
+
+### 🐛 Fixes
+
+- **ProvenanceChain confidence value scale auto-detected** ([[PR #284]] bug #4): renderer now treats `confidence > 1 && <= 100` as already-percent (use as-is) and `<= 1` as fraction (multiply by 100). Daddy's spec passed `100` intending "100%" → rendered as `10000%` before this guard. Schema description in `packages/render-catalog/src/components/shared.ts` tightened to call out the schema-vs-runtime distinction explicitly: schema enforces 0–1, but `Spec` is permissive at runtime so agents bypassing validation still hit the renderer. The auto-detect is a defensive safety net; the contract is "emit fractions."
+- **Breadcrumb ordering consistency between endpoints** ([[PR #284]] bug #1): `search_blocks` returns breadcrumb rootmost-first (server composer does `take(5).rev()` in `shape_search_hit`); `get_block` returned innermost-first because the MCP wrapper mapped `ancestors[].content` directly without reversing. Fixed in two MCP call sites: `apps/outline-explorer/src/mcp/tools.ts:170` and `apps/outline-explorer/src/lib/tools/get-block.ts:29`. Agent code that does `breadcrumb[0]` now gets a consistent "rootmost ancestor" answer regardless of which endpoint produced the response.
+- **Marker parser unwraps embedded `[[wikilink]]` typos** ([[PR #284]] bug #2): `[project::[[floatty]]]` was capturing `[[floatty` because the `TAG_PATTERN` regex (`[^\]]+`) is greedy and stops at the first `]`. New `sanitize_marker_value()` helper in `floatty-core::hooks::parsing` strips a leading `[[` and trailing `]]` from captured values; clean values pass through unchanged. Two new unit tests lock the behavior in (`test_tag_marker_unwraps_embedded_wikilink`, `test_tag_marker_clean_value_passes_through`). Surfaced on a single historic block; low severity but unblocks downstream consumers expecting clean strings.
+- **Ancestor depth cap bumped 10 → 20** ([[PR #284]] watch-this): hoisted to a single `pub(crate) const ANCESTOR_CONTEXT_MAX_DEPTH: usize = 20` in `block_service.rs` covering both `compute_ancestor_context` (populates `ancestorBlockIds`) and `get_ancestors` (used by the breadcrumb composer). Live-outline depth probe (31,120 blocks) found real-world max=16 with ~700 blocks (2.2%) above the old cap silently truncating their rootmost ancestors. 20 leaves headroom (only 1 block above it today). Symmetry harness chain bumped 16 → 25 (`ancestor_block_ids_caps_at_walker_max`); companion lib test renamed `get_ancestors_caps_at_ten` → `get_ancestors_caps_at_walker_max`. `api-reference.md` wire docs updated to reflect the new cap.
+- **MCP `get_inbound` opt-in parity with `search_blocks`** ([[PR #284]] gap): `search_blocks` was passing `?include=effective_markers`; `get_inbound` wasn't. Added the param to both call sites (`mcp/tools.ts` server-side + `lib/tools/get-inbound.ts` AI-SDK), and wired the existing `include` opt in `SearchOptions` through `floatty-client.ts::searchBlocks` (the type was declared but the param builder skipped it — declaration-without-backfill, same shape as the v0.13.0 doctrine).
+- **`get_inbound` AI-SDK refs surface `ancestorContext`** ([[PR #284]] greptile P1 self-review): I added `include=effective_markers` but only the MCP-server path forwarded `h.ancestorContext` on hits; the AI-SDK tool's `refs` projection only forwarded `{content, breadcrumb}`. Pure backend overhead — fetched the data, dropped it before the caller. Now mirrors the MCP server shape. Caught by greptile bot-review on PR #284 itself; resolved in the same merge.
+
+### Internal
+
+- **`packages/render-catalog/eslint.config.js` created** ([[PR #284]], pre-existing PR #283 gap): the package shipped with `"lint": "eslint ."` in scripts but no config file. ESLint v9 fails fast without `eslint.config.js`, so `pnpm lint --force` was returning non-zero on `@float/render-catalog` even on clean main. Mirrors `packages/render-door/eslint.config.js` (no JSX, no console diagnostics, `_`-prefix unused-var convention). Same root-cause class as the v0.13.0 doctrine: forward-declared scripts without backfill are the load-bearing failure mode.
+
+### Doctrine surfaced this cycle
+
+- **"Audit blast radius" lesson, fourth instance** — same root cause as the three banked in v0.13.0 + v0.13.1 doctrine, except this time it bit me on the same PR I added the surface in. I added `include=effective_markers` to both `get_inbound` call sites in PR #284's initial commit but only updated ONE return projection to actually consume the result. Greptile caught it on bot review. Reinforces: when a feature has multiple call sites or multiple projection layers, the audit must visit ALL of them — not just the closest neighbor. Added to the audit checklist in the memory file (`feedback_audit_blast_radius_before_changing_shared_contracts.md`).
+
+---
+
 ## [0.13.1] - 2026-04-26
 
 ### 🐛 Fixes
