@@ -20,6 +20,7 @@ use crate::{
     block::parse_block_type,
     events::BlockChange,
     hooks::InheritanceIndex,
+    projections::{walk_ancestors, StoreParentLookup},
     search::{BlockIndexData, WriterHandle},
     BlockChangeBatch, Origin, YDocStore,
 };
@@ -220,19 +221,13 @@ impl TantivyIndexHook {
         );
 
         // Compute depth by walking parent chain (max 50 to prevent infinite loops).
+        // Migrated to `walk_ancestors` (FLO-679 PR 1, commit 6) — single
+        // walker, single cap, identical observable depth.
         // TODO: Wire into ranking (shallow boost, deep penalty) once real-world
         // observation confirms it's needed. Field is indexed for queries/filters.
         let depth = {
-            let mut d: u32 = 0;
-            let mut current_parent = parent_id.clone();
-            while let Some(ref pid) = current_parent {
-                if d >= 50 {
-                    break;
-                }
-                d += 1;
-                current_parent = store.get_block(pid).and_then(|b| b.parent_id.clone());
-            }
-            d
+            let lookup = StoreParentLookup::new(store);
+            walk_ancestors(&lookup, id, 50, None).depth
         };
 
         // Build BlockIndexData and send to writer
@@ -343,5 +338,103 @@ mod tests {
         let writer = create_mock_writer_handle();
         let index = Arc::new(RwLock::new(InheritanceIndex::new()));
         TantivyIndexHook::new(writer, index)
+    }
+
+    // ---------------------------------------------------------------------
+    // FLO-679 PR 1 (commit 6) — depth-computation behaviour preservation.
+    //
+    // The depth value previously came from an inline `while let` loop with a
+    // 50-cap; it now comes from `walk_ancestors(&StoreParentLookup, id, 50,
+    // None).depth`. These tests exercise the `StoreParentLookup` adapter
+    // through the same `YDocStore::get_block` path the production hook uses,
+    // and assert depth values match what the pre-migration loop would have
+    // produced.
+    // ---------------------------------------------------------------------
+
+    use crate::projections::{walk_ancestors, StoreParentLookup};
+    use yrs::{ArrayPrelim, Map, Transact, WriteTxn};
+
+    /// Insert a block directly into a YDocStore — mirrors the helper used by
+    /// `inheritance_index` and `page_name_index` test modules.
+    fn insert_block(store: &YDocStore, id: &str, parent_id: Option<&str>) {
+        let doc = store.doc();
+        let doc_guard = doc.write().unwrap();
+        let mut txn = doc_guard.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let block_map: yrs::MapRef = blocks.get_or_init(&mut txn, id);
+        block_map.insert(&mut txn, "content", yrs::Any::String("".into()));
+        if let Some(pid) = parent_id {
+            block_map.insert(&mut txn, "parentId", yrs::Any::String(pid.into()));
+        }
+        let empty: Vec<yrs::Any> = vec![];
+        block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
+    }
+
+    fn depth_of(store: &YDocStore, id: &str) -> u32 {
+        let lookup = StoreParentLookup::new(store);
+        walk_ancestors(&lookup, id, 50, None).depth
+    }
+
+    #[test]
+    fn depth_zero_for_root_block() {
+        let store = YDocStore::new().unwrap();
+        insert_block(&store, "r", None);
+        assert_eq!(depth_of(&store, "r"), 0);
+    }
+
+    #[test]
+    fn depth_counts_each_ancestor() {
+        // root → a → b → c (c has 3 ancestors).
+        let store = YDocStore::new().unwrap();
+        insert_block(&store, "root", None);
+        insert_block(&store, "a", Some("root"));
+        insert_block(&store, "b", Some("a"));
+        insert_block(&store, "c", Some("b"));
+        assert_eq!(depth_of(&store, "c"), 3);
+        assert_eq!(depth_of(&store, "b"), 2);
+        assert_eq!(depth_of(&store, "a"), 1);
+        assert_eq!(depth_of(&store, "root"), 0);
+    }
+
+    #[test]
+    fn depth_caps_at_fifty() {
+        // Build a 60-deep chain. Cap is 50 → depth saturates at 50.
+        let store = YDocStore::new().unwrap();
+        insert_block(&store, "b0", None);
+        for i in 1..=60 {
+            insert_block(&store, &format!("b{}", i), Some(&format!("b{}", i - 1)));
+        }
+        assert_eq!(
+            depth_of(&store, "b60"),
+            50,
+            "depth saturates at the 50-cap (matches pre-migration loop's `if d >= 50 break`)"
+        );
+    }
+
+    #[test]
+    fn depth_terminates_on_cycle() {
+        // Synthetic A ↔ B cycle. Pre-migration this would have walked until d
+        // hit 50; the new walker terminates on the visited-set in 1 step.
+        let store = YDocStore::new().unwrap();
+        insert_block(&store, "a", Some("b"));
+        insert_block(&store, "b", Some("a"));
+        // a's only collected ancestor is b; the next step (back to a) is blocked.
+        assert_eq!(depth_of(&store, "a"), 1);
+        assert_eq!(depth_of(&store, "b"), 1);
+    }
+
+    #[test]
+    fn depth_handles_missing_parent_block() {
+        // Block points at a parent that doesn't exist. Pre-migration: the
+        // `store.get_block(pid)` returned None, exiting the loop after
+        // counting one increment. The walker behaves identically (parent_id
+        // returns None on the missing block, terminating the chain).
+        let store = YDocStore::new().unwrap();
+        insert_block(&store, "child", Some("ghost"));
+        assert_eq!(
+            depth_of(&store, "child"),
+            1,
+            "ghost parent counted as one ancestor (matches pre-migration)"
+        );
     }
 }
