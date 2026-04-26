@@ -324,6 +324,23 @@ impl InheritanceIndex {
     pub fn clear(&mut self) {
         self.inherited.clear();
     }
+
+    /// Direct-insert inherited markers for a block. Mirrors the
+    /// `add_existing_page` mutator style on `PageNameIndex`.
+    ///
+    /// Production callers populate the index via `rebuild` /
+    /// `update_affected` from a `YDocStore`. This mutator exists for test
+    /// fixtures and out-of-tree harnesses (e.g., the symmetry harness in
+    /// `floatty-server/tests/symmetry_ancestor_context.rs`) that need to
+    /// assert downstream behaviour given pre-built inheritance state
+    /// without standing up the full SQLite-backed store machinery.
+    pub fn set_inherited(&mut self, block_id: &str, markers: Vec<InheritedMarker>) {
+        if markers.is_empty() {
+            self.inherited.remove(block_id);
+        } else {
+            self.inherited.insert(block_id.to_string(), markers);
+        }
+    }
 }
 
 impl Default for InheritanceIndex {

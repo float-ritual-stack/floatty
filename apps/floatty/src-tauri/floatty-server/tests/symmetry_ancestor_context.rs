@@ -48,7 +48,7 @@
 //! the existing handler unit tests (in `api/blocks.rs`, `api/discovery.rs`,
 //! etc.) which already pass through `compute_ancestor_context`.
 
-use floatty_core::PageNameIndex;
+use floatty_core::{InheritanceIndex, InheritedMarker, PageNameIndex};
 use floatty_server::api::{AncestorContext, BlockDto};
 use floatty_server::block_service::{
     attach_ancestor_context, compute_ancestor_context, compute_ancestor_context_with_hints,
@@ -409,9 +409,16 @@ fn ancestor_block_ids_caps_at_walker_max() {
 }
 
 /// CONTRACT 7: `effective_markers` is opt-in. Without `?include=effective_markers`
-/// in opts, the field is empty even when the InheritanceIndex is wired.
-/// Without this, every search hit would carry the inheritance lookup cost
-/// regardless of whether the caller asked for it.
+/// in opts, the field is empty even when the InheritanceIndex is wired with
+/// real inherited markers. With `?include=effective_markers` AND a wired
+/// index, the field populates.
+///
+/// PR #282 review (CodeRabbit Minor) banked this lesson: behavior-preservation
+/// tests preserve INTENT, not necessarily CORRECTNESS. The prior test passed
+/// `None` for the index in BOTH branches, so `effective_markers` stayed empty
+/// regardless of the gate — a regression that eagerly populated markers
+/// would still pass. This version builds a real `InheritanceIndex` fixture
+/// via `set_inherited` and proves the gate actually flips.
 #[test]
 fn effective_markers_opt_in_respected() {
     let doc = build_doc(&[
@@ -422,29 +429,43 @@ fn effective_markers_opt_in_respected() {
     let blocks_map = txn.get_map("blocks").expect("blocks map");
     let dto = read_skeletal_dto(&blocks_map, &txn, "leaf");
 
-    // Without opt-in: empty effective_markers (we pass None for the index, so
-    // there's nothing to read regardless — but the assertion is that the
-    // OPTS gate is what keeps the field empty in production paths too).
+    // Real InheritanceIndex fixture: `leaf` inherits `[project::demo]` from
+    // `root`. Production path is `index.rebuild(&YDocStore)` walking ancestor
+    // metadata; this test uses the `set_inherited` direct mutator so the
+    // assertion focuses on the OPTS gate rather than rebuild correctness
+    // (which has its own coverage in `floatty_core::hooks::inheritance_index`).
+    let mut inh = InheritanceIndex::new();
+    inh.set_inherited(
+        "leaf",
+        vec![InheritedMarker {
+            marker_type: "project".to_string(),
+            value: "demo".to_string(),
+            source_block_id: "root".to_string(),
+        }],
+    );
+
+    // GATE OFF: without `?include=effective_markers` in opts, the field
+    // stays empty even though the wired index has data for "leaf". This is
+    // the load-bearing assertion — if a regression made `compute_*`
+    // eagerly read the index regardless of opts, this would fail.
     let ctx_off = compute_ancestor_context(
         &blocks_map,
         &txn,
         "leaf",
         dto.metadata.as_ref(),
-        None,
+        Some(&inh),
         None,
         AncestorContextOpts::default(),
     )
     .expect("chain present → some ctx");
     assert!(
         ctx_off.effective_markers.is_empty(),
-        "without `?include=effective_markers`, no effective markers"
+        "without `?include=effective_markers`, no effective markers — \
+         even when the InheritanceIndex has data for this block"
     );
 
-    // With opt-in via `from_raw` — same input, but the opts now request
-    // effective_markers. Index is None so the lookup short-circuits to []
-    // — that's the same result, but the call shape now fires the lookup
-    // path. Production calls with a wired InheritanceIndex would surface
-    // markers; we're verifying the opts wiring, not the index population.
+    // GATE ON: same input + same wired index, but opts now request
+    // effective_markers. The inherited [project::demo] from root surfaces.
     let mut includes = HashSet::new();
     includes.insert("effective_markers".to_string());
     let opts_on = AncestorContextOpts::from_raw(&includes, 5);
@@ -453,14 +474,24 @@ fn effective_markers_opt_in_respected() {
         &txn,
         "leaf",
         dto.metadata.as_ref(),
-        None,
+        Some(&inh),
         None,
         opts_on,
     )
     .expect("chain present → some ctx");
     assert!(
-        ctx_on.effective_markers.is_empty(),
-        "with index=None even when opted-in, no effective markers (degrades cleanly)"
+        !ctx_on.effective_markers.is_empty(),
+        "with `?include=effective_markers` AND a wired index with data, \
+         effective_markers must populate — proves the gate flips"
+    );
+    let project_marker = ctx_on
+        .effective_markers
+        .iter()
+        .find(|m| m.marker_type == "project")
+        .expect("inherited [project::demo] from root must surface when gate is ON");
+    assert_eq!(
+        project_marker.value, "demo",
+        "value preserved through the inheritance lookup"
     );
 }
 
