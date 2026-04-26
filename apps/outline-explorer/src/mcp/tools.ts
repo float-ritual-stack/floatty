@@ -14,6 +14,7 @@ import { z } from "zod";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { buildQmdEnv, checkQmdAvailable } from "../lib/tools/qmd-shared.js";
+import type { Marker } from "../lib/types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -181,19 +182,26 @@ export function registerDataTools(server: McpServer) {
         const results = await floattyFetch<{
           total: number;
           hits: {
+            blockId: string;
+            score: number;
+            blockType: string;
             content: string;
             snippet: string | null;
             breadcrumb?: string[];
-            metadata?: { outlinks?: string[] } | null;
+            metadata?: { markers?: Marker[]; outlinks?: string[] } | null;
           }[];
         }>(`/api/v1/search?${params}`);
 
         return textResult({
           total: results.total,
           hits: results.hits.map((h) => ({
+            blockId: h.blockId,
+            score: h.score,
+            blockType: h.blockType,
             content: h.content,
             snippet: h.snippet,
             breadcrumb: h.breadcrumb,
+            markers: h.metadata?.markers,
             outlinks: h.metadata?.outlinks,
           })),
         });
@@ -206,7 +214,7 @@ export function registerDataTools(server: McpServer) {
   // 4. get_inbound — find blocks linking TO a target page via [[wikilinks]]
   server.tool(
     "get_inbound",
-    "Find blocks that link TO a target page via [[wikilinks]]. Use to discover what references or connects to a page.",
+    "Find blocks that link TO a target page via [[wikilinks]]. Use to discover what references or connects to a page. Each result includes the block's markers and outgoing outlinks for further graph traversal.",
     { target: z.string().describe("Page or link name to find backlinks for") },
     async ({ target }: { target: string }) => {
       try {
@@ -217,16 +225,32 @@ export function registerDataTools(server: McpServer) {
           include_metadata: "true",
         });
 
+        // NOTE: `score` is omitted from this projection. `get_inbound` uses
+        // an outlink= filter with empty `q`, which the backend serves via
+        // tantivy's AllQuery — every hit gets a constant score (1.0), so the
+        // value carries no ranking signal. See
+        // apps/floatty/src-tauri/floatty-core/src/search/service.rs
+        // (search_with_filters: `if query_trimmed.is_empty() { Box::new(AllQuery) }`).
         const results = await floattyFetch<{
           total: number;
-          hits: { content: string; breadcrumb?: string[] }[];
+          hits: {
+            blockId: string;
+            blockType: string;
+            content: string;
+            breadcrumb?: string[];
+            metadata?: { markers?: Marker[]; outlinks?: string[] } | null;
+          }[];
         }>(`/api/v1/search?${params}`);
 
         return textResult({
           total: results.total,
           refs: results.hits.map((h) => ({
+            blockId: h.blockId,
+            blockType: h.blockType,
             content: h.content,
             breadcrumb: h.breadcrumb,
+            markers: h.metadata?.markers,
+            outlinks: h.metadata?.outlinks,
           })),
         });
       } catch (e) {
