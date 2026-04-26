@@ -262,24 +262,34 @@ impl TantivyIndexHook {
         // cost when a page-ancestor sits near the block.
         //
         // Lock-poisoning policy: indexing is best-effort, so a poisoned
-        // PageNameIndex degrades to "no nearest_page_* fields" rather than
-        // aborting the index. We `warn!` so the degradation is visible —
-        // silently dropping search-quality fields would let a single
-        // upstream panic invisibly corrupt every subsequent index entry.
+        // PageNameIndex degrades to "no nearest_page_* fields + zero
+        // inbound_count/inbound_block_ids" rather than aborting the
+        // index. We `warn!` so the degradation is visible — silently
+        // dropping search-quality fields would let a single upstream
+        // panic invisibly corrupt every subsequent index entry.
+        //
+        // Lock acquisition: hoisted to a single `read()` per indexed
+        // block (PR #282 review — Greptile P2). Both the walk and the
+        // inbound-derivation step share the same guard, dropping it at
+        // the end of the indexing pass for this block. Read-read is
+        // safe; single acquisition halves the syscall-level lock cost
+        // at indexing throughput.
+        let page_index_guard = self.page_name_index.as_ref().and_then(|p| match p.read() {
+            Ok(g) => Some(g),
+            Err(e) => {
+                warn!(
+                    block_id = %id,
+                    error = %e,
+                    "PageNameIndex lock poisoned during indexing — \
+                     nearest_page_* fields and inbound_count will be \
+                     empty/zero for this block"
+                );
+                None
+            }
+        });
+
         let walk_full = {
             let lookup = StoreParentLookup::new(store);
-            let page_index_guard = self.page_name_index.as_ref().and_then(|p| match p.read() {
-                Ok(g) => Some(g),
-                Err(e) => {
-                    warn!(
-                        block_id = %id,
-                        error = %e,
-                        "PageNameIndex lock poisoned during indexing — \
-                         nearest_page_* fields will be empty for this block"
-                    );
-                    None
-                }
-            });
             walk_ancestors(&lookup, id, 50, page_index_guard.as_deref())
         };
 
@@ -297,27 +307,10 @@ impl TantivyIndexHook {
         // Inbound count + samples: derived from PageNameIndex if available.
         // Inbound = blocks whose `outlinks` reference this block's nearest
         // page name (or this block itself if it IS a registered page).
-        // Single read-guard scope, single reverse-index lookup — no linear
-        // scans (Fix 3 + Fix 9 in the simplify pass).
-        //
-        // Lock-poisoning policy: same as the walk above — `warn!` and
-        // degrade to (0, vec![]) rather than silently dropping the
-        // inbound-count field for every subsequent block.
-        let (inbound_count, inbound_block_ids) = self
-            .page_name_index
+        // Single read-guard scope (hoisted above), single reverse-index
+        // lookup — no linear scans (Fix 3 + Fix 9 in the simplify pass).
+        let (inbound_count, inbound_block_ids) = page_index_guard
             .as_ref()
-            .and_then(|idx_arc| match idx_arc.read() {
-                Ok(g) => Some(g),
-                Err(e) => {
-                    warn!(
-                        block_id = %id,
-                        error = %e,
-                        "PageNameIndex lock poisoned during indexing — \
-                         inbound_count + inbound_block_ids will be zero for this block"
-                    );
-                    None
-                }
-            })
             .and_then(|g| {
                 // If THIS block IS a registered page, use its own name; else
                 // fall back to the nearest ancestor page from the walk.
@@ -333,6 +326,11 @@ impl TantivyIndexHook {
                 Some((count, samples))
             })
             .unwrap_or((0, vec![]));
+
+        // Drop the read guard explicitly — pedantic, but documents that
+        // we're done with PageNameIndex before sending the index payload
+        // to the (potentially blocking) writer task.
+        drop(page_index_guard);
 
         // Build BlockIndexData and send to writer
         let data = BlockIndexData {
