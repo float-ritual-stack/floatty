@@ -348,14 +348,12 @@ export const bbsCatalog = defineCatalog(schema, {
 
     PatternCard: {
       props: z.object({
-        title: z.string(),
-        type: z.string().optional(),
-        confidence: z.string().optional(),
-        content: z.string(),
-        connectsTo: z.array(z.string()).optional(),
+        label: z.string(),
+        description: z.string(),
+        confidence: z.enum(['high', 'medium', 'low']).optional(),
       }),
       slots: ['default'],
-      description: 'Expandable card with type/confidence badges, markdown body, and connectsTo footer',
+      description: 'A card showing a discovered pattern, theme, or recurring element. Use for surfacing one named insight; description body renders as markdown. Confidence renders as a colored uppercase badge (high=green, medium=amber, low=muted).',
     },
 
     ArcTimeline: {

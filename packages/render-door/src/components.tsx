@@ -1161,28 +1161,18 @@ export function BacklinksFooter(props: BaseComponentProps<{ inbound: string[]; o
 }
 
 export function PatternCard(props: BaseComponentProps<{
-  title: string;
-  type?: string;
-  confidence?: string;
-  content: string;
-  connectsTo?: string[];
+  label: string;
+  description: string;
+  confidence?: 'high' | 'medium' | 'low';
 }>) {
   const [expanded, setExpanded] = createSignal(true);
 
-  const typeColor = () => {
-    switch (props.props.type) {
-      case 'pattern': return V.mag;
-      case 'reference': return V.cy;
-      case 'field-note': return V.amb;
-      default: return V.td;
-    }
-  };
-
-  const confidenceIcon = () => {
+  const confidenceColor = () => {
     switch (props.props.confidence) {
-      case 'VERIFIED': return '\u2713';
-      case 'INFERRED': return '?';
-      default: return '';
+      case 'high': return V.green;
+      case 'medium': return V.amb;
+      case 'low': return V.tf;
+      default: return V.td;
     }
   };
 
@@ -1213,62 +1203,25 @@ export function PatternCard(props: BaseComponentProps<{
           flex: '1',
           'font-family': V.mono,
         }}>
-          {props.props.title}
+          {props.props.label}
         </span>
-        <Show when={props.props.type}>
-          <span style={{
-            'font-size': '9px',
-            'letter-spacing': '1px',
-            'text-transform': 'uppercase',
-            padding: '2px 6px',
-            border: `1px solid ${typeColor()}40`,
-            color: typeColor(),
-            'font-family': V.mono,
-          }}>
-            {props.props.type}
-          </span>
-        </Show>
         <Show when={props.props.confidence}>
           <span style={{
             'font-size': '10px',
-            color: props.props.confidence === 'VERIFIED' ? V.green : V.amb,
+            color: confidenceColor(),
             'font-family': V.mono,
+            'text-transform': 'uppercase',
+            'letter-spacing': '1px',
           }}>
-            {confidenceIcon()} {props.props.confidence}
+            {props.props.confidence}
           </span>
         </Show>
       </div>
 
       <Show when={expanded()}>
         <div style={{ padding: '12px 14px' }}>
-          <div class="bbs-entry-body" innerHTML={sanitize(renderMarkdown(props.props.content))} onClick={handleWikilinkClick} />
+          <div class="bbs-entry-body" innerHTML={sanitize(renderMarkdown(props.props.description))} onClick={handleWikilinkClick} />
           {props.children}
-          <Show when={props.props.connectsTo && props.props.connectsTo.length > 0}>
-            <div style={{
-              'border-top': `1px dashed ${V.b}`,
-              'margin-top': '12px',
-              'padding-top': '8px',
-              'font-size': '10px',
-              color: V.tf,
-              'font-family': V.mono,
-            }}>
-              connects to{' '}
-              <For each={props.props.connectsTo!}>
-                {(raw) => {
-                  const target = raw.replace(/^\[+|\]+$/g, '');
-                  return (
-                    <span ref={(el) => {
-                      el.addEventListener('click', (e: MouseEvent) => {
-                        emitChirpNavigate(el, target, e);
-                      });
-                    }} class="bbs-wikilink" data-wikilink={target} style={{ cursor: 'pointer' }}>
-                      [[{target}]]
-                    </span>
-                  );
-                }}
-              </For>
-            </div>
-          </Show>
         </div>
       </Show>
     </div>
