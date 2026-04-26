@@ -167,7 +167,7 @@ export function registerDataTools(server: McpServer) {
           content: block.content,
           blockType: block.blockType,
           outputType: block.outputType ?? null,
-          breadcrumb: block.ancestors?.map((a) => a.content) ?? [],
+          breadcrumb: block.ancestors?.map((a) => a.content).reverse() ?? [],
           outlinks: block.metadata?.outlinks ?? [],
           childCount: block.childIds?.length ?? 0,
           tree: lines.join("\n"),
@@ -245,6 +245,10 @@ export function registerDataTools(server: McpServer) {
           limit: "15",
           include_breadcrumb: "true",
           include_metadata: "true",
+          // Match search_blocks: opt into effective_markers so inherited
+          // ancestor context surfaces on inbound hits too. Daddy's
+          // 2026-04-26 ancestor-context test pass flagged the gap.
+          include: "effective_markers",
         });
 
         // NOTE: `score` is omitted from this projection. `get_inbound` uses

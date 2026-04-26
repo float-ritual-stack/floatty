@@ -80,6 +80,7 @@ export async function searchBlocks(
     params.set("created_before", String(opts.createdBefore));
   if (opts.includeBreadcrumb) params.set("include_breadcrumb", "true");
   if (opts.includeMetadata) params.set("include_metadata", "true");
+  if (opts.include) params.set("include", opts.include);
   return floattyFetch<SearchResponse>(`/api/v1/search?${params.toString()}`);
 }
 

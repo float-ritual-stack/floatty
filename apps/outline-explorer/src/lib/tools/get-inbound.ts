@@ -14,12 +14,17 @@ export const getInboundTool = tool({
       limit: 15,
       includeBreadcrumb: true,
       includeMetadata: true,
+      // Match search_blocks parity — surface inherited markers on inbound
+      // hits so the caller knows the lineage without a follow-up.
+      include: "effective_markers",
     });
 
     return {
       total: results.total,
       refs: results.hits.map((h) => ({
         content: h.content,
+        // Server already returns breadcrumb rootmost-first via take(5).rev()
+        // in shape_search_hit; keep as-is.
         breadcrumb: h.breadcrumb,
       })),
     };

@@ -26,7 +26,10 @@ export const getBlockTool = tool({
       }
     }
 
-    const breadcrumb = block.ancestors?.map((a) => a.content) ?? [];
+    // Rootmost-first to match search hits' breadcrumb shape (Rust composer
+    // does take(5).rev() server-side; ancestors[] is nearest-first per the
+    // walker contract). See bug #1 in v0.13.1 changelog disposition notes.
+    const breadcrumb = block.ancestors?.map((a) => a.content).reverse() ?? [];
 
     // For door blocks, prefer renderedMarkdown (FLO-633 server-side projection,
     // ~0.19× token cost vs raw spec) over the tree walk.

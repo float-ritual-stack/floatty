@@ -23,7 +23,7 @@ PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 
 | Include | What |
 |---------|------|
-| `ancestors` | Parent chain to root (max 10) |
+| `ancestors` | Parent chain to root (max 20; was 10 pre-v0.13.2 — bumped after live-outline depth probe found real-world max=16) |
 | `siblings` | N blocks before/after (`&sibling_radius=2`) |
 | `children` | Direct children |
 | `tree` | Full subtree DFS (max 1000) |
@@ -116,8 +116,10 @@ Wire shape (camelCase JSON):
 Field semantics:
 
 - `ancestorBlockIds` is **rootmost-first** (matches breadcrumb composer's
-  `take(5).rev()` shape — root → ... → immediate parent). Capped at 10
-  by the walker.
+  `take(5).rev()` shape — root → ... → immediate parent). Capped at 20
+  by the walker (`ANCESTOR_CONTEXT_MAX_DEPTH` in `block_service.rs`).
+  When the chain is longer than 20, the rootmost ancestors are silently
+  truncated; callers can detect this via `ancestorBlockIds.len() == 20`.
 - `ancestorOutlinks` is the deduped union of `[[wikilink]]`s across the
   block itself and its walked ancestors — "all destinations reachable from
   this block's lineage."
