@@ -2,7 +2,7 @@
 
 export interface Marker {
   markerType: string;
-  value: string;
+  value?: string;
 }
 
 export interface InheritedMarker extends Marker {
