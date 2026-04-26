@@ -230,3 +230,4 @@ When asked to build or fix UI components, ALWAYS study the existing implementati
 - See @apps/floatty/docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md — unified expansion policy + navigation funnel
 - See @.claude/rules/api-reference.md — all REST/WS endpoints
 - See @.claude/rules/config-and-logging.md — paths, config, logging, sync health
+- See @.claude/rules/render-door-agent.md — render:: agent path requires reading json-render source/docs first; pin schema/prompt/validate primitives to catalog APIs
