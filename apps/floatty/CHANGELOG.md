@@ -6,6 +6,41 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.13.5] - 2026-04-26
+
+Recency-sortable search hits + a hidden Tantivy staleness fix surfaced while reviving [[FLO-373]] (backlinks panel v2). The artifact iteration in claude-live wanted to sort inbound refs by `updatedAt` and discovered the data wasn't on the wire — and the Tantivy STORED column it would've fallen back to was being clobbered with `Utc::now()` on every reindex.
+
+### ✨ Features
+
+- **`BlockSearchHit` carries `createdAt` / `updatedAt` / `outputType`** ([[PR #287]] [[FLO-684]]) — search hits and `outlink=`-filtered backlink results now surface block timestamps and output type alongside content + breadcrumb. ms-resolution from Y.Map at response time, mirrors `BlockDto` for the same block. Eliminates the N+1 `floatty_block_get` follow-up agents previously needed for recency sorting and door-vs-text classification.
+- **MCP `get_inbound` parameterized** ([[PR #287]] [[FLO-684]]) — `limit` (was hardcoded 15, now max 200) + `metaFilter` (`all` / `with-meta` / `without-meta`) wired to `?has_markers=`. `search_blocks` now shares the same `.max(200)` cap so agents can't slip a runaway query through one tool while the other guards.
+
+### 🐛 Fixes
+
+- **Tantivy indexer no longer clobbers `updated_at` with wall-clock NOW** ([[PR #287]] [[FLO-684]] — `apps/floatty/src-tauri/floatty-core/src/hooks/tantivy_index.rs:244`): the indexer now reads the block's actual `updatedAt` from the store instead of stamping with `chrono::Utc::now().timestamp()` at index time. Since the search index is ephemeral (rebuilt from Y.Doc on every app start), the bug meant every restart reset all `updated_at` values to startup time — recency sort across restarts was silently broken. Fix is one expression; consequences for any future `updated_after`/`updated_before` filter are larger.
+- **`shape_search_hit` does one Y.Map lookup per hit, not three** ([[PR #287]] [[FLO-684]]): coalesced repeated `bmap.get(block_id)` calls into a single hoisted `block_map` reference. Pre-fix, content + metadata + (this PR's) timestamps each issued their own lookup; yrs `MapRef::get` is O(log n) and uncached within a transaction, so the constant factor mattered at search-result list size.
+
+### Internal
+
+- **Symmetry harness gets two new contracts** in `floatty-server/tests/symmetry_ancestor_context.rs`:
+  - **CONTRACT 7** — `BlockSearchHit.{createdAt, updatedAt, outputType}` mirror the block's Y.Map fields. Catches future write-path drift between the singleton `read_block_dto` (`/blocks/:id`) and the search-path `shape_search_hit` (`/search`, `outline=` filter, `get_inbound`).
+  - **CONTRACT 7b** — the no-blocks-map early-return path produces zero/None defaults; `skip_serializing_if` guards keep them off the wire.
+- **`.claude/rules/api-reference.md` + `floatty-backend` skill** updated to document the new fields. Skill notes the deleted-but-still-indexed race may omit these fields via `skip_serializing_if`, so consumers should null-check before reading.
+
+### Doctrine surfaced this cycle
+
+- **CodeRabbit hallucination check protects working code** ([[PR #287]] round-1 review): CodeRabbit flagged a Major finding claiming `/blocks/:id?include=tree` returns a `{ block, tree }` wrapper. Verified against the running dev server (port 33333) — the response is flat (`createdAt`, `updatedAt`, `tree` all top-level on `BlockDto`); the suggested change would have broken pre-existing working code. Dismissed with curl evidence; CodeRabbit retracted with an apology and banked the API shape as a learning. The "verify audit findings before acting" memory is what kept the wrong fix from landing.
+- **Symmetry sweeps catch param-cap drift** ([[PR #287]] round-1 Greptile P2): `get_inbound` got `.int().positive().max(200)` in the same PR but `search_blocks` was left unbounded. Greptile caught the asymmetry; aligned both tools to the same shape. The lesson is the same one `.claude/rules/symmetry-check.md` codifies: when you change HOW something works in one place, grep every sibling.
+
+### Relates
+
+- [[FLO-373]] — backlinks panel v2 (revived 2026-04-26 after artifact iteration in claude-live)
+- [[FLO-338]] — prior search API enrichment, shipped without timestamps
+- [[FLO-401]] — unlinked references panel, adjacent UX work to be absorbed at port time
+- [[FLO-680]] — presence DTO ancestor-context, parallel architecture for the navigation surface
+
+---
+
 ## [0.13.3] - 2026-04-26
 
 Symmetry-check sweep against `packages/render-door/src/components.tsx`. Three bugs that were fixed in `apps/outline-explorer`'s parallel renderers (one in v0.13.0, two in v0.13.2) had drifted in the SolidJS port — render-door has its own "EXPLORER PORTS" section (`components.tsx:2446`) that was never re-synced. Same issues, same fixes, ported with adapted SolidJS reactivity / inline-style equivalents.
