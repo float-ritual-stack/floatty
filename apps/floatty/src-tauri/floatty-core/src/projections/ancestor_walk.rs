@@ -216,19 +216,12 @@ pub fn walk_ancestors(
 
 /// Reverse-lookup `block_id → page_name` against [`PageNameIndex`].
 ///
-/// `PageNameIndex::existing` is keyed by name (forward lookup is for
-/// autocomplete). Reverse lookup is O(N) over the existing-pages set; only
-/// invoked once per walk and only when `page_name_index` is supplied, so
-/// the cost is bounded.
+/// O(1) — backed by the `PageNameIndex::page_name_for_block` reverse index
+/// (added alongside the AncestorContext shaping helpers so per-block hot
+/// paths don't re-scan the full pages set). Returns the lowercased page
+/// name; callers that need preserved casing should look it up upstream.
 fn page_name_for_block(index: &PageNameIndex, block_id: &str) -> Option<String> {
-    for name in index.existing_pages() {
-        if let Some(id) = index.page_block_id(&name) {
-            if id == block_id {
-                return Some(name);
-            }
-        }
-    }
-    None
+    index.page_name_for_block(block_id).map(String::from)
 }
 
 // =========================================================================

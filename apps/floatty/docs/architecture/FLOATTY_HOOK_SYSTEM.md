@@ -2,6 +2,15 @@
 
 > Extracted from architecture session 2026-01-04. Hooks for block lifecycle events.
 
+> **Note (FLO-679 PR 2, 2026-04-25)**: Not every read-time transform belongs
+> here. Hooks are write-time, side-effecting, and run on every Y.Doc
+> mutation. Pure read-time transforms (e.g., `compute_ancestor_context`,
+> ancestor-walk projections, door-block markdown rendering) live in the
+> **projections layer** at `floatty_core::projections::*`. See
+> [PROJECTIONS_LAYER.md](./PROJECTIONS_LAYER.md) for when to add a
+> projection vs. a hook, and the FLO-679 worked example of how 6 inline
+> ancestor walks got consolidated into one projection.
+
 ## The Core Pattern
 
 Every executable block has the same shape of concerns:

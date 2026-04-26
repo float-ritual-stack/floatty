@@ -8,15 +8,16 @@
 //! a legacy route or an outline route. Route-specific behavior belongs in handlers.
 
 use crate::api::{
-    self, ApiError, BlockDto, BlockRef, BlockSearchHit, BlockSearchQuery, BlockSearchResponse,
-    BlocksResponse, InheritedMarkerDto, SiblingContext, TokenEstimate, TreeNode,
+    self, AncestorContext, ApiError, BlockDto, BlockRef, BlockSearchHit, BlockSearchQuery,
+    BlockSearchResponse, BlocksResponse, EffectiveMarkerDto, InboundSampleDto, InheritedMarkerDto,
+    MarkerSource, SiblingContext, TokenEstimate, TreeNode,
 };
 use crate::WsBroadcaster;
 use floatty_core::events::BlockChange;
-use floatty_core::hooks::InheritanceIndex;
-use floatty_core::projections::{walk_ancestors, WalkTermination, YDocParentLookup};
+use floatty_core::hooks::{tantivy_index, InheritanceIndex, PageNameIndex};
+use floatty_core::projections::{walk_ancestors, AncestorWalk, WalkTermination, YDocParentLookup};
 use floatty_core::{HookSystem, IndexManager, Origin, SearchFilters, SearchService, YDocStore};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, RwLock};
 use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
@@ -227,6 +228,10 @@ pub(crate) fn read_block_dto<T: ReadTxn>(
         updated_at,
         output_type,
         output,
+        // Defaults to None — handler-side shaping helpers populate this
+        // when the response surface calls for it. read_block_dto stays a
+        // pure projection (no walks, no index reads).
+        ancestor_context: None,
     }
 }
 
@@ -293,11 +298,515 @@ pub(crate) fn read_block_child_ids<T: ReadTxn>(
 }
 
 /// Parse include directives from comma-separated string.
-pub(crate) fn parse_includes(include: &Option<String>) -> HashSet<String> {
+///
+/// Made `pub` (not `pub(crate)`) so the symmetry harness in
+/// `tests/symmetry_ancestor_context.rs` can build `AncestorContextOpts`
+/// the same way handlers do.
+pub fn parse_includes(include: &Option<String>) -> HashSet<String> {
     include
         .as_ref()
         .map(|s| s.split(',').map(|p| p.trim().to_lowercase()).collect())
         .unwrap_or_default()
+}
+
+// =========================================================================
+// AncestorContext shaping helpers (the navigation-layer surface).
+// These wrap the existing primitives (`walk_ancestors`,
+// `InheritanceIndex`, `PageNameIndex`) — they don't reinvent any walks.
+// =========================================================================
+
+/// Bundle of opt-in toggles for `compute_ancestor_context`. Keeps the
+/// signature manageable when handlers thread their `?include=` decisions
+/// through to the shape layer.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AncestorContextOpts {
+    /// Populate `effectiveMarkers` from InheritanceIndex. Always-on for
+    /// `/blocks/:id` per the plan; opt-in via `?include=effective_markers`
+    /// elsewhere.
+    pub include_effective_markers: bool,
+    /// Populate `inboundSamples` (top-N source blocks linking here).
+    /// Opt-in via `?include=inbound_samples`. Top-5 default; cap honoured
+    /// from `inbound_sample_count`.
+    pub include_inbound_samples: bool,
+    /// Override for the inbound-samples cap; min(value, 50) at use site.
+    pub inbound_sample_count: usize,
+}
+
+impl AncestorContextOpts {
+    /// Construct from a `BlockContextQuery` — the canonical includes parser
+    /// for handlers that already have a query struct in hand.
+    pub(crate) fn from_query(query: &api::BlockContextQuery) -> Self {
+        let includes = parse_includes(&query.include);
+        Self {
+            include_effective_markers: includes.contains("effective_markers"),
+            include_inbound_samples: includes.contains("inbound_samples"),
+            inbound_sample_count: query.inbound_sample_count.min(50),
+        }
+    }
+
+    /// Construct from raw `?include=` + opts (search query layer).
+    ///
+    /// `pub` (not `pub(crate)`) so the symmetry harness in
+    /// `tests/symmetry_ancestor_context.rs` can use the canonical
+    /// constructor handlers funnel through.
+    pub fn from_raw(includes: &HashSet<String>, inbound_sample_count: usize) -> Self {
+        Self {
+            include_effective_markers: includes.contains("effective_markers"),
+            include_inbound_samples: includes.contains("inbound_samples"),
+            inbound_sample_count: inbound_sample_count.min(50),
+        }
+    }
+
+    /// Variant for `/blocks/:id` and other singletons where effective_markers
+    /// is always-on.
+    pub fn always_effective(mut self) -> Self {
+        self.include_effective_markers = true;
+        self
+    }
+}
+
+/// Pre-computed hints to skip walks/lookups inside `compute_ancestor_context`.
+///
+/// Search hits carry these denormalised from Tantivy STORED columns
+/// (populated at index time by `TantivyIndexHook`) — the response path
+/// reuses the indexer's work instead of walking Y.Doc and re-querying
+/// `PageNameIndex` per hit (Fix 2 in the simplify pass).
+///
+/// Singleton paths (e.g., `/blocks/:id` not via search) pass `default()`
+/// and `compute_ancestor_context` falls back to the original walks.
+#[derive(Debug, Clone, Default)]
+pub struct AncestorContextHints {
+    /// Pre-computed `subtree_size`. When `Some`, skips the BFS over the
+    /// block's child pointers.
+    pub subtree_size: Option<u32>,
+    /// Pre-computed `inbound_count`. When `Some`, skips the
+    /// `PageNameIndex::referencing_blocks(...).len()` call for the count.
+    pub inbound_count: Option<u32>,
+    /// Pre-computed inbound block IDs (already deterministically id-sorted +
+    /// capped by the indexer). When `Some` AND `?include=inbound_samples`
+    /// is on, used directly instead of pulling from `PageNameIndex` at
+    /// response time.
+    pub inbound_block_ids: Option<Vec<String>>,
+}
+
+/// Shape an `AncestorContext` for a given block. Pure read-time projection
+/// — no Y.Doc writes, no broadcast.
+///
+/// Inputs (the only primitives this helper touches):
+/// - `walk_ancestors` for the ancestor chain + nearest_page derivation
+/// - `InheritanceIndex` for `effective_markers` (when opted-in)
+/// - `PageNameIndex` for `inbound_count` and `inbound_samples`
+/// - `own_metadata` for the block's own outlinks (folded into
+///   `ancestor_outlinks`) and own markers (folded into `effective_markers`
+///   when opted-in). Pass the raw `BlockDto.metadata` — the same JSON shape
+///   the metadata-extraction hook writes.
+///
+/// Returns `None` when no navigation signal fired — bare blocks (no chain,
+/// no outlinks, no inbound, no markers) ship as `None` to keep the wire
+/// surface terse. See [`AncestorContext::is_empty`].
+///
+/// Signature note: takes `own_metadata: Option<&serde_json::Value>` rather
+/// than the full `BlockDto` so callers (notably `shape_search_hit`) don't
+/// have to construct a skeletal-DTO scaffold just to satisfy this helper.
+/// All the helper actually reads from the DTO is `metadata` — passing it
+/// directly removes the indirection and the duplicate read in the
+/// `want_metadata=false` search-hit path.
+///
+/// `pub` (not `pub(crate)`) so the symmetry harness in
+/// `tests/symmetry_ancestor_context.rs` can call the same shaping function
+/// every endpoint funnels through.
+pub fn compute_ancestor_context<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+    own_metadata: Option<&serde_json::Value>,
+    inheritance_index: Option<&InheritanceIndex>,
+    page_name_index: Option<&PageNameIndex>,
+    opts: AncestorContextOpts,
+) -> Option<AncestorContext> {
+    compute_ancestor_context_with_hints(
+        blocks_map,
+        txn,
+        block_id,
+        own_metadata,
+        inheritance_index,
+        page_name_index,
+        opts,
+        AncestorContextHints::default(),
+    )
+}
+
+/// Same as [`compute_ancestor_context`] but accepts pre-computed hints
+/// (Fix 2 in the simplify pass). Search hits use this with hints derived
+/// from Tantivy STORED columns; singleton paths just call the wrapper
+/// above with empty hints.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+    own_metadata: Option<&serde_json::Value>,
+    inheritance_index: Option<&InheritanceIndex>,
+    page_name_index: Option<&PageNameIndex>,
+    opts: AncestorContextOpts,
+    hints: AncestorContextHints,
+) -> Option<AncestorContext> {
+    // One walk for ancestor IDs + nearest_page derivation. Walker's depth
+    // cap (10) is the documented AncestorContext.ancestorBlockIds cap.
+    let lookup = YDocParentLookup::new(blocks_map, txn);
+    let walk: AncestorWalk = walk_ancestors(&lookup, block_id, 10, page_name_index);
+
+    let nearest_page_block_id = walk.nearest_page.as_ref().map(|(id, _)| id.clone());
+    let nearest_page_name = walk.nearest_page.as_ref().map(|(_, name)| name.clone());
+    // Wire contract is ROOTMOST-FIRST per the plan §"Foundation status
+    // (post-PR-281)" lesson banked from PR 1 review: "behavior-preservation
+    // tests preserve INTENT, not necessarily CORRECTNESS." Walker returns
+    // nearest-first; we reverse here so the public surface matches the
+    // breadcrumb composer's `take(5).rev()` shape established by PR 1.
+    let ancestor_block_ids: Vec<String> = walk.ids.iter().cloned().rev().collect();
+
+    // ancestor_outlinks: deduped union over walked ancestors + own.
+    // The plan calls for the union including the block's own outlinks too —
+    // it's "all outlinks visible from the focused block via its lineage."
+    // BTreeSet keeps the result deterministically sorted (good for diff /
+    // golden-file tests + symmetric harness).
+    let mut outlinks_set: BTreeSet<String> = BTreeSet::new();
+    if let Some(meta) = own_metadata {
+        if let Some(arr) = meta.get("outlinks").and_then(|v| v.as_array()) {
+            for o in arr {
+                if let Some(s) = o.as_str() {
+                    outlinks_set.insert(s.to_string());
+                }
+            }
+        }
+    }
+    for ancestor_id in &walk.ids {
+        if let Some(yrs::Out::YMap(ancestor_map)) = blocks_map.get(txn, ancestor_id) {
+            if let Some(meta_value) = ancestor_map.get(txn, "metadata") {
+                if let Some(meta_json) = api::extract_metadata_from_yrs(meta_value, txn) {
+                    if let Some(arr) = meta_json.get("outlinks").and_then(|v| v.as_array()) {
+                        for o in arr {
+                            if let Some(s) = o.as_str() {
+                                outlinks_set.insert(s.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let ancestor_outlinks: Vec<String> = outlinks_set.into_iter().collect();
+
+    // subtree_size: prefer the Tantivy-STORED hint (denormalised at index
+    // time). When absent, fall back to a fresh BFS over child pointers.
+    // Cap matches the indexer's `SUBTREE_SIZE_CAP` — same shape on read
+    // and write paths (Fix 7 in the simplify pass — single source of truth
+    // for the cap).
+    let subtree_size = hints.subtree_size.unwrap_or_else(|| {
+        compute_subtree_size_via_txn(blocks_map, txn, block_id, tantivy_index::SUBTREE_SIZE_CAP)
+    });
+
+    // effective_markers — opt-in. Reads `InheritanceIndex` for the inherited
+    // half; the own half comes from `own_metadata.markers`.
+    let effective_markers = if opts.include_effective_markers {
+        compute_effective_markers(own_metadata, inheritance_index, block_id)
+    } else {
+        Vec::new()
+    };
+
+    // inbound_count + samples: prefer Tantivy-STORED hints when present.
+    // Falls back to PageNameIndex on the block's nearest page name (or the
+    // block itself if it IS a page) when no hint is available.
+    let (inbound_count, inbound_samples) = compute_inbound(
+        blocks_map,
+        txn,
+        block_id,
+        nearest_page_name.as_deref(),
+        page_name_index,
+        opts,
+        &hints,
+    );
+
+    let ctx = AncestorContext {
+        nearest_page_block_id,
+        nearest_page_name,
+        ancestor_block_ids,
+        effective_markers,
+        ancestor_outlinks,
+        subtree_size,
+        inbound_count,
+        inbound_samples,
+    };
+
+    if ctx.is_empty() {
+        None
+    } else {
+        Some(ctx)
+    }
+}
+
+/// Convenience wrapper for handlers that own a `BlockDto` and want to
+/// attach `ancestor_context` in place. Mutates `dto.ancestor_context`.
+///
+/// `pub` so the symmetry harness can verify `attach_*` and `compute_*`
+/// produce matching shapes (which they must — `attach_*` is just a thin
+/// wrapper around `compute_*`).
+pub fn attach_ancestor_context<T: ReadTxn>(
+    dto: &mut BlockDto,
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    inheritance_index: Option<&InheritanceIndex>,
+    page_name_index: Option<&PageNameIndex>,
+    opts: AncestorContextOpts,
+) {
+    dto.ancestor_context = compute_ancestor_context(
+        blocks_map,
+        txn,
+        &dto.id,
+        dto.metadata.as_ref(),
+        inheritance_index,
+        page_name_index,
+        opts,
+    );
+}
+
+/// Compute `subtree_size` via the existing transaction — avoids the
+/// `Store::get_block` call path and its per-call txn acquisition. Cap
+/// matches the TantivyIndexHook constant.
+fn compute_subtree_size_via_txn<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    root_id: &str,
+    cap: u32,
+) -> u32 {
+    if cap == 0 {
+        return 0;
+    }
+    let mut count: u32 = 0;
+    let mut stack: Vec<String> = vec![root_id.to_string()];
+    let mut seen: HashSet<String> = HashSet::new();
+    seen.insert(root_id.to_string());
+
+    while let Some(id) = stack.pop() {
+        let Some(yrs::Out::YMap(_block_map)) = blocks_map.get(txn, &id) else {
+            continue;
+        };
+        count = count.saturating_add(1);
+        if count >= cap {
+            return cap;
+        }
+        let child_ids = read_block_child_ids(blocks_map, txn, &id);
+        for child_id in child_ids {
+            if seen.insert(child_id.clone()) {
+                stack.push(child_id);
+            }
+        }
+    }
+    count
+}
+
+/// Compose effective markers (own + inherited with provenance) for a block.
+///
+/// `own_metadata` is the block's `BlockDto.metadata` JSON (the same shape
+/// emitted by the metadata-extraction hook). Pass `None` when the caller
+/// only wants the inherited half.
+fn compute_effective_markers(
+    own_metadata: Option<&serde_json::Value>,
+    inheritance_index: Option<&InheritanceIndex>,
+    block_id: &str,
+) -> Vec<EffectiveMarkerDto> {
+    let mut out: Vec<EffectiveMarkerDto> = Vec::new();
+    let mut seen_types: HashSet<String> = HashSet::new();
+
+    if let Some(meta) = own_metadata {
+        if let Some(arr) = meta.get("markers").and_then(|v| v.as_array()) {
+            for m in arr {
+                let marker_type = m
+                    .get("markerType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let value = m
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                if marker_type.is_empty() || value.is_empty() {
+                    // Bare prefix marker — no value, no inheritance. Skip
+                    // for the wire surface (the helper is "tag" markers only,
+                    // matching InheritanceIndex semantics).
+                    continue;
+                }
+                seen_types.insert(marker_type.clone());
+                out.push(EffectiveMarkerDto {
+                    marker_type,
+                    value,
+                    source: MarkerSource::Own,
+                });
+            }
+        }
+    }
+
+    if let Some(idx) = inheritance_index {
+        for inherited in idx.get(block_id) {
+            if seen_types.contains(&inherited.marker_type) {
+                continue;
+            }
+            seen_types.insert(inherited.marker_type.clone());
+            out.push(EffectiveMarkerDto {
+                marker_type: inherited.marker_type.clone(),
+                value: inherited.value.clone(),
+                source: MarkerSource::Inherited {
+                    source_block_id: inherited.source_block_id.clone(),
+                },
+            });
+        }
+    }
+
+    out
+}
+
+/// Compute inbound count + (optional) samples for a block.
+///
+/// Prefers Tantivy-STORED hints when present (search hits) — skips the
+/// `PageNameIndex` lookups entirely for the count, and uses the indexer's
+/// pre-sorted truncated `inbound_block_ids` for samples (Fix 2 in the
+/// simplify pass). Singleton paths pass empty hints and the function falls
+/// back to live `PageNameIndex` queries.
+fn compute_inbound<T: ReadTxn>(
+    blocks_map: &yrs::MapRef,
+    txn: &T,
+    block_id: &str,
+    nearest_page_name: Option<&str>,
+    page_name_index: Option<&PageNameIndex>,
+    opts: AncestorContextOpts,
+    hints: &AncestorContextHints,
+) -> (u32, Vec<InboundSampleDto>) {
+    // Hot path: when the count hint is present we skip PageNameIndex
+    // entirely for the count value. Samples use the hint when present;
+    // otherwise we still need the live index to enumerate.
+    let count_from_hint = hints.inbound_count;
+
+    // Resolve the requested cap once — used by both the hint and live paths
+    // so consumers see consistent honour-the-cap semantics regardless of
+    // which branch fires.
+    let requested_cap = if opts.inbound_sample_count == 0 {
+        5
+    } else {
+        opts.inbound_sample_count.min(50)
+    };
+
+    // Count-only short-circuit (PR #282 review round 2 — CodeRabbit Minor).
+    // When the consumer didn't request samples AND we have a count hint,
+    // skip the entire `PageNameIndex` path — both for stored-ids-present
+    // (already covered below) AND for stored-ids-absent on stale docs.
+    // Without this guard, a stale doc with `Some(count) + None ids` falls
+    // through to the live path; if `page_name_index` isn't wired (or the
+    // block has no nearest page), the live path returns 0, silently
+    // dropping the hinted count for callers that only asked for the count.
+    if !opts.include_inbound_samples {
+        if let Some(count) = count_from_hint {
+            return (count, vec![]);
+        }
+    }
+
+    // Sample ids candidate: from hint when present, else from live index.
+    // Build a Vec<String> either way so the downstream content read is
+    // identical.
+    //
+    // Hint capacity gate (PR #282 review — CodeRabbit Major / Greptile P2):
+    // Tantivy stores at most `INBOUND_SAMPLES_CAP` (5) inbound_block_ids per
+    // doc. Trusting the hint blindly silently caps search-endpoint samples
+    // at 5 even when the consumer asked for `?inbound_sample_count=20`.
+    // Trust the hint when EITHER:
+    //   (a) the consumer didn't request inbound_samples (count-only path —
+    //       the truncated id list is never read), OR
+    //   (b) the requested cap fits inside the hint's stored capacity
+    //       (≤ INBOUND_SAMPLES_CAP), OR
+    //   (c) total inbound count is ≤ INBOUND_SAMPLES_CAP — the hint
+    //       contains everything anyway, no fallback would surface more.
+    // Otherwise fall back to the live PageNameIndex path so the consumer
+    // gets up to `min(N, 50)` samples instead of a silently-truncated 5.
+    let (count, sample_ids): (u32, Vec<String>) = match (count_from_hint, &hints.inbound_block_ids)
+    {
+        (Some(count), Some(ids))
+            if !opts.include_inbound_samples
+                || requested_cap <= tantivy_index::INBOUND_SAMPLES_CAP
+                || (count as usize) <= tantivy_index::INBOUND_SAMPLES_CAP =>
+        {
+            // Hint sufficient — entirely skip PageNameIndex.
+            let mut sample_ids = if opts.include_inbound_samples {
+                ids.clone()
+            } else {
+                Vec::new()
+            };
+            sample_ids.truncate(requested_cap);
+            (count, sample_ids)
+        }
+        _ => {
+            // Fall back to the live PageNameIndex path. Used by:
+            //   - Singleton callers (presence, /blocks/:id) that pass empty
+            //     hints (Fix 2 — kept from prior pass).
+            //   - Search hits where the requested cap exceeds the stored
+            //     hint capacity (the gate above falls through to here).
+            let Some(idx) = page_name_index else {
+                return (0, vec![]);
+            };
+            // Decide which page name to look up — if THIS block IS a page,
+            // use its own name; else fall back to the nearest ancestor
+            // page. O(1) reverse lookup via PageNameIndex's block_id → name
+            // index (Fix 3 in the simplify pass).
+            let target_name = idx
+                .page_name_for_block(block_id)
+                .map(String::from)
+                .or_else(|| nearest_page_name.map(String::from));
+            let Some(name) = target_name else {
+                return (0, vec![]);
+            };
+
+            let Some(refs) = idx.referencing_blocks(&name) else {
+                return (0, vec![]);
+            };
+            let count = refs.len() as u32;
+            if !opts.include_inbound_samples {
+                return (count, vec![]);
+            }
+
+            // Deterministic id-sort, capped to the requested cap (already
+            // bounded by `min(N, 50)` above).
+            let mut sample_ids: Vec<String> = refs.iter().cloned().collect();
+            sample_ids.sort();
+            sample_ids.truncate(requested_cap);
+            (count, sample_ids)
+        }
+    };
+
+    // No samples requested → return count, skip content reads.
+    if !opts.include_inbound_samples {
+        return (count, vec![]);
+    }
+
+    let samples: Vec<InboundSampleDto> = sample_ids
+        .into_iter()
+        .map(|id| {
+            let content = read_block_content(blocks_map, txn, &id)
+                .map(|c| {
+                    if c.chars().count() > 200 {
+                        let truncated: String = c.chars().take(200).collect();
+                        format!("{}...", truncated)
+                    } else {
+                        c
+                    }
+                })
+                .unwrap_or_default();
+            InboundSampleDto {
+                block_id: id,
+                content,
+            }
+        })
+        .collect();
+
+    (count, samples)
 }
 
 // =========================================================================
@@ -569,9 +1078,14 @@ pub(crate) fn collect_descendants(
 // =========================================================================
 
 /// Get all blocks with optional filters. Returns BlocksResponse with typed DTOs.
+///
+/// `page_name_index` is needed when `query.ancestor_context == Some(true)` to
+/// populate `nearestPage*` and `inboundCount` per block. Pass `None` and the
+/// new fields stay defaulted-empty.
 pub(crate) fn get_blocks(
     store: &Arc<YDocStore>,
     inheritance_index: Option<&RwLock<InheritanceIndex>>,
+    page_name_index: Option<&RwLock<PageNameIndex>>,
     query: &api::BlocksQuery,
 ) -> Result<BlocksResponse, ApiError> {
     let doc = store.doc();
@@ -594,6 +1108,16 @@ pub(crate) fn get_blocks(
         Some(idx) => Some(idx.read().map_err(|_| ApiError::LockPoisoned)?),
         None => None,
     };
+    // Same for PageNameIndex when ancestor_context is opted in.
+    let want_ancestor_context = query.ancestor_context.unwrap_or(false);
+    let pni_guard = if want_ancestor_context {
+        match page_name_index {
+            Some(pni) => Some(pni.read().map_err(|_| ApiError::LockPoisoned)?),
+            None => None,
+        }
+    } else {
+        None
+    };
 
     if let Some(blocks_map) = txn.get_map("blocks") {
         for (key, value) in blocks_map.iter(&txn) {
@@ -602,7 +1126,20 @@ pub(crate) fn get_blocks(
                 let inherited_markers = inheritance_guard
                     .as_ref()
                     .and_then(|guard| lookup_inherited(guard, &block_id));
-                let dto = read_block_dto(&block_map, &txn, &block_id, inherited_markers, false);
+                let mut dto = read_block_dto(&block_map, &txn, &block_id, inherited_markers, false);
+
+                // Opt-in per-block ancestor context.
+                if want_ancestor_context {
+                    let opts = AncestorContextOpts::default();
+                    attach_ancestor_context(
+                        &mut dto,
+                        &blocks_map,
+                        &txn,
+                        inheritance_guard.as_deref(),
+                        pni_guard.as_deref(),
+                        opts,
+                    );
+                }
 
                 // Apply query filters
                 if let Some(since) = query.since {
@@ -649,9 +1186,15 @@ pub(crate) fn get_blocks(
 }
 
 /// Get a single block by ID with optional context (?include= params).
+///
+/// Optional `page_name_index` enables `ancestorContext.nearestPage*` and
+/// `ancestorContext.inbound*`. Without it, those fields stay `None`/`0`
+/// (per-outline endpoints that haven't ensured a hook system call us with
+/// `None` and degrade gracefully).
 pub(crate) fn get_block(
     store: &Arc<YDocStore>,
     inheritance_index: &RwLock<InheritanceIndex>,
+    page_name_index: Option<&RwLock<PageNameIndex>>,
     id: &str,
     ctx_query: &api::BlockContextQuery,
 ) -> Result<api::BlockWithContextResponse, ApiError> {
@@ -671,13 +1214,29 @@ pub(crate) fn get_block(
         .ok_or_else(|| ApiError::NotFound(id.clone()))?;
 
     if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = inheritance_index
-                .read()
-                .map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, &id)
+        // Single inheritance_index read guard for both lookup_inherited
+        // and attach_ancestor_context (Fix 6 in the simplify pass).
+        let inh_guard = inheritance_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let inherited_markers = lookup_inherited(&inh_guard, &id);
+        let mut block_dto = read_block_dto(&block_map, &txn, &id, inherited_markers, true);
+
+        // Always-on ancestor context for /blocks/:id (slow-context path
+        // already, so effective_markers is always-on here too).
+        let pni_guard = match page_name_index {
+            Some(rw) => Some(rw.read().map_err(|_| ApiError::LockPoisoned)?),
+            None => None,
         };
-        let block_dto = read_block_dto(&block_map, &txn, &id, inherited_markers, true);
+        let opts = AncestorContextOpts::from_query(ctx_query).always_effective();
+        attach_ancestor_context(
+            &mut block_dto,
+            &blocks_map,
+            &txn,
+            Some(&inh_guard),
+            pni_guard.as_deref(),
+            opts,
+        );
 
         Ok(build_block_context_response(
             &blocks_map,
@@ -921,6 +1480,9 @@ fn create_block_inner(
         updated_at,
         output_type: None,
         output: None,
+        // Create response is the brand-new block — no ancestors yet (or one
+        // shallow parent). Callers wanting context should re-GET.
+        ancestor_context: None,
     })
 }
 
@@ -1419,6 +1981,9 @@ pub(crate) fn update_block(
         updated_at: now,
         output_type: None,
         output: None,
+        // Update response — caller should re-GET if they need recomputed
+        // ancestor context (Tantivy index is async).
+        ancestor_context: None,
     })
 }
 
@@ -1523,9 +2088,16 @@ pub(crate) fn delete_block(
 
 /// Full-text + filtered search over a Tantivy index, hydrated from Y.Doc.
 /// Used by both legacy and per-outline search handlers.
+///
+/// `inheritance_index` and `page_name_index` are optional — the per-outline
+/// path passes `None` (per-outline endpoints don't share the legacy default
+/// outline's indices). When absent, `ancestorContext.effectiveMarkers` and
+/// `ancestorContext.inbound*` stay empty.
 pub(crate) fn search_blocks(
     store: &Arc<YDocStore>,
     index_manager: &Arc<IndexManager>,
+    inheritance_index: Option<&RwLock<InheritanceIndex>>,
+    page_name_index: Option<&RwLock<PageNameIndex>>,
     query: &BlockSearchQuery,
 ) -> Result<BlockSearchResponse, ApiError> {
     let service = SearchService::new(Arc::clone(index_manager));
@@ -1572,99 +2144,192 @@ pub(crate) fn search_blocks(
 
     let want_breadcrumb = query.include_breadcrumb.unwrap_or(false);
     let want_metadata = query.include_metadata.unwrap_or(false);
+    let includes = parse_includes(&query.include);
+    let inbound_sample_count = query.inbound_sample_count.unwrap_or(5);
+    let ac_opts = AncestorContextOpts::from_raw(&includes, inbound_sample_count);
 
-    // Hydrate content from Y.Doc for each hit
+    // Hydrate content from Y.Doc for each hit. Single read txn for the
+    // whole batch — cheap, no lock thrash.
     let hits: Vec<BlockSearchHit> = {
         let doc = store.doc();
         let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
         let txn = doc_guard.transact();
         let blocks_map = txn.get_map("blocks");
+        // Acquire optional indices ONCE for the whole batch.
+        let inh_guard = match inheritance_index {
+            Some(rw) => Some(rw.read().map_err(|_| ApiError::LockPoisoned)?),
+            None => None,
+        };
+        let pni_guard = match page_name_index {
+            Some(rw) => Some(rw.read().map_err(|_| ApiError::LockPoisoned)?),
+            None => None,
+        };
 
         hits.into_iter()
             .map(|h| {
-                let (content, breadcrumb, metadata, block_type) = if let Some(ref bmap) = blocks_map
-                {
-                    let content = bmap
-                        .get(&txn, &h.block_id)
-                        .and_then(|v| match v {
-                            yrs::Out::YMap(block_map) => Some(block_map),
-                            _ => None,
-                        })
-                        .and_then(|block_map| {
-                            block_map.get(&txn, "content").and_then(|v| match v {
-                                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                                _ => None,
-                            })
-                        })
-                        .map(|c| {
-                            if c.chars().count() > 200 {
-                                let truncated: String = c.chars().take(200).collect();
-                                format!("{}...", truncated)
-                            } else {
-                                c
-                            }
-                        });
-
-                    let breadcrumb = if want_breadcrumb {
-                        // Take the nearest 5 ancestors, then reverse for ROOTMOST-FIRST
-                        // display order — matches the contract documented in
-                        // .claude/rules/api-reference.md ("breadcrumb is parent chain
-                        // ... ancestor block content (nearest parent last)") and the
-                        // floatty-backend SKILL.md helper which joins with " → " as
-                        // root → leaf. Per CodeRabbit Major review on PR #281: the
-                        // walker keeps its nearest-first programmatic contract; only
-                        // the breadcrumb projection (a presentation surface) is
-                        // reversed at the composer.
-                        let ancestors = get_ancestors(bmap, &txn, &h.block_id);
-                        let crumbs: Vec<String> = ancestors
-                            .into_iter()
-                            .take(5)
-                            .rev()
-                            .map(|a| a.content)
-                            .collect();
-                        if crumbs.is_empty() {
-                            None
-                        } else {
-                            Some(crumbs)
-                        }
-                    } else {
-                        None
-                    };
-
-                    let metadata = if want_metadata {
-                        bmap.get(&txn, &h.block_id).and_then(|v| match v {
-                            yrs::Out::YMap(block_map) => block_map
-                                .get(&txn, "metadata")
-                                .and_then(|m| api::extract_metadata_from_yrs(m, &txn)),
-                            _ => None,
-                        })
-                    } else {
-                        None
-                    };
-
-                    let block_type = content
-                        .as_ref()
-                        .map(|c| floatty_core::parse_block_type(c).as_str().to_string());
-
-                    (content, breadcrumb, metadata, block_type)
-                } else {
-                    (None, None, None, None)
-                };
-
-                BlockSearchHit {
-                    block_id: h.block_id,
-                    score: h.score,
-                    content,
-                    breadcrumb,
-                    metadata,
-                    snippet: h.snippet,
-                    block_type,
-                }
+                shape_search_hit(
+                    h,
+                    blocks_map.as_ref(),
+                    &txn,
+                    inh_guard.as_deref(),
+                    pni_guard.as_deref(),
+                    want_breadcrumb,
+                    want_metadata,
+                    ac_opts,
+                )
             })
             .collect()
     };
 
     Ok(BlockSearchResponse { hits, total })
+}
+
+/// Convert a `SearchHit` (Tantivy result) into a `BlockSearchHit` (wire DTO).
+///
+/// Extracted from `search_blocks` so the per-outline search handler can call
+/// it with the same shape — closes the `/outlines/` drift surfaced by the
+/// planning-time inventory.
+///
+/// Always emits `block_type` (via parse_block_type on content); emits
+/// `breadcrumb` / `metadata` only when the caller opted in via the
+/// corresponding `include_*` flags. AncestorContext is attached when any
+/// cheap fields fire (always-on tier) — see `compute_ancestor_context`.
+///
+/// `pub` (not `pub(crate)`) so the symmetry harness can prove search-hit
+/// shaping produces matching `ancestorContext` to `compute_ancestor_context`
+/// directly.
+#[allow(clippy::too_many_arguments)]
+pub fn shape_search_hit<T: ReadTxn>(
+    hit: floatty_core::search::SearchHit,
+    blocks_map: Option<&yrs::MapRef>,
+    txn: &T,
+    inheritance_index: Option<&InheritanceIndex>,
+    page_name_index: Option<&PageNameIndex>,
+    want_breadcrumb: bool,
+    want_metadata: bool,
+    ac_opts: AncestorContextOpts,
+) -> BlockSearchHit {
+    let Some(bmap) = blocks_map else {
+        return BlockSearchHit {
+            block_id: hit.block_id,
+            score: hit.score,
+            content: None,
+            breadcrumb: None,
+            metadata: None,
+            snippet: hit.snippet,
+            block_type: None,
+            ancestor_context: None,
+        };
+    };
+
+    // Read content (truncated for wire — same 200-char ceiling as before).
+    let content = bmap
+        .get(txn, &hit.block_id)
+        .and_then(|v| match v {
+            yrs::Out::YMap(block_map) => Some(block_map),
+            _ => None,
+        })
+        .and_then(|block_map| {
+            block_map.get(txn, "content").and_then(|v| match v {
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            })
+        })
+        .map(|c| {
+            if c.chars().count() > 200 {
+                let truncated: String = c.chars().take(200).collect();
+                format!("{}...", truncated)
+            } else {
+                c
+            }
+        });
+
+    let breadcrumb = if want_breadcrumb {
+        // Take the nearest 5 ancestors, then reverse for ROOTMOST-FIRST
+        // display order — matches the contract documented in
+        // .claude/rules/api-reference.md ("breadcrumb is parent chain
+        // ... ancestor block content (nearest parent last)") and the
+        // floatty-backend SKILL.md helper which joins with " → " as
+        // root → leaf. Per CodeRabbit Major review on PR #281: the
+        // walker keeps its nearest-first programmatic contract; only
+        // the breadcrumb projection (a presentation surface) is
+        // reversed at the composer.
+        let ancestors = get_ancestors(bmap, txn, &hit.block_id);
+        let crumbs: Vec<String> = ancestors
+            .into_iter()
+            .take(5)
+            .rev()
+            .map(|a| a.content)
+            .collect();
+        if crumbs.is_empty() {
+            None
+        } else {
+            Some(crumbs)
+        }
+    } else {
+        None
+    };
+
+    let metadata = if want_metadata {
+        bmap.get(txn, &hit.block_id).and_then(|v| match v {
+            yrs::Out::YMap(block_map) => block_map
+                .get(txn, "metadata")
+                .and_then(|m| api::extract_metadata_from_yrs(m, txn)),
+            _ => None,
+        })
+    } else {
+        None
+    };
+
+    let block_type = content
+        .as_ref()
+        .map(|c| floatty_core::parse_block_type(c).as_str().to_string());
+
+    // ancestor_context needs the block's own metadata for outlinks +
+    // markers. Reuse the already-read `metadata` when `want_metadata=true`;
+    // otherwise pull it once here. The helper takes
+    // `Option<&serde_json::Value>` directly so no skeletal DTO scaffold is
+    // needed (Fix 5 in the simplify pass — eliminates the prior duplicate
+    // metadata read in the `want_metadata=false` path).
+    let metadata_for_ac: Option<serde_json::Value> = if metadata.is_some() {
+        None
+    } else {
+        bmap.get(txn, &hit.block_id).and_then(|v| match v {
+            yrs::Out::YMap(block_map) => block_map
+                .get(txn, "metadata")
+                .and_then(|m| api::extract_metadata_from_yrs(m, txn)),
+            _ => None,
+        })
+    };
+    // Hints from the Tantivy STORED columns — let compute_ancestor_context
+    // skip the per-hit BFS over child pointers AND the per-hit
+    // PageNameIndex enumeration (Fix 2 in the simplify pass).
+    let hints = AncestorContextHints {
+        subtree_size: hit.subtree_size_hint,
+        inbound_count: hit.inbound_count_hint,
+        inbound_block_ids: hit.inbound_block_ids_hint.clone(),
+    };
+    let ancestor_context = compute_ancestor_context_with_hints(
+        bmap,
+        txn,
+        &hit.block_id,
+        metadata.as_ref().or(metadata_for_ac.as_ref()),
+        inheritance_index,
+        page_name_index,
+        ac_opts,
+        hints,
+    );
+
+    BlockSearchHit {
+        block_id: hit.block_id,
+        score: hit.score,
+        content,
+        breadcrumb,
+        metadata,
+        snippet: hit.snippet,
+        block_type,
+        ancestor_context,
+    }
 }
 
 // =========================================================================

@@ -163,6 +163,19 @@ pub struct BlockIndexData {
     pub ctx_at: i64,
     /// Block depth in tree (0 = root/page, 1 = direct child, etc.).
     pub depth: u32,
+    // ----- ancestor context fields -----
+    /// Block ID of the nearest registered-page ancestor, when present.
+    pub nearest_page_block_id: Option<String>,
+    /// Page name of the nearest registered-page ancestor, when present.
+    pub nearest_page_name: Option<String>,
+    /// Multi-value: ancestor block IDs (nearest-first, capped at 10).
+    pub ancestor_block_ids: Vec<String>,
+    /// Approximate descendant count (capped — see TantivyIndexHook constants).
+    pub subtree_size: u32,
+    /// Number of [[wikilinks]] in the index that target this block's page.
+    pub inbound_count: u32,
+    /// Top-N inbound source block IDs (multi-value, top 5 by recency).
+    pub inbound_block_ids: Vec<String>,
 }
 
 /// Messages that can be sent to the writer actor.
@@ -469,6 +482,22 @@ impl TantivyWriter {
         // Depth field (always set)
         doc.add_i64(self.fields.depth, d.depth as i64);
 
+        // ----- ancestor context fields -----
+        if let Some(ref id) = d.nearest_page_block_id {
+            doc.add_text(self.fields.nearest_page_block_id, id);
+        }
+        if let Some(ref name) = d.nearest_page_name {
+            doc.add_text(self.fields.nearest_page_name, name);
+        }
+        for ancestor_id in &d.ancestor_block_ids {
+            doc.add_text(self.fields.ancestor_block_ids, ancestor_id);
+        }
+        doc.add_i64(self.fields.subtree_size, d.subtree_size as i64);
+        doc.add_i64(self.fields.inbound_count, d.inbound_count as i64);
+        for inbound_id in &d.inbound_block_ids {
+            doc.add_text(self.fields.inbound_block_ids, inbound_id);
+        }
+
         self.writer
             .add_document(doc)
             .map_err(SearchError::Tantivy)?;
@@ -521,6 +550,12 @@ mod tests {
             created_at: 0,
             ctx_at: 0,
             depth: 0,
+            nearest_page_block_id: None,
+            nearest_page_name: None,
+            ancestor_block_ids: vec![],
+            subtree_size: 0,
+            inbound_count: 0,
+            inbound_block_ids: vec![],
         }
     }
 
@@ -753,6 +788,12 @@ mod tests {
             created_at: 1704067200,
             ctx_at: 1773379200,
             depth: 2,
+            nearest_page_block_id: None,
+            nearest_page_name: None,
+            ancestor_block_ids: vec![],
+            subtree_size: 0,
+            inbound_count: 0,
+            inbound_block_ids: vec![],
         };
         let result = handle.add_or_update(data).await;
         assert!(result.is_ok());

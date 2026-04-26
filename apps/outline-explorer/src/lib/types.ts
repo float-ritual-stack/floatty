@@ -9,6 +9,49 @@ export interface InheritedMarker extends Marker {
   sourceBlockId: string;
 }
 
+// AncestorContext (the navigation-layer surface).
+//
+// Mirrors the Rust DTO in `floatty-server/src/api/blocks.rs`. Surfaced on
+// every block-returning endpoint (BlockDto, BlockSearchHit, PresenceResponse,
+// PageSearchResult). Always-on cheap fields; `effectiveMarkers` and
+// `inboundSamples` opt-in via `?include=effective_markers,inbound_samples`
+// (always-on for `/blocks/:id` since slow-context path already).
+//
+// `ancestorBlockIds` is ROOTMOST-FIRST per the wire contract — matches the
+// breadcrumb composer's `take(5).rev()` shape.
+export type EffectiveMarkerSource =
+  | { kind: "own" }
+  | { kind: "inherited"; sourceBlockId: string };
+
+export interface EffectiveMarker {
+  markerType: string;
+  value: string;
+  source: EffectiveMarkerSource;
+}
+
+export interface InboundSample {
+  blockId: string;
+  /** Truncated content preview (≤200 chars). Empty when source block deleted. */
+  content: string;
+}
+
+export interface AncestorContext {
+  nearestPageBlockId?: string;
+  nearestPageName?: string;
+  /** ROOTMOST-FIRST, capped at 10 by the walker. */
+  ancestorBlockIds?: string[];
+  /** Only present when `?include=effective_markers` (always-on for /blocks/:id). */
+  effectiveMarkers?: EffectiveMarker[];
+  /** Deduped union of [[wikilinks]] across the focused block + walked ancestors. */
+  ancestorOutlinks?: string[];
+  /** Approximate descendant count (capped at 1000 by the indexer). */
+  subtreeSize: number;
+  /** Number of inbound `[[wikilink]]` references to this block's nearest page. */
+  inboundCount: number;
+  /** Only present when `?include=inbound_samples`; default top-5. */
+  inboundSamples?: InboundSample[];
+}
+
 export interface BlockMetadata {
   markers: Marker[];
   outlinks: string[];
@@ -29,6 +72,13 @@ export interface Block {
   updatedAt: number;
   outputType: string | null;
   output: unknown | null;
+  /**
+   * Navigation-layer surface — populated by `/blocks/:id` (always-on with
+   * effectiveMarkers), by `/blocks/resolve/:prefix`, and by `/blocks` when
+   * `?ancestorContext=true`. May be null/absent for bulk responses or root
+   * blocks with no chain.
+   */
+  ancestorContext?: AncestorContext;
 }
 
 export interface BlockWithContext extends Block {
@@ -54,6 +104,12 @@ export interface SearchHit {
   breadcrumb?: string[];
   metadata?: BlockMetadata;
   blockType?: string;
+  /**
+   * Navigation-layer surface — populated on every hit. Cheap fields
+   * always-on; opt-in fields (`effectiveMarkers`, `inboundSamples`) gated
+   * by `?include=`.
+   */
+  ancestorContext?: AncestorContext;
 }
 
 export interface SearchResponse {
@@ -73,6 +129,31 @@ export interface SearchOptions {
   createdBefore?: number;
   includeBreadcrumb?: boolean;
   includeMetadata?: boolean;
+  /**
+   * Comma-separated `?include=` directives for AncestorContext.
+   * Recognised: `effective_markers`, `inbound_samples`. Cheap fields are
+   * always-on regardless of this parameter.
+   */
+  include?: string;
+  /** Cap for `inbound_samples` (default 5; max 50). */
+  inboundSampleCount?: number;
+}
+
+// Page search response (mirrors PageSearchResult on the wire)
+export interface PageSearchHit {
+  name: string;
+  isStub: boolean;
+  blockId: string | null;
+  /** Populated only for non-stub pages (stubs have no chain to compute). */
+  ancestorContext?: AncestorContext;
+}
+
+// Presence response shape ([[FLO-680]])
+export interface PresenceResponse {
+  blockId: string;
+  paneId?: string;
+  /** Same opt-in rules as search hits: cheap fields always-on. */
+  ancestorContext?: AncestorContext;
 }
 
 // Pages API types

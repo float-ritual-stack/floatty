@@ -191,6 +191,20 @@ cmd_context() {
   echo "**Content**: $(printf '%s' "$result" | jq -r '.content // "?"' | head -3)"
   echo ""
 
+  # FLO-679 PR 2: surface AncestorContext one-liner (page identity +
+  # subtree/inbound badges) before the breadcrumb. Saves callers the
+  # `floatty_block_get … | jq '.ancestorContext'` follow-up; the field
+  # is always-on for `/blocks/:id`.
+  local nearest_page
+  nearest_page=$(printf '%s' "$result" | jq -r '.ancestorContext.nearestPageName // empty')
+  if [[ -n "$nearest_page" ]]; then
+    local subtree inbound
+    subtree=$(printf '%s' "$result" | jq -r '.ancestorContext.subtreeSize // 0')
+    inbound=$(printf '%s' "$result" | jq -r '.ancestorContext.inboundCount // 0')
+    echo "**Page**: [[$nearest_page]] (subtree:$subtree inbound:$inbound)"
+    echo ""
+  fi
+
   # Ancestors (breadcrumb)
   local ancestor_count
   ancestor_count=$(printf '%s' "$result" | jq '.ancestors // [] | length')

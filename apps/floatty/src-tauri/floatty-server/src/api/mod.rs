@@ -40,7 +40,11 @@ use crate::WsBroadcaster;
 /// - New: Embedded Y.Map (from MapPrelim insertion)
 /// - Any::Map: JSON-like map value
 /// - Legacy: JSON string (for backwards compatibility)
-pub(crate) fn extract_metadata_from_yrs<T: ReadTxn>(
+///
+/// `pub` (not `pub(crate)`) so the symmetry harness in
+/// `tests/symmetry_ancestor_context.rs` can read metadata directly from
+/// Y.Doc fixtures without reaching back into private API surface.
+pub fn extract_metadata_from_yrs<T: ReadTxn>(
     value: yrs::Out,
     txn: &T,
 ) -> Option<serde_json::Value> {
@@ -153,10 +157,13 @@ pub use export::{
 };
 // Block DTOs re-exported (used by block_service, outline handlers, discovery, tests)
 pub use blocks::{
-    BlockContextQuery, BlockDto, BlockRef, BlockWithContextResponse, BlocksQuery, BlocksResponse,
-    CreateBlockRequest, ImportBlockRequest, InheritedMarkerDto, ResolveResponse, SiblingContext,
-    TokenEstimate, TreeNode, UpdateBlockRequest,
+    AncestorContext, BlockContextQuery, BlockDto, BlockRef, BlockWithContextResponse, BlocksQuery,
+    BlocksResponse, CreateBlockRequest, EffectiveMarkerDto, ImportBlockRequest, InboundSampleDto,
+    InheritedMarkerDto, MarkerSource, ResolveResponse, SiblingContext, TokenEstimate, TreeNode,
+    UpdateBlockRequest,
 };
+// Discovery DTOs re-exported (FLO-680 — presence struct-ified)
+pub use discovery::PresenceResponse;
 
 /// Standard error response
 #[derive(Serialize, Deserialize)]

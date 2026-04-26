@@ -162,8 +162,11 @@ floatty_search_with_breadcrumb() {
   floatty_search_rich "$@"
 }
 
-# Search with formatted context — breadcrumbs + metadata surfaced
+# Search with formatted context — breadcrumbs + metadata + AncestorContext surfaced
 # Usage: floatty_search_context "query" [limit]
+#
+# FLO-679 PR 2: now surfaces .ancestorContext.nearestPageName (page identity)
+# and inboundCount / subtreeSize compact badges when present.
 floatty_search_context() {
   local query="$1"
   local limit="${2:-5}"
@@ -184,6 +187,12 @@ floatty_search_context() {
     "━━━ [\(.blockId[0:8])] score:\(.score | . * 10 | round / 10) ━━━" +
     "\n  \(.content[0:300])" +
     "\n  breadcrumb: \(.breadcrumb // ["(root)"] | join(" → "))" +
+    (if .ancestorContext.nearestPageName then
+      "\n  page: [[\(.ancestorContext.nearestPageName)]]" +
+      (if (.ancestorContext.subtreeSize // 0) > 0 or (.ancestorContext.inboundCount // 0) > 0 then
+        "  (subtree:\(.ancestorContext.subtreeSize // 0) inbound:\(.ancestorContext.inboundCount // 0))"
+      else "" end)
+    else "" end) +
     (if .metadata.markers and (.metadata.markers | length > 0) then
       "\n  markers: \([.metadata.markers[] | if .value then "\(.markerType)::\(.value)" else "\(.markerType)::" end] | join(", "))"
     else "" end) +
@@ -191,6 +200,33 @@ floatty_search_context() {
       "\n  outlinks: \(.metadata.outlinks | join(", "))"
     else "" end) +
     "\n"'
+}
+
+# Search filtered by inherited project marker — FLO-679 PR 2 helper.
+#
+# Wraps the existing marker_type+marker_val+inherited filter into one
+# ergonomic call. The new ancestorContext.effectiveMarkers field lets
+# agents see which project a hit belongs to (own or inherited) — this
+# helper just gives a one-liner for the common "search inside one
+# project" use case.
+#
+# Usage: floatty_search_in_project "query" "floatty" [limit]
+floatty_search_in_project() {
+  local query="$1"
+  local project="$2"
+  local limit="${3:-15}"
+
+  [[ -z "$project" ]] && { echo "Usage: floatty_search_in_project <query> <project> [limit]" >&2; return 1; }
+
+  local q_encoded=""
+  [[ -n "$query" ]] && q_encoded=$(_floatty_urlencode "$query")
+  local proj_encoded
+  proj_encoded=$(_floatty_urlencode "$project")
+
+  # `inherited=true` is the default but we name it explicitly so future
+  # readers understand the intent: "blocks where project::X is in own
+  # OR ancestor markers."
+  floatty_curl "$FLOATTY_URL/api/v1/search?q=$q_encoded&marker_type=project&marker_val=$proj_encoded&inherited=true&limit=$limit&include_breadcrumb=true&include_metadata=true&include=effective_markers"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -385,12 +421,23 @@ floatty_search_pages_pretty() {
 # Combine with floatty_block_get to get context around their focus.
 # ═══════════════════════════════════════════════════════════════
 
-# Get current user presence (focused block + pane)
-# Returns JSON { blockId, paneId } or empty string if no presence.
-# Usage: floatty_presence
+# Get current user presence (focused block + pane + AncestorContext)
+# Returns JSON { blockId, paneId, ancestorContext? } or empty string if no presence.
+#
+# FLO-679 PR 2 / [[FLO-680]]: presence now returns ancestorContext inline.
+# `effective_markers` opt-in surfaces project/mode markers (own + inherited)
+# so one call answers "what is the user focused on AND in what project."
+#
+# Usage: floatty_presence [include_directives]
+#   include_directives: comma-separated list (effective_markers, inbound_samples).
+#                       Default: effective_markers
 floatty_presence() {
+  local includes="${1:-effective_markers}"
+  local url="$FLOATTY_URL/api/v1/presence"
+  [[ -n "$includes" ]] && url="$url?include=$(_floatty_urlencode "$includes")"
+
   local response http_code
-  response=$(floatty_curl -w "\n%{http_code}" "$FLOATTY_URL/api/v1/presence")
+  response=$(floatty_curl -w "\n%{http_code}" "$url")
   http_code=$(printf '%s' "$response" | tail -1)
   response=$(printf '%s' "$response" | sed '$d')
 
@@ -403,6 +450,11 @@ floatty_presence() {
 }
 
 # Get the block the user is currently focused on, with full context.
+#
+# FLO-679 PR 2 NOTE: floatty_presence now returns ancestorContext directly,
+# so for "where am I" queries you can use floatty_presence alone — this
+# helper is for "where am I AND show me the surrounding tree."
+#
 # Usage: floatty_presence_context [sibling_radius]
 floatty_presence_context() {
   local radius="${1:-3}"

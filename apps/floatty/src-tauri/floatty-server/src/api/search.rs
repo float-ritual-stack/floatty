@@ -9,6 +9,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use super::{ApiError, AppState};
+use crate::api::AncestorContext;
+use yrs::{Map, ReadTxn, Transact};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -30,6 +32,13 @@ pub struct PageSearchQuery {
     pub limit: usize,
     #[serde(default)]
     pub fuzzy: bool,
+    /// Comma-separated `?include=` directives for AncestorContext.
+    /// Recognised: `effective_markers`, `inbound_samples`. Always-on cheap
+    /// fields populate regardless. Stubs (no block_id) skip ancestor_context.
+    #[serde(default)]
+    pub include: Option<String>,
+    #[serde(default)]
+    pub inbound_sample_count: Option<usize>,
 }
 
 fn default_limit() -> usize {
@@ -42,6 +51,13 @@ pub struct PageSearchResult {
     pub name: String,
     pub is_stub: bool,
     pub block_id: Option<String>,
+    /// Navigation-layer surface for the page block.
+    /// Populated only for non-stub pages (a stub has no `block_id`, so no
+    /// ancestors / inbound shape to compute). Always-on for cheap fields;
+    /// effective_markers and inbound_samples respect the same `?include=`
+    /// directives the search endpoints honour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor_context: Option<AncestorContext>,
 }
 
 #[derive(Serialize)]
@@ -83,6 +99,15 @@ pub struct BlockSearchQuery {
     pub inherited: Option<bool>,
     #[serde(default)]
     pub exclude_types: Option<String>,
+    /// Comma-separated `?include=` directives for AncestorContext.
+    /// Recognised: `effective_markers`, `inbound_samples`. Cheap fields are
+    /// always-on regardless of this parameter.
+    #[serde(default)]
+    pub include: Option<String>,
+    /// Cap for `inbound_samples` (default 5; max 50). Only honoured when
+    /// `include=inbound_samples`.
+    #[serde(default)]
+    pub inbound_sample_count: Option<usize>,
 }
 
 fn default_search_limit() -> usize {
@@ -104,6 +129,11 @@ pub struct BlockSearchHit {
     pub snippet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_type: Option<String>,
+    /// Navigation-layer surface. Always-on cheap fields;
+    /// `effective_markers` and `inbound_samples` populated only when the
+    /// caller passed the corresponding `?include=` directive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor_context: Option<AncestorContext>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -125,24 +155,77 @@ async fn search_pages(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<PageSearchQuery>,
 ) -> Result<Json<PageSearchResponse>, ApiError> {
-    let index = state
+    // Acquire indices ONCE — the AncestorContext shape per page reads from
+    // both. Drop the page-name read guard before re-locking inside compute_*
+    // helpers (we reuse the same guard reference).
+    let pni = state
         .page_name_index
         .read()
         .map_err(|_| ApiError::LockPoisoned)?;
 
     let results = if query.fuzzy {
-        index.fuzzy_search(&query.prefix)
+        pni.fuzzy_search(&query.prefix)
     } else {
-        index.search(&query.prefix)
+        pni.search(&query.prefix)
     };
 
-    let pages: Vec<PageSearchResult> = results
+    // Build the result vector with AncestorContext for non-stub pages.
+    // Stubs have no block_id → no ancestor chain to compute → ancestor_context
+    // stays None. The result keeps the original page sort order from the
+    // index search.
+    let suggestions: Vec<floatty_core::PageSuggestion> =
+        results.into_iter().take(query.limit).collect();
+
+    // Short-circuits the documented "expand_page" 2-call tax — caller can
+    // read AncestorContext from the page-search hit instead of a follow-up
+    // GET on the page block.
+    let inh = state
+        .inheritance_index
+        .read()
+        .map_err(|_| ApiError::LockPoisoned)?;
+    let includes = crate::block_service::parse_includes(&query.include);
+    let ac_opts = crate::block_service::AncestorContextOpts::from_raw(
+        &includes,
+        query.inbound_sample_count.unwrap_or(5),
+    );
+
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+    let blocks_map = txn.get_map("blocks");
+
+    let pages: Vec<PageSearchResult> = suggestions
         .into_iter()
-        .take(query.limit)
-        .map(|s| PageSearchResult {
-            name: s.name,
-            is_stub: s.is_stub,
-            block_id: s.block_id,
+        .map(|s| {
+            let ancestor_context = match (&blocks_map, &s.block_id) {
+                (Some(bmap), Some(block_id)) => {
+                    // Read metadata directly — compute_ancestor_context takes
+                    // `Option<&serde_json::Value>` so no skeletal DTO scaffold.
+                    let metadata = match bmap.get(&txn, block_id) {
+                        Some(yrs::Out::YMap(block_map)) => block_map
+                            .get(&txn, "metadata")
+                            .and_then(|m| crate::api::extract_metadata_from_yrs(m, &txn)),
+                        _ => None,
+                    };
+                    crate::block_service::compute_ancestor_context(
+                        bmap,
+                        &txn,
+                        block_id,
+                        metadata.as_ref(),
+                        Some(&inh),
+                        Some(&pni),
+                        ac_opts,
+                    )
+                }
+                _ => None,
+            };
+
+            PageSearchResult {
+                name: s.name,
+                is_stub: s.is_stub,
+                block_id: s.block_id,
+                ancestor_context,
+            }
         })
         .collect();
 
@@ -162,7 +245,13 @@ async fn search_blocks(
         .hook_system
         .index_manager()
         .ok_or_else(|| ApiError::SearchUnavailable)?;
-    let result = crate::block_service::search_blocks(&state.store, &index_manager, &query)?;
+    let result = crate::block_service::search_blocks(
+        &state.store,
+        &index_manager,
+        Some(&state.inheritance_index),
+        Some(&state.page_name_index),
+        &query,
+    )?;
     Ok(Json(result))
 }
 

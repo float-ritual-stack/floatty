@@ -19,7 +19,7 @@
 use crate::{
     block::parse_block_type,
     events::BlockChange,
-    hooks::InheritanceIndex,
+    hooks::{InheritanceIndex, PageNameIndex},
     projections::{walk_ancestors, StoreParentLookup},
     search::{BlockIndexData, WriterHandle},
     BlockChangeBatch, Origin, YDocStore,
@@ -28,6 +28,18 @@ use std::sync::{Arc, RwLock};
 use tracing::{instrument, trace, warn};
 
 use super::BlockHook;
+
+/// Cap for `subtree_size` traversal — keeps populating cost bounded on huge
+/// subtrees (a 25K-block daily note shouldn't dominate index time).
+///
+/// `pub` so the response-shape helpers in `floatty-server::block_service`
+/// can reuse the same cap when falling back to a live BFS (singleton
+/// paths that don't have a Tantivy STORED hint).
+pub const SUBTREE_SIZE_CAP: u32 = 1000;
+
+/// Top-N `inbound_block_ids` cap. Surfaces the most recent blocks that link
+/// to this block's nearest page name.
+pub const INBOUND_SAMPLES_CAP: usize = 5;
 
 /// Hook that indexes blocks in Tantivy for full-text search.
 ///
@@ -41,6 +53,10 @@ pub struct TantivyIndexHook {
     writer: WriterHandle,
     /// Pre-computed inheritance index (populated by InheritanceIndexHook at priority 15).
     inheritance_index: Arc<RwLock<InheritanceIndex>>,
+    /// Page name index — used to derive `nearest_page_name` and
+    /// `inbound_count`. Optional: tests / boot-time configurations can omit
+    /// it and the ancestor-context fields will simply be empty/zero.
+    page_name_index: Option<Arc<RwLock<PageNameIndex>>>,
 }
 
 impl TantivyIndexHook {
@@ -49,6 +65,23 @@ impl TantivyIndexHook {
         Self {
             writer,
             inheritance_index,
+            page_name_index: None,
+        }
+    }
+
+    /// Variant that takes the PageNameIndex used to derive ancestor-context
+    /// page fields. Production callers should use this — the `new`
+    /// constructor is kept for legacy / boot-time paths that wire the page
+    /// index in later.
+    pub fn with_page_index(
+        writer: WriterHandle,
+        inheritance_index: Arc<RwLock<InheritanceIndex>>,
+        page_name_index: Arc<RwLock<PageNameIndex>>,
+    ) -> Self {
+        Self {
+            writer,
+            inheritance_index,
+            page_name_index: Some(page_name_index),
         }
     }
 }
@@ -220,15 +253,84 @@ impl TantivyIndexHook {
             "Indexing block"
         );
 
-        // Compute depth by walking parent chain (max 50 to prevent infinite loops).
-        // Migrated to `walk_ancestors` (FLO-679 PR 1, commit 6) — single
-        // walker, single cap, identical observable depth.
-        // TODO: Wire into ranking (shallow boost, deep penalty) once real-world
-        // observation confirms it's needed. Field is indexed for queries/filters.
-        let depth = {
+        // Single walker call populates depth, ancestor IDs, and (when a
+        // PageNameIndex is wired) nearest_page_*. Walk to depth=50 (the
+        // documented indexing cap) so `walk.depth` matches the pre-PR2
+        // 50-cap value; slice `walk.ids[..10]` for `ancestor_block_ids`
+        // (the `AncestorContext` wire-surface cap). Page-name lookup
+        // short-circuits at first match, so the deeper walk doesn't add
+        // cost when a page-ancestor sits near the block.
+        //
+        // Lock-poisoning policy: indexing is best-effort, so a poisoned
+        // PageNameIndex degrades to "no nearest_page_* fields + zero
+        // inbound_count/inbound_block_ids" rather than aborting the
+        // index. We `warn!` so the degradation is visible — silently
+        // dropping search-quality fields would let a single upstream
+        // panic invisibly corrupt every subsequent index entry.
+        //
+        // Lock acquisition: hoisted to a single `read()` per indexed
+        // block (PR #282 review — Greptile P2). Both the walk and the
+        // inbound-derivation step share the same guard, dropping it at
+        // the end of the indexing pass for this block. Read-read is
+        // safe; single acquisition halves the syscall-level lock cost
+        // at indexing throughput.
+        let page_index_guard = self.page_name_index.as_ref().and_then(|p| match p.read() {
+            Ok(g) => Some(g),
+            Err(e) => {
+                warn!(
+                    block_id = %id,
+                    error = %e,
+                    "PageNameIndex lock poisoned during indexing — \
+                     nearest_page_* fields and inbound_count will be \
+                     empty/zero for this block"
+                );
+                None
+            }
+        });
+
+        let walk_full = {
             let lookup = StoreParentLookup::new(store);
-            walk_ancestors(&lookup, id, 50, None).depth
+            walk_ancestors(&lookup, id, 50, page_index_guard.as_deref())
         };
+
+        let depth = walk_full.depth;
+        let ancestor_block_ids: Vec<String> = walk_full.ids.iter().take(10).cloned().collect();
+        let (nearest_page_block_id, nearest_page_name) = match walk_full.nearest_page {
+            Some((bid, name)) => (Some(bid), Some(name)),
+            None => (None, None),
+        };
+
+        // Subtree size: count descendants up to SUBTREE_SIZE_CAP via the
+        // store's child-pointer traversal. Cheap; bounded by the cap.
+        let subtree_size = compute_subtree_size(store, id, SUBTREE_SIZE_CAP);
+
+        // Inbound count + samples: derived from PageNameIndex if available.
+        // Inbound = blocks whose `outlinks` reference this block's nearest
+        // page name (or this block itself if it IS a registered page).
+        // Single read-guard scope (hoisted above), single reverse-index
+        // lookup — no linear scans (Fix 3 + Fix 9 in the simplify pass).
+        let (inbound_count, inbound_block_ids) = page_index_guard
+            .as_ref()
+            .and_then(|g| {
+                // If THIS block IS a registered page, use its own name; else
+                // fall back to the nearest ancestor page from the walk.
+                let target_name = g
+                    .page_name_for_block(id)
+                    .map(String::from)
+                    .or_else(|| nearest_page_name.clone())?;
+                let refs = g.referencing_blocks(&target_name)?;
+                let count = refs.len() as u32;
+                let mut samples: Vec<String> = refs.iter().cloned().collect();
+                samples.sort();
+                samples.truncate(INBOUND_SAMPLES_CAP);
+                Some((count, samples))
+            })
+            .unwrap_or((0, vec![]));
+
+        // Drop the read guard explicitly — pedantic, but documents that
+        // we're done with PageNameIndex before sending the index payload
+        // to the (potentially blocking) writer task.
+        drop(page_index_guard);
 
         // Build BlockIndexData and send to writer
         let data = BlockIndexData {
@@ -247,6 +349,12 @@ impl TantivyIndexHook {
             created_at,
             ctx_at,
             depth,
+            nearest_page_block_id,
+            nearest_page_name,
+            ancestor_block_ids,
+            subtree_size,
+            inbound_count,
+            inbound_block_ids,
         };
 
         let writer = writer.clone();
@@ -270,6 +378,40 @@ impl TantivyIndexHook {
             }
         });
     }
+}
+
+/// BFS the descendants of `root_id` via `Store::get_block` until either the
+/// tree is exhausted or `cap` is reached. Used to populate `subtree_size`.
+///
+/// Returns the count INCLUSIVE of `root_id` (1 for a leaf, 0 if root missing).
+/// Saturates at `cap` — large subtrees report exactly `cap` and stop the walk.
+fn compute_subtree_size(store: &YDocStore, root_id: &str, cap: u32) -> u32 {
+    if cap == 0 {
+        return 0;
+    }
+    let mut count: u32 = 0;
+    let mut stack: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    seen.insert(root_id.to_string());
+    stack.push(root_id.to_string());
+
+    while let Some(id) = stack.pop() {
+        // Only count if the block actually exists in the store.
+        let Some(block) = store.get_block(&id) else {
+            continue;
+        };
+        count = count.saturating_add(1);
+        if count >= cap {
+            return cap;
+        }
+        for child_id in block.child_ids {
+            if seen.insert(child_id.clone()) {
+                stack.push(child_id);
+            }
+        }
+    }
+
+    count
 }
 
 #[cfg(test)]

@@ -36,7 +36,7 @@ pub struct BlocksResponse {
 }
 
 /// Block DTO for API responses
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockDto {
     pub id: String,
@@ -63,6 +63,12 @@ pub struct BlockDto {
     /// Block output data (door envelope, eval result, etc.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<serde_json::Value>,
+    /// Navigation-layer surface — uniform across every block-returning
+    /// endpoint. Populated by handler-side shaping helpers; left `None`
+    /// when no fields would be set (e.g., a bare root block with no chain,
+    /// outlinks, inbound, or markers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor_context: Option<AncestorContext>,
 }
 
 /// A marker inherited from an ancestor block.
@@ -76,13 +82,139 @@ pub struct InheritedMarkerDto {
 }
 
 // ============================================================================
+// AncestorContext (the navigation-layer surface)
+// ============================================================================
+
+/// Single inbound reference sample: a block linking TO this hit's page.
+///
+/// Surfaced via `?include=inbound_samples` on search/presence/blocks
+/// endpoints. Top-N (default 5) deterministically id-sorted at index time
+/// so the wire surface stays stable across rebuilds. Content preview is
+/// looked up at response time — content changes more than reverse-edges,
+/// so denormalising it would just guarantee staleness.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct InboundSampleDto {
+    /// The source block ID (the block whose `[[wikilink]]` points at this hit).
+    pub block_id: String,
+    /// Truncated content preview (≤200 chars) read from the source block.
+    /// Empty string when the source block has been deleted since indexing.
+    pub content: String,
+}
+
+/// Provenance source for an effective marker — own (on the block itself)
+/// vs inherited from a named ancestor.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum MarkerSource {
+    /// Marker is set on the block itself (no inheritance walk needed).
+    Own,
+    /// Marker was inherited from `sourceBlockId` further up the parent chain.
+    Inherited {
+        #[serde(rename = "sourceBlockId")]
+        source_block_id: String,
+    },
+}
+
+/// Effective marker — own + inherited collapsed into a single set, with
+/// provenance. Read on demand from `InheritanceIndex` at response time;
+/// NOT denormalised into Tantivy (the index already serves search; this
+/// surface is for response shaping).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectiveMarkerDto {
+    pub marker_type: String,
+    pub value: String,
+    pub source: MarkerSource,
+}
+
+/// Ancestor-context surface — uniform across every block-returning endpoint.
+///
+/// Always-on fields (cheap, read from Tantivy FAST/STORED columns):
+/// - `nearestPageBlockId` / `nearestPageName` — document identity
+/// - `ancestorBlockIds` — capped parent chain (ROOTMOST-FIRST up to depth 10
+///   — same shape as PR 1's `take(5).rev()` breadcrumb composer; the
+///   symmetry harness asserts this and the rule lives in PR 1's review-
+///   feedback addendum on the plan)
+/// - `subtreeSize` — capped descendant count for navigate-vs-read hints
+/// - `inboundCount` — load-bearing signal
+/// - `ancestorOutlinks` — deduped union of `[[wikilink]]`s across walked
+///   ancestors (assembled at response time from the walk + `outlinks` field)
+///
+/// Opt-in fields (cost-tiered):
+/// - `effectiveMarkers` — `?include=effective_markers` (search + presence;
+///   always-on for `/blocks/:id` since slow-context path already)
+/// - `inboundSamples` — `?include=inbound_samples` (top-5 default,
+///   `&inbound_sample_count=N` to override; ~500B per hit when present)
+///
+/// Resolved per the plan's open-questions table (2026-04-25):
+/// - presence DTO is always-on (DTO is small, one-call orientation is the win)
+/// - `ancestorOutlinks` is a deduped union of all walked ancestors
+/// - WS presence enrichment deferred (REST-only this round)
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AncestorContext {
+    /// Block ID of the nearest registered-page ancestor, when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nearest_page_block_id: Option<String>,
+    /// Page name of the nearest registered-page ancestor, when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nearest_page_name: Option<String>,
+    /// Ancestor block IDs, ROOTMOST-FIRST (matches PR 1's breadcrumb
+    /// `take(5).rev()` shape), capped at depth 10 by the walker before
+    /// reversal. Symmetry harness in `tests/symmetry_ancestor_context.rs`
+    /// asserts this contract holds across every endpoint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ancestor_block_ids: Vec<String>,
+    /// Effective markers — only present when `?include=effective_markers`
+    /// (or always for `/blocks/:id`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effective_markers: Vec<EffectiveMarkerDto>,
+    /// Deduped union of `[[wikilink]]` targets across all walked ancestors
+    /// (depth-capped at 10 by the walker). Assembled at response time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ancestor_outlinks: Vec<String>,
+    /// Approximate descendant count (capped — see TantivyIndexHook constants).
+    pub subtree_size: u32,
+    /// Number of inbound `[[wikilink]]` references to this block's nearest page.
+    pub inbound_count: u32,
+    /// Top-N inbound source samples — only present when
+    /// `?include=inbound_samples`. Default top-5 (`&inbound_sample_count=N`
+    /// to override).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inbound_samples: Vec<InboundSampleDto>,
+}
+
+impl AncestorContext {
+    /// True when no navigation signal fired — used by callers to skip the
+    /// `ancestorContext` field entirely on bare-bones blocks.
+    ///
+    /// `subtree_size` is intentionally NOT part of this check: every existing
+    /// block has `subtree_size >= 1` (it counts itself), so including it would
+    /// make `is_empty()` always false. Bare roots with no chain, no outlinks,
+    /// no markers, and no inbound references should ship as `None` to keep the
+    /// wire surface terse — `subtree_size: 1` alone is not a navigation signal.
+    pub fn is_empty(&self) -> bool {
+        self.nearest_page_block_id.is_none()
+            && self.nearest_page_name.is_none()
+            && self.ancestor_block_ids.is_empty()
+            && self.effective_markers.is_empty()
+            && self.ancestor_outlinks.is_empty()
+            && self.inbound_count == 0
+            && self.inbound_samples.is_empty()
+    }
+}
+
+// ============================================================================
 // Block Context Retrieval (FLO-338)
 // ============================================================================
 
 /// Query parameters for GET /api/v1/blocks/:id
 #[derive(Deserialize, Debug, Default)]
 pub struct BlockContextQuery {
-    /// Comma-separated include directives: ancestors, siblings, children, tree, token_estimate
+    /// Comma-separated include directives. Recognised:
+    /// `ancestors`, `siblings`, `children`, `tree`, `token_estimate`,
+    /// `effective_markers`, `inbound_samples`.
     #[serde(default)]
     pub include: Option<String>,
     /// Number of siblings before/after to include (default: 2)
@@ -91,6 +223,10 @@ pub struct BlockContextQuery {
     /// Max depth for tree traversal (default: 50, prevents runaway on huge subtrees)
     #[serde(default = "default_max_depth")]
     pub max_depth: usize,
+    /// Cap for `inbound_samples` (default 5; max 50). Only honoured when
+    /// `?include=inbound_samples` is present in `include`.
+    #[serde(default = "default_inbound_sample_count")]
+    pub inbound_sample_count: usize,
 }
 
 fn default_sibling_radius() -> usize {
@@ -98,6 +234,9 @@ fn default_sibling_radius() -> usize {
 }
 fn default_max_depth() -> usize {
     50
+}
+fn default_inbound_sample_count() -> usize {
+    5
 }
 
 /// Lightweight block reference for context (ancestors, siblings, children)
@@ -255,6 +394,11 @@ pub struct BlocksQuery {
     pub marker_type: Option<String>,
     /// Filter: marker value (requires marker_type)
     pub marker_value: Option<String>,
+    /// Opt-in `ancestorContext` per block in the bulk response. Off by
+    /// default to keep the bulk cost calculus unchanged (one walk per
+    /// block × N blocks). Enable on small filtered sets.
+    #[serde(default)]
+    pub ancestor_context: Option<bool>,
 }
 
 /// Response for GET /api/v1/blocks/resolve/:prefix
@@ -306,14 +450,30 @@ async fn resolve_block_prefix(
 
         match value {
             yrs::Out::YMap(block_map) => {
-                let inherited_markers = {
-                    let index = state
-                        .inheritance_index
-                        .read()
-                        .map_err(|_| ApiError::LockPoisoned)?;
-                    lookup_inherited(&index, &full_id)
-                };
-                let dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+                // Single inheritance_index read guard for lookup_inherited
+                // and attach_ancestor_context (Fix 6 in the simplify pass).
+                let inh = state
+                    .inheritance_index
+                    .read()
+                    .map_err(|_| ApiError::LockPoisoned)?;
+                let inherited_markers = lookup_inherited(&inh, &full_id);
+                let mut dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+
+                // Same always-on AncestorContext shape as /blocks/:id
+                // (singletons get effective_markers always-on).
+                let pni = state
+                    .page_name_index
+                    .read()
+                    .map_err(|_| ApiError::LockPoisoned)?;
+                let opts = crate::block_service::AncestorContextOpts::default().always_effective();
+                crate::block_service::attach_ancestor_context(
+                    &mut dto,
+                    &blocks_map,
+                    &txn,
+                    Some(&inh),
+                    Some(&pni),
+                    opts,
+                );
                 (full_id, dto)
             }
             _ => return Err(ApiError::NotFound(full_id)),
@@ -335,8 +495,12 @@ async fn get_blocks(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<BlocksQuery>,
 ) -> Result<Json<BlocksResponse>, ApiError> {
-    let result =
-        crate::block_service::get_blocks(&state.store, Some(&state.inheritance_index), &query)?;
+    let result = crate::block_service::get_blocks(
+        &state.store,
+        Some(&state.inheritance_index),
+        Some(&state.page_name_index),
+        &query,
+    )?;
     Ok(Json(result))
 }
 
@@ -346,8 +510,13 @@ async fn get_block(
     Path(id): Path<String>,
     axum::extract::Query(ctx_query): axum::extract::Query<BlockContextQuery>,
 ) -> Result<Json<BlockWithContextResponse>, ApiError> {
-    let mut result =
-        crate::block_service::get_block(&state.store, &state.inheritance_index, &id, &ctx_query)?;
+    let mut result = crate::block_service::get_block(
+        &state.store,
+        &state.inheritance_index,
+        Some(&state.page_name_index),
+        &id,
+        &ctx_query,
+    )?;
     inject_rendered_markdown(&mut result.block, &state.projection_cache);
     Ok(Json(result))
 }
@@ -619,6 +788,7 @@ mod projection_injection_tests {
             updated_at: 0,
             output_type: Some("door".to_string()),
             output: Some(output),
+            ancestor_context: None,
         }
     }
 

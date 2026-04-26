@@ -324,7 +324,7 @@ async fn outline_export_json(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let store = resolve_outline(&state, &name)?;
-    let result = crate::block_service::get_blocks(&store, None, &BlocksQuery::default())?;
+    let result = crate::block_service::get_blocks(&store, None, None, &BlocksQuery::default())?;
 
     Ok((
         StatusCode::OK,
@@ -340,9 +340,22 @@ async fn outline_export_json(
 async fn outline_get_blocks(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<BlocksQuery>,
 ) -> Result<Json<BlocksResponse>, ApiError> {
-    let store = resolve_outline(&state, &name)?;
-    let result = crate::block_service::get_blocks(&store, None, &BlocksQuery::default())?;
+    let ctx = resolve_outline_context(&state, &name)?;
+    let store = Arc::clone(&ctx.store);
+    // Per-outline /blocks honours ?ancestor_context=true identical to the
+    // top-level endpoint — closes the per-outline asymmetry surfaced in
+    // the planning-time inventory.
+    let hs = ctx.ensure_hook_system();
+    let inheritance_index = hs.inheritance_index();
+    let page_name_index = hs.page_name_index();
+    let result = crate::block_service::get_blocks(
+        &store,
+        Some(&inheritance_index),
+        Some(&page_name_index),
+        &query,
+    )?;
     Ok(Json(result))
 }
 
@@ -387,7 +400,11 @@ async fn outline_get_block(
     State(state): State<AppState>,
     Path((name, id)): Path<(String, String)>,
 ) -> Result<Json<BlockDto>, ApiError> {
-    let store = resolve_outline(&state, &name)?;
+    let ctx = resolve_outline_context(&state, &name)?;
+    let store = Arc::clone(&ctx.store);
+    let hs = ctx.ensure_hook_system();
+    let inheritance_index = hs.inheritance_index();
+    let page_name_index = hs.page_name_index();
 
     // Y.Doc read scope: the transaction + read guard are released at the
     // end of this block, BEFORE we run the FLO-633 projection injection.
@@ -405,12 +422,31 @@ async fn outline_get_block(
 
         let block_id = crate::block_service::resolve_block_id(&id, &blocks_map, &txn)?;
 
-        match blocks_map.get(&txn, &block_id) {
+        let mut dto_inner = match blocks_map.get(&txn, &block_id) {
             Some(yrs::Out::YMap(map)) => {
                 crate::block_service::read_block_dto(&map, &txn, &block_id, None, false)
             }
             _ => return Err(ApiError::NotFound(format!("block '{}' not found", id))),
-        }
+        };
+
+        // Per-outline /blocks/:id mirrors /api/v1/blocks/:id — always-on
+        // AncestorContext including effective_markers. Closes the
+        // per-outline asymmetry surfaced in planning.
+        let inh = inheritance_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let pni = page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
+        let opts = crate::block_service::AncestorContextOpts::default().always_effective();
+        crate::block_service::attach_ancestor_context(
+            &mut dto_inner,
+            &blocks_map,
+            &txn,
+            Some(&inh),
+            Some(&pni),
+            opts,
+        );
+
+        dto_inner
     };
 
     // Y.Doc read lock released — safe to run walker + cache operations.
@@ -501,7 +537,19 @@ async fn outline_search_blocks(
     let index_manager = hs
         .index_manager()
         .ok_or_else(|| ApiError::SearchUnavailable)?;
-    let result = crate::block_service::search_blocks(&ctx.store, &index_manager, &query)?;
+    // Per-outline hits get the SAME shape as top-level hits. Threading the
+    // per-outline indices closes the asymmetry called out in the
+    // planning-time inventory (per-outline endpoints didn't even support
+    // ?include= before this PR).
+    let inheritance_index = hs.inheritance_index();
+    let page_name_index = hs.page_name_index();
+    let result = crate::block_service::search_blocks(
+        &ctx.store,
+        &index_manager,
+        Some(&inheritance_index),
+        Some(&page_name_index),
+        &query,
+    )?;
     Ok(Json(result))
 }
 

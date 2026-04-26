@@ -69,6 +69,13 @@ pub struct PageNameIndex {
     /// Blocks that are direct children of `pages::` container.
     existing: HashMap<String, String>,
 
+    /// Reverse of `existing`: block ID → normalized page name. O(1) lookup
+    /// for "what page does this block represent?" — used by hot paths
+    /// (Tantivy indexing per block, search-hit shaping per hit) to avoid
+    /// O(N_pages) `existing_pages().iter().find(...)` linear scans.
+    /// Maintained in lockstep with `existing` via the mutator methods.
+    block_id_to_page_name: HashMap<String, String>,
+
     /// Names referenced via `[[wikilink]]` across all blocks.
     /// Maps normalized name → set of block IDs that reference it.
     referenced: HashMap<String, HashSet<String>>,
@@ -85,6 +92,7 @@ impl PageNameIndex {
     pub fn new() -> Self {
         Self {
             existing: HashMap::new(),
+            block_id_to_page_name: HashMap::new(),
             referenced: HashMap::new(),
             pages_container_id: None,
             matcher: std::sync::Mutex::new(Matcher::new(Config::DEFAULT)),
@@ -206,6 +214,16 @@ impl PageNameIndex {
         self.existing.get(&name.to_lowercase()).map(|s| s.as_str())
     }
 
+    /// Reverse lookup: given a block ID, return the page name it represents
+    /// (lowercased), or `None` when the block is not registered as a page.
+    ///
+    /// O(1) — backed by the `block_id_to_page_name` reverse index. Replaces
+    /// the O(N_pages) `existing_pages().iter().find(...)` scans on the
+    /// Tantivy indexing and search-hit shaping hot paths.
+    pub fn page_name_for_block(&self, block_id: &str) -> Option<&str> {
+        self.block_id_to_page_name.get(block_id).map(|s| s.as_str())
+    }
+
     /// Get all existing page names.
     pub fn existing_pages(&self) -> Vec<String> {
         self.existing.keys().cloned().collect()
@@ -245,20 +263,37 @@ impl PageNameIndex {
     ///
     /// `name` should be the page title with heading prefix stripped.
     /// `block_id` is the Y.Doc block ID of the page block.
+    ///
+    /// Maintains the `block_id_to_page_name` reverse index: if a previous
+    /// page was registered under the same name (rename via `add` after
+    /// `remove`), the reverse entry for the old block_id is dropped here.
     pub fn add_existing_page(&mut self, name: &str, block_id: &str) {
         let normalized = name.to_lowercase();
         let prev = self
             .existing
             .insert(normalized.clone(), block_id.to_string());
+        if let Some(ref old_block_id) = prev {
+            // Same name → different block_id (e.g. rename collision). Drop
+            // the stale reverse entry so we don't leak block_id → name.
+            if old_block_id != block_id {
+                self.block_id_to_page_name.remove(old_block_id);
+            }
+        }
+        self.block_id_to_page_name
+            .insert(block_id.to_string(), normalized);
         if prev.is_none() {
             trace!("Added existing page: {} ({})", name, block_id);
         }
     }
 
     /// Remove an existing page from the index.
+    ///
+    /// Maintains the `block_id_to_page_name` reverse index by clearing the
+    /// entry for the block id that was registered under this name.
     pub fn remove_existing_page(&mut self, name: &str) {
         let normalized = name.to_lowercase();
-        if self.existing.remove(&normalized).is_some() {
+        if let Some(block_id) = self.existing.remove(&normalized) {
+            self.block_id_to_page_name.remove(&block_id);
             trace!("Removed existing page: {}", name);
         }
     }
@@ -300,6 +335,7 @@ impl PageNameIndex {
     /// Clear the entire index.
     pub fn clear(&mut self) {
         self.existing.clear();
+        self.block_id_to_page_name.clear();
         self.referenced.clear();
         self.pages_container_id = None;
     }
@@ -705,6 +741,57 @@ mod tests {
         index.remove_existing_page("my page"); // Case-insensitive
 
         assert!(!index.page_exists("My Page"));
+    }
+
+    #[test]
+    fn test_page_name_for_block_reverse_lookup() {
+        // Reverse index parity: page_name_for_block returns the lowercased
+        // name registered for a given block_id, and stays in sync through
+        // add → remove → re-add cycles.
+        let mut index = PageNameIndex::new();
+        index.add_existing_page("My Page", "page-1");
+        index.add_existing_page("Other Page", "page-2");
+
+        assert_eq!(index.page_name_for_block("page-1"), Some("my page"));
+        assert_eq!(index.page_name_for_block("page-2"), Some("other page"));
+        assert_eq!(index.page_name_for_block("page-missing"), None);
+
+        // Remove drops the reverse entry.
+        index.remove_existing_page("My Page");
+        assert_eq!(index.page_name_for_block("page-1"), None);
+        // Other entry survives.
+        assert_eq!(index.page_name_for_block("page-2"), Some("other page"));
+
+        // Re-add under same block_id with new name.
+        index.add_existing_page("Brand New", "page-1");
+        assert_eq!(index.page_name_for_block("page-1"), Some("brand new"));
+    }
+
+    #[test]
+    fn test_page_name_for_block_handles_rename_collision() {
+        // When the same NAME is re-registered against a different block_id
+        // (rename collision in the outline), the old block_id's reverse
+        // entry must be dropped — otherwise a stale block_id → name mapping
+        // leaks and inbound counts get attributed to the wrong page.
+        let mut index = PageNameIndex::new();
+        index.add_existing_page("Same Name", "block-old");
+        assert_eq!(index.page_name_for_block("block-old"), Some("same name"));
+
+        index.add_existing_page("Same Name", "block-new");
+        assert_eq!(index.page_name_for_block("block-new"), Some("same name"));
+        assert_eq!(
+            index.page_name_for_block("block-old"),
+            None,
+            "stale reverse entry must be dropped on rename collision"
+        );
+    }
+
+    #[test]
+    fn test_clear_resets_reverse_index() {
+        let mut index = PageNameIndex::new();
+        index.add_existing_page("Page A", "block-a");
+        index.clear();
+        assert_eq!(index.page_name_for_block("block-a"), None);
     }
 
     #[test]

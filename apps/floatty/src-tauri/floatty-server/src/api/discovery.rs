@@ -8,18 +8,18 @@
 //! on every new tool.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use yrs::{Map, ReadTxn, Transact};
 
 use super::{ApiError, AppState, BlockContextQuery, BlockWithContextResponse};
-use crate::api::{self, BlockDto};
+use crate::api::{self, AncestorContext, BlockDto};
 use crate::block_service::{lookup_inherited, read_block_dto};
 
 pub fn router() -> Router<AppState> {
@@ -46,6 +46,38 @@ pub fn router() -> Router<AppState> {
 struct PresenceRequest {
     block_id: String,
     pane_id: Option<String>,
+}
+
+/// Presence response, struct-ified ([[FLO-680]]).
+///
+/// Replaces the inline `serde_json::json!` literal previously emitted by
+/// `get_presence`. Adds `ancestorContext` so a single GET orients an agent
+/// on the user's currently-focused block (page identity, ancestor chain,
+/// effective markers when opted-in, inbound count) without a follow-up
+/// `floatty_block_get` call.
+///
+/// `ancestorContext.effectiveMarkers` and `ancestorContext.inboundSamples`
+/// are opt-in via `?include=effective_markers,inbound_samples`. Cheap fields
+/// are always-on per the resolved open-question.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PresenceResponse {
+    pub block_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor_context: Option<AncestorContext>,
+}
+
+/// Query parameters for `GET /api/v1/presence` — mirrors `BlockContextQuery`'s
+/// `?include=` and `&inbound_sample_count=N` knobs so presence behaves the
+/// same way as `/blocks/:id` for the AncestorContext opt-in surface.
+#[derive(Deserialize, Debug, Default)]
+pub struct PresenceQuery {
+    #[serde(default)]
+    pub include: Option<String>,
+    #[serde(default)]
+    pub inbound_sample_count: Option<usize>,
 }
 
 /// Body for `POST /api/v1/daily/:date/append` — append a child block to the
@@ -144,14 +176,32 @@ async fn get_daily_note(
         .ok_or_else(|| ApiError::NotFound(page_id.clone()))?;
 
     if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state
-                .inheritance_index
-                .read()
-                .map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, &page_id)
-        };
-        let block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
+        // Single inheritance_index read guard for lookup_inherited +
+        // attach_ancestor_context (Fix 6 in the simplify pass).
+        let inh = state
+            .inheritance_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let inherited_markers = lookup_inherited(&inh, &page_id);
+        let mut block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
+
+        // AncestorContext on daily-note response (singleton path —
+        // effective_markers always-on).
+        let pni = state
+            .page_name_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let opts =
+            crate::block_service::AncestorContextOpts::from_query(&ctx_query).always_effective();
+        crate::block_service::attach_ancestor_context(
+            &mut block_dto,
+            &blocks_map,
+            &txn,
+            Some(&inh),
+            Some(&pni),
+            opts,
+        );
+
         Ok(Json(crate::block_service::build_block_context_response(
             &blocks_map,
             &txn,
@@ -164,7 +214,10 @@ async fn get_daily_note(
     }
 }
 
-async fn get_presence(State(state): State<AppState>) -> impl IntoResponse {
+async fn get_presence(
+    State(state): State<AppState>,
+    Query(query): Query<PresenceQuery>,
+) -> impl IntoResponse {
     let Some(info) = state.broadcaster.get_last_presence() else {
         return StatusCode::NO_CONTENT.into_response();
     };
@@ -174,19 +227,79 @@ async fn get_presence(State(state): State<AppState>) -> impl IntoResponse {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     let txn = doc_guard.transact();
-    let block_exists = txn
-        .get_map("blocks")
-        .and_then(|m| m.get(&txn, &info.block_id))
-        .is_some();
-
+    let Some(blocks_map) = txn.get_map("blocks") else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
+    let block_exists = blocks_map.get(&txn, &info.block_id).is_some();
     if !block_exists {
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    Json(serde_json::json!({
-        "blockId": info.block_id,
-        "paneId": info.pane_id,
-    }))
+    // Shape the AncestorContext for the focused block. Cheap fields
+    // always-on; effective_markers + inbound_samples gated by `?include=`.
+    // Reads the block's metadata directly — compute_ancestor_context now
+    // takes `Option<&serde_json::Value>` rather than a full DTO scaffold.
+    //
+    // Lock-poisoning policy: presence is poll-based (every ~2s) and used
+    // as an orientation hint, so we degrade to "no ancestor_context" rather
+    // than failing the whole presence call. `tracing::warn!` makes the
+    // degradation visible (Pattern 5 — silent degradation prohibited; the
+    // sibling `doc.read()` failure above ALREADY returns 500, so a true
+    // poisoned-lock state will surface there too — this branch only fires
+    // when `doc` is healthy but one of the index locks is poisoned).
+    let ancestor_context = (|| -> Option<AncestorContext> {
+        let inh = match state.inheritance_index.read() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!(
+                    block_id = %info.block_id,
+                    error = %e,
+                    "InheritanceIndex lock poisoned during presence — \
+                     ancestorContext.effectiveMarkers will be empty"
+                );
+                return None;
+            }
+        };
+        let pni = match state.page_name_index.read() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!(
+                    block_id = %info.block_id,
+                    error = %e,
+                    "PageNameIndex lock poisoned during presence — \
+                     ancestorContext.nearestPage* + inboundCount will be empty"
+                );
+                return None;
+            }
+        };
+        let block_map = match blocks_map.get(&txn, &info.block_id)? {
+            yrs::Out::YMap(m) => m,
+            _ => return None,
+        };
+        let metadata = block_map
+            .get(&txn, "metadata")
+            .and_then(|m| crate::api::extract_metadata_from_yrs(m, &txn));
+        let includes = crate::block_service::parse_includes(&query.include);
+        let opts = crate::block_service::AncestorContextOpts::from_raw(
+            &includes,
+            query.inbound_sample_count.unwrap_or(5),
+        );
+        crate::block_service::compute_ancestor_context(
+            &blocks_map,
+            &txn,
+            &info.block_id,
+            metadata.as_ref(),
+            Some(&inh),
+            Some(&pni),
+            opts,
+        )
+    })();
+
+    Json(PresenceResponse {
+        block_id: info.block_id,
+        pane_id: info.pane_id,
+        ancestor_context,
+    })
     .into_response()
 }
 
@@ -372,6 +485,11 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), A
 /// Read a page block as a `BlockDto` for returning from the upsert handler.
 /// Scoped to this module — the full `get_block` in `block_service` builds a
 /// context response (ancestors, siblings, etc.) that we don't need here.
+///
+/// The returned BlockDto carries `ancestorContext` (always-on for singleton
+/// paths, mirrors `/blocks/:id`). For a freshly-upserted page the ancestor
+/// chain is just the `pages::` container; for an existing page the chain
+/// reflects whatever the outline has materialised.
 fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
@@ -386,20 +504,31 @@ fn read_page_dto(state: &AppState, id: &str) -> Result<BlockDto, ApiError> {
         .ok_or_else(|| ApiError::NotFound(id.to_string()))?;
 
     if let yrs::Out::YMap(block_map) = value {
-        let inherited_markers = {
-            let index = state
-                .inheritance_index
-                .read()
-                .map_err(|_| ApiError::LockPoisoned)?;
-            lookup_inherited(&index, id)
-        };
-        Ok(read_block_dto(
-            &block_map,
+        // Single inheritance_index read guard for lookup_inherited +
+        // attach_ancestor_context (Fix 6 in the simplify pass).
+        let inh = state
+            .inheritance_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let inherited_markers = lookup_inherited(&inh, id);
+        let mut dto = read_block_dto(&block_map, &txn, id, inherited_markers, true);
+
+        // Always-on AncestorContext on the upsert response.
+        let pni = state
+            .page_name_index
+            .read()
+            .map_err(|_| ApiError::LockPoisoned)?;
+        let opts = crate::block_service::AncestorContextOpts::default().always_effective();
+        crate::block_service::attach_ancestor_context(
+            &mut dto,
+            &blocks_map,
             &txn,
-            id,
-            inherited_markers,
-            true,
-        ))
+            Some(&inh),
+            Some(&pni),
+            opts,
+        );
+
+        Ok(dto)
     } else {
         Err(ApiError::NotFound(id.to_string()))
     }
@@ -498,7 +627,7 @@ async fn append_to_daily_note(
 
     let (daily_id, _existed) = find_or_create_page(&state, &date)?;
 
-    let dto = crate::block_service::create_block(
+    let mut dto = crate::block_service::create_block(
         &state.store,
         &state.broadcaster,
         &state.hook_system,
@@ -509,6 +638,40 @@ async fn append_to_daily_note(
             at_index: None,
         },
     )?;
+
+    // Attach AncestorContext to the newly-created child (always-on for
+    // singleton paths). The hook system is async so the PageNameIndex /
+    // InheritanceIndex lookups reflect at-call-time state — for a fresh
+    // append under an existing daily note, the daily note is already in
+    // PageNameIndex so nearestPage* populates correctly.
+    let block_id_for_attach = dto.id.clone();
+    {
+        let doc = state.store.doc();
+        let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+        let txn = doc_guard.transact();
+        let blocks_map = txn
+            .get_map("blocks")
+            .ok_or_else(|| ApiError::NotFound("blocks map not found".to_string()))?;
+        if blocks_map.get(&txn, &block_id_for_attach).is_some() {
+            let inh = state
+                .inheritance_index
+                .read()
+                .map_err(|_| ApiError::LockPoisoned)?;
+            let pni = state
+                .page_name_index
+                .read()
+                .map_err(|_| ApiError::LockPoisoned)?;
+            let opts = crate::block_service::AncestorContextOpts::default().always_effective();
+            crate::block_service::attach_ancestor_context(
+                &mut dto,
+                &blocks_map,
+                &txn,
+                Some(&inh),
+                Some(&pni),
+                opts,
+            );
+        }
+    }
 
     Ok((StatusCode::CREATED, Json(dto)))
 }

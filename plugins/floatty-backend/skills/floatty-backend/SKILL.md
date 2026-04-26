@@ -30,7 +30,20 @@ When search returns 20 hits, read the full response — don't aggressively filte
 
 ### Presence — spatial awareness
 
-Agents can read `GET /api/v1/presence` to know where the human is in the outline right now — the `blockId` and `paneId` of their last focused block. Combine with `floatty_block_get` to understand what they're looking at. Returns 204 if no focus or block was deleted.
+Agents can read `GET /api/v1/presence` to know where the human is in the outline right now — the `blockId` and `paneId` of their last focused block. Returns 204 if no focus or block was deleted.
+
+**FLO-679 PR 2 / [[FLO-680]] win**: presence now returns `ancestorContext`
+inline (cheap fields always-on; `effectiveMarkers` and `inboundSamples`
+opt-in via `?include=`). The documented `presence + floatty_block_get`
+chain to orient on what the user is looking at is no longer required —
+ONE call gets the page identity, the ancestor chain, the project markers,
+and the load-bearing-block signal.
+
+```bash
+# One call for full orientation:
+curl -H "Authorization: Bearer $FLOATTY_API_KEY" \
+  "$FLOATTY_URL/api/v1/presence?include=effective_markers" | jq '.ancestorContext'
+```
 
 ### Page name index
 
@@ -221,12 +234,14 @@ months ago may be reinventing something that now has a dedicated endpoint.
 
 ### Search: always read the full response
 
-`floatty_search` returns breadcrumbs + metadata by default. Every hit includes:
+`floatty_search` returns breadcrumbs + metadata + AncestorContext by default.
+Every hit includes:
 
 - `.breadcrumb` — where the block lives in the tree (LOCATION)
 - `.metadata.markers` — parsed `ctx::`, `project::`, `mode::` etc (STRUCTURED TAGS)
 - `.metadata.outlinks` — parsed `[[wikilinks]]` (GRAPH EDGES)
 - `.score` — BM25 relevance (RANKING)
+- `.ancestorContext` (FLO-679 PR 2) — navigation-layer surface (see below)
 
 These are the navigation layer. Do not jq-filter them out. Do not select only `.content`. If you strip the metadata, you lose the graph and will need extra API calls to recover what you already had.
 
@@ -234,6 +249,28 @@ These are the navigation layer. Do not jq-filter them out. Do not select only `.
 WRONG: floatty_search "query" | jq '.hits[] | .content'
 RIGHT: floatty_search "query"   (read the full JSON)
 ```
+
+#### AncestorContext fields (FLO-679 PR 2)
+
+The `ancestorContext` sub-object on every hit collapses several common
+"orient on this hit" follow-up calls into the original response:
+
+- `.ancestorContext.nearestPageName` — DOCUMENT IDENTITY (which page contains this hit)
+- `.ancestorContext.nearestPageBlockId` — UUID of that page block (zoom target)
+- `.ancestorContext.ancestorBlockIds` — parent chain, ROOTMOST-FIRST (root → ... → immediate parent)
+- `.ancestorContext.effectiveMarkers` — INHERITED + OWN MARKERS (project/mode context from ancestors, with provenance)
+- `.ancestorContext.subtreeSize` — NAVIGATE vs READ hint (small = read it, big = zoom and walk)
+- `.ancestorContext.inboundCount` — LINK-IN signal (load-bearing block if many things reference it)
+- `.ancestorContext.ancestorOutlinks` — deduped union of `[[wikilinks]]` visible from this block's lineage (one-step graph traversal)
+- `.ancestorContext.inboundSamples` — top-N source-block previews (opt-in via `?include=inbound_samples`)
+
+`effectiveMarkers` and `inboundSamples` are opt-in via
+`?include=effective_markers` / `?include=inbound_samples` for search and
+presence (always-on for `/blocks/:id`).
+
+**The agent-facing win**: questions like "which project does this hit
+belong to" or "is this block load-bearing" are answered by the original
+search response — no follow-up `floatty_block_get` needed.
 
 ### Backlinks: use outlinks metadata, not text matching
 
