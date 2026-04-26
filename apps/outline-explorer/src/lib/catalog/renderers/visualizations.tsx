@@ -110,11 +110,20 @@ export const visualizationRenderers = {
                     {step.source}
                   </span>
                   {step.docId && <span className="text-dim text-[9px] font-mono">#{step.docId}</span>}
-                  {Number.isFinite(step.confidence) && (
-                    <span className="text-[9px] font-mono ml-auto" style={{
-                      color: step.confidence! > 0.8 ? colors.green : step.confidence! > 0.5 ? colors.amber : colors.coral,
-                    }}>{Math.round(step.confidence! * 100)}%</span>
-                  )}
+                  {Number.isFinite(step.confidence) && (() => {
+                    // Schema documents 0–1 fractions (renderer multiplies by 100).
+                    // Auto-detect agents that emit 0–100 ints by mistake — if the
+                    // value is > 1 (and at most 100, the only sensible upper
+                    // bound), treat it as already-percent. Daddy's 2026-04-26
+                    // bug #4: confidence: 100 → 10000% before this guard.
+                    const raw = step.confidence!;
+                    const pct = raw > 1 && raw <= 100 ? raw : raw * 100;
+                    return (
+                      <span className="text-[9px] font-mono ml-auto" style={{
+                        color: pct > 80 ? colors.green : pct > 50 ? colors.amber : colors.coral,
+                      }}>{Math.round(pct)}%</span>
+                    );
+                  })()}
                 </div>
                 <div className="text-text text-[11px] font-mono leading-snug">{step.content}</div>
                 {step.lines && <span className="text-dim text-[9px] font-mono">lines {step.lines}</span>}

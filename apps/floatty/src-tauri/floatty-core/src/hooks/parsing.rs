@@ -117,6 +117,11 @@ static STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 ///
 /// Returns markers for patterns like `[project::floatty]`, `[mode::dev]`.
 ///
+/// Also unwraps the historic typo `[project::[[wikilink]]]` — the regex
+/// captures `[[wikilink` (greedy match stops at the first `]`); the
+/// sanitizer strips the leading `[[` so downstream consumers receive
+/// the wikilink target as the value rather than a bracketed string.
+///
 /// # Examples
 ///
 /// ```
@@ -126,12 +131,34 @@ static STANDALONE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// assert_eq!(markers.len(), 2);
 /// assert_eq!(markers[0].marker_type, "project");
 /// assert_eq!(markers[0].value, Some("floatty".to_string()));
+///
+/// // Historic typo: [project::[[floatty]]] captures "[[floatty",
+/// // sanitizer unwraps to "floatty"
+/// let markers = extract_tag_markers("[project::[[floatty]] = [[2026-04-19]]");
+/// assert_eq!(markers[0].value, Some("floatty".to_string()));
 /// ```
 pub fn extract_tag_markers(content: &str) -> Vec<Marker> {
     TAG_PATTERN
         .captures_iter(content)
-        .map(|cap| Marker::with_value(&cap[1], &cap[2]))
+        .map(|cap| Marker::with_value(&cap[1], sanitize_marker_value(&cap[2])))
         .collect()
+}
+
+/// Sanitize a captured marker value.
+///
+/// Handles the `[type::[[wikilink]]]` typo case: the TAG_PATTERN regex
+/// (`[^\]]+`) stops at the first `]`, so it captures `[[wikilink` (with
+/// the closing `]]` left as broken trailing content). When the captured
+/// value starts with `[[`, strip that prefix (and any matching `]]`
+/// suffix) so the value is the wikilink target rather than the
+/// bracketed source. Clean values pass through unchanged.
+fn sanitize_marker_value(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some(after_open) = trimmed.strip_prefix("[[") {
+        let cleaned = after_open.strip_suffix("]]").unwrap_or(after_open);
+        return cleaned.trim().to_string();
+    }
+    trimmed.to_string()
 }
 
 /// Extract standalone markers like `project::floatty` (not bracketed).
@@ -537,6 +564,26 @@ mod tests {
     fn test_tag_marker_none() {
         let markers = extract_tag_markers("no tags here");
         assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_tag_marker_unwraps_embedded_wikilink() {
+        // Historic typo: [project::[[floatty]]] — the regex captures
+        // "[[floatty" (greedy [^\]]+ stops at the first `]`); sanitizer
+        // should strip the leading `[[` so the value is the wikilink target.
+        // From daddy's 2026-04-26 ancestor-context test pass on the live
+        // outline (one block had this typo).
+        let markers = extract_tag_markers("[project::[[floatty]] = [[2026-04-19]]");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].marker_type, "project");
+        assert_eq!(markers[0].value, Some("floatty".to_string()));
+    }
+
+    #[test]
+    fn test_tag_marker_clean_value_passes_through() {
+        // Regression guard: sanitizer must not mangle clean values.
+        let markers = extract_tag_markers("[project::floatty]");
+        assert_eq!(markers[0].value, Some("floatty".to_string()));
     }
 
     // ─────────────────────────────────────────────────────────────────────────

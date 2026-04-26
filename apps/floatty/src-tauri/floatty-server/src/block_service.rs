@@ -22,6 +22,25 @@ use std::sync::{Arc, RwLock};
 use yrs::{Array, ArrayPrelim, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
 // =========================================================================
+// Constants
+// =========================================================================
+
+/// Maximum ancestor chain length surfaced via `ancestorContext.ancestorBlockIds`.
+///
+/// Bumped from 10 → 20 on 2026-04-26 after a depth probe against the live
+/// outline (31,120 blocks): real-world max depth is 16 with one cluster of
+/// 9 blocks at depth 15. ~700 blocks today have depth > 10 and were having
+/// their rootmost ancestors silently truncated. 20 leaves headroom for
+/// daily-note nesting growth without immediately re-entering the truncation
+/// regime.
+///
+/// The walker contract is "nearest-first; caller-controlled cap"; callers
+/// reverse to rootmost-first when shaping the wire response. Breadcrumb
+/// composition has its own visible cap of `take(5)` independent of this
+/// value — bumping this only affects `ancestorBlockIds` length.
+pub(crate) const ANCESTOR_CONTEXT_MAX_DEPTH: usize = 20;
+
+// =========================================================================
 // Helpers (pub(crate) — used by api.rs handlers during incremental migration)
 // =========================================================================
 
@@ -452,9 +471,16 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
     hints: AncestorContextHints,
 ) -> Option<AncestorContext> {
     // One walk for ancestor IDs + nearest_page derivation. Walker's depth
-    // cap (10) is the documented AncestorContext.ancestorBlockIds cap.
+    // cap (ANCESTOR_CONTEXT_MAX_DEPTH = 20) is the documented
+    // AncestorContext.ancestorBlockIds cap. See const definition for the
+    // depth-probe rationale (real-world max=16 + headroom for nesting growth).
     let lookup = YDocParentLookup::new(blocks_map, txn);
-    let walk: AncestorWalk = walk_ancestors(&lookup, block_id, 10, page_name_index);
+    let walk: AncestorWalk = walk_ancestors(
+        &lookup,
+        block_id,
+        ANCESTOR_CONTEXT_MAX_DEPTH,
+        page_name_index,
+    );
 
     let nearest_page_block_id = walk.nearest_page.as_ref().map(|(id, _)| id.clone());
     let nearest_page_name = walk.nearest_page.as_ref().map(|(_, name)| name.clone());
@@ -818,15 +844,16 @@ fn compute_inbound<T: ReadTxn>(
 ///
 /// Migrated to `walk_ancestors` (FLO-679 PR 1, commit 2). The walker returns
 /// IDs only; this caller folds each ID into a `BlockRef` by fetching content.
-/// Cap kept at 10 to preserve pre-migration behaviour for the search
-/// breadcrumb composer (see commit 3).
+/// Cap matches `ANCESTOR_CONTEXT_MAX_DEPTH` so the breadcrumb composer's
+/// `take(5)` and `ancestorContext.ancestorBlockIds` draw from the same
+/// underlying walk. The visible breadcrumb stays at 5 regardless.
 pub(crate) fn get_ancestors<T: ReadTxn>(
     blocks_map: &yrs::MapRef,
     txn: &T,
     block_id: &str,
 ) -> Vec<BlockRef> {
     let lookup = YDocParentLookup::new(blocks_map, txn);
-    let walk = walk_ancestors(&lookup, block_id, 10, None);
+    let walk = walk_ancestors(&lookup, block_id, ANCESTOR_CONTEXT_MAX_DEPTH, None);
     walk.ids
         .into_iter()
         .map(|id| {
@@ -2395,10 +2422,13 @@ mod ancestor_migration_tests {
     }
 
     #[test]
-    fn get_ancestors_caps_at_ten() {
-        // Build a 15-deep chain. Cap is 10; expect exactly 10 ancestors.
+    fn get_ancestors_caps_at_walker_max() {
+        // Build a 25-deep chain. Cap is ANCESTOR_CONTEXT_MAX_DEPTH = 20;
+        // expect exactly 20 ancestors. Cap was 10 before 2026-04-26; bumped
+        // after live-outline depth probe found real-world max=16. See the
+        // const definition for full rationale.
         let mut seeds: Vec<(String, Option<String>, String)> = Vec::new();
-        for i in 0..16 {
+        for i in 0..25 {
             let parent = if i == 0 {
                 None
             } else {
@@ -2415,10 +2445,12 @@ mod ancestor_migration_tests {
         let txn = doc.transact();
         let blocks_map = txn.get_map("blocks").expect("blocks map");
 
-        let ancestors = get_ancestors(&blocks_map, &txn, "b15");
-        assert_eq!(ancestors.len(), 10, "depth cap held");
-        assert_eq!(ancestors[0].id, "b14");
-        assert_eq!(ancestors.last().unwrap().id, "b5");
+        let ancestors = get_ancestors(&blocks_map, &txn, "b24");
+        assert_eq!(ancestors.len(), 20, "depth cap held");
+        // Walker contract: nearest-first. b24's parent b23 is index 0;
+        // 20 hops up is b4 (last entry).
+        assert_eq!(ancestors[0].id, "b23");
+        assert_eq!(ancestors.last().unwrap().id, "b4");
     }
 
     #[test]

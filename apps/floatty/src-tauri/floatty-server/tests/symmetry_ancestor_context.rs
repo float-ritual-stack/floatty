@@ -353,14 +353,20 @@ fn bare_root_returns_none() {
     );
 }
 
-/// CONTRACT 6: walker depth cap (10) is honoured. A 15-deep chain caps at
-/// 10 ancestors. Verifies the cap survives the rootmost-first reversal —
-/// `len() == 10` either way; the rootmost-first end of the wire surface
-/// must be the 10th ancestor up (not the deepest).
+/// CONTRACT 6: walker depth cap (`ANCESTOR_CONTEXT_MAX_DEPTH = 20`) is
+/// honoured. A 25-deep chain caps at 20 ancestors. Verifies the cap survives
+/// the rootmost-first reversal — `len() == 20` either way; the rootmost-first
+/// end of the wire surface must be the 20th ancestor up (not the deepest).
+///
+/// Cap was 10 before 2026-04-26; bumped to 20 after a live-outline depth
+/// probe found real-world max=16 (~700 blocks above the old cap). See
+/// `block_service.rs::ANCESTOR_CONTEXT_MAX_DEPTH` for the full rationale.
 #[test]
 fn ancestor_block_ids_caps_at_walker_max() {
+    // 25 blocks: b0 (root) → b1 → ... → b24 (leaf). 24 ancestors above b24,
+    // walker caps at 20 → expect 20 visible (b4..b23).
     let mut seeds_owned: Vec<(String, Option<String>, String, Vec<String>)> = Vec::new();
-    for i in 0..16 {
+    for i in 0..25 {
         let parent = if i == 0 {
             None
         } else {
@@ -375,12 +381,12 @@ fn ancestor_block_ids_caps_at_walker_max() {
     let doc = build_doc(&seeds);
     let txn = doc.transact();
     let blocks_map = txn.get_map("blocks").expect("blocks map");
-    let dto = read_skeletal_dto(&blocks_map, &txn, "b15");
+    let dto = read_skeletal_dto(&blocks_map, &txn, "b24");
 
     let ctx = compute_ancestor_context(
         &blocks_map,
         &txn,
-        "b15",
+        "b24",
         dto.metadata.as_ref(),
         None,
         None,
@@ -390,20 +396,21 @@ fn ancestor_block_ids_caps_at_walker_max() {
 
     assert_eq!(
         ctx.ancestor_block_ids.len(),
-        10,
-        "walker cap (10) preserved through the rootmost-first reversal"
+        20,
+        "walker cap (ANCESTOR_CONTEXT_MAX_DEPTH = 20) preserved through the rootmost-first reversal"
     );
     // Reversed: rootmost-first means the FIRST entry is the deepest visible
-    // ancestor (b5 — 10 hops up from b15: b14 b13 b12 b11 b10 b9 b8 b7 b6 b5).
-    // Walker returns nearest-first → [b14, b13, ..., b5]; reversed → [b5, ..., b14].
+    // ancestor (b4 — 20 hops up from b24: b23 b22 b21 b20 b19 b18 b17 b16
+    // b15 b14 b13 b12 b11 b10 b9 b8 b7 b6 b5 b4).
+    // Walker returns nearest-first → [b23, b22, ..., b4]; reversed → [b4, ..., b23].
     assert_eq!(
         ctx.ancestor_block_ids.first(),
-        Some(&"b5".to_string()),
-        "first item is the rootmost visible (10th hop up)"
+        Some(&"b4".to_string()),
+        "first item is the rootmost visible (20th hop up)"
     );
     assert_eq!(
         ctx.ancestor_block_ids.last(),
-        Some(&"b14".to_string()),
+        Some(&"b23".to_string()),
         "last item is the immediate parent"
     );
 }
