@@ -13,6 +13,7 @@ use yrs::{Array, Map, ReadTxn, Transact};
 
 use super::{extract_metadata_from_yrs, ApiError, AppState};
 use crate::block_service::extract_timestamp;
+use floatty_core::projections::{walk_ancestors, HashMapParentLookup};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -509,36 +510,30 @@ async fn get_topology(
         }
     }
 
-    // Build block_to_root by walking up parent chains (depth-capped for cycle safety)
-    fn find_root(
-        block_id: &str,
-        parent_map: &std::collections::HashMap<String, String>,
-        cache: &mut std::collections::HashMap<String, String>,
-        depth: usize,
-    ) -> String {
-        if let Some(cached) = cache.get(block_id) {
-            return cached.clone();
-        }
-        if depth > 500 {
-            // Cycle or impossibly deep tree — treat as own root
-            cache.insert(block_id.to_string(), block_id.to_string());
-            return block_id.to_string();
-        }
-        match parent_map.get(block_id) {
-            Some(parent_id) => {
-                let root = find_root(parent_id, parent_map, cache, depth + 1);
-                cache.insert(block_id.to_string(), root.clone());
-                root
-            }
-            None => {
-                cache.insert(block_id.to_string(), block_id.to_string());
-                block_id.to_string()
-            }
-        }
-    }
+    // Build block_to_root by walking up parent chains via the consolidated
+    // `walk_ancestors` (FLO-679 PR 1, commit 5).
+    //
+    // Pre-migration this was a recursive `find_root` with a 500-depth cap that
+    // returned the *original* block on cap-saturation (cycle as own root). The
+    // migrated impl returns the deepest reachable ancestor instead. The only
+    // caller (`root_names.get(&root_id)`) only contains entries for blocks
+    // present in `rootIds`; cycle participants are by definition not in
+    // `rootIds`, so the lookup returns `None` either way and the caller
+    // falls back to `"other"`. The pre-merge audit (single caller, recorded in
+    // PR description) confirmed the semantic shift is unobservable.
+    //
+    // Cap remains at 500 to match pre-migration behaviour (deeper trees still
+    // produce the same `block_to_root` mapping for usable depths; cap matters
+    // only for pathological/cycle cases which the audit covered).
     let block_ids: Vec<String> = all_blocks.keys().cloned().collect();
+    let lookup = HashMapParentLookup::new(&parent_map);
     for bid in &block_ids {
-        let root = find_root(bid, &parent_map, &mut block_to_root, 0);
+        let walk = walk_ancestors(&lookup, bid, 500, None);
+        let root = walk
+            .ids
+            .last()
+            .cloned()
+            .unwrap_or_else(|| bid.to_string());
         block_to_root.insert(bid.clone(), root);
     }
 
@@ -922,4 +917,101 @@ async fn get_page_content(
 fn strip_heading_prefix(content: &str) -> &str {
     let first_line = content.lines().next().unwrap_or(content);
     first_line.trim_start_matches('#').trim()
+}
+
+// ============================================================================
+// FLO-679 PR 1 (commit 5) — find_root migration tests.
+//
+// `find_root` was removed in favour of `walk_ancestors(...).ids.last()`. The
+// pre-merge audit (single caller; cycle participants are never in `rootIds`)
+// confirmed the cycle-as-root semantic shift is unobservable in production.
+// These tests pin the migrated logic against the same `parent_map`-shape
+// inputs the real export path produces.
+// ============================================================================
+
+#[cfg(test)]
+mod find_root_migration_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn parent_map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(c, p)| ((*c).to_string(), (*p).to_string()))
+            .collect()
+    }
+
+    /// Mirrors the migrated `find_root` projection at `export.rs:~528` so the
+    /// shape of the assertion is identical to the production code path.
+    fn find_root(map: &HashMap<String, String>, block_id: &str) -> String {
+        let lookup = HashMapParentLookup::new(map);
+        let walk = walk_ancestors(&lookup, block_id, 500, None);
+        walk.ids
+            .last()
+            .cloned()
+            .unwrap_or_else(|| block_id.to_string())
+    }
+
+    #[test]
+    fn find_root_returns_self_for_root_block() {
+        let map = parent_map(&[]);
+        assert_eq!(find_root(&map, "r"), "r");
+    }
+
+    #[test]
+    fn find_root_walks_to_top_of_chain() {
+        // leaf → mid → root
+        let map = parent_map(&[("leaf", "mid"), ("mid", "root")]);
+        assert_eq!(find_root(&map, "leaf"), "root");
+    }
+
+    /// Documents the semantic shift the audit cleared.
+    ///
+    /// PRE-MIGRATION (`find_root` recursion + depth-500 cap): on cycle, the
+    /// function returned the *original* `block_id` — "treat cycles as their
+    /// own root."
+    ///
+    /// POST-MIGRATION (`walk_ancestors(...).ids.last()`): returns the deepest
+    /// reachable ancestor. For A → B → A walking from A, ids = [B], so
+    /// `.last() = B`.
+    ///
+    /// The only caller (`root_names.get(&root_id)`) only contains entries for
+    /// blocks present in `rootIds`. Cycle participants are by definition NOT
+    /// in `rootIds`, so the lookup returns `None` either way and the caller
+    /// falls back to the `"other"` territory in both pre- and post-migration
+    /// code. Audit recorded in PR description.
+    #[test]
+    fn find_root_returns_last_reachable_on_cycle() {
+        // A → B → A (synthetic cycle).
+        let map = parent_map(&[("a", "b"), ("b", "a")]);
+        // Pre-migration would have returned "a" (the original block_id).
+        // Post-migration returns "b" (the last reachable ancestor).
+        assert_eq!(
+            find_root(&map, "a"),
+            "b",
+            "cycle now returns deepest reachable, not self — see PR audit"
+        );
+    }
+
+    #[test]
+    fn find_root_returns_last_reachable_on_long_cycle() {
+        // A → B → C → B (cycle starts mid-chain).
+        let map = parent_map(&[("a", "b"), ("b", "c"), ("c", "b")]);
+        assert_eq!(find_root(&map, "a"), "c");
+    }
+
+    #[test]
+    fn find_root_caps_at_500_for_pathological_chains() {
+        // 600-deep chain. Walker caps at 500, so .last() is the 500th ancestor.
+        let mut map: HashMap<String, String> = HashMap::new();
+        for i in 0..600 {
+            map.insert(format!("b{}", i), format!("b{}", i + 1));
+        }
+        // b0's 500th ancestor is b500. Pre-migration also stopped at depth 500
+        // (treating it as own root); the new "last reachable" semantic returns
+        // a different value but neither value is in rootIds in production, so
+        // root_names.get(&_) → None either way.
+        let r = find_root(&map, "b0");
+        assert_eq!(r, "b500", "saturated walker returns last collected ancestor");
+    }
 }
