@@ -120,8 +120,8 @@ function extractRenderSummary(output: unknown): string | null {
         for (const h of headings) {
           if (!parts.includes(h)) parts.push(h);
         }
-      } else if (el.type === 'PatternCard' && typeof title === 'string') {
-        if (!parts.includes(title)) parts.push(title);
+      } else if (el.type === 'PatternCard' && typeof el.props?.label === 'string') {
+        if (!parts.includes(el.props.label)) parts.push(el.props.label);
       }
     }
   }
@@ -174,9 +174,8 @@ export function flattenSpecToMarkdown(output: unknown): string | null {
         if (p.content) lines.push(p.content);
         break;
       case 'PatternCard':
-        lines.push(`### ${p.title || 'Pattern'}${p.type ? ` [${p.type}]` : ''}${p.confidence ? ` (${p.confidence})` : ''}`);
-        if (p.content) lines.push('', p.content);
-        if (Array.isArray(p.connectsTo) && p.connectsTo.length) lines.push('', `connects to: ${p.connectsTo.map((c: string) => `[[${c}]]`).join(', ')}`);
+        lines.push(`### ${p.label || 'Pattern'}${p.confidence ? ` (${p.confidence})` : ''}`);
+        if (p.description) lines.push('', p.description);
         lines.push('');
         break;
       case 'QuoteBlock':

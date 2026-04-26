@@ -6,6 +6,26 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.13.1] - 2026-04-26
+
+### 🐛 Fixes
+
+- **`outputSummaryHook.ts` PatternCard markdown projection migrated to canonical signature** ([[FLO-657]] follow-up): the frontend `flattenSpecToMarkdown()` walker (which writes `block.metadata.renderedMarkdown`) was still reading the OLD PatternCard shape (`p.title`, `p.type`, `p.content`, `p.connectsTo`) after v0.13.0 canonicalized to `{label, description, confidence}`. Per the four-layer `renderedMarkdown` fallback chain (`output.data.normalizedMarkdown` → `metadata.renderedMarkdown` → `walk_spec_to_markdown` Rust → `walk_generic_json_to_markdown`), the frontend hook output is preferred over the migrated Rust walker — so PatternCard sections in `renderedMarkdown` came out as `### Pattern (high)` with the description body dropped (the Rust walker was correct, but never reached). Both the summary scanner (line 123–125) and the markdown projection switch (line 176–180) now read `p.label` / `p.description` / `p.confidence`. Surfaced by Desktop Daddy's full ancestor-context test pass against the live outline (kitchen-sink door spec on `render test` page) — same finding documented as bug #3 in that report.
+
+### Doctrine surfaced this cycle
+
+- **Blast-radius miss, third instance** — same root cause as the two PR #283 cases banked in v0.13.0 doctrine. The `feedback_audit_blast_radius_before_changing_shared_contracts.md` memory specifically called out "all four PatternCard surfaces" — the four are: (1) Zod schema in `@float/render-catalog` ✅, (2) SolidJS renderer in `@floatty/render-door` ✅, (3) Rust walker in `floatty-core::projections` ✅, (4) **frontend markdown hook in `apps/floatty/src/lib/handlers/hooks/outputSummaryHook.ts` ❌ (this fix)**. The fourth surface was not on the audit list because the four-layer fallback chain wasn't fully traced — the Rust walker was assumed authoritative when in practice the frontend hook intercepts it. **Update to the audit checklist**: when changing a shared component schema, grep BOTH for the component name AND for `renderedMarkdown` / `flattenSpecToMarkdown` writers — the projection layer has multiple writers and only the highest-priority one's output is used.
+
+### Out-of-scope findings from same test pass (filed separately)
+
+Desktop Daddy's full ancestor-context verification against the live outline (running floatty server, `render test` page, real conversation content) surfaced two more unrelated bugs and one watch-this. Not bundled into v0.13.1 because they're backend (`floatty-server`/`floatty-core`) concerns, not the frontend hook this patch fixes:
+
+- **Breadcrumb ordering inconsistency between endpoints** (medium severity): `search_blocks` returns `breadcrumb` rootmost-first (`["pages::", "# render test"]`); `get_block` returns it innermost-first (`["# render test", "pages::"]`). `ancestorContext.ancestorBlockIds` is consistent across both (rootmost-first per the symmetry harness in [[PR #282]]) — only `breadcrumb` drifts. Agent code that does `breadcrumb[0]` gets a different answer depending on which endpoint produced the response. To file: `apps/floatty/src-tauri/floatty-server/src/api.rs` (BlockResponse breadcrumb composer vs SearchHit breadcrumb composer).
+- **Marker parser captures broken `[[wikilink]]` syntax inside `[type::value]`** (low severity): on a historic block with content `ctx::2026-04-19 @ 04:01:51 PM = [project::[[floatty]] = [[2026-04-19]]` (a typo where the author wrote `[project::[[floatty]]]` instead of `[project::floatty]`), the marker parser captures `value: "[[floatty"` — literal opening bracket included. Should either reject as malformed or resolve `[[floatty]]` to its target. Affects `effectiveMarkers.value` shape for downstream consumers expecting clean strings.
+- **Watch: real-world `ancestorBlockIds` depth at 9 (cap is 10)**: a hit on the FLO-680 thread (deep daily-note nesting) returned 9 ancestor IDs. One more level of nesting starts truncating root ancestors. User confirmed deep-nest is normal usage pattern; worth probing actual outline ancestor depth distribution to size the cap appropriately. Probe planned post-release.
+
+---
+
 ## [0.13.0] - 2026-04-26
 
 ### ✨ Features
