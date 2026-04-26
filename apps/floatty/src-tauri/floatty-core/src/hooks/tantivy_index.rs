@@ -241,7 +241,18 @@ impl TantivyIndexHook {
             })
             .unwrap_or(0);
 
-        let updated_at = chrono::Utc::now().timestamp();
+        // FLO-684: read the block's actual updatedAt instead of stamping with
+        // index time. Block.updated_at is ms since epoch; Tantivy `updated_at`
+        // field is seconds (matches `created_at` conversion above). Falls back
+        // to created_at when block_data is unavailable (rare race; created_at
+        // is already 0 in that case so the field stays self-consistent).
+        // Without this fix, every reindex (incl. full rebuild on app start
+        // since the index is ephemeral) overrode the real edit time with
+        // wall-clock NOW — kills recency sort across restarts.
+        let updated_at = block_data
+            .as_ref()
+            .map(|b| b.updated_at / 1000)
+            .unwrap_or(created_at);
 
         trace!(
             block_id = %id,

@@ -73,6 +73,15 @@ Client-side: `shortHashIndex` singleton memo in WorkspaceContext for O(1) 8-char
 | `include` | String | Comma-separated AncestorContext opt-ins: `effective_markers`, `inbound_samples` (FLO-679 PR 2) |
 | `inbound_sample_count` | usize | Cap for `inbound_samples` (default 5; max 50) |
 
+Each `BlockSearchHit` carries (in addition to `blockId`/`score`/`content`/
+`snippet`/`breadcrumb`/`metadata`/`blockType`/`ancestorContext`):
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `createdAt` | i64 (ms) | Block creation timestamp from Y.Map. Mirrors `BlockDto.createdAt`. Dropped from wire when 0 (FLO-684) |
+| `updatedAt` | i64 (ms) | Last-edit timestamp. Single source of truth = block's Y.Map `updatedAt`. Frontend stamps on every local edit; REST mutations stamp on PATCH/POST. Symmetry harness asserts `BlockSearchHit.updatedAt == BlockDto.updatedAt` (FLO-684) |
+| `outputType` | String | `"door"` / `"eval-result"` / `"search-results"` etc. when set. Mirrors `BlockDto.outputType` so MCP/agent consumers can distinguish doors from text without a follow-up GET (FLO-684) |
+
 ### AncestorContext (FLO-679 PR 2 — every block-returning endpoint)
 
 Every endpoint that returns a block-shaped response carries an

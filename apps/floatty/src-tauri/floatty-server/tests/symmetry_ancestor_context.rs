@@ -704,6 +704,151 @@ fn inbound_sample_cap_falls_back_when_hint_insufficient() {
 }
 
 // ---------------------------------------------------------------------------
+// FLO-684 — BlockSearchHit timestamps + outputType symmetry
+// ---------------------------------------------------------------------------
+
+/// CONTRACT 7 (FLO-684): `shape_search_hit` carries `createdAt`,
+/// `updatedAt`, and `outputType` directly from the block's Y.Map fields —
+/// matching the singleton `read_block_dto` path that powers
+/// `GET /api/v1/blocks/:id`.
+///
+/// Why this lives in the symmetry harness: the failure mode is silent
+/// drift between two read paths. A future write path that updates the
+/// Y.Map differently (or a `shape_search_hit` refactor that reads from a
+/// stale Tantivy STORED column instead of the live block) would break
+/// recency sort on the artifact's inbound panel and door-vs-text
+/// classification on agent consumers — neither would be caught by the
+/// per-handler unit tests because both surfaces still return *some*
+/// value. This test asserts the values match the source of truth.
+///
+/// Companion to the indexer fix in
+/// `floatty-core/src/hooks/tantivy_index.rs:244` (was `Utc::now()`,
+/// now reads `block.updated_at`). The indexer fix protects Tantivy's
+/// `updated_at` STORED column from drifting on every reindex; this test
+/// protects the wire-level `BlockSearchHit` from drifting at response
+/// shaping. Both layers must stay coherent for recency sort to work
+/// across restarts.
+#[test]
+fn shape_search_hit_carries_timestamps_and_output_type() {
+    let created_at_ms: i64 = 1_700_000_000_000;
+    let updated_at_ms: i64 = 1_700_001_234_567;
+
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let block_map: yrs::MapRef = blocks.get_or_init(&mut txn, "the-block");
+        block_map.insert(&mut txn, "content", Any::String("hello".into()));
+        let empty_children: Vec<Any> = vec![];
+        block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty_children));
+        // f64 storage matches what the frontend writes via the Y.Map JS API
+        // (numbers are f64 by default); `extract_timestamp` accepts both
+        // f64 (Number) and i64 (BigInt) — both cases need to round-trip.
+        block_map.insert(&mut txn, "createdAt", Any::Number(created_at_ms as f64));
+        block_map.insert(&mut txn, "updatedAt", Any::Number(updated_at_ms as f64));
+        block_map.insert(&mut txn, "outputType", Any::String("door".into()));
+    }
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+    let synthetic_hit = floatty_core::search::SearchHit {
+        block_id: "the-block".to_string(),
+        score: 1.0,
+        snippet: None,
+        ..Default::default()
+    };
+    let hit = shape_search_hit(
+        synthetic_hit,
+        Some(&blocks_map),
+        &txn,
+        None,
+        None,
+        false,
+        false,
+        AncestorContextOpts::default(),
+    );
+
+    assert_eq!(
+        hit.created_at, created_at_ms,
+        "BlockSearchHit.createdAt must equal the block's Y.Map createdAt — \
+         protects recency sort and creation-time queries against write-path \
+         drift between BlockDto (singleton path) and BlockSearchHit (search \
+         path)."
+    );
+    assert_eq!(
+        hit.updated_at, updated_at_ms,
+        "BlockSearchHit.updatedAt must equal the block's Y.Map updatedAt — \
+         this is the same symmetry FLO-684 fixed at the indexer level. The \
+         indexer was clobbering Tantivy's updated_at with Utc::now() at \
+         index time; this test ensures the wire-level DTO doesn't introduce \
+         a parallel drift at response shaping."
+    );
+    assert_eq!(
+        hit.output_type.as_deref(),
+        Some("door"),
+        "BlockSearchHit.outputType must mirror BlockDto.outputType so MCP \
+         and agent consumers can distinguish a door spec from a plain text \
+         block without a follow-up /blocks/:id GET (the N+1 the FLO-684 \
+         plumbing eliminates)."
+    );
+}
+
+/// CONTRACT 7b (FLO-684): the no-blocks-map early-return path produces a
+/// hit with default-zero timestamps + `None` outputType. Some test paths
+/// synthesize hits without a Y.Doc — the wire shape stays stable
+/// (zero-value gets dropped via `skip_serializing_if`).
+#[test]
+fn shape_search_hit_without_blocks_map_defaults_timestamp_fields() {
+    let synthetic_hit = floatty_core::search::SearchHit {
+        block_id: "ghost-block".to_string(),
+        score: 0.5,
+        snippet: None,
+        ..Default::default()
+    };
+    // No txn is read on this path — pass a throwaway one for the signature.
+    let doc = Doc::new();
+    let txn = doc.transact();
+    let hit = shape_search_hit(
+        synthetic_hit,
+        None,
+        &txn,
+        None,
+        None,
+        false,
+        false,
+        AncestorContextOpts::default(),
+    );
+
+    assert_eq!(
+        hit.created_at, 0,
+        "no-blocks-map path: createdAt defaults to 0"
+    );
+    assert_eq!(
+        hit.updated_at, 0,
+        "no-blocks-map path: updatedAt defaults to 0"
+    );
+    assert_eq!(
+        hit.output_type, None,
+        "no-blocks-map path: outputType defaults to None"
+    );
+    // Sanity-check the serde guards drop zero/None on the wire so consumers
+    // don't see noise from the synthetic-hit path.
+    let json = serde_json::to_string(&hit).expect("serializes");
+    assert!(
+        !json.contains("\"createdAt\""),
+        "skip_serializing_if drops zero createdAt: {json}"
+    );
+    assert!(
+        !json.contains("\"updatedAt\""),
+        "skip_serializing_if drops zero updatedAt: {json}"
+    );
+    assert!(
+        !json.contains("\"outputType\""),
+        "skip_serializing_if drops None outputType: {json}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Comparison shim
 // ---------------------------------------------------------------------------
 

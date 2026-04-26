@@ -2245,19 +2245,28 @@ pub fn shape_search_hit<T: ReadTxn>(
             metadata: None,
             snippet: hit.snippet,
             block_type: None,
+            created_at: 0,
+            updated_at: 0,
+            output_type: None,
             ancestor_context: None,
         };
     };
 
-    // Read content (truncated for wire — same 200-char ceiling as before).
-    let content = bmap
-        .get(txn, &hit.block_id)
-        .and_then(|v| match v {
-            yrs::Out::YMap(block_map) => Some(block_map),
-            _ => None,
-        })
-        .and_then(|block_map| {
-            block_map.get(txn, "content").and_then(|v| match v {
+    // Single Y.Map lookup for the block — content, metadata, timestamps,
+    // and outputType all read from the same `block_map`. Pre-FLO-684 the
+    // function fetched the same block 2× (content, metadata-when-not-wanted);
+    // FLO-684 added a third site for timestamps. Coalescing into one lookup
+    // (yrs::MapRef::get is O(log n) and uncached within a transaction) keeps
+    // search response shaping at one Y.Doc traversal per hit.
+    let block_map: Option<yrs::MapRef> = match bmap.get(txn, &hit.block_id) {
+        Some(yrs::Out::YMap(m)) => Some(m),
+        _ => None,
+    };
+
+    let content = block_map
+        .as_ref()
+        .and_then(|bm| {
+            bm.get(txn, "content").and_then(|v| match v {
                 yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
                 _ => None,
             })
@@ -2273,14 +2282,10 @@ pub fn shape_search_hit<T: ReadTxn>(
 
     let breadcrumb = if want_breadcrumb {
         // Take the nearest 5 ancestors, then reverse for ROOTMOST-FIRST
-        // display order — matches the contract documented in
-        // .claude/rules/api-reference.md ("breadcrumb is parent chain
-        // ... ancestor block content (nearest parent last)") and the
-        // floatty-backend SKILL.md helper which joins with " → " as
-        // root → leaf. Per CodeRabbit Major review on PR #281: the
-        // walker keeps its nearest-first programmatic contract; only
-        // the breadcrumb projection (a presentation surface) is
-        // reversed at the composer.
+        // display order — matches the contract in api-reference.md and the
+        // floatty-backend skill (root → leaf). PR #281 review: walker keeps
+        // its nearest-first programmatic contract; only the breadcrumb
+        // projection is reversed.
         let ancestors = get_ancestors(bmap, txn, &hit.block_id);
         let crumbs: Vec<String> = ancestors
             .into_iter()
@@ -2298,11 +2303,9 @@ pub fn shape_search_hit<T: ReadTxn>(
     };
 
     let metadata = if want_metadata {
-        bmap.get(txn, &hit.block_id).and_then(|v| match v {
-            yrs::Out::YMap(block_map) => block_map
-                .get(txn, "metadata")
-                .and_then(|m| api::extract_metadata_from_yrs(m, txn)),
-            _ => None,
+        block_map.as_ref().and_then(|bm| {
+            bm.get(txn, "metadata")
+                .and_then(|m| api::extract_metadata_from_yrs(m, txn))
         })
     } else {
         None
@@ -2312,25 +2315,16 @@ pub fn shape_search_hit<T: ReadTxn>(
         .as_ref()
         .map(|c| floatty_core::parse_block_type(c).as_str().to_string());
 
-    // ancestor_context needs the block's own metadata for outlinks +
-    // markers. Reuse the already-read `metadata` when `want_metadata=true`;
-    // otherwise pull it once here. The helper takes
-    // `Option<&serde_json::Value>` directly so no skeletal DTO scaffold is
-    // needed (Fix 5 in the simplify pass — eliminates the prior duplicate
-    // metadata read in the `want_metadata=false` path).
+    // ancestor_context wants the block's own metadata for outlinks + markers.
+    // When `want_metadata=false`, pull it from the same block_map.
     let metadata_for_ac: Option<serde_json::Value> = if metadata.is_some() {
         None
     } else {
-        bmap.get(txn, &hit.block_id).and_then(|v| match v {
-            yrs::Out::YMap(block_map) => block_map
-                .get(txn, "metadata")
-                .and_then(|m| api::extract_metadata_from_yrs(m, txn)),
-            _ => None,
+        block_map.as_ref().and_then(|bm| {
+            bm.get(txn, "metadata")
+                .and_then(|m| api::extract_metadata_from_yrs(m, txn))
         })
     };
-    // Hints from the Tantivy STORED columns — let compute_ancestor_context
-    // skip the per-hit BFS over child pointers AND the per-hit
-    // PageNameIndex enumeration (Fix 2 in the simplify pass).
     let hints = AncestorContextHints {
         subtree_size: hit.subtree_size_hint,
         inbound_count: hit.inbound_count_hint,
@@ -2347,6 +2341,22 @@ pub fn shape_search_hit<T: ReadTxn>(
         hints,
     );
 
+    // FLO-684: createdAt/updatedAt use `extract_timestamp` for the same
+    // f64/i64 tolerance as `read_block_dto` — symmetry harness asserts the
+    // resulting BlockSearchHit matches BlockDto for the same block.
+    let (created_at, updated_at, output_type) = block_map
+        .as_ref()
+        .map(|bm| {
+            let c = extract_timestamp(bm.get(txn, "createdAt"));
+            let u = extract_timestamp(bm.get(txn, "updatedAt"));
+            let ot = bm.get(txn, "outputType").and_then(|v| match v {
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            });
+            (c, u, ot)
+        })
+        .unwrap_or((0, 0, None));
+
     BlockSearchHit {
         block_id: hit.block_id,
         score: hit.score,
@@ -2355,6 +2365,9 @@ pub fn shape_search_hit<T: ReadTxn>(
         metadata,
         snippet: hit.snippet,
         block_type,
+        created_at,
+        updated_at,
+        output_type,
         ancestor_context,
     }
 }
