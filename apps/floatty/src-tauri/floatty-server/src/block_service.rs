@@ -1744,6 +1744,48 @@ mod ancestor_migration_tests {
         assert_eq!(ancestors[0].id, "b");
     }
 
+    /// Breadcrumb composition for a search hit takes `get_ancestors().take(5).map(|a| a.content)`.
+    /// This test mirrors that projection against the migrated walker — proves the breadcrumb
+    /// inherits the FLO-679 walker for free (commit 3 of PR 1).
+    #[test]
+    fn search_breadcrumb_projection_matches_pre_migration() {
+        let doc = build_doc(&[
+            ("root", None, "root"),
+            ("a", Some("root"), "a"),
+            ("b", Some("a"), "b"),
+            ("c", Some("b"), "c"),
+            ("d", Some("c"), "d"),
+            ("e", Some("d"), "e"),
+            ("f", Some("e"), "f"),
+            ("hit", Some("f"), "hit"),
+        ]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        // Reproduce the exact projection from the search-hit composer.
+        let ancestors = get_ancestors(&blocks_map, &txn, "hit");
+        let crumbs: Vec<String> = ancestors.into_iter().take(5).map(|a| a.content).collect();
+
+        // Pre-migration behaviour: nearest-first, take 5 of up to 10 ancestors.
+        // hit's chain is f → e → d → c → b → a → root (7 ancestors, capped to 10
+        // by get_ancestors, then trimmed to 5 by the composer).
+        assert_eq!(crumbs, vec!["f", "e", "d", "c", "b"]);
+    }
+
+    #[test]
+    fn search_breadcrumb_short_chain_yields_short_crumbs() {
+        let doc = build_doc(&[
+            ("root", None, "root"),
+            ("hit", Some("root"), "hit"),
+        ]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "hit");
+        let crumbs: Vec<String> = ancestors.into_iter().take(5).map(|a| a.content).collect();
+        assert_eq!(crumbs, vec!["root"]);
+    }
+
     #[test]
     fn get_ancestors_missing_parent_treated_as_root() {
         // child references parent "ghost" that doesn't exist in the map.
