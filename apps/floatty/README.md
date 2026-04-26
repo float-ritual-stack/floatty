@@ -61,8 +61,11 @@ npm install
 # Run in development mode (hot reload frontend, rebuilds Rust)
 npm run tauri:dev
 
-# Run tests
-npm run test:run
+# Run tests (one-off)
+npm test
+
+# Run tests in watch mode (re-runs on file changes)
+npm run test:watch
 
 # Lint
 npm run lint
