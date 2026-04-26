@@ -37,31 +37,26 @@ export const meetingNotesSpec: Spec = {
     d1: {
       type: 'PatternCard',
       props: {
-        title: 'Basket bug — Jordan owns the fix, Alex standby',
-        type: 'decision',
-        confidence: 'stated-by-Kai',
-        content: "Kai flagged client-log errors on basket creation that look RLS-ish but are really ID mismatches from three divergent `createGuestBasket` implementations using different ID sources (user ID vs profile ID).\n\n**Fix approach**: consolidate the three call sites into a single basket-creation helper. Reduces code size and eliminates the divergence class of bugs in one shot.\n\n**Ownership**: Jordan is actively implementing. Alex offered to pair in if Jordan gets pulled into meetings. Agreement: wait for Jordan's update before stepping in.\n\n**03:06 PM correction**: cowboy investigation suggests the 3-fn diagnosis may not actually match the code. Material correction to the 01:42 PM wrap record. Jordan's AM investigation is the confirmation point.",
-        connectsTo: ['c587eea7', 'PR #2287', 'PR #2293'],
+        label: 'Basket bug — Jordan owns the fix, Alex standby',
+        description: "*Decision (raised by Kai).* Kai flagged client-log errors on basket creation that look RLS-ish but are really ID mismatches from three divergent `createGuestBasket` implementations using different ID sources (user ID vs profile ID).\n\n**Fix approach**: consolidate the three call sites into a single basket-creation helper. Reduces code size and eliminates the divergence class of bugs in one shot.\n\n**Ownership**: Jordan is actively implementing. Alex offered to pair in if Jordan gets pulled into meetings. Agreement: wait for Jordan's update before stepping in.\n\n**03:06 PM correction**: cowboy investigation suggests the 3-fn diagnosis may not actually match the code. Material correction to the 01:42 PM wrap record. Jordan's AM investigation is the confirmation point.\n\n**Refs**: [[c587eea7]], [[PR #2287]], [[PR #2293]]",
       },
     },
 
     d2: {
       type: 'PatternCard',
       props: {
-        title: '"Complete assessment warning" — Sam digging offline',
-        type: 'decision',
-        confidence: 'hypothesis',
-        content: "Backlog ticket refers to a red warning on the prescription form: *\"Showing unmatched assessments for this order. Some may not be related to the selected item.\"*\n\nSam walked production live during the sync and couldn't reproduce from the ticket text alone — not enough detail to act on.\n\n**Hypothesis**: dynamic assessment updates mid-flow cause the submission to stop matching the current definition. Sam to reproduce on staging offline.",
+        label: '"Complete assessment warning" — Sam digging offline',
+        confidence: 'low',
+        description: "*Decision.* Backlog ticket refers to a red warning on the prescription form: *\"Showing unmatched assessments for this order. Some may not be related to the selected item.\"*\n\nSam walked production live during the sync and couldn't reproduce from the ticket text alone — not enough detail to act on.\n\n**Hypothesis**: dynamic assessment updates mid-flow cause the submission to stop matching the current definition. Sam to reproduce on staging offline.",
       },
     },
 
     d3: {
       type: 'PatternCard',
       props: {
-        title: 'Follow-up emails — Dana\'s fix appears holding',
-        type: 'decision',
-        confidence: 'partial-evidence',
-        content: "No erroneous follow-up emails going out in production right now. Dana's fix looks to be working.\n\n**Caveat**: most follow-up products configured for 21-day delay → 'no emails yet' is partial evidence, not proof. Real verification comes when patient notes start returning assessment results.\n\n**Alex proposal (unticketed)**: minimal admin debug view over the follow-up-email cron source table. Read-only, low-traffic, safe — avoids ad-hoc DB queries.",
+        label: 'Follow-up emails — Dana\'s fix appears holding',
+        confidence: 'medium',
+        description: "*Decision.* No erroneous follow-up emails going out in production right now. Dana's fix looks to be working.\n\n**Caveat**: most follow-up products configured for 21-day delay → 'no emails yet' is partial evidence, not proof. Real verification comes when patient notes start returning assessment results.\n\n**Alex proposal (unticketed)**: minimal admin debug view over the follow-up-email cron source table. Read-only, low-traffic, safe — avoids ad-hoc DB queries.",
       },
     },
 

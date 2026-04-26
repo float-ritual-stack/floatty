@@ -610,7 +610,7 @@ async function generateSpecViaOllama(userPrompt: string, ctx: DoorContext): Prom
     '- Text: { content: string, size?: "sm"|"md"|"lg"|"xl", weight?: "normal"|"medium"|"bold", color?: string, mono?: boolean }',
     '- DataBlock: { label?: string, content: string } - Monospace pre block with label',
     '- ShippedItem: { content: string } - Green bullet item',
-    '- PatternCard: { title: string, type?: string, confidence?: string, content: string, connectsTo?: string[] } - Expandable card [children]',
+    '- PatternCard: { label: string, description: string, confidence?: "high"|"medium"|"low" } - A card surfacing one discovered pattern/theme/insight; description renders as markdown [children]',
     '- BacklinksFooter: { inbound: string[], outbound: string[] } - Bidirectional link footer',
     '- EntryHeader: { type: "synthesis"|"archaeology"|"bbs-source", title: string, date: string, author?: string }',
     '- Divider: {} - Horizontal line',

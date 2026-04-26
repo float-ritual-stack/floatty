@@ -170,31 +170,19 @@ fn emit_element(el_type: &str, props: Option<&Value>, lines: &mut Vec<String>) {
             }
         }
         "PatternCard" => {
-            let title = string_prop(p, "title").unwrap_or_else(|| "Pattern".to_string());
-            let ty = string_prop(p, "type")
-                .map(|t| format!(" [{}]", t))
-                .unwrap_or_default();
+            // FLO-657 canonical schema: { label, description, confidence?: 'high'|'medium'|'low' }.
+            // The old shape (title/content/type/connectsTo) was migrated; categorical
+            // info that used to live in `type` is now folded into `description` as a
+            // markdown italic prefix; refs that used to live in `connectsTo` go into
+            // `description` as a `**Refs**:` line.
+            let label = string_prop(p, "label").unwrap_or_else(|| "Pattern".to_string());
             let conf = string_prop(p, "confidence")
                 .map(|c| format!(" ({})", c))
                 .unwrap_or_default();
-            lines.push(format!("### {}{}{}", title, ty, conf));
-            if let Some(content) = string_prop(p, "content") {
+            lines.push(format!("### {}{}", label, conf));
+            if let Some(description) = string_prop(p, "description") {
                 lines.push(String::new());
-                lines.push(content);
-            }
-            if let Some(connects) = p
-                .and_then(|p| p.get("connectsTo"))
-                .and_then(Value::as_array)
-            {
-                let refs: Vec<String> = connects
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(|c| format!("[[{}]]", c))
-                    .collect();
-                if !refs.is_empty() {
-                    lines.push(String::new());
-                    lines.push(format!("connects to: {}", refs.join(", ")));
-                }
+                lines.push(description);
             }
             lines.push(String::new());
         }

@@ -11,8 +11,9 @@
     "test": {
       "outputs": []
     },
-    "test:run": {
-      "outputs": []
+    "test:watch": {
+      "cache": false,
+      "persistent": true
     }
   }
 }

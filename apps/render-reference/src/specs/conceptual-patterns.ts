@@ -84,9 +84,8 @@ export const conceptualPatternsSpec: Spec = {
     'p-visibility': {
       type: 'PatternCard',
       props: {
-        title: 'visible — sibling of type/props/children',
-        type: 'dynamic',
-        content: '`visible` is a TOP-LEVEL field on an element, NOT inside props. Operators: $state (truthy), eq, neq, not, gt/lt, $or, $and.',
+        label: 'visible — sibling of type/props/children',
+        description: '*Dynamic.* `visible` is a TOP-LEVEL field on an element, NOT inside props. Operators: $state (truthy), eq, neq, not, gt/lt, $or, $and.',
       },
       children: ['p-vis-split'],
     },
@@ -148,9 +147,8 @@ export const conceptualPatternsSpec: Spec = {
     'p-tabnav': {
       type: 'PatternCard',
       props: {
-        title: 'TabNav bound to state + sibling sections with visible $eq',
-        type: 'interactive',
-        content: 'The canonical "tabs switch content" composition. TabNav uses $bindState to write to a state key; content elements declare visible with $state + eq.',
+        label: 'TabNav bound to state + sibling sections with visible $eq',
+        description: '*Interactive.* The canonical "tabs switch content" composition. TabNav uses $bindState to write to a state key; content elements declare visible with $state + eq.',
       },
       children: ['p-tabnav-split'],
     },
@@ -216,9 +214,8 @@ export const conceptualPatternsSpec: Spec = {
     'p-dynamic': {
       type: 'PatternCard',
       props: {
-        title: 'Two elements + opposing visibility = value-switch pattern',
-        type: 'dynamic',
-        content: 'For "show X or Y based on state", use two sibling elements with opposing visible conditions. Always works — use when entire elements differ (not just a prop value). For prop-only differences, prefer $cond (next pattern).',
+        label: 'Two elements + opposing visibility = value-switch pattern',
+        description: '*Dynamic.* For "show X or Y based on state", use two sibling elements with opposing visible conditions. Always works — use when entire elements differ (not just a prop value). For prop-only differences, prefer $cond (next pattern).',
       },
       children: ['p-dynamic-split'],
     },
@@ -269,9 +266,8 @@ export const conceptualPatternsSpec: Spec = {
     'p-cond': {
       type: 'PatternCard',
       props: {
-        title: '$cond for prop values that vary by state',
-        type: 'dynamic',
-        content: 'When only a prop VALUE differs (not the whole element), use $cond on the prop. Cleaner than duplicating elements with opposing visibility. $cond/$then/$else is a prop expression — resolves to a single value at render time.',
+        label: '$cond for prop values that vary by state',
+        description: '*Dynamic.* When only a prop VALUE differs (not the whole element), use $cond on the prop. Cleaner than duplicating elements with opposing visibility. $cond/$then/$else is a prop expression — resolves to a single value at render time.',
       },
       children: ['p-cond-split'],
     },
@@ -324,9 +320,8 @@ export const conceptualPatternsSpec: Spec = {
     'p-repeat': {
       type: 'PatternCard',
       props: {
-        title: 'Render children once per item in a state array',
-        type: 'dynamic',
-        content: 'repeat is a top-level field (sibling of type/props/children), not inside props. Inside the repeated children, use $item to read fields, $index for the array position, $template for string interpolation ({field} = current item, {/path} = global state).',
+        label: 'Render children once per item in a state array',
+        description: '*Dynamic.* repeat is a top-level field (sibling of type/props/children), not inside props. Inside the repeated children, use $item to read fields, $index for the array position, $template for string interpolation ({field} = current item, {/path} = global state).',
       },
       children: ['p-repeat-split'],
     },
@@ -365,9 +360,8 @@ export const conceptualPatternsSpec: Spec = {
     'p-stack': {
       type: 'PatternCard',
       props: {
-        title: 'Layout primitives: direction, Section variants',
-        type: 'layout',
-        content: 'Stack(vertical|horizontal) is the layout primitive; Section adds titled grouping with variant highlighting (default/highlight/warning).',
+        label: 'Layout primitives: direction, Section variants',
+        description: '*Layout.* Stack(vertical|horizontal) is the layout primitive; Section adds titled grouping with variant highlighting (default/highlight/warning).',
       },
       children: ['p-stack-split'],
     },
