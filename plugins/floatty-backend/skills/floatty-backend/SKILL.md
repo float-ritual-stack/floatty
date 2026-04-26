@@ -528,7 +528,7 @@ The server fills tiers 3–4 on read when tiers 1–2 produced nothing. **Cache 
 - ❌ Don't parse `output.data.agentRaw` — that's a debug field, not a contract.
 - ❌ Don't expect `renderedMarkdown` on bulk reads (`GET /api/v1/blocks`) — bulk endpoints skip the projection to avoid N× walker cost. Use per-block GETs when you need markdown for multiple doors.
 - ❌ Don't expect `renderedMarkdown` on search hits — search returns a `BlockSearchHit` DTO with partial metadata, not a full `BlockDto`. Follow up with `floatty_block_get` on the `.blockId` if you need the markdown.
-- ✅ Search hits **do** carry `createdAt`, `updatedAt`, `outputType` (FLO-684) — sort by `updatedAt` for recency, gate on `outputType === "door"` to distinguish door specs from text without an N+1 `floatty_block_get`. The Tantivy indexer's `updated_at` STORED column is the same Y.Map source (FLO-684 fixed it from being clobbered with `Utc::now()` at index time), so the value is the canonical block edit time, not a per-reindex stamp.
+- ✅ Search hits **typically carry** `createdAt`, `updatedAt`, `outputType` (FLO-684) when the block is still present in Y.Doc — sort by `updatedAt` for recency, gate on `outputType === "door"` to distinguish door specs from text without an N+1 `floatty_block_get`. (Deleted-but-still-indexed race hits omit these fields via `skip_serializing_if`, so always check before reading.) The Tantivy indexer's `updated_at` STORED column reads from the same Y.Map source (FLO-684 fixed it from being clobbered with `Utc::now()` at index time), so recency reflects the canonical block edit time rather than a per-reindex stamp.
 
 ## References
 
