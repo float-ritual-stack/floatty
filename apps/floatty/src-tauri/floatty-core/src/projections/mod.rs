@@ -30,7 +30,7 @@ pub mod ancestor_walk;
 
 pub use ancestor_walk::{
     walk_ancestors, AncestorWalk, HashMapParentLookup, ParentLookup, StoreParentLookup,
-    YDocParentLookup,
+    WalkTermination, YDocParentLookup,
 };
 
 use serde_json::Value;

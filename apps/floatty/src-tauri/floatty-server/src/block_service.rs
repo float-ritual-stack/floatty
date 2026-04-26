@@ -14,7 +14,7 @@ use crate::api::{
 use crate::WsBroadcaster;
 use floatty_core::events::BlockChange;
 use floatty_core::hooks::InheritanceIndex;
-use floatty_core::projections::{walk_ancestors, YDocParentLookup};
+use floatty_core::projections::{walk_ancestors, WalkTermination, YDocParentLookup};
 use floatty_core::{HookSystem, IndexManager, Origin, SearchFilters, SearchService, YDocStore};
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
@@ -1169,21 +1169,28 @@ pub(crate) fn update_block(
                 }
 
                 // Walk ancestor chain to prevent cycles (can't parent under a descendant).
-                // Migrated to `walk_ancestors` (FLO-679 PR 1, commit 4). Pre-migration this
-                // was an inline `while let` loop that:
-                //   1. checked `pid == id` on each step → reject as "descendant cycle"
-                //   2. counted iterations and rejected at depth 1001 → "data corruption"
+                // Migrated to `walk_ancestors` (FLO-679 PR 1, commit 4) with explicit
+                // Cycle-termination rejection added per PR #281 reviewer findings (Greptile P1
+                // + CodeRabbit Major: walker's silent break on cycle weakened the corruption
+                // guard, since visited-set short-circuits before the depth cap can fire).
                 //
-                // The walker terminates on natural cycles already (visited-set), so the
-                // cycle check collapses to `walk.ids.contains(&id)`. The "deep tree =
-                // data corruption" guard is reproduced by walking with `MAX + 1` and
-                // rejecting when the cap saturates — matches the pre-migration error
-                // exactly. Self-parenting is caught by the explicit guard above; the
-                // walker starts from `new_parent_id`'s parent so it would not catch
-                // `new_parent_id == id` on its own.
+                // Three guards, in order:
+                //   1. termination == Cycle → pre-existing cycle in new_parent_id's ancestry
+                //      (does NOT need to involve `id`). Refuse to attach under corrupt data.
+                //   2. depth saturates `MAX + 1` → genuinely deep-but-acyclic chain →
+                //      same "data corruption" reject as pre-migration loop's iteration count.
+                //   3. `walk.ids.contains(&id)` → reparenting under its own descendant.
+                //
+                // Self-parenting (`new_parent_id == id`) is caught by the explicit guard
+                // above; the walker starts from `new_parent_id`'s parent.
                 const MAX_ANCESTOR_DEPTH: usize = 1000;
                 let lookup = YDocParentLookup::new(&blocks, &txn);
                 let walk = walk_ancestors(&lookup, new_parent_id, MAX_ANCESTOR_DEPTH + 1, None);
+                if matches!(walk.termination, WalkTermination::Cycle) {
+                    return Err(ApiError::InvalidParent(
+                        "Ancestor chain contains a cycle — possible data corruption".to_string(),
+                    ));
+                }
                 if walk.depth as usize > MAX_ANCESTOR_DEPTH {
                     return Err(ApiError::InvalidParent(
                         "Ancestor chain exceeds depth limit — possible data corruption".to_string(),
@@ -1599,9 +1606,22 @@ pub(crate) fn search_blocks(
                         });
 
                     let breadcrumb = if want_breadcrumb {
+                        // Take the nearest 5 ancestors, then reverse for ROOTMOST-FIRST
+                        // display order — matches the contract documented in
+                        // .claude/rules/api-reference.md ("breadcrumb is parent chain
+                        // ... ancestor block content (nearest parent last)") and the
+                        // floatty-backend SKILL.md helper which joins with " → " as
+                        // root → leaf. Per CodeRabbit Major review on PR #281: the
+                        // walker keeps its nearest-first programmatic contract; only
+                        // the breadcrumb projection (a presentation surface) is
+                        // reversed at the composer.
                         let ancestors = get_ancestors(bmap, &txn, &h.block_id);
-                        let crumbs: Vec<String> =
-                            ancestors.into_iter().take(5).map(|a| a.content).collect();
+                        let crumbs: Vec<String> = ancestors
+                            .into_iter()
+                            .take(5)
+                            .rev()
+                            .map(|a| a.content)
+                            .collect();
                         if crumbs.is_empty() {
                             None
                         } else {
@@ -1748,11 +1768,14 @@ mod ancestor_migration_tests {
         assert_eq!(ancestors[0].id, "b");
     }
 
-    /// Breadcrumb composition for a search hit takes `get_ancestors().take(5).map(|a| a.content)`.
-    /// This test mirrors that projection against the migrated walker — proves the breadcrumb
-    /// inherits the FLO-679 walker for free (commit 3 of PR 1).
+    /// Breadcrumb composition for a search hit takes `get_ancestors().take(5)` then
+    /// REVERSES for rootmost-first display order. The reversal was added per
+    /// CodeRabbit Major review on PR #281 to match the documented breadcrumb contract
+    /// (nearest parent LAST, joined with " → " by skill helpers as root → leaf).
+    /// `get_ancestors()` itself stays nearest-first — that's the programmatic
+    /// contract; the reversal lives at the presentation boundary in the composer.
     #[test]
-    fn search_breadcrumb_projection_matches_pre_migration() {
+    fn search_breadcrumb_projection_returns_rootmost_first() {
         let doc = build_doc(&[
             ("root", None, "root"),
             ("a", Some("root"), "a"),
@@ -1767,13 +1790,21 @@ mod ancestor_migration_tests {
         let blocks_map = txn.get_map("blocks").expect("blocks map");
 
         // Reproduce the exact projection from the search-hit composer.
+        // hit's chain is f → e → d → c → b → a → root (7 ancestors).
+        // get_ancestors caps at 10, take(5) keeps the nearest 5 (f..b),
+        // .rev() flips to rootmost-first within that window: b..f.
         let ancestors = get_ancestors(&blocks_map, &txn, "hit");
-        let crumbs: Vec<String> = ancestors.into_iter().take(5).map(|a| a.content).collect();
+        let crumbs: Vec<String> = ancestors
+            .into_iter()
+            .take(5)
+            .rev()
+            .map(|a| a.content)
+            .collect();
 
-        // Pre-migration behaviour: nearest-first, take 5 of up to 10 ancestors.
-        // hit's chain is f → e → d → c → b → a → root (7 ancestors, capped to 10
-        // by get_ancestors, then trimmed to 5 by the composer).
-        assert_eq!(crumbs, vec!["f", "e", "d", "c", "b"]);
+        // Rootmost-first: b is 5-deep ancestor (visible window's root),
+        // f is the immediate parent (visible window's leaf — last item).
+        // Reads naturally as "b → c → d → e → f → hit" with " → " join.
+        assert_eq!(crumbs, vec!["b", "c", "d", "e", "f"]);
     }
 
     /// Cycle detection (commit 4 of PR 1) replaces an inline parent-walk with
@@ -1865,6 +1896,56 @@ mod ancestor_migration_tests {
         assert!(
             (walk.depth as usize) <= 1000,
             "cycle terminates well under the cap"
+        );
+        assert_eq!(
+            walk.termination,
+            WalkTermination::Cycle,
+            "termination = Cycle so reparent guards can reject"
+        );
+    }
+
+    /// Greptile P1 + CodeRabbit Major on PR #281: pre-existing cycle in
+    /// `new_parent_id`'s ancestor chain that does NOT involve `id`. Old
+    /// inline loop spun until depth=1001 → `data corruption` reject. New
+    /// walker terminates at the cycle (visited-set), `walk.depth` never
+    /// reaches 1001, and the depth-saturation guard alone wouldn't fire.
+    /// The `WalkTermination::Cycle` rejection MUST catch this.
+    ///
+    /// Asserts the walker contract directly (rejection is wired into the
+    /// `update_block` reparent path; testing the full reparent flow needs
+    /// a write-side fixture, which is out of scope for this regression
+    /// test — the walker contract IS the regression).
+    #[test]
+    fn cycle_detection_rejects_pre_existing_cycle_in_new_parent_chain() {
+        // new_parent_id `np` → p1 → p2 → p1 (cycle at p1, NOT involving
+        // the block being reparented). Independent block `id` is fresh.
+        let doc = build_doc(&[
+            ("p1", Some("p2"), "p1"),
+            ("p2", Some("p1"), "p2"),
+            ("np", Some("p1"), "new parent"),
+            ("id", None, "block being reparented (separate root)"),
+        ]);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "np", 1001, None);
+        assert_eq!(
+            walk.termination,
+            WalkTermination::Cycle,
+            "walker MUST surface Cycle so reparent rejects pre-existing corruption"
+        );
+        assert!(
+            !walk.ids.iter().any(|aid| aid == "id"),
+            "reparented block `id` is NOT in np's ancestry — cycle is upstream"
+        );
+        // Without the Cycle check, the depth-saturation branch would
+        // be the only guard, and walk.depth here is just 2 — far from
+        // 1001 — so the guard would NOT fire and the reparent would
+        // silently succeed on corrupt data. That's the bug.
+        assert!(
+            (walk.depth as usize) < 1000,
+            "visited-set short-circuit means depth never saturates"
         );
     }
 

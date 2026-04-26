@@ -31,12 +31,21 @@
 //! The walk terminates when ANY of:
 //!
 //! 1. `parent_of(current)` returns `None` — reached the root
+//!    → `walk.termination = WalkTermination::Root`
 //! 2. `walk.ids.len() == max_depth` — caller-provided cap
+//!    → `walk.termination = WalkTermination::MaxDepth`
 //! 3. The next parent ID is already in the visited set — cycle detected
+//!    → `walk.termination = WalkTermination::Cycle`
 //!
 //! On cycle: the cycle entry-point is NOT appended (the walker terminates
 //! BEFORE adding the duplicate). The returned `ids` contains every ancestor
 //! seen exactly once, in nearest-first order. See `walk_terminates_on_cycle`.
+//!
+//! **Mutation guard contract:** callers that write state under an ancestor
+//! chain (reparent, reorder under a new parent, etc.) MUST inspect
+//! `walk.termination` and reject `Cycle` explicitly — surfaces pre-existing
+//! corruption that the visited-set short-circuit would otherwise hide.
+//! Read-only callers (search breadcrumb, depth, find_root) can ignore it.
 //!
 //! # Cycle-as-root note (export `find_root` migration)
 //!
@@ -56,13 +65,42 @@ use yrs::{Map, ReadTxn};
 
 use crate::hooks::PageNameIndex;
 
+/// Why a walk stopped. Surfacing the reason lets callers distinguish
+/// "reached the top of the tree" from "hit a pre-existing cycle" from
+/// "ran out of caller-allotted depth" — three semantically distinct
+/// situations that all produce a finite [`AncestorWalk::ids`] vector.
+///
+/// Added 2026-04-25 in response to PR #281 reviewer findings: silently
+/// folding `Cycle` into a short walk weakened the reparent corruption
+/// guard (Greptile P1) and made the walker's contract ambiguous
+/// (CodeRabbit Major). Callers that mutate state on top of an ancestor
+/// chain (e.g. reparent) MUST inspect this to reject `Cycle` explicitly.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum WalkTermination {
+    /// `parent_of(current)` returned `None` — the walk reached a root
+    /// block, or `block_id` itself didn't exist (both terminate the
+    /// walk identically; callers that need to distinguish should check
+    /// `walk.ids.is_empty()` and look the start block up themselves).
+    #[default]
+    Root,
+    /// `walk.ids.len() == max_depth` — the caller's cap was reached
+    /// before either of the other two terminations.
+    MaxDepth,
+    /// The next parent ID was already in the visited set — a cycle was
+    /// detected. The cycle entry-point is NOT included in `walk.ids`.
+    /// Callers performing tree mutations under this ancestry should
+    /// treat this as "data corruption upstream" and refuse to write.
+    Cycle,
+}
+
 /// Result of walking the parent chain.
 ///
 /// `ids` is nearest-first (the immediate parent is `ids[0]`), depth-capped at
 /// the caller's `max_depth`. `nearest_page` is set when one of the walked
 /// ancestors is registered in [`PageNameIndex`] as an existing page (allowing
 /// callers to short-circuit "what page does this block live on" without a
-/// separate walk). `depth` always equals `ids.len() as u32`.
+/// separate walk). `depth` always equals `ids.len() as u32`. `termination`
+/// records WHY the walk stopped — see [`WalkTermination`].
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct AncestorWalk {
     /// Ancestor block IDs, nearest-first, capped at `max_depth`.
@@ -73,6 +111,10 @@ pub struct AncestorWalk {
     pub nearest_page: Option<(String, String)>,
     /// `ids.len() as u32`. Convenience field; equivalent to `walk.ids.len()`.
     pub depth: u32,
+    /// Why the walk stopped. Inspect this when "reached root" vs "hit a
+    /// cycle" vs "hit the cap" matters (e.g. mutation guards). See
+    /// [`WalkTermination`] for the doctrine.
+    pub termination: WalkTermination,
 }
 
 /// Parent-chain lookup abstraction — the only thing [`walk_ancestors`] needs.
@@ -112,7 +154,11 @@ pub fn walk_ancestors(
     page_name_index: Option<&PageNameIndex>,
 ) -> AncestorWalk {
     if max_depth == 0 {
-        return AncestorWalk::default();
+        // The caller asked for zero ancestors; we hit the cap immediately.
+        return AncestorWalk {
+            termination: WalkTermination::MaxDepth,
+            ..AncestorWalk::default()
+        };
     }
 
     let mut ids: Vec<String> = Vec::new();
@@ -121,13 +167,18 @@ pub fn walk_ancestors(
     visited.insert(block_id.to_string());
 
     let mut current = block_id.to_string();
+    let mut termination = WalkTermination::Root;
 
     while ids.len() < max_depth {
         let Some(parent_id) = lookup.parent_of(&current) else {
+            // parent_of returned None → reached the top of the tree.
+            termination = WalkTermination::Root;
             break;
         };
         if !visited.insert(parent_id.clone()) {
-            // Cycle — terminate BEFORE re-adding.
+            // Cycle — terminate BEFORE re-adding. Callers that mutate state
+            // on top of this ancestry MUST inspect `termination` and reject.
+            termination = WalkTermination::Cycle;
             break;
         }
 
@@ -145,6 +196,13 @@ pub fn walk_ancestors(
 
         ids.push(parent_id.clone());
         current = parent_id;
+
+        if ids.len() == max_depth {
+            // We filled to the cap on this iteration. The loop condition
+            // would also stop us next iteration, but we want the
+            // termination reason to be MaxDepth, not the default Root.
+            termination = WalkTermination::MaxDepth;
+        }
     }
 
     let depth = ids.len() as u32;
@@ -152,6 +210,7 @@ pub fn walk_ancestors(
         ids,
         nearest_page,
         depth,
+        termination,
     }
 }
 
@@ -255,18 +314,28 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    /// Owns its `HashMap` instead of borrowing — avoids the per-test
+    /// `Box::leak` accumulation that the original helper had (Greptile P2 on
+    /// PR #281: each `map_lookup` call leaked one map; with a 17+ test
+    /// module that scaled with suite size).
+    struct OwnedMapLookup(HashMap<String, String>);
+
+    impl ParentLookup for OwnedMapLookup {
+        fn parent_of(&self, block_id: &str) -> Option<String> {
+            self.0.get(block_id).cloned()
+        }
+    }
+
     /// Tiny in-process lookup used to keep walker tests independent from
     /// `YDocStore` setup. The Y.Doc adapter is exercised via the migrated
     /// call sites' own behaviour-preservation tests.
-    fn map_lookup(pairs: &[(&str, &str)]) -> HashMapParentLookup<'static> {
-        // Leak the map into a 'static lifetime so the lookup borrow is happy.
-        // Test-only; never used outside `#[cfg(test)]`.
-        let map: HashMap<String, String> = pairs
-            .iter()
-            .map(|(c, p)| (c.to_string(), p.to_string()))
-            .collect();
-        let leaked: &'static HashMap<String, String> = Box::leak(Box::new(map));
-        HashMapParentLookup::new(leaked)
+    fn map_lookup(pairs: &[(&str, &str)]) -> OwnedMapLookup {
+        OwnedMapLookup(
+            pairs
+                .iter()
+                .map(|(c, p)| (c.to_string(), p.to_string()))
+                .collect(),
+        )
     }
 
     #[test]
@@ -276,6 +345,7 @@ mod tests {
         assert!(walk.ids.is_empty());
         assert_eq!(walk.depth, 0);
         assert_eq!(walk.nearest_page, None);
+        assert_eq!(walk.termination, WalkTermination::Root);
     }
 
     #[test]
@@ -285,6 +355,7 @@ mod tests {
         let walk = walk_ancestors(&lookup, "a", 3, None);
         assert_eq!(walk.ids, vec!["b", "c", "d"]);
         assert_eq!(walk.depth, 3);
+        assert_eq!(walk.termination, WalkTermination::MaxDepth);
     }
 
     #[test]
@@ -293,6 +364,7 @@ mod tests {
         let walk = walk_ancestors(&lookup, "a", 100, None);
         assert_eq!(walk.ids, vec!["b", "c", "d", "e"]);
         assert_eq!(walk.depth, 4);
+        assert_eq!(walk.termination, WalkTermination::Root);
     }
 
     #[test]
@@ -303,6 +375,7 @@ mod tests {
         // b is collected, the next step (back to a) terminates the walk.
         assert_eq!(walk.ids, vec!["b"]);
         assert_eq!(walk.depth, 1);
+        assert_eq!(walk.termination, WalkTermination::Cycle);
     }
 
     #[test]
@@ -312,6 +385,23 @@ mod tests {
         let walk = walk_ancestors(&lookup, "a", 100, None);
         assert_eq!(walk.ids, vec!["b", "c"]);
         assert_eq!(walk.depth, 2);
+        assert_eq!(walk.termination, WalkTermination::Cycle);
+    }
+
+    #[test]
+    fn walk_terminates_on_pre_existing_cycle_not_through_start() {
+        // Greptile PR #281 review case: a → b → c → b (cycle at b, NOT
+        // involving start `a`). Old inline loop spun until depth=1001
+        // → "data corruption" reject. New walker terminates early with
+        // termination=Cycle so callers can reject explicitly.
+        let lookup = map_lookup(&[("a", "b"), ("b", "c"), ("c", "b")]);
+        let walk = walk_ancestors(&lookup, "a", 1001, None);
+        assert_eq!(walk.depth, 2, "visited-set short-circuits at b's re-entry");
+        assert_eq!(
+            walk.termination,
+            WalkTermination::Cycle,
+            "termination MUST be Cycle so reparent guards can reject"
+        );
     }
 
     #[test]
@@ -320,6 +410,7 @@ mod tests {
         let lookup = map_lookup(&[]);
         let walk = walk_ancestors(&lookup, "ghost", 10, None);
         assert!(walk.ids.is_empty());
+        assert_eq!(walk.termination, WalkTermination::Root);
     }
 
     #[test]
@@ -328,6 +419,22 @@ mod tests {
         let walk = walk_ancestors(&lookup, "a", 0, None);
         assert!(walk.ids.is_empty());
         assert_eq!(walk.depth, 0);
+        assert_eq!(
+            walk.termination,
+            WalkTermination::MaxDepth,
+            "zero-cap = MaxDepth even though we never ran the loop"
+        );
+    }
+
+    #[test]
+    fn walk_max_depth_exact_match_terminates_max_depth() {
+        // 3-deep chain, cap=3 → fills exactly and terminates as MaxDepth
+        // (the loop condition would stop us next iter; we set the reason
+        // on the iteration that filled the cap).
+        let lookup = map_lookup(&[("a", "b"), ("b", "c"), ("c", "d")]);
+        let walk = walk_ancestors(&lookup, "a", 3, None);
+        assert_eq!(walk.ids, vec!["b", "c", "d"]);
+        assert_eq!(walk.termination, WalkTermination::MaxDepth);
     }
 
     #[test]
@@ -336,6 +443,7 @@ mod tests {
         let lookup = map_lookup(&[("a", "a")]);
         let walk = walk_ancestors(&lookup, "a", 10, None);
         assert!(walk.ids.is_empty(), "self-parent must not produce ids");
+        assert_eq!(walk.termination, WalkTermination::Cycle);
     }
 
     #[test]
