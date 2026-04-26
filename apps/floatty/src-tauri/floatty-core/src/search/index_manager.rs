@@ -81,6 +81,19 @@ pub struct SchemaFields {
     pub ctx_at: Field,
     /// Block tree depth (0 = root, 1 = direct child, etc.). For ranking boost.
     pub depth: Field,
+    // ----- FLO-679 PR 2: ancestor context fields -----
+    /// Block ID of the nearest registered-page ancestor, when present.
+    pub nearest_page_block_id: Field,
+    /// Page name of the nearest registered-page ancestor, when present.
+    pub nearest_page_name: Field,
+    /// Multi-value: ancestor block IDs (nearest-first, capped at 10).
+    pub ancestor_block_ids: Field,
+    /// Approximate descendant count for "navigate vs read" hints (capped).
+    pub subtree_size: Field,
+    /// Number of inbound `[[wikilink]]` references to this block's nearest page.
+    pub inbound_count: Field,
+    /// Multi-value: top-N inbound source block IDs (`?include=inbound_samples`).
+    pub inbound_block_ids: Field,
 }
 
 impl SchemaFields {
@@ -102,6 +115,12 @@ impl SchemaFields {
             created_at: get_field(schema, "created_at"),
             ctx_at: get_field(schema, "ctx_at"),
             depth: get_field(schema, "depth"),
+            nearest_page_block_id: get_field(schema, "nearest_page_block_id"),
+            nearest_page_name: get_field(schema, "nearest_page_name"),
+            ancestor_block_ids: get_field(schema, "ancestor_block_ids"),
+            subtree_size: get_field(schema, "subtree_size"),
+            inbound_count: get_field(schema, "inbound_count"),
+            inbound_block_ids: get_field(schema, "inbound_block_ids"),
         }
     }
 }
@@ -210,8 +229,8 @@ mod tests {
         // Index directory should now exist
         assert!(index_path.exists());
 
-        // Schema should have 15 fields (7 original + 5 enrichment + 2 own-only + depth)
-        assert_eq!(manager.schema().fields().count(), 15);
+        // Schema should have 21 fields (15 original + 6 ancestor-context fields, FLO-679 PR 2)
+        assert_eq!(manager.schema().fields().count(), 21);
     }
 
     #[test]

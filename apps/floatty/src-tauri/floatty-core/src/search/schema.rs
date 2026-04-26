@@ -16,6 +16,12 @@
 //! | created_at | I64 | FAST, STORED | Block creation timestamp |
 //! | ctx_at | I64 | FAST, STORED | ctx:: event timestamp |
 //! | depth | I64 | FAST, STORED | Block tree depth (for ranking boost) |
+//! | nearest_page_block_id | TEXT | STRING, STORED | Nearest ancestor that is a registered page (FLO-679 PR 2) |
+//! | nearest_page_name | TEXT | STRING, STORED | Page name for `nearest_page_block_id` (FLO-679 PR 2) |
+//! | ancestor_block_ids | TEXT | STRING, STORED (multi-value) | Capped ancestor chain (FLO-679 PR 2) |
+//! | subtree_size | I64 | FAST, STORED | Approximate descendant count cap (FLO-679 PR 2) |
+//! | inbound_count | I64 | FAST, STORED | Number of `outlinks` referencing this block's page name (FLO-679 PR 2) |
+//! | inbound_block_ids | TEXT | STRING, STORED (multi-value) | Top-N inbound block IDs (FLO-679 PR 2) |
 //!
 //! # Why block_id is Indexed STRING
 //!
@@ -105,7 +111,37 @@ pub fn build_schema() -> Schema {
 
     // depth: Block depth in tree (0 = root page, 1 = direct child, etc.)
     // Used for ranking boost: shallow blocks rank higher for same query terms
-    builder.add_i64_field("depth", i64_options);
+    builder.add_i64_field("depth", i64_options.clone());
+
+    // ----- FLO-679 PR 2: ancestor context fields -----
+    // The "always-on" wire surface for `AncestorContext`. Populated by
+    // TantivyIndexHook from a single `walk_ancestors` pass per block.
+    // Schema additions are FREE per Tantivy ephemerality (the index is
+    // nuked + rebuilt on every server start), so no migration is needed.
+
+    // nearest_page_block_id / nearest_page_name: derived from the same
+    // walk_ancestors call that produces `depth`. STORED so search hits can
+    // surface "this hit lives on page X" without a second lookup.
+    builder.add_text_field("nearest_page_block_id", STRING | STORED);
+    builder.add_text_field("nearest_page_name", STRING | STORED);
+
+    // ancestor_block_ids: multi-value capped ancestor chain (nearest-first,
+    // capped at 10 per the walker's depth cap). STORED so the search-shape
+    // helper can surface the ancestry without re-walking the Y.Doc.
+    builder.add_text_field("ancestor_block_ids", STRING | STORED);
+
+    // subtree_size: rough descendant count for "navigate vs read" hint.
+    // Capped at 1000 to keep populating cost bounded.
+    builder.add_i64_field("subtree_size", i64_options.clone());
+
+    // inbound_count: number of [[wikilinks]] across the index that target
+    // this block's nearest_page_name. Approximates "load-bearing" weight.
+    builder.add_i64_field("inbound_count", i64_options);
+
+    // inbound_block_ids: top-N inbound source block IDs (multi-value, top 5
+    // by recency). Opt-in surfacing via `?include=inbound_samples` — the
+    // hit-shaping helper joins these to content previews at response time.
+    builder.add_text_field("inbound_block_ids", STRING | STORED);
 
     builder.build()
 }
@@ -145,14 +181,21 @@ mod tests {
         assert!(schema.get_field("ctx_at").is_ok());
         assert!(schema.get_field("marker_types_own").is_ok());
         assert!(schema.get_field("marker_values_own").is_ok());
+        // FLO-679 PR 2: ancestor context fields
+        assert!(schema.get_field("nearest_page_block_id").is_ok());
+        assert!(schema.get_field("nearest_page_name").is_ok());
+        assert!(schema.get_field("ancestor_block_ids").is_ok());
+        assert!(schema.get_field("subtree_size").is_ok());
+        assert!(schema.get_field("inbound_count").is_ok());
+        assert!(schema.get_field("inbound_block_ids").is_ok());
     }
 
     #[test]
     fn test_schema_field_count() {
         let schema = build_schema();
-        // Should have exactly 15 fields (7 original + 5 enrichment + 2 own-only + depth)
+        // 15 original + 6 ancestor-context fields (FLO-679 PR 2)
         let field_count = schema.fields().count();
-        assert_eq!(field_count, 15);
+        assert_eq!(field_count, 21);
     }
 
     #[test]

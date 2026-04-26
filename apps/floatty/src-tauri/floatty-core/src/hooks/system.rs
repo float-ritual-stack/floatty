@@ -106,8 +106,14 @@ impl HookSystem {
 
         // Initialize search infrastructure (skip if no path provided)
         let search_start = std::time::Instant::now();
+        let page_name_index_arc = page_name_index_hook.index();
         let (index_manager, writer_handle, commit_handle) = if let Some(path) = search_index_path {
-            match Self::initialize_search_at(&registry, Arc::clone(&inheritance_index), path) {
+            match Self::initialize_search_at(
+                &registry,
+                Arc::clone(&inheritance_index),
+                Arc::clone(&page_name_index_arc),
+                path,
+            ) {
                 Ok((im, wh, ch)) => (Some(im), Some(wh), Some(ch)),
                 Err(e) => {
                     warn!(
@@ -157,7 +163,7 @@ impl HookSystem {
             registry,
             emitter,
             _dispatch_handle: dispatch_handle,
-            page_name_index: page_name_index_hook.index(),
+            page_name_index: page_name_index_arc,
             inheritance_index,
             index_manager,
             writer_handle,
@@ -169,6 +175,7 @@ impl HookSystem {
     fn initialize_search_at(
         registry: &Arc<HookRegistry>,
         inheritance_index: Arc<RwLock<InheritanceIndex>>,
+        page_name_index: Arc<RwLock<PageNameIndex>>,
         index_path: std::path::PathBuf,
     ) -> Result<(Arc<IndexManager>, WriterHandle, tokio::task::JoinHandle<()>), SearchError> {
         info!("Initializing search infrastructure at {:?}...", index_path);
@@ -198,10 +205,12 @@ impl HookSystem {
             return Err(e);
         }
 
-        // Register TantivyIndexHook
-        registry.register(Arc::new(TantivyIndexHook::new(
+        // Register TantivyIndexHook (FLO-679 PR 2: page_name_index threaded
+        // through so the indexer can derive nearest_page_* and inbound_count).
+        registry.register(Arc::new(TantivyIndexHook::with_page_index(
             writer_handle.clone(),
             inheritance_index,
+            page_name_index,
         )));
         info!("TantivyIndexHook registered with priority 50");
 
