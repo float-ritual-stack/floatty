@@ -40,6 +40,7 @@ type DoorUIElement = UIElement & {
 import { bbsCatalog } from './catalog';
 import { registry as bbsRegistry } from './registry';
 import { LAYOUT_PATTERNS } from './patterns';
+import { buildAgentSystemPrompt } from './agent-schema';
 
 // ═══════════════════════════════════════════════════════════════
 // Door runtime contract — what `ctx` looks like inside execute().
@@ -711,44 +712,9 @@ async function tauriShellExec(command: string): Promise<string> {
   return invoke('execute_shell_command', { command });
 }
 
-// Cache catalog prompt — it's derived from static catalog definition
-let _cachedCatalogPrompt: string | null = null;
-
-// Dynamic prompt from catalog — includes all components, actions, state bindings, repeat fields.
-// Replaces old static AGENT_SYSTEM_PROMPT with catalog.prompt() for auto-sync with catalog changes.
-function buildAgentSystemPrompt(): string {
-  const catalogPrompt = _cachedCatalogPrompt ??= bbsCatalog.prompt();
-  const stateIdx = catalogPrompt.indexOf('INITIAL STATE');
-  const componentSection = stateIdx > 0 ? catalogPrompt.substring(stateIdx) : catalogPrompt;
-
-  return [
-    'You generate JSON render specs for floatty, a dark-themed terminal outliner.',
-    '',
-    'OUTPUT: A single JSON object on stdout. No markdown fences, no explanation, ONLY the JSON.',
-    'Include a top-level "title" field (3-6 word human-readable summary) alongside root/state/elements.',
-    '',
-    'FORMAT:',
-    '{"root":"<key>","title":"<3-6 word title>","state":{...},"elements":{"<key>":{"type":"<Component>","props":{...},"children":["<child-key>"]},...}}',
-    '',
-    componentSection,
-    '',
-    'OUTLINE WRITE vs LOCAL STATE:',
-    '- createChild/upsertChild write REAL BLOCKS to the outline (persistent, searchable, visible as children)',
-    '- pushState/removeState/setState only update LOCAL UI STATE (temporary, gone on re-render)',
-    '- When the user says "add to outline", "save", "append", "create block" → use createChild or upsertChild',
-    '- When the user wants a local list/counter/toggle within the UI only → use pushState/setState',
-    '- Default to outline writes unless the user explicitly wants local-only state',
-    '',
-    'FLOATTY-SPECIFIC:',
-    '- Every children key MUST exist in elements',
-    '- gap is a NUMBER not a string',
-    '- Use REAL data from the context provided, not placeholder text',
-    '- Colors: #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber)',
-    '- Output a SINGLE JSON object, NOT JSONL patches',
-    '',
-    LAYOUT_PATTERNS,
-  ].join('\n');
-}
+// `buildAgentSystemPrompt` and the catalog-prompt cache moved to ./agent-schema
+// in Phase 1 of the render-agent refactor. See /Users/evan/.claude/plans/
+// eventual-inventing-pond.md and apps/floatty/.claude/rules/render-door-agent.md.
 
 interface AgentResult {
   spec: Spec;
