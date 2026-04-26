@@ -48,10 +48,11 @@
 //! the existing handler unit tests (in `api/blocks.rs`, `api/discovery.rs`,
 //! etc.) which already pass through `compute_ancestor_context`.
 
+use floatty_core::PageNameIndex;
 use floatty_server::api::{AncestorContext, BlockDto};
 use floatty_server::block_service::{
-    attach_ancestor_context, compute_ancestor_context, parse_includes, shape_search_hit,
-    AncestorContextOpts,
+    attach_ancestor_context, compute_ancestor_context, compute_ancestor_context_with_hints,
+    parse_includes, shape_search_hit, AncestorContextHints, AncestorContextOpts,
 };
 use std::collections::HashSet;
 use yrs::{Any, ArrayPrelim, Doc, Map, ReadTxn, Transact, WriteTxn};
@@ -511,6 +512,156 @@ fn root_with_outlink_returns_empty_ancestor_block_ids() {
         ctx.ancestor_outlinks,
         vec!["A".to_string()],
         "own outlinks still surface on root blocks"
+    );
+}
+
+/// CONTRACT 10 (PR #282 review — CodeRabbit Major / Greptile P2): when a
+/// search hit's stored hint is capped at `INBOUND_SAMPLES_CAP` (5) but the
+/// consumer requests more samples (`?inbound_sample_count > 5`) AND total
+/// inbound count exceeds 5, the helper MUST fall back to the live
+/// `PageNameIndex` path so the consumer gets up to `min(N, 50)` samples
+/// instead of a silently-truncated 5.
+///
+/// Three branches verified:
+/// 1. requested_cap > 5 AND total > 5 → fallback fires (live path returns 8)
+/// 2. requested_cap ≤ 5 → trust the hint (returns 5)
+/// 3. total ≤ 5 → trust the hint even when requested_cap is large
+///    (no fallback could surface more samples anyway)
+#[test]
+fn inbound_sample_cap_falls_back_when_hint_insufficient() {
+    // Page "Target" with 8 inbound references — exceeds INBOUND_SAMPLES_CAP (5).
+    // Each inbound block has a metadata.outlinks entry pointing at "Target".
+    //
+    // Layout: leaf is the block being shaped (NOT a page). Its parent is
+    // the "Target" page block (a child of `pages::`) so `nearest_page_name`
+    // resolves to "Target". The 8 inbound source blocks are siblings under a
+    // separate root.
+    let doc = build_doc(&[
+        // Pages container + the target page
+        ("pages", None, "pages::", &[]),
+        ("target_page", Some("pages"), "# Target", &[]),
+        ("leaf", Some("target_page"), "leaf content", &[]),
+        // 8 inbound references — separate root, each links to "Target"
+        ("ref_root", None, "ref root", &[]),
+        ("ref1", Some("ref_root"), "ref 1", &["Target"]),
+        ("ref2", Some("ref_root"), "ref 2", &["Target"]),
+        ("ref3", Some("ref_root"), "ref 3", &["Target"]),
+        ("ref4", Some("ref_root"), "ref 4", &["Target"]),
+        ("ref5", Some("ref_root"), "ref 5", &["Target"]),
+        ("ref6", Some("ref_root"), "ref 6", &["Target"]),
+        ("ref7", Some("ref_root"), "ref 7", &["Target"]),
+        ("ref8", Some("ref_root"), "ref 8", &["Target"]),
+    ]);
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+    let dto = read_skeletal_dto(&blocks_map, &txn, "leaf");
+
+    // Build a real PageNameIndex with the 8 inbound references registered
+    // against "Target". Lowercased per the PageNameIndex contract.
+    let mut pni = PageNameIndex::new();
+    pni.add_existing_page("target", "target_page");
+    for ref_id in [
+        "ref1", "ref2", "ref3", "ref4", "ref5", "ref6", "ref7", "ref8",
+    ] {
+        pni.add_references(ref_id, &["target".to_string()]);
+    }
+
+    // Hint state mirroring what the indexer would have written to Tantivy:
+    //   inbound_count = 8 (true total)
+    //   inbound_block_ids = top-5 only (sorted), per INBOUND_SAMPLES_CAP
+    let mut sorted_top5: Vec<String> = vec![
+        "ref1".to_string(),
+        "ref2".to_string(),
+        "ref3".to_string(),
+        "ref4".to_string(),
+        "ref5".to_string(),
+    ];
+    sorted_top5.sort();
+    let hints = AncestorContextHints {
+        subtree_size: None,
+        inbound_count: Some(8),
+        inbound_block_ids: Some(sorted_top5.clone()),
+    };
+
+    // Branch 1: requested_cap = 8 > INBOUND_SAMPLES_CAP (5) AND total = 8 > 5
+    // → fallback fires, samples come from live PageNameIndex (all 8 ids).
+    let mut includes = HashSet::new();
+    includes.insert("inbound_samples".to_string());
+    let opts_large = AncestorContextOpts::from_raw(&includes, 8);
+    let ctx_large = compute_ancestor_context_with_hints(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        Some(&pni),
+        opts_large,
+        hints.clone(),
+    )
+    .expect("leaf has chain → some ctx");
+    assert_eq!(
+        ctx_large.inbound_count, 8,
+        "inbound_count reflects the true total (hint was correct on count)"
+    );
+    assert_eq!(
+        ctx_large.inbound_samples.len(),
+        8,
+        "fallback fired: live PageNameIndex returned all 8 samples — hint's \
+         5-id capacity would have silently truncated to 5"
+    );
+
+    // Branch 2: requested_cap = 3 ≤ INBOUND_SAMPLES_CAP (5)
+    // → hint is sufficient, no fallback needed; truncated to 3.
+    let opts_small = AncestorContextOpts::from_raw(&includes, 3);
+    let ctx_small = compute_ancestor_context_with_hints(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        Some(&pni),
+        opts_small,
+        hints.clone(),
+    )
+    .expect("leaf has chain → some ctx");
+    assert_eq!(
+        ctx_small.inbound_samples.len(),
+        3,
+        "requested_cap ≤ 5: hint sufficient, truncated to requested_cap"
+    );
+
+    // Branch 3: total inbound count ≤ INBOUND_SAMPLES_CAP, even with large
+    // requested_cap → trust the hint (no fallback could surface more).
+    let small_total_hints = AncestorContextHints {
+        subtree_size: None,
+        inbound_count: Some(3),
+        inbound_block_ids: Some(vec![
+            "ref1".to_string(),
+            "ref2".to_string(),
+            "ref3".to_string(),
+        ]),
+    };
+    let opts_large_small_total = AncestorContextOpts::from_raw(&includes, 50);
+    let ctx_small_total = compute_ancestor_context_with_hints(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        Some(&pni),
+        opts_large_small_total,
+        small_total_hints,
+    )
+    .expect("leaf has chain → some ctx");
+    assert_eq!(
+        ctx_small_total.inbound_count, 3,
+        "count_hint Some(3) wins over PageNameIndex live count of 8 — \
+         the hint is the count source when total ≤ cap"
+    );
+    assert_eq!(
+        ctx_small_total.inbound_samples.len(),
+        3,
+        "total ≤ cap: hint is comprehensive, fallback unnecessary"
     );
 }
 

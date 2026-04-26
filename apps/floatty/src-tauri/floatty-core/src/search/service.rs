@@ -293,16 +293,25 @@ impl SearchService {
                         .get_all(fields.inbound_block_ids)
                         .filter_map(|v| v.as_str().map(String::from))
                         .collect();
-                    let inbound_block_ids_hint = if inbound_block_ids_hint.is_empty() {
-                        // Distinguish "no STORED entries — could be no
-                        // inbounds OR could be a stale doc" from "STORED
-                        // entries present but empty". The indexer always
-                        // writes when populating, so an empty vec almost
-                        // certainly means no inbounds — pass it through as
-                        // the canonical "zero" hint.
+                    // Missing-vs-empty hint semantics (PR #282 review —
+                    // CodeRabbit Major). The writer
+                    // (`floatty-core/src/search/writer.rs`) ONLY emits
+                    // `inbound_block_ids` entries when the vector is
+                    // non-empty, so an empty `get_all(...).collect()` is
+                    // ambiguous: it could mean "no inbounds" OR "field
+                    // absent on a stale doc that pre-dates the schema."
+                    // Only synthesize `Some(Vec::new())` (authoritative
+                    // zero) when `inbound_count_hint == Some(0)` — that's
+                    // the indexer-confirmed zero signal. Otherwise pass
+                    // `None` so the downstream `compute_inbound` shaping
+                    // falls back to the live PageNameIndex path instead
+                    // of silently under-reporting samples.
+                    let inbound_block_ids_hint = if !inbound_block_ids_hint.is_empty() {
+                        Some(inbound_block_ids_hint)
+                    } else if inbound_count_hint == Some(0) {
                         Some(Vec::new())
                     } else {
-                        Some(inbound_block_ids_hint)
+                        None
                     };
                     hits.push(SearchHit {
                         block_id: id_str.to_string(),

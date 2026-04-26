@@ -687,30 +687,54 @@ fn compute_inbound<T: ReadTxn>(
     // otherwise we still need the live index to enumerate.
     let count_from_hint = hints.inbound_count;
 
+    // Resolve the requested cap once — used by both the hint and live paths
+    // so consumers see consistent honour-the-cap semantics regardless of
+    // which branch fires.
+    let requested_cap = if opts.inbound_sample_count == 0 {
+        5
+    } else {
+        opts.inbound_sample_count.min(50)
+    };
+
     // Sample ids candidate: from hint when present, else from live index.
     // Build a Vec<String> either way so the downstream content read is
     // identical.
+    //
+    // Hint capacity gate (PR #282 review — CodeRabbit Major / Greptile P2):
+    // Tantivy stores at most `INBOUND_SAMPLES_CAP` (5) inbound_block_ids per
+    // doc. Trusting the hint blindly silently caps search-endpoint samples
+    // at 5 even when the consumer asked for `?inbound_sample_count=20`.
+    // Trust the hint when EITHER:
+    //   (a) the consumer didn't request inbound_samples (count-only path —
+    //       the truncated id list is never read), OR
+    //   (b) the requested cap fits inside the hint's stored capacity
+    //       (≤ INBOUND_SAMPLES_CAP), OR
+    //   (c) total inbound count is ≤ INBOUND_SAMPLES_CAP — the hint
+    //       contains everything anyway, no fallback would surface more.
+    // Otherwise fall back to the live PageNameIndex path so the consumer
+    // gets up to `min(N, 50)` samples instead of a silently-truncated 5.
     let (count, sample_ids): (u32, Vec<String>) = match (count_from_hint, &hints.inbound_block_ids)
     {
-        (Some(count), Some(ids)) => {
-            // Both hints present — entirely skip PageNameIndex.
-            let cap = if opts.inbound_sample_count == 0 {
-                5
-            } else {
-                opts.inbound_sample_count.min(50)
-            };
+        (Some(count), Some(ids))
+            if !opts.include_inbound_samples
+                || requested_cap <= tantivy_index::INBOUND_SAMPLES_CAP
+                || (count as usize) <= tantivy_index::INBOUND_SAMPLES_CAP =>
+        {
+            // Hint sufficient — entirely skip PageNameIndex.
             let mut sample_ids = if opts.include_inbound_samples {
                 ids.clone()
             } else {
                 Vec::new()
             };
-            sample_ids.truncate(cap);
+            sample_ids.truncate(requested_cap);
             (count, sample_ids)
         }
         _ => {
-            // Fall back to the live PageNameIndex path. Same shape as before
-            // Fix 2 — kept for singleton callers (presence, /blocks/:id) that
-            // don't have hints.
+            // Fall back to the live PageNameIndex path. Used by:
+            //   - Singleton callers (presence, /blocks/:id) that pass empty
+            //     hints (Fix 2 — kept from prior pass).
+            //   - Search hits where the requested cap exceeds the stored
+            //     hint capacity (the gate above falls through to here).
             let Some(idx) = page_name_index else {
                 return (0, vec![]);
             };
@@ -734,16 +758,11 @@ fn compute_inbound<T: ReadTxn>(
                 return (count, vec![]);
             }
 
-            // Deterministic id-sort, capped — matches
-            // TantivyIndexHook::INBOUND_SAMPLES_CAP.
-            let cap = if opts.inbound_sample_count == 0 {
-                5
-            } else {
-                opts.inbound_sample_count.min(50)
-            };
+            // Deterministic id-sort, capped to the requested cap (already
+            // bounded by `min(N, 50)` above).
             let mut sample_ids: Vec<String> = refs.iter().cloned().collect();
             sample_ids.sort();
-            sample_ids.truncate(cap);
+            sample_ids.truncate(requested_cap);
             (count, sample_ids)
         }
     };
