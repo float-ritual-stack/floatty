@@ -11,8 +11,8 @@
     "transit": "node -e \"process.exit(0)\"",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "lsof -ti :8766 | xargs kill 2>/dev/null || true; RUST_LOG=debug FLOATTY_DATA_DIR=$HOME/.floatty-dev tauri dev --config src-tauri/tauri.dev.conf.json",
-    "tauri:dev:fresh": "lsof -ti :8766 | xargs kill 2>/dev/null || true; cd src-tauri && cargo build -p floatty-server && cd .. && RUST_LOG=debug FLOATTY_DATA_DIR=$HOME/.floatty-dev tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:dev": "lsof -ti :8766 | xargs kill 2>/dev/null || true; RUST_LOG=floatty_server=debug,floatty_core=debug,floatty_startup=info,hyper=warn,reqwest=warn,opentelemetry=off,tower_http=warn,tauri_plugin_pty=warn FLOATTY_DATA_DIR=$HOME/.floatty-dev tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:dev:fresh": "lsof -ti :8766 | xargs kill 2>/dev/null || true; cd src-tauri && cargo build -p floatty-server && cd .. && RUST_LOG=floatty_server=debug,floatty_core=debug,floatty_startup=info,hyper=warn,reqwest=warn,opentelemetry=off,tower_http=warn,tauri_plugin_pty=warn FLOATTY_DATA_DIR=$HOME/.floatty-dev tauri dev --config src-tauri/tauri.dev.conf.json",
     "kill-server": "lsof -ti :8765 :8766 :33333 2>/dev/null | xargs kill 2>/dev/null && echo 'Killed servers' || echo 'No servers running'",
     "test": "vitest",
     "test:run": "vitest run"
