@@ -14,6 +14,7 @@ import { z } from "zod";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { buildQmdEnv, checkQmdAvailable } from "../lib/tools/qmd-shared.js";
+import type { Marker } from "../lib/types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -187,7 +188,7 @@ export function registerDataTools(server: McpServer) {
             content: string;
             snippet: string | null;
             breadcrumb?: string[];
-            metadata?: { markers?: unknown[]; outlinks?: string[] } | null;
+            metadata?: { markers?: Marker[]; outlinks?: string[] } | null;
           }[];
         }>(`/api/v1/search?${params}`);
 
@@ -213,7 +214,7 @@ export function registerDataTools(server: McpServer) {
   // 4. get_inbound — find blocks linking TO a target page via [[wikilinks]]
   server.tool(
     "get_inbound",
-    "Find blocks that link TO a target page via [[wikilinks]]. Use to discover what references or connects to a page.",
+    "Find blocks that link TO a target page via [[wikilinks]]. Use to discover what references or connects to a page. Each result includes the block's markers and outgoing outlinks for further graph traversal.",
     { target: z.string().describe("Page or link name to find backlinks for") },
     async ({ target }: { target: string }) => {
       try {
@@ -237,7 +238,7 @@ export function registerDataTools(server: McpServer) {
             blockType: string;
             content: string;
             breadcrumb?: string[];
-            metadata?: { markers?: unknown[]; outlinks?: string[] } | null;
+            metadata?: { markers?: Marker[]; outlinks?: string[] } | null;
           }[];
         }>(`/api/v1/search?${params}`);
 
