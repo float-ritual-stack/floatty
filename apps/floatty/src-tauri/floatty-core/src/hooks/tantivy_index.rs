@@ -242,10 +242,16 @@ impl TantivyIndexHook {
             .unwrap_or(0);
 
         // FLO-684: read the block's actual updatedAt instead of stamping with
-        // index time. Block.updated_at is ms since epoch; Tantivy `updated_at`
-        // field is seconds (matches `created_at` conversion above). Falls back
-        // to created_at when block_data is unavailable (rare race; created_at
-        // is already 0 in that case so the field stays self-consistent).
+        // index time. Block.updated_at is ms since epoch (frontend `Date.now()`
+        // / Rust `timestamp_millis()`); Tantivy's `updated_at` field is the
+        // i64 seconds-resolution column declared in `search/schema.rs` —
+        // hence `/ 1000` to align units. Same conversion as `created_at`
+        // above; if a future writer changes one source's units, BOTH lines
+        // here need to update or the recency-sort key drifts silently.
+        // Falls back to `created_at` when block_data is unavailable (rare
+        // race; created_at is already 0 in that case so the field stays
+        // self-consistent).
+        //
         // Without this fix, every reindex (incl. full rebuild on app start
         // since the index is ephemeral) overrode the real edit time with
         // wall-clock NOW — kills recency sort across restarts.
