@@ -19,14 +19,14 @@ export const explorerCatalog = defineCatalog(schema, {
     setState: {
       params: z.object({
         statePath: z.string(),
-        value: z.any(),
+        value: z.unknown(),
       }),
       description: "Update a value in the state model",
     },
     pushState: {
       params: z.object({
         statePath: z.string(),
-        value: z.any(),
+        value: z.unknown(),
         clearStatePath: z.string().optional(),
       }),
       description: "Append an item to an array in state",
