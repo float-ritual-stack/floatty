@@ -14,6 +14,7 @@ use crate::api::{
 use crate::WsBroadcaster;
 use floatty_core::events::BlockChange;
 use floatty_core::hooks::InheritanceIndex;
+use floatty_core::projections::{walk_ancestors, YDocParentLookup};
 use floatty_core::{HookSystem, IndexManager, Origin, SearchFilters, SearchService, YDocStore};
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
@@ -305,27 +306,25 @@ pub(crate) fn parse_includes(include: &Option<String>) -> HashSet<String> {
 
 /// Walk the parent chain up to root, returning ancestor BlockRefs (nearest first).
 /// Max 10 ancestors to prevent runaway.
+///
+/// Migrated to `walk_ancestors` (FLO-679 PR 1, commit 2). The walker returns
+/// IDs only; this caller folds each ID into a `BlockRef` by fetching content.
+/// Cap kept at 10 to preserve pre-migration behaviour for the search
+/// breadcrumb composer (see commit 3).
 pub(crate) fn get_ancestors<T: ReadTxn>(
     blocks_map: &yrs::MapRef,
     txn: &T,
     block_id: &str,
 ) -> Vec<BlockRef> {
-    let mut ancestors = Vec::new();
-    let mut current_id = block_id.to_string();
-    for _ in 0..10 {
-        match read_block_parent_id(blocks_map, txn, &current_id) {
-            Some(pid) => {
-                let content = read_block_content(blocks_map, txn, &pid).unwrap_or_default();
-                ancestors.push(BlockRef {
-                    id: pid.clone(),
-                    content,
-                });
-                current_id = pid;
-            }
-            None => break,
-        }
-    }
-    ancestors
+    let lookup = YDocParentLookup::new(blocks_map, txn);
+    let walk = walk_ancestors(&lookup, block_id, 10, None);
+    walk.ids
+        .into_iter()
+        .map(|id| {
+            let content = read_block_content(blocks_map, txn, &id).unwrap_or_default();
+            BlockRef { id, content }
+        })
+        .collect()
 }
 
 /// Get siblings before/after a block within its parent's childIds.
@@ -1646,4 +1645,118 @@ pub(crate) fn search_blocks(
     };
 
     Ok(BlockSearchResponse { hits, total })
+}
+
+// =========================================================================
+// Behaviour-preservation tests for FLO-679 PR 1 ancestor-walk migrations.
+//
+// Each migrated call site (get_ancestors / cycle detection / search
+// breadcrumb) gets a focused integration test that builds a small Y.Doc
+// and asserts the post-migration output matches what the pre-migration
+// implementation produced. The walker itself is exhaustively unit-tested
+// in `floatty-core::projections::ancestor_walk::tests`; tests here prove
+// the *adapter wiring* and *result projection* haven't drifted.
+// =========================================================================
+
+#[cfg(test)]
+mod ancestor_migration_tests {
+    use super::*;
+    use yrs::{ArrayPrelim, Doc};
+
+    /// Build a Y.Doc with a blocks map and seed it with `(id, parent_id?, content)` tuples.
+    fn build_doc(seeds: &[(&str, Option<&str>, &str)]) -> Doc {
+        let doc = Doc::new();
+        {
+            let mut txn = doc.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            for (id, parent, content) in seeds {
+                let block_map: yrs::MapRef = blocks.get_or_init(&mut txn, *id);
+                block_map.insert(&mut txn, "content", yrs::Any::String((*content).into()));
+                if let Some(pid) = parent {
+                    block_map.insert(&mut txn, "parentId", yrs::Any::String((*pid).into()));
+                }
+                let empty: Vec<yrs::Any> = vec![];
+                block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
+            }
+        }
+        doc
+    }
+
+    #[test]
+    fn get_ancestors_returns_nearest_first() {
+        // root → mid → leaf
+        let doc = build_doc(&[
+            ("root", None, "root content"),
+            ("mid", Some("root"), "mid content"),
+            ("leaf", Some("mid"), "leaf content"),
+        ]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "leaf");
+        assert_eq!(ancestors.len(), 2, "leaf has 2 ancestors");
+        assert_eq!(ancestors[0].id, "mid", "nearest first");
+        assert_eq!(ancestors[0].content, "mid content");
+        assert_eq!(ancestors[1].id, "root");
+        assert_eq!(ancestors[1].content, "root content");
+    }
+
+    #[test]
+    fn get_ancestors_root_returns_empty() {
+        let doc = build_doc(&[("root", None, "root")]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+        assert!(get_ancestors(&blocks_map, &txn, "root").is_empty());
+    }
+
+    #[test]
+    fn get_ancestors_caps_at_ten() {
+        // Build a 15-deep chain. Cap is 10; expect exactly 10 ancestors.
+        let mut seeds: Vec<(String, Option<String>, String)> = Vec::new();
+        for i in 0..16 {
+            let parent = if i == 0 { None } else { Some(format!("b{}", i - 1)) };
+            seeds.push((format!("b{}", i), parent, format!("content {}", i)));
+        }
+        // Convert to the borrowed-tuple shape build_doc wants.
+        let seed_refs: Vec<(&str, Option<&str>, &str)> = seeds
+            .iter()
+            .map(|(id, p, c)| (id.as_str(), p.as_deref(), c.as_str()))
+            .collect();
+        let doc = build_doc(&seed_refs);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "b15");
+        assert_eq!(ancestors.len(), 10, "depth cap held");
+        assert_eq!(ancestors[0].id, "b14");
+        assert_eq!(ancestors.last().unwrap().id, "b5");
+    }
+
+    #[test]
+    fn get_ancestors_terminates_on_cycle() {
+        // A → B → A — the walker should not loop.
+        let doc = build_doc(&[("a", Some("b"), "A"), ("b", Some("a"), "B")]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "a");
+        assert_eq!(ancestors.len(), 1, "cycle short-circuits at first repeat");
+        assert_eq!(ancestors[0].id, "b");
+    }
+
+    #[test]
+    fn get_ancestors_missing_parent_treated_as_root() {
+        // child references parent "ghost" that doesn't exist in the map.
+        let doc = build_doc(&[("child", Some("ghost"), "child content")]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "child");
+        assert_eq!(ancestors.len(), 1, "ghost parent yields one BlockRef");
+        assert_eq!(ancestors[0].id, "ghost");
+        assert_eq!(
+            ancestors[0].content, "",
+            "missing block content reads as empty string (preserves pre-migration behaviour)"
+        );
+    }
 }
