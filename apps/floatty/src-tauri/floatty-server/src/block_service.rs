@@ -298,7 +298,11 @@ pub(crate) fn read_block_child_ids<T: ReadTxn>(
 }
 
 /// Parse include directives from comma-separated string.
-pub(crate) fn parse_includes(include: &Option<String>) -> HashSet<String> {
+///
+/// Made `pub` (not `pub(crate)`) so the symmetry harness in
+/// `tests/symmetry_ancestor_context.rs` can build `AncestorContextOpts`
+/// the same way handlers do.
+pub fn parse_includes(include: &Option<String>) -> HashSet<String> {
     include
         .as_ref()
         .map(|s| s.split(',').map(|p| p.trim().to_lowercase()).collect())
@@ -315,7 +319,7 @@ pub(crate) fn parse_includes(include: &Option<String>) -> HashSet<String> {
 /// signature manageable when handlers thread their `?include=` decisions
 /// through to the shape layer.
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct AncestorContextOpts {
+pub struct AncestorContextOpts {
     /// Populate `effectiveMarkers` from InheritanceIndex. Always-on for
     /// `/blocks/:id` per the plan; opt-in via `?include=effective_markers`
     /// elsewhere.
@@ -341,7 +345,11 @@ impl AncestorContextOpts {
     }
 
     /// Construct from raw `?include=` + opts (search query layer).
-    pub(crate) fn from_raw(includes: &HashSet<String>, inbound_sample_count: usize) -> Self {
+    ///
+    /// `pub` (not `pub(crate)`) so the symmetry harness in
+    /// `tests/symmetry_ancestor_context.rs` can use the canonical
+    /// constructor handlers funnel through.
+    pub fn from_raw(includes: &HashSet<String>, inbound_sample_count: usize) -> Self {
         Self {
             include_effective_markers: includes.contains("effective_markers"),
             include_inbound_samples: includes.contains("inbound_samples"),
@@ -351,7 +359,7 @@ impl AncestorContextOpts {
 
     /// Variant for `/blocks/:id` and other singletons where effective_markers
     /// is always-on.
-    pub(crate) fn always_effective(mut self) -> Self {
+    pub fn always_effective(mut self) -> Self {
         self.include_effective_markers = true;
         self
     }
@@ -369,7 +377,11 @@ impl AncestorContextOpts {
 /// Returns `None` when the block has no ancestors AND no outlinks AND no
 /// inbound references AND no own markers — keeps the wire surface terse on
 /// bare root blocks.
-pub(crate) fn compute_ancestor_context<T: ReadTxn>(
+///
+/// `pub` (not `pub(crate)`) so the symmetry harness in
+/// `tests/symmetry_ancestor_context.rs` can call the same shaping function
+/// every endpoint funnels through.
+pub fn compute_ancestor_context<T: ReadTxn>(
     blocks_map: &yrs::MapRef,
     txn: &T,
     block_id: &str,
@@ -470,7 +482,11 @@ pub(crate) fn compute_ancestor_context<T: ReadTxn>(
 
 /// Convenience wrapper for handlers that own a `BlockDto` and want to
 /// attach `ancestor_context` in place. Mutates `dto.ancestor_context`.
-pub(crate) fn attach_ancestor_context<T: ReadTxn>(
+///
+/// `pub` so the symmetry harness can verify `attach_*` and `compute_*`
+/// produce matching shapes (which they must — `attach_*` is just a thin
+/// wrapper around `compute_*`).
+pub fn attach_ancestor_context<T: ReadTxn>(
     dto: &mut BlockDto,
     blocks_map: &yrs::MapRef,
     txn: &T,
@@ -2035,8 +2051,12 @@ pub(crate) fn search_blocks(
 /// `breadcrumb` / `metadata` only when the caller opted in via the
 /// corresponding `include_*` flags. AncestorContext is attached when any
 /// cheap fields fire (always-on tier) — see `compute_ancestor_context`.
+///
+/// `pub` (not `pub(crate)`) so the symmetry harness can prove search-hit
+/// shaping produces matching `ancestorContext` to `compute_ancestor_context`
+/// directly.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn shape_search_hit<T: ReadTxn>(
+pub fn shape_search_hit<T: ReadTxn>(
     hit: floatty_core::search::SearchHit,
     blocks_map: Option<&yrs::MapRef>,
     txn: &T,

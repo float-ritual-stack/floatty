@@ -36,7 +36,7 @@ pub struct BlocksResponse {
 }
 
 /// Block DTO for API responses
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockDto {
     pub id: String,

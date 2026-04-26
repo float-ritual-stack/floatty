@@ -40,7 +40,11 @@ use crate::WsBroadcaster;
 /// - New: Embedded Y.Map (from MapPrelim insertion)
 /// - Any::Map: JSON-like map value
 /// - Legacy: JSON string (for backwards compatibility)
-pub(crate) fn extract_metadata_from_yrs<T: ReadTxn>(
+///
+/// `pub` (not `pub(crate)`) so the FLO-679 PR 2 symmetry harness in
+/// `tests/symmetry_ancestor_context.rs` can build skeletal `BlockDto`s
+/// from a Y.Doc fixture without reaching back into private API surface.
+pub fn extract_metadata_from_yrs<T: ReadTxn>(
     value: yrs::Out,
     txn: &T,
 ) -> Option<serde_json::Value> {
