@@ -3,12 +3,12 @@
 // defineCatalog call. See package README + PLAN.md for the canonical pattern.
 
 export { sharedComponentDefinitions } from "./shared";
+export { doorComponentDefinitions } from "./door";
+export { explorerComponentDefinitions } from "./explorer";
 export * from "./enums";
 
-// Stubs — populated in subsequent FLO-657 steps:
+// Stub — populated in subsequent FLO-657 step:
 // Step 4b: list-shape components (Timeline/List/AnchoredList/Narrative)
-// Step 5:  door-only and explorer-only sets
+//   per FLO-657 Apr 20 comment
 
 export const listShapeComponentDefinitions = {} as const;
-export const doorComponentDefinitions = {} as const;
-export const explorerComponentDefinitions = {} as const;
