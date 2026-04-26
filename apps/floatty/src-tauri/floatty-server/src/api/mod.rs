@@ -158,6 +158,8 @@ pub use blocks::{
     InheritedMarkerDto, MarkerSource, ResolveResponse, SiblingContext, TokenEstimate, TreeNode,
     UpdateBlockRequest,
 };
+// Discovery DTOs re-exported (FLO-679 PR 2 / FLO-680 — presence struct-ified)
+pub use discovery::PresenceResponse;
 
 /// Standard error response
 #[derive(Serialize, Deserialize)]

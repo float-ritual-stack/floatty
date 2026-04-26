@@ -8,18 +8,18 @@
 //! on every new tool.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use yrs::{Map, ReadTxn, Transact};
 
 use super::{ApiError, AppState, BlockContextQuery, BlockWithContextResponse};
-use crate::api::{self, BlockDto};
+use crate::api::{self, AncestorContext, BlockDto};
 use crate::block_service::{lookup_inherited, read_block_dto};
 
 pub fn router() -> Router<AppState> {
@@ -46,6 +46,38 @@ pub fn router() -> Router<AppState> {
 struct PresenceRequest {
     block_id: String,
     pane_id: Option<String>,
+}
+
+/// FLO-679 PR 2 / [[FLO-680]]: presence response, struct-ified.
+///
+/// Replaces the inline `serde_json::json!` literal previously emitted by
+/// `get_presence`. Adds `ancestorContext` so a single GET orients an agent
+/// on the user's currently-focused block (page identity, ancestor chain,
+/// effective markers when opted-in, inbound count) without a follow-up
+/// `floatty_block_get` call.
+///
+/// `ancestorContext.effectiveMarkers` and `ancestorContext.inboundSamples`
+/// are opt-in via `?include=effective_markers,inbound_samples`. Cheap fields
+/// are always-on per the resolved open-question.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PresenceResponse {
+    pub block_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor_context: Option<AncestorContext>,
+}
+
+/// Query parameters for `GET /api/v1/presence` — mirrors `BlockContextQuery`'s
+/// `?include=` and `&inbound_sample_count=N` knobs so presence behaves the
+/// same way as `/blocks/:id` for the AncestorContext opt-in surface.
+#[derive(Deserialize, Debug, Default)]
+pub struct PresenceQuery {
+    #[serde(default)]
+    pub include: Option<String>,
+    #[serde(default)]
+    pub inbound_sample_count: Option<usize>,
 }
 
 /// Body for `POST /api/v1/daily/:date/append` — append a child block to the
@@ -187,7 +219,10 @@ async fn get_daily_note(
     }
 }
 
-async fn get_presence(State(state): State<AppState>) -> impl IntoResponse {
+async fn get_presence(
+    State(state): State<AppState>,
+    Query(query): Query<PresenceQuery>,
+) -> impl IntoResponse {
     let Some(info) = state.broadcaster.get_last_presence() else {
         return StatusCode::NO_CONTENT.into_response();
     };
@@ -197,19 +232,49 @@ async fn get_presence(State(state): State<AppState>) -> impl IntoResponse {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     let txn = doc_guard.transact();
-    let block_exists = txn
-        .get_map("blocks")
-        .and_then(|m| m.get(&txn, &info.block_id))
-        .is_some();
-
+    let Some(blocks_map) = txn.get_map("blocks") else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
+    let block_exists = blocks_map.get(&txn, &info.block_id).is_some();
     if !block_exists {
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    Json(serde_json::json!({
-        "blockId": info.block_id,
-        "paneId": info.pane_id,
-    }))
+    // FLO-679 PR 2 / [[FLO-680]]: shape the AncestorContext for the focused
+    // block. Cheap fields always-on; effective_markers + inbound_samples
+    // gated by `?include=`.
+    let ancestor_context = (|| -> Option<AncestorContext> {
+        // Build the minimal BlockDto needed by compute_ancestor_context
+        // (markers + outlinks for ancestor_outlinks + effective_markers).
+        let inh = state.inheritance_index.read().ok()?;
+        let pni = state.page_name_index.read().ok()?;
+        let inherited_markers = lookup_inherited(&inh, &info.block_id);
+        let block_map = match blocks_map.get(&txn, &info.block_id)? {
+            yrs::Out::YMap(m) => m,
+            _ => return None,
+        };
+        let dto = read_block_dto(&block_map, &txn, &info.block_id, inherited_markers, false);
+        let includes = crate::block_service::parse_includes(&query.include);
+        let opts = crate::block_service::AncestorContextOpts::from_raw(
+            &includes,
+            query.inbound_sample_count.unwrap_or(5),
+        );
+        crate::block_service::compute_ancestor_context(
+            &blocks_map,
+            &txn,
+            &info.block_id,
+            &dto,
+            Some(&inh),
+            Some(&pni),
+            opts,
+        )
+    })();
+
+    Json(PresenceResponse {
+        block_id: info.block_id,
+        pane_id: info.pane_id,
+        ancestor_context,
+    })
     .into_response()
 }
 
