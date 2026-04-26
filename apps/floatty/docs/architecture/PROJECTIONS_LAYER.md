@@ -75,8 +75,7 @@ The boundary is **read-time vs write-time**.
 
 ```rust
 pub fn walk_ancestors(
-    blocks_map: &yrs::MapRef,
-    txn: &T,
+    lookup: &impl ParentLookup,
     block_id: &str,
     max_depth: usize,
     page_name_index: Option<&PageNameIndex>,
@@ -89,6 +88,18 @@ pub struct AncestorWalk {
     pub termination: WalkTermination,            // Root | MaxDepth | Cycle
 }
 ```
+
+The walker is generic over a `ParentLookup` adapter so it can serve every
+parent-resolution shape in the codebase from a single implementation. Three
+adapters ship with the module:
+
+| Adapter | Wraps | Use when |
+|---|---|---|
+| `YDocParentLookup<'a, T: ReadTxn>` | `(&MapRef, &T)` | The caller already holds a Y.Doc transaction (handlers, search composer, reparent cycle detection). Cheapest path. |
+| `StoreParentLookup<'a>` | `&YDocStore` | The caller doesn't own a transaction (hooks like `tantivy_index::depth`). Each lookup acquires its own read txn under the hood. |
+| `HashMapParentLookup<'a>` | `&HashMap<String, String>` | The caller has a pre-materialised `block_id → parent_id` map (export's single-pass scan). |
+
+Tests use the `OwnedMapLookup` newtype pattern (in `ancestor_walk.rs` `#[cfg(test)]`) so synthetic fixtures don't need `Box::leak`.
 
 **Programmatic contract**: `ids` are nearest-first. The walker terminates
 on `Root`, `MaxDepth`, or `Cycle` and surfaces which via `termination` so
@@ -109,8 +120,12 @@ nearest-first and lets each consumer decide when to flip.
 
 1. **Verify it's read-time**, not a hook. (See table above.)
 2. **Create the module** under `apps/floatty/src-tauri/floatty-core/src/projections/`.
-3. **Use existing primitives.** Take `&yrs::MapRef` + `&T: ReadTxn` so the
-   caller controls the transaction lifetime; never spawn your own.
+3. **Use existing primitives.** For ancestor traversal, call
+   `walk_ancestors` with a `ParentLookup` adapter (`YDocParentLookup`,
+   `StoreParentLookup`, or `HashMapParentLookup`) — never write an inline
+   `while let Some(parent) = ...` loop. For other reads, take
+   `&yrs::MapRef` + `&T: ReadTxn` so the caller controls the transaction
+   lifetime; never spawn your own.
 4. **Document the contract in the docstring** — what the function returns,
    what cap (if any) it applies, what termination semantics it has.
 5. **Write `#[cfg(test)] mod tests`** with deterministic Y.Doc fixtures.

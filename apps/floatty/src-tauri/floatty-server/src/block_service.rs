@@ -696,6 +696,20 @@ fn compute_inbound<T: ReadTxn>(
         opts.inbound_sample_count.min(50)
     };
 
+    // Count-only short-circuit (PR #282 review round 2 — CodeRabbit Minor).
+    // When the consumer didn't request samples AND we have a count hint,
+    // skip the entire `PageNameIndex` path — both for stored-ids-present
+    // (already covered below) AND for stored-ids-absent on stale docs.
+    // Without this guard, a stale doc with `Some(count) + None ids` falls
+    // through to the live path; if `page_name_index` isn't wired (or the
+    // block has no nearest page), the live path returns 0, silently
+    // dropping the hinted count for callers that only asked for the count.
+    if !opts.include_inbound_samples {
+        if let Some(count) = count_from_hint {
+            return (count, vec![]);
+        }
+    }
+
     // Sample ids candidate: from hint when present, else from live index.
     // Build a Vec<String> either way so the downstream content read is
     // identical.
