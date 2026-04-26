@@ -260,12 +260,7 @@ impl TantivyIndexHook {
             // The depth field uses a separate walk capped at 50 for backwards
             // parity with the pre-PR2 indexing logic.
             let page_index_guard = self.page_name_index.as_ref().and_then(|p| p.read().ok());
-            walk_ancestors(
-                &lookup,
-                id,
-                10,
-                page_index_guard.as_deref(),
-            )
+            walk_ancestors(&lookup, id, 10, page_index_guard.as_deref())
         };
 
         // Depth uses the historic 50-cap (parity with FLO-679 PR 1).
@@ -287,49 +282,47 @@ impl TantivyIndexHook {
         // Inbound count + samples: derived from PageNameIndex if available.
         // Inbound = blocks whose `outlinks` reference this block's nearest
         // page name (or this block itself if it IS a registered page).
-        let (inbound_count, inbound_block_ids) = match (
-            self.page_name_index.as_ref(),
-            nearest_page_name.as_ref(),
-        ) {
-            (Some(idx_arc), _) => {
-                // Decide which page name to look up:
-                // - If THIS block IS a page (e.g., walk_full.nearest_page may
-                //   include the block itself? — actually walk_ancestors starts
-                //   from the parent so it never returns the start block; we
-                //   check separately whether this block IS a page below).
-                // - Otherwise, use the nearest page name from the walk.
-                let target_name = {
-                    let g = idx_arc.read().ok();
-                    let self_is_page = g
-                        .as_ref()
-                        .and_then(|g| g.existing_pages().into_iter().find(|n| {
-                            g.page_block_id(n).map(|b| b == id).unwrap_or(false)
-                        }));
-                    self_is_page.or_else(|| nearest_page_name.clone())
-                };
+        let (inbound_count, inbound_block_ids) =
+            match (self.page_name_index.as_ref(), nearest_page_name.as_ref()) {
+                (Some(idx_arc), _) => {
+                    // Decide which page name to look up:
+                    // - If THIS block IS a page (e.g., walk_full.nearest_page may
+                    //   include the block itself? — actually walk_ancestors starts
+                    //   from the parent so it never returns the start block; we
+                    //   check separately whether this block IS a page below).
+                    // - Otherwise, use the nearest page name from the walk.
+                    let target_name = {
+                        let g = idx_arc.read().ok();
+                        let self_is_page = g.as_ref().and_then(|g| {
+                            g.existing_pages()
+                                .into_iter()
+                                .find(|n| g.page_block_id(n).map(|b| b == id).unwrap_or(false))
+                        });
+                        self_is_page.or_else(|| nearest_page_name.clone())
+                    };
 
-                if let Some(name) = target_name {
-                    let g = idx_arc.read().ok();
-                    if let Some(g) = g {
-                        let refs = g.referencing_blocks(&name);
-                        let count = refs.map(|s| s.len()).unwrap_or(0) as u32;
-                        // Top-N samples: deterministic order (sort by id) so
-                        // the wire surface stays stable across rebuilds.
-                        let mut samples: Vec<String> = refs
-                            .map(|s| s.iter().cloned().collect())
-                            .unwrap_or_default();
-                        samples.sort();
-                        samples.truncate(INBOUND_SAMPLES_CAP);
-                        (count, samples)
+                    if let Some(name) = target_name {
+                        let g = idx_arc.read().ok();
+                        if let Some(g) = g {
+                            let refs = g.referencing_blocks(&name);
+                            let count = refs.map(|s| s.len()).unwrap_or(0) as u32;
+                            // Top-N samples: deterministic order (sort by id) so
+                            // the wire surface stays stable across rebuilds.
+                            let mut samples: Vec<String> = refs
+                                .map(|s| s.iter().cloned().collect())
+                                .unwrap_or_default();
+                            samples.sort();
+                            samples.truncate(INBOUND_SAMPLES_CAP);
+                            (count, samples)
+                        } else {
+                            (0, vec![])
+                        }
                     } else {
                         (0, vec![])
                     }
-                } else {
-                    (0, vec![])
                 }
-            }
-            _ => (0, vec![]),
-        };
+                _ => (0, vec![]),
+            };
 
         // Build BlockIndexData and send to writer
         let data = BlockIndexData {

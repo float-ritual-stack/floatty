@@ -979,8 +979,7 @@ pub(crate) fn get_blocks(
                 let inherited_markers = inheritance_guard
                     .as_ref()
                     .and_then(|guard| lookup_inherited(guard, &block_id));
-                let mut dto =
-                    read_block_dto(&block_map, &txn, &block_id, inherited_markers, false);
+                let mut dto = read_block_dto(&block_map, &txn, &block_id, inherited_markers, false);
 
                 // FLO-679 PR 2: opt-in per-block ancestor context.
                 if want_ancestor_context {

@@ -84,16 +84,10 @@ fn build_doc(seeds: &[Seed<'_>]) -> Doc {
             // realistic input (the hook leaves it absent when there are no
             // outlinks).
             if !outlinks.is_empty() {
-                let outlink_arr: Vec<Any> = outlinks
-                    .iter()
-                    .map(|s| Any::String((*s).into()))
-                    .collect();
+                let outlink_arr: Vec<Any> =
+                    outlinks.iter().map(|s| Any::String((*s).into())).collect();
                 let metadata_map: yrs::MapRef = block_map.get_or_init(&mut txn, "metadata");
-                metadata_map.insert(
-                    &mut txn,
-                    "outlinks",
-                    ArrayPrelim::from(outlink_arr),
-                );
+                metadata_map.insert(&mut txn, "outlinks", ArrayPrelim::from(outlink_arr));
                 let empty_markers: Vec<Any> = vec![];
                 metadata_map.insert(&mut txn, "markers", ArrayPrelim::from(empty_markers));
             }
@@ -272,9 +266,7 @@ fn shape_search_hit_matches_compute_ancestor_context() {
     let dto = read_skeletal_dto(&blocks_map, &txn, "leaf");
 
     let opts = AncestorContextOpts::default();
-    let from_compute = compute_ancestor_context(
-        &blocks_map, &txn, "leaf", &dto, None, None, opts,
-    );
+    let from_compute = compute_ancestor_context(&blocks_map, &txn, "leaf", &dto, None, None, opts);
 
     let synthetic_hit = floatty_core::search::SearchHit {
         block_id: "leaf".to_string(),
@@ -440,16 +432,8 @@ fn effective_markers_opt_in_respected() {
     let mut includes = HashSet::new();
     includes.insert("effective_markers".to_string());
     let opts_on = AncestorContextOpts::from_raw(&includes, 5);
-    let ctx_on = compute_ancestor_context(
-        &blocks_map,
-        &txn,
-        "leaf",
-        &dto,
-        None,
-        None,
-        opts_on,
-    )
-    .expect("chain present → some ctx");
+    let ctx_on = compute_ancestor_context(&blocks_map, &txn, "leaf", &dto, None, None, opts_on)
+        .expect("chain present → some ctx");
     assert!(
         ctx_on.effective_markers.is_empty(),
         "with index=None even when opted-in, no effective markers (degrades cleanly)"
@@ -462,9 +446,7 @@ fn effective_markers_opt_in_respected() {
 /// AncestorContextOpts.
 #[test]
 fn parse_includes_handles_whitespace_and_multiples() {
-    let parsed = parse_includes(&Some(
-        " effective_markers , inbound_samples ".to_string(),
-    ));
+    let parsed = parse_includes(&Some(" effective_markers , inbound_samples ".to_string()));
     assert!(parsed.contains("effective_markers"));
     assert!(parsed.contains("inbound_samples"));
     assert_eq!(parsed.len(), 2);

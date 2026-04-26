@@ -203,16 +203,21 @@ async fn search_pages(
                     // compute_ancestor_context has metadata for outlinks/
                     // markers shaping.
                     let dto = match bmap.get(&txn, block_id) {
-                        Some(yrs::Out::YMap(block_map)) => Some(
-                            crate::block_service::read_block_dto(
+                        Some(yrs::Out::YMap(block_map)) => {
+                            Some(crate::block_service::read_block_dto(
                                 &block_map, &txn, block_id, None, false,
-                            ),
-                        ),
+                            ))
+                        }
                         _ => None,
                     };
                     dto.and_then(|dto| {
                         crate::block_service::compute_ancestor_context(
-                            bmap, &txn, block_id, &dto, Some(&inh), Some(&pni),
+                            bmap,
+                            &txn,
+                            block_id,
+                            &dto,
+                            Some(&inh),
+                            Some(&pni),
                             ac_opts,
                         )
                     })

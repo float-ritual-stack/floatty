@@ -435,9 +435,7 @@ async fn outline_get_block(
         let inh = inheritance_index
             .read()
             .map_err(|_| ApiError::LockPoisoned)?;
-        let pni = page_name_index
-            .read()
-            .map_err(|_| ApiError::LockPoisoned)?;
+        let pni = page_name_index.read().map_err(|_| ApiError::LockPoisoned)?;
         let opts = crate::block_service::AncestorContextOpts::default().always_effective();
         crate::block_service::attach_ancestor_context(
             &mut dto_inner,

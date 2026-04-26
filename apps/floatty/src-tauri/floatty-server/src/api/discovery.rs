@@ -183,8 +183,7 @@ async fn get_daily_note(
                 .map_err(|_| ApiError::LockPoisoned)?;
             lookup_inherited(&index, &page_id)
         };
-        let mut block_dto =
-            read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
+        let mut block_dto = read_block_dto(&block_map, &txn, &page_id, inherited_markers, true);
 
         // FLO-679 PR 2: AncestorContext on daily-note response (singleton
         // path — effective_markers always-on).
@@ -196,8 +195,8 @@ async fn get_daily_note(
             .page_name_index
             .read()
             .map_err(|_| ApiError::LockPoisoned)?;
-        let opts = crate::block_service::AncestorContextOpts::from_query(&ctx_query)
-            .always_effective();
+        let opts =
+            crate::block_service::AncestorContextOpts::from_query(&ctx_query).always_effective();
         crate::block_service::attach_ancestor_context(
             &mut block_dto,
             &blocks_map,

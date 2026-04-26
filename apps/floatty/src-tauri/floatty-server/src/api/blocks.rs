@@ -452,8 +452,7 @@ async fn resolve_block_prefix(
                         .map_err(|_| ApiError::LockPoisoned)?;
                     lookup_inherited(&index, &full_id)
                 };
-                let mut dto =
-                    read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
+                let mut dto = read_block_dto(&block_map, &txn, &full_id, inherited_markers, true);
 
                 // FLO-679 PR 2: same always-on AncestorContext shape as
                 // /blocks/:id (singletons get effective_markers always-on).
@@ -465,8 +464,7 @@ async fn resolve_block_prefix(
                     .page_name_index
                     .read()
                     .map_err(|_| ApiError::LockPoisoned)?;
-                let opts = crate::block_service::AncestorContextOpts::default()
-                    .always_effective();
+                let opts = crate::block_service::AncestorContextOpts::default().always_effective();
                 crate::block_service::attach_ancestor_context(
                     &mut dto,
                     &blocks_map,
