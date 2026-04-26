@@ -181,19 +181,26 @@ export function registerDataTools(server: McpServer) {
         const results = await floattyFetch<{
           total: number;
           hits: {
+            blockId: string;
+            score: number;
+            blockType: string;
             content: string;
             snippet: string | null;
             breadcrumb?: string[];
-            metadata?: { outlinks?: string[] } | null;
+            metadata?: { markers?: unknown[]; outlinks?: string[] } | null;
           }[];
         }>(`/api/v1/search?${params}`);
 
         return textResult({
           total: results.total,
           hits: results.hits.map((h) => ({
+            blockId: h.blockId,
+            score: h.score,
+            blockType: h.blockType,
             content: h.content,
             snippet: h.snippet,
             breadcrumb: h.breadcrumb,
+            markers: h.metadata?.markers,
             outlinks: h.metadata?.outlinks,
           })),
         });
@@ -217,16 +224,32 @@ export function registerDataTools(server: McpServer) {
           include_metadata: "true",
         });
 
+        // NOTE: `score` is omitted from this projection. `get_inbound` uses
+        // an outlink= filter with empty `q`, which the backend serves via
+        // tantivy's AllQuery — every hit gets a constant score (1.0), so the
+        // value carries no ranking signal. See
+        // apps/floatty/src-tauri/floatty-core/src/search/service.rs
+        // (search_with_filters: `if query_trimmed.is_empty() { Box::new(AllQuery) }`).
         const results = await floattyFetch<{
           total: number;
-          hits: { content: string; breadcrumb?: string[] }[];
+          hits: {
+            blockId: string;
+            blockType: string;
+            content: string;
+            breadcrumb?: string[];
+            metadata?: { markers?: unknown[]; outlinks?: string[] } | null;
+          }[];
         }>(`/api/v1/search?${params}`);
 
         return textResult({
           total: results.total,
           refs: results.hits.map((h) => ({
+            blockId: h.blockId,
+            blockType: h.blockType,
             content: h.content,
             breadcrumb: h.breadcrumb,
+            markers: h.metadata?.markers,
+            outlinks: h.metadata?.outlinks,
           })),
         });
       } catch (e) {
