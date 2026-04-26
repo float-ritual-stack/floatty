@@ -1183,12 +1183,10 @@ pub(crate) fn update_block(
                 // `new_parent_id == id` on its own.
                 const MAX_ANCESTOR_DEPTH: usize = 1000;
                 let lookup = YDocParentLookup::new(&blocks, &txn);
-                let walk =
-                    walk_ancestors(&lookup, new_parent_id, MAX_ANCESTOR_DEPTH + 1, None);
+                let walk = walk_ancestors(&lookup, new_parent_id, MAX_ANCESTOR_DEPTH + 1, None);
                 if walk.depth as usize > MAX_ANCESTOR_DEPTH {
                     return Err(ApiError::InvalidParent(
-                        "Ancestor chain exceeds depth limit — possible data corruption"
-                            .to_string(),
+                        "Ancestor chain exceeds depth limit — possible data corruption".to_string(),
                     ));
                 }
                 if walk.ids.iter().any(|aid| aid == &id) {
@@ -1716,7 +1714,11 @@ mod ancestor_migration_tests {
         // Build a 15-deep chain. Cap is 10; expect exactly 10 ancestors.
         let mut seeds: Vec<(String, Option<String>, String)> = Vec::new();
         for i in 0..16 {
-            let parent = if i == 0 { None } else { Some(format!("b{}", i - 1)) };
+            let parent = if i == 0 {
+                None
+            } else {
+                Some(format!("b{}", i - 1))
+            };
             seeds.push((format!("b{}", i), parent, format!("content {}", i)));
         }
         // Convert to the borrowed-tuple shape build_doc wants.
@@ -1795,7 +1797,10 @@ mod ancestor_migration_tests {
         let lookup = YDocParentLookup::new(&blocks, &txn);
         let walk = walk_ancestors(&lookup, "leaf", 1001, None);
         assert!(walk.ids.iter().any(|aid| aid == "root"));
-        assert!(walk.depth as usize <= 1000, "no false positive on depth cap");
+        assert!(
+            walk.depth as usize <= 1000,
+            "no false positive on depth cap"
+        );
     }
 
     #[test]
@@ -1824,7 +1829,11 @@ mod ancestor_migration_tests {
         // at depth 1001 → triggers the "data corruption" rejection branch.
         let mut seeds: Vec<(String, Option<String>, String)> = Vec::new();
         for i in 0..1003 {
-            let parent = if i == 0 { None } else { Some(format!("b{}", i - 1)) };
+            let parent = if i == 0 {
+                None
+            } else {
+                Some(format!("b{}", i - 1))
+            };
             seeds.push((format!("b{}", i), parent, String::new()));
         }
         let seed_refs: Vec<(&str, Option<&str>, &str)> = seeds
@@ -1861,10 +1870,7 @@ mod ancestor_migration_tests {
 
     #[test]
     fn search_breadcrumb_short_chain_yields_short_crumbs() {
-        let doc = build_doc(&[
-            ("root", None, "root"),
-            ("hit", Some("root"), "hit"),
-        ]);
+        let doc = build_doc(&[("root", None, "root"), ("hit", Some("root"), "hit")]);
         let txn = doc.transact();
         let blocks_map = txn.get_map("blocks").expect("blocks map");
 

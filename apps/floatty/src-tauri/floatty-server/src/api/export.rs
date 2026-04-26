@@ -529,11 +529,7 @@ async fn get_topology(
     let lookup = HashMapParentLookup::new(&parent_map);
     for bid in &block_ids {
         let walk = walk_ancestors(&lookup, bid, 500, None);
-        let root = walk
-            .ids
-            .last()
-            .cloned()
-            .unwrap_or_else(|| bid.to_string());
+        let root = walk.ids.last().cloned().unwrap_or_else(|| bid.to_string());
         block_to_root.insert(bid.clone(), root);
     }
 
@@ -1012,6 +1008,9 @@ mod find_root_migration_tests {
         // a different value but neither value is in rootIds in production, so
         // root_names.get(&_) → None either way.
         let r = find_root(&map, "b0");
-        assert_eq!(r, "b500", "saturated walker returns last collected ancestor");
+        assert_eq!(
+            r, "b500",
+            "saturated walker returns last collected ancestor"
+        );
     }
 }

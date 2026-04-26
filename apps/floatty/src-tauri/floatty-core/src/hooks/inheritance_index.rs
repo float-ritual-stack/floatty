@@ -22,6 +22,36 @@
 //!
 //! Accepts: User, Agent, BulkImport, Remote
 //! Ignores: Hook (metadata writes)
+//!
+//! # Why this hook still has its own ancestor walk (FLO-679 PR 1 carve-out)
+//!
+//! PR 1 of FLO-679 consolidated five of the six divergent ancestor walks in
+//! the codebase into [`crate::projections::walk_ancestors`]. This module —
+//! both `rebuild` and `update_affected` — was the deliberate carve-out.
+//!
+//! The carve-out exists for two reasons:
+//!
+//! 1. **Hot path.** Both `rebuild` and `update_affected` run on every metadata
+//!    change. `rebuild` walks ancestors for *every* block in the store; at
+//!    25K blocks with avg depth 6 that's ~150K parent lookups in a single
+//!    pass. Swapping in `walk_ancestors` would replace one tight loop with
+//!    one loop per block plus a `Vec<String>` allocation per walk. The
+//!    expected impact is small but unmeasured — migration without a
+//!    benchmark first would be a "not the kind of perf regression we want
+//!    to discover in production" call.
+//! 2. **Different shape.** This walker doesn't just collect IDs — it also
+//!    accumulates *per-marker-type* structured data (`InheritedMarker`)
+//!    while skipping marker types the block already owns. The current
+//!    `walk_ancestors` returns IDs only; expressing the marker-collect-with-
+//!    skip-already-owned-types semantics on top would require either a
+//!    `walk_ancestors_with_visitor` variant or a two-pass IDs-then-collect
+//!    rewrite — both of which deserve their own design discussion.
+//!
+//! Migration is tracked as a follow-up: it requires (a) a benchmark of
+//! today's tight loop against a `walk_ancestors`-based version on a real
+//! 25K-block store, and (b) a decision on the visitor-vs-two-pass shape.
+//! Until that benchmark exists, this hook keeps its own walk and that's
+//! deliberate, not drift.
 
 use crate::{events::BlockChange, hooks::BlockHook, BlockChangeBatch, Origin, YDocStore};
 use std::collections::{HashMap, HashSet};

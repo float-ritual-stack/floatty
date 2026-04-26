@@ -195,6 +195,7 @@ Before implementing any common pattern, **grep the codebase for existing impleme
 | Inline formatting | `inlineParser.ts` | Regex-based markdown/wikilink parsing |
 | Expansion/collapse | `expansionPolicy.ts` `computeExpansion()` | Direct `setCollapsed()` calls |
 | Y.Array mutations | Surgical helpers (`insertChildId`, `removeChildId`) | `delete(0, length)` then `push()` |
+| Ancestor traversal (Rust) | `floatty_core::projections::walk_ancestors` (+ `YDocParentLookup` / `StoreParentLookup` / `HashMapParentLookup` adapters) | Inline `while let Some(pid) = current_parent` loops or recursive `find_root`-style helpers |
 
 ### Protected Architecture
 
@@ -205,6 +206,7 @@ These modules are load-bearing infrastructure. Do not delete, bypass, or reimple
 - **`expansionPolicy.ts`** — unified expand/collapse logic. One policy, not five.
 - **`EventBus`** + **`ProjectionScheduler`** — search fidelity chain (layers 1-2). Deleting these starves the Tantivy index.
 - **Y.Doc surgical helpers** in `useBlockStore.ts` — `insertChildId`, `removeChildId`, etc. Never delete-all-then-push.
+- **`projections/ancestor_walk.rs`** — single-walker primitive for parent-chain traversal (FLO-679 PR 1). Five sites consolidated into one; the only known carve-out is `InheritanceIndex` (hot path + per-marker accumulator; documented in that file).
 
 ## Development Workflow
 
