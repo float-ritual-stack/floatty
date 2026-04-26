@@ -2556,10 +2556,13 @@ export function ActivityHeatmap(props: BaseComponentProps<{
             }}
           </For>
         </div>
-        <div style={{ display: 'flex', 'justify-content': 'space-between', padding: '0 4px', 'margin-top': '2px' }}>
-          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono }}>{data()[0]?.label}</span>
-          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono }}>peak: {maxVal()}</span>
-          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono }}>{data()[data().length - 1]?.label}</span>
+        {/* gap + min-width: 0 + overflow ellipsis on spans prevents long
+            first/last labels from butting against the peak text. Mirrors
+            outline-explorer's gap-2 + truncate min-w-0 fix from v0.13.0. */}
+        <div style={{ display: 'flex', 'justify-content': 'space-between', gap: '8px', padding: '0 4px', 'margin-top': '2px' }}>
+          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono, 'min-width': '0', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>{data()[0]?.label}</span>
+          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono, 'flex-shrink': '0' }}>peak: {maxVal()}</span>
+          <span style={{ color: V.tf, 'font-size': '8px', 'font-family': V.mono, 'min-width': '0', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>{data()[data().length - 1]?.label}</span>
         </div>
       </div>
     </div>
@@ -2604,10 +2607,23 @@ export function ProvenanceChain(props: BaseComponentProps<{
                     <Show when={step.docId}>
                       <span style={{ color: V.tf, 'font-size': '9px', 'font-family': V.mono }}>#{step.docId}</span>
                     </Show>
-                    <Show when={step.confidence != null}>
-                      <span style={{ 'font-size': '9px', 'font-family': V.mono, 'margin-left': 'auto', color: (step.confidence ?? 0) > 0.8 ? V.green : (step.confidence ?? 0) > 0.5 ? V.amb : V.cor }}>
-                        {Math.round((step.confidence ?? 0) * 100)}%
-                      </span>
+                    <Show when={Number.isFinite(step.confidence)}>
+                      {(() => {
+                        // Schema documents 0–1 fractions (renderer multiplies
+                        // by 100). Auto-detect agents that emit 0–100 ints by
+                        // mistake — if the value is > 1 (and at most 100, the
+                        // only sensible upper bound), treat it as already-percent.
+                        // Mirrors outline-explorer's visualizations.tsx fix.
+                        // Number.isFinite gate also rejects NaN (which slipped
+                        // past the prior `!= null` check — NaN != null is true).
+                        const raw = step.confidence!;
+                        const pct = raw > 1 && raw <= 100 ? raw : raw * 100;
+                        return (
+                          <span style={{ 'font-size': '9px', 'font-family': V.mono, 'margin-left': 'auto', color: pct > 80 ? V.green : pct > 50 ? V.amb : V.cor }}>
+                            {Math.round(pct)}%
+                          </span>
+                        );
+                      })()}
                     </Show>
                   </div>
                   <div style={{ color: V.t, 'font-size': '11px', 'font-family': V.mono, 'line-height': '1.4' }}>{step.content}</div>
