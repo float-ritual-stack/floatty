@@ -1,4 +1,16 @@
-//! Server-side markdown projection for door-block output.
+//! Projections — read-time intermediary surfaces over the block tree.
+//!
+//! Per FLO-368's three-layer model (human → intermediary → query), the
+//! `projections` module hosts pure functions that translate raw Y.Doc /
+//! `Store` state into shapes consumed by API handlers and agents. Projections
+//! never mutate state; they read and project.
+//!
+//! # Sub-modules
+//!
+//! - [`ancestor_walk`] — depth-capped parent-chain walker shared across every
+//!   block-returning endpoint. Single source of truth for ancestor traversal.
+//!
+//! # Door-block markdown projection (this file)
 //!
 //! Two layers of a four-layer fallback chain (see FLO-633):
 //! 1. `output.data.normalizedMarkdown` — future, not handled here
@@ -13,6 +25,13 @@
 //!
 //! Both functions are pure, sync, and must never panic on malformed input.
 //! Callers should still wrap in `std::panic::catch_unwind` as defense-in-depth.
+
+pub mod ancestor_walk;
+
+pub use ancestor_walk::{
+    walk_ancestors, AncestorWalk, HashMapParentLookup, ParentLookup, StoreParentLookup,
+    WalkTermination, YDocParentLookup,
+};
 
 use serde_json::Value;
 use std::collections::HashSet;
@@ -372,7 +391,7 @@ mod tests {
 
     /// Full fixture: the real output.data for block 7f5ef11c from the release server
     /// (captured 2026-04-15). See `tests/fixtures/spec-7f5ef11c.json`.
-    const FIXTURE_7F5EF11C: &str = include_str!("../tests/fixtures/spec-7f5ef11c.json");
+    const FIXTURE_7F5EF11C: &str = include_str!("../../tests/fixtures/spec-7f5ef11c.json");
 
     #[test]
     fn test_spec_walker_produces_expected_markdown() {

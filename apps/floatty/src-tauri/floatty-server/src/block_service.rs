@@ -14,6 +14,7 @@ use crate::api::{
 use crate::WsBroadcaster;
 use floatty_core::events::BlockChange;
 use floatty_core::hooks::InheritanceIndex;
+use floatty_core::projections::{walk_ancestors, WalkTermination, YDocParentLookup};
 use floatty_core::{HookSystem, IndexManager, Origin, SearchFilters, SearchService, YDocStore};
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
@@ -305,27 +306,25 @@ pub(crate) fn parse_includes(include: &Option<String>) -> HashSet<String> {
 
 /// Walk the parent chain up to root, returning ancestor BlockRefs (nearest first).
 /// Max 10 ancestors to prevent runaway.
+///
+/// Migrated to `walk_ancestors` (FLO-679 PR 1, commit 2). The walker returns
+/// IDs only; this caller folds each ID into a `BlockRef` by fetching content.
+/// Cap kept at 10 to preserve pre-migration behaviour for the search
+/// breadcrumb composer (see commit 3).
 pub(crate) fn get_ancestors<T: ReadTxn>(
     blocks_map: &yrs::MapRef,
     txn: &T,
     block_id: &str,
 ) -> Vec<BlockRef> {
-    let mut ancestors = Vec::new();
-    let mut current_id = block_id.to_string();
-    for _ in 0..10 {
-        match read_block_parent_id(blocks_map, txn, &current_id) {
-            Some(pid) => {
-                let content = read_block_content(blocks_map, txn, &pid).unwrap_or_default();
-                ancestors.push(BlockRef {
-                    id: pid.clone(),
-                    content,
-                });
-                current_id = pid;
-            }
-            None => break,
-        }
-    }
-    ancestors
+    let lookup = YDocParentLookup::new(blocks_map, txn);
+    let walk = walk_ancestors(&lookup, block_id, 10, None);
+    walk.ids
+        .into_iter()
+        .map(|id| {
+            let content = read_block_content(blocks_map, txn, &id).unwrap_or_default();
+            BlockRef { id, content }
+        })
+        .collect()
 }
 
 /// Get siblings before/after a block within its parent's childIds.
@@ -1169,32 +1168,39 @@ pub(crate) fn update_block(
                     ));
                 }
 
-                // Walk ancestor chain to prevent cycles (can't parent under a descendant)
-                let mut cursor = Some(new_parent_id.clone());
-                let mut depth = 0;
+                // Walk ancestor chain to prevent cycles (can't parent under a descendant).
+                // Migrated to `walk_ancestors` (FLO-679 PR 1, commit 4) with explicit
+                // Cycle-termination rejection added per PR #281 reviewer findings (Greptile P1
+                // + CodeRabbit Major: walker's silent break on cycle weakened the corruption
+                // guard, since visited-set short-circuits before the depth cap can fire).
+                //
+                // Three guards, in order:
+                //   1. termination == Cycle → pre-existing cycle in new_parent_id's ancestry
+                //      (does NOT need to involve `id`). Refuse to attach under corrupt data.
+                //   2. depth saturates `MAX + 1` → genuinely deep-but-acyclic chain →
+                //      same "data corruption" reject as pre-migration loop's iteration count.
+                //   3. `walk.ids.contains(&id)` → reparenting under its own descendant.
+                //
+                // Self-parenting (`new_parent_id == id`) is caught by the explicit guard
+                // above; the walker starts from `new_parent_id`'s parent.
                 const MAX_ANCESTOR_DEPTH: usize = 1000;
-                while let Some(pid) = cursor {
-                    if pid == id {
-                        return Err(ApiError::InvalidParent(format!(
-                            "Cannot reparent block {} under its own descendant",
-                            id
-                        )));
-                    }
-                    depth += 1;
-                    if depth > MAX_ANCESTOR_DEPTH {
-                        return Err(ApiError::InvalidParent(
-                            "Ancestor chain exceeds depth limit — possible data corruption"
-                                .to_string(),
-                        ));
-                    }
-                    cursor = blocks.get(&txn, &pid).and_then(|v| match v {
-                        yrs::Out::YMap(m) => m.get(&txn, "parentId").and_then(|v| match v {
-                            yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
-                            yrs::Out::Any(yrs::Any::Null) => None,
-                            _ => None,
-                        }),
-                        _ => None,
-                    });
+                let lookup = YDocParentLookup::new(&blocks, &txn);
+                let walk = walk_ancestors(&lookup, new_parent_id, MAX_ANCESTOR_DEPTH + 1, None);
+                if matches!(walk.termination, WalkTermination::Cycle) {
+                    return Err(ApiError::InvalidParent(
+                        "Ancestor chain contains a cycle — possible data corruption".to_string(),
+                    ));
+                }
+                if walk.depth as usize > MAX_ANCESTOR_DEPTH {
+                    return Err(ApiError::InvalidParent(
+                        "Ancestor chain exceeds depth limit — possible data corruption".to_string(),
+                    ));
+                }
+                if walk.ids.iter().any(|aid| aid == &id) {
+                    return Err(ApiError::InvalidParent(format!(
+                        "Cannot reparent block {} under its own descendant",
+                        id
+                    )));
                 }
 
                 // Validate new parent exists
@@ -1600,9 +1606,22 @@ pub(crate) fn search_blocks(
                         });
 
                     let breadcrumb = if want_breadcrumb {
+                        // Take the nearest 5 ancestors, then reverse for ROOTMOST-FIRST
+                        // display order — matches the contract documented in
+                        // .claude/rules/api-reference.md ("breadcrumb is parent chain
+                        // ... ancestor block content (nearest parent last)") and the
+                        // floatty-backend SKILL.md helper which joins with " → " as
+                        // root → leaf. Per CodeRabbit Major review on PR #281: the
+                        // walker keeps its nearest-first programmatic contract; only
+                        // the breadcrumb projection (a presentation surface) is
+                        // reversed at the composer.
                         let ancestors = get_ancestors(bmap, &txn, &h.block_id);
-                        let crumbs: Vec<String> =
-                            ancestors.into_iter().take(5).map(|a| a.content).collect();
+                        let crumbs: Vec<String> = ancestors
+                            .into_iter()
+                            .take(5)
+                            .rev()
+                            .map(|a| a.content)
+                            .collect();
                         if crumbs.is_empty() {
                             None
                         } else {
@@ -1646,4 +1665,314 @@ pub(crate) fn search_blocks(
     };
 
     Ok(BlockSearchResponse { hits, total })
+}
+
+// =========================================================================
+// Behaviour-preservation tests for FLO-679 PR 1 ancestor-walk migrations.
+//
+// Each migrated call site (get_ancestors / cycle detection / search
+// breadcrumb) gets a focused integration test that builds a small Y.Doc
+// and asserts the post-migration output matches what the pre-migration
+// implementation produced. The walker itself is exhaustively unit-tested
+// in `floatty-core::projections::ancestor_walk::tests`; tests here prove
+// the *adapter wiring* and *result projection* haven't drifted.
+// =========================================================================
+
+#[cfg(test)]
+mod ancestor_migration_tests {
+    use super::*;
+    use yrs::{ArrayPrelim, Doc};
+
+    /// Build a Y.Doc with a blocks map and seed it with `(id, parent_id?, content)` tuples.
+    fn build_doc(seeds: &[(&str, Option<&str>, &str)]) -> Doc {
+        let doc = Doc::new();
+        {
+            let mut txn = doc.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            for (id, parent, content) in seeds {
+                let block_map: yrs::MapRef = blocks.get_or_init(&mut txn, *id);
+                block_map.insert(&mut txn, "content", yrs::Any::String((*content).into()));
+                if let Some(pid) = parent {
+                    block_map.insert(&mut txn, "parentId", yrs::Any::String((*pid).into()));
+                }
+                let empty: Vec<yrs::Any> = vec![];
+                block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
+            }
+        }
+        doc
+    }
+
+    #[test]
+    fn get_ancestors_returns_nearest_first() {
+        // root → mid → leaf
+        let doc = build_doc(&[
+            ("root", None, "root content"),
+            ("mid", Some("root"), "mid content"),
+            ("leaf", Some("mid"), "leaf content"),
+        ]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "leaf");
+        assert_eq!(ancestors.len(), 2, "leaf has 2 ancestors");
+        assert_eq!(ancestors[0].id, "mid", "nearest first");
+        assert_eq!(ancestors[0].content, "mid content");
+        assert_eq!(ancestors[1].id, "root");
+        assert_eq!(ancestors[1].content, "root content");
+    }
+
+    #[test]
+    fn get_ancestors_root_returns_empty() {
+        let doc = build_doc(&[("root", None, "root")]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+        assert!(get_ancestors(&blocks_map, &txn, "root").is_empty());
+    }
+
+    #[test]
+    fn get_ancestors_caps_at_ten() {
+        // Build a 15-deep chain. Cap is 10; expect exactly 10 ancestors.
+        let mut seeds: Vec<(String, Option<String>, String)> = Vec::new();
+        for i in 0..16 {
+            let parent = if i == 0 {
+                None
+            } else {
+                Some(format!("b{}", i - 1))
+            };
+            seeds.push((format!("b{}", i), parent, format!("content {}", i)));
+        }
+        // Convert to the borrowed-tuple shape build_doc wants.
+        let seed_refs: Vec<(&str, Option<&str>, &str)> = seeds
+            .iter()
+            .map(|(id, p, c)| (id.as_str(), p.as_deref(), c.as_str()))
+            .collect();
+        let doc = build_doc(&seed_refs);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "b15");
+        assert_eq!(ancestors.len(), 10, "depth cap held");
+        assert_eq!(ancestors[0].id, "b14");
+        assert_eq!(ancestors.last().unwrap().id, "b5");
+    }
+
+    #[test]
+    fn get_ancestors_terminates_on_cycle() {
+        // A → B → A — the walker should not loop.
+        let doc = build_doc(&[("a", Some("b"), "A"), ("b", Some("a"), "B")]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "a");
+        assert_eq!(ancestors.len(), 1, "cycle short-circuits at first repeat");
+        assert_eq!(ancestors[0].id, "b");
+    }
+
+    /// Breadcrumb composition for a search hit takes `get_ancestors().take(5)` then
+    /// REVERSES for rootmost-first display order. The reversal was added per
+    /// CodeRabbit Major review on PR #281 to match the documented breadcrumb contract
+    /// (nearest parent LAST, joined with " → " by skill helpers as root → leaf).
+    /// `get_ancestors()` itself stays nearest-first — that's the programmatic
+    /// contract; the reversal lives at the presentation boundary in the composer.
+    #[test]
+    fn search_breadcrumb_projection_returns_rootmost_first() {
+        let doc = build_doc(&[
+            ("root", None, "root"),
+            ("a", Some("root"), "a"),
+            ("b", Some("a"), "b"),
+            ("c", Some("b"), "c"),
+            ("d", Some("c"), "d"),
+            ("e", Some("d"), "e"),
+            ("f", Some("e"), "f"),
+            ("hit", Some("f"), "hit"),
+        ]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        // Reproduce the exact projection from the search-hit composer.
+        // hit's chain is f → e → d → c → b → a → root (7 ancestors).
+        // get_ancestors caps at 10, take(5) keeps the nearest 5 (f..b),
+        // .rev() flips to rootmost-first within that window: b..f.
+        let ancestors = get_ancestors(&blocks_map, &txn, "hit");
+        let crumbs: Vec<String> = ancestors
+            .into_iter()
+            .take(5)
+            .rev()
+            .map(|a| a.content)
+            .collect();
+
+        // Rootmost-first: b is 5-deep ancestor (visible window's root),
+        // f is the immediate parent (visible window's leaf — last item).
+        // Reads naturally as "b → c → d → e → f → hit" with " → " join.
+        assert_eq!(crumbs, vec!["b", "c", "d", "e", "f"]);
+    }
+
+    /// Cycle detection (commit 4 of PR 1) replaces an inline parent-walk with
+    /// `walk_ancestors(...).ids.contains(&id)` plus a depth-saturation check.
+    /// This test reproduces the predicate against a Y.Doc — proves the
+    /// `YDocParentLookup` adapter wiring catches the same descendant-cycle
+    /// case the pre-migration loop caught.
+    #[test]
+    fn cycle_detection_rejects_descendant_as_new_parent() {
+        // Existing tree: root → mid → leaf.
+        // Attempt: reparent `root` under `leaf` (creates a cycle).
+        // walk_ancestors(leaf) = [mid, root] → contains(root) → reject.
+        let doc = build_doc(&[
+            ("root", None, "root"),
+            ("mid", Some("root"), "mid"),
+            ("leaf", Some("mid"), "leaf"),
+        ]);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "leaf", 1001, None);
+        assert!(walk.ids.iter().any(|aid| aid == "root"));
+        assert!(
+            walk.depth as usize <= 1000,
+            "no false positive on depth cap"
+        );
+    }
+
+    #[test]
+    fn cycle_detection_allows_unrelated_subtree_reparent() {
+        // Two branches: A→A1, B→B1. Reparenting A1 under B is legal.
+        let doc = build_doc(&[
+            ("a", None, "a"),
+            ("a1", Some("a"), "a1"),
+            ("b", None, "b"),
+            ("b1", Some("b"), "b1"),
+        ]);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "b", 1001, None);
+        // Walking b's ancestors: b → none. b is a root.
+        assert!(walk.ids.is_empty());
+        // The cycle predicate would be: walk.ids.contains(&"a1") → false.
+        assert!(!walk.ids.iter().any(|aid| aid == "a1"));
+    }
+
+    #[test]
+    fn cycle_detection_depth_saturation_signals_corruption() {
+        // Build a 1002-deep chain. Walking with cap MAX+1 (1001) should saturate
+        // at depth 1001 → triggers the "data corruption" rejection branch.
+        let mut seeds: Vec<(String, Option<String>, String)> = Vec::new();
+        for i in 0..1003 {
+            let parent = if i == 0 {
+                None
+            } else {
+                Some(format!("b{}", i - 1))
+            };
+            seeds.push((format!("b{}", i), parent, String::new()));
+        }
+        let seed_refs: Vec<(&str, Option<&str>, &str)> = seeds
+            .iter()
+            .map(|(id, p, c)| (id.as_str(), p.as_deref(), c.as_str()))
+            .collect();
+        let doc = build_doc(&seed_refs);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "b1002", 1001, None);
+        assert_eq!(walk.depth, 1001, "saturated at MAX_ANCESTOR_DEPTH + 1");
+        assert!(walk.depth as usize > 1000, "triggers corruption branch");
+    }
+
+    #[test]
+    fn cycle_detection_natural_cycle_terminates_safely() {
+        // Synthetic cycle x ↔ y. The walker must terminate without running
+        // away — pre-migration this hit the depth-1001 corruption branch;
+        // post-migration the visited-set short-circuits.
+        let doc = build_doc(&[("x", Some("y"), "x"), ("y", Some("x"), "y")]);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "x", 1001, None);
+        assert_eq!(walk.ids, vec!["y"]);
+        assert!(
+            (walk.depth as usize) <= 1000,
+            "cycle terminates well under the cap"
+        );
+        assert_eq!(
+            walk.termination,
+            WalkTermination::Cycle,
+            "termination = Cycle so reparent guards can reject"
+        );
+    }
+
+    /// Greptile P1 + CodeRabbit Major on PR #281: pre-existing cycle in
+    /// `new_parent_id`'s ancestor chain that does NOT involve `id`. Old
+    /// inline loop spun until depth=1001 → `data corruption` reject. New
+    /// walker terminates at the cycle (visited-set), `walk.depth` never
+    /// reaches 1001, and the depth-saturation guard alone wouldn't fire.
+    /// The `WalkTermination::Cycle` rejection MUST catch this.
+    ///
+    /// Asserts the walker contract directly (rejection is wired into the
+    /// `update_block` reparent path; testing the full reparent flow needs
+    /// a write-side fixture, which is out of scope for this regression
+    /// test — the walker contract IS the regression).
+    #[test]
+    fn cycle_detection_rejects_pre_existing_cycle_in_new_parent_chain() {
+        // new_parent_id `np` → p1 → p2 → p1 (cycle at p1, NOT involving
+        // the block being reparented). Independent block `id` is fresh.
+        let doc = build_doc(&[
+            ("p1", Some("p2"), "p1"),
+            ("p2", Some("p1"), "p2"),
+            ("np", Some("p1"), "new parent"),
+            ("id", None, "block being reparented (separate root)"),
+        ]);
+        let txn = doc.transact();
+        let blocks = txn.get_map("blocks").expect("blocks map");
+
+        let lookup = YDocParentLookup::new(&blocks, &txn);
+        let walk = walk_ancestors(&lookup, "np", 1001, None);
+        assert_eq!(
+            walk.termination,
+            WalkTermination::Cycle,
+            "walker MUST surface Cycle so reparent rejects pre-existing corruption"
+        );
+        assert!(
+            !walk.ids.iter().any(|aid| aid == "id"),
+            "reparented block `id` is NOT in np's ancestry — cycle is upstream"
+        );
+        // Without the Cycle check, the depth-saturation branch would
+        // be the only guard, and walk.depth here is just 2 — far from
+        // 1001 — so the guard would NOT fire and the reparent would
+        // silently succeed on corrupt data. That's the bug.
+        assert!(
+            (walk.depth as usize) < 1000,
+            "visited-set short-circuit means depth never saturates"
+        );
+    }
+
+    #[test]
+    fn search_breadcrumb_short_chain_yields_short_crumbs() {
+        let doc = build_doc(&[("root", None, "root"), ("hit", Some("root"), "hit")]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "hit");
+        let crumbs: Vec<String> = ancestors.into_iter().take(5).map(|a| a.content).collect();
+        assert_eq!(crumbs, vec!["root"]);
+    }
+
+    #[test]
+    fn get_ancestors_missing_parent_treated_as_root() {
+        // child references parent "ghost" that doesn't exist in the map.
+        let doc = build_doc(&[("child", Some("ghost"), "child content")]);
+        let txn = doc.transact();
+        let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+        let ancestors = get_ancestors(&blocks_map, &txn, "child");
+        assert_eq!(ancestors.len(), 1, "ghost parent yields one BlockRef");
+        assert_eq!(ancestors[0].id, "ghost");
+        assert_eq!(
+            ancestors[0].content, "",
+            "missing block content reads as empty string (preserves pre-migration behaviour)"
+        );
+    }
 }
