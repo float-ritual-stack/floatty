@@ -42,6 +42,19 @@ apps/floatty/src-tauri/binaries/
 .claude/hooks/
 .claude/settings.json
 .claude/settings.local.json
+# Worktrees created by the Agent tool's isolation: "worktree" mode + manual
+# `git worktree add` flows. Per-developer ephemeral checkouts; never committed.
+.claude/worktrees/
+
+# pi extension content — per-developer local extension installs
+.pi/extensions/
+
+# ink-chat local devtools state (per-developer)
+apps/ink-chat/.devtools/
+
+# Door build artifacts — produced by `pnpm --filter <door>-door build`,
+# regenerated on every release; never the source of truth.
+apps/floatty/doors/*.zip
 
 # Float loop work tracks (survives branch changes, local to developer)
 .float/
