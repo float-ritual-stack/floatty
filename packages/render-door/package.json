@@ -22,6 +22,7 @@
     "deploy:all": "pnpm run build && mkdir -p ~/.floatty-dev/doors/render ~/.floatty/doors/render && cp dist/index.js ~/.floatty-dev/doors/render/index.js && cp dist/door.json ~/.floatty-dev/doors/render/door.json && cp dist/index.js ~/.floatty/doors/render/index.js && cp dist/door.json ~/.floatty/doors/render/door.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "test": "vitest run",
     "transit": "node -e \"process.exit(0)\""
   },
   "dependencies": {
@@ -36,7 +37,11 @@
     "@types/dompurify": "^3.0.5",
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "jsdom": "^27.4.0",
     "typescript": "^5.7.0",
-    "typescript-eslint": "^8.46.4"
+    "typescript-eslint": "^8.46.4",
+    "vite-plugin-solid": "^2.11.6",
+    "vitest": "^4.0.16"
   }
 }
