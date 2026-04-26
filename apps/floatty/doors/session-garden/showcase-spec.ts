@@ -131,22 +131,18 @@ export function buildShowcaseSpec() {
       'pattern-1': {
         type: 'PatternCard',
         props: {
-          title: 'Surgical Y.Array Mutations',
-          type: 'pattern',
-          confidence: 'VERIFIED',
-          content: 'Y.Array operations like `delete(0, length)` then `push(newItems)` create fresh CRDT ops that **duplicate on merge**.\n\nUse surgical helpers: `insertChildId`, `removeChildId`, `appendChildId`.',
-          connectsTo: ['FLO-280', 'ydoc-patterns'],
+          label: 'Surgical Y.Array Mutations',
+          confidence: 'high',
+          description: '*Pattern.* Y.Array operations like `delete(0, length)` then `push(newItems)` create fresh CRDT ops that **duplicate on merge**.\n\nUse surgical helpers: `insertChildId`, `removeChildId`, `appendChildId`.\n\n**Refs**: [[FLO-280]], [[ydoc-patterns]]',
         },
         children: [],
       },
       'pattern-2': {
         type: 'PatternCard',
         props: {
-          title: 'Default Path Problem',
-          type: 'field-note',
-          confidence: 'INFERRED',
-          content: 'A system built for one actor develops implicit behaviors. A second actor follows the explicit rules and hits every unconsidered state.',
-          connectsTo: ['multi-actor', 'scar-tissue'],
+          label: 'Default Path Problem',
+          confidence: 'low',
+          description: '*Field-note.* A system built for one actor develops implicit behaviors. A second actor follows the explicit rules and hits every unconsidered state.\n\n**Refs**: [[multi-actor]], [[scar-tissue]]',
         },
         children: [],
       },

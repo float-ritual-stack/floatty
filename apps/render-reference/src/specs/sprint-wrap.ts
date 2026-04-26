@@ -92,19 +92,16 @@ export const sprintWrapSpec: Spec = {
     'pattern-1': {
       type: 'PatternCard',
       props: {
-        title: 'Schema-as-vocabulary / constraint-lattice prompting',
-        type: 'doctrine',
-        confidence: 'validated',
-        content: 'Discovered via floatty render agent. JSON schema with typed component definitions collapses vague prompts into precise output. The schema does the intent-translation work. Applicable to: floatctl capture, evna synthesis, woodchipper receive pattern.',
+        label: 'Schema-as-vocabulary / constraint-lattice prompting',
+        confidence: 'high',
+        description: '*Doctrine.* Discovered via floatty render agent. JSON schema with typed component definitions collapses vague prompts into precise output. The schema does the intent-translation work. Applicable to: floatctl capture, evna synthesis, woodchipper receive pattern.',
       },
     },
     'pattern-2': {
       type: 'PatternCard',
       props: {
-        title: 'Approval inertia / green-light drift',
-        type: 'anti-pattern',
-        confidence: 'candidate-6th-death-spiral',
-        content: 'Named as a candidate sixth death spiral pattern. Reviewer builds momentum toward approval on familiar code and carries it through unfamiliar code without slowing. Live case study: ConfigContext adversarial review found 4 real bugs that default review missed. The adversarial trigger is just the words *"adversarial code review."* That\'s it. A phrase.',
+        label: 'Approval inertia / green-light drift',
+        description: '*Anti-pattern — candidate sixth death spiral.* Reviewer builds momentum toward approval on familiar code and carries it through unfamiliar code without slowing. Live case study: ConfigContext adversarial review found 4 real bugs that default review missed. The adversarial trigger is just the words *"adversarial code review."* That\'s it. A phrase.',
       },
     },
   },

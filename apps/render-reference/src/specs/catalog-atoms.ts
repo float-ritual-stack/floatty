@@ -33,7 +33,14 @@ type AtomEntry = {
 const atomEntries = (atom: AtomEntry): Record<string, any> => ({
   [`${atom.id}-card`]: {
     type: 'PatternCard',
-    props: { title: atom.title, type: atom.category, content: atom.description },
+    // FLO-657: PatternCard schema canonicalized to {label, description, confidence: enum}.
+    // The atom.category was rendered as a colored type-badge in the OLD schema; with the
+    // new schema we fold it into description as a markdown italic prefix so the
+    // categorical signal survives.
+    props: {
+      label: atom.title,
+      description: `*${atom.category}.* ${atom.description}`,
+    },
     children: [`${atom.id}-split`],
   },
   [`${atom.id}-split`]: {

@@ -8,11 +8,8 @@
     ".": "./src/index.ts",
     "./components": "./src/components/index.ts",
     "./components/shared": "./src/components/shared.ts",
-    "./components/list-shapes": "./src/components/list-shapes.ts",
     "./components/door": "./src/components/door.ts",
     "./components/explorer": "./src/components/explorer.ts",
-    "./actions/door": "./src/actions/door.ts",
-    "./actions/explorer": "./src/actions/explorer.ts",
     "./enums": "./src/components/enums.ts"
   },
   "files": [

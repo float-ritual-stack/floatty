@@ -6,7 +6,7 @@ Holds Zod component definitions + action definitions. **Framework-agnostic**: de
 
 ## Status
 
-Phase 1 of [[FLO-657]] (parent [[FLO-656]]) — scaffolding established. Real component migrations land in subsequent steps per `.float/work/floatty-catalog-extraction/PLAN.md`.
+Phase 1 of [[FLO-657]] (parent [[FLO-656]]) — shared, door-only, and explorer-only component definitions now live in this package. Set D (list-shape components) and per-consumer actions remain deferred to follow-up steps per `.float/work/floatty-catalog-extraction/PLAN.md`.
 
 ## Consumers
 
@@ -41,9 +41,9 @@ export const catalog = defineCatalog(schema, {
 | Set | Source file | Purpose |
 |---|---|---|
 | Shared (Set A) | `src/components/shared.ts` | 12 components both door and explorer use (PatternCard, Section, GapItem, ...) |
-| List shapes (Set D) | `src/components/list-shapes.ts` | 4 shape-distinguished primitives (Timeline, List, AnchoredList, Narrative) per [[FLO-657]] Apr 20 comment |
 | Door-only (Set B) | `src/components/door.ts` | 32 components only the render door consumes |
-| Explorer-only (Set C) | `src/components/explorer.ts` | 34 components only outline-explorer consumes |
+| Explorer-only (Set C) | `src/components/explorer.ts` | 24 components only outline-explorer consumes |
+| List shapes (Set D) | _Deferred_ | Out of scope for this PR; Timeline / List / AnchoredList / Narrative per [[FLO-657]] Apr 20 comment, lands in follow-up step |
 
 See `.claude/skills/designing-json-render-catalogs/` (post-[[FLO-658]]) for the catalog design doctrine: three-layer pattern, silent-drop diagnostic, MCP rebuild discipline, composition over decomposition.
 
