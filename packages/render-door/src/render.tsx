@@ -40,7 +40,7 @@ type DoorUIElement = UIElement & {
 import { bbsCatalog } from './catalog';
 import { registry as bbsRegistry } from './registry';
 import { LAYOUT_PATTERNS } from './patterns';
-import { buildAgentSystemPrompt } from './agent-schema';
+import { buildAgentSystemPrompt, BBS_AGENT_REQUEST_SCHEMA } from './agent-schema';
 
 // ═══════════════════════════════════════════════════════════════
 // Door runtime contract — what `ctx` looks like inside execute().
@@ -511,17 +511,14 @@ interface LooseSpec {
   title?: string;
 }
 
+// Defense-in-depth post-`bbsCatalog.validate()`. The zod-backed validator
+// catches per-component prop mismatches but does NOT enforce that:
+//   - spec.root references an existing element (just a string check)
+//   - children[] entries reference existing elements (just string-array check)
+// Both are real defenses; keep them. Phase 2 of the agent refactor (2026-04-26)
+// removed `component`→`type` aliasing and `Stack.gap` string-coercion because
+// `--json-schema` constrained decoding now prevents both at the source.
 function normalizeSpec(spec: LooseSpec, ctx: DoorContext): Spec {
-  for (const el of Object.values(spec.elements || {})) {
-    // Translate legacy "component" field → "type" (json-render resolver uses el.type)
-    if (el.component && !el.type) {
-      el.type = el.component;
-      delete el.component;
-    }
-    if (el.type === 'Stack' && typeof el.props?.gap === 'string') {
-      el.props.gap = parseInt(el.props.gap) || 8;
-    }
-  }
   if (!spec.root || !spec.elements) {
     throw new Error('Invalid spec: missing root or elements');
   }
@@ -545,12 +542,8 @@ function normalizeSpec(spec: LooseSpec, ctx: DoorContext): Spec {
       ctx.log(`[render] dropped ${before - filtered.length} dangling child refs from ${id}`);
     }
   }
-  // Cast is the boundary: spec was loose on entry; the validation above
-  // ensures root + elements are present, and Stack.gap normalization
-  // matches the catalog's expected shape. Downstream Renderer can trust it.
-  // `as unknown as Spec` because LooseSpec.root is `string | undefined` (narrowed
-  // by the throw above) and LooseElement.children is `unknown` (narrowed by
-  // the filter loop). Single-step `as Spec` would error on the type widening.
+  // Cast is the boundary: validation above ensures root + elements are present
+  // and refer to real elements. Downstream Renderer can trust the shape.
   return spec as unknown as Spec;
 }
 
@@ -776,9 +769,25 @@ async function generateSpecViaAgent(userPrompt: string, ctx: DoorContext, option
     `USER REQUEST: ${userPrompt}`,
   ].join('\n');
 
+  // Phase 2 of agent refactor (2026-04-26): structured output via `--json-schema`
+  // replaces the prior text-mode + fenced-block-extraction path. Empirical
+  // findings:
+  //   - claude --json-schema accepts the loose catalog schema (per-element
+  //     `type` enum + per-component zod props are preserved as constraints).
+  //   - claude --output-format json returns a wrapper with both `result`
+  //     (string-encoded) and `structured_output` (already-parsed object).
+  //     We use `structured_output` directly — no re-parse heuristic.
+  //   - `session_id`, `is_error`, `subtype` are top-level wrapper fields.
+  // See packages/render-door/src/agent-schema.ts for schema rationale and
+  // `.claude/rules/render-door-agent.md` for the operational rule.
   const escapedPrompt = fullPrompt.replace(/'/g, "'\\''");
-  const command = `cd "${agentCwd}" && ${agentBinary} -p${sessionFlag} --dangerously-skip-permissions --output-format text '${escapedPrompt}' 2>&1`;
-  ctx.log('[render::agent] command:', agentBinary, sessionFlag || '(new session)');
+  const escapedSchema = JSON.stringify(BBS_AGENT_REQUEST_SCHEMA).replace(/'/g, "'\\''");
+  const command = `cd "${agentCwd}" && ${agentBinary} -p${sessionFlag}`
+    + ` --dangerously-skip-permissions`
+    + ` --output-format json`
+    + ` --json-schema '${escapedSchema}'`
+    + ` '${escapedPrompt}' 2>&1`;
+  ctx.log('[render::agent] command:', agentBinary, sessionFlag || '(new session)', '+ --json-schema (structured output)');
 
   const raw = await tauriShellExec(command);
   ctx.log('[render::agent] response length:', raw.length);
@@ -789,48 +798,58 @@ async function generateSpecViaAgent(userPrompt: string, ctx: DoorContext, option
     throw err;
   }
 
-  let jsonStr = raw.trim();
-
-  // Prefer the last fenced JSON block (agent typically explains before emitting spec).
-  // Assumption: the spec object is the LAST JSON block. If agents start emitting
-  // summary/metadata JSON after the spec, this heuristic breaks.
-  // Only matches blocks starting with '{' (objects, not arrays).
-  const fenceMatches = [...jsonStr.matchAll(/```([^\n`]*)\n?([\s\S]*?)```/g)];
-  for (let i = fenceMatches.length - 1; i >= 0; i--) {
-    const lang = fenceMatches[i][1].trim().toLowerCase();
-    const candidate = fenceMatches[i][2].trim();
-    if (lang && lang !== 'json') continue;
-    if (!candidate.startsWith('{')) continue;
-    jsonStr = candidate;
-    break;
+  // Parse the --output-format json wrapper. It's a single JSON object on
+  // stdout (no fences, no prose). When the model errored or didn't honor
+  // the schema, `structured_output` will be missing and `is_error`/subtype
+  // signal the failure mode.
+  interface ClaudeJsonWrapper {
+    type?: string;
+    subtype?: string;
+    is_error?: boolean;
+    result?: string;
+    structured_output?: LooseSpec;
+    session_id?: string;
   }
-
-  const start = jsonStr.indexOf('{');
-  const end = jsonStr.lastIndexOf('}');
-  if (start < 0 || end < 0) {
-    const err = new Error('No JSON object in agent response') as SpecGenerationError;
-    err.raw = raw;
-    throw err;
-  }
-  jsonStr = jsonStr.slice(start, end + 1);
-
-  let spec: LooseSpec;
+  let wrapper: ClaudeJsonWrapper;
   try {
-    spec = JSON.parse(jsonStr);
+    wrapper = JSON.parse(raw.trim()) as ClaudeJsonWrapper;
   } catch (parseErr) {
-    const err = new Error(`JSON parse failed: ${errMsg(parseErr)}`) as SpecGenerationError;
+    const err = new Error(`Failed to parse claude --output-format json wrapper: ${errMsg(parseErr)}`) as SpecGenerationError;
     err.raw = raw;
     throw err;
   }
 
-  // Extract agent-generated title before normalizeSpec strips it
+  if (wrapper.is_error) {
+    const err = new Error(`Agent returned an error (subtype: ${wrapper.subtype || 'unknown'})`) as SpecGenerationError;
+    err.raw = raw;
+    throw err;
+  }
+
+  if (!wrapper.structured_output || typeof wrapper.structured_output !== 'object') {
+    const err = new Error('Agent response missing structured_output — schema may have been rejected') as SpecGenerationError;
+    err.raw = raw;
+    throw err;
+  }
+
+  const spec: LooseSpec = wrapper.structured_output;
+
+  // Extract agent-generated title before normalizeSpec runs (the schema lets
+  // top-level `title` through as an optional string per BBS_AGENT_REQUEST_SCHEMA).
   const agentTitle = typeof spec.title === 'string' ? spec.title.trim() : undefined;
   delete spec.title;
 
-  // Capture normalized spec — typed as Spec (narrowed) instead of LooseSpec.
-  // Bug fix: prior code called normalizeSpec for side effects only, then
-  // returned the still-loosely-typed `spec`, which silently passed when the
-  // agent path was `any`-typed but errors under strict mode.
+  // Catalog-side validation — zod-backed per-component prop check. Catches
+  // shape drift the schema-constrained decoder couldn't enforce (e.g. a
+  // catalog field with a record-typed prop, which collapses opaquely).
+  const validation = bbsCatalog.validate(spec);
+  if (!validation.success) {
+    const err = new Error(`Spec failed catalog validation: ${validation.error?.message || 'unknown error'}`) as SpecGenerationError;
+    err.raw = raw;
+    throw err;
+  }
+
+  // Defense-in-depth: bbsCatalog.validate doesn't enforce root → elements[root]
+  // existence or children-ref integrity. normalizeSpec covers both.
   let normalized: Spec;
   try {
     normalized = normalizeSpec(spec, ctx);
@@ -840,28 +859,9 @@ async function generateSpecViaAgent(userPrompt: string, ctx: DoorContext, option
     throw err;
   }
 
-  let sessionId: string | undefined;
-  const sessionMatch = raw.match(/session[:\s]+([0-9a-f]{8}-[0-9a-f-]+)/i)
-    || raw.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
-  if (sessionMatch) {
-    sessionId = sessionMatch[1];
+  const sessionId = wrapper.session_id;
+  if (sessionId) {
     ctx.log('[render::agent] session ID:', sessionId);
-  }
-
-  if (!sessionId) {
-    try {
-      const lsResult = await tauriShellExec(
-        `ls -t $HOME/.claude/projects/-Users-*-*floatty-doors-render-agent*/*.jsonl 2>/dev/null | head -1`
-      );
-      const latestFile = lsResult.trim();
-      if (latestFile) {
-        const match = latestFile.match(/([0-9a-f]{8}-[0-9a-f-]+)\.jsonl$/);
-        if (match) {
-          sessionId = match[1];
-          ctx.log('[render::agent] session ID (from JSONL):', sessionId);
-        }
-      }
-    } catch { /* ignore */ }
   }
 
   return { spec: normalized, raw, sessionId, title: agentTitle };

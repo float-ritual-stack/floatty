@@ -33,6 +33,37 @@ import { LAYOUT_PATTERNS } from './patterns';
 export const BBS_SPEC_JSON_SCHEMA_STRICT: object = bbsCatalog.jsonSchema({ strict: true });
 export const BBS_SPEC_JSON_SCHEMA_LOOSE: object = bbsCatalog.jsonSchema();
 
+// Schema actually passed to `claude -p --json-schema` for the agent path.
+//
+// Empirical findings (2026-04-26):
+// 1. `claude --json-schema` accepts the loose schema (per-element `type` enum
+//    and per-component zod props are preserved → real protection).
+// 2. The strict schema collapses `elements: record(...)` to opaque per
+//    `core/src/schema.ts:1486-1500`, so the LLM gets no shape to fill in and
+//    returns empty `elements`. Strict is unusable for this use case.
+// 3. The loose schema has `additionalProperties: false` at the top level and
+//    only declares `root` + `elements` (the @json-render/solid `spec` shape
+//    in `solid/src/schema.ts:13-29` doesn't include `title` or `state`).
+//    The system prompt asks the agent to emit a top-level `title` and
+//    `state`, which would be silently rejected without this extension.
+//
+// This wrapper extends the catalog's loose schema with the render-door's
+// door-side conventions (top-level `title` and `state`) at use-site rather
+// than mutating the catalog spec definition (which would ripple to other
+// json-render consumers like outline-explorer).
+export const BBS_AGENT_REQUEST_SCHEMA: object = (() => {
+  const base = BBS_SPEC_JSON_SCHEMA_LOOSE as Record<string, unknown>;
+  const properties = (base.properties as Record<string, unknown>) ?? {};
+  return {
+    ...base,
+    properties: {
+      ...properties,
+      title: { type: 'string' },
+      state: { type: 'object' },
+    },
+  };
+})();
+
 // =============================================================================
 // System prompt — verbatim move from render.tsx::buildAgentSystemPrompt.
 //
