@@ -385,7 +385,14 @@ pub(crate) fn compute_ancestor_context<T: ReadTxn>(
 
     let nearest_page_block_id = walk.nearest_page.as_ref().map(|(id, _)| id.clone());
     let nearest_page_name = walk.nearest_page.as_ref().map(|(_, name)| name.clone());
-    let ancestor_block_ids = walk.ids.clone();
+    // FLO-679 PR 2 — wire contract is ROOTMOST-FIRST per the plan
+    // §"Foundation status (post-PR-281)" lesson banked from PR 1 review:
+    // "behavior-preservation tests preserve INTENT, not necessarily
+    // CORRECTNESS." Walker returns nearest-first; we reverse here so the
+    // public surface matches the breadcrumb composer's `take(5).rev()`
+    // shape established by PR 1 (see `block_service.rs` near
+    // `breadcrumb` assembly site).
+    let ancestor_block_ids: Vec<String> = walk.ids.iter().cloned().rev().collect();
 
     // ancestor_outlinks: deduped union over walked ancestors + own.
     // The plan calls for the union including the block's own outlinks too —

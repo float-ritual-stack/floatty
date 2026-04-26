@@ -132,7 +132,10 @@ pub struct EffectiveMarkerDto {
 ///
 /// Always-on fields (cheap, read from Tantivy FAST/STORED columns):
 /// - `nearestPageBlockId` / `nearestPageName` — document identity
-/// - `ancestorBlockIds` — capped parent chain (nearest-first up to depth 10)
+/// - `ancestorBlockIds` — capped parent chain (ROOTMOST-FIRST up to depth 10
+///   — same shape as PR 1's `take(5).rev()` breadcrumb composer; the
+///   symmetry harness asserts this and the rule lives in PR 1's review-
+///   feedback addendum on the plan)
 /// - `subtreeSize` — capped descendant count for navigate-vs-read hints
 /// - `inboundCount` — load-bearing signal
 /// - `ancestorOutlinks` — deduped union of `[[wikilink]]`s across walked
@@ -157,7 +160,10 @@ pub struct AncestorContext {
     /// Page name of the nearest registered-page ancestor, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nearest_page_name: Option<String>,
-    /// Ancestor block IDs, nearest-first, capped at 10 by the walker.
+    /// Ancestor block IDs, ROOTMOST-FIRST (matches PR 1's breadcrumb
+    /// `take(5).rev()` shape), capped at depth 10 by the walker before
+    /// reversal. Symmetry harness in `tests/symmetry_ancestor_context.rs`
+    /// asserts this contract holds across every endpoint.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ancestor_block_ids: Vec<String>,
     /// Effective markers — only present when `?include=effective_markers`

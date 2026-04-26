@@ -340,9 +340,22 @@ async fn outline_export_json(
 async fn outline_get_blocks(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<BlocksQuery>,
 ) -> Result<Json<BlocksResponse>, ApiError> {
-    let store = resolve_outline(&state, &name)?;
-    let result = crate::block_service::get_blocks(&store, None, None, &BlocksQuery::default())?;
+    let ctx = resolve_outline_context(&state, &name)?;
+    let store = Arc::clone(&ctx.store);
+    // FLO-679 PR 2 — per-outline /blocks now honours ?ancestor_context=true
+    // identical to the top-level endpoint. Closes the asymmetry-fix called
+    // out in the plan §"Per-outline asymmetry fix".
+    let hs = ctx.ensure_hook_system();
+    let inheritance_index = hs.inheritance_index();
+    let page_name_index = hs.page_name_index();
+    let result = crate::block_service::get_blocks(
+        &store,
+        Some(&inheritance_index),
+        Some(&page_name_index),
+        &query,
+    )?;
     Ok(Json(result))
 }
 
