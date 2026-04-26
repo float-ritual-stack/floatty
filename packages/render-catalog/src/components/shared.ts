@@ -123,13 +123,13 @@ export const sharedComponentDefinitions = {
         source: z.string().describe("Source type — qmd / conversation / bbs / outline / loki / autorag"),
         content: z.string().describe("Quoted content from the source"),
         docId: z.string().optional().describe("Document or block reference"),
-        confidence: z.number().min(0).max(1).optional().describe("Confidence score as a 0–1 fraction (NOT 0–100). 0.95 renders as 95%. Passing 100 renders as 10000%."),
+        confidence: z.number().min(0).max(1).optional().describe("Confidence score as a 0–1 fraction (NOT 0–100). 0.95 renders as 95%. The schema enforces 0–1, but agent emissions often skip schema validation in permissive Spec catalogs — emit fractions, not percentages, to keep the renderer honest."),
         lines: z.string().optional().describe("Line range citation (e.g. \"42-58\")"),
       })),
       title: z.string().optional(),
     }),
     slots: [],
-    description: "Vertical provenance chain showing source trail. Each step has source type with colored dot, content, optional docId and confidence %. Good for showing how information was found, archaeology trails. CONFIDENCE values must be 0–1 fractions (the renderer multiplies by 100 to display as percent).",
+    description: "Vertical provenance chain showing source trail. Each step has source type with colored dot, content, optional docId and confidence %. Good for showing how information was found, archaeology trails. CONFIDENCE values must be 0–1 fractions — the schema enforces this, and the renderer multiplies by 100 for display. Agents bypassing schema validation should still emit fractions; the renderer auto-detects 0–100 ints as a defensive guard, but that's a safety net, not the contract.",
   },
 
   RiskMatrix: {
