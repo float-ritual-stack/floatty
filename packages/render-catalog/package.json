@@ -1,0 +1,37 @@
+{
+  "name": "@float/render-catalog",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared FLOAT semantic vocabulary for json-render — Zod component definitions consumed by @floatty/render-door (SolidJS) and apps/outline-explorer (React). Framework-agnostic: only depends on @json-render/core + zod.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./components": "./src/components/index.ts",
+    "./components/shared": "./src/components/shared.ts",
+    "./components/list-shapes": "./src/components/list-shapes.ts",
+    "./components/door": "./src/components/door.ts",
+    "./components/explorer": "./src/components/explorer.ts",
+    "./actions/door": "./src/actions/door.ts",
+    "./actions/explorer": "./src/actions/explorer.ts",
+    "./enums": "./src/components/enums.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "transit": "node -e \"process.exit(0)\""
+  },
+  "dependencies": {
+    "@json-render/core": "^0.18.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@json-render/react": "^0.18.0",
+    "@json-render/solid": "^0.18.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.16"
+  }
+}
