@@ -14,7 +14,7 @@ import { z } from "zod";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { buildQmdEnv, checkQmdAvailable } from "../lib/tools/qmd-shared.js";
-import type { Marker } from "../lib/types.js";
+import type { AncestorContext, Marker } from "../lib/types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -63,16 +63,32 @@ function errorResult(msg: string) {
 
 export function registerDataTools(server: McpServer) {
   // 1. expand_page — fetch a page's subtree by title
+  //
+  // FLO-679 PR 2: page-search hits now carry `ancestorContext` (always-on
+  // cheap fields). We surface the orientation context (nearest page identity,
+  // subtree size, inbound count) on the response so callers don't need a
+  // follow-up `get_block` for that data — same one-call orientation win the
+  // plan §"floatty-backend skill" subsection calls out.
   server.tool(
     "expand_page",
     "Fetch a page's subtree by title. Use when you need to see the content tree of a specific page in the knowledge graph.",
     { title: z.string().describe("Page title to look up") },
     async ({ title }: { title: string }) => {
       try {
-        const params = new URLSearchParams({ prefix: title, limit: "5" });
-        const pagesRes = await floattyFetch<{ pages: { name: string; blockId: string | null }[] }>(
-          `/api/v1/pages/search?${params}`
-        );
+        // include= is opt-in for the costlier fields; effective_markers is
+        // useful for navigating to a specific project page.
+        const params = new URLSearchParams({
+          prefix: title,
+          limit: "5",
+          include: "effective_markers",
+        });
+        const pagesRes = await floattyFetch<{
+          pages: {
+            name: string;
+            blockId: string | null;
+            ancestorContext?: AncestorContext;
+          }[];
+        }>(`/api/v1/pages/search?${params}`);
 
         const pages = pagesRes.pages ?? [];
         if (!pages.length) return textResult({ error: `Page "${title}" not found` });
@@ -100,6 +116,10 @@ export function registerDataTools(server: McpServer) {
           blockId: match.blockId,
           blockCount: block.tree?.length ?? 0,
           tree: lines.join("\n"),
+          // FLO-679 PR 2: inline orientation — the agent now has the
+          // page identity, ancestor chain, effective markers, and inbound
+          // count without a third API call.
+          ancestorContext: match.ancestorContext ?? null,
         });
       } catch (e) {
         return errorResult(String(e));
@@ -130,6 +150,7 @@ export function registerDataTools(server: McpServer) {
           metadata?: { outlinks?: string[]; renderedMarkdown?: string | null; summary?: string | null } | null;
           ancestors?: { id: string; content: string }[];
           tree?: { depth: number; content: string }[];
+          ancestorContext?: AncestorContext;
         }>(`/api/v1/blocks/${blockId}${params}`);
 
         const lines: string[] = [];
@@ -152,6 +173,10 @@ export function registerDataTools(server: McpServer) {
           childCount: block.childIds?.length ?? 0,
           tree: lines.join("\n"),
           treeBlockCount: block.tree?.length ?? 0,
+          // FLO-679 PR 2: navigation-layer surface — the wire contract is
+          // always-on for /blocks/:id (slow-context path already), so
+          // effectiveMarkers is populated automatically. Pass through.
+          ancestorContext: block.ancestorContext ?? null,
           ...(isDoor && renderedMarkdown
             ? { renderedMarkdown, summary: block.metadata?.summary ?? null }
             : {}),
@@ -163,9 +188,14 @@ export function registerDataTools(server: McpServer) {
   );
 
   // 3. search_blocks — full-text search across all blocks
+  //
+  // FLO-679 PR 2: every hit now carries `ancestorContext` (cheap fields
+  // always-on; effective_markers + inbound_samples opt-in via include=).
+  // Default include includes effective_markers so the search hit answers
+  // "which project does this hit belong to" without a follow-up call.
   server.tool(
     "search_blocks",
-    "Full-text search across all blocks in the knowledge graph. Returns matching blocks with breadcrumb context.",
+    "Full-text search across all blocks in the knowledge graph. Returns matching blocks with breadcrumb context AND ancestorContext (nearestPageName, effectiveMarkers, inboundCount) — usually no follow-up call needed for orientation.",
     {
       query: z.string().describe("Search query"),
       limit: z.number().optional().describe("Max results (default 15)"),
@@ -177,6 +207,7 @@ export function registerDataTools(server: McpServer) {
           limit: String(limit),
           include_breadcrumb: "true",
           include_metadata: "true",
+          include: "effective_markers",
         });
 
         const results = await floattyFetch<{
@@ -189,6 +220,7 @@ export function registerDataTools(server: McpServer) {
             snippet: string | null;
             breadcrumb?: string[];
             metadata?: { markers?: Marker[]; outlinks?: string[] } | null;
+            ancestorContext?: AncestorContext;
           }[];
         }>(`/api/v1/search?${params}`);
 
@@ -203,6 +235,7 @@ export function registerDataTools(server: McpServer) {
             breadcrumb: h.breadcrumb,
             markers: h.metadata?.markers,
             outlinks: h.metadata?.outlinks,
+            ancestorContext: h.ancestorContext ?? null,
           })),
         });
       } catch (e) {
@@ -239,6 +272,7 @@ export function registerDataTools(server: McpServer) {
             content: string;
             breadcrumb?: string[];
             metadata?: { markers?: Marker[]; outlinks?: string[] } | null;
+            ancestorContext?: AncestorContext;
           }[];
         }>(`/api/v1/search?${params}`);
 
@@ -251,6 +285,10 @@ export function registerDataTools(server: McpServer) {
             breadcrumb: h.breadcrumb,
             markers: h.metadata?.markers,
             outlinks: h.metadata?.outlinks,
+            // FLO-679 PR 2: surfaces nearestPageName + subtreeSize so the
+            // caller knows which page the inbound source lives in without
+            // a follow-up navigate.
+            ancestorContext: h.ancestorContext ?? null,
           })),
         });
       } catch (e) {
@@ -444,6 +482,66 @@ export function registerDataTools(server: McpServer) {
             { type: "text" as const, text: `qmd multi-get failed: ${message}` },
           ],
         };
+      }
+    }
+  );
+
+  // 9. presence — what is the user currently focused on? (FLO-679 PR 2 / FLO-680)
+  //
+  // Returns the focused block id + paneId + ancestorContext (page identity,
+  // ancestor chain, effective markers) in a single call. Replaces the
+  // documented `presence + get_block` chain — orienting an agent on the
+  // user's current focus is now one fetch.
+  server.tool(
+    "presence",
+    "Get the user's currently-focused block in floatty, with ancestorContext (nearestPageName, effectiveMarkers, inboundCount) so you can orient on what they're looking at without a follow-up call. Returns null when no focus is set.",
+    {
+      includeInboundSamples: z
+        .boolean()
+        .optional()
+        .describe("Include up to 5 inbound source previews (default false)."),
+    },
+    async ({
+      includeInboundSamples = false,
+    }: {
+      includeInboundSamples?: boolean;
+    }) => {
+      try {
+        const includes = ["effective_markers"];
+        if (includeInboundSamples) includes.push("inbound_samples");
+        const params = new URLSearchParams({ include: includes.join(",") });
+        const url = `/api/v1/presence?${params}`;
+
+        // /presence returns 204 No Content when no focus is set. floattyFetch
+        // doesn't model that — handle inline so the tool returns a clean null
+        // rather than throwing.
+        const res = await fetch(`${getFloattyUrl()}${url}`, {
+          headers: {
+            Authorization: `Bearer ${getApiKey()}`,
+            "Content-Type": "application/json",
+          },
+        });
+        if (res.status === 204) {
+          return textResult({ focused: null });
+        }
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          throw new Error(`Floatty ${res.status}: ${body}`);
+        }
+        const presence = (await res.json()) as {
+          blockId: string;
+          paneId?: string;
+          ancestorContext?: AncestorContext;
+        };
+        return textResult({
+          focused: {
+            blockId: presence.blockId,
+            paneId: presence.paneId ?? null,
+            ancestorContext: presence.ancestorContext ?? null,
+          },
+        });
+      } catch (e) {
+        return errorResult(String(e));
       }
     }
   );
