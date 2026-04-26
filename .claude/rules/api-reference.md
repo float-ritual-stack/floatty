@@ -70,6 +70,78 @@ Client-side: `shortHashIndex` singleton memo in WorkspaceContext for O(1) 8-char
 | `ctx_after/before` | i64 | Epoch seconds — ctx:: event time |
 | `include_breadcrumb` | bool | Parent chain per hit |
 | `include_metadata` | bool | Block metadata per hit |
+| `include` | String | Comma-separated AncestorContext opt-ins: `effective_markers`, `inbound_samples` (FLO-679 PR 2) |
+| `inbound_sample_count` | usize | Cap for `inbound_samples` (default 5; max 50) |
+
+### AncestorContext (FLO-679 PR 2 — every block-returning endpoint)
+
+Every endpoint that returns a block-shaped response carries an
+`ancestorContext` sub-object that surfaces the navigation-layer view of
+the block's place in the outline. Surfaces:
+
+- `GET /api/v1/blocks/:id` — always-on, including `effectiveMarkers`
+- `GET /api/v1/blocks/resolve/:prefix` — same shape as `/blocks/:id`
+- `GET /api/v1/blocks` — opt-in via `?ancestorContext=true` (off by default for bulk)
+- `GET /api/v1/search` — always-on cheap fields per hit
+- `GET /api/v1/pages/search` — non-stub pages get `ancestorContext`
+- `GET /api/v1/presence` — focused block, always-on cheap fields ([[FLO-680]])
+- `GET /api/v1/daily/:date` — daily note page, always-on `effectiveMarkers`
+- `POST /api/v1/pages/:name` (upsert) — newly-created or existing page, always-on
+- `POST /api/v1/daily/:date/append` — appended child, always-on
+- `GET /api/v1/outlines/:name/blocks` and `/search` and `/blocks/:id` —
+  same shapes as the top-level endpoints (per-outline asymmetry-fix)
+
+Wire shape (camelCase JSON):
+
+```json
+{
+  "ancestorContext": {
+    "nearestPageBlockId": "uuid-of-page-block",
+    "nearestPageName": "FLO-679",
+    "ancestorBlockIds": ["root-id", "...", "immediate-parent-id"],
+    "subtreeSize": 47,
+    "inboundCount": 12,
+    "ancestorOutlinks": ["FLO-368", "FLO-680"],
+    "effectiveMarkers": [
+      { "markerType": "project", "value": "floatty",
+        "source": { "kind": "inherited", "sourceBlockId": "ancestor-uuid" } }
+    ],
+    "inboundSamples": [
+      { "blockId": "src-uuid", "content": "see [[FLO-679]] for context" }
+    ]
+  }
+}
+```
+
+Field semantics:
+
+- `ancestorBlockIds` is **rootmost-first** (matches breadcrumb composer's
+  `take(5).rev()` shape — root → ... → immediate parent). Capped at 10
+  by the walker.
+- `ancestorOutlinks` is the deduped union of `[[wikilink]]`s across the
+  block itself and its walked ancestors — "all destinations reachable from
+  this block's lineage."
+- `subtreeSize` counts the block itself plus descendants up to a cap
+  (1000); use as a "navigate vs. read" hint.
+- `inboundCount` is how many blocks point at this block's nearest page —
+  load-bearing-block signal.
+
+Cost-tier opt-ins (use `?include=` on search/presence; always-on for `/blocks/:id`):
+
+| `?include=` value | What it adds | Cost |
+|---|---|---|
+| `effective_markers` | Own + inherited markers with provenance | InheritanceIndex lookup |
+| `inbound_samples` | Top-N source-block previews (default 5, `&inbound_sample_count=N`) | Reverse-index walk |
+
+Endpoints whose response is `None`/absent for `ancestorContext`:
+
+- A `/blocks` bulk response without `?ancestorContext=true`
+- A `pages/search` stub (no `blockId` → no chain to compute)
+- A `/presence` 204 (no focus set)
+
+The contract is enforced by a symmetry harness in
+`apps/floatty/src-tauri/floatty-server/tests/symmetry_ancestor_context.rs`
+— if a future change drifts any endpoint's shape, that test fires.
 
 ## Daily Note
 

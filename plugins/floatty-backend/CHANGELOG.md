@@ -7,6 +7,52 @@ semver ([semver.org](https://semver.org/)). The authoritative version lives
 in `marketplace.json` (per Claude Code's
 [relative-path plugin guidance](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels)).
 
+## [0.8.0] — 2026-04-26
+
+[[FLO-679]] PR 2 / [[FLO-680]]: every block-returning floatty endpoint now
+carries an `ancestorContext` sub-object on the wire. The skill's helpers
+and pretty-printers surface it; doctrine in `SKILL.md` names it as a
+navigation-layer field. Pairs with the `walk_ancestors` foundation merged
+in [[PR #281]] (FLO-679 PR 1).
+
+### Added
+
+- **`ancestorContext` is now part of "always read the full response."**
+  `SKILL.md` §"Search: always read the full response" lists every cheap
+  field (nearestPageName, nearestPageBlockId, ancestorBlockIds rootmost-
+  first, subtreeSize, inboundCount, ancestorOutlinks) and the opt-in
+  fields (effectiveMarkers, inboundSamples).
+- **`floatty_search_in_project "query" "floatty"`** — new helper in
+  `floatty-search.sh`. Wraps `marker_type=project&marker_val=<name>&inherited=true`
+  and adds `?include=effective_markers` for free; the most common
+  "search inside one project" use case is now one line.
+- **`floatty_presence` accepts `?include=` directives** (default
+  `effective_markers`). Returns `ancestorContext` inline so a single call
+  answers "what is the user focused on AND what project is that in."
+- **`floatty_search_context` pretty-printer** displays
+  `[[nearestPageName]] (subtree:N inbound:M)` when present per hit.
+- **`floatty-context.sh cmd_context`** displays `**Page**: [[name]]
+  (subtree:N inbound:M)` before the breadcrumb section.
+
+### Doctrine update — callers no longer need
+
+- The documented "presence + floatty_block_get" two-call orientation
+  chain. Single `floatty_presence` returns the AncestorContext.
+- The "page-search → first-result → block-get" expand_page chain when
+  the user only needs orientation (page identity + size + inbound count).
+  The page-search hit now carries `ancestorContext` directly.
+- A separate inheritance lookup to surface project markers — pass
+  `?include=effective_markers` on search/presence and the markers
+  arrive (with `{kind:"own"}` vs `{kind:"inherited", sourceBlockId}`
+  provenance) on the same response.
+
+### References
+
+- floatty-server: `apps/floatty/src-tauri/floatty-server/src/api/blocks.rs`
+  `AncestorContext` DTO + `BlockContextQuery::include`
+- Symmetry harness: `apps/floatty/src-tauri/floatty-server/tests/symmetry_ancestor_context.rs`
+- Architecture doc: `apps/floatty/docs/architecture/PROJECTIONS_LAYER.md`
+
 ## [0.7.1] — 2026-04-20
 
 Hot-fix for 0.7.0's retry logic. 0.7.0 broke floatty_curl in zsh (user's login shell) — caught the first time the user opened the skill from their actual shell, not my bash-only test harness.

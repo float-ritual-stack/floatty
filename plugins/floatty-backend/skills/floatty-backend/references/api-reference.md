@@ -269,6 +269,8 @@ GET /api/v1/search?q={query}&limit={limit}
 | `ctx_before` | i64 | | Epoch seconds — ctx:: event time upper bound |
 | `include_breadcrumb` | bool | false | Add parent chain array per hit |
 | `include_metadata` | bool | false | Add block metadata per hit |
+| `include` | string | | Comma-separated AncestorContext opt-ins: `effective_markers`, `inbound_samples` (FLO-679 PR 2) |
+| `inbound_sample_count` | int | 5 | Cap for `inbound_samples` (max 50) |
 
 **Response:**
 ```json
@@ -280,7 +282,15 @@ GET /api/v1/search?q={query}&limit={limit}
       "content": "block text",
       "snippet": "<b>matched</b> text with highlights",
       "breadcrumb": ["grandparent content", "parent content"],
-      "metadata": { "extractedAt": 1773379628493, "isStub": false, "markers": [...], "outlinks": [...] }
+      "metadata": { "extractedAt": 1773379628493, "isStub": false, "markers": [...], "outlinks": [...] },
+      "ancestorContext": {
+        "nearestPageBlockId": "page-uuid",
+        "nearestPageName": "FLO-679",
+        "ancestorBlockIds": ["root-id", "...", "parent-id"],
+        "subtreeSize": 47,
+        "inboundCount": 12,
+        "ancestorOutlinks": ["FLO-368", "FLO-680"]
+      }
     }
   ],
   "total": 3
@@ -288,6 +298,28 @@ GET /api/v1/search?q={query}&limit={limit}
 ```
 
 `snippet` is HTML with `<b>` tags around matched terms (from Tantivy SnippetGenerator). Present for text queries, null for filter-only. `breadcrumb` and `metadata` are only present when the corresponding `include_*` param is true.
+
+**AncestorContext (FLO-679 PR 2 — every block-returning endpoint):**
+
+Every endpoint that returns a block-shaped response (`/blocks`,
+`/blocks/:id`, `/blocks/resolve/:prefix`, `/search`, `/pages/search`,
+`/presence`, `/daily/:date`, `/pages/:name` upsert,
+`/daily/:date/append`, all `/outlines/:name/...` siblings) carries
+`ancestorContext`.
+
+| Field | Always-on? | Description |
+|---|---|---|
+| `nearestPageBlockId` / `nearestPageName` | yes | Document identity (zoom target + display name) |
+| `ancestorBlockIds` | yes | Parent chain ROOTMOST-FIRST, capped at depth 10 |
+| `subtreeSize` | yes | Block + descendant count (cap 1000); navigate-vs-read hint |
+| `inboundCount` | yes | Number of `[[wikilink]]`s pointing at this block's nearest page |
+| `ancestorOutlinks` | yes | Deduped union of `[[wikilinks]]` across the block + walked ancestors |
+| `effectiveMarkers` | opt-in via `?include=effective_markers` (always-on for `/blocks/:id`) | Own + inherited markers with `{kind: "own"}` or `{kind: "inherited", sourceBlockId}` provenance |
+| `inboundSamples` | opt-in via `?include=inbound_samples` | Top-N source-block previews (default 5; `&inbound_sample_count=N` to override; max 50) |
+
+`ancestorContext` is omitted entirely (the field is absent) for
+bare-bones bulk responses without `?ancestorContext=true`, for
+`pages/search` stubs (no block_id → no chain), and for `/presence` 204.
 
 **Content preprocessing (v0.9.6):**
 - `prefix::value` compounds are stripped from content field — prefix lives in `markers` field only. Value parts kept.
@@ -456,13 +488,29 @@ Track the user's focused block in the outliner. Used by agents to know where the
 
 Returns the last focused block, or `204 No Content` if no presence set or the block was deleted.
 
+**Query parameters (FLO-679 PR 2 / [[FLO-680]]):**
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `include` | string | | Comma-separated AncestorContext opt-ins: `effective_markers`, `inbound_samples` |
+| `inbound_sample_count` | int | 5 | Cap for `inbound_samples` (max 50) |
+
 **Response (200):**
 ```json
 {
   "blockId": "165bba2a-988b-4ed3-8f73-864394185865",
-  "paneId": "pane-2b908f0e-93fd-4e35-a505-995c73c4bd1d"
+  "paneId": "pane-2b908f0e-93fd-4e35-a505-995c73c4bd1d",
+  "ancestorContext": {
+    "nearestPageBlockId": "page-uuid",
+    "nearestPageName": "FLO-679",
+    "ancestorBlockIds": ["root-id", "...", "parent-id"],
+    "subtreeSize": 47,
+    "inboundCount": 12,
+    "ancestorOutlinks": ["FLO-368"]
+  }
 }
 ```
+
+`ancestorContext` is always-on for cheap fields (nearestPage*, ancestorBlockIds rootmost-first, subtreeSize, inboundCount, ancestorOutlinks). One GET orients an agent on the user's focused block — the documented "presence + floatty_block_get" chain is no longer needed.
 
 **POST — Set presence:**
 
