@@ -107,6 +107,71 @@ function errRaw(e: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Render up to N bytes of a string as space-separated 2-char hex pairs.
+ * Used in error messages so unprintable characters survive copy-paste
+ * into terminals, chat UIs, or screenshots that would otherwise lose them.
+ */
+export function bytesToHexPreview(s: string, maxBytes: number): string {
+  return Array.from(s.slice(0, maxBytes))
+    .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+    .join(' ');
+}
+
+/**
+ * Result of stripJsonPrefix — narrow union so callers can distinguish
+ * "no JSON found at all" from "wrapper present, prefix removed."
+ */
+export type StripJsonResult =
+  | { kind: 'clean'; cleaned: string; strippedLen: 0; strippedHex: null }
+  | { kind: 'stripped'; cleaned: string; strippedLen: number; strippedHex: string }
+  | { kind: 'no-brace'; cleaned: string; strippedLen: 0; strippedHex: null };
+
+/**
+ * Strip any leading non-JSON prefix from a claude --output-format json
+ * response so JSON.parse can read it cleanly.
+ *
+ * Failure mode this defends against (observed 2026-04-27):
+ *
+ * Tauri's execute_shell helper sources the user's shell rc (zshrc/bashrc)
+ * before running the command (apps/floatty/src-tauri/src/services/
+ * execution.rs:41-47). Under a non-TTY parent process (Tauri spawns via
+ * pipes, not a terminal), oh-my-zsh / starship / p10k / robbyrussell-style
+ * theme initialization can leak ANSI control sequences (CSI escapes,
+ * cursor-hide/show, terminal-title setters) to stdout. Those escapes
+ * survive subprocess capture and prepend the JSON wrapper, causing
+ * JSON.parse to fail at byte 0 with `Unrecognized token '<ESC>'` — a
+ * copy-paste-evading character that's hard to diagnose without hex.
+ *
+ * Strategy: locate the first `{` (the wrapper's opening brace), slice
+ * from there. The wrapper's first byte is always `{` — anything before
+ * is per-definition not part of the JSON. If we strip a non-empty prefix,
+ * the helper returns the hex preview so the caller can log it for
+ * diagnosis. If no `{` is found at all, return kind='no-brace' so the
+ * caller can throw a precise error.
+ */
+export function stripJsonPrefix(raw: string): StripJsonResult {
+  // trimStart() handles the common-case "harmless leading whitespace" so we
+  // don't log spurious "stripped 1 byte" entries on every clean response.
+  // Anything that survives trimStart and is still before the first `{`
+  // is a real non-JSON prefix worth diagnosing.
+  const trimmed = raw.trimStart();
+  const firstBrace = trimmed.indexOf('{');
+  if (firstBrace < 0) {
+    return { kind: 'no-brace', cleaned: '', strippedLen: 0, strippedHex: null };
+  }
+  if (firstBrace === 0) {
+    return { kind: 'clean', cleaned: trimmed.trim(), strippedLen: 0, strippedHex: null };
+  }
+  const stripped = trimmed.slice(0, firstBrace);
+  return {
+    kind: 'stripped',
+    cleaned: trimmed.slice(firstBrace).trim(),
+    strippedLen: stripped.length,
+    strippedHex: bytesToHexPreview(stripped, stripped.length),
+  };
+}
+
 function getOllamaConfig(ctx: DoorContext) {
   return {
     url: ctx.settings?.ollama_endpoint || 'http://float-box:11434',
@@ -817,11 +882,36 @@ async function generateSpecViaAgent(userPrompt: string, ctx: DoorContext, option
     structured_output?: LooseSpec;
     session_id?: string;
   }
+  // Strip any leading non-JSON prefix before parsing. See stripJsonPrefix
+  // (defined below this function) for the failure mode this defends against.
+  // Helper is exported so unit tests can cover prefix variants without
+  // mocking the full agent shell-exec path.
+  const stripResult = stripJsonPrefix(raw);
+  if (stripResult.kind === 'no-brace') {
+    const err = new Error(
+      'Agent response contained no JSON wrapper (no opening brace found in stdout)',
+    ) as SpecGenerationError;
+    err.raw = raw;
+    throw err;
+  }
+  if (stripResult.strippedHex) {
+    ctx.log(
+      `[render::agent] stripped ${stripResult.strippedLen} non-JSON prefix bytes before wrapper:`,
+      stripResult.strippedHex,
+    );
+  }
+
   let wrapper: ClaudeJsonWrapper;
   try {
-    wrapper = JSON.parse(raw.trim()) as ClaudeJsonWrapper;
+    wrapper = JSON.parse(stripResult.cleaned) as ClaudeJsonWrapper;
   } catch (parseErr) {
-    const err = new Error(`Failed to parse claude --output-format json wrapper: ${errMsg(parseErr)}`) as SpecGenerationError;
+    // Include first 64 hex bytes of the cleaned payload in the error so
+    // future copy-paste diagnostics survive even when the offending
+    // character is unprintable in terminals or chat UIs.
+    const previewHex = bytesToHexPreview(stripResult.cleaned, 64);
+    const err = new Error(
+      `Failed to parse claude --output-format json wrapper: ${errMsg(parseErr)} (first 64 bytes hex: ${previewHex})`,
+    ) as SpecGenerationError;
     err.raw = raw;
     throw err;
   }
