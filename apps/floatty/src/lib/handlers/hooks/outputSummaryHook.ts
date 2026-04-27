@@ -360,6 +360,63 @@ export function flattenSpecToMarkdown(output: unknown): string | null {
           lines.push(`_[button: ${p.label}]_`);
         }
         break;
+      case 'TreeView': {
+        // TreeView ↔ outline is the same shape: hierarchical {label, status,
+        // detail, children}. Emit as indented bullets so parseMarkdownTree
+        // reconstructs the tree as nested child blocks (2 spaces = 1 level
+        // deeper, see markdownParser.ts). Status enum maps to a leading
+        // unicode symbol — colors don't round-trip, but the structure does.
+        const TREE_STATUS_SYMBOL: Record<string, string> = {
+          done: '✓',
+          active: '▸',
+          pending: '○',
+          deferred: '⊘',
+        };
+
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`## ${p.title}`, '');
+        }
+
+        const renderNode = (node: unknown, depth: number): void => {
+          if (!node || typeof node !== 'object') return;
+          const n = node as {
+            label?: unknown;
+            status?: unknown;
+            detail?: unknown;
+            children?: unknown;
+          };
+          const label = typeof n.label === 'string' ? n.label : '';
+          if (!label) return;
+          const symbol =
+            typeof n.status === 'string' && n.status in TREE_STATUS_SYMBOL
+              ? `${TREE_STATUS_SYMBOL[n.status]} `
+              : '';
+          const detail = typeof n.detail === 'string' && n.detail.trim()
+            ? ` — ${n.detail.trim()}`
+            : '';
+          const indent = '  '.repeat(depth);
+          lines.push(`${indent}- ${symbol}${label}${detail}`);
+          if (Array.isArray(n.children)) {
+            for (const child of n.children) renderNode(child, depth + 1);
+          }
+        };
+
+        if (Array.isArray(p.nodes)) {
+          for (const node of p.nodes) renderNode(node, 0);
+          lines.push('');
+        }
+
+        if (Array.isArray(p.connectsTo) && p.connectsTo.length) {
+          lines.push(
+            `connects: ${p.connectsTo
+              .filter((r): r is string => typeof r === 'string')
+              .map((r) => `[[${r}]]`)
+              .join(', ')}`,
+            '',
+          );
+        }
+        break;
+      }
 
       // Generic fallback: any component type not enumerated above.
       // Walks known text-bearing props + {label, value} arrays.

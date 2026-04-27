@@ -181,6 +181,131 @@ describe('flattenSpecToMarkdown — added explicit cases', () => {
   });
 });
 
+describe('flattenSpecToMarkdown — TreeView round-trips as nested bullets', () => {
+  it('flat tree with status emits bullets with status symbols', () => {
+    const out = makeDoorOutput(
+      {
+        root: {
+          type: 'TreeView',
+          props: {
+            title: 'Sprint',
+            nodes: [
+              { id: 'a', label: 'Done thing', status: 'done' },
+              { id: 'b', label: 'In progress', status: 'active', detail: 'half landed' },
+              { id: 'c', label: 'Up next', status: 'pending' },
+              { id: 'd', label: 'Punted', status: 'deferred' },
+            ],
+          },
+        },
+      },
+      'root',
+    );
+    const md = flattenSpecToMarkdown(out)!;
+    expect(md).toContain('## Sprint');
+    expect(md).toContain('- ✓ Done thing');
+    expect(md).toContain('- ▸ In progress — half landed');
+    expect(md).toContain('- ○ Up next');
+    expect(md).toContain('- ⊘ Punted');
+  });
+
+  it('nested tree emits 2-space indentation per level', () => {
+    const out = makeDoorOutput(
+      {
+        root: {
+          type: 'TreeView',
+          props: {
+            nodes: [
+              {
+                id: '1',
+                label: 'Top',
+                children: [
+                  { id: '1a', label: 'Mid', children: [{ id: '1a1', label: 'Leaf' }] },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      'root',
+    );
+    const md = flattenSpecToMarkdown(out)!;
+    expect(md).toContain('- Top');
+    expect(md).toContain('  - Mid');
+    expect(md).toContain('    - Leaf');
+  });
+
+  it('connectsTo emits as wikilink footer', () => {
+    const out = makeDoorOutput(
+      {
+        root: {
+          type: 'TreeView',
+          props: {
+            nodes: [{ id: '1', label: 'item' }],
+            connectsTo: ['FLO-100', 'FLO-200'],
+          },
+        },
+      },
+      'root',
+    );
+    const md = flattenSpecToMarkdown(out)!;
+    expect(md).toContain('connects: [[FLO-100]], [[FLO-200]]');
+  });
+
+  it('round-trips through parseMarkdownTree with correct depth', async () => {
+    // The point of bullet-indentation: when echoCopy materializes the
+    // projection back into the outline, parseMarkdownTree reconstructs
+    // nested child blocks at the original tree depth.
+    const { parseMarkdownTree } = await import('../../markdownParser');
+    const out = makeDoorOutput(
+      {
+        root: {
+          type: 'TreeView',
+          props: {
+            nodes: [
+              {
+                id: '1',
+                label: 'Parent',
+                status: 'active',
+                children: [
+                  { id: '1a', label: 'Child', status: 'done' },
+                  {
+                    id: '1b',
+                    label: 'Sibling',
+                    children: [{ id: '1b1', label: 'Grandchild' }],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      'root',
+    );
+    const md = flattenSpecToMarkdown(out)!;
+    const parsed = parseMarkdownTree(md);
+
+    // Find the Parent node and check it has 2 children, one of which has 1 grandchild.
+    const findByContent = (
+      nodes: { content: string; children: { content: string; children: unknown[] }[] }[],
+      needle: string,
+    ): { content: string; children: { content: string; children: unknown[] }[] } | null => {
+      for (const n of nodes) {
+        if (n.content.includes(needle)) return n;
+        const inner = findByContent(n.children, needle);
+        if (inner) return inner;
+      }
+      return null;
+    };
+    const parent = findByContent(parsed, 'Parent');
+    expect(parent).not.toBeNull();
+    expect(parent!.children.length).toBe(2);
+    const sibling = parent!.children.find((c) => c.content.includes('Sibling'));
+    expect(sibling).toBeDefined();
+    expect(sibling!.children.length).toBe(1);
+    expect(sibling!.children[0].content).toContain('Grandchild');
+  });
+});
+
 describe('flattenSpecToMarkdown — existing cases regression', () => {
   it('still handles EntryHeader / EntryBody / Code', () => {
     const out = makeDoorOutput(
