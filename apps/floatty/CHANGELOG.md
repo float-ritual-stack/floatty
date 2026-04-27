@@ -6,6 +6,24 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.13.6] - 2026-04-27
+
+echoCopy:: door projection levels up to BlockDown — generic walker + 22 new explicit cases for component types that previously fell silently to `<!-- ComponentName -->`. TreeView now round-trips through `parseMarkdownTree` as nested child blocks (3-way invariant: tree spec ↔ indented bullets ↔ outline). render::agent shipped a defensive parse fix after a shell-init regression started leaking ANSI escapes into stdout.
+
+### ✨ Features
+
+- **echoCopy projection emits BlockDown idioms** (`7fa3e0e`, `0bb6afe`, `e39ee4f` — `apps/floatty/src/lib/handlers/hooks/outputSummaryHook.ts`) — `flattenSpecToMarkdown` previously had explicit cases for 16/55 catalog component types and silently dropped the rest via `default: break;`. Now: generic prop walker emits text-bearing props with `<!-- ${type} -->` grep markers (no silent drops), 22 new explicit cases borrow width-agnostic ASCII idioms from the [[3d40632d]] W15 dispatch — `▓▓▒▒ TITLE ▒▒▓▓` shaded headers (CollapsibleSection, TuiPanel), `████████ value` filled-block bars (BarChart owns its children walk to scale BarItems via closure), `* ✦` shipped items, `· · ·` ellipsis, `_← label_` breadcrumbs, `→` LinkGraph edges, `✓ ▸ ○ ⊘` TreeView status symbols. TreeView projects to indented bullets that `parseMarkdownTree` reconstructs as nested child blocks at original tree depth — the projection is structurally lossless for hierarchical components. 32 new tests.
+
+### 🐛 Fixes
+
+- **render-door agent: strip non-JSON prefix from claude --output-format json wrapper** (`aca2ac2` — `packages/render-door/src/render.tsx`) — under non-TTY parents (Tauri spawns via pipes), oh-my-zsh's iTerm2 integration in `chpwd_functions` emits `OSC 1337;CurrentDir=...` escape sequences when the shell does `cd "..." &&` to enter the agent cwd. Those escapes survived subprocess capture and prepended the JSON wrapper, causing `JSON.parse` to fail at byte 0 with `Unrecognized token ''` (ASCII ESC, 0x1B) — a copy-paste-evading character that displayed in the floatty error UI as a placeholder glyph. Defensive fix: `stripJsonPrefix()` locates the first `{`, slices from there, logs stripped bytes as space-separated hex for diagnosis. Helper exported with 14 unit tests covering ANSI CSI, OSC, BOM, ZWSP, garbage prose, and end-to-end `JSON.parse` roundtrip after a real ANSI prefix. [[FLO-687]] tracks the deeper `execute_shell_clean` Rust-side root cause fix.
+
+### 📝 Docs
+
+- **outline-explorer MCP: `get_block` advertises short-hash prefix support** (`13092f5` — `apps/outline-explorer/src/mcp/tools.ts`) — server-side resolution of 6+ hex char prefixes via `/api/v1/blocks/:id` was already shipped (handles `[[37371679]]` paste-and-resolve from cmd-cmd block-ID copy), but the tool description and `blockId` param doc both said "UUID" — agents reading the schema had no signal that short-hashes work. Description now documents prefix support, the `[[ ]]` strip step, and the 409-on-ambiguous fallback.
+
+---
+
 ## [0.13.5] - 2026-04-26
 
 Recency-sortable search hits + a hidden Tantivy staleness fix surfaced while reviving [[FLO-373]] (backlinks panel v2). The artifact iteration in claude-live wanted to sort inbound refs by `updatedAt` and discovered the data wasn't on the wire — and the Tantivy STORED column it would've fallen back to was being clobbered with `Utc::now()` on every reindex.
