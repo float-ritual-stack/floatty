@@ -133,9 +133,73 @@ function extractRenderSummary(output: unknown): string | null {
 }
 
 /**
+ * Prop keys we consider "text-bearing" for the generic fallback walker.
+ * Order matters: keys earlier in the list get emitted first when an
+ * unknown component carries multiple of them. Tuned to surface
+ * heading-ish keys before body-ish keys.
+ */
+const STRING_PROP_KEYS = [
+  'title', 'heading', 'label', 'name',
+  'text', 'content', 'markdown',
+  'description', 'summary', 'message', 'caption', 'alt',
+  'value',
+] as const;
+
+/**
+ * Generic prop walker for component types that don't have an explicit
+ * markdown shape. Emits known text-bearing string props as plain lines
+ * and {label, value/text/content} array shapes as bullet lists.
+ *
+ * Returns true if anything was emitted — caller uses this to decide
+ * whether to wrap in a `<!-- ${type} -->` comment (signals to the reader
+ * that the projection went through the generic walker, and grep target
+ * for components worth promoting to an explicit case).
+ *
+ * Components that emit nothing (pure layout chrome like Stack/Grid)
+ * still get their children walked by the surrounding switch — this
+ * function only handles the parent's own props.
+ */
+function emitGenericPropLines(props: SpecElementProps, lines: string[]): boolean {
+  let emitted = false;
+
+  for (const key of STRING_PROP_KEYS) {
+    const v = props[key];
+    if (typeof v === 'string' && v.trim()) {
+      lines.push(v.trim());
+      emitted = true;
+    }
+  }
+
+  // Array-of-records: {label, value/text/content} → bullet list.
+  // Covers TimeEntry[], BarItem[], TagChip[], etc. at the prop level
+  // (not the component level — those still get recursion via children).
+  for (const v of Object.values(props)) {
+    if (!Array.isArray(v)) continue;
+    for (const item of v) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+      const i = item as Record<string, unknown>;
+      if (typeof i.label !== 'string') continue;
+      const valueField = i.value ?? i.text ?? i.content;
+      if (valueField === undefined) continue;
+      lines.push(`- **${i.label}**: ${String(valueField)}`);
+      emitted = true;
+    }
+  }
+
+  return emitted;
+}
+
+/**
  * Flatten a render spec into a markdown projection.
  * Walks the element tree in document order (following children refs),
  * extracting text content from each component type.
+ *
+ * Coverage strategy: ~20 high-frequency component types get explicit
+ * cases that produce well-shaped markdown (headings, bullets, code
+ * fences, blockquotes). Every other component falls through to a
+ * generic prop walker (`emitGenericPropLines`) which emits text-bearing
+ * props as plain lines — no silent drops. Pure layout chrome (Stack,
+ * Grid, NavBrand, etc.) emits nothing but still recurses into children.
  */
 export function flattenSpecToMarkdown(output: unknown): string | null {
   const { data, spec } = unwrapDoorOutput(output);
@@ -206,8 +270,6 @@ export function flattenSpecToMarkdown(output: unknown): string | null {
         if (p.content) lines.push('```', p.content, '```', '');
         break;
       case 'NavBrand':
-        // Skip nav chrome
-        break;
       case 'NavSection':
       case 'NavItem':
       case 'NavFooter':
@@ -216,9 +278,104 @@ export function flattenSpecToMarkdown(output: unknown): string | null {
       case 'Divider':
         lines.push('---', '');
         break;
-      // Layout containers — just recurse children
-      default:
+
+      // ── Added explicit cases (FLO-echo-fallback): high-frequency content
+      //    components that have well-defined markdown shape and would lose
+      //    structure under the generic walker.
+      case 'Section':
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`## ${p.title}`, '');
+        } else if (typeof p.heading === 'string' && p.heading.trim()) {
+          lines.push(`## ${p.heading}`, '');
+        }
         break;
+      case 'Card':
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`### ${p.title}`, '');
+        }
+        if (typeof p.description === 'string' && p.description.trim()) {
+          lines.push(p.description, '');
+        }
+        if (typeof p.content === 'string' && p.content.trim()) {
+          lines.push(p.content, '');
+        }
+        break;
+      case 'KanbanColumn':
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`### ${p.title}`, '');
+        }
+        break;
+      case 'KanbanCard':
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`- **${p.title}**${typeof p.status === 'string' ? ` _(${p.status})_` : ''}`);
+        }
+        if (typeof p.description === 'string' && p.description.trim()) {
+          lines.push(`  ${p.description}`);
+        }
+        break;
+      case 'GapItem':
+        lines.push(
+          `- ${p.severity ? `**[${p.severity}]** ` : ''}${p.label || p.title || ''}${
+            p.description ? ` — ${p.description}` : ''
+          }`,
+        );
+        break;
+      case 'TimeEntry':
+        lines.push(
+          `- ${p.time || ''}${p.time && (p.activity || p.label) ? ': ' : ''}${
+            p.activity || p.label || ''
+          }${p.project ? ` _(${p.project})_` : ''}`,
+        );
+        break;
+      case 'RefCard':
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`### ${p.title}`);
+        }
+        if (typeof p.ref === 'string' && p.ref.trim()) {
+          lines.push(`ref: [[${p.ref}]]`);
+        }
+        if (typeof p.summary === 'string' && p.summary.trim()) {
+          lines.push('', p.summary, '');
+        }
+        break;
+      case 'RefSection':
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`## ${p.title}`, '');
+        }
+        break;
+      case 'TagChip':
+      case 'ModeTag':
+        if (typeof p.label === 'string') lines.push(`\`${p.label}\``);
+        else if (typeof p.mode === 'string') lines.push(`\`${p.mode}\``);
+        break;
+      case 'Image': {
+        const src = typeof p.src === 'string' ? p.src : '';
+        const alt = typeof p.alt === 'string' ? p.alt : '';
+        if (src) lines.push(`![${alt}](${src})`, '');
+        else if (alt) lines.push(`_(image: ${alt})_`);
+        break;
+      }
+      case 'Button':
+        if (typeof p.label === 'string' && p.label.trim()) {
+          lines.push(`_[button: ${p.label}]_`);
+        }
+        break;
+
+      // Generic fallback: any component type not enumerated above.
+      // Walks known text-bearing props + {label, value} arrays.
+      // Wraps emitted output in a `<!-- ${type} -->` comment so future
+      // readers can grep echoCopy output for components worth promoting
+      // to an explicit case. Pure layout chrome (no text props, no
+      // matching arrays) emits nothing — children still recurse below.
+      default: {
+        const before = lines.length;
+        const emitted = emitGenericPropLines(p, lines);
+        if (emitted) {
+          lines.splice(before, 0, `<!-- ${el.type} -->`);
+          lines.push('');
+        }
+        break;
+      }
     }
 
     // Recurse children
