@@ -137,12 +137,12 @@ export function registerDataTools(server: McpServer) {
     }
   );
 
-  // 2. get_block — fetch a specific block by UUID with subtree
+  // 2. get_block — fetch a specific block by UUID or short-hash prefix with subtree
   server.tool(
     "get_block",
-    "Fetch a specific block by its UUID, including its subtree. Use when you have a block ID and need to see its content and children.",
+    "Fetch a block by full UUID or 6+ hex char short-hash prefix (e.g. '37371679' or a [[37371679]] wikilink with brackets stripped). Server resolves prefixes via /api/v1/blocks/:id. Returns block content, breadcrumb (ancestors), subtree, outlinks, and ancestorContext. On ambiguous prefix the server returns 409 — broaden the prefix or use search_blocks to disambiguate.",
     {
-      blockId: z.string().describe("Block UUID to fetch"),
+      blockId: z.string().describe("Full block UUID or 6+ hex character short-hash prefix (case-insensitive). Strip [[ ]] from wikilink form before passing."),
       includeTree: z.boolean().optional().describe("Include full subtree (default true)"),
     },
     async ({ blockId, includeTree = true }: { blockId: string; includeTree?: boolean }) => {
