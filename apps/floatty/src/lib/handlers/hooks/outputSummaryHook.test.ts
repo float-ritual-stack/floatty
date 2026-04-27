@@ -306,6 +306,154 @@ describe('flattenSpecToMarkdown — TreeView round-trips as nested bullets', () 
   });
 });
 
+describe('flattenSpecToMarkdown — blockdown ASCII idioms (round 2)', () => {
+  // All fixtures here are synthetic — names like "Demo Alpha", invented PR
+  // numbers, neutral content. Per .claude/rules/test-fixtures-no-pii.md.
+
+  it('CollapsibleSection emits ▓▓▒▒-shaded header with optional count', () => {
+    const out = makeDoorOutput(
+      {
+        root: {
+          type: 'CollapsibleSection',
+          props: { title: 'Demo Section', count: 3 },
+        },
+      },
+      'root',
+    );
+    expect(flattenSpecToMarkdown(out)).toContain('▓▓▒▒ Demo Section (3) ▒▒▓▓');
+  });
+
+  it('TuiPanel emits ▓▓▒▒-shaded header from title', () => {
+    const out = makeDoorOutput(
+      { root: { type: 'TuiPanel', props: { title: 'Demo Panel' } } },
+      'root',
+    );
+    expect(flattenSpecToMarkdown(out)).toContain('▓▓▒▒ Demo Panel ▒▒▓▓');
+  });
+
+  it('BarChart + BarItem emit value-scaled █ filled-block bars', () => {
+    const out = makeDoorOutput(
+      {
+        chart: {
+          type: 'BarChart',
+          props: { title: 'Demo Activity' },
+          children: ['b1', 'b2', 'b3'],
+        },
+        b1: { type: 'BarItem', props: { label: 'Mon', value: 200 } },
+        b2: { type: 'BarItem', props: { label: 'Tue', value: 100 } },
+        b3: { type: 'BarItem', props: { label: 'Wed', value: 50 } },
+      },
+      'chart',
+    );
+    const md = flattenSpecToMarkdown(out)!;
+    expect(md).toContain('### Demo Activity');
+    // Mon = max → full width 20 blocks
+    expect(md).toMatch(/Mon\s+█{20}\s+200/);
+    // Tue = 50% → 10 blocks
+    expect(md).toMatch(/Tue\s+█{10}\s+100/);
+    // Wed = 25% → 5 blocks
+    expect(md).toMatch(/Wed\s+█{5}\s+50/);
+  });
+
+  it('BarItem outside a BarChart still emits without crashing', () => {
+    const out = makeDoorOutput(
+      { root: { type: 'BarItem', props: { label: 'Standalone', value: 7 } } },
+      'root',
+    );
+    const md = flattenSpecToMarkdown(out)!;
+    expect(md).toContain('Standalone');
+    expect(md).toContain('7');
+  });
+
+  it('StatPill emits Metric-style bullet', () => {
+    const out = makeDoorOutput(
+      { root: { type: 'StatPill', props: { label: 'Sessions', value: '42' } } },
+      'root',
+    );
+    expect(flattenSpecToMarkdown(out)).toContain('- **Sessions**: 42');
+  });
+
+  it('ShippedItem emits ✦ bullet with content', () => {
+    const out = makeDoorOutput(
+      { root: { type: 'ShippedItem', props: { content: 'Demo PR #101 merged' } } },
+      'root',
+    );
+    expect(flattenSpecToMarkdown(out)).toContain('* ✦ Demo PR #101 merged');
+  });
+
+  it('TimelineEvent emits time · label bullet', () => {
+    const out = makeDoorOutput(
+      {
+        root: {
+          type: 'TimelineEvent',
+          props: { time: '14:30', label: 'demo event' },
+        },
+      },
+      'root',
+    );
+    expect(flattenSpecToMarkdown(out)).toContain('- 14:30 · demo event');
+  });
+
+  it('Breadcrumb emits italic ← label hint', () => {
+    const out = makeDoorOutput(
+      { root: { type: 'Breadcrumb', props: { label: 'Demo Page' } } },
+      'root',
+    );
+    expect(flattenSpecToMarkdown(out)).toContain('_← Demo Page_');
+  });
+
+  it('Ellipsis emits centered · · · separator', () => {
+    const out = makeDoorOutput({ root: { type: 'Ellipsis', props: {} } }, 'root');
+    expect(flattenSpecToMarkdown(out)).toContain('· · ·');
+  });
+
+  it('DataBlock emits labeled code fence', () => {
+    const out = makeDoorOutput(
+      {
+        root: {
+          type: 'DataBlock',
+          props: { label: 'Demo Output', content: 'line one\nline two' },
+        },
+      },
+      'root',
+    );
+    const md = flattenSpecToMarkdown(out)!;
+    expect(md).toContain('**Demo Output**');
+    expect(md).toMatch(/```\nline one\nline two\n```/);
+  });
+
+  it('LinkGraph emits nodes list and edges with → arrows', () => {
+    const out = makeDoorOutput(
+      {
+        root: {
+          type: 'LinkGraph',
+          props: {
+            title: 'Demo Graph',
+            nodes: [
+              { id: 'a', label: 'Alpha' },
+              { id: 'b', label: 'Beta' },
+              { id: 'c', label: 'Gamma' },
+            ],
+            edges: [
+              ['a', 'b'],
+              ['b', 'c'],
+            ],
+          },
+        },
+      },
+      'root',
+    );
+    const md = flattenSpecToMarkdown(out)!;
+    expect(md).toContain('### Demo Graph');
+    expect(md).toContain('nodes:');
+    expect(md).toContain('- Alpha');
+    expect(md).toContain('- Gamma');
+    expect(md).toContain('edges:');
+    expect(md).toContain('- a → b');
+    expect(md).toContain('- b → c');
+  });
+});
+
 describe('flattenSpecToMarkdown — existing cases regression', () => {
   it('still handles EntryHeader / EntryBody / Code', () => {
     const out = makeDoorOutput(

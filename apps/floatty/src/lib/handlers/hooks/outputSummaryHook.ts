@@ -209,6 +209,11 @@ export function flattenSpecToMarkdown(output: unknown): string | null {
   const lines: string[] = [];
   const visiting = new Set<string>();
 
+  // BarChart-scoped max value, threaded via closure so BarItem can scale
+  // its filled-block bar relative to its containing chart. Restored on
+  // exit so nested charts don't bleed scale into siblings.
+  let currentBarMax = 1;
+
   // Title from data envelope
   if (typeof data?.title === 'string' && !data.title.trimStart().startsWith('{')) {
     lines.push(`# ${data.title}`, '');
@@ -360,6 +365,133 @@ export function flattenSpecToMarkdown(output: unknown): string | null {
           lines.push(`_[button: ${p.label}]_`);
         }
         break;
+
+
+      // ── Round 2 (FLO-echo-blockdown): explicit cases for the 11 most-frequent
+      //    fall-through types found in the live render-door corpus. Borrows
+      //    width-agnostic ASCII idioms from the W15 dispatch ([[3d40632d]]):
+      //    `▓▓▒▒ TITLE ▒▒▓▓` shading borders for sectioned headers, `█`
+      //    filled blocks for value-scaled bars, `· · ·` for ellipsis. Floatty's
+      //    terminal renderer highlights these distinctively even outside fences.
+
+      case 'CollapsibleSection':
+        if (typeof p.title === 'string' && p.title.trim()) {
+          const count = typeof p.count === 'number' ? ` (${p.count})` : '';
+          lines.push(`▓▓▒▒ ${p.title}${count} ▒▒▓▓`, '');
+        }
+        break;
+      case 'TuiPanel':
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`▓▓▒▒ ${p.title} ▒▒▓▓`, '');
+        }
+        break;
+      case 'BarChart': {
+        // BarChart owns its own children walk so it can pre-compute max
+        // and pass it to BarItems via the closure-scoped currentBarMax.
+        // We still need the "skip auto-recursion" trick (return early).
+        let max = typeof p.max === 'number' ? p.max : 0;
+        if (Array.isArray(el.children)) {
+          for (const childKey of el.children) {
+            const c = elements[childKey];
+            const cv = c?.props?.value;
+            if (c?.type === 'BarItem' && typeof cv === 'number') {
+              max = Math.max(max, cv);
+            }
+          }
+        }
+        const prevMax = currentBarMax;
+        currentBarMax = Math.max(1, max);
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`### ${p.title}`, '');
+        }
+        if (Array.isArray(el.children)) {
+          for (const childKey of el.children) walk(childKey);
+        }
+        lines.push('');
+        currentBarMax = prevMax;
+        visiting.delete(key);
+        return; // skip the default child-recursion below
+      }
+      case 'BarItem': {
+        // Horizontal filled-block bar normalized to BAR_WIDTH chars,
+        // scaled against the containing BarChart's max. Mirrors the W15
+        // dispatch's `Mon Apr 6  ██████████████████ 218` idiom.
+        const BAR_WIDTH = 20;
+        const value = typeof p.value === 'number' ? p.value : 0;
+        const label = typeof p.label === 'string' ? p.label : '';
+        const scaled = Math.round((value / currentBarMax) * BAR_WIDTH);
+        const fill = '█'.repeat(Math.max(0, Math.min(BAR_WIDTH, scaled)));
+        lines.push(`  ${label.padEnd(14)} ${fill.padEnd(BAR_WIDTH)} ${value}`);
+        break;
+      }
+      case 'StatPill':
+        if (typeof p.label === 'string') {
+          lines.push(`- **${p.label}**: ${typeof p.value === 'string' || typeof p.value === 'number' ? p.value : ''}`);
+        }
+        break;
+      case 'ShippedItem':
+        if (typeof p.content === 'string' && p.content.trim()) {
+          // Per catalog: "green asterisk bullet item for shipped/completed work"
+          lines.push(`* ✦ ${p.content}`);
+        }
+        break;
+      case 'TimelineEvent':
+        if (typeof p.time === 'string' || typeof p.label === 'string') {
+          const time = typeof p.time === 'string' ? p.time : '';
+          const label = typeof p.label === 'string' ? p.label : '';
+          lines.push(`- ${time}${time && label ? ' · ' : ''}${label}`);
+        }
+        break;
+      case 'Breadcrumb':
+        if (typeof p.label === 'string' && p.label.trim()) {
+          lines.push(`_← ${p.label}_`, '');
+        }
+        break;
+      case 'Ellipsis':
+        // Per catalog: "Centered · · · separator indicating truncated content"
+        lines.push('· · ·', '');
+        break;
+      case 'DataBlock':
+        if (typeof p.content === 'string') {
+          if (typeof p.label === 'string' && p.label.trim()) {
+            lines.push(`**${p.label}**`);
+          }
+          lines.push('```', p.content, '```', '');
+        }
+        break;
+      case 'LinkGraph': {
+        if (typeof p.title === 'string' && p.title.trim()) {
+          lines.push(`### ${p.title}`, '');
+        }
+        if (Array.isArray(p.nodes) && p.nodes.length) {
+          lines.push('nodes:');
+          for (const n of p.nodes) {
+            if (n && typeof n === 'object' && !Array.isArray(n)) {
+              const node = n as Record<string, unknown>;
+              if (typeof node.label === 'string') {
+                lines.push(`- ${node.label}`);
+              }
+            }
+          }
+          lines.push('');
+        }
+        if (Array.isArray(p.edges) && p.edges.length) {
+          lines.push('edges:');
+          for (const e of p.edges) {
+            if (
+              Array.isArray(e) &&
+              e.length === 2 &&
+              typeof e[0] === 'string' &&
+              typeof e[1] === 'string'
+            ) {
+              lines.push(`- ${e[0]} → ${e[1]}`);
+            }
+          }
+          lines.push('');
+        }
+        break;
+      }
+
       case 'TreeView': {
         // TreeView ↔ outline is the same shape: hierarchical {label, status,
         // detail, children}. Emit as indented bullets so parseMarkdownTree
