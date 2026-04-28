@@ -12,6 +12,7 @@
 
 import { createRoot, createSignal } from 'solid-js';
 import { layoutStore, findTabIdByPaneId } from './useLayoutStore';
+import { paneStore } from './usePaneStore';
 import { tabStore } from './useTabStore';
 import { collectLeaves } from '../lib/layoutTypes';
 
@@ -200,14 +201,33 @@ function createPaneLinkStore() {
 
   /**
    * Resolve target pane for navigation from a given source.
-   * Chain: block link → pane link → null (caller falls back)
+   * Chain: block link → pane link → sidebar fallback → null.
+   *
+   * The sidebar fallback covers sources hosted in the sidebar shelf (FLO-502
+   * pin shelf): they have no `paneLinks` entry of their own; their per-tab
+   * routing target lives in `sidebarLinks[activeTab]` (set by Cmd+L via
+   * PaneLinkOverlay). Lifted from `resolveSameTabLink` (lib/navigation.ts)
+   * so every caller of `resolveLink` — `handleChirpNavigate`,
+   * `resolveTargetPane`, the App.tsx deep-link path, Cmd+Shift+L — gets the
+   * sidebar route, not just native wikilink clicks.
    */
   function resolveLink(sourcePaneId: string, blockId?: string): string | null {
     if (blockId) {
       const blockTarget = getLinkedPaneForBlock(blockId);
       if (blockTarget) return blockTarget;
     }
-    return getLinkedPaneForPane(sourcePaneId);
+    const paneTarget = getLinkedPaneForPane(sourcePaneId);
+    if (paneTarget) return paneTarget;
+
+    const host = paneStore.getPaneHost(sourcePaneId);
+    if (host?.kind === 'sidebar') {
+      const activeTab = tabStore.activeTabId();
+      if (activeTab) {
+        const sidebarTarget = resolveSidebarTarget(activeTab);
+        if (sidebarTarget && sidebarTarget !== sourcePaneId) return sidebarTarget;
+      }
+    }
+    return null;
   }
 
   /**
