@@ -6,6 +6,20 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.13.7] - 2026-04-28
+
+Sidebar-pin chirp wikilinks now route to the user's Cmd+L target pane ([[FLO-696]]). Single-fix patch surfaced during RCA on a `render::agent` door pinned in the sidebar shelf — clicks navigated *inside* the pin instead of routing to the linked tab pane. Root cause was a sibling-drift between `paneLinkStore.resolveLink` (the chirp / deep-link / Cmd+Shift+L primitive) and `lib/navigation.ts::resolveSameTabLink` (the native-wikilink path). The [[FLO-671]] sidebar fallback shipped only on the latter; chirp callers silently fell back to the source pane. This release lifts the fallback into the primitive and updates the parent function to delegate, restoring symmetry.
+
+### 🐛 Fixes
+
+- **Sidebar-pin chirp wikilinks route to linked tab pane** (`d2bc331` / [[PR #288]] / [[FLO-696]] — `apps/floatty/src/hooks/usePaneLinkStore.ts`, `apps/floatty/src/lib/navigation.ts`) — `paneLinkStore.resolveLink` (the primitive used by `handleChirpNavigate`, `resolveTargetPane`, `App.tsx` deep-link, Cmd+Shift+L) was missing the [[FLO-671]] sidebar fallback that PR [[#269]] added only to `resolveSameTabLink`. From a sidebar pin's render door, chirp navigation got `null` and the caller `??`'d back to `sourcePaneId` (the pin), so the click landed inside the pin. Lifted the fallback into `resolveLink` as the single primitive (chain: block link → pane link → sidebar fallback → null) and restructured `resolveSameTabLink` to short-circuit the same-tab guard for sidebar sources (since `resolveLink` now enforces correctness). Both chirp and native wikilink paths now behave identically from inside a pin. **Behavior change worth noting**: `Cmd+Shift+L` from a focused block inside a sidebar pin previously was a no-op; now follows `sidebarLinks[activeTab]`. 12 new tests covering sidebar fallback + tab-hosted regression + parity.
+
+### 🧪 Tests
+
+- **`apps/floatty/src/hooks/usePaneLinkStore.test.ts` (new)** — first dedicated test file for `paneLinkStore`. 12 cases: 6 sidebar-fallback, 3 tab-hosted regression, 3 `resolveSameTabLink` parity. Resilient to singleton-state pollution from sibling test files (`paneStore` + `tabStore` + `layoutStore` + `paneLinkStore` all reset in `beforeEach`/`afterEach`). Suite total: 1248 → 1251.
+
+---
+
 ## [0.13.6] - 2026-04-27
 
 echoCopy:: door projection levels up to BlockDown — generic walker + 22 new explicit cases for component types that previously fell silently to `<!-- ComponentName -->`. TreeView now round-trips through `parseMarkdownTree` as nested child blocks (3-way invariant: tree spec ↔ indented bullets ↔ outline). render::agent shipped a defensive parse fix after a shell-init regression started leaking ANSI escapes into stdout.
