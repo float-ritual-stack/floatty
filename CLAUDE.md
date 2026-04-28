@@ -71,7 +71,7 @@ cd src-tauri && cargo test ...            # Stale path — pre-monorepo. Use app
 
 ### Version Bumping
 
-Three files must stay in sync. Use the Edit tool for JSON files — `mv` on this machine is aliased to `mv -i` which blocks on interactive confirmation.
+Three files must stay in sync. Use the Edit tool for JSON files (atomic, no temp-file shuffle, clean diff — preferred over `jq … > tmp.json && mv`).
 
 ```
 src-tauri/Cargo.toml      # workspace.package.version AND package.version
@@ -79,7 +79,7 @@ package.json              # .version
 src-tauri/tauri.conf.json # .version
 ```
 
-Use Edit tool with `replace_all: true` for all three.
+Use Edit tool with `replace_all: true` for `Cargo.toml` (it has TWO matching `version = "..."` lines — `[workspace.package]` and `[package]`); single-target Edit is fine for the JSON files.
 
 ### Release Build
 
