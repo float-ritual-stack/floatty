@@ -160,7 +160,7 @@ describe('paneLinkStore.resolveLink — sidebar-source fallback', () => {
     expect(paneLinkStore.resolveLink(pinPaneId)).toBeNull();
   });
 
-  it('falls back to first outliner even when the tab is terminal-only (returns the terminal)', () => {
+  it('falls back to first leaf when the tab is terminal-only (returns the terminal, not an outliner)', () => {
     // Documents the resolveSidebarTarget behavior: when no outliner exists,
     // it returns the first leaf overall (terminal). resolveLink mirrors this.
     const tabId = trackTab('plr-tab-terminal');
