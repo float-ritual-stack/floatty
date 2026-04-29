@@ -8,10 +8,10 @@ Format: date · headline · PR. Bullets describe what's NEW or DIFFERENT after t
 
 ---
 
-## [[2026-04-22]] · render-door package precedent docs · b6428cc / 041ca8d
+## [[2026-04-22]] · render-door package precedent docs · [[PR #262]] follow-up (041ca8d)
 
 - Cross-package precedent note added to ink-chat CLAUDE.md — when ink-chat's catalog grows a peer-app consumer, follow the [[PR #262]] playbook (extract to `packages/`, see `feedback_door_extraction_pattern.md`).
-- json-render dep bump to npm `^0.17.0` (see "Origin" below — workspace:* refs are gone, this is a normal npm consumer now).
+- The ink-chat-side note landed as direct commit `041ca8d` on main, separate from [[PR #262]] itself (which was the render-door extraction). Going forward: even small follow-ups should land via PR so the changelog can wikilink them cleanly.
 
 ## [[2026-04-19]] · FLO-636 + FLO-637 — wikilink + daily-add fixes · [[PR #246]], [[PR #248]]
 
