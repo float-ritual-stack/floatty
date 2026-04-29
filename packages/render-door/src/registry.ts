@@ -70,6 +70,7 @@ import {
   XYPad,
   MasterClock,
   MasterFX,
+  Strudel,
   injectBodyStyles,
 } from './components';
 
@@ -143,6 +144,7 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     XYPad,
     MasterClock,
     MasterFX,
+    Strudel,
   },
   actions: {
     navigate: async () => {},

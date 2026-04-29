@@ -13,9 +13,8 @@ import { useWorkspace } from '../../context/WorkspaceContext';
 import { Breadcrumb } from '../Breadcrumb';
 import { DoorHost } from './DoorHost';
 import type { DoorViewOutput } from '../../lib/handlers/doorTypes';
-import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData, type ChirpWriteStore } from '../../lib/chirpWriteHandler';
+import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../../lib/chirpWriteHandler';
 import { useDoorChirpListener } from '../../hooks/useDoorChirpListener';
-import { useBlockExecution } from '../../hooks/useBlockExecution';
 import './doors.css';
 
 interface DoorPaneViewProps {
@@ -29,16 +28,6 @@ interface DoorPaneViewProps {
 export function DoorPaneView(props: DoorPaneViewProps) {
   const { blockStore } = useWorkspace();
   const [containerRef, setContainerRef] = createSignal<HTMLElement | undefined>(undefined);
-  // Auto-execute chirped-in handler-prefixed blocks (matches BlockOutputView).
-  const { executeBlock } = useBlockExecution(() => props.paneId);
-  const buildChirpStore = (): ChirpWriteStore => ({
-    createBlockInside: blockStore.createBlockInside,
-    updateBlockContent: blockStore.updateBlockContent,
-    upsertChildByPrefix: blockStore.upsertChildByPrefix,
-    moveBlock: (blockId, targetParentId, targetIndex) =>
-      blockStore.moveBlock(blockId, targetParentId, targetIndex, { origin: 'user' }),
-    executeBlockIfHandler: executeBlock,
-  });
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -50,7 +39,7 @@ export function DoorPaneView(props: DoorPaneViewProps) {
   // Chirp listener via shared hook (FM #9: proper cleanup)
   useDoorChirpListener(containerRef, {
     getBlockId: () => props.blockId,
-    getStore: () => buildChirpStore(),
+    getStore: () => blockStore,
     onNavigate: (target, opts) => {
       props.onNavigate?.(target, opts);
     },
@@ -77,7 +66,7 @@ export function DoorPaneView(props: DoorPaneViewProps) {
           onNavigate={props.onNavigate}
           onChirp={(message, data) => {
             if (isChirpWriteVerb(message)) {
-              handleChirpWrite(message, data as ChirpWriteData, props.blockId, buildChirpStore());
+              handleChirpWrite(message, data as ChirpWriteData, props.blockId, blockStore);
             }
           }}
         />

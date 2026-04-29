@@ -23,7 +23,7 @@ vi.mock('./logger', () => ({
 
 function makeStore(overrides: Partial<ChirpWriteStore> = {}): ChirpWriteStore {
   return {
-    createBlockInside: vi.fn(() => 'new-block'),
+    createBlockInsideWithContent: vi.fn(() => 'new-block'),
     updateBlockContent: vi.fn(),
     upsertChildByPrefix: vi.fn(() => 'upsert-block'),
     moveBlock: vi.fn(() => true),
@@ -56,7 +56,10 @@ describe('isChirpWriteVerb', () => {
 });
 
 describe('handleChirpWrite — create-child / upsert-child (existing)', () => {
-  it('create-child creates a block then sets content', () => {
+  it('create-child creates atomically with content (single transaction)', () => {
+    // PR #292 Greptile P1: previously called createBlockInside('') then
+    // updateBlockContent — block:add fired with empty content, auto-execute
+    // guard skipped. Atomic call ensures the add event carries real content.
     const store = makeStore();
     const result = handleChirpWrite(
       'create-child',
@@ -65,15 +68,30 @@ describe('handleChirpWrite — create-child / upsert-child (existing)', () => {
       store,
     );
     expect(result).toEqual({ success: true, blockId: 'new-block' });
-    expect(store.createBlockInside).toHaveBeenCalledWith('parent');
-    expect(store.updateBlockContent).toHaveBeenCalledWith('new-block', 'hello');
+    expect(store.createBlockInsideWithContent).toHaveBeenCalledWith('parent', 'hello');
+    // Critical: updateBlockContent NOT called — that was the two-txn split.
+    expect(store.updateBlockContent).not.toHaveBeenCalled();
   });
 
   it('create-child fails when content is missing', () => {
     const store = makeStore();
     const result = handleChirpWrite('create-child', {}, 'parent', store);
     expect(result).toEqual({ success: false });
-    expect(store.createBlockInside).not.toHaveBeenCalled();
+    expect(store.createBlockInsideWithContent).not.toHaveBeenCalled();
+  });
+
+  it('create-child returns failure when atomic create returns empty id', () => {
+    const store = makeStore({
+      createBlockInsideWithContent: vi.fn(() => ''),
+    });
+    const result = handleChirpWrite(
+      'create-child',
+      { content: 'render:: {...}' },
+      'parent',
+      store,
+    );
+    expect(result).toEqual({ success: false });
+    expect(store.updateBlockContent).not.toHaveBeenCalled();
   });
 
   it('upsert-child delegates to store', () => {
@@ -231,140 +249,5 @@ describe('handleChirpWrite — unknown verbs', () => {
     const store = makeStore();
     const result = handleChirpWrite('nuke-everything', {}, 'parent', store);
     expect(result).toEqual({ success: false });
-  });
-});
-
-// ─── Auto-execute path ──────────────────────────────────────────────────
-//
-// Closes the user/agent asymmetry: agent-emitted handler-prefixed blocks
-// (e.g. `render:: { json }`) auto-trigger executeHandler the same way
-// user-typed Enter does. Implementation lives in chirpWriteHandler — it
-// invokes the optional `executeBlockIfHandler` callback after success.
-// The callback's wiring (registry.findHandler + executeHandler) is in
-// useBlockExecution.ts (not exercised here — pure-store unit scope).
-
-describe('handleChirpWrite — auto-execute', () => {
-  it('create-child invokes executeBlockIfHandler with the new block id', () => {
-    const executeBlockIfHandler = vi.fn();
-    const store = makeStore({ executeBlockIfHandler });
-    handleChirpWrite(
-      'create-child',
-      { content: 'render:: {"root":"x","elements":{"x":{"type":"Text"}}}' },
-      'parent',
-      store,
-    );
-    expect(executeBlockIfHandler).toHaveBeenCalledWith('new-block');
-    expect(executeBlockIfHandler).toHaveBeenCalledTimes(1);
-  });
-
-  it('create-child with execute:false skips executeBlockIfHandler', () => {
-    const executeBlockIfHandler = vi.fn();
-    const store = makeStore({ executeBlockIfHandler });
-    handleChirpWrite(
-      'create-child',
-      { content: 'render:: agent draft', execute: false },
-      'parent',
-      store,
-    );
-    expect(executeBlockIfHandler).not.toHaveBeenCalled();
-  });
-
-  it('upsert-child invokes executeBlockIfHandler with the resolved block id', () => {
-    const executeBlockIfHandler = vi.fn();
-    const store = makeStore({ executeBlockIfHandler });
-    handleChirpWrite(
-      'upsert-child',
-      { content: 'render:: {...}', match: 'render::' },
-      'parent',
-      store,
-    );
-    expect(executeBlockIfHandler).toHaveBeenCalledWith('upsert-block');
-  });
-
-  it('upsert-child with execute:false skips executeBlockIfHandler', () => {
-    const executeBlockIfHandler = vi.fn();
-    const store = makeStore({ executeBlockIfHandler });
-    handleChirpWrite(
-      'upsert-child',
-      { content: 'render:: draft', match: 'render::', execute: false },
-      'parent',
-      store,
-    );
-    expect(executeBlockIfHandler).not.toHaveBeenCalled();
-  });
-
-  it('update-block does NOT trigger executeBlockIfHandler (kanban two-way binding only)', () => {
-    // FLO-587 update-block fires on every keystroke during card editing.
-    // Wiring auto-execute here would re-run the parent door on every
-    // letter — not the intent. Only create-child / upsert-child auto-execute.
-    const executeBlockIfHandler = vi.fn();
-    const store = makeStore({ executeBlockIfHandler });
-    handleChirpWrite(
-      'update-block',
-      { blockId: 'card-7', content: 'render:: {...}' },
-      'parent',
-      store,
-    );
-    expect(executeBlockIfHandler).not.toHaveBeenCalled();
-  });
-
-  it('move-block does NOT trigger executeBlockIfHandler', () => {
-    // Move is structural; the moved block's content is unchanged. Re-running
-    // its handler would be at best wasteful, at worst surprising.
-    const executeBlockIfHandler = vi.fn();
-    const store = makeStore({ executeBlockIfHandler });
-    handleChirpWrite(
-      'move-block',
-      { blockId: 'card-3', targetParentId: 'col-2', targetIndex: 0 },
-      'parent',
-      store,
-    );
-    expect(executeBlockIfHandler).not.toHaveBeenCalled();
-  });
-
-  it('store without executeBlockIfHandler is a clean no-op', () => {
-    // Backwards compat — if a caller hasn't wired up auto-execute yet, the
-    // chirp handler must not throw. Existing legacy call sites that haven't
-    // migrated to ChirpWriteStore-with-executor pattern still work.
-    const store = makeStore();
-    delete (store as { executeBlockIfHandler?: unknown }).executeBlockIfHandler;
-    expect(() =>
-      handleChirpWrite(
-        'create-child',
-        { content: 'render:: {...}' },
-        'parent',
-        store,
-      ),
-    ).not.toThrow();
-  });
-
-  it('failed create does NOT trigger executeBlockIfHandler', () => {
-    const executeBlockIfHandler = vi.fn();
-    const store = makeStore({
-      executeBlockIfHandler,
-      createBlockInside: vi.fn(() => '' as unknown as string), // returns falsy
-    });
-    handleChirpWrite(
-      'create-child',
-      { content: 'render:: {...}' },
-      'parent',
-      store,
-    );
-    expect(executeBlockIfHandler).not.toHaveBeenCalled();
-  });
-
-  it('failed upsert does NOT trigger executeBlockIfHandler', () => {
-    const executeBlockIfHandler = vi.fn();
-    const store = makeStore({
-      executeBlockIfHandler,
-      upsertChildByPrefix: vi.fn(() => null),
-    });
-    handleChirpWrite(
-      'upsert-child',
-      { content: 'render:: {...}', match: 'render::' },
-      'parent',
-      store,
-    );
-    expect(executeBlockIfHandler).not.toHaveBeenCalled();
   });
 });

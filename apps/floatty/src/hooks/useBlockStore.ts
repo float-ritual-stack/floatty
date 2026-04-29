@@ -36,6 +36,11 @@ export interface BatchBlockOp {
 // ═══════════════════════════════════════════════════════════════
 // AUTO-EXECUTE CALLBACK (for external block creation via API)
 // ═══════════════════════════════════════════════════════════════
+//
+// Architecture: apps/floatty/docs/architecture/AGENT_CREATED_DOOR_BLOCKS.md
+//   — Phase 1/2/3 plan, decision records, opt-out semantics, verification
+//     recipe, and the rough-draft → polish lesson for the chirp-path
+//     attempt that was reverted in favor of this primitive.
 
 type AutoExecuteHandler = (blockId: string, content: string) => void;
 let _autoExecuteHandler: AutoExecuteHandler | null = null;
@@ -48,12 +53,30 @@ export function setAutoExecuteHandler(handler: AutoExecuteHandler | null) {
   _autoExecuteHandler = handler;
 }
 
-function isAutoExecutable(content: string): boolean {
-  // Only auto-execute idempotent view blocks, not side-effect ones like sh::
-  // Check content directly (not handler.prefixes) to avoid false positives
-  // if a future handler has multiple prefixes including 'daily::'
+export function isAutoExecutable(content: string): boolean {
+  // Only auto-execute idempotent VIEW blocks (output writes back to the same
+  // block, no external side effects). NOT side-effect ones like sh:: (runs
+  // shell), ai:: (calls API + costs money), render:: agent (spawns claude -p).
+  //
+  // The render:: door is special-cased: most render:: routes (raw-json,
+  // demo, stats, expand, kanban, prompt) are pure-projection and safe; the
+  // ai:: and agent:: sub-routes branch internally and gate themselves on
+  // explicit user intent (e.g. agent's --dangerously-skip-permissions).
+  // Auto-executing render:: lands the spec/output projection without firing
+  // those external paths.
+  //
+  // Why this matters: when an agent (or external tooling) creates a block
+  // via POST /api/v1/blocks with content `render:: {json}`, it lands via
+  // CRDT sync without going through useBlockInput.execute_block (which is
+  // the keyboard Enter path). Without this allowlist, the JSON sits as raw
+  // text until the user manually opens the block and presses Enter — and
+  // worse, the search-projection layer indexes the raw JSON spec instead of
+  // the rendered markdown projection.
   const trimmed = content.trim().toLowerCase();
-  return trimmed.startsWith('daily::');
+  return (
+    trimmed.startsWith('daily::') ||
+    trimmed.startsWith('render::')
+  );
   // Future: add || trimmed.startsWith('web::') || trimmed.startsWith('query::')
 }
 
@@ -414,6 +437,16 @@ function createBlockStore() {
 
       if (isBulk) {
         const createdBlockIds: string[] = [];
+        // Per-block changed-field tracker. Used downstream to emit
+        // block:update events for door subscriptions watching specific
+        // fields (e.g. render-door's `subscribeBlockChanges({ fields:
+        // ['childIds', 'content', 'parentId'] })`).
+        const updatedFieldsByBlock = new Map<string, Set<string>>();
+        const trackField = (blockId: string, field: string) => {
+          let s = updatedFieldsByBlock.get(blockId);
+          if (!s) { s = new Set(); updatedFieldsByBlock.set(blockId, s); }
+          s.add(field);
+        };
 
         batch(() => {
           setState('lastUpdateOrigin', txOrigin);
@@ -432,7 +465,23 @@ function createBlockStore() {
                 }
               });
             } else if (path.length >= 1) {
-              blocksToRefresh.add(path[0] as string);
+              const blockId = path[0] as string;
+              blocksToRefresh.add(blockId);
+              // Tracking changed-field names — two shapes to cover:
+              //
+              // 1) YMapEvent at path.length === 1 — the block's Y.Map had
+              //    a top-level key set/updated/deleted (e.g. PATCH on
+              //    block.content). Field name lives in event.changes.keys.
+              //
+              // 2) Path-deeper events (path.length >= 2) — nested CRDT
+              //    structures like Y.Array childIds. path[1] is the field.
+              if (path.length === 1 && event instanceof Y.YMapEvent) {
+                event.changes.keys.forEach((_change, key) => {
+                  if (typeof key === 'string') trackField(blockId, key);
+                });
+              } else if (path.length >= 2 && typeof path[1] === 'string') {
+                trackField(blockId, path[1]);
+              }
             }
           }
 
@@ -465,6 +514,123 @@ function createBlockStore() {
               origin,
               events: createEvents,
             });
+          }
+        }
+
+        // Auto-execute for remote/reconnect adds (steady-state API/CRDT writes).
+        //
+        // The slim path otherwise skips auto-execute (FLO-320) to keep startup
+        // and bulk reconnects fast. But when the server-applied transaction is
+        // a single-block addition arriving in steady state — e.g. an agent
+        // hits POST /api/v1/blocks with `render:: {json}` content — we DO
+        // want auto-execute to fire so the JSON projects through the door
+        // pipeline instead of sitting as raw text.
+        //
+        // Three guards prevent regression:
+        //   1. `_autoExecuteHandler` is registered (set by WorkspaceContext
+        //      after mount; null during Y.Doc init)
+        //   2. content matches `isAutoExecutable` (view-only handler prefix)
+        //   3. block has no existing output (preserves already-executed blocks
+        //      on initial reconnect — they replay through here with their
+        //      output already set, which we leave alone)
+        //
+        // Why the output-guard alone is sufficient (no event-count threshold):
+        // initial-sync blocks of `render::` type that previously executed
+        // carry their output envelope in Y.Doc. They re-sync with output
+        // intact → the guard short-circuits → no re-execute storm.
+        if (
+          _autoExecuteHandler
+          && (origin === Origin.Remote || origin === Origin.ReconnectAuthority)
+          && createdBlockIds.length > 0
+        ) {
+          for (const blockId of createdBlockIds) {
+            const blockData = blocksMap.get(blockId);
+            if (!(blockData instanceof Y.Map)) continue;
+            const content = (blockData.get('content') as string) || '';
+            if (!content || !isAutoExecutable(content)) continue;
+            // Output-presence guard: if the block already has an output
+            // envelope, the originating client already executed it. Don't
+            // double-fire on the receiving client.
+            const existingOutput = blockData.get('output');
+            const existingOutputType = blockData.get('outputType');
+            if (existingOutput || existingOutputType) continue;
+            // Defer to next tick so SolidJS state finishes settling before
+            // the handler reads the block.
+            const runHandler = _autoExecuteHandler;
+            const capturedId = blockId;
+            const capturedContent = content;
+            setTimeout(() => {
+              try {
+                runHandler(capturedId, capturedContent);
+              } catch (err) {
+                logger.error(`Slim-path auto-execute error for block ${capturedId}`, { err });
+              }
+            }, 0);
+          }
+        }
+
+        // Emit blockEventBus events for STEADY-STATE remote/reconnect adds.
+        //
+        // The slim path otherwise skips event-bus emission (FLO-320) so
+        // initial-sync (~13k events) doesn't overwhelm hooks. But for a
+        // single-block API write arriving in steady state, door subscribers
+        // (e.g. render-door's subscribeBlockChanges in raw-json execute,
+        // kanban refresh, expand) need to be notified — otherwise editing
+        // a `bpm:: 130` child block does nothing because the parent door
+        // never hears about the new child.
+        //
+        // Hooks like ctxRouterHook + outlinksHook ARE idempotent (they
+        // skip when extracted metadata equals existing metadata), so
+        // re-emission for already-extracted remote blocks is safe — at
+        // worst a no-op re-extraction. Verified at ctxRouterHook.ts:85
+        // and outlinksHook.ts:70 ("skip no-op updates").
+        //
+        // Threshold: only emit when total event count is small (steady
+        // state). Initial sync / reconnect carries hundreds-to-thousands
+        // of events; we keep skipping those to preserve the FLO-320 perf
+        // gain.
+        const SLIM_PATH_EMIT_THRESHOLD = 50;
+        if (
+          (origin === Origin.Remote || origin === Origin.ReconnectAuthority)
+          && (createdBlockIds.length + updatedFieldsByBlock.size) > 0
+          && (createdBlockIds.length + updatedFieldsByBlock.size) <= SLIM_PATH_EMIT_THRESHOLD
+        ) {
+          const blockEvents: BlockEvent[] = [];
+          // block:create — content was set in the same Y.Doc transaction,
+          // so changedFields includes 'content' for hooks that filter on it.
+          for (const id of createdBlockIds) {
+            const block = state.blocks[id];
+            if (!block) continue;
+            blockEvents.push({
+              type: 'block:create',
+              blockId: id,
+              block,
+              changedFields: ['content', 'parentId', 'childIds'],
+            });
+          }
+          // block:update — for blocks that already existed but had fields
+          // changed (e.g. parent's childIds when a child was added).
+          for (const [id, fields] of updatedFieldsByBlock.entries()) {
+            // Skip if this block is also in createdBlockIds — block:create
+            // already covers it.
+            if (createdBlockIds.includes(id)) continue;
+            const block = state.blocks[id];
+            if (!block) continue;
+            blockEvents.push({
+              type: 'block:update',
+              blockId: id,
+              block,
+              changedFields: Array.from(fields) as BlockEvent['changedFields'],
+            });
+          }
+          if (blockEvents.length > 0) {
+            const envelope: EventEnvelope = {
+              batchId: crypto.randomUUID(),
+              timestamp: Date.now(),
+              origin,
+              events: blockEvents,
+            };
+            blockEventBus.emit(envelope);
           }
         }
 
@@ -800,6 +966,38 @@ function createBlockStore() {
       const blocksMap = _doc.getMap('blocks');
       if (!blocksMap.has(parentId)) {
         logger.warn(`createBlockInside: parent missing in Y.Doc ${parentId}`);
+        recordParentValidationFailure();
+        return;
+      }
+      blocksMap.set(newId, blockToYMap(newBlock));
+      appendChildId(blocksMap, parentId, newId);
+      setValueOnYMap(blocksMap, parentId, 'collapsed', false);
+      success = true;
+    }, 'user');
+
+    return success ? newId : '';
+  };
+
+  // Atomic create-with-content. Single Y.Doc transaction so the block:add
+  // event carries real content — `isAutoExecutable(content)` can decide on
+  // the canonical primitive's first observation (PR #292 Greptile P1).
+  // Splitting create + update across two transactions makes block:add fire
+  // with content="", auto-execute skips, and the subsequent update fires as
+  // a YMap field change which the auto-execute guard does not check.
+  const createBlockInsideWithContent = (parentId: string, content: string) => {
+    if (!_doc) { warnDocNotReady('createBlockInsideWithContent'); return ''; }
+
+    const parentBlock = state.blocks[parentId];
+    if (!parentBlock) return '';
+
+    const newId = crypto.randomUUID();
+    const newBlock = createBlock(newId, content, parentId);
+    let success = false;
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      if (!blocksMap.has(parentId)) {
+        logger.warn(`createBlockInsideWithContent: parent missing in Y.Doc ${parentId}`);
         recordParentValidationFailure();
         return;
       }
@@ -2081,6 +2279,7 @@ function createBlockStore() {
     createBlockBefore,
     createBlockAfter,
     createBlockInside,
+    createBlockInsideWithContent,  // atomic create+content (chirp create-child auto-execute, PR #292)
     createBlockInsideAtTop,
     splitBlock,
     splitBlockToFirstChild,
