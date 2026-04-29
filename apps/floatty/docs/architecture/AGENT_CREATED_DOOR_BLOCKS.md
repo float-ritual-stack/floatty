@@ -173,6 +173,63 @@ of who created it, ends up as `outputType === 'door'` with a rendered
 view, and the markdown projection pipes structured output to the search
 index — not the raw JSON.
 
+## Test fixture — paste-and-verify
+
+This is a self-contained `render::` block that creates a button which
+emits a `createChild` action carrying a child render:: spec. Paste the
+content (one line) into a fresh outline block, hit Enter, click the button.
+
+**Expected behavior** (post-fix):
+
+1. The parent block renders a green "Spawn child render" button.
+2. Click → a child block is created beneath the parent.
+3. The child block's content reads `render:: {...}`.
+4. The child block AUTO-EXECUTES — within milliseconds the JSON text
+   disappears and the child renders the spec (a simple Card with text).
+   No JSON flash. No manual Enter required.
+
+**Pre-fix behavior** (for contrast):
+
+1. Same button, same click.
+2. Child block created with `render:: {...}` content.
+3. JSON text stays visible. Child does NOT execute. User must open the
+   child and press Enter manually.
+4. Tantivy indexes the raw JSON text (until the user runs it).
+
+### The fixture
+
+Copy this whole line as the content of a `render::` block in floatty:
+
+```text
+render:: {"root":"main","elements":{"main":{"type":"Stack","props":{"direction":"vertical","gap":12},"children":["title","desc","button"]},"title":{"type":"Text","props":{"content":"Auto-execute test (FLO render::)","size":"lg","weight":"bold","color":"#00e5ff"}},"desc":{"type":"Text","props":{"content":"Click below — the child render block should auto-execute, no JSON flash."}},"button":{"type":"Button","props":{"label":"Spawn child render","variant":"primary"},"actions":{"onPress":{"type":"createChild","params":{"content":"render:: {\"root\":\"x\",\"elements\":{\"x\":{\"type\":\"Card\",\"props\":{\"title\":\"Child rendered ✓\",\"subtitle\":\"auto-executed via chirp\"},\"children\":[\"y\"]},\"y\":{\"type\":\"Text\",\"props\":{\"content\":\"This card was created by the parent's createChild action and auto-executed without a manual Enter.\"}}}}"}}}}}}
+```
+
+### Manual verification recipe
+
+1. Build floatty (the fix is in the host, not the door bundle):
+   `cd apps/floatty && bash scripts/rebuild.sh` — or hot-reload via
+   `pnpm --filter float-pty tauri:dev`.
+2. Open floatty (port 8765 release / 33333 dev).
+3. New block, paste the fixture content above, hit Enter.
+4. Parent renders the button.
+5. Click the button.
+6. **Pass condition**: the child block immediately shows a card with
+   "Child rendered ✓". No raw JSON text visible.
+7. **Fail condition** (regression): child block stays as raw `render:: …`
+   text until you click it and press Enter.
+
+### What it exercises
+
+- ActionProvider in render.tsx routing `createChild` → `props.onChirp('create-child', ...)`.
+- BlockOutputView's chirp listener catching it.
+- handleChirpWrite create-child path running.
+- ChirpWriteStore.executeBlockIfHandler invoked (if present).
+- useBlockExecution.executeBlock → registry.findHandler('render::') →
+  executeHandler → render-door door.execute → setBlockOutput.
+- Door view replacing the JSON text.
+
+If any link breaks, the test fails visibly.
+
 ## Provenance
 
 - 2026-04-29 02:17 AM — user reports asymmetry with screenshots.
