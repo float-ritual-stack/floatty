@@ -786,9 +786,17 @@ export function registerDataTools(server: McpServer) {
           }
         );
 
+        // Server stores page name as `# ${canonicalName}` heading content.
+        // create_page is case-insensitive idempotent, so an existing match may
+        // carry different canonical casing than the request. Surface the
+        // server-canonical name to avoid drift, with the request name as fallback.
+        const canonicalName =
+          block.content.split("\n")[0].replace(/^#\s+/, "").trim() || name;
+
         return textResult({
           blockId: block.id,
-          name,
+          name: canonicalName,
+          requestedName: name,
           content: block.content,
           childCount: block.childIds?.length ?? 0,
           ancestorContext: block.ancestorContext ?? null,
