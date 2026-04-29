@@ -3509,7 +3509,7 @@ function getAudioContext(): AudioContext {
 // listen and react. Voices route audio through getFxSend(rigId, sendName)
 // when MasterFX is mounted on the same rig.
 
-interface RigStepDetail {
+export interface RigStepDetail {
   rigId: string;
   step: number;        // 0-based step counter (looping per masterSteps)
   bpm: number;
@@ -3517,7 +3517,7 @@ interface RigStepDetail {
   masterSteps: number; // master loop length
   audioTime: number;   // ctx.currentTime at the tick (seconds)
 }
-interface RigTransportDetail {
+export interface RigTransportDetail {
   rigId: string;
   state: 'play' | 'stop';
 }
@@ -3551,23 +3551,23 @@ function rigTransportListeners(rigId: string): Set<(d: RigTransportDetail) => vo
   return s;
 }
 
-function emitRigStep(d: RigStepDetail): void {
+export function emitRigStep(d: RigStepDetail): void {
   rigStepListeners(d.rigId).forEach(fn => { try { fn(d); } catch { /* swallow */ } });
 }
-function emitRigTransport(d: RigTransportDetail): void {
+export function emitRigTransport(d: RigTransportDetail): void {
   rigTransportListeners(d.rigId).forEach(fn => { try { fn(d); } catch { /* swallow */ } });
 }
 
-function subscribeRigStep(rigId: string, fn: (d: RigStepDetail) => void): () => void {
+export function subscribeRigStep(rigId: string, fn: (d: RigStepDetail) => void): () => void {
   rigStepListeners(rigId).add(fn);
   return () => { rigStepListeners(rigId).delete(fn); };
 }
-function subscribeRigTransport(rigId: string, fn: (d: RigTransportDetail) => void): () => void {
+export function subscribeRigTransport(rigId: string, fn: (d: RigTransportDetail) => void): () => void {
   rigTransportListeners(rigId).add(fn);
   return () => { rigTransportListeners(rigId).delete(fn); };
 }
 
-function rigStateGet(rigId: string): { playing: boolean; bpm: number } {
+export function rigStateGet(rigId: string): { playing: boolean; bpm: number } {
   const g = rigGlobal();
   if (!g.__floatty_rig_state) g.__floatty_rig_state = new Map();
   let s = g.__floatty_rig_state.get(rigId);
@@ -4657,38 +4657,54 @@ export function AcidBass(props: BaseComponentProps<{
 // (7,12) -> Aksak, etc. Tweaking hits/steps live = cascading polyrhythm
 // magic. Rotation shifts the start position.
 
-function bjorklund(hits: number, steps: number): boolean[] {
+export function bjorklund(hits: number, steps: number): boolean[] {
   if (hits <= 0 || steps <= 0) return Array(Math.max(steps, 0)).fill(false);
   if (hits >= steps) return Array(steps).fill(true);
 
-  // Build initial groups: `hits` ones, then `steps - hits` zeros
-  let groups: boolean[][] = [];
-  for (let i = 0; i < hits; i++) groups.push([true]);
-  for (let i = 0; i < steps - hits; i++) groups.push([false]);
+  // E. Bjorklund's recursive algorithm (2003) — produces the most
+  // evenly-distributed pattern of `hits` pulses across `steps` positions.
+  // Reference: "The Theory of Rep-Rate Pattern Generation in the SNS
+  // Timing System".
+  //
+  // The recursive form below builds the pattern by Euclidean division of
+  // (steps - hits) by `hits`. Output starts with a `false` (`0...01`
+  // segments). After build, we rotate to the first `true` so the pattern
+  // begins on a hit — that's what users expect when they say "(3, 8) is
+  // tresillo at positions 0, 3, 6".
+  const pattern: boolean[] = [];
+  const counts: number[] = [];
+  const remainders: number[] = [hits];
+  let divisor = steps - hits;
+  let level = 0;
 
-  // Repeatedly merge from the tail (zeros) into the head (ones) until
-  // there's at most one trailing remainder group.
   while (true) {
-    const headLast = groups[0].length;
-    let splitAt = groups.length;
-    for (let i = 1; i < groups.length; i++) {
-      if (groups[i].length !== headLast) { splitAt = i; break; }
-    }
-    const head = groups.slice(0, splitAt);
-    const tail = groups.slice(splitAt);
-    if (tail.length <= 1) break;
-
-    const pairs = Math.min(head.length, tail.length);
-    const merged: boolean[][] = [];
-    for (let i = 0; i < pairs; i++) merged.push([...head[i], ...tail[i]]);
-    const leftover = head.length > pairs ? head.slice(pairs) : tail.slice(pairs);
-    groups = [...merged, ...leftover];
+    counts.push(Math.floor(divisor / remainders[level]));
+    remainders.push(divisor % remainders[level]);
+    divisor = remainders[level];
+    level++;
+    if (remainders[level] <= 1) break;
   }
+  counts.push(divisor);
 
-  return groups.flat();
+  const build = (lvl: number): void => {
+    if (lvl === -1) {
+      pattern.push(false);
+    } else if (lvl === -2) {
+      pattern.push(true);
+    } else {
+      for (let i = 0; i < counts[lvl]; i++) build(lvl - 1);
+      if (remainders[lvl] !== 0) build(lvl - 2);
+    }
+  };
+  build(level);
+
+  // Rotate so the first hit lands on position 0 (canonical form).
+  const firstHit = pattern.indexOf(true);
+  if (firstHit <= 0) return pattern;
+  return [...pattern.slice(firstHit), ...pattern.slice(0, firstHit)];
 }
 
-function rotateArray<T>(arr: T[], by: number): T[] {
+export function rotateArray<T>(arr: T[], by: number): T[] {
   const n = arr.length;
   if (n === 0) return arr;
   const r = ((by % n) + n) % n;
