@@ -42,8 +42,8 @@ pnpm install                              # Install JS deps (workspace-aware)
 pnpm --filter float-pty tauri:dev         # Dev mode (hot reload, rebuilds Rust)
 pnpm lint --force                         # ESLint across all packages via turbo
 pnpm --filter float-pty typecheck         # tsc --noEmit
-pnpm --filter float-pty test:run          # vitest run (1210+ tests)
-pnpm --filter float-pty test              # vitest watch (TDD mode)
+pnpm --filter float-pty test              # vitest run (1251 tests, run-and-exit)
+pnpm --filter float-pty test:watch        # vitest watch (TDD mode)
 ```
 
 ### Rust Tests (IMPORTANT)
@@ -71,15 +71,17 @@ cd src-tauri && cargo test ...            # Stale path — pre-monorepo. Use app
 
 ### Version Bumping
 
-Three files must stay in sync. Use the Edit tool for JSON files — `mv` on this machine is aliased to `mv -i` which blocks on interactive confirmation.
+Four files must stay in sync. Use the Edit tool for the JSON / TOML files (atomic, no temp-file shuffle, clean diff — preferred over `jq … > tmp.json && mv`); use `cargo update --workspace` for the lockfile.
 
-```
-src-tauri/Cargo.toml      # workspace.package.version AND package.version
-package.json              # .version
-src-tauri/tauri.conf.json # .version
+```text
+apps/floatty/src-tauri/Cargo.toml      # workspace.package.version AND package.version
+apps/floatty/src-tauri/Cargo.lock      # name = "float-pty" + name = "floatty-server" version entries
+apps/floatty/package.json              # .version
+apps/floatty/src-tauri/tauri.conf.json # .version
 ```
 
-Use Edit tool with `replace_all: true` for all three.
+- Use Edit tool with `replace_all: true` for `Cargo.toml` (it has TWO matching `version = "..."` lines — `[workspace.package]` and `[package]`); single-target Edit is fine for the JSON files.
+- After the manifest edits, run `(cd apps/floatty/src-tauri && cargo update --workspace)` to sync `Cargo.lock`. Skipping this leaves the lockfile pointing at the old workspace versions, and a fresh checkout of the tag produces a dirty working tree on first `cargo build` (this happened in v0.13.7 — see `.claude/commands/floatty/release.md` Drift History).
 
 ### Release Build
 
