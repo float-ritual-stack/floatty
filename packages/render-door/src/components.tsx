@@ -3686,6 +3686,15 @@ function useSlaveRig(opts: {
   onStep: (d: RigStepDetail, isStillCurrent: () => boolean) => void;
   onTransport: (d: RigTransportDetail) => void;
   onAttach?: (rig: string, state: { playing: boolean; bpm: number }) => void;
+  /**
+   * Called immediately before the previous rig's subscriptions are torn
+   * down (rig swap or unmount). Lets stateful consumers reset whatever the
+   * old rig left behind: AcidBass kills its sustained osc, the step-based
+   * sequencers clear `playing`/`currentStep`. Without this, a live rig
+   * swap leaves the consumer wired to the previous rig's last state.
+   * CodeRabbit P1 review on PR #292.
+   */
+  onDetach?: () => void;
 }): void {
   let unsubStep: (() => void) | undefined;
   let unsubTransport: (() => void) | undefined;
@@ -3694,6 +3703,9 @@ function useSlaveRig(opts: {
     generation++;
     const myGen = generation;
     const isStillCurrent = () => myGen === generation;
+    // Notify consumer before tearing down the old rig — only when we
+    // actually had subscriptions (skip the synthetic first-mount transition).
+    if (unsubStep || unsubTransport) opts.onDetach?.();
     if (unsubStep) { unsubStep(); unsubStep = undefined; }
     if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
     if (!rig) return;
@@ -3709,6 +3721,7 @@ function useSlaveRig(opts: {
   }));
   onCleanup(() => {
     generation++; // any deferred fire after unmount sees a stale gen and bails
+    if (unsubStep || unsubTransport) opts.onDetach?.();
     if (unsubStep) unsubStep();
     if (unsubTransport) unsubTransport();
   });
@@ -4101,6 +4114,13 @@ export function StepSequencer(props: BaseComponentProps<{
       }
     },
     onAttach: (_rig, s) => setPlaying(s.playing),
+    onDetach: () => {
+      // Old rig is going away — drop its transport state so we don't keep
+      // showing "playing" on the previous rig's last beat. CodeRabbit P1.
+      setPlaying(false);
+      setCurrentStep(-1);
+      stepCursor = -1;
+    },
   });
 
   const start = () => {
@@ -4493,6 +4513,21 @@ export function AcidBass(props: BaseComponentProps<{
     onAttach: (_rig, s) => {
       setPlaying(s.playing);
       if (s.playing) ensureVoice();
+    },
+    // Old rig is leaving — silence the sustained osc and reset state so
+    // a new rig swap doesn't leave 303-bass droning. CodeRabbit P1 #292.
+    onDetach: () => {
+      if (voice) {
+        const now = voice.ctx.currentTime;
+        voice.ampEnv.gain.cancelScheduledValues(now);
+        voice.ampEnv.gain.linearRampToValueAtTime(0.0001, now + 0.05);
+        voice.osc.stop(now + 0.1);
+        voice = null;
+      }
+      setPlaying(false);
+      setCurrentStep(-1);
+      stepCursor = -1;
+      prevWasNote = false;
     },
   });
 
@@ -4901,6 +4936,13 @@ export function EuclideanDrums(props: BaseComponentProps<{
       }
     },
     onAttach: (_rig, s) => setPlaying(s.playing),
+    onDetach: () => {
+      // Drop transport state from the old rig so a swap doesn't leave the
+      // step-cursor frozen on the previous rig's last beat. CodeRabbit P1.
+      setPlaying(false);
+      setCurrentStep(-1);
+      stepCursor = -1;
+    },
   });
 
   const start = () => {
@@ -5653,7 +5695,17 @@ export function Strudel(props: BaseComponentProps<{
     const cpsRaw = Number(cps());
     const cpsSafe = Number.isFinite(cpsRaw) ? cpsRaw : 0.5;
     const fullPattern = `setcps(${cpsSafe})\n\n${pattern()}`;
-    const encoded = typeof btoa !== 'undefined' ? btoa(fullPattern) : '';
+    // btoa accepts only Latin-1 (0x00–0xFF). UTF-8 in `pattern` (emoji,
+    // accents, CJK) would throw InvalidCharacterError and blank the iframe.
+    // Encode to UTF-8 bytes, render as a binary string, then base64.
+    // CodeRabbit P3 #292.
+    const encoded = (() => {
+      if (typeof btoa === 'undefined') return '';
+      const bytes = new TextEncoder().encode(fullPattern);
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    })();
     const safeEncoded = encoded.replace(/=+$/, '');
     return `https://strudel.cc/?${Math.random().toString(36).slice(2, 10)}#${safeEncoded}`;
   });
