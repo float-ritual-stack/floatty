@@ -19,6 +19,7 @@ import type {
   PageSearchHit,
   PresenceResponse,
   SearchHit,
+  TokenEstimate,
   TreeNode,
 } from "../lib/types.js";
 
@@ -34,11 +35,13 @@ function getApiKey(): string {
   return process.env.FLOATTY_API_KEY!;
 }
 
-async function floattyFetch<T>(path: string): Promise<T> {
+async function floattyFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${getFloattyUrl()}${path}`, {
+    ...init,
     headers: {
       Authorization: `Bearer ${getApiKey()}`,
       "Content-Type": "application/json",
+      ...init?.headers,
     },
   });
   if (!res.ok) {
@@ -107,9 +110,14 @@ export function registerDataTools(server: McpServer) {
         // touched" without a third call. The Block type already carries
         // createdAt/updatedAt; outputType is optional and skip-serialized
         // when absent.
+        //
+        // Dual-shape return: `tree` (rendered string, token-cheap for skim)
+        // alongside `treeNodes` (structured array for live-artifact consumers
+        // that need to navigate sub-blocks). `tokenEstimate` always-on so
+        // callers can size the response without a follow-up.
         const block = await floattyFetch<
-          Block & { tree?: TreeNode[] }
-        >(`/api/v1/blocks/${match.blockId}?include=tree`);
+          Block & { tree?: TreeNode[]; tokenEstimate?: TokenEstimate }
+        >(`/api/v1/blocks/${match.blockId}?include=tree,token_estimate`);
 
         const lines: string[] = [];
         if (block.tree) {
@@ -121,8 +129,13 @@ export function registerDataTools(server: McpServer) {
         return textResult({
           page: match.name,
           blockId: match.blockId,
-          blockCount: block.tree?.length ?? 0,
+          // Symmetry with get_block: childCount = direct, treeBlockCount = total.
+          // Replaces former `blockCount` field — single-user app, BC break OK.
+          childCount: block.childIds?.length ?? 0,
+          treeBlockCount: block.tree?.length ?? 0,
           tree: lines.join("\n"),
+          treeNodes: block.tree ?? [],
+          tokenEstimate: block.tokenEstimate ?? null,
           createdAt: block.createdAt ?? null,
           updatedAt: block.updatedAt ?? null,
           outputType: block.outputType ?? null,
@@ -140,23 +153,27 @@ export function registerDataTools(server: McpServer) {
   // 2. get_block — fetch a specific block by UUID or short-hash prefix with subtree
   server.tool(
     "get_block",
-    "Fetch a block by full UUID or 6+ hex char short-hash prefix (e.g. '37371679' or a [[37371679]] wikilink with brackets stripped). Server resolves prefixes via /api/v1/blocks/:id. Returns block content, breadcrumb (ancestors), subtree, outlinks, and ancestorContext. On ambiguous prefix the server returns 409 — broaden the prefix or use search_blocks to disambiguate.",
+    "Fetch a block by full UUID or 6+ hex char short-hash prefix (e.g. '37371679' or a [[37371679]] wikilink with brackets stripped). Server resolves prefixes via /api/v1/blocks/:id. Returns block content, breadcrumb (ancestors), subtree (both rendered string AND structured treeNodes array), tokenEstimate, outlinks, and ancestorContext. On ambiguous prefix the server returns 409 — broaden the prefix or use search_blocks to disambiguate.",
     {
       blockId: z.string().describe("Full block UUID or 6+ hex character short-hash prefix (case-insensitive). Strip [[ ]] from wikilink form before passing."),
-      includeTree: z.boolean().optional().describe("Include full subtree (default true)"),
+      includeTree: z.boolean().optional().describe("Include full subtree (default true). When true, response carries `tree` (rendered string), `treeNodes` (structured array of {id, content, depth, childIds}), and `tokenEstimate`. Use estimate_subtree first if you suspect a large subtree."),
     },
     async ({ blockId, includeTree = true }: { blockId: string; includeTree?: boolean }) => {
       try {
         const includes = ["ancestors"];
-        if (includeTree) includes.push("tree");
+        if (includeTree) {
+          includes.push("tree");
+          includes.push("token_estimate");
+        }
         const params = `?include=${includes.join(",")}`;
 
         // Block GET response — extends shared `Block` with the optional
-        // context shape from ?include=ancestors,tree.
+        // context shape from ?include=ancestors,tree,token_estimate.
         const block = await floattyFetch<
           Block & {
             ancestors?: { id: string; content: string }[];
             tree?: TreeNode[];
+            tokenEstimate?: TokenEstimate;
           }
         >(`/api/v1/blocks/${blockId}${params}`);
 
@@ -179,7 +196,9 @@ export function registerDataTools(server: McpServer) {
           outlinks: block.metadata?.outlinks ?? [],
           childCount: block.childIds?.length ?? 0,
           tree: lines.join("\n"),
+          treeNodes: block.tree ?? [],
           treeBlockCount: block.tree?.length ?? 0,
+          tokenEstimate: block.tokenEstimate ?? null,
           // Always-on wire contract for /blocks/:id (slow-context path
           // already, so effectiveMarkers is populated automatically).
           ancestorContext: block.ancestorContext ?? null,
@@ -189,6 +208,43 @@ export function registerDataTools(server: McpServer) {
         });
       } catch (e) {
         return errorResult(String(e));
+      }
+    }
+  );
+
+  // 2.5 estimate_subtree — cheap size peek before fetching content
+  //
+  // Cautious-agent pattern: peek at a subtree's size before deciding whether
+  // to pull the whole thing. Many blocks are 1-2 lines; many subtrees are
+  // 500+ blocks. `?include=token_estimate` alone returns just the size
+  // metrics without serialising the tree array — much cheaper than a full
+  // get_block(includeTree:true) when you only need to size the response.
+  server.tool(
+    "estimate_subtree",
+    "Get size estimate for a block's subtree WITHOUT fetching content. Use to decide whether to expand a tree before paying the token cost. Returns blockCount, totalChars, maxDepth, estimatedTokens (chars/4), and directChildren. Heuristics: blockCount <50 = pull all safely; 50-200 = consider scoping; >200 = paginate via search_blocks(parent_id) instead.",
+    {
+      blockId: z.string().describe("Block UUID or 6+ hex short-hash prefix to size."),
+    },
+    async ({ blockId }: { blockId: string }) => {
+      try {
+        const block = await floattyFetch<
+          Block & { tokenEstimate?: TokenEstimate }
+        >(`/api/v1/blocks/${blockId}?include=token_estimate`);
+
+        const e = block.tokenEstimate;
+        return textResult({
+          blockId: block.id,
+          directChildren: block.childIds?.length ?? 0,
+          totalChars: e?.totalChars ?? 0,
+          blockCount: e?.blockCount ?? 0,
+          maxDepth: e?.maxDepth ?? 0,
+          // Rough token approximation. /4 is the standard rule of thumb for
+          // English+code mixed content. Treat as a budget hint, not a billing
+          // figure.
+          estimatedTokens: Math.ceil((e?.totalChars ?? 0) / 4),
+        });
+      } catch (err) {
+        return errorResult(String(err));
       }
     }
   );
@@ -583,6 +639,152 @@ export function registerDataTools(server: McpServer) {
             paneId: presence.paneId ?? null,
             ancestorContext: presence.ancestorContext ?? null,
           },
+        });
+      } catch (e) {
+        return errorResult(String(e));
+      }
+    }
+  );
+
+  // ── Write tools ─────────────────────────────────────────────────────
+  //
+  // Wrap existing floatty-server endpoints. The API enforces validation
+  // (parentId XOR afterId on add_block, YYYY-MM-DD shape on append_to_daily,
+  // etc.) — we surface server errors verbatim rather than re-validating.
+
+  // 10. add_block — create a new block under a parent or after a sibling
+  server.tool(
+    "add_block",
+    "Create a new block. Pass parentId (nest under this block as last child) OR afterId (insert as a sibling after this block) — exactly one. Returns the created block's UUID and ancestorContext for orientation. Use create_page for named pages, append_to_daily for daily-note children — those wrap the same API but autocreate the parent.",
+    {
+      content: z.string().describe("Block content (markdown / floatty syntax allowed)."),
+      parentId: z.string().optional().describe("Parent block UUID or 6+ hex prefix. Mutually exclusive with afterId."),
+      afterId: z.string().optional().describe("Insert after this sibling block (UUID or prefix). Mutually exclusive with parentId."),
+    },
+    async ({ content, parentId, afterId }: { content: string; parentId?: string; afterId?: string }) => {
+      try {
+        const body: Record<string, unknown> = { content };
+        if (parentId !== undefined) body.parentId = parentId;
+        if (afterId !== undefined) body.afterId = afterId;
+
+        const block = await floattyFetch<Block>("/api/v1/blocks", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+
+        return textResult({
+          blockId: block.id,
+          content: block.content,
+          blockType: block.blockType,
+          childCount: block.childIds?.length ?? 0,
+          ancestorContext: block.ancestorContext ?? null,
+        });
+      } catch (e) {
+        return errorResult(String(e));
+      }
+    }
+  );
+
+  // 11. patch_block — update an existing block
+  server.tool(
+    "patch_block",
+    "Update an existing block. All fields except blockId are optional — pass only what changes. content edits text; parentId moves the block to a new parent; collapsed toggles the per-pane collapse state (Y.Doc-persisted). Returns the updated block.",
+    {
+      blockId: z.string().describe("Block UUID or 6+ hex short-hash prefix."),
+      content: z.string().optional().describe("New block content."),
+      parentId: z.string().optional().describe("New parent block UUID or prefix (moves the block)."),
+      collapsed: z.boolean().optional().describe("Set the block's collapsed state."),
+    },
+    async ({ blockId, content, parentId, collapsed }: { blockId: string; content?: string; parentId?: string; collapsed?: boolean }) => {
+      try {
+        const body: Record<string, unknown> = {};
+        if (content !== undefined) body.content = content;
+        if (parentId !== undefined) body.parentId = parentId;
+        if (collapsed !== undefined) body.collapsed = collapsed;
+
+        const block = await floattyFetch<Block>(`/api/v1/blocks/${blockId}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        });
+
+        return textResult({
+          blockId: block.id,
+          content: block.content,
+          blockType: block.blockType,
+          childCount: block.childIds?.length ?? 0,
+          ancestorContext: block.ancestorContext ?? null,
+        });
+      } catch (e) {
+        return errorResult(String(e));
+      }
+    }
+  );
+
+  // 12. create_page — get-or-create a named page (FLO-652 semantic upsert)
+  //
+  // Idempotent. Returns the existing page when one matches (case-insensitive)
+  // or creates one under the `pages::` container. Use this for any named
+  // page — daily notes, project pages, sysop notes, MOCs — instead of
+  // hand-rolling pages:: container manipulation through add_block.
+  server.tool(
+    "create_page",
+    "Get-or-create a named page (idempotent). Use for any named page in the knowledge graph: daily notes, project pages, sysop notes, MOCs. Server autocreates the `pages::` container if missing, returns existing page if name matches (case-insensitive). Returns the page block with ancestorContext.",
+    {
+      name: z.string().min(1).describe("Page name. Must be non-empty after trimming whitespace."),
+    },
+    async ({ name }: { name: string }) => {
+      try {
+        const block = await floattyFetch<Block>(
+          `/api/v1/pages/${encodeURIComponent(name)}`,
+          {
+            method: "POST",
+            body: JSON.stringify({}),
+          }
+        );
+
+        return textResult({
+          blockId: block.id,
+          name,
+          content: block.content,
+          childCount: block.childIds?.length ?? 0,
+          ancestorContext: block.ancestorContext ?? null,
+        });
+      } catch (e) {
+        return errorResult(String(e));
+      }
+    }
+  );
+
+  // 13. append_to_daily — append a child to a daily note (autocreates note)
+  //
+  // Replaces the find-daily-then-add_block dance. Daily note autocreation
+  // handled server-side; the YYYY-MM-DD shape is validated server-side to
+  // prevent orphan pages that GET /api/v1/daily/:date can't resolve.
+  server.tool(
+    "append_to_daily",
+    "Append a child block under a daily note (autocreates the daily note if missing). Date format must be YYYY-MM-DD. Returns the new child block. Use this instead of resolving the daily note by name and calling add_block — server handles autocreation atomically.",
+    {
+      date: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
+        .describe("Daily note date, e.g. '2026-04-28'. Server rejects other formats."),
+      content: z.string().min(1).describe("Block content. Must be non-empty after trimming."),
+    },
+    async ({ date, content }: { date: string; content: string }) => {
+      try {
+        const block = await floattyFetch<Block>(
+          `/api/v1/daily/${date}/append`,
+          {
+            method: "POST",
+            body: JSON.stringify({ content }),
+          }
+        );
+
+        return textResult({
+          blockId: block.id,
+          date,
+          content: block.content,
+          ancestorContext: block.ancestorContext ?? null,
         });
       } catch (e) {
         return errorResult(String(e));

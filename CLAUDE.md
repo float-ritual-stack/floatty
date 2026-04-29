@@ -226,6 +226,7 @@ When asked to build or fix UI components, ALWAYS study the existing implementati
 - See @.claude/rules/accessibility-baseline.md — ARIA, focus, motion
 - See @.claude/rules/symmetry-check.md — hotfix drift prevention
 - See @.claude/rules/lint-discipline.md — verified surfaces + owned-vs-ignored policy + bounded-scope escape hatch + edit-time hook prohibition
+- See @.claude/rules/personal-tool-pr-scope.md — bot-only review means bundle aggressively; don't apply team-coordination PR scoping
 - See @.claude/rules/architecture.md — full file inventory, data flows
 - See @apps/floatty/docs/architecture/EXPAND_COLLAPSE_NAVIGATION.md — unified expansion policy + navigation funnel
 - See @.claude/rules/api-reference.md — all REST/WS endpoints
