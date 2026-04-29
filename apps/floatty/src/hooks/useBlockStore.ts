@@ -467,8 +467,19 @@ function createBlockStore() {
             } else if (path.length >= 1) {
               const blockId = path[0] as string;
               blocksToRefresh.add(blockId);
-              // path[1] is the field name (childIds, content, parentId, etc.)
-              if (path.length >= 2 && typeof path[1] === 'string') {
+              // Tracking changed-field names — two shapes to cover:
+              //
+              // 1) YMapEvent at path.length === 1 — the block's Y.Map had
+              //    a top-level key set/updated/deleted (e.g. PATCH on
+              //    block.content). Field name lives in event.changes.keys.
+              //
+              // 2) Path-deeper events (path.length >= 2) — nested CRDT
+              //    structures like Y.Array childIds. path[1] is the field.
+              if (path.length === 1 && event instanceof Y.YMapEvent) {
+                event.changes.keys.forEach((_change, key) => {
+                  if (typeof key === 'string') trackField(blockId, key);
+                });
+              } else if (path.length >= 2 && typeof path[1] === 'string') {
                 trackField(blockId, path[1]);
               }
             }
