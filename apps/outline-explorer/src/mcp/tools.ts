@@ -51,6 +51,14 @@ async function floattyFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// ── Constants ───────────────────────────────────────────────────────
+
+// Cap for the rendered `tree` string in expand_page / get_block. The full
+// structured shape rides on `treeNodes` (bounded server-side at 1000); this
+// cap is purely a token-efficiency safety net for agents skimming the string.
+// `treeTruncated: true` is surfaced when the underlying tree exceeds this.
+const TREE_STRING_CAP = 200;
+
 // ── MCP response helpers ────────────────────────────────────────────
 
 function textResult(data: unknown) {
@@ -119,12 +127,18 @@ export function registerDataTools(server: McpServer) {
           Block & { tree?: TreeNode[]; tokenEstimate?: TokenEstimate }
         >(`/api/v1/blocks/${match.blockId}?include=tree,token_estimate`);
 
+        // Render up to TREE_STRING_CAP nodes for token-cheap skim. The full
+        // structured array goes out via `treeNodes` regardless. The
+        // `treeTruncated` flag tells consumers when the rendered string is a
+        // partial view of treeNodes — switch to treeNodes (or paginate via
+        // search_blocks with parent_id) when true.
         const lines: string[] = [];
         if (block.tree) {
-          for (const node of block.tree.slice(0, 200)) {
+          for (const node of block.tree.slice(0, TREE_STRING_CAP)) {
             lines.push(`${"  ".repeat(node.depth)}${node.content}`);
           }
         }
+        const treeTruncated = (block.tree?.length ?? 0) > TREE_STRING_CAP;
 
         return textResult({
           page: match.name,
@@ -134,6 +148,7 @@ export function registerDataTools(server: McpServer) {
           childCount: block.childIds?.length ?? 0,
           treeBlockCount: block.tree?.length ?? 0,
           tree: lines.join("\n"),
+          treeTruncated,
           treeNodes: block.tree ?? [],
           tokenEstimate: block.tokenEstimate ?? null,
           createdAt: block.createdAt ?? null,
@@ -177,12 +192,18 @@ export function registerDataTools(server: McpServer) {
           }
         >(`/api/v1/blocks/${blockId}${params}`);
 
+        // Render up to TREE_STRING_CAP nodes for token-cheap skim. The full
+        // structured array goes out via `treeNodes` regardless. The
+        // `treeTruncated` flag tells consumers when the rendered string is a
+        // partial view of treeNodes — switch to treeNodes (or paginate via
+        // search_blocks with parent_id) when true.
         const lines: string[] = [];
         if (block.tree) {
-          for (const node of block.tree.slice(0, 200)) {
+          for (const node of block.tree.slice(0, TREE_STRING_CAP)) {
             lines.push(`${"  ".repeat(node.depth)}${node.content}`);
           }
         }
+        const treeTruncated = (block.tree?.length ?? 0) > TREE_STRING_CAP;
 
         const isDoor = block.outputType === "door";
         const renderedMarkdown = block.metadata?.renderedMarkdown ?? null;
@@ -196,6 +217,7 @@ export function registerDataTools(server: McpServer) {
           outlinks: block.metadata?.outlinks ?? [],
           childCount: block.childIds?.length ?? 0,
           tree: lines.join("\n"),
+          treeTruncated,
           treeNodes: block.tree ?? [],
           treeBlockCount: block.tree?.length ?? 0,
           tokenEstimate: block.tokenEstimate ?? null,
@@ -221,7 +243,7 @@ export function registerDataTools(server: McpServer) {
   // get_block(includeTree:true) when you only need to size the response.
   server.tool(
     "estimate_subtree",
-    "Get size estimate for a block's subtree WITHOUT fetching content. Use to decide whether to expand a tree before paying the token cost. Returns blockCount, totalChars, maxDepth, estimatedTokens (chars/4), and directChildren. Heuristics: blockCount <50 = pull all safely; 50-200 = consider scoping; >200 = paginate via search_blocks(parent_id) instead.",
+    "Get size estimate for a block's subtree WITHOUT fetching content. Use to decide whether to expand a tree before paying the token cost. Returns blockCount, totalChars, maxDepth, estimatedTokens (chars/4), and directChildren. Heuristics: blockCount <50 = pull all safely; 50-200 = consider scoping; >200 = paginate via search_blocks({parentId}) instead.",
     {
       blockId: z.string().describe("Block UUID or 6+ hex short-hash prefix to size."),
     },
@@ -257,9 +279,9 @@ export function registerDataTools(server: McpServer) {
   // project does this hit belong to" without a follow-up call.
   server.tool(
     "search_blocks",
-    "Full-text search across all blocks in the knowledge graph. Returns matching blocks with breadcrumb context AND ancestorContext (nearestPageName, effectiveMarkers, inboundCount) — usually no follow-up call needed for orientation.",
+    "Full-text search across all blocks in the knowledge graph. Returns matching blocks with breadcrumb context AND ancestorContext (nearestPageName, effectiveMarkers, inboundCount) — usually no follow-up call needed for orientation. Pass parentId to scope the search to a specific subtree (e.g. paginate within a large page).",
     {
-      query: z.string().describe("Search query"),
+      query: z.string().describe("Search query. Pass empty string with parentId to list-paginate a subtree by recency without keyword filtering."),
       limit: z
         .number()
         .int()
@@ -267,8 +289,12 @@ export function registerDataTools(server: McpServer) {
         .max(200)
         .optional()
         .describe("Max results (default 15, max 200)."),
+      parentId: z
+        .string()
+        .optional()
+        .describe("Restrict search to descendants of this block (UUID or 6+ hex prefix). Use to paginate within a large subtree when get_block's tree response is truncated."),
     },
-    async ({ query, limit = 15 }: { query: string; limit?: number }) => {
+    async ({ query, limit = 15, parentId }: { query: string; limit?: number; parentId?: string }) => {
       try {
         const params = new URLSearchParams({
           q: query,
@@ -277,6 +303,7 @@ export function registerDataTools(server: McpServer) {
           include_metadata: "true",
           include: "effective_markers",
         });
+        if (parentId !== undefined) params.set("parent_id", parentId);
 
         const results = await floattyFetch<{
           total: number;
@@ -663,6 +690,15 @@ export function registerDataTools(server: McpServer) {
     },
     async ({ content, parentId, afterId }: { content: string; parentId?: string; afterId?: string }) => {
       try {
+        // XOR enforcement at the MCP boundary so agents get a clear actionable
+        // message instead of bubbling up an opaque server error. Server enforces
+        // the same rule, this is the friendly cross-check.
+        if ((parentId === undefined) === (afterId === undefined)) {
+          return errorResult(
+            "Exactly one of parentId or afterId must be provided. parentId nests as last child; afterId inserts as a following sibling."
+          );
+        }
+
         const body: Record<string, unknown> = { content };
         if (parentId !== undefined) body.parentId = parentId;
         if (afterId !== undefined) body.afterId = afterId;
@@ -730,7 +766,7 @@ export function registerDataTools(server: McpServer) {
     "create_page",
     "Get-or-create a named page (idempotent). Use for any named page in the knowledge graph: daily notes, project pages, sysop notes, MOCs. Server autocreates the `pages::` container if missing, returns existing page if name matches (case-insensitive). Returns the page block with ancestorContext.",
     {
-      name: z.string().min(1).describe("Page name. Must be non-empty after trimming whitespace."),
+      name: z.string().trim().min(1).describe("Page name. Must be non-empty after trimming whitespace."),
     },
     async ({ name }: { name: string }) => {
       try {
@@ -768,7 +804,7 @@ export function registerDataTools(server: McpServer) {
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
         .describe("Daily note date, e.g. '2026-04-28'. Server rejects other formats."),
-      content: z.string().min(1).describe("Block content. Must be non-empty after trimming."),
+      content: z.string().trim().min(1).describe("Block content. Must be non-empty after trimming."),
     },
     async ({ date, content }: { date: string; content: string }) => {
       try {
