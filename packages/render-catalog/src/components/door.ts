@@ -475,6 +475,13 @@ export const doorComponentDefinitions = {
   // ─── Audio / Synth (FLO-techno-fidget) ───────────────
   // Web Audio API primitives. AudioContext lazy-inits on first click
   // (browser autoplay policy). No external libs — built on `OscillatorNode`.
+  //
+  // Rig wiring (cross-block sync):
+  //   - `rigId` (default 'main') — namespace for clock + FX bus
+  //   - `clock: '<rigId>'` — listen to MasterClock on that rig (slave mode);
+  //     omit to run own internal transport (master mode, default)
+  //   - `sends: { delay, reverb }` — route audio output through MasterFX
+  //     bus on the same rigId. 0..1 send levels. No-op if no MasterFX.
 
   Tone: {
     props: z.object({
@@ -483,9 +490,14 @@ export const doorComponentDefinitions = {
       wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
       label: z.string().optional(),
       color: z.string().optional(),
+      rigId: z.string().optional(),
+      sends: z.object({
+        delay: z.number().optional(),
+        reverb: z.number().optional(),
+      }).optional(),
     }),
     slots: [],
-    description: "Boring synth primitive: a button that plays one note via Web Audio. Props: freq (Hz, default 440), duration (ms, default 200), wave (sine|square|sawtooth|triangle, default sine), label (default freq label), color (hex). Use as a single click-to-hear cell, or compose into pads/sequencers.",
+    description: "Boring synth primitive: a button that plays one note via Web Audio. Props: freq (Hz, default 440), duration (ms, default 200), wave (sine|square|sawtooth|triangle, default sine), label (default freq label), color (hex). Optional rig wiring: rigId + sends={delay, reverb} routes through MasterFX bus on that rig.",
   },
 
   DrumPad: {
@@ -499,9 +511,14 @@ export const doorComponentDefinitions = {
       })),
       columns: z.number().optional(),
       title: z.string().optional(),
+      rigId: z.string().optional(),
+      sends: z.object({
+        delay: z.number().optional(),
+        reverb: z.number().optional(),
+      }).optional(),
     }),
     slots: [],
-    description: "A grid of clickable pads, each plays a tone. Props: pads (array of {label, freq, duration?, wave?, color?}), columns (default 4), title (optional header). Build kick/snare/hi-hat/perc with different freqs+waves: kick~80Hz sine, snare~200Hz square, hat~6000Hz sawtooth, low-tom~120Hz triangle. Color by role.",
+    description: "A grid of clickable pads, each plays a tone. Props: pads (array of {label, freq, duration?, wave?, color?}), columns (default 4), title (optional header). Build kick/snare/hi-hat/perc with different freqs+waves: kick~80Hz sine, snare~200Hz square, hat~6000Hz sawtooth, low-tom~120Hz triangle. Color by role. Optional rig wiring: rigId + sends route all pads through MasterFX bus.",
   },
 
   StepSequencer: {
@@ -517,9 +534,15 @@ export const doorComponentDefinitions = {
       })),
       initial: z.array(z.array(z.boolean())).optional(),
       title: z.string().optional(),
+      clock: z.string().optional(),
+      rigId: z.string().optional(),
+      sends: z.object({
+        delay: z.number().optional(),
+        reverb: z.number().optional(),
+      }).optional(),
     }),
     slots: [],
-    description: "Step sequencer: tracks × steps grid. Click cells to toggle, PLAY to loop at BPM (16th-note timing). Props: bpm (default 120), steps (default 16), tracks (array of {label, freq, wave?, duration?, color?}), initial (optional [tracks][steps] boolean grid to seed the pattern). Current step has amber outline. Built-in transport bar.",
+    description: "Step sequencer: tracks × steps grid. Click cells to toggle, PLAY to loop at BPM (16th-note timing). Props: bpm (default 120), steps (default 16), tracks (array of {label, freq, wave?, duration?, color?}), initial (optional [tracks][steps] boolean grid to seed the pattern). Current step has amber outline. Built-in transport bar. Rig wiring: clock='<rigId>' makes it a slave of MasterClock (no own transport); sends={delay, reverb} routes through MasterFX on the same rigId.",
   },
 
   AcidBass: {
@@ -537,9 +560,15 @@ export const doorComponentDefinitions = {
       envAmount: z.number().optional(),
       envDecay: z.number().optional(),
       title: z.string().optional(),
+      clock: z.string().optional(),
+      rigId: z.string().optional(),
+      sends: z.object({
+        delay: z.number().optional(),
+        reverb: z.number().optional(),
+      }).optional(),
     }),
     slots: [],
-    description: "303-style mono bass step sequencer. 16 steps × {pitch (semitones from baseFreq), accent (louder + brighter), slide (portamento to next note), gate (null = rest)}. Lowpass filter with envelope: cutoff=base cutoff (Hz), resonance=Q, envAmount=Hz added to cutoff at note-on, envDecay=ms. Live knobs: cutoff/resonance/envAmount/envDecay. baseFreq default 55Hz (A1), wave default 'sawtooth'. The squelch lives in cutoff+resonance+envAmount interaction.",
+    description: "303-style mono bass step sequencer. 16 steps × {pitch (semitones from baseFreq), accent (louder + brighter), slide (portamento to next note), gate (null = rest)}. Lowpass filter with envelope: cutoff=base cutoff (Hz), resonance=Q, envAmount=Hz added to cutoff at note-on, envDecay=ms. Live knobs: cutoff/resonance/envAmount/envDecay. baseFreq default 55Hz (A1), wave default 'sawtooth'. The squelch lives in cutoff+resonance+envAmount interaction. Rig wiring: clock='<rigId>' = slave; sends={delay, reverb} routes through MasterFX.",
   },
 
   EuclideanDrums: {
@@ -556,9 +585,15 @@ export const doorComponentDefinitions = {
         color: z.string().optional(),
       })),
       title: z.string().optional(),
+      clock: z.string().optional(),
+      rigId: z.string().optional(),
+      sends: z.object({
+        delay: z.number().optional(),
+        reverb: z.number().optional(),
+      }).optional(),
     }),
     slots: [],
-    description: "Bjorklund-algorithm Euclidean rhythm sequencer. Per-track (hits, steps, rotation) generates the most-evenly-distributed pattern. Live-tweaking hits/steps cascades polyrhythms. Built-in transport. Props: bpm (default 120), steps (default 16), tracks (array of {label, hits, rotation?, freq, wave?, duration?, color?}). Try (3,8) → tresillo, (5,8) → cinquillo, (7,16) → variable.",
+    description: "Bjorklund-algorithm Euclidean rhythm sequencer. Per-track (hits, steps, rotation) generates the most-evenly-distributed pattern. Live-tweaking hits/steps cascades polyrhythms. Built-in transport. Props: bpm (default 120), steps (default 16), tracks (array of {label, hits, rotation?, freq, wave?, duration?, color?}). Try (3,8) → tresillo, (5,8) → cinquillo, (7,16) → variable. Rig wiring: clock='<rigId>' = slave; sends={delay, reverb} routes through MasterFX.",
   },
 
   XYPad: {
@@ -572,6 +607,36 @@ export const doorComponentDefinitions = {
     }),
     slots: [],
     description: "Press-and-drag pad for sustained drone with continuous filter sweep. X axis = lowpass cutoff (200Hz–8kHz log). Y axis = resonance (0.5–25). Pointer down starts a sustained oscillator through the filter; release stops. Props: baseFreq (default 110Hz), wave (default 'sawtooth'), width (default 280), height (default 220), color (hex). Layer over the AcidBass for ambient pad mode.",
+  },
+
+  // ─── Rig: cross-block clock + FX bus ─────────────────
+  // Multiple sequencer blocks can attach to the same `rigId`. MasterClock
+  // emits step events, slaves listen via clock prop. MasterFX provides
+  // shared delay+reverb sends voices opt into via sends prop.
+
+  MasterClock: {
+    props: z.object({
+      rigId: z.string().optional(),
+      bpm: z.number().optional(),
+      steps: z.number().optional(),
+      swing: z.number().optional(),
+      title: z.string().optional(),
+    }),
+    slots: [],
+    description: "Rig clock — drives all sequencers tagged with `clock: '<rigId>'`. Props: rigId (default 'main'), bpm (default 124), steps (master loop length, default 16), swing (0..1, off-beat 16th delay, default 0), title. PLAY/STOP controls all attached slaves. Display shows step indicator. Voices route audio through MasterFX on same rigId if present.",
+  },
+
+  MasterFX: {
+    props: z.object({
+      rigId: z.string().optional(),
+      delayTime: z.number().optional(),
+      delayFeedback: z.number().optional(),
+      delayMix: z.number().optional(),
+      reverbMix: z.number().optional(),
+      title: z.string().optional(),
+    }),
+    slots: [],
+    description: "Rig FX bus — shared delay + convolution reverb sends. Voices on the same rigId opt into sends via the sends prop ({ delay: 0..1, reverb: 0..1 }). Props: rigId (default 'main'), delayTime (sec, default 0.375 ≈ dotted-eighth at 120 BPM), delayFeedback (0..0.85, default 0.35), delayMix (0..1, default 0.35), reverbMix (0..1, default 0.25). Live knobs.",
   },
 
   // ─── Tree ────────────────────────────────────────────

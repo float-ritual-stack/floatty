@@ -3502,7 +3502,231 @@ function getAudioContext(): AudioContext {
   return _audioCtx;
 }
 
-function playTone(freq: number, durationMs: number, wave: WaveType = 'sine', gainPeak = 0.25): void {
+// ─── RigBus: cross-block clock / transport / FX-send pub-sub ─────
+//
+// Multiple sequencer blocks attach to a named rig (default rigId='main').
+// MasterClock emits 'rig:step' + 'rig:transport' events; slave sequencers
+// listen and react. Voices route audio through getFxSend(rigId, sendName)
+// when MasterFX is mounted on the same rig.
+
+interface RigStepDetail {
+  rigId: string;
+  step: number;        // 0-based step counter (looping per masterSteps)
+  bpm: number;
+  swing: number;       // 0..1 — fraction of step-interval to delay odd 16ths
+  masterSteps: number; // master loop length
+  audioTime: number;   // ctx.currentTime at the tick (seconds)
+}
+interface RigTransportDetail {
+  rigId: string;
+  state: 'play' | 'stop';
+}
+
+interface BusEntry {
+  step: ((d: RigStepDetail) => void) | undefined;
+  transport: ((d: RigTransportDetail) => void) | undefined;
+}
+
+// Listener registries. We use a window-attached map so the singleton
+// survives Vite HMR; the door bundle re-runs but the listeners persist.
+type RigBusGlobal = {
+  __floatty_rig_listeners?: Map<string, Set<(d: RigStepDetail) => void>>;
+  __floatty_rig_transport?: Map<string, Set<(d: RigTransportDetail) => void>>;
+  __floatty_rig_state?: Map<string, { playing: boolean; bpm: number }>;
+};
+const rigGlobal = (): RigBusGlobal => (window as unknown as RigBusGlobal);
+
+function rigStepListeners(rigId: string): Set<(d: RigStepDetail) => void> {
+  const g = rigGlobal();
+  if (!g.__floatty_rig_listeners) g.__floatty_rig_listeners = new Map();
+  let s = g.__floatty_rig_listeners.get(rigId);
+  if (!s) { s = new Set(); g.__floatty_rig_listeners.set(rigId, s); }
+  return s;
+}
+function rigTransportListeners(rigId: string): Set<(d: RigTransportDetail) => void> {
+  const g = rigGlobal();
+  if (!g.__floatty_rig_transport) g.__floatty_rig_transport = new Map();
+  let s = g.__floatty_rig_transport.get(rigId);
+  if (!s) { s = new Set(); g.__floatty_rig_transport.set(rigId, s); }
+  return s;
+}
+
+function emitRigStep(d: RigStepDetail): void {
+  rigStepListeners(d.rigId).forEach(fn => { try { fn(d); } catch { /* swallow */ } });
+}
+function emitRigTransport(d: RigTransportDetail): void {
+  rigTransportListeners(d.rigId).forEach(fn => { try { fn(d); } catch { /* swallow */ } });
+}
+
+function subscribeRigStep(rigId: string, fn: (d: RigStepDetail) => void): () => void {
+  rigStepListeners(rigId).add(fn);
+  return () => { rigStepListeners(rigId).delete(fn); };
+}
+function subscribeRigTransport(rigId: string, fn: (d: RigTransportDetail) => void): () => void {
+  rigTransportListeners(rigId).add(fn);
+  return () => { rigTransportListeners(rigId).delete(fn); };
+}
+
+function rigStateGet(rigId: string): { playing: boolean; bpm: number } {
+  const g = rigGlobal();
+  if (!g.__floatty_rig_state) g.__floatty_rig_state = new Map();
+  let s = g.__floatty_rig_state.get(rigId);
+  if (!s) { s = { playing: false, bpm: 124 }; g.__floatty_rig_state.set(rigId, s); }
+  return s;
+}
+
+// ─── FX bus: delay + reverb sends per rigId ─────────────────────
+//
+// MasterFX creates the bus on mount; voices that opt into a send route
+// their output node into getFxInput(rigId, sendName). Bus exposes setters
+// that MasterFX's UI controls.
+
+interface FxBus {
+  ctx: AudioContext;
+  delayInput: GainNode;
+  delayNode: DelayNode;
+  delayFeedback: GainNode;
+  delayMix: GainNode;
+  reverbInput: GainNode;
+  reverbConvolver: ConvolverNode;
+  reverbMix: GainNode;
+  dest: AudioNode;
+  setDelayTime: (sec: number) => void;
+  setDelayFeedback: (g: number) => void;
+  setDelayMix: (g: number) => void;
+  setReverbMix: (g: number) => void;
+}
+
+function createImpulseResponse(ctx: AudioContext, durationSec: number, decay: number): AudioBuffer {
+  const sr = ctx.sampleRate;
+  const len = Math.max(1, Math.floor(sr * durationSec));
+  const buf = ctx.createBuffer(2, len, sr);
+  for (let ch = 0; ch < 2; ch++) {
+    const data = buf.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      const t = i / len;
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
+    }
+  }
+  return buf;
+}
+
+function buildFxBus(): FxBus {
+  const ctx = getAudioContext();
+  const delayInput = ctx.createGain();
+  const delayNode = ctx.createDelay(1.0);
+  const delayFeedback = ctx.createGain();
+  const delayMix = ctx.createGain();
+  const reverbInput = ctx.createGain();
+  const reverbConvolver = ctx.createConvolver();
+  const reverbMix = ctx.createGain();
+
+  delayNode.delayTime.value = 0.375;     // dotted-eighth at 120 BPM-ish
+  delayFeedback.gain.value = 0.35;
+  delayMix.gain.value = 0.35;
+  reverbMix.gain.value = 0.25;
+  reverbConvolver.buffer = createImpulseResponse(ctx, 2.5, 2.5);
+
+  // Routing:
+  //   delayInput → delayNode → delayMix → destination
+  //                   ↘  delayFeedback → delayNode (loop)
+  //   reverbInput → reverbConvolver → reverbMix → destination
+  delayInput.connect(delayNode);
+  delayNode.connect(delayMix);
+  delayMix.connect(ctx.destination);
+  delayNode.connect(delayFeedback);
+  delayFeedback.connect(delayNode);
+
+  reverbInput.connect(reverbConvolver);
+  reverbConvolver.connect(reverbMix);
+  reverbMix.connect(ctx.destination);
+
+  const setIfChanged = (param: AudioParam, value: number) => {
+    const now = ctx.currentTime;
+    param.cancelScheduledValues(now);
+    param.linearRampToValueAtTime(value, now + 0.05);
+  };
+
+  return {
+    ctx, delayInput, delayNode, delayFeedback, delayMix,
+    reverbInput, reverbConvolver, reverbMix,
+    dest: ctx.destination,
+    setDelayTime: (sec) => setIfChanged(delayNode.delayTime, Math.max(0.01, Math.min(1.0, sec))),
+    setDelayFeedback: (g) => setIfChanged(delayFeedback.gain, Math.max(0, Math.min(0.85, g))),
+    setDelayMix: (g) => setIfChanged(delayMix.gain, Math.max(0, Math.min(1.0, g))),
+    setReverbMix: (g) => setIfChanged(reverbMix.gain, Math.max(0, Math.min(1.0, g))),
+  };
+}
+
+type FxBusGlobal = { __floatty_fx_buses?: Map<string, FxBus> };
+const fxBuses = (): Map<string, FxBus> => {
+  const g = window as unknown as FxBusGlobal;
+  if (!g.__floatty_fx_buses) g.__floatty_fx_buses = new Map();
+  return g.__floatty_fx_buses;
+};
+
+function getOrCreateFxBus(rigId: string): FxBus {
+  const map = fxBuses();
+  let bus = map.get(rigId);
+  if (!bus) { bus = buildFxBus(); map.set(rigId, bus); }
+  return bus;
+}
+
+/**
+ * Returns an input node for the named send on the rig's FX bus, or null
+ * if the bus doesn't exist (no MasterFX mounted). Voices should route to
+ * this OR ctx.destination depending on whether the user wired up FX.
+ */
+function getFxSend(rigId: string, sendName: 'delay' | 'reverb'): AudioNode | null {
+  const bus = fxBuses().get(rigId);
+  if (!bus) return null;
+  return sendName === 'delay' ? bus.delayInput : bus.reverbInput;
+}
+
+/**
+ * Connect a voice node to dry destination AND optionally to FX sends in
+ * proportion to send levels (0..1). All sends are derived from a single
+ * source connection chain — the voice picks its sources here.
+ */
+function routeVoiceToFx(
+  source: AudioNode,
+  ctx: AudioContext,
+  rigId: string,
+  delaySend: number,
+  reverbSend: number,
+): void {
+  // Dry path always connects.
+  source.connect(ctx.destination);
+
+  if (delaySend > 0) {
+    const send = getFxSend(rigId, 'delay');
+    if (send) {
+      const g = ctx.createGain();
+      g.gain.value = Math.max(0, Math.min(1, delaySend));
+      source.connect(g);
+      g.connect(send);
+    }
+  }
+  if (reverbSend > 0) {
+    const send = getFxSend(rigId, 'reverb');
+    if (send) {
+      const g = ctx.createGain();
+      g.gain.value = Math.max(0, Math.min(1, reverbSend));
+      source.connect(g);
+      g.connect(send);
+    }
+  }
+}
+
+function playTone(
+  freq: number,
+  durationMs: number,
+  wave: WaveType = 'sine',
+  gainPeak = 0.25,
+  rigId = 'main',
+  delaySend = 0,
+  reverbSend = 0,
+): void {
   const ctx = getAudioContext();
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -3515,7 +3739,7 @@ function playTone(freq: number, durationMs: number, wave: WaveType = 'sine', gai
   gain.gain.linearRampToValueAtTime(gainPeak, now + 0.005);
   gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
   osc.connect(gain);
-  gain.connect(ctx.destination);
+  routeVoiceToFx(gain, ctx, rigId, delaySend, reverbSend);
   osc.start(now);
   osc.stop(now + dur + 0.02);
 }
@@ -3526,16 +3750,21 @@ export function Tone(props: BaseComponentProps<{
   wave?: WaveType;
   label?: string;
   color?: string;
+  rigId?: string;
+  sends?: { delay?: number; reverb?: number };
 }>) {
   const freq = () => props.props.freq ?? 440;
   const duration = () => props.props.duration ?? 200;
   const wave = () => props.props.wave ?? 'sine';
   const color = () => props.props.color ?? V.cy;
   const label = () => props.props.label ?? `${Math.round(freq())} Hz`;
+  const rigId = () => props.props.rigId ?? 'main';
+  const delaySend = () => props.props.sends?.delay ?? 0;
+  const reverbSend = () => props.props.sends?.reverb ?? 0;
   const [active, setActive] = createSignal(false);
 
   const handleClick = () => {
-    playTone(freq(), duration(), wave());
+    playTone(freq(), duration(), wave(), 0.25, rigId(), delaySend(), reverbSend());
     setActive(true);
     setTimeout(() => setActive(false), Math.min(duration(), 300));
   };
@@ -3567,10 +3796,15 @@ export function DrumPad(props: BaseComponentProps<{
   pads: Array<{ label: string; freq: number; duration?: number; wave?: WaveType; color?: string }>;
   columns?: number;
   title?: string;
+  rigId?: string;
+  sends?: { delay?: number; reverb?: number };
 }>) {
   const pads = () => props.props.pads ?? [];
   const columns = () => props.props.columns ?? 4;
   const title = () => props.props.title;
+  const rigId = () => props.props.rigId ?? 'main';
+  const delaySend = () => props.props.sends?.delay ?? 0;
+  const reverbSend = () => props.props.sends?.reverb ?? 0;
 
   return (
     <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
@@ -3594,7 +3828,7 @@ export function DrumPad(props: BaseComponentProps<{
           const dur = pad.duration ?? 200;
           const color = pad.color ?? V.mag;
           const handleClick = () => {
-            playTone(pad.freq, dur, wave);
+            playTone(pad.freq, dur, wave, 0.25, rigId(), delaySend(), reverbSend());
             setActive(true);
             setTimeout(() => setActive(false), Math.min(dur, 300));
           };
@@ -3633,11 +3867,18 @@ export function StepSequencer(props: BaseComponentProps<{
   tracks: TrackSpec[];
   initial?: boolean[][];
   title?: string;
+  clock?: string;
+  rigId?: string;
+  sends?: { delay?: number; reverb?: number };
 }>) {
   const stepCount = () => props.props.steps ?? 16;
   const bpm = () => props.props.bpm ?? 120;
   const tracks = () => props.props.tracks ?? [];
   const title = () => props.props.title;
+  const clockRig = () => props.props.clock; // truthy = slave mode
+  const rigId = () => props.props.rigId ?? props.props.clock ?? 'main';
+  const delaySend = () => props.props.sends?.delay ?? 0;
+  const reverbSend = () => props.props.sends?.reverb ?? 0;
 
   const seedGrid = (): boolean[][] => {
     const t = tracks();
@@ -3659,21 +3900,51 @@ export function StepSequencer(props: BaseComponentProps<{
 
   const stepIntervalMs = () => 60000 / bpmLocal() / 4; // 16th notes
 
-  const tick = () => {
-    stepCursor = (stepCursor + 1) % stepCount();
-    setCurrentStep(stepCursor);
+  const fireStep = (idx: number) => {
+    setCurrentStep(idx);
     const g = grid();
     const t = tracks();
     g.forEach((row, ti) => {
-      if (row[stepCursor]) {
+      if (row[idx]) {
         const tk = t[ti];
-        if (tk) playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine');
+        if (tk) playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25, rigId(), delaySend(), reverbSend());
       }
     });
   };
 
+  const tick = () => {
+    stepCursor = (stepCursor + 1) % stepCount();
+    fireStep(stepCursor);
+  };
+
+  // Slave mode: subscribe to RigBus, no internal interval.
+  let unsubStep: (() => void) | undefined;
+  let unsubTransport: (() => void) | undefined;
+  createEffect(() => {
+    const rig = clockRig();
+    if (unsubStep) { unsubStep(); unsubStep = undefined; }
+    if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
+    if (!rig) return;
+    unsubStep = subscribeRigStep(rig, (d) => {
+      // Map master step → local step (modulo our own loop length)
+      const idx = d.step % stepCount();
+      fireStep(idx);
+    });
+    unsubTransport = subscribeRigTransport(rig, (d) => {
+      setPlaying(d.state === 'play');
+      if (d.state === 'stop') {
+        stepCursor = -1;
+        setCurrentStep(-1);
+      }
+    });
+    // Sync to whatever state the rig is currently in.
+    const s = rigStateGet(rig);
+    setPlaying(s.playing);
+  });
+
   const start = () => {
     if (playing()) return;
+    if (clockRig()) return; // slave — driven by rig bus
     // Unlock AudioContext via user gesture before scheduling.
     getAudioContext();
     stepCursor = -1;
@@ -3683,6 +3954,7 @@ export function StepSequencer(props: BaseComponentProps<{
   };
 
   const stop = () => {
+    if (clockRig()) return; // slave — only rig bus stops
     setPlaying(false);
     if (intervalId !== null) {
       clearInterval(intervalId);
@@ -3705,7 +3977,11 @@ export function StepSequencer(props: BaseComponentProps<{
     }
   });
 
-  onCleanup(() => { if (intervalId !== null) clearInterval(intervalId); });
+  onCleanup(() => {
+    if (intervalId !== null) clearInterval(intervalId);
+    if (unsubStep) unsubStep();
+    if (unsubTransport) unsubTransport();
+  });
 
   const toggleCell = (track: number, step: number) => {
     setGrid(g => g.map((row, ti) =>
@@ -3733,58 +4009,84 @@ export function StepSequencer(props: BaseComponentProps<{
         }}>{title()}</div>
       </Show>
 
-      {/* Transport */}
-      <div style={{
-        display: 'flex',
-        'align-items': 'center',
-        gap: '10px',
-        'padding-bottom': '8px',
-        'border-bottom': `1px solid ${V.b}`,
-      }}>
-        <button
-          onClick={() => playing() ? stop() : start()}
-          style={{
-            background: playing() ? V.cor : V.green,
-            color: '#000',
-            border: 'none',
-            'border-radius': '4px',
-            padding: '6px 14px',
-            'font-size': '11px',
-            'font-family': V.mono,
-            'font-weight': 'bold',
-            'letter-spacing': '0.1em',
-            cursor: 'pointer',
-            'min-width': '60px',
-          }}
-        >{playing() ? 'STOP' : 'PLAY'}</button>
-
-        <button
-          onClick={clear}
-          style={{
-            background: V.s2,
-            color: V.td,
-            border: `1px solid ${V.b2}`,
-            'border-radius': '4px',
-            padding: '6px 12px',
-            'font-size': '11px',
-            'font-family': V.mono,
-            cursor: 'pointer',
-          }}
-        >CLEAR</button>
-
-        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'margin-left': 'auto' }}>
-          <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em' }}>BPM</span>
-          <input
-            type="range"
-            min="40"
-            max="240"
-            value={bpmLocal()}
-            onInput={(e) => setBpmLocal(parseInt(e.currentTarget.value, 10) || 120)}
-            style={{ width: '120px', 'accent-color': V.amb }}
-          />
-          <span style={{ 'font-size': '12px', color: V.amb, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{bpmLocal()}</span>
+      {/* Transport — local in master mode, badge in slave mode */}
+      <Show when={!clockRig()} fallback={
+        <div style={{
+          display: 'flex', 'align-items': 'center', gap: '8px',
+          'padding-bottom': '8px', 'border-bottom': `1px solid ${V.b}`,
+        }}>
+          <span style={{
+            'font-size': '10px', color: V.cy, 'font-family': V.mono,
+            'letter-spacing': '0.1em', 'text-transform': 'uppercase',
+            background: V.s2, padding: '4px 10px',
+            border: `1px solid ${V.cy}`, 'border-radius': '4px',
+          }}>△ clock: {clockRig()}</span>
+          <button
+            onClick={clear}
+            style={{
+              background: V.s2, color: V.td, border: `1px solid ${V.b2}`,
+              'border-radius': '4px', padding: '4px 10px',
+              'font-size': '11px', 'font-family': V.mono, cursor: 'pointer',
+            }}
+          >CLEAR</button>
+          <span style={{
+            'font-size': '10px', color: V.tf, 'font-family': V.mono,
+            'margin-left': 'auto',
+          }}>{playing() ? '● live' : '○ idle'}</span>
         </div>
-      </div>
+      }>
+        <div style={{
+          display: 'flex',
+          'align-items': 'center',
+          gap: '10px',
+          'padding-bottom': '8px',
+          'border-bottom': `1px solid ${V.b}`,
+        }}>
+          <button
+            onClick={() => playing() ? stop() : start()}
+            style={{
+              background: playing() ? V.cor : V.green,
+              color: '#000',
+              border: 'none',
+              'border-radius': '4px',
+              padding: '6px 14px',
+              'font-size': '11px',
+              'font-family': V.mono,
+              'font-weight': 'bold',
+              'letter-spacing': '0.1em',
+              cursor: 'pointer',
+              'min-width': '60px',
+            }}
+          >{playing() ? 'STOP' : 'PLAY'}</button>
+
+          <button
+            onClick={clear}
+            style={{
+              background: V.s2,
+              color: V.td,
+              border: `1px solid ${V.b2}`,
+              'border-radius': '4px',
+              padding: '6px 12px',
+              'font-size': '11px',
+              'font-family': V.mono,
+              cursor: 'pointer',
+            }}
+          >CLEAR</button>
+
+          <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'margin-left': 'auto' }}>
+            <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em' }}>BPM</span>
+            <input
+              type="range"
+              min="40"
+              max="240"
+              value={bpmLocal()}
+              onInput={(e) => setBpmLocal(parseInt(e.currentTarget.value, 10) || 120)}
+              style={{ width: '120px', 'accent-color': V.amb }}
+            />
+            <span style={{ 'font-size': '12px', color: V.amb, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{bpmLocal()}</span>
+          </div>
+        </div>
+      </Show>
 
       {/* Grid */}
       <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
@@ -3873,7 +4175,12 @@ interface AcidVoice {
   ampEnv: GainNode;
 }
 
-function createAcidVoice(wave: 'sawtooth' | 'square'): AcidVoice {
+function createAcidVoice(
+  wave: 'sawtooth' | 'square',
+  rigId = 'main',
+  delaySend = 0,
+  reverbSend = 0,
+): AcidVoice {
   const ctx = getAudioContext();
   const osc = ctx.createOscillator();
   const filter = ctx.createBiquadFilter();
@@ -3891,7 +4198,7 @@ function createAcidVoice(wave: 'sawtooth' | 'square'): AcidVoice {
   osc.connect(filter);
   filter.connect(ampEnv);
   ampEnv.connect(amp);
-  amp.connect(ctx.destination);
+  routeVoiceToFx(amp, ctx, rigId, delaySend, reverbSend);
   return { ctx, osc, filter, amp, ampEnv };
 }
 
@@ -3912,10 +4219,17 @@ export function AcidBass(props: BaseComponentProps<{
   envAmount?: number;
   envDecay?: number;
   title?: string;
+  clock?: string;
+  rigId?: string;
+  sends?: { delay?: number; reverb?: number };
 }>) {
   const stepCount = () => props.props.steps ?? 16;
   const baseFreq = () => props.props.baseFreq ?? 55;
   const wave = () => props.props.wave ?? 'sawtooth';
+  const clockRig = () => props.props.clock;
+  const rigId = () => props.props.rigId ?? props.props.clock ?? 'main';
+  const delaySend = () => props.props.sends?.delay ?? 0;
+  const reverbSend = () => props.props.sends?.reverb ?? 0;
 
   const seedNotes = (): Array<number | null> => {
     const n = props.props.notes ?? [];
@@ -3991,16 +4305,63 @@ export function AcidBass(props: BaseComponentProps<{
     prevWasNote = true;
   };
 
+  const ensureVoice = () => {
+    if (!voice) {
+      voice = createAcidVoice(wave(), rigId(), delaySend(), reverbSend());
+      voice.osc.start();
+    }
+  };
+
+  const fireStep = (idx: number) => {
+    setCurrentStep(idx);
+    triggerStep(idx);
+  };
+
   const tick = () => {
     stepCursor = (stepCursor + 1) % stepCount();
-    setCurrentStep(stepCursor);
-    triggerStep(stepCursor);
+    fireStep(stepCursor);
   };
+
+  // Slave-mode rig subscriptions
+  let unsubStep: (() => void) | undefined;
+  let unsubTransport: (() => void) | undefined;
+  createEffect(() => {
+    const rig = clockRig();
+    if (unsubStep) { unsubStep(); unsubStep = undefined; }
+    if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
+    if (!rig) return;
+    unsubStep = subscribeRigStep(rig, (d) => {
+      ensureVoice();
+      fireStep(d.step % stepCount());
+    });
+    unsubTransport = subscribeRigTransport(rig, (d) => {
+      if (d.state === 'play') {
+        ensureVoice();
+        prevWasNote = false;
+        setPlaying(true);
+      } else {
+        if (voice) {
+          const now = voice.ctx.currentTime;
+          voice.ampEnv.gain.cancelScheduledValues(now);
+          voice.ampEnv.gain.linearRampToValueAtTime(0.0001, now + 0.05);
+          voice.osc.stop(now + 0.1);
+          voice = null;
+        }
+        setPlaying(false);
+        stepCursor = -1;
+        setCurrentStep(-1);
+        prevWasNote = false;
+      }
+    });
+    const s = rigStateGet(rig);
+    setPlaying(s.playing);
+    if (s.playing) ensureVoice();
+  });
 
   const start = () => {
     if (playing()) return;
-    voice = createAcidVoice(wave());
-    voice.osc.start();
+    if (clockRig()) return;
+    ensureVoice();
     stepCursor = -1;
     prevWasNote = false;
     setCurrentStep(-1);
@@ -4009,6 +4370,7 @@ export function AcidBass(props: BaseComponentProps<{
   };
 
   const stop = () => {
+    if (clockRig()) return;
     setPlaying(false);
     if (intervalId !== null) {
       clearInterval(intervalId);
@@ -4035,7 +4397,12 @@ export function AcidBass(props: BaseComponentProps<{
     }
   });
 
-  onCleanup(() => stop());
+  onCleanup(() => {
+    if (intervalId !== null) clearInterval(intervalId);
+    if (voice) { try { voice.osc.stop(); } catch { /* may already be stopped */ } voice = null; }
+    if (unsubStep) unsubStep();
+    if (unsubTransport) unsubTransport();
+  });
 
   const cycleNote = (i: number) => {
     // Cycle through useful 303 voicings (semitones from base)
@@ -4102,25 +4469,34 @@ export function AcidBass(props: BaseComponentProps<{
         gap: '12px',
         'padding-bottom': '10px',
         'border-bottom': `1px solid ${V.b}`,
+        'flex-wrap': 'wrap',
       }}>
-        <button
-          onClick={() => playing() ? stop() : start()}
-          style={{
-            background: playing() ? V.cor : V.green,
-            color: '#000',
-            border: 'none',
-            'border-radius': '4px',
-            padding: '6px 14px',
-            'font-size': '11px',
-            'font-family': V.mono,
-            'font-weight': 'bold',
-            'letter-spacing': '0.1em',
-            cursor: 'pointer',
-            'min-width': '60px',
-          }}
-        >{playing() ? 'STOP' : 'PLAY'}</button>
-
-        <Knob label="BPM" value={bpm()} min={60} max={200} step={1} setter={setBpm} />
+        <Show when={!clockRig()} fallback={
+          <span style={{
+            'font-size': '10px', color: V.cor, 'font-family': V.mono,
+            'letter-spacing': '0.1em', 'text-transform': 'uppercase',
+            background: V.s2, padding: '5px 10px',
+            border: `1px solid ${V.cor}`, 'border-radius': '4px',
+          }}>△ clock: {clockRig()} {playing() ? '● live' : '○ idle'}</span>
+        }>
+          <button
+            onClick={() => playing() ? stop() : start()}
+            style={{
+              background: playing() ? V.cor : V.green,
+              color: '#000',
+              border: 'none',
+              'border-radius': '4px',
+              padding: '6px 14px',
+              'font-size': '11px',
+              'font-family': V.mono,
+              'font-weight': 'bold',
+              'letter-spacing': '0.1em',
+              cursor: 'pointer',
+              'min-width': '60px',
+            }}
+          >{playing() ? 'STOP' : 'PLAY'}</button>
+          <Knob label="BPM" value={bpm()} min={60} max={200} step={1} setter={setBpm} />
+        </Show>
         <Knob label="CUTOFF" value={cutoff()} min={80} max={4000} step={10} suffix=" Hz" setter={setCutoff} color={V.cy} />
         <Knob label="RES" value={resonance()} min={0.5} max={28} step={0.5} setter={setResonance} color={V.mag} />
         <Knob label="ENV AMT" value={envAmount()} min={0} max={6000} step={50} suffix=" Hz" setter={setEnvAmount} color={V.amb} />
@@ -4334,8 +4710,15 @@ export function EuclideanDrums(props: BaseComponentProps<{
   steps?: number;
   tracks: EuclidTrack[];
   title?: string;
+  clock?: string;
+  rigId?: string;
+  sends?: { delay?: number; reverb?: number };
 }>) {
   const stepCount = () => props.props.steps ?? 16;
+  const clockRig = () => props.props.clock;
+  const rigId = () => props.props.rigId ?? props.props.clock ?? 'main';
+  const delaySend = () => props.props.sends?.delay ?? 0;
+  const reverbSend = () => props.props.sends?.reverb ?? 0;
   const initialTracks = (): EuclidTrack[] =>
     (props.props.tracks ?? []).map(t => ({ ...t }));
 
@@ -4353,20 +4736,43 @@ export function EuclideanDrums(props: BaseComponentProps<{
 
   const stepIntervalMs = () => 60000 / bpm() / 4;
 
-  const tick = () => {
-    stepCursor = (stepCursor + 1) % stepCount();
-    setCurrentStep(stepCursor);
+  const fireStep = (idx: number) => {
+    setCurrentStep(idx);
     const ts = tracks();
     const ps = patterns();
     ts.forEach((tk, ti) => {
-      if (ps[ti]?.[stepCursor]) {
-        playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine');
+      if (ps[ti]?.[idx]) {
+        playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25, rigId(), delaySend(), reverbSend());
       }
     });
   };
 
+  const tick = () => {
+    stepCursor = (stepCursor + 1) % stepCount();
+    fireStep(stepCursor);
+  };
+
+  let unsubStep: (() => void) | undefined;
+  let unsubTransport: (() => void) | undefined;
+  createEffect(() => {
+    const rig = clockRig();
+    if (unsubStep) { unsubStep(); unsubStep = undefined; }
+    if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
+    if (!rig) return;
+    unsubStep = subscribeRigStep(rig, (d) => fireStep(d.step % stepCount()));
+    unsubTransport = subscribeRigTransport(rig, (d) => {
+      setPlaying(d.state === 'play');
+      if (d.state === 'stop') {
+        stepCursor = -1;
+        setCurrentStep(-1);
+      }
+    });
+    setPlaying(rigStateGet(rig).playing);
+  });
+
   const start = () => {
     if (playing()) return;
+    if (clockRig()) return;
     getAudioContext();
     stepCursor = -1;
     setCurrentStep(-1);
@@ -4375,6 +4781,7 @@ export function EuclideanDrums(props: BaseComponentProps<{
   };
 
   const stop = () => {
+    if (clockRig()) return;
     setPlaying(false);
     if (intervalId !== null) {
       clearInterval(intervalId);
@@ -4392,7 +4799,11 @@ export function EuclideanDrums(props: BaseComponentProps<{
     }
   });
 
-  onCleanup(() => { if (intervalId !== null) clearInterval(intervalId); });
+  onCleanup(() => {
+    if (intervalId !== null) clearInterval(intervalId);
+    if (unsubStep) unsubStep();
+    if (unsubTransport) unsubTransport();
+  });
 
   const updateTrack = (i: number, patch: Partial<EuclidTrack>) => {
     setTracks(ts => ts.map((t, idx) => idx === i ? { ...t, ...patch } : t));
@@ -4419,43 +4830,57 @@ export function EuclideanDrums(props: BaseComponentProps<{
       </Show>
 
       {/* Transport */}
-      <div style={{
-        display: 'flex',
-        'align-items': 'center',
-        gap: '10px',
-        'padding-bottom': '8px',
-        'border-bottom': `1px solid ${V.b}`,
-      }}>
-        <button
-          onClick={() => playing() ? stop() : start()}
-          style={{
-            background: playing() ? V.cor : V.green,
-            color: '#000',
-            border: 'none',
-            'border-radius': '4px',
-            padding: '6px 14px',
-            'font-size': '11px',
-            'font-family': V.mono,
-            'font-weight': 'bold',
-            'letter-spacing': '0.1em',
-            cursor: 'pointer',
-            'min-width': '60px',
-          }}
-        >{playing() ? 'STOP' : 'PLAY'}</button>
-
-        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'margin-left': 'auto' }}>
-          <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em' }}>BPM</span>
-          <input
-            type="range"
-            min="60"
-            max="200"
-            value={bpm()}
-            onInput={(e) => setBpm(parseInt(e.currentTarget.value, 10) || 124)}
-            style={{ width: '120px', 'accent-color': V.amb }}
-          />
-          <span style={{ 'font-size': '12px', color: V.amb, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{bpm()}</span>
+      <Show when={!clockRig()} fallback={
+        <div style={{
+          display: 'flex', 'align-items': 'center', gap: '8px',
+          'padding-bottom': '8px', 'border-bottom': `1px solid ${V.b}`,
+        }}>
+          <span style={{
+            'font-size': '10px', color: V.mag, 'font-family': V.mono,
+            'letter-spacing': '0.1em', 'text-transform': 'uppercase',
+            background: V.s2, padding: '5px 10px',
+            border: `1px solid ${V.mag}`, 'border-radius': '4px',
+          }}>△ clock: {clockRig()} {playing() ? '● live' : '○ idle'}</span>
         </div>
-      </div>
+      }>
+        <div style={{
+          display: 'flex',
+          'align-items': 'center',
+          gap: '10px',
+          'padding-bottom': '8px',
+          'border-bottom': `1px solid ${V.b}`,
+        }}>
+          <button
+            onClick={() => playing() ? stop() : start()}
+            style={{
+              background: playing() ? V.cor : V.green,
+              color: '#000',
+              border: 'none',
+              'border-radius': '4px',
+              padding: '6px 14px',
+              'font-size': '11px',
+              'font-family': V.mono,
+              'font-weight': 'bold',
+              'letter-spacing': '0.1em',
+              cursor: 'pointer',
+              'min-width': '60px',
+            }}
+          >{playing() ? 'STOP' : 'PLAY'}</button>
+
+          <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'margin-left': 'auto' }}>
+            <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em' }}>BPM</span>
+            <input
+              type="range"
+              min="60"
+              max="200"
+              value={bpm()}
+              onInput={(e) => setBpm(parseInt(e.currentTarget.value, 10) || 124)}
+              style={{ width: '120px', 'accent-color': V.amb }}
+            />
+            <span style={{ 'font-size': '12px', color: V.amb, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{bpm()}</span>
+          </div>
+        </div>
+      </Show>
 
       {/* Tracks */}
       <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
@@ -4755,6 +5180,340 @@ export function XYPad(props: BaseComponentProps<{
         <span style={{ color: V.cy }}>cutoff {Math.round(readout().cutoff)} Hz</span>
         <span style={{ color: V.mag }}>Q {readout().q.toFixed(1)}</span>
         <span style={{ color: active() ? V.amb : V.tf, 'margin-left': 'auto' }}>{active() ? '● live' : '○ idle'}</span>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MASTER CLOCK — drives RigBus on a named rigId
+// ═══════════════════════════════════════════════════════════════
+
+export function MasterClock(props: BaseComponentProps<{
+  rigId?: string;
+  bpm?: number;
+  steps?: number;
+  swing?: number;
+  title?: string;
+}>) {
+  const rigId = () => props.props.rigId ?? 'main';
+  const masterSteps = () => props.props.steps ?? 16;
+  const initialBpm = props.props.bpm ?? 124;
+
+  const [bpm, setBpm] = createSignal(initialBpm);
+  const [swing, setSwing] = createSignal(props.props.swing ?? 0);
+  const [playing, setPlaying] = createSignal(false);
+  const [currentStep, setCurrentStep] = createSignal(-1);
+
+  let intervalId: number | null = null;
+  let stepCursor = -1;
+
+  const stepIntervalMs = () => 60000 / bpm() / 4;
+
+  const tick = () => {
+    stepCursor = (stepCursor + 1) % masterSteps();
+    setCurrentStep(stepCursor);
+    const ctx = getAudioContext();
+    emitRigStep({
+      rigId: rigId(),
+      step: stepCursor,
+      bpm: bpm(),
+      swing: swing(),
+      masterSteps: masterSteps(),
+      audioTime: ctx.currentTime,
+    });
+  };
+
+  const start = () => {
+    if (playing()) return;
+    getAudioContext();
+    stepCursor = -1;
+    setCurrentStep(-1);
+    setPlaying(true);
+    rigStateGet(rigId()).playing = true;
+    rigStateGet(rigId()).bpm = bpm();
+    emitRigTransport({ rigId: rigId(), state: 'play' });
+    intervalId = window.setInterval(tick, stepIntervalMs());
+  };
+
+  const stop = () => {
+    setPlaying(false);
+    rigStateGet(rigId()).playing = false;
+    if (intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+    setCurrentStep(-1);
+    stepCursor = -1;
+    emitRigTransport({ rigId: rigId(), state: 'stop' });
+  };
+
+  // Re-arm on BPM change
+  createEffect(() => {
+    bpm();
+    if (playing() && intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = window.setInterval(tick, stepIntervalMs());
+    }
+  });
+
+  onCleanup(() => {
+    if (intervalId !== null) clearInterval(intervalId);
+    if (playing()) emitRigTransport({ rigId: rigId(), state: 'stop' });
+  });
+
+  return (
+    <div style={{
+      display: 'flex',
+      'flex-direction': 'column',
+      gap: '10px',
+      padding: '14px',
+      background: 'linear-gradient(135deg, #0d0d0d, #1a0d18)',
+      border: `1px solid ${V.amb}`,
+      'border-radius': '8px',
+      'box-shadow': playing() ? `0 0 18px ${V.amb}33` : 'none',
+      transition: 'box-shadow 0.15s ease',
+    }}>
+      <div style={{
+        display: 'flex', 'align-items': 'center', gap: '12px',
+      }}>
+        <span style={{
+          'font-size': '11px', color: V.amb, 'font-family': V.mono,
+          'text-transform': 'uppercase', 'letter-spacing': '0.18em',
+          'font-weight': 'bold',
+        }}>◇ master clock</span>
+        <span style={{
+          'font-size': '10px', color: V.td, 'font-family': V.mono,
+          padding: '3px 8px', background: V.s2,
+          border: `1px solid ${V.b2}`, 'border-radius': '4px',
+        }}>rig: {rigId()}</span>
+        <Show when={props.props.title}>
+          <span style={{
+            'font-size': '10px', color: V.tf, 'font-family': V.mono,
+            'margin-left': 'auto',
+          }}>{props.props.title}</span>
+        </Show>
+      </div>
+
+      <div style={{
+        display: 'flex', 'align-items': 'center', gap: '14px',
+      }}>
+        <button
+          onClick={() => playing() ? stop() : start()}
+          style={{
+            background: playing() ? V.cor : V.amb,
+            color: '#000',
+            border: 'none',
+            'border-radius': '4px',
+            padding: '8px 18px',
+            'font-size': '12px',
+            'font-family': V.mono,
+            'font-weight': 'bold',
+            'letter-spacing': '0.12em',
+            cursor: 'pointer',
+            'min-width': '74px',
+          }}
+        >{playing() ? '◼ STOP' : '▶ PLAY'}</button>
+
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+          <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em' }}>BPM</span>
+          <input
+            type="range"
+            min="60"
+            max="200"
+            value={bpm()}
+            onInput={(e) => setBpm(parseInt(e.currentTarget.value, 10) || 124)}
+            style={{ width: '120px', 'accent-color': V.amb }}
+          />
+          <span style={{ 'font-size': '14px', color: V.amb, 'font-family': V.mono, 'min-width': '36px', 'text-align': 'right', 'font-weight': 'bold' }}>{bpm()}</span>
+        </div>
+
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+          <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em' }}>SWING</span>
+          <input
+            type="range"
+            min="0"
+            max="0.6"
+            step="0.01"
+            value={swing()}
+            onInput={(e) => setSwing(parseFloat(e.currentTarget.value) || 0)}
+            style={{ width: '80px', 'accent-color': V.cy }}
+          />
+          <span style={{ 'font-size': '11px', color: V.cy, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{Math.round(swing() * 100)}%</span>
+        </div>
+      </div>
+
+      {/* Step indicator */}
+      <div style={{
+        display: 'grid',
+        'grid-template-columns': `repeat(${masterSteps()}, 1fr)`,
+        gap: '3px',
+      }}>
+        <For each={Array.from({ length: masterSteps() }, (_, i) => i)}>{(si) => {
+          const isCurrent = () => currentStep() === si;
+          const isBeat = si % 4 === 0;
+          return (
+            <div style={{
+              height: '8px',
+              background: isCurrent() ? V.amb : (isBeat ? V.s2 : V.bg),
+              border: `1px solid ${isCurrent() ? V.amb : V.b}`,
+              'border-radius': '2px',
+              'box-shadow': isCurrent() ? `0 0 6px ${V.amb}` : 'none',
+              transition: 'background 0.04s ease',
+            }} />
+          );
+        }}</For>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MASTER FX — shared delay + reverb bus per rigId
+// ═══════════════════════════════════════════════════════════════
+
+export function MasterFX(props: BaseComponentProps<{
+  rigId?: string;
+  delayTime?: number;
+  delayFeedback?: number;
+  delayMix?: number;
+  reverbMix?: number;
+  title?: string;
+}>) {
+  const rigId = () => props.props.rigId ?? 'main';
+  const [delayTime, setDelayTime] = createSignal(props.props.delayTime ?? 0.375);
+  const [delayFeedback, setDelayFeedback] = createSignal(props.props.delayFeedback ?? 0.35);
+  const [delayMix, setDelayMix] = createSignal(props.props.delayMix ?? 0.35);
+  const [reverbMix, setReverbMix] = createSignal(props.props.reverbMix ?? 0.25);
+
+  // Mount: build bus on this rigId, push initial values.
+  onMount(() => {
+    const bus = getOrCreateFxBus(rigId());
+    bus.setDelayTime(delayTime());
+    bus.setDelayFeedback(delayFeedback());
+    bus.setDelayMix(delayMix());
+    bus.setReverbMix(reverbMix());
+  });
+
+  // Live: push knob changes to bus.
+  createEffect(() => {
+    const bus = fxBuses().get(rigId());
+    if (!bus) return;
+    bus.setDelayTime(delayTime());
+  });
+  createEffect(() => {
+    const bus = fxBuses().get(rigId());
+    if (!bus) return;
+    bus.setDelayFeedback(delayFeedback());
+  });
+  createEffect(() => {
+    const bus = fxBuses().get(rigId());
+    if (!bus) return;
+    bus.setDelayMix(delayMix());
+  });
+  createEffect(() => {
+    const bus = fxBuses().get(rigId());
+    if (!bus) return;
+    bus.setReverbMix(reverbMix());
+  });
+
+  // Note: we don't tear down the bus on cleanup — it's a shared resource
+  // keyed by rigId, and other voices may still be sending to it. Cleanup
+  // is implicit at AudioContext close.
+
+  return (
+    <div style={{
+      display: 'flex',
+      'flex-direction': 'column',
+      gap: '10px',
+      padding: '14px',
+      background: 'linear-gradient(135deg, #0d0d0d, #0d1a18)',
+      border: `1px solid ${V.cy}`,
+      'border-radius': '8px',
+    }}>
+      <div style={{
+        display: 'flex', 'align-items': 'center', gap: '12px',
+      }}>
+        <span style={{
+          'font-size': '11px', color: V.cy, 'font-family': V.mono,
+          'text-transform': 'uppercase', 'letter-spacing': '0.18em',
+          'font-weight': 'bold',
+        }}>◇ master fx</span>
+        <span style={{
+          'font-size': '10px', color: V.td, 'font-family': V.mono,
+          padding: '3px 8px', background: V.s2,
+          border: `1px solid ${V.b2}`, 'border-radius': '4px',
+        }}>rig: {rigId()}</span>
+        <Show when={props.props.title}>
+          <span style={{
+            'font-size': '10px', color: V.tf, 'font-family': V.mono,
+            'margin-left': 'auto',
+          }}>{props.props.title}</span>
+        </Show>
+      </div>
+
+      <div style={{
+        display: 'flex', gap: '18px', 'flex-wrap': 'wrap',
+        'align-items': 'flex-start',
+      }}>
+        {/* Delay group */}
+        <div style={{
+          display: 'flex', 'flex-direction': 'column', gap: '6px',
+          padding: '10px 12px',
+          background: V.s1,
+          border: `1px solid ${V.b}`,
+          'border-radius': '6px',
+        }}>
+          <span style={{ 'font-size': '9px', color: V.cy, 'font-family': V.mono, 'letter-spacing': '0.1em', 'text-transform': 'uppercase' }}>delay</span>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'align-items': 'center', 'min-width': '60px' }}>
+              <span style={{ 'font-size': '8px', color: V.td, 'font-family': V.mono }}>TIME</span>
+              <input type="range" min="0.05" max="0.95" step="0.01" value={delayTime()} onInput={(e) => setDelayTime(parseFloat(e.currentTarget.value))} style={{ width: '60px', 'accent-color': V.cy }} />
+              <span style={{ 'font-size': '9px', color: V.cy, 'font-family': V.mono }}>{(delayTime() * 1000).toFixed(0)} ms</span>
+            </div>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'align-items': 'center', 'min-width': '60px' }}>
+              <span style={{ 'font-size': '8px', color: V.td, 'font-family': V.mono }}>FBK</span>
+              <input type="range" min="0" max="0.85" step="0.01" value={delayFeedback()} onInput={(e) => setDelayFeedback(parseFloat(e.currentTarget.value))} style={{ width: '60px', 'accent-color': V.cy }} />
+              <span style={{ 'font-size': '9px', color: V.cy, 'font-family': V.mono }}>{Math.round(delayFeedback() * 100)}%</span>
+            </div>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'align-items': 'center', 'min-width': '60px' }}>
+              <span style={{ 'font-size': '8px', color: V.td, 'font-family': V.mono }}>MIX</span>
+              <input type="range" min="0" max="1" step="0.01" value={delayMix()} onInput={(e) => setDelayMix(parseFloat(e.currentTarget.value))} style={{ width: '60px', 'accent-color': V.cy }} />
+              <span style={{ 'font-size': '9px', color: V.cy, 'font-family': V.mono }}>{Math.round(delayMix() * 100)}%</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Reverb group */}
+        <div style={{
+          display: 'flex', 'flex-direction': 'column', gap: '6px',
+          padding: '10px 12px',
+          background: V.s1,
+          border: `1px solid ${V.b}`,
+          'border-radius': '6px',
+        }}>
+          <span style={{ 'font-size': '9px', color: V.mag, 'font-family': V.mono, 'letter-spacing': '0.1em', 'text-transform': 'uppercase' }}>reverb</span>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'align-items': 'center', 'min-width': '60px' }}>
+              <span style={{ 'font-size': '8px', color: V.td, 'font-family': V.mono }}>MIX</span>
+              <input type="range" min="0" max="1" step="0.01" value={reverbMix()} onInput={(e) => setReverbMix(parseFloat(e.currentTarget.value))} style={{ width: '60px', 'accent-color': V.mag }} />
+              <span style={{ 'font-size': '9px', color: V.mag, 'font-family': V.mono }}>{Math.round(reverbMix() * 100)}%</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', 'flex-direction': 'column', gap: '4px',
+          'align-self': 'center',
+          'font-family': V.mono, 'font-size': '10px', color: V.tf,
+          'max-width': '220px',
+          'line-height': '1.4',
+        }}>
+          <span style={{ color: V.td, 'font-size': '9px', 'letter-spacing': '0.1em', 'text-transform': 'uppercase' }}>send wiring</span>
+          <span>voices opt in via</span>
+          <span style={{ color: V.cy }}>sends: {'{ delay, reverb }'}</span>
+          <span>matching <span style={{ color: V.amb }}>rigId</span></span>
+        </div>
       </div>
     </div>
   );

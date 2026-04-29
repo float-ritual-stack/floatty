@@ -68,6 +68,8 @@ import {
   AcidBass,
   EuclideanDrums,
   XYPad,
+  MasterClock,
+  MasterFX,
   injectBodyStyles,
 } from './components';
 
@@ -139,6 +141,8 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     AcidBass,
     EuclideanDrums,
     XYPad,
+    MasterClock,
+    MasterFX,
   },
   actions: {
     navigate: async () => {},

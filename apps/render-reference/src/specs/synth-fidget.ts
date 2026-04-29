@@ -22,6 +22,12 @@ export const synthFidgetSpec: Spec = {
       children: [
         'header',
         'banner',
+        'rig-h',
+        'rig-readme',
+        'rig-master-row',
+        'rig-stepseq',
+        'rig-acid',
+        'rig-euclid',
         'tone-h',
         'tone-row',
         'drumpad-h',
@@ -52,6 +58,110 @@ export const synthFidgetSpec: Spec = {
       props: {
         type: 'insight',
         text: 'Click anything. AudioContext unlocks on first interaction. Volume up but not up-up.',
+      },
+    },
+
+    'rig-h': {
+      type: 'Text',
+      props: { content: '## 0. Rig — multi-block sync via MasterClock + MasterFX', size: 'lg', weight: 'bold' },
+    },
+
+    'rig-readme': {
+      type: 'EntryBody',
+      props: {
+        markdown:
+          'Below: a **MasterClock** + **MasterFX** drive three slave sequencers.\n\n' +
+          '- `clock: \'main\'` makes a sequencer follow rig `main` (no own transport — see △ badge).\n' +
+          '- `sends: { delay, reverb }` routes audio through MasterFX on the same `rigId`.\n' +
+          '- Hit PLAY on the master and all three slaves tick in sync. Tweak filter knobs on the AcidBass while the rig runs; tweak hits/rotation on the Euclidean tracks; everything stays locked.\n\n' +
+          'This is the rig pattern — composable blocks instead of one monolith. Same primitive scales to N rigs (`rigId: \'aux\'` for a polyrhythm bus).',
+      },
+    },
+
+    'rig-master-row': {
+      type: 'Stack',
+      props: { direction: 'horizontal', gap: 14 },
+      children: ['rig-master-clock', 'rig-master-fx'],
+    },
+
+    'rig-master-clock': {
+      type: 'MasterClock',
+      props: {
+        rigId: 'main',
+        bpm: 124,
+        steps: 16,
+        title: 'drives all clock="main" slaves',
+      },
+    },
+
+    'rig-master-fx': {
+      type: 'MasterFX',
+      props: {
+        rigId: 'main',
+        delayTime: 0.42,
+        delayFeedback: 0.42,
+        delayMix: 0.32,
+        reverbMix: 0.28,
+        title: 'shared by all sends',
+      },
+    },
+
+    'rig-stepseq': {
+      type: 'StepSequencer',
+      props: {
+        title: 'drums (slave) — sends → reverb',
+        clock: 'main',
+        rigId: 'main',
+        sends: { reverb: 0.4 },
+        steps: 16,
+        tracks: [
+          { label: 'KICK',  freq: 60,   wave: 'sine',     duration: 180, color: '#ff4444' },
+          { label: 'SNARE', freq: 200,  wave: 'square',   duration: 100, color: '#ffb300' },
+          { label: 'HAT',   freq: 6500, wave: 'sawtooth', duration: 50,  color: '#00e5ff' },
+          { label: 'PERC',  freq: 320,  wave: 'triangle', duration: 90,  color: '#e040a0' },
+        ],
+        initial: [
+          [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false],
+          [false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false],
+          [false, false, true, false, false, false, true, false, false, false, true, false, false, false, true, false],
+          [false, false, false, false, false, false, false, true, false, false, false, false, false, false, true, false],
+        ],
+      },
+    },
+
+    'rig-acid': {
+      type: 'AcidBass',
+      props: {
+        title: 'bass (slave) — sends → delay + reverb',
+        clock: 'main',
+        rigId: 'main',
+        sends: { delay: 0.5, reverb: 0.2 },
+        steps: 16,
+        notes: [0, null, 12, 0, 3, null, 7, 0, 0, null, 10, 5, 0, null, 7, 3],
+        accents: [true, false, false, false, true, false, false, false, true, false, false, false, true, false, false, false],
+        slides:  [false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false],
+        baseFreq: 55,
+        wave: 'sawtooth',
+        cutoff: 700,
+        resonance: 16,
+        envAmount: 2600,
+        envDecay: 200,
+      },
+    },
+
+    'rig-euclid': {
+      type: 'EuclideanDrums',
+      props: {
+        title: 'polyrhythm layer (slave) — sends → delay',
+        clock: 'main',
+        rigId: 'main',
+        sends: { delay: 0.35 },
+        steps: 16,
+        tracks: [
+          { label: 'TOM',   hits: 5, rotation: 1, freq: 160, wave: 'triangle', duration: 90,  color: '#a02070' },
+          { label: 'BLIP',  hits: 7, rotation: 0, freq: 880, wave: 'sine',     duration: 50,  color: '#98c379' },
+          { label: 'CLAVE', hits: 3, rotation: 2, freq: 1500, wave: 'square',   duration: 40,  color: '#ffb300' },
+        ],
       },
     },
 
