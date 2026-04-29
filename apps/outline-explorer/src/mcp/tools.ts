@@ -738,6 +738,14 @@ export function registerDataTools(server: McpServer) {
         if (parentId !== undefined) body.parentId = parentId;
         if (collapsed !== undefined) body.collapsed = collapsed;
 
+        // Empty-body guard — caller passed only blockId. Surface a clear UX
+        // error at the MCP boundary rather than making a no-op API call.
+        if (Object.keys(body).length === 0) {
+          return errorResult(
+            "No updates requested. Provide at least one of: content, parentId, collapsed."
+          );
+        }
+
         const block = await floattyFetch<Block>(`/api/v1/blocks/${blockId}`, {
           method: "PATCH",
           body: JSON.stringify(body),

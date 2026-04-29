@@ -25,7 +25,7 @@ If you're sketching N PRs to land what could be 1 PR, **stop and surface the bun
 
 ## Reference: prior incidents
 
-- 2026-04-28 outline-explorer MCP work: Initial proposal was a 4-PR stack (dual-shape → write tools → neighbourhood → bulk). Reality: 1 coherent TypeScript-only PR (the dual-shape + write tools + estimate_subtree bundle) + 1 coherent Rust API PR (neighbourhood + bulk endpoints, separate, parallel). The "stack" was invented by treating bot review as team review.
+- [[2026-04-28]] outline-explorer MCP work ([[PR #291]]): Initial proposal was a 4-PR stack (dual-shape → write tools → neighbourhood → bulk). Reality: 1 coherent TypeScript-only PR (the dual-shape + write tools + estimate_subtree bundle) + 1 coherent Rust API PR (neighbourhood + bulk endpoints, separate, parallel). The "stack" was invented by treating bot review as team review.
 - See memory: `feedback_default_to_bundling.md`, `feedback_decision_branching_is_stall.md` — same lesson, project-scoped form here.
 
 ## Composes with
