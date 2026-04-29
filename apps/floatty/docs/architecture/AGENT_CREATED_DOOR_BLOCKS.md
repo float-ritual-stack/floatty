@@ -248,7 +248,7 @@ User direction (preserved verbatim):
 > similar to user intiated ones, like auto-execute, not have the flash of
 > JSON, etc"*
 
-> *"this is a feature of dors/render doors that i have been wanting for
+> *"this is a feature of doors/render doors that i have been wanting for
 > awhile outside of this, and i thhink its a crucial piece t really
 > unlocking their power and potential and would rate it as a high
 > priority, foundational architecture, not nice to have optional polish"*
