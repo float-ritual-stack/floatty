@@ -10,7 +10,7 @@
  * never receives events emitted on rig 'B', unsubscribe actually
  * detaches, and multiple listeners on the same rig all fire.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
   bjorklund,
   rotateArray,
@@ -19,6 +19,7 @@ import {
   emitRigStep,
   emitRigTransport,
   rigStateGet,
+  applySwing,
   type RigStepDetail,
   type RigTransportDetail,
 } from './components';
@@ -216,6 +217,64 @@ describe('RigBus.subscribeRigStep', () => {
 
   it('emit with no subscribers is a silent no-op (no throw)', () => {
     expect(() => emitRigStep(makeStepDetail('__nobody_listening__', 0))).not.toThrow();
+  });
+});
+
+describe('applySwing', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const detail = (step: number, swing: number, bpm = 120): RigStepDetail =>
+    ({ rigId: 'main', step, bpm, swing, masterSteps: 16, audioTime: 0 });
+
+  it('fires immediately on even steps regardless of swing', () => {
+    const fire = vi.fn();
+    applySwing(detail(0, 0.5), fire);
+    expect(fire).toHaveBeenCalledTimes(1);
+    applySwing(detail(2, 0.5), fire);
+    expect(fire).toHaveBeenCalledTimes(2);
+    applySwing(detail(14, 0.5), fire);
+    expect(fire).toHaveBeenCalledTimes(3);
+  });
+
+  it('fires immediately on odd steps when swing is 0', () => {
+    const fire = vi.fn();
+    applySwing(detail(1, 0), fire);
+    applySwing(detail(3, 0), fire);
+    expect(fire).toHaveBeenCalledTimes(2);
+  });
+
+  it('delays odd steps by swing * stepInterval when swing > 0', () => {
+    const fire = vi.fn();
+    // 120 BPM → 16th = 60000/120/4 = 125ms. Swing 0.5 → 62.5ms delay.
+    applySwing(detail(1, 0.5, 120), fire);
+    expect(fire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60);
+    expect(fire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(10);
+    expect(fire).toHaveBeenCalledTimes(1);
+  });
+
+  it('clamps swing > 0.85 to prevent next-step collision', () => {
+    const fire = vi.fn();
+    // Swing 1.0 would equal a full step; we cap at 0.85 to prevent overlap.
+    applySwing(detail(1, 1.0, 120), fire);
+    // 125ms * 0.85 = 106.25ms.
+    vi.advanceTimersByTime(105);
+    expect(fire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(5);
+    expect(fire).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles bpm <= 30 without divide-by-near-zero pathology', () => {
+    const fire = vi.fn();
+    // bpm clamps to 30 internally.
+    applySwing(detail(1, 0.5, 0), fire);
+    // 60000/30/4 = 500ms; 0.5 * 500 = 250ms.
+    vi.advanceTimersByTime(240);
+    expect(fire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(20);
+    expect(fire).toHaveBeenCalledTimes(1);
   });
 });
 

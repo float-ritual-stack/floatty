@@ -531,6 +531,12 @@ export const doorComponentDefinitions = {
         duration: z.number().optional(),
         wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
         color: z.string().optional(),
+        // Per-track FX sends override component-level sends. Useful when
+        // kick should stay dry but hat goes wet.
+        sends: z.object({
+          delay: z.number().optional(),
+          reverb: z.number().optional(),
+        }).optional(),
       })),
       initial: z.array(z.array(z.boolean())).optional(),
       title: z.string().optional(),
@@ -542,7 +548,7 @@ export const doorComponentDefinitions = {
       }).optional(),
     }),
     slots: [],
-    description: "Step sequencer: tracks × steps grid. Click cells to toggle, PLAY to loop at BPM (16th-note timing). Props: bpm (default 120), steps (default 16), tracks (array of {label, freq, wave?, duration?, color?}), initial (optional [tracks][steps] boolean grid to seed the pattern). Current step has amber outline. Built-in transport bar. Rig wiring: clock='<rigId>' makes it a slave of MasterClock (no own transport); sends={delay, reverb} routes through MasterFX on the same rigId.",
+    description: "Step sequencer: tracks × steps grid. Click cells to toggle, PLAY to loop at BPM (16th-note timing). Props: bpm (default 120), steps (default 16), tracks (array of {label, freq, wave?, duration?, color?, sends?}), initial (optional [tracks][steps] boolean grid to seed the pattern). Current step has amber outline. Built-in transport bar. Rig wiring: clock='<rigId>' makes it a slave of MasterClock (no own transport); component-level sends={delay, reverb} routes all tracks through MasterFX on the same rigId, OR set per-track sends on individual tracks (kick dry, hat wet).",
   },
 
   AcidBass: {
@@ -583,6 +589,11 @@ export const doorComponentDefinitions = {
         duration: z.number().optional(),
         wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
         color: z.string().optional(),
+        // Per-track FX sends override component-level sends.
+        sends: z.object({
+          delay: z.number().optional(),
+          reverb: z.number().optional(),
+        }).optional(),
       })),
       title: z.string().optional(),
       clock: z.string().optional(),
@@ -593,7 +604,7 @@ export const doorComponentDefinitions = {
       }).optional(),
     }),
     slots: [],
-    description: "Bjorklund-algorithm Euclidean rhythm sequencer. Per-track (hits, steps, rotation) generates the most-evenly-distributed pattern. Live-tweaking hits/steps cascades polyrhythms. Built-in transport. Props: bpm (default 120), steps (default 16), tracks (array of {label, hits, rotation?, freq, wave?, duration?, color?}). Try (3,8) → tresillo, (5,8) → cinquillo, (7,16) → variable. Rig wiring: clock='<rigId>' = slave; sends={delay, reverb} routes through MasterFX.",
+    description: "Bjorklund-algorithm Euclidean rhythm sequencer. Per-track (hits, steps, rotation) generates the most-evenly-distributed pattern. Live-tweaking hits/steps cascades polyrhythms. Built-in transport. Props: bpm (default 120), steps (default 16), tracks (array of {label, hits, rotation?, freq, wave?, duration?, color?, sends?}). Try (3,8) → tresillo, (5,8) → cinquillo, (7,16) → variable. Rig wiring: clock='<rigId>' = slave; component-level sends={delay, reverb} routes all tracks through MasterFX, OR per-track sends to mix kick-dry-hat-wet style.",
   },
 
   XYPad: {

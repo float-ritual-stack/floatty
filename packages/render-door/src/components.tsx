@@ -3567,6 +3567,27 @@ export function subscribeRigTransport(rigId: string, fn: (d: RigTransportDetail)
   return () => { rigTransportListeners(rigId).delete(fn); };
 }
 
+/**
+ * Wrap a step-fire callback so it honors the rig's swing value: odd 16ths
+ * (1/4 of the bar's mid-points) get delayed by `swing * stepIntervalMs`,
+ * even 16ths fire immediately. Maps the MasterClock UI knob (0..0.6) into
+ * a behavioral delay.
+ *
+ * Swing 0   = straight 16ths
+ * Swing 0.5 = full triplet feel (off-beat halfway between)
+ * Swing 0.6 = max — past triplet, into shuffle
+ */
+export function applySwing(d: RigStepDetail, fire: () => void): void {
+  const isOffBeat = (d.step % 2) === 1;
+  if (!isOffBeat || d.swing <= 0) {
+    fire();
+    return;
+  }
+  const stepIntervalMs = 60000 / Math.max(d.bpm, 30) / 4;
+  const delayMs = Math.min(d.swing, 0.85) * stepIntervalMs;
+  setTimeout(fire, delayMs);
+}
+
 export function rigStateGet(rigId: string): { playing: boolean; bpm: number } {
   const g = rigGlobal();
   if (!g.__floatty_rig_state) g.__floatty_rig_state = new Map();
@@ -3928,7 +3949,7 @@ export function StepSequencer(props: BaseComponentProps<{
     unsubStep = subscribeRigStep(rig, (d) => {
       // Map master step → local step (modulo our own loop length)
       const idx = d.step % stepCount();
-      fireStep(idx);
+      applySwing(d, () => fireStep(idx));
     });
     unsubTransport = subscribeRigTransport(rig, (d) => {
       setPlaying(d.state === 'play');
@@ -4332,7 +4353,7 @@ export function AcidBass(props: BaseComponentProps<{
     if (!rig) return;
     unsubStep = subscribeRigStep(rig, (d) => {
       ensureVoice();
-      fireStep(d.step % stepCount());
+      applySwing(d, () => fireStep(d.step % stepCount()));
     });
     unsubTransport = subscribeRigTransport(rig, (d) => {
       if (d.state === 'play') {
@@ -4775,7 +4796,7 @@ export function EuclideanDrums(props: BaseComponentProps<{
     if (unsubStep) { unsubStep(); unsubStep = undefined; }
     if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
     if (!rig) return;
-    unsubStep = subscribeRigStep(rig, (d) => fireStep(d.step % stepCount()));
+    unsubStep = subscribeRigStep(rig, (d) => applySwing(d, () => fireStep(d.step % stepCount())));
     unsubTransport = subscribeRigTransport(rig, (d) => {
       setPlaying(d.state === 'play');
       if (d.state === 'stop') {
