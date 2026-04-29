@@ -3603,6 +3603,39 @@ export function rigStateGet(rigId: string): { playing: boolean; bpm: number } {
 }
 
 /**
+ * Beat-ticks footer for sequencer step grids. Renders one cell per step:
+ * the current step shows in amber, downbeats (every 4) show their beat
+ * number, off-beats show a dim dot. Width-spacer matches the 70px label
+ * gutter that StepSequencer / AcidBass / EuclideanDrums use to align
+ * tick numbers with their step columns.
+ *
+ * Three sequencers had this exact JSX inlined; consolidating prevents
+ * style drift if we change tick density / colors in one place.
+ */
+function BeatTicksFooter(props: { stepCount: number; currentStep: number; gutterWidth?: string }) {
+  return (
+    <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+      <span style={{ width: props.gutterWidth ?? '70px' }} />
+      <div style={{
+        display: 'grid',
+        'grid-template-columns': `repeat(${props.stepCount}, 1fr)`,
+        gap: '3px',
+        flex: 1,
+      }}>
+        <For each={Array.from({ length: props.stepCount }, (_, i) => i)}>{(si) => (
+          <div style={{
+            'text-align': 'center',
+            'font-size': '8px',
+            color: props.currentStep === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
+            'font-family': V.mono,
+          }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
+        )}</For>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Slave-mode "△ clock: rigName" pill. Color-themed per voice, optionally
  * trailed by a live/idle dot. Common visual across the slave fallback in
  * StepSequencer / AcidBass / EuclideanDrums; sibling controls (clear, knobs)
@@ -3749,20 +3782,40 @@ const fxBuses = (): Map<string, FxBus> => {
 };
 
 function getOrCreateFxBus(rigId: string): FxBus {
+  const ctx = getAudioContext();
   const map = fxBuses();
   let bus = map.get(rigId);
+  // Staleness check (Vite HMR + AudioContext close): the FX-bus map is
+  // window-attached so it survives module reload, but the AudioContext
+  // singleton _audioCtx is module-local. After HMR the module reruns,
+  // _audioCtx resets to null, getAudioContext() builds a fresh ctx —
+  // but the cached bus still holds nodes bound to the OLD ctx. Voices
+  // in the new ctx that try to connect to those nodes throw
+  // InvalidAccessError. Drop + rebuild when contexts diverge.
+  if (bus && bus.ctx !== ctx) {
+    map.delete(rigId);
+    bus = undefined;
+  }
   if (!bus) { bus = buildFxBus(); map.set(rigId, bus); }
   return bus;
 }
 
 /**
  * Returns an input node for the named send on the rig's FX bus, or null
- * if the bus doesn't exist (no MasterFX mounted). Voices should route to
- * this OR ctx.destination depending on whether the user wired up FX.
+ * if the bus doesn't exist (no MasterFX mounted) OR if the cached bus
+ * is from a previous AudioContext (HMR staleness — see getOrCreateFxBus).
+ * Voices should route to this OR ctx.destination depending on whether
+ * the user wired up FX. Stale buses get evicted from the map so the next
+ * MasterFX mount rebuilds cleanly.
  */
 function getFxSend(rigId: string, sendName: 'delay' | 'reverb'): AudioNode | null {
   const bus = fxBuses().get(rigId);
   if (!bus) return null;
+  // Staleness check — see getOrCreateFxBus for the failure mode.
+  if (bus.ctx !== getAudioContext()) {
+    fxBuses().delete(rigId);
+    return null;
+  }
   return sendName === 'delay' ? bus.delayInput : bus.reverbInput;
 }
 
@@ -4210,25 +4263,7 @@ export function StepSequencer(props: BaseComponentProps<{
         )}</For>
       </div>
 
-      {/* Beat ticks footer */}
-      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-        <span style={{ width: '70px' }} />
-        <div style={{
-          display: 'grid',
-          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
-          gap: '3px',
-          flex: 1,
-        }}>
-          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
-            <div style={{
-              'text-align': 'center',
-              'font-size': '8px',
-              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
-              'font-family': V.mono,
-            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
-          )}</For>
-        </div>
-      </div>
+      <BeatTicksFooter stepCount={stepCount()} currentStep={currentStep()} />
     </div>
   );
 }
@@ -4691,25 +4726,7 @@ export function AcidBass(props: BaseComponentProps<{
         </div>
       </div>
 
-      {/* Beat ticks */}
-      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-        <span style={{ width: '70px' }} />
-        <div style={{
-          display: 'grid',
-          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
-          gap: '3px',
-          flex: 1,
-        }}>
-          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
-            <div style={{
-              'text-align': 'center',
-              'font-size': '8px',
-              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
-              'font-family': V.mono,
-            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
-          )}</For>
-        </div>
-      </div>
+      <BeatTicksFooter stepCount={stepCount()} currentStep={currentStep()} />
     </div>
   );
 }
@@ -5038,25 +5055,7 @@ export function EuclideanDrums(props: BaseComponentProps<{
         }}</For>
       </div>
 
-      {/* Beat ticks footer */}
-      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-        <span style={{ width: '70px' }} />
-        <div style={{
-          display: 'grid',
-          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
-          gap: '3px',
-          flex: 1,
-        }}>
-          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
-            <div style={{
-              'text-align': 'center',
-              'font-size': '8px',
-              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
-              'font-family': V.mono,
-            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
-          )}</For>
-        </div>
-      </div>
+      <BeatTicksFooter stepCount={stepCount()} currentStep={currentStep()} />
     </div>
   );
 }
