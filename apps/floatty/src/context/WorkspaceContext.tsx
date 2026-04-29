@@ -199,7 +199,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     shortHashIndex,
   };
 
-  // Wire up auto-execute handler for externally-created blocks (API/CRDT sync)
+  // Wire up auto-execute handler for externally-created blocks (API/CRDT sync).
+  // See apps/floatty/docs/architecture/AGENT_CREATED_DOOR_BLOCKS.md for the full
+  // lifecycle, allowlist policy, and how this composes with the slim path's
+  // Remote/ReconnectAuthority output-presence guard in useBlockStore.
   onMount(() => {
     setAutoExecuteHandler((blockId: string, content: string) => {
       logger.info('External block detected', { blockId, contentLength: content.length });

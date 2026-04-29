@@ -209,6 +209,32 @@ patterns can't sync with our RigBus clock without postMessage glue.
 If a future agent ships this: pair it with a `clock: 'main'` semantic that pings the
 iframe via postMessage on each rig step (Strudel can hook external clock).
 
+### FX bus HMR staleness — guard, don't tear down
+
+The FX bus map (`window.__floatty_fx_buses`) is window-attached so it
+survives Vite HMR. The AudioContext singleton (`_audioCtx`) is module-local
+and resets across HMR. After HMR, new voices in the new AudioContext try
+to connect to bus nodes from the old context → `InvalidAccessError:
+cannot connect to an AudioNode belonging to a different audio context`.
+
+`getFxSend` and `getOrCreateFxBus` both compare `bus.ctx` to the current
+`getAudioContext()`. Mismatch → evict the stale entry from the map. Voices
+in transition fall back to dry destination (skip the FX send) instead of
+throwing. Next `MasterFX` mount on the rigId rebuilds against the new ctx.
+
+jsdom can't run real Web Audio, so the runtime assertion lives in the
+`apps/render-reference` dev-server + browser-console verification (zero
+`InvalidAccessError` exceptions across HMR cycles + button-click probes).
+Confirmed live 2026-04-29 03:38 after the fix landed.
+
+**Partial-connect race** (CodeRabbit P1.2 #292): `routeVoiceToFx` calls
+`getFxSend('delay')` then `getFxSend('reverb')` separately. If HMR runs
+between them (vanishingly rare during dev-only flow), the first send
+connects to the old-ctx bus and the second evicts + returns null. Voice
+ends up with one orphaned FX send (silently garbage-collected later). Net
+effect = no throw, slightly off mix for one note. Not worth fixing; named
+here so the next person doesn't get surprised.
+
 ### Why bjorklund needs a rotate-to-first-hit step
 
 The recursive Bjorklund algorithm produces e.g. `[F, T, F, F, T, F, F, T]` for `(3, 8)`.

@@ -250,7 +250,7 @@ interface LocalBlock {
   createdAt?: number;
 }
 
-interface BlockActions {
+export interface BlockActions {
   getBlock: (id: string) => LocalBlock | undefined;
   getChildren: (id: string) => string[];
   rootIds?: () => readonly string[];
@@ -325,6 +325,91 @@ function blockToTreeNode(block: LocalBlock, actions: BlockActions): TreeNode {
     status: detectBlockStatus(block.content),
     ...(children.length > 0 ? { children } : {}),
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CHILD-CONFIG — blocks-as-config for raw-json render specs
+// ═══════════════════════════════════════════════════════════════
+//
+// Same pattern as `func::` (see help::func / [[05175ac4]]) and `kanban::`:
+// the user puts a render block at top, then writes `prefix:: value`
+// children to override values inside the spec. The render door reads
+// the children at execute() time, parses each `prefix:: value` pair,
+// and merges into spec.state under matching keys. Audio components
+// (or any json-render component) can then bind via `{ "$state": "/key" }`.
+//
+// Example:
+//
+//   render:: {"root":"r","state":{"bpm":124},"elements":{
+//     "r":{"type":"AcidBass","props":{
+//       "bpm":{"$state":"/bpm"},
+//       "notes":{"$state":"/notes"},
+//       "cutoff":{"$state":"/cutoff"}
+//     }}}}
+//   ↳ bpm:: 130
+//   ↳ cutoff:: 850
+//   ↳ notes:: [0, null, 12, 7]
+//
+// Result: child blocks override the spec's defaults. Edit a child →
+// subscribeBlockChanges fires → render re-executes → component receives
+// the new state.
+//
+// Why this shape:
+// - User can edit values without touching JSON spec
+// - Values are typed: JSON.parse first, fall back to a string
+// - One value per child block — outline-native, navigable
+// - Same flow as kanban (cards-from-children) and func (input/body
+//   from children) — uses the existing primitive
+
+/**
+ * Try to parse a config value:
+ * 1. Strict JSON first (handles arrays, objects, numbers, booleans, null, strings)
+ * 2. Fall back to the raw string (so `clock:: main` works without quoting)
+ */
+export function parseChildConfigValue(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (trimmed === '') return '';
+  try { return JSON.parse(trimmed); } catch { /* fall through */ }
+  // Common booleans without quoting
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  if (trimmed === 'null') return null;
+  return trimmed;
+}
+
+const CHILD_CONFIG_RE = /^([a-zA-Z][a-zA-Z0-9_-]*)\s*::\s*([\s\S]*)$/;
+
+/**
+ * Walk a render block's direct children and extract `prefix:: value` pairs.
+ * Returns a flat object suitable for merging into spec.state. Reserved
+ * prefixes (render::, help::, ctx::) are skipped — they have their own
+ * meaning in the outline.
+ */
+export function readChildConfig(parentBlockId: string, actions: BlockActions): Record<string, unknown> {
+  const RESERVED = new Set(['render', 'help', 'ctx', 'sh', 'term', 'ai', 'chat', 'dispatch', 'daily', 'echocopy', 'sync', 'pages']);
+  const childIds = actions.getChildren(parentBlockId);
+  const config: Record<string, unknown> = {};
+  for (const cid of childIds) {
+    const child = actions.getBlock(cid) as LocalBlock | undefined;
+    if (!child?.content) continue;
+    const m = CHILD_CONFIG_RE.exec(child.content);
+    if (!m) continue;
+    const [, key, val] = m;
+    if (RESERVED.has(key.toLowerCase())) continue;
+    config[key] = parseChildConfigValue(val);
+  }
+  return config;
+}
+
+/**
+ * Merge config object into spec.state. Spec-defined defaults stay if
+ * the child config didn't override them. Returns a new spec (does not
+ * mutate input).
+ */
+export function applyChildConfig(spec: LooseSpec, config: Record<string, unknown>): LooseSpec {
+  if (Object.keys(config).length === 0) return spec;
+  const baseState = (spec.state && typeof spec.state === 'object') ? spec.state : {};
+  return { ...spec, state: { ...baseState, ...config } };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -567,7 +652,7 @@ interface LooseElement {
   bindings?: Record<string, unknown>;
 }
 
-interface LooseSpec {
+export interface LooseSpec {
   root?: string;
   elements?: Record<string, LooseElement>;
   state?: Record<string, unknown>;
@@ -1428,14 +1513,50 @@ export const door = {
       return;
     }
 
-    // Raw JSON spec
+    // Raw JSON spec — also reads `prefix:: value` child blocks and merges
+    // them into spec.state, so users can edit values from the outline
+    // (kanban / func pattern). Child changes re-execute via
+    // subscribeBlockChanges, same primitive kanban/expand use.
     try {
-      const spec = JSON.parse(arg);
-      if (spec.root && spec.elements) {
-        setOutputWithTitle({ spec: normalizeSpec(spec, ctx), generatedVia: 'raw-json' });
-      } else {
+      const baseSpec = JSON.parse(arg) as LooseSpec;
+      if (!baseSpec.root || !baseSpec.elements) {
         setOutputWithTitle({ spec: null }, 'JSON must have root + elements');
+        return;
       }
+
+      const storeActions: BlockActions = {
+        getBlock: (id: string) => ctx.actions.getBlock(id) as LocalBlock | undefined,
+        getChildren: (id: string) => ctx.actions.getChildren(id),
+        rootIds: () => ctx.actions.rootIds?.() ?? [],
+      };
+
+      const buildAndSetOutput = () => {
+        try {
+          // Re-read JSON each refresh — block content is stable (the
+          // content arg passed in is current content even for re-execute,
+          // because the keyboard path always passes the latest value
+          // via content arg). For subscribe-driven refresh, we read
+          // child overrides freshly each time.
+          const childConfig = readChildConfig(blockId, storeActions);
+          const merged = applyChildConfig(baseSpec, childConfig);
+          setOutputWithTitle({ spec: normalizeSpec(merged, ctx), generatedVia: 'raw-json' });
+        } catch (e) {
+          ctx.log('[render::raw-json] refresh failed:', errMsg(e));
+        }
+      };
+
+      // Initial render
+      buildAndSetOutput();
+
+      // Subscribe to child changes so editing a `bpm:: 130` child triggers
+      // a re-render with the new state. Filter to childIds + content +
+      // parentId — metadata-only updates (outlinks/markers) wouldn't
+      // change what the spec renders.
+      clearRenderSubscriptionsForBlock(blockId);
+      const unsubscribe = ctx.server.subscribeBlockChanges(buildAndSetOutput, {
+        fields: ['childIds', 'content', 'parentId'],
+      });
+      renderSubscriptions.set(`${blockId}:raw-json`, unsubscribe);
     } catch {
       setOutputWithTitle({ spec: null }, `Unknown render command: ${arg}`);
     }

@@ -3492,6 +3492,15 @@ interface TrackSpec {
   sends?: { delay?: number; reverb?: number };
 }
 
+// Audio-rig tunables. Named so swing/BPM math doesn't sprinkle bare numbers.
+//   SWING_CAP — max swing fraction before odd-step delay collides with the
+//     next step. 1.0 == full step interval; 0.85 leaves headroom.
+//   BPM_FLOOR — clamp on bpm denominator in step-interval math; below this,
+//     stepInterval explodes and the rig becomes unusable. UI sliders can
+//     still display lower values; behavior caps here.
+const SWING_CAP = 0.85;
+const BPM_FLOOR = 30;
+
 let _audioCtx: AudioContext | null = null;
 
 function getAudioContext(): AudioContext {
@@ -3522,11 +3531,6 @@ export interface RigStepDetail {
 export interface RigTransportDetail {
   rigId: string;
   state: 'play' | 'stop';
-}
-
-interface BusEntry {
-  step: ((d: RigStepDetail) => void) | undefined;
-  transport: ((d: RigTransportDetail) => void) | undefined;
 }
 
 // Listener registries. We use a window-attached map so the singleton
@@ -3585,8 +3589,8 @@ export function applySwing(d: RigStepDetail, fire: () => void): void {
     fire();
     return;
   }
-  const stepIntervalMs = 60000 / Math.max(d.bpm, 30) / 4;
-  const delayMs = Math.min(d.swing, 0.85) * stepIntervalMs;
+  const stepIntervalMs = 60000 / Math.max(d.bpm, BPM_FLOOR) / 4;
+  const delayMs = Math.min(d.swing, SWING_CAP) * stepIntervalMs;
   setTimeout(fire, delayMs);
 }
 
@@ -3596,6 +3600,131 @@ export function rigStateGet(rigId: string): { playing: boolean; bpm: number } {
   let s = g.__floatty_rig_state.get(rigId);
   if (!s) { s = { playing: false, bpm: 124 }; g.__floatty_rig_state.set(rigId, s); }
   return s;
+}
+
+/**
+ * Beat-ticks footer for sequencer step grids. Renders one cell per step:
+ * the current step shows in amber, downbeats (every 4) show their beat
+ * number, off-beats show a dim dot. Width-spacer matches the 70px label
+ * gutter that StepSequencer / AcidBass / EuclideanDrums use to align
+ * tick numbers with their step columns.
+ *
+ * Three sequencers had this exact JSX inlined; consolidating prevents
+ * style drift if we change tick density / colors in one place.
+ */
+function BeatTicksFooter(props: { stepCount: number; currentStep: number; gutterWidth?: string }) {
+  return (
+    <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+      <span style={{ width: props.gutterWidth ?? '70px' }} />
+      <div style={{
+        display: 'grid',
+        'grid-template-columns': `repeat(${props.stepCount}, 1fr)`,
+        gap: '3px',
+        flex: 1,
+      }}>
+        <For each={Array.from({ length: props.stepCount }, (_, i) => i)}>{(si) => (
+          <div style={{
+            'text-align': 'center',
+            'font-size': '8px',
+            color: props.currentStep === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
+            'font-family': V.mono,
+          }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
+        )}</For>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Slave-mode "△ clock: rigName" pill. Color-themed per voice, optionally
+ * trailed by a live/idle dot. Common visual across the slave fallback in
+ * StepSequencer / AcidBass / EuclideanDrums; sibling controls (clear, knobs)
+ * are composed outside.
+ */
+function ClockBadge(props: { rig: string; color: string; playing?: boolean; showStatus?: boolean }) {
+  return (
+    <span style={{
+      'font-size': '10px', color: props.color, 'font-family': V.mono,
+      'letter-spacing': '0.1em', 'text-transform': 'uppercase',
+      background: V.s2, padding: '4px 10px',
+      border: `1px solid ${props.color}`, 'border-radius': '4px',
+    }}>△ clock: {props.rig}{props.showStatus ? ` ${props.playing ? '● live' : '○ idle'}` : ''}</span>
+  );
+}
+
+/**
+ * Wire a sequencer voice as a slave on a named rig. Re-subscribes whenever
+ * the `clockRig()` accessor changes, tears down on cleanup, hydrates initial
+ * playing-state from `rigStateGet`. Pass `null`/`undefined` from `clockRig()`
+ * to detach (master mode).
+ *
+ * Consolidated from StepSequencer / AcidBass / EuclideanDrums — they all had
+ * identical re-sub/unsub bookkeeping; only the per-voice fire / transport
+ * handlers differ, and those are passed in.
+ *
+ * The `on(clockRig, ...)` wrapper makes it explicit that this effect tracks
+ * ONLY the rig accessor — without it, any reactive read inside `onStep` /
+ * `onTransport` callbacks (executed at fire-time, not effect-run-time) would
+ * be invisible to the tracker today, but a future refactor that pulls a
+ * reactive read into the effect body would silently leak. See
+ * `solidjs-patterns.md` rule 7.
+ */
+function useSlaveRig(opts: {
+  clockRig: () => string | undefined;
+  /**
+   * Called when the rig fires a step. The second arg is a generation
+   * accessor — call it before any deferred work (setTimeout, requestAnimationFrame,
+   * etc.) to check whether this subscription is still current. Synchronous
+   * `onStep` work is always current and doesn't need to consult it.
+   *
+   * Why: when the rig accessor changes (rig swap or unmount) WHILE a
+   * previous step's swing-delayed callback is still pending, the firing
+   * sequencer is now wired to a different rig. Without a guard, the
+   * deferred fire lands on the new state with the old step index. See
+   * CodeRabbit P1.1 review on PR #292.
+   */
+  onStep: (d: RigStepDetail, isStillCurrent: () => boolean) => void;
+  onTransport: (d: RigTransportDetail) => void;
+  onAttach?: (rig: string, state: { playing: boolean; bpm: number }) => void;
+  /**
+   * Called immediately before the previous rig's subscriptions are torn
+   * down (rig swap or unmount). Lets stateful consumers reset whatever the
+   * old rig left behind: AcidBass kills its sustained osc, the step-based
+   * sequencers clear `playing`/`currentStep`. Without this, a live rig
+   * swap leaves the consumer wired to the previous rig's last state.
+   * CodeRabbit P1 review on PR #292.
+   */
+  onDetach?: () => void;
+}): void {
+  let unsubStep: (() => void) | undefined;
+  let unsubTransport: (() => void) | undefined;
+  let generation = 0;
+  createEffect(on(opts.clockRig, (rig) => {
+    generation++;
+    const myGen = generation;
+    const isStillCurrent = () => myGen === generation;
+    // Notify consumer before tearing down the old rig — only when we
+    // actually had subscriptions (skip the synthetic first-mount transition).
+    if (unsubStep || unsubTransport) opts.onDetach?.();
+    if (unsubStep) { unsubStep(); unsubStep = undefined; }
+    if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
+    if (!rig) return;
+    unsubStep = subscribeRigStep(rig, (d) => {
+      if (!isStillCurrent()) return; // listener-time guard for sync race
+      opts.onStep(d, isStillCurrent);
+    });
+    unsubTransport = subscribeRigTransport(rig, (d) => {
+      if (!isStillCurrent()) return;
+      opts.onTransport(d);
+    });
+    if (opts.onAttach) opts.onAttach(rig, rigStateGet(rig));
+  }));
+  onCleanup(() => {
+    generation++; // any deferred fire after unmount sees a stale gen and bails
+    if (unsubStep || unsubTransport) opts.onDetach?.();
+    if (unsubStep) unsubStep();
+    if (unsubTransport) unsubTransport();
+  });
 }
 
 // ─── FX bus: delay + reverb sends per rigId ─────────────────────
@@ -3689,20 +3818,40 @@ const fxBuses = (): Map<string, FxBus> => {
 };
 
 function getOrCreateFxBus(rigId: string): FxBus {
+  const ctx = getAudioContext();
   const map = fxBuses();
   let bus = map.get(rigId);
+  // Staleness check (Vite HMR + AudioContext close): the FX-bus map is
+  // window-attached so it survives module reload, but the AudioContext
+  // singleton _audioCtx is module-local. After HMR the module reruns,
+  // _audioCtx resets to null, getAudioContext() builds a fresh ctx —
+  // but the cached bus still holds nodes bound to the OLD ctx. Voices
+  // in the new ctx that try to connect to those nodes throw
+  // InvalidAccessError. Drop + rebuild when contexts diverge.
+  if (bus && bus.ctx !== ctx) {
+    map.delete(rigId);
+    bus = undefined;
+  }
   if (!bus) { bus = buildFxBus(); map.set(rigId, bus); }
   return bus;
 }
 
 /**
  * Returns an input node for the named send on the rig's FX bus, or null
- * if the bus doesn't exist (no MasterFX mounted). Voices should route to
- * this OR ctx.destination depending on whether the user wired up FX.
+ * if the bus doesn't exist (no MasterFX mounted) OR if the cached bus
+ * is from a previous AudioContext (HMR staleness — see getOrCreateFxBus).
+ * Voices should route to this OR ctx.destination depending on whether
+ * the user wired up FX. Stale buses get evicted from the map so the next
+ * MasterFX mount rebuilds cleanly.
  */
 function getFxSend(rigId: string, sendName: 'delay' | 'reverb'): AudioNode | null {
   const bus = fxBuses().get(rigId);
   if (!bus) return null;
+  // Staleness check — see getOrCreateFxBus for the failure mode.
+  if (bus.ctx !== getAudioContext()) {
+    fxBuses().delete(rigId);
+    return null;
+  }
   return sendName === 'delay' ? bus.delayInput : bus.reverbInput;
 }
 
@@ -3947,28 +4096,31 @@ export function StepSequencer(props: BaseComponentProps<{
   };
 
   // Slave mode: subscribe to RigBus, no internal interval.
-  let unsubStep: (() => void) | undefined;
-  let unsubTransport: (() => void) | undefined;
-  createEffect(() => {
-    const rig = clockRig();
-    if (unsubStep) { unsubStep(); unsubStep = undefined; }
-    if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
-    if (!rig) return;
-    unsubStep = subscribeRigStep(rig, (d) => {
+  useSlaveRig({
+    clockRig,
+    onStep: (d, isStillCurrent) => {
       // Map master step → local step (modulo our own loop length)
       const idx = d.step % stepCount();
-      applySwing(d, () => fireStep(idx));
-    });
-    unsubTransport = subscribeRigTransport(rig, (d) => {
+      applySwing(d, () => {
+        if (!isStillCurrent()) return; // rig swapped during swing window
+        fireStep(idx);
+      });
+    },
+    onTransport: (d) => {
       setPlaying(d.state === 'play');
       if (d.state === 'stop') {
         stepCursor = -1;
         setCurrentStep(-1);
       }
-    });
-    // Sync to whatever state the rig is currently in.
-    const s = rigStateGet(rig);
-    setPlaying(s.playing);
+    },
+    onAttach: (_rig, s) => setPlaying(s.playing),
+    onDetach: () => {
+      // Old rig is going away — drop its transport state so we don't keep
+      // showing "playing" on the previous rig's last beat. CodeRabbit P1.
+      setPlaying(false);
+      setCurrentStep(-1);
+      stepCursor = -1;
+    },
   });
 
   const start = () => {
@@ -3999,7 +4151,7 @@ export function StepSequencer(props: BaseComponentProps<{
 
   // Re-arm interval if BPM changes mid-play. `on(bpmLocal, ...)` scopes
   // the dependency so transitions of `playing` don't pointlessly re-run
-  // the body (Greptile P2 review on PR #290).
+  // the body (per Greptile P2 #290).
   createEffect(on(bpmLocal, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
@@ -4009,8 +4161,6 @@ export function StepSequencer(props: BaseComponentProps<{
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
-    if (unsubStep) unsubStep();
-    if (unsubTransport) unsubTransport();
   });
 
   const toggleCell = (track: number, step: number) => {
@@ -4045,12 +4195,7 @@ export function StepSequencer(props: BaseComponentProps<{
           display: 'flex', 'align-items': 'center', gap: '8px',
           'padding-bottom': '8px', 'border-bottom': `1px solid ${V.b}`,
         }}>
-          <span style={{
-            'font-size': '10px', color: V.cy, 'font-family': V.mono,
-            'letter-spacing': '0.1em', 'text-transform': 'uppercase',
-            background: V.s2, padding: '4px 10px',
-            border: `1px solid ${V.cy}`, 'border-radius': '4px',
-          }}>△ clock: {clockRig()}</span>
+          <ClockBadge rig={clockRig() ?? ''} color={V.cy} />
           <button
             onClick={clear}
             style={{
@@ -4165,25 +4310,7 @@ export function StepSequencer(props: BaseComponentProps<{
         )}</For>
       </div>
 
-      {/* Beat ticks footer */}
-      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-        <span style={{ width: '70px' }} />
-        <div style={{
-          display: 'grid',
-          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
-          gap: '3px',
-          flex: 1,
-        }}>
-          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
-            <div style={{
-              'text-align': 'center',
-              'font-size': '8px',
-              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
-              'font-family': V.mono,
-            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
-          )}</For>
-        </div>
-      </div>
+      <BeatTicksFooter stepCount={stepCount()} currentStep={currentStep()} />
     </div>
   );
 }
@@ -4352,19 +4479,19 @@ export function AcidBass(props: BaseComponentProps<{
     fireStep(stepCursor);
   };
 
-  // Slave-mode rig subscriptions
-  let unsubStep: (() => void) | undefined;
-  let unsubTransport: (() => void) | undefined;
-  createEffect(() => {
-    const rig = clockRig();
-    if (unsubStep) { unsubStep(); unsubStep = undefined; }
-    if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
-    if (!rig) return;
-    unsubStep = subscribeRigStep(rig, (d) => {
+  // Slave-mode rig subscriptions. Acid voice lifecycle is asymmetric vs the
+  // poly sequencers: a sustained osc must be created on play and stopped
+  // (not just amp-envelope-released) on stop, and re-created on next play.
+  useSlaveRig({
+    clockRig,
+    onStep: (d, isStillCurrent) => {
       ensureVoice();
-      applySwing(d, () => fireStep(d.step % stepCount()));
-    });
-    unsubTransport = subscribeRigTransport(rig, (d) => {
+      applySwing(d, () => {
+        if (!isStillCurrent()) return; // rig swapped during swing window
+        fireStep(d.step % stepCount());
+      });
+    },
+    onTransport: (d) => {
       if (d.state === 'play') {
         ensureVoice();
         prevWasNote = false;
@@ -4382,10 +4509,26 @@ export function AcidBass(props: BaseComponentProps<{
         setCurrentStep(-1);
         prevWasNote = false;
       }
-    });
-    const s = rigStateGet(rig);
-    setPlaying(s.playing);
-    if (s.playing) ensureVoice();
+    },
+    onAttach: (_rig, s) => {
+      setPlaying(s.playing);
+      if (s.playing) ensureVoice();
+    },
+    // Old rig is leaving — silence the sustained osc and reset state so
+    // a new rig swap doesn't leave 303-bass droning. CodeRabbit P1 #292.
+    onDetach: () => {
+      if (voice) {
+        const now = voice.ctx.currentTime;
+        voice.ampEnv.gain.cancelScheduledValues(now);
+        voice.ampEnv.gain.linearRampToValueAtTime(0.0001, now + 0.05);
+        voice.osc.stop(now + 0.1);
+        voice = null;
+      }
+      setPlaying(false);
+      setCurrentStep(-1);
+      stepCursor = -1;
+      prevWasNote = false;
+    },
   });
 
   const start = () => {
@@ -4420,7 +4563,7 @@ export function AcidBass(props: BaseComponentProps<{
 
   // Re-arm interval on BPM change
   // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
-  // don't pointlessly re-run the body (Greptile P2 review on PR #290).
+  // don't pointlessly re-run the body (Greptile P2 #290).
   createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
@@ -4431,8 +4574,6 @@ export function AcidBass(props: BaseComponentProps<{
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
     if (voice) { try { voice.osc.stop(); } catch { /* may already be stopped */ } voice = null; }
-    if (unsubStep) unsubStep();
-    if (unsubTransport) unsubTransport();
   });
 
   const cycleNote = (i: number) => {
@@ -4503,12 +4644,7 @@ export function AcidBass(props: BaseComponentProps<{
         'flex-wrap': 'wrap',
       }}>
         <Show when={!clockRig()} fallback={
-          <span style={{
-            'font-size': '10px', color: V.cor, 'font-family': V.mono,
-            'letter-spacing': '0.1em', 'text-transform': 'uppercase',
-            background: V.s2, padding: '5px 10px',
-            border: `1px solid ${V.cor}`, 'border-radius': '4px',
-          }}>△ clock: {clockRig()} {playing() ? '● live' : '○ idle'}</span>
+          <ClockBadge rig={clockRig() ?? ''} color={V.cor} playing={playing()} showStatus />
         }>
           <button
             onClick={() => playing() ? stop() : start()}
@@ -4656,25 +4792,7 @@ export function AcidBass(props: BaseComponentProps<{
         </div>
       </div>
 
-      {/* Beat ticks */}
-      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-        <span style={{ width: '70px' }} />
-        <div style={{
-          display: 'grid',
-          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
-          gap: '3px',
-          flex: 1,
-        }}>
-          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
-            <div style={{
-              'text-align': 'center',
-              'font-size': '8px',
-              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
-              'font-family': V.mono,
-            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
-          )}</For>
-        </div>
-      </div>
+      <BeatTicksFooter stepCount={stepCount()} currentStep={currentStep()} />
     </div>
   );
 }
@@ -4804,22 +4922,27 @@ export function EuclideanDrums(props: BaseComponentProps<{
     fireStep(stepCursor);
   };
 
-  let unsubStep: (() => void) | undefined;
-  let unsubTransport: (() => void) | undefined;
-  createEffect(() => {
-    const rig = clockRig();
-    if (unsubStep) { unsubStep(); unsubStep = undefined; }
-    if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
-    if (!rig) return;
-    unsubStep = subscribeRigStep(rig, (d) => applySwing(d, () => fireStep(d.step % stepCount())));
-    unsubTransport = subscribeRigTransport(rig, (d) => {
+  useSlaveRig({
+    clockRig,
+    onStep: (d, isStillCurrent) => applySwing(d, () => {
+      if (!isStillCurrent()) return; // rig swapped during swing window
+      fireStep(d.step % stepCount());
+    }),
+    onTransport: (d) => {
       setPlaying(d.state === 'play');
       if (d.state === 'stop') {
         stepCursor = -1;
         setCurrentStep(-1);
       }
-    });
-    setPlaying(rigStateGet(rig).playing);
+    },
+    onAttach: (_rig, s) => setPlaying(s.playing),
+    onDetach: () => {
+      // Drop transport state from the old rig so a swap doesn't leave the
+      // step-cursor frozen on the previous rig's last beat. CodeRabbit P1.
+      setPlaying(false);
+      setCurrentStep(-1);
+      stepCursor = -1;
+    },
   });
 
   const start = () => {
@@ -4844,7 +4967,7 @@ export function EuclideanDrums(props: BaseComponentProps<{
   };
 
   // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
-  // don't pointlessly re-run the body (Greptile P2 review on PR #290).
+  // don't pointlessly re-run the body (Greptile P2 #290).
   createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
@@ -4854,8 +4977,6 @@ export function EuclideanDrums(props: BaseComponentProps<{
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
-    if (unsubStep) unsubStep();
-    if (unsubTransport) unsubTransport();
   });
 
   const updateTrack = (i: number, patch: Partial<EuclidTrack>) => {
@@ -4888,12 +5009,7 @@ export function EuclideanDrums(props: BaseComponentProps<{
           display: 'flex', 'align-items': 'center', gap: '8px',
           'padding-bottom': '8px', 'border-bottom': `1px solid ${V.b}`,
         }}>
-          <span style={{
-            'font-size': '10px', color: V.mag, 'font-family': V.mono,
-            'letter-spacing': '0.1em', 'text-transform': 'uppercase',
-            background: V.s2, padding: '5px 10px',
-            border: `1px solid ${V.mag}`, 'border-radius': '4px',
-          }}>△ clock: {clockRig()} {playing() ? '● live' : '○ idle'}</span>
+          <ClockBadge rig={clockRig() ?? ''} color={V.mag} playing={playing()} showStatus />
         </div>
       }>
         <div style={{
@@ -5016,25 +5132,7 @@ export function EuclideanDrums(props: BaseComponentProps<{
         }}</For>
       </div>
 
-      {/* Beat ticks footer */}
-      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-        <span style={{ width: '70px' }} />
-        <div style={{
-          display: 'grid',
-          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
-          gap: '3px',
-          flex: 1,
-        }}>
-          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
-            <div style={{
-              'text-align': 'center',
-              'font-size': '8px',
-              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
-              'font-family': V.mono,
-            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
-          )}</For>
-        </div>
-      </div>
+      <BeatTicksFooter stepCount={stepCount()} currentStep={currentStep()} />
     </div>
   );
 }
@@ -5303,7 +5401,7 @@ export function MasterClock(props: BaseComponentProps<{
 
   // Re-arm on BPM change
   // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
-  // don't pointlessly re-run the body (Greptile P2 review on PR #290).
+  // don't pointlessly re-run the body (Greptile P2 #290).
   createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
@@ -5449,27 +5547,20 @@ export function MasterFX(props: BaseComponentProps<{
     bus.setReverbMix(reverbMix());
   });
 
-  // Live: push knob changes to bus.
-  createEffect(() => {
-    const bus = fxBuses().get(rigId());
-    if (!bus) return;
-    bus.setDelayTime(delayTime());
-  });
-  createEffect(() => {
-    const bus = fxBuses().get(rigId());
-    if (!bus) return;
-    bus.setDelayFeedback(delayFeedback());
-  });
-  createEffect(() => {
-    const bus = fxBuses().get(rigId());
-    if (!bus) return;
-    bus.setDelayMix(delayMix());
-  });
-  createEffect(() => {
-    const bus = fxBuses().get(rigId());
-    if (!bus) return;
-    bus.setReverbMix(reverbMix());
-  });
+  // Live: push knob changes to bus. Each knob gets its own effect so a
+  // change to one parameter doesn't re-emit the others' setIfChanged ramps.
+  const pushParam = (read: () => number, apply: (b: FxBus, v: number) => void) => {
+    createEffect(() => {
+      const v = read();
+      const bus = fxBuses().get(rigId());
+      if (!bus) return;
+      apply(bus, v);
+    });
+  };
+  pushParam(delayTime, (b, v) => b.setDelayTime(v));
+  pushParam(delayFeedback, (b, v) => b.setDelayFeedback(v));
+  pushParam(delayMix, (b, v) => b.setDelayMix(v));
+  pushParam(reverbMix, (b, v) => b.setReverbMix(v));
 
   // Note: we don't tear down the bus on cleanup — it's a shared resource
   // keyed by rigId, and other voices may still be sending to it. Cleanup
@@ -5569,6 +5660,84 @@ export function MasterFX(props: BaseComponentProps<{
           <span>matching <span style={{ color: V.amb }}>rigId</span></span>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STRUDEL — iframe to strudel.cc with pattern URL-encoded
+// ═══════════════════════════════════════════════════════════════
+//
+// strudel.cc accepts the mini-notation source as a base64-encoded URL
+// hash. No NPM dep needed; the page hosts the runtime. Doesn't sync to
+// our RigBus today — runs its own clock. Future work: postMessage bridge
+// from MasterClock to Strudel for clock-locked patterns.
+
+export function Strudel(props: BaseComponentProps<{
+  pattern: string;
+  cps?: number;
+  height?: string;
+  title?: string;
+}>) {
+  const cps = () => props.props.cps ?? 0.5;
+  const height = () => props.props.height ?? '420px';
+  const pattern = () => props.props.pattern ?? '';
+
+  const url = createMemo(() => {
+    // Strudel REPL accepts: https://strudel.cc/?<id>#<base64-encoded-pattern>
+    // We don't need an id (any random nonce works) — pattern lives in the hash.
+    // Coerce cps to a finite number — the value flows into a templated
+    // string that becomes evaluated JS inside the strudel.cc iframe. Spec
+    // authors are trusted in floatty's threat model, but the iframe still
+    // runs in strudel.cc's origin; defensive coercion keeps a stray
+    // string-typed `cps` (or `Infinity`/`NaN`) from corrupting the call.
+    // CodeRabbit P3.3 #292.
+    const cpsRaw = Number(cps());
+    const cpsSafe = Number.isFinite(cpsRaw) ? cpsRaw : 0.5;
+    const fullPattern = `setcps(${cpsSafe})\n\n${pattern()}`;
+    // btoa accepts only Latin-1 (0x00–0xFF). UTF-8 in `pattern` (emoji,
+    // accents, CJK) would throw InvalidCharacterError and blank the iframe.
+    // Encode to UTF-8 bytes, render as a binary string, then base64.
+    // CodeRabbit P3 #292.
+    const encoded = (() => {
+      if (typeof btoa === 'undefined') return '';
+      const bytes = new TextEncoder().encode(fullPattern);
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    })();
+    const safeEncoded = encoded.replace(/=+$/, '');
+    return `https://strudel.cc/?${Math.random().toString(36).slice(2, 10)}#${safeEncoded}`;
+  });
+
+  return (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '11px', color: V.amb, 'font-family': V.mono,
+          'text-transform': 'uppercase', 'letter-spacing': '0.1em',
+        }}>{props.props.title} <span style={{ color: V.tf }}>· strudel.cc</span></div>
+      </Show>
+      <iframe
+        src={url()}
+        // sandbox includes allow-same-origin per the floatty Tauri rule —
+        // iframe content is cross-origin from tauri://localhost so it
+        // needs same-origin to access its own subresources.
+        sandbox="allow-scripts allow-same-origin allow-forms"
+        style={{
+          width: '100%',
+          height: height(),
+          border: `1px solid ${V.b2}`,
+          'border-radius': '8px',
+          background: V.s1,
+        }}
+        title="Strudel REPL"
+        allow="autoplay"
+      />
+      <div style={{
+        'font-size': '9px', color: V.tf, 'font-family': V.mono,
+        'letter-spacing': '0.05em',
+      }}>cps {cps()} · pattern {pattern().length}b · iframe → strudel.cc</div>
     </div>
   );
 }

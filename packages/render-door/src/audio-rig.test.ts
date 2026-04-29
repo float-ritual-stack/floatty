@@ -278,6 +278,13 @@ describe('applySwing', () => {
   });
 });
 
+// FX bus HMR staleness contract — moved from a placeholder it() that was
+// just expect(true).toBe(true). jsdom can't run real Web Audio, so the
+// runtime assertion lives in the dev-server + browser-console verification,
+// not in this file. Decision record + verification recipe live in
+// packages/render-door/docs/RIG_ARCHITECTURE.md "Decision records".
+// (Per CodeRabbit P2.1 review on PR #292.)
+
 describe('RigBus.subscribeRigTransport', () => {
   let cleanups: Array<() => void> = [];
   beforeEach(() => {

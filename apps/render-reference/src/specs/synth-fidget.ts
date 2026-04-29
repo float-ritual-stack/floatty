@@ -40,6 +40,8 @@ export const synthFidgetSpec: Spec = {
         'euclid',
         'xypad-h',
         'xypad-row',
+        'strudel-h',
+        'strudel-demo',
         'footer',
       ],
     },
@@ -316,11 +318,47 @@ export const synthFidgetSpec: Spec = {
       },
     },
 
+    'strudel-h': {
+      type: 'Text',
+      props: { content: '## 7. Strudel — pattern REPL via strudel.cc iframe', size: 'lg', weight: 'bold' },
+    },
+
+    'strudel-demo': {
+      type: 'Strudel',
+      props: {
+        title: 'electronic insects (mask 0)',
+        cps: 0.52,
+        height: '420px',
+        // Mini-notation from e-schultz/v0-float-omg-...claude-fucks
+        // (bootygrabber). Standalone-runnable via strudel.cc; doesn't sync
+        // with our MasterClock today.
+        pattern: [
+          '// chirpy pluck pattern + dnb hat layer',
+          'stack(',
+          '  note("c6 eb6 g6 c7".struct("t(5,8)"))',
+          '    .s("sine")',
+          '    .gain(perlin.range(0.1, 0.3).fast(2))',
+          '    .pan(perlin.range(-1, 1).fast(0.7))',
+          '    .release(0.01)',
+          '    .delay(0.125)',
+          '    .delaytime(perlin.range(0.05, 0.15))',
+          '    .room(0.8),',
+          '  sound("hh:8").n(irand(16))',
+          '    .gain(0.2)',
+          '    .speed(perlin.range(2, 4))',
+          '    .pan(sine.range(-0.8, 0.8).fast(3))',
+          '    .hpf(perlin.range(8000, 15000))',
+          '    .struct("t(13,16)")',
+          ')',
+        ].join('\n'),
+      },
+    },
+
     footer: {
       type: 'BacklinksFooter',
       props: {
         inbound: ['render-door catalog', 'FLO-techno-fidget'],
-        outbound: ['Web Audio API', 'Bjorklund algorithm', 'TB-303'],
+        outbound: ['Web Audio API', 'Bjorklund algorithm', 'TB-303', 'strudel.cc'],
       },
     },
   },
