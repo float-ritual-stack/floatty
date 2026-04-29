@@ -4103,14 +4103,15 @@ export function StepSequencer(props: BaseComponentProps<{
     setGrid(g => g.map(row => row.map(() => false)));
   };
 
-  // Re-arm interval if BPM changes mid-play.
-  createEffect(() => {
-    bpmLocal();
+  // Re-arm interval if BPM changes mid-play. `on(bpmLocal, ...)` scopes
+  // the dependency so transitions of `playing` don't pointlessly re-run
+  // the body (per Greptile P2 #290).
+  createEffect(on(bpmLocal, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
       intervalId = window.setInterval(tick, stepIntervalMs());
     }
-  });
+  }));
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
@@ -4497,13 +4498,14 @@ export function AcidBass(props: BaseComponentProps<{
   };
 
   // Re-arm interval on BPM change
-  createEffect(() => {
-    bpm();
+  // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
+  // don't pointlessly re-run the body (Greptile P2 #290).
+  createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
       intervalId = window.setInterval(tick, stepIntervalMs());
     }
-  });
+  }));
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
@@ -4890,13 +4892,14 @@ export function EuclideanDrums(props: BaseComponentProps<{
     stepCursor = -1;
   };
 
-  createEffect(() => {
-    bpm();
+  // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
+  // don't pointlessly re-run the body (Greptile P2 #290).
+  createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
       intervalId = window.setInterval(tick, stepIntervalMs());
     }
-  });
+  }));
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
@@ -5323,13 +5326,14 @@ export function MasterClock(props: BaseComponentProps<{
   };
 
   // Re-arm on BPM change
-  createEffect(() => {
-    bpm();
+  // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
+  // don't pointlessly re-run the body (Greptile P2 #290).
+  createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
       intervalId = window.setInterval(tick, stepIntervalMs());
     }
-  });
+  }));
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);

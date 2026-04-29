@@ -42,7 +42,7 @@ markDevtoolsActive();
 import { bbsCatalog } from '@render-door/catalog';
 import { registry as bbsRegistry } from '@render-door/registry';
 
-// Our 9 reference specs
+// Our 10 reference specs
 import { dailyNoteSpec } from './specs/daily-note';
 import { weeklyTrackerSpec } from './specs/weekly-tracker';
 import { meetingNotesSpec } from './specs/meeting-notes';
