@@ -148,34 +148,38 @@ async fn health() -> Json<HealthResponse> {
 // timing into `Store::get_full_state` and emit via tracing::span there;
 // keeping it at the handler keeps the diff small per Daddy's "5-line
 // copy" + "small focused PR" guidance in the FLO-698 handoff.
-#[tracing::instrument(
-    skip(state),
-    fields(route_family = "sync", handler = "get_state"),
-    err
-)]
+//
+// Resolution: microseconds. Millisecond truncation (`as_millis()`) loses
+// every phase that completes in < 1 ms — for small documents on fast
+// hardware, every field would log as `0` and Loki would only ever see
+// non-zero values during genuine freezes, hiding the baseline we need
+// to compare against. `as_micros() as u64` keeps three orders of
+// magnitude more resolution; u64 holds 584,554 years of microseconds
+// so saturation is not a concern. (Greptile P2 #293.)
+#[tracing::instrument(skip(state), fields(route_family = "sync", handler = "get_state"), err)]
 async fn get_state(State(state): State<AppState>) -> Result<Json<StateResponse>, ApiError> {
     let lock_start = Instant::now();
     let doc = state.store.doc();
     let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let lock_acquire_ms = lock_start.elapsed().as_millis() as u64;
+    let lock_acquire_us = lock_start.elapsed().as_micros() as u64;
 
     let encode_start = Instant::now();
     let update = doc_guard
         .transact()
         .encode_state_as_update_v1(&StateVector::default());
-    let encode_ms = encode_start.elapsed().as_millis() as u64;
+    let encode_us = encode_start.elapsed().as_micros() as u64;
     drop(doc_guard); // release the read lock before doing base64
 
     let base64_start = Instant::now();
     let encoded = BASE64.encode(&update);
-    let base64_ms = base64_start.elapsed().as_millis() as u64;
+    let base64_us = base64_start.elapsed().as_micros() as u64;
 
     let latest_seq = state.store.get_latest_seq()?;
 
     tracing::info!(
-        lock_acquire_ms,
-        encode_ms,
-        base64_ms,
+        lock_acquire_us,
+        encode_us,
+        base64_us,
         update_bytes = update.len(),
         "get_state phase timing"
     );
@@ -196,15 +200,15 @@ async fn get_state_vector(
 ) -> Result<Json<StateVectorResponse>, ApiError> {
     let total_start = Instant::now();
     let sv = state.store.get_state_vector()?;
-    let lock_encode_ms = total_start.elapsed().as_millis() as u64;
+    let lock_encode_us = total_start.elapsed().as_micros() as u64;
 
     let base64_start = Instant::now();
     let encoded = BASE64.encode(&sv);
-    let base64_ms = base64_start.elapsed().as_millis() as u64;
+    let base64_us = base64_start.elapsed().as_micros() as u64;
 
     tracing::info!(
-        lock_encode_ms,
-        base64_ms,
+        lock_encode_us,
+        base64_us,
         sv_bytes = sv.len(),
         "get_state_vector phase timing"
     );
@@ -214,6 +218,21 @@ async fn get_state_vector(
     }))
 }
 
+// One lock, one snapshot. Previously the handler took two separate
+// transactions: `state.store.get_full_state()` for the encode + hash, then
+// a fresh `doc.read()` guard for the block-count traversal. Two
+// consequences:
+//   1. A concurrent write between the two transactions could make the
+//      returned (hash, block_count) pair internally inconsistent —
+//      caller's drift detection sees a spurious mismatch (CodeRabbit P1).
+//   2. The second `doc.read()` await was being attributed to `count_ms`,
+//      so under writer-starvation contention the timing said "block
+//      traversal is slow" when the real cost was "second lock contended"
+//      (Greptile P2). This was the wrong signal for the freeze diagnostic.
+//
+// Fix: acquire one read guard, encode + count under it, drop the guard,
+// then hash. Both encode_us and count_us now measure pure work without
+// any second-lock-acquire blend.
 #[tracing::instrument(
     skip(state),
     fields(route_family = "sync", handler = "get_state_hash"),
@@ -223,24 +242,26 @@ async fn get_state_hash(
     State(state): State<AppState>,
 ) -> Result<Json<StateHashResponse>, ApiError> {
     let lock_encode_start = Instant::now();
-    let full_state = state.store.get_full_state()?;
-    let lock_encode_ms = lock_encode_start.elapsed().as_millis() as u64;
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+    let full_state = txn.encode_state_as_update_v1(&StateVector::default());
+    let lock_encode_us = lock_encode_start.elapsed().as_micros() as u64;
+
+    let count_start = Instant::now();
+    let block_count = txn
+        .get_map("blocks")
+        .map(|m| m.len(&txn) as usize)
+        .unwrap_or(0);
+    let count_us = count_start.elapsed().as_micros() as u64;
+    drop(txn); // txn borrows doc_guard — release it before the guard
+    drop(doc_guard);
 
     let hash_start = Instant::now();
     let mut hasher = Sha256::new();
     hasher.update(&full_state);
     let hash = format!("{:x}", hasher.finalize());
-    let hash_ms = hash_start.elapsed().as_millis() as u64;
-
-    let count_start = Instant::now();
-    let doc = state.store.doc();
-    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
-    let txn = doc_guard.transact();
-    let block_count = txn
-        .get_map("blocks")
-        .map(|m| m.len(&txn) as usize)
-        .unwrap_or(0);
-    let count_ms = count_start.elapsed().as_millis() as u64;
+    let hash_us = hash_start.elapsed().as_micros() as u64;
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -248,9 +269,9 @@ async fn get_state_hash(
         .as_millis();
 
     tracing::info!(
-        lock_encode_ms,
-        hash_ms,
-        count_ms,
+        lock_encode_us,
+        hash_us,
+        count_us,
         block_count,
         full_state_bytes = full_state.len(),
         "get_state_hash phase timing"
