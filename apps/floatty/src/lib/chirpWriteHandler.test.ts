@@ -23,7 +23,7 @@ vi.mock('./logger', () => ({
 
 function makeStore(overrides: Partial<ChirpWriteStore> = {}): ChirpWriteStore {
   return {
-    createBlockInside: vi.fn(() => 'new-block'),
+    createBlockInsideWithContent: vi.fn(() => 'new-block'),
     updateBlockContent: vi.fn(),
     upsertChildByPrefix: vi.fn(() => 'upsert-block'),
     moveBlock: vi.fn(() => true),
@@ -56,7 +56,10 @@ describe('isChirpWriteVerb', () => {
 });
 
 describe('handleChirpWrite — create-child / upsert-child (existing)', () => {
-  it('create-child creates a block then sets content', () => {
+  it('create-child creates atomically with content (single transaction)', () => {
+    // PR #292 Greptile P1: previously called createBlockInside('') then
+    // updateBlockContent — block:add fired with empty content, auto-execute
+    // guard skipped. Atomic call ensures the add event carries real content.
     const store = makeStore();
     const result = handleChirpWrite(
       'create-child',
@@ -65,15 +68,30 @@ describe('handleChirpWrite — create-child / upsert-child (existing)', () => {
       store,
     );
     expect(result).toEqual({ success: true, blockId: 'new-block' });
-    expect(store.createBlockInside).toHaveBeenCalledWith('parent');
-    expect(store.updateBlockContent).toHaveBeenCalledWith('new-block', 'hello');
+    expect(store.createBlockInsideWithContent).toHaveBeenCalledWith('parent', 'hello');
+    // Critical: updateBlockContent NOT called — that was the two-txn split.
+    expect(store.updateBlockContent).not.toHaveBeenCalled();
   });
 
   it('create-child fails when content is missing', () => {
     const store = makeStore();
     const result = handleChirpWrite('create-child', {}, 'parent', store);
     expect(result).toEqual({ success: false });
-    expect(store.createBlockInside).not.toHaveBeenCalled();
+    expect(store.createBlockInsideWithContent).not.toHaveBeenCalled();
+  });
+
+  it('create-child returns failure when atomic create returns empty id', () => {
+    const store = makeStore({
+      createBlockInsideWithContent: vi.fn(() => ''),
+    });
+    const result = handleChirpWrite(
+      'create-child',
+      { content: 'render:: {...}' },
+      'parent',
+      store,
+    );
+    expect(result).toEqual({ success: false });
+    expect(store.updateBlockContent).not.toHaveBeenCalled();
   });
 
   it('upsert-child delegates to store', () => {

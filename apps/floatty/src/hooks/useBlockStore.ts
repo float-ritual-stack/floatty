@@ -978,6 +978,38 @@ function createBlockStore() {
     return success ? newId : '';
   };
 
+  // Atomic create-with-content. Single Y.Doc transaction so the block:add
+  // event carries real content — `isAutoExecutable(content)` can decide on
+  // the canonical primitive's first observation (PR #292 Greptile P1).
+  // Splitting create + update across two transactions makes block:add fire
+  // with content="", auto-execute skips, and the subsequent update fires as
+  // a YMap field change which the auto-execute guard does not check.
+  const createBlockInsideWithContent = (parentId: string, content: string) => {
+    if (!_doc) { warnDocNotReady('createBlockInsideWithContent'); return ''; }
+
+    const parentBlock = state.blocks[parentId];
+    if (!parentBlock) return '';
+
+    const newId = crypto.randomUUID();
+    const newBlock = createBlock(newId, content, parentId);
+    let success = false;
+
+    _doc.transact(() => {
+      const blocksMap = _doc.getMap('blocks');
+      if (!blocksMap.has(parentId)) {
+        logger.warn(`createBlockInsideWithContent: parent missing in Y.Doc ${parentId}`);
+        recordParentValidationFailure();
+        return;
+      }
+      blocksMap.set(newId, blockToYMap(newBlock));
+      appendChildId(blocksMap, parentId, newId);
+      setValueOnYMap(blocksMap, parentId, 'collapsed', false);
+      success = true;
+    }, 'user');
+
+    return success ? newId : '';
+  };
+
   const createBlockInsideAtTop = (parentId: string) => {
     if (!_doc) { warnDocNotReady('createBlockInsideAtTop'); return ''; }
 
@@ -2247,6 +2279,7 @@ function createBlockStore() {
     createBlockBefore,
     createBlockAfter,
     createBlockInside,
+    createBlockInsideWithContent,  // atomic create+content (chirp create-child auto-execute, PR #292)
     createBlockInsideAtTop,
     splitBlock,
     splitBlockToFirstChild,

@@ -34,7 +34,14 @@ export interface ChirpWriteData {
 }
 
 export interface ChirpWriteStore {
-  createBlockInside: (parentId: string) => string;
+  // Atomic create-with-content. Used by create-child so the resulting
+  // block:add event carries real content and the canonical auto-execute
+  // primitive in useBlockStore can fire on its first observation
+  // (`isAutoExecutable(content)`). Splitting create + update across two
+  // transactions makes block:add fire with content="", auto-execute skips,
+  // and the subsequent update is a YMap field change the guard doesn't check.
+  // See PR #292 Greptile P1 + apps/floatty/docs/architecture/AGENT_CREATED_DOOR_BLOCKS.md
+  createBlockInsideWithContent: (parentId: string, content: string) => string;
   updateBlockContent: (id: string, content: string) => void;
   upsertChildByPrefix: (parentId: string, prefix: string, content: string) => string | null;
   moveBlock: (blockId: string, targetParentId: string | null, targetIndex: number) => boolean;
@@ -61,12 +68,11 @@ export function handleChirpWrite(
         logger.warn('create-child: missing content');
         return { success: false };
       }
-      const newId = store.createBlockInside(parentBlockId);
+      const newId = store.createBlockInsideWithContent(parentBlockId, content);
       if (!newId) {
         logger.warn(`create-child: failed to create block inside ${parentBlockId}`);
         return { success: false };
       }
-      store.updateBlockContent(newId, content);
       logger.info('create-child', { parentBlockId, content: content.slice(0, 40), newId });
       return { success: true, blockId: newId };
     }
