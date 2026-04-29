@@ -437,6 +437,16 @@ function createBlockStore() {
 
       if (isBulk) {
         const createdBlockIds: string[] = [];
+        // Per-block changed-field tracker. Used downstream to emit
+        // block:update events for door subscriptions watching specific
+        // fields (e.g. render-door's `subscribeBlockChanges({ fields:
+        // ['childIds', 'content', 'parentId'] })`).
+        const updatedFieldsByBlock = new Map<string, Set<string>>();
+        const trackField = (blockId: string, field: string) => {
+          let s = updatedFieldsByBlock.get(blockId);
+          if (!s) { s = new Set(); updatedFieldsByBlock.set(blockId, s); }
+          s.add(field);
+        };
 
         batch(() => {
           setState('lastUpdateOrigin', txOrigin);
@@ -455,7 +465,12 @@ function createBlockStore() {
                 }
               });
             } else if (path.length >= 1) {
-              blocksToRefresh.add(path[0] as string);
+              const blockId = path[0] as string;
+              blocksToRefresh.add(blockId);
+              // path[1] is the field name (childIds, content, parentId, etc.)
+              if (path.length >= 2 && typeof path[1] === 'string') {
+                trackField(blockId, path[1]);
+              }
             }
           }
 
@@ -540,6 +555,71 @@ function createBlockStore() {
                 logger.error(`Slim-path auto-execute error for block ${capturedId}`, { err });
               }
             }, 0);
+          }
+        }
+
+        // Emit blockEventBus events for STEADY-STATE remote/reconnect adds.
+        //
+        // The slim path otherwise skips event-bus emission (FLO-320) so
+        // initial-sync (~13k events) doesn't overwhelm hooks. But for a
+        // single-block API write arriving in steady state, door subscribers
+        // (e.g. render-door's subscribeBlockChanges in raw-json execute,
+        // kanban refresh, expand) need to be notified — otherwise editing
+        // a `bpm:: 130` child block does nothing because the parent door
+        // never hears about the new child.
+        //
+        // Hooks like ctxRouterHook + outlinksHook ARE idempotent (they
+        // skip when extracted metadata equals existing metadata), so
+        // re-emission for already-extracted remote blocks is safe — at
+        // worst a no-op re-extraction. Verified at ctxRouterHook.ts:85
+        // and outlinksHook.ts:70 ("skip no-op updates").
+        //
+        // Threshold: only emit when total event count is small (steady
+        // state). Initial sync / reconnect carries hundreds-to-thousands
+        // of events; we keep skipping those to preserve the FLO-320 perf
+        // gain.
+        const SLIM_PATH_EMIT_THRESHOLD = 50;
+        if (
+          (origin === Origin.Remote || origin === Origin.ReconnectAuthority)
+          && (createdBlockIds.length + updatedFieldsByBlock.size) > 0
+          && (createdBlockIds.length + updatedFieldsByBlock.size) <= SLIM_PATH_EMIT_THRESHOLD
+        ) {
+          const blockEvents: BlockEvent[] = [];
+          // block:create — content was set in the same Y.Doc transaction,
+          // so changedFields includes 'content' for hooks that filter on it.
+          for (const id of createdBlockIds) {
+            const block = state.blocks[id];
+            if (!block) continue;
+            blockEvents.push({
+              type: 'block:create',
+              blockId: id,
+              block,
+              changedFields: ['content', 'parentId', 'childIds'],
+            });
+          }
+          // block:update — for blocks that already existed but had fields
+          // changed (e.g. parent's childIds when a child was added).
+          for (const [id, fields] of updatedFieldsByBlock.entries()) {
+            // Skip if this block is also in createdBlockIds — block:create
+            // already covers it.
+            if (createdBlockIds.includes(id)) continue;
+            const block = state.blocks[id];
+            if (!block) continue;
+            blockEvents.push({
+              type: 'block:update',
+              blockId: id,
+              block,
+              changedFields: Array.from(fields) as BlockEvent['changedFields'],
+            });
+          }
+          if (blockEvents.length > 0) {
+            const envelope: EventEnvelope = {
+              batchId: crypto.randomUUID(),
+              timestamp: Date.now(),
+              origin,
+              events: blockEvents,
+            };
+            blockEventBus.emit(envelope);
           }
         }
 
