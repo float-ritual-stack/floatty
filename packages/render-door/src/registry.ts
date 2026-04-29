@@ -62,6 +62,9 @@ import {
   TimelineEvent,
   StatPill,
   GapItem,
+  Tone,
+  DrumPad,
+  StepSequencer,
   injectBodyStyles,
 } from './components';
 
@@ -127,6 +130,9 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     TimelineEvent,
     StatPill,
     GapItem,
+    Tone,
+    DrumPad,
+    StepSequencer,
   },
   actions: {
     navigate: async () => {},

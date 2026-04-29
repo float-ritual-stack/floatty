@@ -472,6 +472,56 @@ export const doorComponentDefinitions = {
     description: 'Horizontal tab bar. "horizontal" uses underline, "pills" uses pill background. Use $bindState on active to sync with spec state for view switching.',
   },
 
+  // ─── Audio / Synth (FLO-techno-fidget) ───────────────
+  // Web Audio API primitives. AudioContext lazy-inits on first click
+  // (browser autoplay policy). No external libs — built on `OscillatorNode`.
+
+  Tone: {
+    props: z.object({
+      freq: z.number().optional(),
+      duration: z.number().optional(),
+      wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
+      label: z.string().optional(),
+      color: z.string().optional(),
+    }),
+    slots: [],
+    description: "Boring synth primitive: a button that plays one note via Web Audio. Props: freq (Hz, default 440), duration (ms, default 200), wave (sine|square|sawtooth|triangle, default sine), label (default freq label), color (hex). Use as a single click-to-hear cell, or compose into pads/sequencers.",
+  },
+
+  DrumPad: {
+    props: z.object({
+      pads: z.array(z.object({
+        label: z.string(),
+        freq: z.number(),
+        duration: z.number().optional(),
+        wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
+        color: z.string().optional(),
+      })),
+      columns: z.number().optional(),
+      title: z.string().optional(),
+    }),
+    slots: [],
+    description: "A grid of clickable pads, each plays a tone. Props: pads (array of {label, freq, duration?, wave?, color?}), columns (default 4), title (optional header). Build kick/snare/hi-hat/perc with different freqs+waves: kick~80Hz sine, snare~200Hz square, hat~6000Hz sawtooth, low-tom~120Hz triangle. Color by role.",
+  },
+
+  StepSequencer: {
+    props: z.object({
+      bpm: z.number().optional(),
+      steps: z.number().optional(),
+      tracks: z.array(z.object({
+        label: z.string(),
+        freq: z.number(),
+        duration: z.number().optional(),
+        wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
+        color: z.string().optional(),
+      })),
+      initial: z.array(z.array(z.boolean())).optional(),
+      title: z.string().optional(),
+    }),
+    slots: [],
+    description: "Step sequencer: tracks × steps grid. Click cells to toggle, PLAY to loop at BPM (16th-note timing). Props: bpm (default 120), steps (default 16), tracks (array of {label, freq, wave?, duration?, color?}), initial (optional [tracks][steps] boolean grid to seed the pattern). Current step has amber outline. Built-in transport bar.",
+  },
+
   // ─── Tree ────────────────────────────────────────────
   TreeView: {
     props: z.object({

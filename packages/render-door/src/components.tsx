@@ -3472,6 +3472,390 @@ function installKanbanNavShim() {
   console.log(KANBAN_LOG, 'nav-shim installed');
 }
 
+// ═══════════════════════════════════════════════════════════════
+// AUDIO / SYNTH PRIMITIVES (FLO-techno-fidget)
+// ═══════════════════════════════════════════════════════════════
+//
+// Web Audio API. AudioContext is lazy — created on first user interaction
+// to satisfy browser autoplay policy. Single shared context for the whole
+// page; oscillators are short-lived per-note.
+
+type WaveType = 'sine' | 'square' | 'sawtooth' | 'triangle';
+
+interface TrackSpec {
+  label: string;
+  freq: number;
+  duration?: number;
+  wave?: WaveType;
+  color?: string;
+}
+
+let _audioCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext {
+  if (!_audioCtx) {
+    const Ctor = (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
+    if (!Ctor) throw new Error('Web Audio API not supported');
+    _audioCtx = new Ctor();
+  }
+  if (_audioCtx.state === 'suspended') void _audioCtx.resume();
+  return _audioCtx;
+}
+
+function playTone(freq: number, durationMs: number, wave: WaveType = 'sine', gainPeak = 0.25): void {
+  const ctx = getAudioContext();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = wave;
+  osc.frequency.value = freq;
+  const now = ctx.currentTime;
+  const dur = Math.max(durationMs, 20) / 1000;
+  // ADSR-ish: 5ms attack, exponential decay to silence.
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(gainPeak, now + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + dur + 0.02);
+}
+
+export function Tone(props: BaseComponentProps<{
+  freq?: number;
+  duration?: number;
+  wave?: WaveType;
+  label?: string;
+  color?: string;
+}>) {
+  const freq = () => props.props.freq ?? 440;
+  const duration = () => props.props.duration ?? 200;
+  const wave = () => props.props.wave ?? 'sine';
+  const color = () => props.props.color ?? V.cy;
+  const label = () => props.props.label ?? `${Math.round(freq())} Hz`;
+  const [active, setActive] = createSignal(false);
+
+  const handleClick = () => {
+    playTone(freq(), duration(), wave());
+    setActive(true);
+    setTimeout(() => setActive(false), Math.min(duration(), 300));
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      style={{
+        background: active() ? color() : V.s2,
+        color: active() ? '#000' : color(),
+        border: `1px solid ${color()}`,
+        'border-radius': '6px',
+        padding: '10px 16px',
+        'font-size': '12px',
+        'font-family': V.mono,
+        'letter-spacing': '0.04em',
+        cursor: 'pointer',
+        transition: 'background 0.05s ease, color 0.05s ease',
+        'min-width': '64px',
+        'user-select': 'none',
+      }}
+    >
+      {label()}
+    </button>
+  );
+}
+
+export function DrumPad(props: BaseComponentProps<{
+  pads: Array<{ label: string; freq: number; duration?: number; wave?: WaveType; color?: string }>;
+  columns?: number;
+  title?: string;
+}>) {
+  const pads = () => props.props.pads ?? [];
+  const columns = () => props.props.columns ?? 4;
+  const title = () => props.props.title;
+
+  return (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+      <Show when={title()}>
+        <div style={{
+          'font-size': '11px',
+          color: V.td,
+          'font-family': V.mono,
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.1em',
+        }}>{title()}</div>
+      </Show>
+      <div style={{
+        display: 'grid',
+        'grid-template-columns': `repeat(${columns()}, 1fr)`,
+        gap: '6px',
+      }}>
+        <For each={pads()}>{(pad) => {
+          const [active, setActive] = createSignal(false);
+          const wave: WaveType = pad.wave ?? 'sine';
+          const dur = pad.duration ?? 200;
+          const color = pad.color ?? V.mag;
+          const handleClick = () => {
+            playTone(pad.freq, dur, wave);
+            setActive(true);
+            setTimeout(() => setActive(false), Math.min(dur, 300));
+          };
+          return (
+            <button
+              onClick={handleClick}
+              style={{
+                background: active() ? color : V.s1,
+                color: active() ? '#000' : color,
+                border: `1px solid ${color}`,
+                'border-radius': '8px',
+                padding: '18px 8px',
+                'font-size': '11px',
+                'font-family': V.mono,
+                'letter-spacing': '0.05em',
+                'text-transform': 'uppercase',
+                cursor: 'pointer',
+                transition: 'background 0.04s ease, color 0.04s ease',
+                'user-select': 'none',
+                'min-height': '54px',
+              }}
+            >
+              <div style={{ 'font-weight': 'bold' }}>{pad.label}</div>
+              <div style={{ 'font-size': '9px', opacity: 0.7, 'margin-top': '2px' }}>{Math.round(pad.freq)} Hz · {wave}</div>
+            </button>
+          );
+        }}</For>
+      </div>
+    </div>
+  );
+}
+
+export function StepSequencer(props: BaseComponentProps<{
+  bpm?: number;
+  steps?: number;
+  tracks: TrackSpec[];
+  initial?: boolean[][];
+  title?: string;
+}>) {
+  const stepCount = () => props.props.steps ?? 16;
+  const bpm = () => props.props.bpm ?? 120;
+  const tracks = () => props.props.tracks ?? [];
+  const title = () => props.props.title;
+
+  const seedGrid = (): boolean[][] => {
+    const t = tracks();
+    const s = stepCount();
+    const init = props.props.initial;
+    return t.map((_, ti) => {
+      const row = init?.[ti];
+      return Array.from({ length: s }, (_, si) => Boolean(row?.[si]));
+    });
+  };
+
+  const [grid, setGrid] = createSignal<boolean[][]>(seedGrid());
+  const [currentStep, setCurrentStep] = createSignal(-1);
+  const [playing, setPlaying] = createSignal(false);
+  const [bpmLocal, setBpmLocal] = createSignal(bpm());
+
+  let intervalId: number | null = null;
+  let stepCursor = -1;
+
+  const stepIntervalMs = () => 60000 / bpmLocal() / 4; // 16th notes
+
+  const tick = () => {
+    stepCursor = (stepCursor + 1) % stepCount();
+    setCurrentStep(stepCursor);
+    const g = grid();
+    const t = tracks();
+    g.forEach((row, ti) => {
+      if (row[stepCursor]) {
+        const tk = t[ti];
+        if (tk) playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine');
+      }
+    });
+  };
+
+  const start = () => {
+    if (playing()) return;
+    // Unlock AudioContext via user gesture before scheduling.
+    getAudioContext();
+    stepCursor = -1;
+    setCurrentStep(-1);
+    setPlaying(true);
+    intervalId = window.setInterval(tick, stepIntervalMs());
+  };
+
+  const stop = () => {
+    setPlaying(false);
+    if (intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+    setCurrentStep(-1);
+    stepCursor = -1;
+  };
+
+  const clear = () => {
+    setGrid(g => g.map(row => row.map(() => false)));
+  };
+
+  // Re-arm interval if BPM changes mid-play.
+  createEffect(() => {
+    bpmLocal();
+    if (playing() && intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = window.setInterval(tick, stepIntervalMs());
+    }
+  });
+
+  onCleanup(() => { if (intervalId !== null) clearInterval(intervalId); });
+
+  const toggleCell = (track: number, step: number) => {
+    setGrid(g => g.map((row, ti) =>
+      ti === track ? row.map((cell, si) => si === step ? !cell : cell) : row
+    ));
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      'flex-direction': 'column',
+      gap: '10px',
+      padding: '12px',
+      background: V.s1,
+      border: `1px solid ${V.b2}`,
+      'border-radius': '8px',
+    }}>
+      <Show when={title()}>
+        <div style={{
+          'font-size': '12px',
+          color: V.cy,
+          'font-family': V.mono,
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.12em',
+        }}>{title()}</div>
+      </Show>
+
+      {/* Transport */}
+      <div style={{
+        display: 'flex',
+        'align-items': 'center',
+        gap: '10px',
+        'padding-bottom': '8px',
+        'border-bottom': `1px solid ${V.b}`,
+      }}>
+        <button
+          onClick={() => playing() ? stop() : start()}
+          style={{
+            background: playing() ? V.cor : V.green,
+            color: '#000',
+            border: 'none',
+            'border-radius': '4px',
+            padding: '6px 14px',
+            'font-size': '11px',
+            'font-family': V.mono,
+            'font-weight': 'bold',
+            'letter-spacing': '0.1em',
+            cursor: 'pointer',
+            'min-width': '60px',
+          }}
+        >{playing() ? 'STOP' : 'PLAY'}</button>
+
+        <button
+          onClick={clear}
+          style={{
+            background: V.s2,
+            color: V.td,
+            border: `1px solid ${V.b2}`,
+            'border-radius': '4px',
+            padding: '6px 12px',
+            'font-size': '11px',
+            'font-family': V.mono,
+            cursor: 'pointer',
+          }}
+        >CLEAR</button>
+
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'margin-left': 'auto' }}>
+          <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em' }}>BPM</span>
+          <input
+            type="range"
+            min="40"
+            max="240"
+            value={bpmLocal()}
+            onInput={(e) => setBpmLocal(parseInt(e.currentTarget.value, 10) || 120)}
+            style={{ width: '120px', 'accent-color': V.amb }}
+          />
+          <span style={{ 'font-size': '12px', color: V.amb, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{bpmLocal()}</span>
+        </div>
+      </div>
+
+      {/* Grid */}
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+        <For each={tracks()}>{(track, ti) => (
+          <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+            <span style={{
+              width: '70px',
+              color: track.color ?? V.cy,
+              'font-family': V.mono,
+              'font-size': '10px',
+              'text-transform': 'uppercase',
+              'letter-spacing': '0.05em',
+              'text-align': 'right',
+              'padding-right': '4px',
+            }}>{track.label}</span>
+            <div style={{
+              display: 'grid',
+              'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
+              gap: '3px',
+              flex: 1,
+            }}>
+              <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => {
+                const isActive = () => grid()[ti()]?.[si] ?? false;
+                const isCurrent = () => currentStep() === si;
+                const isBeat = si % 4 === 0;
+                const trackColor = track.color ?? V.cy;
+                return (
+                  <button
+                    onClick={() => toggleCell(ti(), si)}
+                    style={{
+                      background: isActive() ? trackColor : (isBeat ? V.s2 : V.bg),
+                      border: `1px solid ${isCurrent() ? V.amb : (isActive() ? trackColor : V.b)}`,
+                      'border-radius': '3px',
+                      height: '26px',
+                      cursor: 'pointer',
+                      transition: 'background 0.04s ease',
+                      padding: 0,
+                      'box-shadow': isCurrent() ? `0 0 6px ${V.amb}66` : 'none',
+                    }}
+                    aria-label={`${track.label} step ${si + 1}`}
+                  />
+                );
+              }}</For>
+            </div>
+          </div>
+        )}</For>
+      </div>
+
+      {/* Beat ticks footer */}
+      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+        <span style={{ width: '70px' }} />
+        <div style={{
+          display: 'grid',
+          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
+          gap: '3px',
+          flex: 1,
+        }}>
+          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
+            <div style={{
+              'text-align': 'center',
+              'font-size': '8px',
+              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
+              'font-family': V.mono,
+            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
+          )}</For>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function injectBodyStyles() {
   if (typeof document === 'undefined') return;
   if (!document.querySelector('[data-bbs-entry-styles]')) {
