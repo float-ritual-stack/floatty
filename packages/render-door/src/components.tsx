@@ -5569,6 +5569,66 @@ export function MasterFX(props: BaseComponentProps<{
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// STRUDEL — iframe to strudel.cc with pattern URL-encoded
+// ═══════════════════════════════════════════════════════════════
+//
+// strudel.cc accepts the mini-notation source as a base64-encoded URL
+// hash. No NPM dep needed; the page hosts the runtime. Doesn't sync to
+// our RigBus today — runs its own clock. Future work: postMessage bridge
+// from MasterClock to Strudel for clock-locked patterns.
+
+export function Strudel(props: BaseComponentProps<{
+  pattern: string;
+  cps?: number;
+  height?: string;
+  title?: string;
+}>) {
+  const cps = () => props.props.cps ?? 0.5;
+  const height = () => props.props.height ?? '420px';
+  const pattern = () => props.props.pattern ?? '';
+
+  const url = createMemo(() => {
+    // Strudel REPL accepts: https://strudel.cc/?<id>#<base64-encoded-pattern>
+    // We don't need an id (any random nonce works) — pattern lives in the hash.
+    const fullPattern = `setcps(${cps()})\n\n${pattern()}`;
+    const encoded = typeof btoa !== 'undefined' ? btoa(fullPattern) : '';
+    const safeEncoded = encoded.replace(/=+$/, '');
+    return `https://strudel.cc/?${Math.random().toString(36).slice(2, 10)}#${safeEncoded}`;
+  });
+
+  return (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '11px', color: V.amb, 'font-family': V.mono,
+          'text-transform': 'uppercase', 'letter-spacing': '0.1em',
+        }}>{props.props.title} <span style={{ color: V.tf }}>· strudel.cc</span></div>
+      </Show>
+      <iframe
+        src={url()}
+        // sandbox includes allow-same-origin per the floatty Tauri rule —
+        // iframe content is cross-origin from tauri://localhost so it
+        // needs same-origin to access its own subresources.
+        sandbox="allow-scripts allow-same-origin allow-forms"
+        style={{
+          width: '100%',
+          height: height(),
+          border: `1px solid ${V.b2}`,
+          'border-radius': '8px',
+          background: V.s1,
+        }}
+        title="Strudel REPL"
+        allow="autoplay"
+      />
+      <div style={{
+        'font-size': '9px', color: V.tf, 'font-family': V.mono,
+        'letter-spacing': '0.05em',
+      }}>cps {cps()} · pattern {pattern().length}b · iframe → strudel.cc</div>
+    </div>
+  );
+}
+
 export function injectBodyStyles() {
   if (typeof document === 'undefined') return;
   if (!document.querySelector('[data-bbs-entry-styles]')) {

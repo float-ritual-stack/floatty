@@ -650,6 +650,17 @@ export const doorComponentDefinitions = {
     description: "Rig FX bus — shared delay + convolution reverb sends. Voices on the same rigId opt into sends via the sends prop ({ delay: 0..1, reverb: 0..1 }). Props: rigId (default 'main'), delayTime (sec, default 0.375 ≈ dotted-eighth at 120 BPM), delayFeedback (0..0.85, default 0.35), delayMix (0..1, default 0.35), reverbMix (0..1, default 0.25). Live knobs.",
   },
 
+  Strudel: {
+    props: z.object({
+      pattern: z.string(),
+      cps: z.number().optional(),
+      height: z.string().optional(),
+      title: z.string().optional(),
+    }),
+    slots: [],
+    description: "Strudel REPL embed — runs at strudel.cc via iframe with the pattern URL-encoded into the hash. Pattern is mini-notation source (e.g. `note(\"c4 eb4 g4\").s(\"sine\")`). Props: pattern (required, mini-notation string), cps (cycles per second, default 0.5 = 120 BPM), height (default '420px'), title. Note: external dependency on strudel.cc; works offline only if strudel.cc was loaded previously and cached. Doesn't currently sync with MasterClock — runs its own clock.",
+  },
+
   // ─── Tree ────────────────────────────────────────────
   TreeView: {
     props: z.object({
