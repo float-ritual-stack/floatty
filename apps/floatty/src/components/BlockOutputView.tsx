@@ -12,7 +12,8 @@ import { Show, createSignal, createEffect, createMemo, on, onCleanup, ErrorBound
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { navigateToBlock, handleChirpNavigate, resolveSameTabLink } from '../lib/navigation';
-import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData } from '../lib/chirpWriteHandler';
+import { handleChirpWrite, isChirpWriteVerb, type ChirpWriteData, type ChirpWriteStore } from '../lib/chirpWriteHandler';
+import { useBlockExecution } from '../hooks/useBlockExecution';
 import { isMac } from '../lib/keybinds';
 import { createLogger } from '../lib/logger';
 
@@ -70,6 +71,19 @@ export function BlockOutputView(props: BlockOutputViewProps) {
   const { blockStore, paneStore } = useWorkspace();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
+  // Auto-execute chirped-in handler-prefixed blocks (render::, sh::, etc.).
+  // See useBlockExecution.ts + chirpWriteHandler.ts for the lifecycle. The
+  // handler-aware store wraps blockStore with the execute callback;
+  // chirpWriteHandler invokes it after create-child / upsert-child success.
+  const { executeBlock } = useBlockExecution(() => props.paneId);
+  const chirpStore: ChirpWriteStore = {
+    createBlockInside: store.createBlockInside,
+    updateBlockContent: store.updateBlockContent,
+    upsertChildByPrefix: store.upsertChildByPrefix,
+    moveBlock: (blockId, targetParentId, targetIndex) =>
+      store.moveBlock(blockId, targetParentId, targetIndex, { origin: 'user' }),
+    executeBlockIfHandler: executeBlock,
+  };
 
   const block = createMemo(() => store.blocks[props.blockId]);
   let outputFocusRef: HTMLDivElement | undefined;
@@ -332,7 +346,7 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                   return;
                 }
                 if (isChirpWriteVerb(message)) {
-                  const result = handleChirpWrite(message, data as ChirpWriteData, props.blockId, store);
+                  const result = handleChirpWrite(message, data as ChirpWriteData, props.blockId, chirpStore);
                   pokeIframe?.(`ack: ${message}`, result);
                   return;
                 }
@@ -381,7 +395,7 @@ export function BlockOutputView(props: BlockOutputViewProps) {
                     return;
                   }
                   if (isChirpWriteVerb(message)) {
-                    handleChirpWrite(message, data as ChirpWriteData, props.blockId, store);
+                    handleChirpWrite(message, data as ChirpWriteData, props.blockId, chirpStore);
                   }
                 }}
               />
