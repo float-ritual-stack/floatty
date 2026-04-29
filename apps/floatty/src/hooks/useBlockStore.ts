@@ -48,12 +48,30 @@ export function setAutoExecuteHandler(handler: AutoExecuteHandler | null) {
   _autoExecuteHandler = handler;
 }
 
-function isAutoExecutable(content: string): boolean {
-  // Only auto-execute idempotent view blocks, not side-effect ones like sh::
-  // Check content directly (not handler.prefixes) to avoid false positives
-  // if a future handler has multiple prefixes including 'daily::'
+export function isAutoExecutable(content: string): boolean {
+  // Only auto-execute idempotent VIEW blocks (output writes back to the same
+  // block, no external side effects). NOT side-effect ones like sh:: (runs
+  // shell), ai:: (calls API + costs money), render:: agent (spawns claude -p).
+  //
+  // The render:: door is special-cased: most render:: routes (raw-json,
+  // demo, stats, expand, kanban, prompt) are pure-projection and safe; the
+  // ai:: and agent:: sub-routes branch internally and gate themselves on
+  // explicit user intent (e.g. agent's --dangerously-skip-permissions).
+  // Auto-executing render:: lands the spec/output projection without firing
+  // those external paths.
+  //
+  // Why this matters: when an agent (or external tooling) creates a block
+  // via POST /api/v1/blocks with content `render:: {json}`, it lands via
+  // CRDT sync without going through useBlockInput.execute_block (which is
+  // the keyboard Enter path). Without this allowlist, the JSON sits as raw
+  // text until the user manually opens the block and presses Enter — and
+  // worse, the search-projection layer indexes the raw JSON spec instead of
+  // the rendered markdown projection.
   const trimmed = content.trim().toLowerCase();
-  return trimmed.startsWith('daily::');
+  return (
+    trimmed.startsWith('daily::') ||
+    trimmed.startsWith('render::')
+  );
   // Future: add || trimmed.startsWith('web::') || trimmed.startsWith('query::')
 }
 
@@ -465,6 +483,58 @@ function createBlockStore() {
               origin,
               events: createEvents,
             });
+          }
+        }
+
+        // Auto-execute for remote/reconnect adds (steady-state API/CRDT writes).
+        //
+        // The slim path otherwise skips auto-execute (FLO-320) to keep startup
+        // and bulk reconnects fast. But when the server-applied transaction is
+        // a single-block addition arriving in steady state — e.g. an agent
+        // hits POST /api/v1/blocks with `render:: {json}` content — we DO
+        // want auto-execute to fire so the JSON projects through the door
+        // pipeline instead of sitting as raw text.
+        //
+        // Three guards prevent regression:
+        //   1. `_autoExecuteHandler` is registered (set by WorkspaceContext
+        //      after mount; null during Y.Doc init)
+        //   2. content matches `isAutoExecutable` (view-only handler prefix)
+        //   3. block has no existing output (preserves already-executed blocks
+        //      on initial reconnect — they replay through here with their
+        //      output already set, which we leave alone)
+        //
+        // Why the output-guard alone is sufficient (no event-count threshold):
+        // initial-sync blocks of `render::` type that previously executed
+        // carry their output envelope in Y.Doc. They re-sync with output
+        // intact → the guard short-circuits → no re-execute storm.
+        if (
+          _autoExecuteHandler
+          && (origin === Origin.Remote || origin === Origin.ReconnectAuthority)
+          && createdBlockIds.length > 0
+        ) {
+          for (const blockId of createdBlockIds) {
+            const blockData = blocksMap.get(blockId);
+            if (!(blockData instanceof Y.Map)) continue;
+            const content = (blockData.get('content') as string) || '';
+            if (!content || !isAutoExecutable(content)) continue;
+            // Output-presence guard: if the block already has an output
+            // envelope, the originating client already executed it. Don't
+            // double-fire on the receiving client.
+            const existingOutput = blockData.get('output');
+            const existingOutputType = blockData.get('outputType');
+            if (existingOutput || existingOutputType) continue;
+            // Defer to next tick so SolidJS state finishes settling before
+            // the handler reads the block.
+            const runHandler = _autoExecuteHandler;
+            const capturedId = blockId;
+            const capturedContent = content;
+            setTimeout(() => {
+              try {
+                runHandler(capturedId, capturedContent);
+              } catch (err) {
+                logger.error(`Slim-path auto-execute error for block ${capturedId}`, { err });
+              }
+            }, 0);
           }
         }
 
