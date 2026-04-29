@@ -101,7 +101,7 @@ Update ALL version locations:
 (cd apps/floatty/src-tauri && cargo update --workspace)
 ```
 
-`cargo update --workspace` rewrites only the workspace packages' versions (no transitive churn). Without this step, `Cargo.lock` keeps the old version and any subsequent `cargo build` produces a dirty working tree on a fresh checkout of the tag — see drift history below.
+`cargo update --workspace` targets the workspace packages' versions; per Cargo docs and known issues (rust-lang/cargo#5530, #16926, #12599) the resolver may also touch transitive entries during the dependency-graph re-resolution, so review the diff before staging. Without this step, `Cargo.lock` keeps the old workspace versions and any subsequent `cargo build` produces a dirty working tree on a fresh checkout of the tag — see drift history below.
 
 **`apps/floatty/CHANGELOG.md`** — prepend the new release section (see step 6).
 
