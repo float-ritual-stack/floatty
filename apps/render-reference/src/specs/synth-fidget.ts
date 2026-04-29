@@ -109,15 +109,20 @@ export const synthFidgetSpec: Spec = {
     'rig-stepseq': {
       type: 'StepSequencer',
       props: {
-        title: 'drums (slave) — sends → reverb',
+        title: 'drums (slave) — KICK dry, HAT wet, others = component default',
         clock: 'main',
         rigId: 'main',
-        sends: { reverb: 0.4 },
+        // Component-level sends apply when a track has no override.
+        sends: { reverb: 0.25 },
         steps: 16,
         tracks: [
-          { label: 'KICK',  freq: 60,   wave: 'sine',     duration: 180, color: '#ff4444' },
+          // Per-track sends override component-level sends. Common move:
+          // kick stays bone-dry for tightness, hat goes wet for air.
+          { label: 'KICK',  freq: 60,   wave: 'sine',     duration: 180, color: '#ff4444',
+            sends: { delay: 0, reverb: 0 } },
           { label: 'SNARE', freq: 200,  wave: 'square',   duration: 100, color: '#ffb300' },
-          { label: 'HAT',   freq: 6500, wave: 'sawtooth', duration: 50,  color: '#00e5ff' },
+          { label: 'HAT',   freq: 6500, wave: 'sawtooth', duration: 50,  color: '#00e5ff',
+            sends: { delay: 0.3, reverb: 0.55 } },
           { label: 'PERC',  freq: 320,  wave: 'triangle', duration: 90,  color: '#e040a0' },
         ],
         initial: [

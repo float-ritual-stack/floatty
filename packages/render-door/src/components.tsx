@@ -3488,6 +3488,8 @@ interface TrackSpec {
   duration?: number;
   wave?: WaveType;
   color?: string;
+  /** Per-track FX sends override the component-level sends. */
+  sends?: { delay?: number; reverb?: number };
 }
 
 let _audioCtx: AudioContext | null = null;
@@ -3928,7 +3930,13 @@ export function StepSequencer(props: BaseComponentProps<{
     g.forEach((row, ti) => {
       if (row[idx]) {
         const tk = t[ti];
-        if (tk) playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25, rigId(), delaySend(), reverbSend());
+        if (tk) {
+          // Per-track sends override component-level sends. Lets a kit
+          // mix kick-dry-hat-wet without needing per-component scopes.
+          const trackDelay = tk.sends?.delay ?? delaySend();
+          const trackReverb = tk.sends?.reverb ?? reverbSend();
+          playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25, rigId(), trackDelay, trackReverb);
+        }
       }
     });
   };
@@ -4740,6 +4748,8 @@ interface EuclidTrack {
   duration?: number;
   wave?: WaveType;
   color?: string;
+  /** Per-track FX sends override component-level sends. */
+  sends?: { delay?: number; reverb?: number };
 }
 
 export function EuclideanDrums(props: BaseComponentProps<{
@@ -4779,7 +4789,10 @@ export function EuclideanDrums(props: BaseComponentProps<{
     const ps = patterns();
     ts.forEach((tk, ti) => {
       if (ps[ti]?.[idx]) {
-        playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25, rigId(), delaySend(), reverbSend());
+        // Per-track sends override component-level sends.
+        const trackDelay = tk.sends?.delay ?? delaySend();
+        const trackReverb = tk.sends?.reverb ?? reverbSend();
+        playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25, rigId(), trackDelay, trackReverb);
       }
     });
   };
