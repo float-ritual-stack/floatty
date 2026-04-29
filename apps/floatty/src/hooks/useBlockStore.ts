@@ -36,6 +36,11 @@ export interface BatchBlockOp {
 // ═══════════════════════════════════════════════════════════════
 // AUTO-EXECUTE CALLBACK (for external block creation via API)
 // ═══════════════════════════════════════════════════════════════
+//
+// Architecture: apps/floatty/docs/architecture/AGENT_CREATED_DOOR_BLOCKS.md
+//   — Phase 1/2/3 plan, decision records, opt-out semantics, verification
+//     recipe, and the rough-draft → polish lesson for the chirp-path
+//     attempt that was reverted in favor of this primitive.
 
 type AutoExecuteHandler = (blockId: string, content: string) => void;
 let _autoExecuteHandler: AutoExecuteHandler | null = null;
