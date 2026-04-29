@@ -151,6 +151,52 @@ direction `"if it already exists, leverage it -> if we need to refactor it,
 thats fine ... we have lots of 'well intentioned, well designed
 architecture' that keeps going under leveraged"`.)
 
+## Live re-render: child blocks as config
+
+A render block's child blocks can be `prefix:: value` configurations
+that the door reads at execute time and merges into `spec.state`. The
+door subscribes to block changes (`subscribeBlockChanges`) so that
+adding, removing, or PATCH-editing a child block triggers an automatic
+re-projection.
+
+```text
+- render:: {"root":"r","state":{"bpm":120},"elements":{
+    "r":{"type":"AcidBass","props":{
+      "bpm":{"$state":"/bpm"},
+      "cutoff":{"$state":"/cutoff"}
+    }}}}
+  ↳ bpm:: 130        ← override default
+  ↳ cutoff:: 850     ← override default
+```
+
+Result: `spec.state` becomes `{ bpm: 130, cutoff: 850 }`. Edit any
+child's content (PATCH `/blocks/<childId>`) → parent re-projects.
+
+The full chain (verified end-to-end via Tauri MCP 2026-04-29 ~04:13):
+
+1. Server applies the child write/update with origin `'remote'`
+2. Local Y.Doc observer fires (slim path, FLO-320)
+3. Slim path tracks the change (parent's `childIds` for adds, child's
+   `content` for updates) — see `useBlockStore.ts` for both event
+   shapes (path-1 YMapEvent vs path-deeper)
+4. Slim path emits a `block:create` or `block:update` envelope to
+   `blockEventBus` (gated by a small-batch threshold so initial-sync
+   bulk reconnects keep skipping)
+5. Door's `subscribeBlockChanges({ fields: ['childIds', 'content',
+   'parentId'] })` callback fires
+6. `buildAndSetOutput` re-reads children, parses `key:: value`,
+   merges via `applyChildConfig`, writes new output envelope
+
+Same `subscribeBlockChanges` primitive `kanban`/`expand` already use —
+no new mechanism. This is the pattern the user pointed at when they
+said "use the fucking architecture": three small fixes (consumer in
+the door, producer in the slim path, field-tracking for the YMapEvent
+shape) connecting an existing primitive end-to-end.
+
+Reserved prefixes (render::, ctx::, sh::, ai::, chat::, dispatch::,
+daily::, echocopy::, sync::, pages::) are skipped by the child-config
+reader so they retain their own outline meaning.
+
 ## Verbs that do and don't auto-execute
 
 This applies *within* the chirp protocol too — chirp create-child /
