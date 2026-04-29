@@ -8,7 +8,7 @@
  * Wikilink navigation via chirp CustomEvent bubbling to BlockItem.
  */
 
-import { Show, For, createSignal, createMemo, onMount, createEffect, onCleanup } from 'solid-js';
+import { Show, For, createSignal, createMemo, onMount, createEffect, onCleanup, on } from 'solid-js';
 import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
@@ -3997,14 +3997,15 @@ export function StepSequencer(props: BaseComponentProps<{
     setGrid(g => g.map(row => row.map(() => false)));
   };
 
-  // Re-arm interval if BPM changes mid-play.
-  createEffect(() => {
-    bpmLocal();
+  // Re-arm interval if BPM changes mid-play. `on(bpmLocal, ...)` scopes
+  // the dependency so transitions of `playing` don't pointlessly re-run
+  // the body (Greptile P2 review on PR #290).
+  createEffect(on(bpmLocal, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
       intervalId = window.setInterval(tick, stepIntervalMs());
     }
-  });
+  }));
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
@@ -4418,13 +4419,14 @@ export function AcidBass(props: BaseComponentProps<{
   };
 
   // Re-arm interval on BPM change
-  createEffect(() => {
-    bpm();
+  // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
+  // don't pointlessly re-run the body (Greptile P2 review on PR #290).
+  createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
       intervalId = window.setInterval(tick, stepIntervalMs());
     }
-  });
+  }));
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
@@ -4841,13 +4843,14 @@ export function EuclideanDrums(props: BaseComponentProps<{
     stepCursor = -1;
   };
 
-  createEffect(() => {
-    bpm();
+  // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
+  // don't pointlessly re-run the body (Greptile P2 review on PR #290).
+  createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
       intervalId = window.setInterval(tick, stepIntervalMs());
     }
-  });
+  }));
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);
@@ -5299,13 +5302,14 @@ export function MasterClock(props: BaseComponentProps<{
   };
 
   // Re-arm on BPM change
-  createEffect(() => {
-    bpm();
+  // BPM re-arm — `on(bpm, ...)` scopes deps so transitions of `playing`
+  // don't pointlessly re-run the body (Greptile P2 review on PR #290).
+  createEffect(on(bpm, () => {
     if (playing() && intervalId !== null) {
       clearInterval(intervalId);
       intervalId = window.setInterval(tick, stepIntervalMs());
     }
-  });
+  }));
 
   onCleanup(() => {
     if (intervalId !== null) clearInterval(intervalId);

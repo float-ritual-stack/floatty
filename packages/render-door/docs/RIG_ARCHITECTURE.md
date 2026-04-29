@@ -14,7 +14,7 @@ one massive monolith,"* which is the test for any change here.
 
 Quick map of the parts:
 
-```
+```text
 spec props                    runtime                    audio graph
 ──────────────────────────    ─────────────────────────  ─────────────────────────
 MasterClock { rigId: 'x' } ── emits rig:step events  ──▶ (no audio — pure clock)
@@ -137,7 +137,7 @@ contract doesn't.
 
 Evan's instinct from the original session:
 
-```
+```text
 instrument:: kick
   in:: clock=main
   out:: delay=0.4 reverb=0.2

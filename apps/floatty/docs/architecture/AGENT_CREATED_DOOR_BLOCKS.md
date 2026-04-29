@@ -45,7 +45,7 @@ children (Q&A, breadcrumbs, etc.) don't accidentally re-execute anything.
 
 The wire path:
 
-```
+```text
 agent in render-door spec:
   { type: '...', actions: { onPress: { type: 'createChild',
                               params: { content: 'render:: {...}' }}}}
