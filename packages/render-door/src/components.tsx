@@ -3671,21 +3671,44 @@ function ClockBadge(props: { rig: string; color: string; playing?: boolean; show
  */
 function useSlaveRig(opts: {
   clockRig: () => string | undefined;
-  onStep: (d: RigStepDetail) => void;
+  /**
+   * Called when the rig fires a step. The second arg is a generation
+   * accessor — call it before any deferred work (setTimeout, requestAnimationFrame,
+   * etc.) to check whether this subscription is still current. Synchronous
+   * `onStep` work is always current and doesn't need to consult it.
+   *
+   * Why: when the rig accessor changes (rig swap or unmount) WHILE a
+   * previous step's swing-delayed callback is still pending, the firing
+   * sequencer is now wired to a different rig. Without a guard, the
+   * deferred fire lands on the new state with the old step index. See
+   * CodeRabbit P1.1 review on PR #292.
+   */
+  onStep: (d: RigStepDetail, isStillCurrent: () => boolean) => void;
   onTransport: (d: RigTransportDetail) => void;
   onAttach?: (rig: string, state: { playing: boolean; bpm: number }) => void;
 }): void {
   let unsubStep: (() => void) | undefined;
   let unsubTransport: (() => void) | undefined;
+  let generation = 0;
   createEffect(on(opts.clockRig, (rig) => {
+    generation++;
+    const myGen = generation;
+    const isStillCurrent = () => myGen === generation;
     if (unsubStep) { unsubStep(); unsubStep = undefined; }
     if (unsubTransport) { unsubTransport(); unsubTransport = undefined; }
     if (!rig) return;
-    unsubStep = subscribeRigStep(rig, opts.onStep);
-    unsubTransport = subscribeRigTransport(rig, opts.onTransport);
+    unsubStep = subscribeRigStep(rig, (d) => {
+      if (!isStillCurrent()) return; // listener-time guard for sync race
+      opts.onStep(d, isStillCurrent);
+    });
+    unsubTransport = subscribeRigTransport(rig, (d) => {
+      if (!isStillCurrent()) return;
+      opts.onTransport(d);
+    });
     if (opts.onAttach) opts.onAttach(rig, rigStateGet(rig));
   }));
   onCleanup(() => {
+    generation++; // any deferred fire after unmount sees a stale gen and bails
     if (unsubStep) unsubStep();
     if (unsubTransport) unsubTransport();
   });
@@ -4062,10 +4085,13 @@ export function StepSequencer(props: BaseComponentProps<{
   // Slave mode: subscribe to RigBus, no internal interval.
   useSlaveRig({
     clockRig,
-    onStep: (d) => {
+    onStep: (d, isStillCurrent) => {
       // Map master step → local step (modulo our own loop length)
       const idx = d.step % stepCount();
-      applySwing(d, () => fireStep(idx));
+      applySwing(d, () => {
+        if (!isStillCurrent()) return; // rig swapped during swing window
+        fireStep(idx);
+      });
     },
     onTransport: (d) => {
       setPlaying(d.state === 'play');
@@ -4438,9 +4464,12 @@ export function AcidBass(props: BaseComponentProps<{
   // (not just amp-envelope-released) on stop, and re-created on next play.
   useSlaveRig({
     clockRig,
-    onStep: (d) => {
+    onStep: (d, isStillCurrent) => {
       ensureVoice();
-      applySwing(d, () => fireStep(d.step % stepCount()));
+      applySwing(d, () => {
+        if (!isStillCurrent()) return; // rig swapped during swing window
+        fireStep(d.step % stepCount());
+      });
     },
     onTransport: (d) => {
       if (d.state === 'play') {
@@ -4860,7 +4889,10 @@ export function EuclideanDrums(props: BaseComponentProps<{
 
   useSlaveRig({
     clockRig,
-    onStep: (d) => applySwing(d, () => fireStep(d.step % stepCount())),
+    onStep: (d, isStillCurrent) => applySwing(d, () => {
+      if (!isStillCurrent()) return; // rig swapped during swing window
+      fireStep(d.step % stepCount());
+    }),
     onTransport: (d) => {
       setPlaying(d.state === 'play');
       if (d.state === 'stop') {
@@ -5612,7 +5644,15 @@ export function Strudel(props: BaseComponentProps<{
   const url = createMemo(() => {
     // Strudel REPL accepts: https://strudel.cc/?<id>#<base64-encoded-pattern>
     // We don't need an id (any random nonce works) — pattern lives in the hash.
-    const fullPattern = `setcps(${cps()})\n\n${pattern()}`;
+    // Coerce cps to a finite number — the value flows into a templated
+    // string that becomes evaluated JS inside the strudel.cc iframe. Spec
+    // authors are trusted in floatty's threat model, but the iframe still
+    // runs in strudel.cc's origin; defensive coercion keeps a stray
+    // string-typed `cps` (or `Infinity`/`NaN`) from corrupting the call.
+    // CodeRabbit P3.3 #292.
+    const cpsRaw = Number(cps());
+    const cpsSafe = Number.isFinite(cpsRaw) ? cpsRaw : 0.5;
+    const fullPattern = `setcps(${cpsSafe})\n\n${pattern()}`;
     const encoded = typeof btoa !== 'undefined' ? btoa(fullPattern) : '';
     const safeEncoded = encoded.replace(/=+$/, '');
     return `https://strudel.cc/?${Math.random().toString(36).slice(2, 10)}#${safeEncoded}`;

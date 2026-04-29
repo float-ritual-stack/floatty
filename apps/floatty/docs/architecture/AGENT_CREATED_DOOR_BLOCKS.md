@@ -91,6 +91,20 @@ reconnect skips (output now present).
 
 No event-count threshold needed. The guard does the work cleanly.
 
+### Error-state handling (CodeRabbit P1.3 #292)
+
+The guard treats `outputType: 'error'` (with or without an `output`
+envelope) as "already executed" — it short-circuits, so a previously-
+errored render block does NOT auto-retry on remote sync. This is the
+intended semantics: don't loop on broken specs. The user can clear
+the error envelope manually (Cmd+Backspace clears block output in
+floatty) and re-run via Enter, or update the content and re-execute.
+
+If a future need for "retry-on-reconnect" emerges, the guard would
+become `(outputType === 'door' || (output && outputType !== 'error'))`
+or similar — but the current behavior matches user expectation that
+errors don't silently re-fire.
+
 ## Allowlist policy
 
 `isAutoExecutable` permits *idempotent view-only* handlers only. A
