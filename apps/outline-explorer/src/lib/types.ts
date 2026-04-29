@@ -86,13 +86,20 @@ export interface BlockWithContext extends Block {
   siblings?: { before: Block[]; after: Block[] };
   children?: Block[];
   tree?: TreeNode[];
-  tokenEstimate?: { totalChars: number; blockCount: number; maxDepth: number };
+  tokenEstimate?: TokenEstimate;
 }
 
 export interface TreeNode {
   id: string;
   content: string;
   depth: number;
+  childIds: string[];
+}
+
+export interface TokenEstimate {
+  totalChars: number;
+  blockCount: number;
+  maxDepth: number;
 }
 
 // Search API types
