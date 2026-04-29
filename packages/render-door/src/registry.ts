@@ -65,6 +65,9 @@ import {
   Tone,
   DrumPad,
   StepSequencer,
+  AcidBass,
+  EuclideanDrums,
+  XYPad,
   injectBodyStyles,
 } from './components';
 
@@ -133,6 +136,9 @@ export const { registry, handlers } = defineRegistry(bbsCatalog, {
     Tone,
     DrumPad,
     StepSequencer,
+    AcidBass,
+    EuclideanDrums,
+    XYPad,
   },
   actions: {
     navigate: async () => {},

@@ -3856,6 +3856,910 @@ export function StepSequencer(props: BaseComponentProps<{
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// ACID BASS — 303-style mono with filter envelope (FLO-techno-fidget)
+// ═══════════════════════════════════════════════════════════════
+//
+// Pseudo-mono voice: single oscillator running continuously while
+// transport plays, retriggered per step via amp + filter envelopes.
+// Slide flag does linear-ramp portamento to next note's frequency.
+// Accent boosts amp peak and adds extra cutoff modulation.
+
+interface AcidVoice {
+  ctx: AudioContext;
+  osc: OscillatorNode;
+  filter: BiquadFilterNode;
+  amp: GainNode;
+  ampEnv: GainNode;
+}
+
+function createAcidVoice(wave: 'sawtooth' | 'square'): AcidVoice {
+  const ctx = getAudioContext();
+  const osc = ctx.createOscillator();
+  const filter = ctx.createBiquadFilter();
+  const ampEnv = ctx.createGain(); // per-note shape
+  const amp = ctx.createGain(); // master volume
+
+  osc.type = wave;
+  osc.frequency.value = 110;
+  filter.type = 'lowpass';
+  filter.frequency.value = 600;
+  filter.Q.value = 12;
+  ampEnv.gain.value = 0.0001;
+  amp.gain.value = 0.45;
+
+  osc.connect(filter);
+  filter.connect(ampEnv);
+  ampEnv.connect(amp);
+  amp.connect(ctx.destination);
+  return { ctx, osc, filter, amp, ampEnv };
+}
+
+function semitoneToHz(base: number, semi: number): number {
+  return base * Math.pow(2, semi / 12);
+}
+
+export function AcidBass(props: BaseComponentProps<{
+  bpm?: number;
+  steps?: number;
+  notes: Array<number | null>;
+  accents?: boolean[];
+  slides?: boolean[];
+  baseFreq?: number;
+  wave?: 'sawtooth' | 'square';
+  cutoff?: number;
+  resonance?: number;
+  envAmount?: number;
+  envDecay?: number;
+  title?: string;
+}>) {
+  const stepCount = () => props.props.steps ?? 16;
+  const baseFreq = () => props.props.baseFreq ?? 55;
+  const wave = () => props.props.wave ?? 'sawtooth';
+
+  const seedNotes = (): Array<number | null> => {
+    const n = props.props.notes ?? [];
+    const out: Array<number | null> = [];
+    for (let i = 0; i < stepCount(); i++) out.push(n[i] ?? null);
+    return out;
+  };
+  const seedBools = (src?: boolean[]): boolean[] => {
+    const out: boolean[] = [];
+    for (let i = 0; i < stepCount(); i++) out.push(Boolean(src?.[i]));
+    return out;
+  };
+
+  const [notes, setNotes] = createSignal<Array<number | null>>(seedNotes());
+  const [accents, setAccents] = createSignal<boolean[]>(seedBools(props.props.accents));
+  const [slides, setSlides] = createSignal<boolean[]>(seedBools(props.props.slides));
+  const [currentStep, setCurrentStep] = createSignal(-1);
+  const [playing, setPlaying] = createSignal(false);
+  const [bpm, setBpm] = createSignal(props.props.bpm ?? 124);
+  const [cutoff, setCutoff] = createSignal(props.props.cutoff ?? 600);
+  const [resonance, setResonance] = createSignal(props.props.resonance ?? 14);
+  const [envAmount, setEnvAmount] = createSignal(props.props.envAmount ?? 2400);
+  const [envDecay, setEnvDecay] = createSignal(props.props.envDecay ?? 220);
+
+  let voice: AcidVoice | null = null;
+  let intervalId: number | null = null;
+  let stepCursor = -1;
+  let prevWasNote = false;
+
+  const stepIntervalMs = () => 60000 / bpm() / 4;
+
+  const triggerStep = (idx: number) => {
+    if (!voice) return;
+    const { ctx, osc, filter, ampEnv } = voice;
+    const note = notes()[idx];
+    if (note == null) {
+      // rest — just silence the amp env
+      const now = ctx.currentTime;
+      ampEnv.gain.cancelScheduledValues(now);
+      ampEnv.gain.linearRampToValueAtTime(0.0001, now + 0.04);
+      prevWasNote = false;
+      return;
+    }
+    const targetHz = semitoneToHz(baseFreq(), note);
+    const accent = accents()[idx];
+    const slide = slides()[idx];
+    const now = ctx.currentTime;
+    const decaySec = Math.max(envDecay(), 30) / 1000;
+
+    // Pitch — slide does portamento, otherwise instant
+    osc.frequency.cancelScheduledValues(now);
+    if (slide && prevWasNote) {
+      osc.frequency.linearRampToValueAtTime(targetHz, now + 0.05);
+    } else {
+      osc.frequency.setValueAtTime(targetHz, now);
+    }
+
+    // Amp env — quick attack, exponential decay
+    const peak = accent ? 1.0 : 0.7;
+    ampEnv.gain.cancelScheduledValues(now);
+    ampEnv.gain.setValueAtTime(0.0001, now);
+    ampEnv.gain.linearRampToValueAtTime(peak, now + 0.005);
+    ampEnv.gain.exponentialRampToValueAtTime(0.0001, now + decaySec);
+
+    // Filter env
+    filter.Q.setValueAtTime(resonance(), now);
+    const baseCut = cutoff();
+    const peakCut = baseCut + envAmount() + (accent ? envAmount() * 0.6 : 0);
+    filter.frequency.cancelScheduledValues(now);
+    filter.frequency.setValueAtTime(peakCut, now);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(baseCut, 80), now + decaySec);
+
+    prevWasNote = true;
+  };
+
+  const tick = () => {
+    stepCursor = (stepCursor + 1) % stepCount();
+    setCurrentStep(stepCursor);
+    triggerStep(stepCursor);
+  };
+
+  const start = () => {
+    if (playing()) return;
+    voice = createAcidVoice(wave());
+    voice.osc.start();
+    stepCursor = -1;
+    prevWasNote = false;
+    setCurrentStep(-1);
+    setPlaying(true);
+    intervalId = window.setInterval(tick, stepIntervalMs());
+  };
+
+  const stop = () => {
+    setPlaying(false);
+    if (intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+    if (voice) {
+      const now = voice.ctx.currentTime;
+      voice.ampEnv.gain.cancelScheduledValues(now);
+      voice.ampEnv.gain.linearRampToValueAtTime(0.0001, now + 0.05);
+      voice.osc.stop(now + 0.1);
+      voice = null;
+    }
+    setCurrentStep(-1);
+    stepCursor = -1;
+    prevWasNote = false;
+  };
+
+  // Re-arm interval on BPM change
+  createEffect(() => {
+    bpm();
+    if (playing() && intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = window.setInterval(tick, stepIntervalMs());
+    }
+  });
+
+  onCleanup(() => stop());
+
+  const cycleNote = (i: number) => {
+    // Cycle through useful 303 voicings (semitones from base)
+    const cycle: Array<number | null> = [null, 0, 3, 5, 7, 10, 12, 15];
+    setNotes(ns => ns.map((n, idx) => {
+      if (idx !== i) return n;
+      const cur = cycle.indexOf(n ?? null);
+      return cycle[(cur + 1) % cycle.length];
+    }));
+  };
+
+  const toggleAccent = (i: number) => setAccents(a => a.map((v, idx) => idx === i ? !v : v));
+  const toggleSlide = (i: number) => setSlides(a => a.map((v, idx) => idx === i ? !v : v));
+
+  // Knob primitive — vertical slider styled as a fader
+  const Knob = (kp: { label: string; value: number; min: number; max: number; step?: number; suffix?: string; setter: (v: number) => void; color?: string }) => (
+    <div style={{ display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '4px', 'min-width': '64px' }}>
+      <span style={{ 'font-size': '9px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em', 'text-transform': 'uppercase' }}>{kp.label}</span>
+      <input
+        type="range"
+        min={kp.min}
+        max={kp.max}
+        step={kp.step ?? 1}
+        value={kp.value}
+        onInput={(e) => kp.setter(parseFloat(e.currentTarget.value))}
+        style={{ width: '64px', 'accent-color': kp.color ?? V.amb }}
+      />
+      <span style={{ 'font-size': '10px', color: kp.color ?? V.amb, 'font-family': V.mono, 'min-width': '36px', 'text-align': 'center' }}>
+        {Math.round(kp.value)}{kp.suffix ?? ''}
+      </span>
+    </div>
+  );
+
+  const semiLabel = (n: number | null): string => {
+    if (n == null) return '·';
+    if (n === 0) return '0';
+    return n > 0 ? `+${n}` : `${n}`;
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      'flex-direction': 'column',
+      gap: '12px',
+      padding: '14px',
+      background: V.s1,
+      border: `1px solid ${V.b2}`,
+      'border-radius': '8px',
+    }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '12px',
+          color: V.cor,
+          'font-family': V.mono,
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.12em',
+        }}>{props.props.title}</div>
+      </Show>
+
+      {/* Transport */}
+      <div style={{
+        display: 'flex',
+        'align-items': 'center',
+        gap: '12px',
+        'padding-bottom': '10px',
+        'border-bottom': `1px solid ${V.b}`,
+      }}>
+        <button
+          onClick={() => playing() ? stop() : start()}
+          style={{
+            background: playing() ? V.cor : V.green,
+            color: '#000',
+            border: 'none',
+            'border-radius': '4px',
+            padding: '6px 14px',
+            'font-size': '11px',
+            'font-family': V.mono,
+            'font-weight': 'bold',
+            'letter-spacing': '0.1em',
+            cursor: 'pointer',
+            'min-width': '60px',
+          }}
+        >{playing() ? 'STOP' : 'PLAY'}</button>
+
+        <Knob label="BPM" value={bpm()} min={60} max={200} step={1} setter={setBpm} />
+        <Knob label="CUTOFF" value={cutoff()} min={80} max={4000} step={10} suffix=" Hz" setter={setCutoff} color={V.cy} />
+        <Knob label="RES" value={resonance()} min={0.5} max={28} step={0.5} setter={setResonance} color={V.mag} />
+        <Knob label="ENV AMT" value={envAmount()} min={0} max={6000} step={50} suffix=" Hz" setter={setEnvAmount} color={V.amb} />
+        <Knob label="DECAY" value={envDecay()} min={40} max={900} step={10} suffix=" ms" setter={setEnvDecay} color={V.green} />
+      </div>
+
+      {/* Pitch row — click to cycle */}
+      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+        <span style={{
+          width: '70px',
+          color: V.cor,
+          'font-family': V.mono,
+          'font-size': '10px',
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.05em',
+          'text-align': 'right',
+          'padding-right': '4px',
+        }}>NOTE</span>
+        <div style={{
+          display: 'grid',
+          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
+          gap: '3px',
+          flex: 1,
+        }}>
+          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => {
+            const note = () => notes()[si];
+            const isCurrent = () => currentStep() === si;
+            const isBeat = si % 4 === 0;
+            const hasNote = () => note() != null;
+            return (
+              <button
+                onClick={() => cycleNote(si)}
+                style={{
+                  background: hasNote() ? V.cor : (isBeat ? V.s2 : V.bg),
+                  color: hasNote() ? '#000' : V.tf,
+                  border: `1px solid ${isCurrent() ? V.amb : (hasNote() ? V.cor : V.b)}`,
+                  'border-radius': '3px',
+                  height: '30px',
+                  'font-size': '10px',
+                  'font-family': V.mono,
+                  'font-weight': hasNote() ? 'bold' : 'normal',
+                  cursor: 'pointer',
+                  padding: 0,
+                  'box-shadow': isCurrent() ? `0 0 6px ${V.amb}66` : 'none',
+                }}
+                aria-label={`step ${si + 1} note`}
+              >{semiLabel(note())}</button>
+            );
+          }}</For>
+        </div>
+      </div>
+
+      {/* Accent row */}
+      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+        <span style={{
+          width: '70px',
+          color: V.amb,
+          'font-family': V.mono,
+          'font-size': '10px',
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.05em',
+          'text-align': 'right',
+          'padding-right': '4px',
+        }}>ACCENT</span>
+        <div style={{
+          display: 'grid',
+          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
+          gap: '3px',
+          flex: 1,
+        }}>
+          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => {
+            const isAcc = () => accents()[si];
+            return (
+              <button
+                onClick={() => toggleAccent(si)}
+                style={{
+                  background: isAcc() ? V.amb : V.bg,
+                  border: `1px solid ${isAcc() ? V.amb : V.b}`,
+                  'border-radius': '3px',
+                  height: '14px',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+                aria-label={`step ${si + 1} accent`}
+              />
+            );
+          }}</For>
+        </div>
+      </div>
+
+      {/* Slide row */}
+      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+        <span style={{
+          width: '70px',
+          color: V.cy,
+          'font-family': V.mono,
+          'font-size': '10px',
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.05em',
+          'text-align': 'right',
+          'padding-right': '4px',
+        }}>SLIDE</span>
+        <div style={{
+          display: 'grid',
+          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
+          gap: '3px',
+          flex: 1,
+        }}>
+          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => {
+            const isSli = () => slides()[si];
+            return (
+              <button
+                onClick={() => toggleSlide(si)}
+                style={{
+                  background: isSli() ? V.cy : V.bg,
+                  border: `1px solid ${isSli() ? V.cy : V.b}`,
+                  'border-radius': '3px',
+                  height: '14px',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+                aria-label={`step ${si + 1} slide`}
+              />
+            );
+          }}</For>
+        </div>
+      </div>
+
+      {/* Beat ticks */}
+      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+        <span style={{ width: '70px' }} />
+        <div style={{
+          display: 'grid',
+          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
+          gap: '3px',
+          flex: 1,
+        }}>
+          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
+            <div style={{
+              'text-align': 'center',
+              'font-size': '8px',
+              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
+              'font-family': V.mono,
+            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
+          )}</For>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EUCLIDEAN DRUMS — Bjorklund n-of-k pattern generator
+// ═══════════════════════════════════════════════════════════════
+//
+// Bjorklund's algorithm distributes `hits` pulses as evenly as possible
+// across `steps` positions. (3,8) -> tresillo, (5,8) -> cinquillo,
+// (7,12) -> Aksak, etc. Tweaking hits/steps live = cascading polyrhythm
+// magic. Rotation shifts the start position.
+
+function bjorklund(hits: number, steps: number): boolean[] {
+  if (hits <= 0 || steps <= 0) return Array(Math.max(steps, 0)).fill(false);
+  if (hits >= steps) return Array(steps).fill(true);
+
+  // Build initial groups: `hits` ones, then `steps - hits` zeros
+  let groups: boolean[][] = [];
+  for (let i = 0; i < hits; i++) groups.push([true]);
+  for (let i = 0; i < steps - hits; i++) groups.push([false]);
+
+  // Repeatedly merge from the tail (zeros) into the head (ones) until
+  // there's at most one trailing remainder group.
+  while (true) {
+    const headLast = groups[0].length;
+    let splitAt = groups.length;
+    for (let i = 1; i < groups.length; i++) {
+      if (groups[i].length !== headLast) { splitAt = i; break; }
+    }
+    const head = groups.slice(0, splitAt);
+    const tail = groups.slice(splitAt);
+    if (tail.length <= 1) break;
+
+    const pairs = Math.min(head.length, tail.length);
+    const merged: boolean[][] = [];
+    for (let i = 0; i < pairs; i++) merged.push([...head[i], ...tail[i]]);
+    const leftover = head.length > pairs ? head.slice(pairs) : tail.slice(pairs);
+    groups = [...merged, ...leftover];
+  }
+
+  return groups.flat();
+}
+
+function rotateArray<T>(arr: T[], by: number): T[] {
+  const n = arr.length;
+  if (n === 0) return arr;
+  const r = ((by % n) + n) % n;
+  return [...arr.slice(r), ...arr.slice(0, r)];
+}
+
+interface EuclidTrack {
+  label: string;
+  hits: number;
+  rotation?: number;
+  freq: number;
+  duration?: number;
+  wave?: WaveType;
+  color?: string;
+}
+
+export function EuclideanDrums(props: BaseComponentProps<{
+  bpm?: number;
+  steps?: number;
+  tracks: EuclidTrack[];
+  title?: string;
+}>) {
+  const stepCount = () => props.props.steps ?? 16;
+  const initialTracks = (): EuclidTrack[] =>
+    (props.props.tracks ?? []).map(t => ({ ...t }));
+
+  const [tracks, setTracks] = createSignal<EuclidTrack[]>(initialTracks());
+  const [bpm, setBpm] = createSignal(props.props.bpm ?? 124);
+  const [currentStep, setCurrentStep] = createSignal(-1);
+  const [playing, setPlaying] = createSignal(false);
+
+  const patterns = createMemo(() =>
+    tracks().map(t => rotateArray(bjorklund(t.hits, stepCount()), t.rotation ?? 0))
+  );
+
+  let intervalId: number | null = null;
+  let stepCursor = -1;
+
+  const stepIntervalMs = () => 60000 / bpm() / 4;
+
+  const tick = () => {
+    stepCursor = (stepCursor + 1) % stepCount();
+    setCurrentStep(stepCursor);
+    const ts = tracks();
+    const ps = patterns();
+    ts.forEach((tk, ti) => {
+      if (ps[ti]?.[stepCursor]) {
+        playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine');
+      }
+    });
+  };
+
+  const start = () => {
+    if (playing()) return;
+    getAudioContext();
+    stepCursor = -1;
+    setCurrentStep(-1);
+    setPlaying(true);
+    intervalId = window.setInterval(tick, stepIntervalMs());
+  };
+
+  const stop = () => {
+    setPlaying(false);
+    if (intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+    setCurrentStep(-1);
+    stepCursor = -1;
+  };
+
+  createEffect(() => {
+    bpm();
+    if (playing() && intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = window.setInterval(tick, stepIntervalMs());
+    }
+  });
+
+  onCleanup(() => { if (intervalId !== null) clearInterval(intervalId); });
+
+  const updateTrack = (i: number, patch: Partial<EuclidTrack>) => {
+    setTracks(ts => ts.map((t, idx) => idx === i ? { ...t, ...patch } : t));
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      'flex-direction': 'column',
+      gap: '10px',
+      padding: '12px',
+      background: V.s1,
+      border: `1px solid ${V.b2}`,
+      'border-radius': '8px',
+    }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '12px',
+          color: V.mag,
+          'font-family': V.mono,
+          'text-transform': 'uppercase',
+          'letter-spacing': '0.12em',
+        }}>{props.props.title}</div>
+      </Show>
+
+      {/* Transport */}
+      <div style={{
+        display: 'flex',
+        'align-items': 'center',
+        gap: '10px',
+        'padding-bottom': '8px',
+        'border-bottom': `1px solid ${V.b}`,
+      }}>
+        <button
+          onClick={() => playing() ? stop() : start()}
+          style={{
+            background: playing() ? V.cor : V.green,
+            color: '#000',
+            border: 'none',
+            'border-radius': '4px',
+            padding: '6px 14px',
+            'font-size': '11px',
+            'font-family': V.mono,
+            'font-weight': 'bold',
+            'letter-spacing': '0.1em',
+            cursor: 'pointer',
+            'min-width': '60px',
+          }}
+        >{playing() ? 'STOP' : 'PLAY'}</button>
+
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', 'margin-left': 'auto' }}>
+          <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em' }}>BPM</span>
+          <input
+            type="range"
+            min="60"
+            max="200"
+            value={bpm()}
+            onInput={(e) => setBpm(parseInt(e.currentTarget.value, 10) || 124)}
+            style={{ width: '120px', 'accent-color': V.amb }}
+          />
+          <span style={{ 'font-size': '12px', color: V.amb, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{bpm()}</span>
+        </div>
+      </div>
+
+      {/* Tracks */}
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+        <For each={tracks()}>{(track, ti) => {
+          const trackColor = track.color ?? V.cy;
+          const pattern = () => patterns()[ti()] ?? [];
+          return (
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+              {/* Track header with hits/rotation knobs */}
+              <div style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'padding-bottom': '2px' }}>
+                <span style={{
+                  width: '70px',
+                  color: trackColor,
+                  'font-family': V.mono,
+                  'font-size': '10px',
+                  'text-transform': 'uppercase',
+                  'letter-spacing': '0.05em',
+                  'text-align': 'right',
+                  'padding-right': '4px',
+                }}>{track.label}</span>
+
+                <div style={{ display: 'flex', 'align-items': 'center', gap: '4px' }}>
+                  <span style={{ 'font-size': '9px', color: V.tf, 'font-family': V.mono }}>HITS</span>
+                  <button
+                    onClick={() => updateTrack(ti(), { hits: Math.max(0, track.hits - 1) })}
+                    style={{ background: V.s2, color: V.t, border: `1px solid ${V.b2}`, 'border-radius': '3px', width: '20px', height: '18px', cursor: 'pointer', 'font-family': V.mono, 'font-size': '11px', padding: 0 }}
+                  >−</button>
+                  <span style={{ 'font-size': '11px', color: trackColor, 'font-family': V.mono, 'min-width': '20px', 'text-align': 'center' }}>{track.hits}</span>
+                  <button
+                    onClick={() => updateTrack(ti(), { hits: Math.min(stepCount(), track.hits + 1) })}
+                    style={{ background: V.s2, color: V.t, border: `1px solid ${V.b2}`, 'border-radius': '3px', width: '20px', height: '18px', cursor: 'pointer', 'font-family': V.mono, 'font-size': '11px', padding: 0 }}
+                  >+</button>
+                </div>
+
+                <div style={{ display: 'flex', 'align-items': 'center', gap: '4px' }}>
+                  <span style={{ 'font-size': '9px', color: V.tf, 'font-family': V.mono }}>ROT</span>
+                  <button
+                    onClick={() => updateTrack(ti(), { rotation: ((track.rotation ?? 0) - 1 + stepCount()) % stepCount() })}
+                    style={{ background: V.s2, color: V.t, border: `1px solid ${V.b2}`, 'border-radius': '3px', width: '20px', height: '18px', cursor: 'pointer', 'font-family': V.mono, 'font-size': '11px', padding: 0 }}
+                  >◀</button>
+                  <span style={{ 'font-size': '11px', color: trackColor, 'font-family': V.mono, 'min-width': '20px', 'text-align': 'center' }}>{track.rotation ?? 0}</span>
+                  <button
+                    onClick={() => updateTrack(ti(), { rotation: ((track.rotation ?? 0) + 1) % stepCount() })}
+                    style={{ background: V.s2, color: V.t, border: `1px solid ${V.b2}`, 'border-radius': '3px', width: '20px', height: '18px', cursor: 'pointer', 'font-family': V.mono, 'font-size': '11px', padding: 0 }}
+                  >▶</button>
+                </div>
+
+                <span style={{ 'font-size': '9px', color: V.tf, 'font-family': V.mono, 'margin-left': 'auto' }}>
+                  {track.hits}/{stepCount()}
+                </span>
+              </div>
+
+              {/* Step row (read-only — derived from hits/rotation) */}
+              <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+                <span style={{ width: '70px' }} />
+                <div style={{
+                  display: 'grid',
+                  'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
+                  gap: '3px',
+                  flex: 1,
+                }}>
+                  <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => {
+                    const isActive = () => pattern()[si] ?? false;
+                    const isCurrent = () => currentStep() === si;
+                    const isBeat = si % 4 === 0;
+                    return (
+                      <div style={{
+                        background: isActive() ? trackColor : (isBeat ? V.s2 : V.bg),
+                        border: `1px solid ${isCurrent() ? V.amb : (isActive() ? trackColor : V.b)}`,
+                        'border-radius': '3px',
+                        height: '20px',
+                        'box-shadow': isCurrent() ? `0 0 6px ${V.amb}66` : 'none',
+                      }} />
+                    );
+                  }}</For>
+                </div>
+              </div>
+            </div>
+          );
+        }}</For>
+      </div>
+
+      {/* Beat ticks footer */}
+      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+        <span style={{ width: '70px' }} />
+        <div style={{
+          display: 'grid',
+          'grid-template-columns': `repeat(${stepCount()}, 1fr)`,
+          gap: '3px',
+          flex: 1,
+        }}>
+          <For each={Array.from({ length: stepCount() }, (_, i) => i)}>{(si) => (
+            <div style={{
+              'text-align': 'center',
+              'font-size': '8px',
+              color: currentStep() === si ? V.amb : (si % 4 === 0 ? V.td : V.tf),
+              'font-family': V.mono,
+            }}>{si % 4 === 0 ? (si / 4 + 1) : '·'}</div>
+          )}</For>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// XY PAD — drone with continuous filter sweep
+// ═══════════════════════════════════════════════════════════════
+//
+// Press-and-drag pad. Pointer down starts a sustained oscillator
+// through a lowpass filter; pointer move modulates cutoff (X, log)
+// and resonance (Y, linear). Pointer up releases.
+
+interface XYVoice {
+  ctx: AudioContext;
+  osc: OscillatorNode;
+  filter: BiquadFilterNode;
+  amp: GainNode;
+}
+
+function createXYVoice(wave: WaveType, baseFreq: number): XYVoice {
+  const ctx = getAudioContext();
+  const osc = ctx.createOscillator();
+  const filter = ctx.createBiquadFilter();
+  const amp = ctx.createGain();
+  osc.type = wave;
+  osc.frequency.value = baseFreq;
+  filter.type = 'lowpass';
+  filter.frequency.value = 800;
+  filter.Q.value = 8;
+  amp.gain.value = 0;
+  osc.connect(filter);
+  filter.connect(amp);
+  amp.connect(ctx.destination);
+  osc.start();
+  return { ctx, osc, filter, amp };
+}
+
+export function XYPad(props: BaseComponentProps<{
+  baseFreq?: number;
+  wave?: WaveType;
+  width?: number;
+  height?: number;
+  color?: string;
+  title?: string;
+}>) {
+  const baseFreq = () => props.props.baseFreq ?? 110;
+  const wave = () => props.props.wave ?? 'sawtooth';
+  const W = () => props.props.width ?? 280;
+  const H = () => props.props.height ?? 220;
+  const color = () => props.props.color ?? V.mag;
+
+  const [active, setActive] = createSignal(false);
+  const [pos, setPos] = createSignal<{ x: number; y: number } | null>(null);
+  const [readout, setReadout] = createSignal<{ cutoff: number; q: number }>({ cutoff: 800, q: 8 });
+
+  let voice: XYVoice | null = null;
+  let containerRef: HTMLDivElement | undefined;
+
+  // Map normalized x [0,1] to log frequency [200, 8000]
+  const xToCutoff = (x: number) => {
+    const fMin = 200, fMax = 8000;
+    return fMin * Math.pow(fMax / fMin, Math.max(0, Math.min(1, x)));
+  };
+  const yToQ = (y: number) => 0.5 + (1 - Math.max(0, Math.min(1, y))) * 24.5;
+
+  const updateFromEvent = (e: PointerEvent) => {
+    if (!containerRef || !voice) return;
+    const rect = containerRef.getBoundingClientRect();
+    const xN = (e.clientX - rect.left) / rect.width;
+    const yN = (e.clientY - rect.top) / rect.height;
+    const cutoff = xToCutoff(xN);
+    const q = yToQ(yN);
+    setPos({ x: xN, y: yN });
+    setReadout({ cutoff, q });
+    const now = voice.ctx.currentTime;
+    voice.filter.frequency.setTargetAtTime(cutoff, now, 0.02);
+    voice.filter.Q.setTargetAtTime(q, now, 0.02);
+  };
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (!containerRef) return;
+    containerRef.setPointerCapture(e.pointerId);
+    voice = createXYVoice(wave(), baseFreq());
+    const now = voice.ctx.currentTime;
+    voice.amp.gain.cancelScheduledValues(now);
+    voice.amp.gain.linearRampToValueAtTime(0.35, now + 0.04);
+    setActive(true);
+    updateFromEvent(e);
+  };
+
+  const onPointerMove = (e: PointerEvent) => {
+    if (!active()) return;
+    updateFromEvent(e);
+  };
+
+  const release = (e?: PointerEvent) => {
+    if (!active()) return;
+    setActive(false);
+    setPos(null);
+    if (voice) {
+      const now = voice.ctx.currentTime;
+      voice.amp.gain.cancelScheduledValues(now);
+      voice.amp.gain.linearRampToValueAtTime(0.0001, now + 0.08);
+      voice.osc.stop(now + 0.12);
+      voice = null;
+    }
+    if (e && containerRef && containerRef.hasPointerCapture(e.pointerId)) {
+      containerRef.releasePointerCapture(e.pointerId);
+    }
+  };
+
+  onCleanup(() => release());
+
+  return (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+      <Show when={props.props.title}>
+        <div style={{
+          'font-size': '11px', color: V.td, 'font-family': V.mono,
+          'text-transform': 'uppercase', 'letter-spacing': '0.1em',
+        }}>{props.props.title}</div>
+      </Show>
+
+      <div
+        ref={(el) => { containerRef = el; }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={(e) => release(e)}
+        onPointerCancel={(e) => release(e)}
+        onPointerLeave={(e) => active() && release(e)}
+        style={{
+          width: `${W()}px`,
+          height: `${H()}px`,
+          background: `radial-gradient(circle at 50% 50%, ${V.s2}, ${V.bg})`,
+          border: `1px solid ${active() ? color() : V.b2}`,
+          'border-radius': '8px',
+          position: 'relative',
+          cursor: active() ? 'crosshair' : 'pointer',
+          'touch-action': 'none',
+          'user-select': 'none',
+          transition: 'border-color 0.1s ease',
+        }}
+      >
+        {/* Crosshair guides */}
+        <div style={{
+          position: 'absolute',
+          left: '0', right: '0', top: '50%',
+          height: '1px',
+          background: V.b,
+        }} />
+        <div style={{
+          position: 'absolute',
+          top: '0', bottom: '0', left: '50%',
+          width: '1px',
+          background: V.b,
+        }} />
+
+        {/* Pointer dot */}
+        <Show when={pos()}>
+          {(p) => (
+            <div style={{
+              position: 'absolute',
+              left: `${p().x * 100}%`,
+              top: `${p().y * 100}%`,
+              width: '20px',
+              height: '20px',
+              background: color(),
+              'border-radius': '50%',
+              transform: 'translate(-50%, -50%)',
+              'box-shadow': `0 0 16px ${color()}, 0 0 32px ${color()}66`,
+              'pointer-events': 'none',
+            }} />
+          )}
+        </Show>
+
+        {/* Corner labels */}
+        <div style={{
+          position: 'absolute', bottom: '6px', left: '8px',
+          'font-size': '9px', color: V.tf, 'font-family': V.mono,
+        }}>200 Hz</div>
+        <div style={{
+          position: 'absolute', bottom: '6px', right: '8px',
+          'font-size': '9px', color: V.tf, 'font-family': V.mono,
+        }}>8 kHz</div>
+        <div style={{
+          position: 'absolute', top: '6px', left: '8px',
+          'font-size': '9px', color: V.tf, 'font-family': V.mono,
+        }}>Q 25</div>
+        <div style={{
+          position: 'absolute', top: '6px', right: '8px',
+          'font-size': '9px', color: V.tf, 'font-family': V.mono,
+        }}>{Math.round(baseFreq())} Hz · {wave()}</div>
+      </div>
+
+      {/* Readout */}
+      <div style={{ display: 'flex', gap: '12px', 'font-family': V.mono, 'font-size': '11px' }}>
+        <span style={{ color: V.cy }}>cutoff {Math.round(readout().cutoff)} Hz</span>
+        <span style={{ color: V.mag }}>Q {readout().q.toFixed(1)}</span>
+        <span style={{ color: active() ? V.amb : V.tf, 'margin-left': 'auto' }}>{active() ? '● live' : '○ idle'}</span>
+      </div>
+    </div>
+  );
+}
+
 export function injectBodyStyles() {
   if (typeof document === 'undefined') return;
   if (!document.querySelector('[data-bbs-entry-styles]')) {

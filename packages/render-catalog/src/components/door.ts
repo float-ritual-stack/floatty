@@ -522,6 +522,58 @@ export const doorComponentDefinitions = {
     description: "Step sequencer: tracks × steps grid. Click cells to toggle, PLAY to loop at BPM (16th-note timing). Props: bpm (default 120), steps (default 16), tracks (array of {label, freq, wave?, duration?, color?}), initial (optional [tracks][steps] boolean grid to seed the pattern). Current step has amber outline. Built-in transport bar.",
   },
 
+  AcidBass: {
+    props: z.object({
+      bpm: z.number().optional(),
+      steps: z.number().optional(),
+      // Per-step semitone offset from baseFreq. null = rest.
+      notes: z.array(z.union([z.number(), z.null()])),
+      accents: z.array(z.boolean()).optional(),
+      slides: z.array(z.boolean()).optional(),
+      baseFreq: z.number().optional(),
+      wave: z.enum(["sawtooth", "square"]).optional(),
+      cutoff: z.number().optional(),
+      resonance: z.number().optional(),
+      envAmount: z.number().optional(),
+      envDecay: z.number().optional(),
+      title: z.string().optional(),
+    }),
+    slots: [],
+    description: "303-style mono bass step sequencer. 16 steps × {pitch (semitones from baseFreq), accent (louder + brighter), slide (portamento to next note), gate (null = rest)}. Lowpass filter with envelope: cutoff=base cutoff (Hz), resonance=Q, envAmount=Hz added to cutoff at note-on, envDecay=ms. Live knobs: cutoff/resonance/envAmount/envDecay. baseFreq default 55Hz (A1), wave default 'sawtooth'. The squelch lives in cutoff+resonance+envAmount interaction.",
+  },
+
+  EuclideanDrums: {
+    props: z.object({
+      bpm: z.number().optional(),
+      steps: z.number().optional(),
+      tracks: z.array(z.object({
+        label: z.string(),
+        hits: z.number(),
+        rotation: z.number().optional(),
+        freq: z.number(),
+        duration: z.number().optional(),
+        wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
+        color: z.string().optional(),
+      })),
+      title: z.string().optional(),
+    }),
+    slots: [],
+    description: "Bjorklund-algorithm Euclidean rhythm sequencer. Per-track (hits, steps, rotation) generates the most-evenly-distributed pattern. Live-tweaking hits/steps cascades polyrhythms. Built-in transport. Props: bpm (default 120), steps (default 16), tracks (array of {label, hits, rotation?, freq, wave?, duration?, color?}). Try (3,8) → tresillo, (5,8) → cinquillo, (7,16) → variable.",
+  },
+
+  XYPad: {
+    props: z.object({
+      baseFreq: z.number().optional(),
+      wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+      color: z.string().optional(),
+      title: z.string().optional(),
+    }),
+    slots: [],
+    description: "Press-and-drag pad for sustained drone with continuous filter sweep. X axis = lowpass cutoff (200Hz–8kHz log). Y axis = resonance (0.5–25). Pointer down starts a sustained oscillator through the filter; release stops. Props: baseFreq (default 110Hz), wave (default 'sawtooth'), width (default 280), height (default 220), color (hex). Layer over the AcidBass for ambient pad mode.",
+  },
+
   // ─── Tree ────────────────────────────────────────────
   TreeView: {
     props: z.object({
