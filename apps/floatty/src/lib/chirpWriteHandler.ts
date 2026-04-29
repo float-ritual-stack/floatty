@@ -38,6 +38,22 @@ export interface ChirpWriteStore {
   updateBlockContent: (id: string, content: string) => void;
   upsertChildByPrefix: (parentId: string, prefix: string, content: string) => string | null;
   moveBlock: (blockId: string, targetParentId: string | null, targetIndex: number) => boolean;
+  /**
+   * Optional auto-execute hook. When set, chirpWriteHandler calls this
+   * after successful create-child / upsert-child if the new/updated
+   * block's content begins with a handler-registered prefix (e.g.
+   * `render::`, `sh::`, `ai::`). The implementation lives in
+   * useBlockExecution.ts; the chirp handler stays infrastructure-free
+   * and merely invokes the callback.
+   *
+   * Why: agent-created handler-prefixed blocks need to execute the same
+   * way user-typed blocks do (Enter → executeHandler). Without this,
+   * an agent-emitted `render:: {json}` lands as raw text and the JSON
+   * gets indexed by the search projection layer until the user
+   * manually opens the block and presses Enter. Closing that asymmetry
+   * is the load-bearing fix.
+   */
+  executeBlockIfHandler?: (blockId: string) => void;
 }
 
 export interface ChirpWriteResult {
@@ -68,6 +84,15 @@ export function handleChirpWrite(
       }
       store.updateBlockContent(newId, content);
       logger.info('create-child', { parentBlockId, content: content.slice(0, 40), newId });
+      // Auto-execute if this is a handler-prefixed block (render::, sh::, etc.).
+      // Closes the user/agent asymmetry: typing a render:: and pressing Enter
+      // already triggers executeHandler via useBlockInput.execute_block; an
+      // agent-emitted render:: block now does the same. data?.execute === false
+      // opts out (rare — when the agent specifically wants the content to sit
+      // as text, e.g. when emitting a draft for the user to edit before run).
+      if (data?.execute !== false) {
+        store.executeBlockIfHandler?.(newId);
+      }
       return { success: true, blockId: newId };
     }
 
@@ -84,6 +109,12 @@ export function handleChirpWrite(
         return { success: false };
       }
       logger.info('upsert-child', { parentBlockId, match, resultId });
+      // Same auto-execute story as create-child. Upserts re-run handler
+      // execution by default so an agent updating an existing render::
+      // block sees the new spec rendered without manual Enter.
+      if (data?.execute !== false) {
+        store.executeBlockIfHandler?.(resultId);
+      }
       return { success: true, blockId: resultId };
     }
 

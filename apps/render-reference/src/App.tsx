@@ -42,7 +42,7 @@ markDevtoolsActive();
 import { bbsCatalog } from '@render-door/catalog';
 import { registry as bbsRegistry } from '@render-door/registry';
 
-// Our 8 reference specs
+// Our 10 reference specs
 import { dailyNoteSpec } from './specs/daily-note';
 import { weeklyTrackerSpec } from './specs/weekly-tracker';
 import { meetingNotesSpec } from './specs/meeting-notes';
@@ -51,6 +51,8 @@ import { standupHeadlineSpec } from './specs/standup-headline';
 import { bbsPostSpec } from './specs/bbs-post';
 import { catalogAtomsSpec } from './specs/catalog-atoms';
 import { conceptualPatternsSpec } from './specs/conceptual-patterns';
+import { synthFidgetSpec } from './specs/synth-fidget';
+import { presetRigSpec } from './specs/preset-rig';
 
 type LayoutEntry = {
   id: string;
@@ -107,6 +109,18 @@ const LAYOUTS: LayoutEntry[] = [
     label: '8. Conceptual Patterns',
     description: 'How to shape a spec to achieve X. JSON side-by-side with live render. Six patterns: visibility conditions, TabNav + visibility switching, sibling-visibility value switch, $cond on prop values, repeat + $item/$template for dynamic lists, Stack + Section composition.',
     spec: conceptualPatternsSpec,
+  },
+  {
+    id: 'synth-fidget',
+    label: '9. Synth Fidget',
+    description: 'Techno-fidget audio components. Tone (single voice), DrumPad (click grid), StepSequencer (transport + 16-step grid), AcidBass (303-style mono bass), EuclideanDrums (Bjorklund n-of-k generator), XYPad (continuous filter sweep). All Web Audio, no libraries. Click anything; sound unlocks on first interaction. Section 0 (Rig) shows MasterClock + MasterFX driving slave-mode sequencers.',
+    spec: synthFidgetSpec,
+  },
+  {
+    id: 'preset-rig',
+    label: '10. Preset Rig',
+    description: 'Full techno-fidget rig assembled entirely from synth-presets.ts imports — drum kits, patterns, acid lines, euclidean classics, send recipes. Demonstrates compose-not-synthesize: agents grab from the library; remix by swapping one import name. Edit the spec to change recipes.',
+    spec: presetRigSpec,
   },
 ];
 
