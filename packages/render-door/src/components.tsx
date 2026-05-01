@@ -3488,6 +3488,12 @@ interface TrackSpec {
   duration?: number;
   wave?: WaveType;
   color?: string;
+  /**
+   * Per-track gain (0..2.5, default 1.0). Multiplied with the
+   * component-level gain prop to compute the effective playTone gainPeak.
+   * Use to mix-balance: kick at 1.2, hat at 0.7, etc.
+   */
+  gain?: number;
   /** Per-track FX sends override the component-level sends. */
   sends?: { delay?: number; reverb?: number };
 }
@@ -3765,7 +3771,12 @@ function buildMasterOutBus(): MasterOutBus {
   return {
     ctx,
     masterOut,
-    setGain: (g) => setIfChanged(masterOut.gain, Math.max(0, Math.min(1.5, g))),
+    // Ceiling 2.5x — laptop speakers + low-frequency content (80Hz kicks
+     // etc.) need real headroom past unity to be audible. Web Audio
+     // tolerates >1 cleanly; clipping happens at the destination only when
+     // the SUM of all summed sources exceeds 1.0, which 2.5x on a single
+     // master node won't reach by itself.
+    setGain: (g) => setIfChanged(masterOut.gain, Math.max(0, Math.min(2.5, g))),
   };
 }
 
@@ -4126,6 +4137,7 @@ export function DrumPad(props: BaseComponentProps<{
 export function StepSequencer(props: BaseComponentProps<{
   bpm?: number;
   steps?: number;
+  gain?: number;
   tracks: TrackSpec[];
   initial?: boolean[][];
   title?: string;
@@ -4141,6 +4153,9 @@ export function StepSequencer(props: BaseComponentProps<{
   const rigId = () => props.props.rigId ?? props.props.clock ?? 'main';
   const delaySend = () => props.props.sends?.delay ?? 0;
   const reverbSend = () => props.props.sends?.reverb ?? 0;
+  // Component-level gain attenuates the whole sequencer; per-track gain
+  // multiplies in for mix-balance. Live-editable via the GAIN knob below.
+  const [gain, setGain] = createSignal(props.props.gain ?? 1);
 
   const seedGrid = (): boolean[][] => {
     const t = tracks();
@@ -4174,7 +4189,11 @@ export function StepSequencer(props: BaseComponentProps<{
           // mix kick-dry-hat-wet without needing per-component scopes.
           const trackDelay = tk.sends?.delay ?? delaySend();
           const trackReverb = tk.sends?.reverb ?? reverbSend();
-          playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25, rigId(), trackDelay, trackReverb);
+          // Effective gainPeak: 0.25 baseline × component gain × per-track
+          // gain. Range stays sane in normal use (~0.25), can boost up to
+          // ~0.56 (1.5×1.5×0.25) for laptop-speaker rescue.
+          const trackGain = (tk.gain ?? 1) * gain();
+          playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25 * trackGain, rigId(), trackDelay, trackReverb);
         }
       }
     });
@@ -4349,6 +4368,17 @@ export function StepSequencer(props: BaseComponentProps<{
               style={{ width: '120px', 'accent-color': V.amb }}
             />
             <span style={{ 'font-size': '12px', color: V.amb, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{bpmLocal()}</span>
+            <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em', 'margin-left': '12px' }}>GAIN</span>
+            <input
+              type="range"
+              min="0"
+              max="2.5"
+              step="0.01"
+              value={gain()}
+              onInput={(e) => setGain(parseFloat(e.currentTarget.value))}
+              style={{ width: '80px', 'accent-color': V.cy }}
+            />
+            <span style={{ 'font-size': '12px', color: V.cy, 'font-family': V.mono, 'min-width': '36px', 'text-align': 'right' }}>{Math.round(gain() * 100)}%</span>
           </div>
         </div>
       </Show>
@@ -4461,6 +4491,7 @@ export function AcidBass(props: BaseComponentProps<{
   slides?: boolean[];
   baseFreq?: number;
   wave?: 'sawtooth' | 'square';
+  gain?: number;
   cutoff?: number;
   resonance?: number;
   envAmount?: number;
@@ -4496,6 +4527,7 @@ export function AcidBass(props: BaseComponentProps<{
   const [currentStep, setCurrentStep] = createSignal(-1);
   const [playing, setPlaying] = createSignal(false);
   const [bpm, setBpm] = createSignal(props.props.bpm ?? 124);
+  const [gain, setGain] = createSignal(props.props.gain ?? 1);
   const [cutoff, setCutoff] = createSignal(props.props.cutoff ?? 600);
   const [resonance, setResonance] = createSignal(props.props.resonance ?? 14);
   const [envAmount, setEnvAmount] = createSignal(props.props.envAmount ?? 2400);
@@ -4556,8 +4588,23 @@ export function AcidBass(props: BaseComponentProps<{
     if (!voice) {
       voice = createAcidVoice(wave(), rigId(), delaySend(), reverbSend());
       voice.osc.start();
+      // Apply current gain to the freshly-created voice. The gain effect
+      // below handles live changes; this seeds the initial value so a
+      // play-after-knob-drag respects the user's setting.
+      voice.amp.gain.value = 0.45 * gain();
     }
   };
+
+  // Live: knob changes ramp amp.gain on the active voice. Scoped with on()
+  // so the effect doesn't re-run when other reactive reads (rigId, sends,
+  // etc.) happen — only gain transitions matter here.
+  createEffect(on(gain, (g) => {
+    if (!voice) return;
+    const ctx = voice.ctx;
+    const now = ctx.currentTime;
+    voice.amp.gain.cancelScheduledValues(now);
+    voice.amp.gain.linearRampToValueAtTime(0.45 * g, now + 0.05);
+  }));
 
   const fireStep = (idx: number) => {
     setCurrentStep(idx);
@@ -4754,6 +4801,7 @@ export function AcidBass(props: BaseComponentProps<{
           >{playing() ? 'STOP' : 'PLAY'}</button>
           <Knob label="BPM" value={bpm()} min={60} max={200} step={1} setter={setBpm} />
         </Show>
+        <Knob label="GAIN" value={gain() * 100} min={0} max={250} step={1} suffix="%" setter={(v) => setGain(v / 100)} color={V.cy} />
         <Knob label="CUTOFF" value={cutoff()} min={80} max={4000} step={10} suffix=" Hz" setter={setCutoff} color={V.cy} />
         <Knob label="RES" value={resonance()} min={0.5} max={28} step={0.5} setter={setResonance} color={V.mag} />
         <Knob label="ENV AMT" value={envAmount()} min={0} max={6000} step={50} suffix=" Hz" setter={setEnvAmount} color={V.amb} />
@@ -4958,6 +5006,11 @@ interface EuclidTrack {
   duration?: number;
   wave?: WaveType;
   color?: string;
+  /**
+   * Per-track gain (0..2.5, default 1.0). Multiplied with the
+   * component-level gain to compute the effective playTone gainPeak.
+   */
+  gain?: number;
   /** Per-track FX sends override component-level sends. */
   sends?: { delay?: number; reverb?: number };
 }
@@ -4965,6 +5018,7 @@ interface EuclidTrack {
 export function EuclideanDrums(props: BaseComponentProps<{
   bpm?: number;
   steps?: number;
+  gain?: number;
   tracks: EuclidTrack[];
   title?: string;
   clock?: string;
@@ -4983,6 +5037,7 @@ export function EuclideanDrums(props: BaseComponentProps<{
   const [bpm, setBpm] = createSignal(props.props.bpm ?? 124);
   const [currentStep, setCurrentStep] = createSignal(-1);
   const [playing, setPlaying] = createSignal(false);
+  const [gain, setGain] = createSignal(props.props.gain ?? 1);
 
   const patterns = createMemo(() =>
     tracks().map(t => rotateArray(bjorklund(t.hits, stepCount()), t.rotation ?? 0))
@@ -5002,7 +5057,9 @@ export function EuclideanDrums(props: BaseComponentProps<{
         // Per-track sends override component-level sends.
         const trackDelay = tk.sends?.delay ?? delaySend();
         const trackReverb = tk.sends?.reverb ?? reverbSend();
-        playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25, rigId(), trackDelay, trackReverb);
+        // Effective gainPeak = baseline 0.25 × component gain × per-track gain.
+        const trackGain = (tk.gain ?? 1) * gain();
+        playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25 * trackGain, rigId(), trackDelay, trackReverb);
       }
     });
   };
@@ -5137,6 +5194,17 @@ export function EuclideanDrums(props: BaseComponentProps<{
               style={{ width: '120px', 'accent-color': V.amb }}
             />
             <span style={{ 'font-size': '12px', color: V.amb, 'font-family': V.mono, 'min-width': '32px', 'text-align': 'right' }}>{bpm()}</span>
+            <span style={{ 'font-size': '10px', color: V.td, 'font-family': V.mono, 'letter-spacing': '0.1em', 'margin-left': '12px' }}>GAIN</span>
+            <input
+              type="range"
+              min="0"
+              max="2.5"
+              step="0.01"
+              value={gain()}
+              onInput={(e) => setGain(parseFloat(e.currentTarget.value))}
+              style={{ width: '80px', 'accent-color': V.cy }}
+            />
+            <span style={{ 'font-size': '12px', color: V.cy, 'font-family': V.mono, 'min-width': '36px', 'text-align': 'right' }}>{Math.round(gain() * 100)}%</span>
           </div>
         </div>
       </Show>
@@ -5722,7 +5790,7 @@ export function MasterFX(props: BaseComponentProps<{
           <div style={{ display: 'flex', gap: '12px' }}>
             <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'align-items': 'center', 'min-width': '60px' }}>
               <span style={{ 'font-size': '8px', color: V.td, 'font-family': V.mono }}>GAIN</span>
-              <input type="range" min="0" max="1.5" step="0.01" value={gain()} onInput={(e) => setGain(parseFloat(e.currentTarget.value))} style={{ width: '60px', 'accent-color': V.amb }} />
+              <input type="range" min="0" max="2.5" step="0.01" value={gain()} onInput={(e) => setGain(parseFloat(e.currentTarget.value))} style={{ width: '60px', 'accent-color': V.amb }} />
               <span style={{ 'font-size': '9px', color: V.amb, 'font-family': V.mono }}>{Math.round(gain() * 100)}%</span>
             </div>
           </div>
