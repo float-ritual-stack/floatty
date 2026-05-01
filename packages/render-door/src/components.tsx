@@ -5616,6 +5616,7 @@ export function MasterClock(props: BaseComponentProps<{
 
 export function MasterFX(props: BaseComponentProps<{
   rigId?: string;
+  gain?: number;
   delayTime?: number;
   delayFeedback?: number;
   delayMix?: number;
@@ -5623,18 +5624,23 @@ export function MasterFX(props: BaseComponentProps<{
   title?: string;
 }>) {
   const rigId = () => props.props.rigId ?? 'main';
+  const [gain, setGain] = createSignal(props.props.gain ?? 1.0);
   const [delayTime, setDelayTime] = createSignal(props.props.delayTime ?? 0.375);
   const [delayFeedback, setDelayFeedback] = createSignal(props.props.delayFeedback ?? 0.35);
   const [delayMix, setDelayMix] = createSignal(props.props.delayMix ?? 0.35);
   const [reverbMix, setReverbMix] = createSignal(props.props.reverbMix ?? 0.25);
 
-  // Mount: build bus on this rigId, push initial values.
+  // Mount: build bus on this rigId, push initial values. MasterOut is
+  // a separate per-rig bus from FxBus — touch both so initial gain
+  // value is applied even when the rig has no voices yet.
   onMount(() => {
-    const bus = getOrCreateFxBus(rigId());
-    bus.setDelayTime(delayTime());
-    bus.setDelayFeedback(delayFeedback());
-    bus.setDelayMix(delayMix());
-    bus.setReverbMix(reverbMix());
+    const fx = getOrCreateFxBus(rigId());
+    fx.setDelayTime(delayTime());
+    fx.setDelayFeedback(delayFeedback());
+    fx.setDelayMix(delayMix());
+    fx.setReverbMix(reverbMix());
+    const master = getOrCreateMasterOut(rigId());
+    master.setGain(gain());
   });
 
   // Live: push knob changes to bus. Each knob gets its own effect so a
@@ -5651,6 +5657,18 @@ export function MasterFX(props: BaseComponentProps<{
   pushParam(delayFeedback, (b, v) => b.setDelayFeedback(v));
   pushParam(delayMix, (b, v) => b.setDelayMix(v));
   pushParam(reverbMix, (b, v) => b.setReverbMix(v));
+
+  // Master gain rides on its own bus (MasterOut, not FxBus) — separate
+  // effect so it doesn't entangle with FX-knob lookups. Reading
+  // masterOuts() instead of getOrCreateMasterOut() avoids autocreating
+  // during the effect's tracking phase; mount handler already created
+  // the bus, so the lookup is the right level here.
+  createEffect(() => {
+    const v = gain();
+    const bus = masterOuts().get(rigId());
+    if (!bus) return;
+    bus.setGain(v);
+  });
 
   // Note: we don't tear down the bus on cleanup — it's a shared resource
   // keyed by rigId, and other voices may still be sending to it. Cleanup
@@ -5691,6 +5709,25 @@ export function MasterFX(props: BaseComponentProps<{
         display: 'flex', gap: '18px', 'flex-wrap': 'wrap',
         'align-items': 'flex-start',
       }}>
+        {/* Master output group — single knob controlling the per-rig
+            masterOut GainNode all voices and FX-mix outputs transit. */}
+        <div style={{
+          display: 'flex', 'flex-direction': 'column', gap: '6px',
+          padding: '10px 12px',
+          background: V.s1,
+          border: `1px solid ${V.amb}`,
+          'border-radius': '6px',
+        }}>
+          <span style={{ 'font-size': '9px', color: V.amb, 'font-family': V.mono, 'letter-spacing': '0.1em', 'text-transform': 'uppercase' }}>master out</span>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'align-items': 'center', 'min-width': '60px' }}>
+              <span style={{ 'font-size': '8px', color: V.td, 'font-family': V.mono }}>GAIN</span>
+              <input type="range" min="0" max="1.5" step="0.01" value={gain()} onInput={(e) => setGain(parseFloat(e.currentTarget.value))} style={{ width: '60px', 'accent-color': V.amb }} />
+              <span style={{ 'font-size': '9px', color: V.amb, 'font-family': V.mono }}>{Math.round(gain() * 100)}%</span>
+            </div>
+          </div>
+        </div>
+
         {/* Delay group */}
         <div style={{
           display: 'flex', 'flex-direction': 'column', gap: '6px',

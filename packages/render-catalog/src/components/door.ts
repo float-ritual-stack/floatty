@@ -640,6 +640,7 @@ export const doorComponentDefinitions = {
   MasterFX: {
     props: z.object({
       rigId: z.string().optional(),
+      gain: z.number().optional(),
       delayTime: z.number().optional(),
       delayFeedback: z.number().optional(),
       delayMix: z.number().optional(),
@@ -647,7 +648,7 @@ export const doorComponentDefinitions = {
       title: z.string().optional(),
     }),
     slots: [],
-    description: "Rig FX bus — shared delay + convolution reverb sends. Voices on the same rigId opt into sends via the sends prop ({ delay: 0..1, reverb: 0..1 }). Props: rigId (default 'main'), delayTime (sec, default 0.375 ≈ dotted-eighth at 120 BPM), delayFeedback (0..0.85, default 0.35), delayMix (0..1, default 0.35), reverbMix (0..1, default 0.25). Live knobs.",
+    description: "Rig FX bus — shared delay + convolution reverb sends + master output gain. Voices on the same rigId opt into sends via the sends prop ({ delay: 0..1, reverb: 0..1 }) AND all transit a per-rig master GainNode controlled by the gain prop here. Props: rigId (default 'main'), gain (master output level, 0..1.5, default 1.0 — turn down to mix-balance, push past 1.0 for laptop-speaker boost), delayTime (sec, default 0.375 ≈ dotted-eighth at 120 BPM), delayFeedback (0..0.85, default 0.35), delayMix (0..1, default 0.35), reverbMix (0..1, default 0.25). Live knobs.",
   },
 
   Strudel: {
