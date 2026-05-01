@@ -3727,11 +3727,76 @@ function useSlaveRig(opts: {
   });
 }
 
+// ─── Master output bus per rigId ─────────────────────────────────
+//
+// Single GainNode inserted between the rig's audio graph and
+// ctx.destination. Voices terminate their dry path at masterOut, the
+// FX bus terminates its delayMix/reverbMix outputs at masterOut, and
+// masterOut → ctx.destination is the only direct speaker connection.
+// One gain knob, attenuates everything routed through the rig.
+//
+// Lazy + autocreated — first voice on a rigId triggers construction
+// even without a MasterFX panel mounted (default unity gain). Same
+// HMR staleness pattern as FxBus: window-attached map survives module
+// reload, AudioContext divergence drops the cached bus and rebuilds.
+//
+// XYPad is intentionally NOT wired through this graph — it has no
+// rigId prop and is treated as a standalone drone voice with its own
+// amp envelope. Schema-level rigId addition would bring it in.
+
+interface MasterOutBus {
+  ctx: AudioContext;
+  masterOut: GainNode;
+  setGain: (g: number) => void;
+}
+
+function buildMasterOutBus(): MasterOutBus {
+  const ctx = getAudioContext();
+  const masterOut = ctx.createGain();
+  masterOut.gain.value = 1.0; // unity — preserves prior topology's loudness exactly
+  masterOut.connect(ctx.destination);
+
+  const setIfChanged = (param: AudioParam, value: number) => {
+    const now = ctx.currentTime;
+    param.cancelScheduledValues(now);
+    param.linearRampToValueAtTime(value, now + 0.05);
+  };
+
+  return {
+    ctx,
+    masterOut,
+    setGain: (g) => setIfChanged(masterOut.gain, Math.max(0, Math.min(1.5, g))),
+  };
+}
+
+type MasterOutBusGlobal = { __floatty_master_outs?: Map<string, MasterOutBus> };
+const masterOuts = (): Map<string, MasterOutBus> => {
+  const g = window as unknown as MasterOutBusGlobal;
+  if (!g.__floatty_master_outs) g.__floatty_master_outs = new Map();
+  return g.__floatty_master_outs;
+};
+
+function getOrCreateMasterOut(rigId: string): MasterOutBus {
+  const ctx = getAudioContext();
+  const map = masterOuts();
+  let bus = map.get(rigId);
+  // Staleness check — see getOrCreateFxBus for the AudioContext failure
+  // mode (Vite HMR closes the ctx, singleton resets, cached nodes orphan).
+  if (bus && bus.ctx !== ctx) {
+    map.delete(rigId);
+    bus = undefined;
+  }
+  if (!bus) { bus = buildMasterOutBus(); map.set(rigId, bus); }
+  return bus;
+}
+
 // ─── FX bus: delay + reverb sends per rigId ─────────────────────
 //
 // MasterFX creates the bus on mount; voices that opt into a send route
 // their output node into getFxInput(rigId, sendName). Bus exposes setters
-// that MasterFX's UI controls.
+// that MasterFX's UI controls. Mix outputs terminate at the rig's
+// MasterOut (not ctx.destination directly) so the master gain knob
+// attenuates FX-routed audio in lock-step with the dry path.
 
 interface FxBus {
   ctx: AudioContext;
@@ -3743,6 +3808,14 @@ interface FxBus {
   reverbConvolver: ConvolverNode;
   reverbMix: GainNode;
   dest: AudioNode;
+  /**
+   * The MasterOut GainNode this bus's mix outputs are connected to.
+   * Tracked so getOrCreateFxBus can detect when the rig's MasterOut got
+   * rebuilt (HMR or AudioContext rotation) and rebuild the FxBus to
+   * re-bind to the fresh node — connecting to an orphaned masterOut
+   * silently drops audio.
+   */
+  masterOutRef: GainNode;
   setDelayTime: (sec: number) => void;
   setDelayFeedback: (g: number) => void;
   setDelayMix: (g: number) => void;
@@ -3763,7 +3836,7 @@ function createImpulseResponse(ctx: AudioContext, durationSec: number, decay: nu
   return buf;
 }
 
-function buildFxBus(): FxBus {
+function buildFxBus(masterOut: GainNode): FxBus {
   const ctx = getAudioContext();
   const delayInput = ctx.createGain();
   const delayNode = ctx.createDelay(1.0);
@@ -3780,18 +3853,18 @@ function buildFxBus(): FxBus {
   reverbConvolver.buffer = createImpulseResponse(ctx, 2.5, 2.5);
 
   // Routing:
-  //   delayInput → delayNode → delayMix → destination
+  //   delayInput → delayNode → delayMix → masterOut → ctx.destination
   //                   ↘  delayFeedback → delayNode (loop)
-  //   reverbInput → reverbConvolver → reverbMix → destination
+  //   reverbInput → reverbConvolver → reverbMix → masterOut → ctx.destination
   delayInput.connect(delayNode);
   delayNode.connect(delayMix);
-  delayMix.connect(ctx.destination);
+  delayMix.connect(masterOut);
   delayNode.connect(delayFeedback);
   delayFeedback.connect(delayNode);
 
   reverbInput.connect(reverbConvolver);
   reverbConvolver.connect(reverbMix);
-  reverbMix.connect(ctx.destination);
+  reverbMix.connect(masterOut);
 
   const setIfChanged = (param: AudioParam, value: number) => {
     const now = ctx.currentTime;
@@ -3802,7 +3875,8 @@ function buildFxBus(): FxBus {
   return {
     ctx, delayInput, delayNode, delayFeedback, delayMix,
     reverbInput, reverbConvolver, reverbMix,
-    dest: ctx.destination,
+    dest: masterOut,
+    masterOutRef: masterOut,
     setDelayTime: (sec) => setIfChanged(delayNode.delayTime, Math.max(0.01, Math.min(1.0, sec))),
     setDelayFeedback: (g) => setIfChanged(delayFeedback.gain, Math.max(0, Math.min(0.85, g))),
     setDelayMix: (g) => setIfChanged(delayMix.gain, Math.max(0, Math.min(1.0, g))),
@@ -3819,6 +3893,9 @@ const fxBuses = (): Map<string, FxBus> => {
 
 function getOrCreateFxBus(rigId: string): FxBus {
   const ctx = getAudioContext();
+  // Resolve masterOut FIRST — if it had to rebuild, FxBus needs to know
+  // so it can re-bind its mix outputs to the fresh node.
+  const masterBus = getOrCreateMasterOut(rigId);
   const map = fxBuses();
   let bus = map.get(rigId);
   // Staleness check (Vite HMR + AudioContext close): the FX-bus map is
@@ -3828,11 +3905,16 @@ function getOrCreateFxBus(rigId: string): FxBus {
   // but the cached bus still holds nodes bound to the OLD ctx. Voices
   // in the new ctx that try to connect to those nodes throw
   // InvalidAccessError. Drop + rebuild when contexts diverge.
-  if (bus && bus.ctx !== ctx) {
+  //
+  // Second invariant: masterOutRef must match the current rig's
+  // MasterOut. MasterOut can rebuild independently (its own staleness
+  // path), and an FxBus pointing at an orphaned masterOut silently
+  // drops audio with no error. Drop + rebuild on either drift.
+  if (bus && (bus.ctx !== ctx || bus.masterOutRef !== masterBus.masterOut)) {
     map.delete(rigId);
     bus = undefined;
   }
-  if (!bus) { bus = buildFxBus(); map.set(rigId, bus); }
+  if (!bus) { bus = buildFxBus(masterBus.masterOut); map.set(rigId, bus); }
   return bus;
 }
 
@@ -3859,6 +3941,12 @@ function getFxSend(rigId: string, sendName: 'delay' | 'reverb'): AudioNode | nul
  * Connect a voice node to dry destination AND optionally to FX sends in
  * proportion to send levels (0..1). All sends are derived from a single
  * source connection chain — the voice picks its sources here.
+ *
+ * Dry path terminates at the rig's MasterOut (autocreated on first use
+ * if no MasterFX panel is mounted), not ctx.destination directly. Same
+ * applies transitively to FX-routed audio: getFxSend → FxBus mix nodes
+ * → masterOut → ctx.destination. Result: a single GainNode controls
+ * the entire rig's level.
  */
 function routeVoiceToFx(
   source: AudioNode,
@@ -3867,8 +3955,10 @@ function routeVoiceToFx(
   delaySend: number,
   reverbSend: number,
 ): void {
-  // Dry path always connects.
-  source.connect(ctx.destination);
+  // Dry path always connects, now via the rig's MasterOut so the master
+  // gain knob attenuates it (default unity = identical loudness to prior).
+  const masterBus = getOrCreateMasterOut(rigId);
+  source.connect(masterBus.masterOut);
 
   if (delaySend > 0) {
     const send = getFxSend(rigId, 'delay');
