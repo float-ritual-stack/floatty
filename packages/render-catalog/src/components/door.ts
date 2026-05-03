@@ -490,6 +490,7 @@ export const doorComponentDefinitions = {
       wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
       label: z.string().optional(),
       color: z.string().optional(),
+      gain: z.number().optional(),
       rigId: z.string().optional(),
       sends: z.object({
         delay: z.number().optional(),
@@ -497,7 +498,7 @@ export const doorComponentDefinitions = {
       }).optional(),
     }),
     slots: [],
-    description: "Boring synth primitive: a button that plays one note via Web Audio. Props: freq (Hz, default 440), duration (ms, default 200), wave (sine|square|sawtooth|triangle, default sine), label (default freq label), color (hex). Optional rig wiring: rigId + sends={delay, reverb} routes through MasterFX bus on that rig.",
+    description: "Boring synth primitive: a button that plays one note via Web Audio. Props: freq (Hz, default 440), duration (ms, default 200), wave (sine|square|sawtooth|triangle, default sine), label (default freq label), color (hex), gain (0..2.5, default 1.0 — voice-level attenuation, multiplied into the ADSR peak). Optional rig wiring: rigId + sends={delay, reverb} routes through MasterFX bus on that rig.",
   },
 
   DrumPad: {
@@ -508,9 +509,11 @@ export const doorComponentDefinitions = {
         duration: z.number().optional(),
         wave: z.enum(["sine", "square", "sawtooth", "triangle"]).optional(),
         color: z.string().optional(),
+        gain: z.number().optional(),
       })),
       columns: z.number().optional(),
       title: z.string().optional(),
+      gain: z.number().optional(),
       rigId: z.string().optional(),
       sends: z.object({
         delay: z.number().optional(),
@@ -518,7 +521,7 @@ export const doorComponentDefinitions = {
       }).optional(),
     }),
     slots: [],
-    description: "A grid of clickable pads, each plays a tone. Props: pads (array of {label, freq, duration?, wave?, color?}), columns (default 4), title (optional header). Build kick/snare/hi-hat/perc with different freqs+waves: kick~80Hz sine, snare~200Hz square, hat~6000Hz sawtooth, low-tom~120Hz triangle. Color by role. Optional rig wiring: rigId + sends route all pads through MasterFX bus.",
+    description: "A grid of clickable pads, each plays a tone. Props: pads (array of {label, freq, duration?, wave?, color?, gain?}), columns (default 4), title (optional header), gain (component-level, 0..2.5, default 1.0 — attenuates whole pad). Per-pad gain (0..2.5, default 1.0) for mix-balance (kick loud, hat quiet). Build kick/snare/hi-hat/perc with different freqs+waves: kick~80Hz sine, snare~200Hz square, hat~6000Hz sawtooth, low-tom~120Hz triangle. Color by role. Optional rig wiring: rigId + sends route all pads through MasterFX bus.",
   },
 
   StepSequencer: {

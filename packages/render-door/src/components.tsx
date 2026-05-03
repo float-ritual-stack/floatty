@@ -4023,6 +4023,7 @@ export function Tone(props: BaseComponentProps<{
   wave?: WaveType;
   label?: string;
   color?: string;
+  gain?: number;
   rigId?: string;
   sends?: { delay?: number; reverb?: number };
 }>) {
@@ -4034,10 +4035,14 @@ export function Tone(props: BaseComponentProps<{
   const rigId = () => props.props.rigId ?? 'main';
   const delaySend = () => props.props.sends?.delay ?? 0;
   const reverbSend = () => props.props.sends?.reverb ?? 0;
+  // Voice-level gain: multiplied into the ADSR peak. Same shape as
+  // sequencer per-track gain (commit 3) — preserves the envelope, just
+  // scales the peak amplitude.
+  const gain = () => props.props.gain ?? 1;
   const [active, setActive] = createSignal(false);
 
   const handleClick = () => {
-    playTone(freq(), duration(), wave(), 0.25, rigId(), delaySend(), reverbSend());
+    playTone(freq(), duration(), wave(), 0.25 * gain(), rigId(), delaySend(), reverbSend());
     setActive(true);
     setTimeout(() => setActive(false), Math.min(duration(), 300));
   };
@@ -4066,9 +4071,10 @@ export function Tone(props: BaseComponentProps<{
 }
 
 export function DrumPad(props: BaseComponentProps<{
-  pads: Array<{ label: string; freq: number; duration?: number; wave?: WaveType; color?: string }>;
+  pads: Array<{ label: string; freq: number; duration?: number; wave?: WaveType; color?: string; gain?: number }>;
   columns?: number;
   title?: string;
+  gain?: number;
   rigId?: string;
   sends?: { delay?: number; reverb?: number };
 }>) {
@@ -4078,6 +4084,10 @@ export function DrumPad(props: BaseComponentProps<{
   const rigId = () => props.props.rigId ?? 'main';
   const delaySend = () => props.props.sends?.delay ?? 0;
   const reverbSend = () => props.props.sends?.reverb ?? 0;
+  // Component-level gain attenuates the whole pad; per-pad gain
+  // multiplies in for mix-balance. Effective gainPeak per pad =
+  // 0.25 * componentGain * (pad.gain ?? 1).
+  const gain = () => props.props.gain ?? 1;
 
   return (
     <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
@@ -4100,8 +4110,9 @@ export function DrumPad(props: BaseComponentProps<{
           const wave: WaveType = pad.wave ?? 'sine';
           const dur = pad.duration ?? 200;
           const color = pad.color ?? V.mag;
+          const padGain = (pad.gain ?? 1) * gain();
           const handleClick = () => {
-            playTone(pad.freq, dur, wave, 0.25, rigId(), delaySend(), reverbSend());
+            playTone(pad.freq, dur, wave, 0.25 * padGain, rigId(), delaySend(), reverbSend());
             setActive(true);
             setTimeout(() => setActive(false), Math.min(dur, 300));
           };
