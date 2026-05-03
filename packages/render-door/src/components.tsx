@@ -4200,9 +4200,11 @@ export function StepSequencer(props: BaseComponentProps<{
           // mix kick-dry-hat-wet without needing per-component scopes.
           const trackDelay = tk.sends?.delay ?? delaySend();
           const trackReverb = tk.sends?.reverb ?? reverbSend();
-          // Effective gainPeak: 0.25 baseline × component gain × per-track
-          // gain. Range stays sane in normal use (~0.25), can boost up to
-          // ~0.56 (1.5×1.5×0.25) for laptop-speaker rescue.
+          // Effective gainPeak: 0.25 baseline × component gain × per-track gain.
+          // Ceiling is 2.5×2.5×0.25 = 1.5625 — above unity, so layering both gains
+          // near max will clip at ctx.destination on its own (before the master
+          // GainNode multiplies further). Set both near max only when master is
+          // correspondingly low.
           const trackGain = (tk.gain ?? 1) * gain();
           playTone(tk.freq, tk.duration ?? 100, tk.wave ?? 'sine', 0.25 * trackGain, rigId(), trackDelay, trackReverb);
         }
@@ -5738,14 +5740,16 @@ export function MasterFX(props: BaseComponentProps<{
   pushParam(reverbMix, (b, v) => b.setReverbMix(v));
 
   // Master gain rides on its own bus (MasterOut, not FxBus) — separate
-  // effect so it doesn't entangle with FX-knob lookups. Reading
-  // masterOuts() instead of getOrCreateMasterOut() avoids autocreating
-  // during the effect's tracking phase; mount handler already created
-  // the bus, so the lookup is the right level here.
+  // effect so it doesn't entangle with FX-knob lookups. Use the
+  // autocreating getOrCreateMasterOut() so a runtime rigId change (e.g.
+  // rebinding MasterFX to a different rig that hasn't been touched yet)
+  // doesn't silently default the new rig's masterOut to unity. Mirrors
+  // the getOrCreateFxBus() pattern used by the FX param effects above.
+  // Safe to call inside createEffect: getOrCreateMasterOut reads only
+  // module-local + window-attached state, no reactive signals.
   createEffect(() => {
     const v = gain();
-    const bus = masterOuts().get(rigId());
-    if (!bus) return;
+    const bus = getOrCreateMasterOut(rigId());
     bus.setGain(v);
   });
 
