@@ -6,6 +6,42 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.14.0] - 2026-05-05
+
+Multi-outline retirement + render-door audio + rich-doc primitives. Headline shift: **DB-per-outline as mainline architecture is gone** ([[ADR-006]] / [[FLO-718]] / [[PR #298]]) — Phase 1's named-outline storage topology lands as ~2000 lines deleted, with workspace-via-data-dir + future scope-shaped outline reintroduction as the replacement. Feature was ~2 days of post-merge use; in the one real separation scenario, scripted backup/restore of `default` was the actual workaround. Worlds vs Outlines: world/workspace = data-dir/process/routing boundary; outline = command/view/scope inside a world. Retirement ships alongside two render-door expansions: a four-tier gain stack (master/component/track/pad) on the audio rig ([[FLO-703]] / [[PR #296]]) and four rich-doc primitives (Callout/Hero/GalleryGrid/CardCover) plus targeted reactivity + visual fixes across TabNav/DecisionLog/TuiStat/TreeView/Hero ([[PR #297]]).
+
+### ✨ Features
+
+- **Rich-doc primitives + 4 hub-page reference layouts** ([[PR #297]] / `ada3de8` — `packages/render-catalog/src/components/door.ts`, `packages/render-door/src/components.tsx`, `apps/render-reference/src/specs/`) — four new catalog components with full schema + impl + registry: `Callout` (13 types — note/info/tip/success/warning/danger/failure/bug/example/question/quote/abstract/todo, optional title, collapsible, type-tinted bg + 3px accent left-border, nestable via slots); `Hero` (title/subtitle/eyebrow + cover with gradient/color/icon + density full|compact + text-link actions instead of pill buttons — drops contrast + dead-affordance issues together); `GalleryGrid` (CSS auto-fit columns with `minCardWidth`); `CardCover` (header/body/properties/footer card with optional whole-card href). bbs-post layout refactored to use the new primitives. Agent guidance tells the `render::` agent when to reach for which primitive.
+- **Render-door rig gain stack — master / component / track / pad** ([[PR #296]] / `7355166` / [[FLO-703]] — `packages/render-door/src/components.tsx`, `packages/render-catalog/src/components/door.ts`) — full four-tier gain control on the audio rig, ceiling bumped 1.5× → 2.5× per laptop-speaker headroom testing on 80Hz kicks. Per-rig `MasterOut` `GainNode` (window-attached registry, HMR-survival + AudioContext-divergence checks) inserted between voice/FX paths and `ctx.destination`. `MasterFX.gain` schema prop drives the master knob (UI: amber-bordered MASTER OUT panel). Per-component `gain` props on `StepSequencer` / `AcidBass` / `EuclideanDrums` / `DrumPad` / `Tone`. Per-track `tracks[].gain` on `StepSequencer` / `EuclideanDrums` and per-pad `pads[].gain` on `DrumPad`. Math: `0.25 ADSR baseline × component × track × master`, max ~1.56 amp at ceiling — capable of clipping `ctx.destination` on its own, which the fireStep comment now warns about.
+
+### ♻️ Refactors
+
+- **DB-per-outline retirement (ADR-006)** ([[PR #298]] / [[FLO-718]] / `d2edeeb` — 30 files, +840/-2087 = net **-1247 lines**) — Phase 1 multi-outline storage topology removed: deletes `outline_manager.rs` (611), `api/outlines.rs` (563), `floatty-core/src/outline.rs` (162, `OutlineName` type), frontend `outline::` handler (64), `appEvents.ts` (24, `pendingOutlineSwitch` carrier). `WsState` collapsed to single `broadcaster` field (renamed from `default_broadcaster`); `ws_handler` drops the `outline` query branch + `WsQuery` deserializer. `create_router` signature loses `OutlineManager` arg. `backup_dir_for(outline_name)` collapses to `backup_dir()` (sole caller passed `"default"` after route removal). `App.tsx` drops outline-restore-on-connect + native menu listener + `pendingOutlineSwitch` effect; adds defensive one-shot `localStorage.removeItem('floatty-outline')` migration. `httpClient.currentOutline` signal + `setOutline`/`getOutline` + per-outline `api()` prefix all gone. `useSyncedYDoc` WS URL no longer threads `?outline=`; IDB namespace simplified to `floatty-backup-{build}|{ws}`. Tauri-side Outlines submenu (102 lines: `fetch_outline_names`, `rebuild_outlines_menu`, capture vars, `tauri::menu::*` import) deleted. Decision-capture: `apps/floatty/docs/adrs/ADR-006-retire-db-per-outline.md`, `.claude/rules/integration-branch-discipline.md` (process lesson, multi-outline retirement is the canonical worked example), `.claude/handoffs/multi-outline-rollback-recon-2026-05-05.md` (recon body). `api/mod.rs` test boilerplate consolidates 11 inline `tempdir + YDocStore + WsBroadcaster + HookSystem + create_router` setups to existing `test_app()` helper (-66 lines test boilerplate). Symmetry-harness per-outline arms in `tests/symmetry_ancestor_context.rs` dropped; default-route arms keep FLO-679 contract. Migration: stale `floatty-backup-{build}|{ws}|default` IDBs cleaned up via fire-and-forget `deleteDatabase` on namespace set.
+
+### 🐛 Fixes
+
+- **TabNav active-binding reactive desync** ([[PR #297]] / `ada3de8`) — `useBoundProp` returned a primitive the closure captured forever; clicks moved body content but not the button highlight. Mirror to a local signal + `createEffect` sync.
+- **DecisionLog topic hierarchy** ([[PR #297]] / `ada3de8`) — optional `topic` field for "what was being decided" grouping above per-decision rows.
+- **TuiStat reshape** ([[PR #297]] / `ada3de8`) — equal-width cards became less-generic typographic block.
+- **TreeView CSS-drawn connectors** ([[PR #297]] / `ada3de8`) — replaces brittle ASCII chars (`├── │ └──`) with CSS pseudo-elements; clean rendering at any zoom.
+- **Hero action affordance** ([[PR #297]] / `ada3de8`) — text-link "see also" actions with kicker labels instead of pill buttons (drops contrast + dead-route issues together).
+
+### 📝 Docs
+
+- **ADR-006: Retire DB-per-outline as Mainline Architecture** ([[PR #298]]) — canonical decision record. World/workspace ≠ outline/view/scope distinction; bar to revisit (10+/10 with seven specific reintroduction triggers); preserves the lesson, retires the storage topology.
+- **`.claude/rules/integration-branch-discipline.md`** ([[PR #298]]) — process rule: architecture experiments land on integration branches with explicit "this is now a building block" confirmation before mainline merge. Multi-outline retirement is the canonical worked example.
+- **Recon handoff** at `.claude/handoffs/multi-outline-rollback-recon-2026-05-05.md` ([[PR #298]]) — audit re-verification, drift archaeology since 2026-04-07, A–G surface classification, parity matrix, cleanup phases.
+- **Phase 1 review marked superseded** ([[PR #298]]) — `apps/floatty/docs/reviews/multi-outline-phase1-review.md` retains a "superseded by ADR-006" status header for archaeology.
+- **Render-door rig architecture** ([[PR #296]]) — `gain` ceilings updated (1.5× → 2.5×) in the RIG_ARCHITECTURE notes; component schema descriptions teach mix-balance vs boost semantics.
+
+### 🧪 Tests
+
+- **`api/mod.rs` `test_app()` consolidation** ([[PR #298]]) — 11 inline test setups collapsed to existing helper (-66 lines test boilerplate). Sites that read `store` directly keep `store`; rest use `_store`. 103/103 lib tests still pass.
+- **`idbBackup` test assertions end-anchored** ([[PR #298]]) — `stringMatching(/...$/)` instead of `stringContaining` so a regression to the legacy 3-part `…|default` namespace fails the test (CR follow-up review). Plus `deleteDatabase` mock stub for the new ADR-006 migration code path. 1268/1268 vitest.
+
+---
+
 ## [0.13.8] - 2026-04-29
 
 Five-merge release: techno-fidget audio rig + auto-execute architecture cleanup + FLO-698 read-path instrumentation + outline-explorer MCP expansion + personal-log changelog scaffolding. The headline shifts: agent-emitted `render::` blocks (chirp `create-child`, `POST /api/v1/blocks`) now auto-execute the same way user-typed ones do — three call sites converge on one canonical primitive (`_autoExecuteHandler` in `useBlockStore`, slim-path emit threshold, output-presence guard). The render-door grew an audio-rig pattern (MasterClock + slave sequencers + FX bus + Strudel iframe) and a "blocks-as-config" facility where child `prefix:: value` blocks override the parent door's `spec.state` reactively. Daddy's diagnostic stack on the freeze-on-load issue ([[FLO-698]]) gained microsecond timing fields on the three read endpoints, and outline-explorer's MCP shipped dual-shape reads, token previews, and write CRUD so other agents can drive the outline programmatically.
