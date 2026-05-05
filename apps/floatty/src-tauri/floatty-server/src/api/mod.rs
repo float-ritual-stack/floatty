@@ -6,14 +6,12 @@
 //! - `search` — full-text + page search, reindex, clear
 //! - `export` — binary/JSON export, topology graph, page content
 //! - `backup` — backup status, list, trigger, restore, config
-//! - `outlines` — outline management + per-outline sync/blocks/search
 //! - `discovery` — markers, stats, daily note, presence, attachments
 
 pub mod backup;
 pub mod blocks;
 pub mod discovery;
 pub mod export;
-pub mod outlines;
 pub mod search;
 pub mod sync;
 
@@ -33,7 +31,6 @@ pub(crate) type ProjectionCacheKey = (String, u64);
 /// Capacity 10_000 entries; bounded to prevent unbounded growth on long-running servers.
 pub(crate) type ProjectionCache = Arc<Mutex<LruCache<ProjectionCacheKey, String>>>;
 
-use crate::OutlineManager;
 use crate::WsBroadcaster;
 
 /// Extract metadata from Y.Doc block, handling multiple formats:
@@ -128,8 +125,6 @@ pub struct AppState {
     pub hook_system: Arc<HookSystem>,
     /// Backup daemon (optional - only present if backups enabled)
     pub backup_daemon: Option<Arc<BackupDaemon>>,
-    /// Multi-outline manager (Phase 1: server-side only)
-    pub outline_manager: Arc<OutlineManager>,
     /// LRU cache for computed door-block markdown projections (FLO-633).
     /// Keyed by `(block_id, hash(output.data))`; in-memory, no persistence,
     /// no WS broadcast on writes. See `blocks::inject_rendered_markdown`.
@@ -143,19 +138,19 @@ pub struct AppState {
     pub semantic_cache: Arc<Mutex<crate::api::discovery::SemanticCache>>,
 }
 
-// Sync DTOs re-exported (used by ApiError::IntoResponse, outline handlers, tests)
+// Sync DTOs re-exported (used by ApiError::IntoResponse, tests)
 pub use sync::{
     HealthResponse, RestoreResponse, StateHashResponse, StateResponse, StateVectorResponse,
     UpdateEntry, UpdateRequest, UpdatesCompactedResponse, UpdatesQuery, UpdatesResponse,
 };
-// Search DTOs re-exported (used by outline handlers, block_service, tests)
+// Search DTOs re-exported (used by block_service, tests)
 pub use search::{BlockSearchHit, BlockSearchQuery, BlockSearchResponse};
-// Export DTOs re-exported (used by outline handlers, tests)
+// Export DTOs re-exported (used by tests)
 pub use export::{
     DailyEntry, ExportedBlock, ExportedOutline, PageContentResponse, TopologyMeta, TopologyNode,
     TopologyQuery, TopologyResponse,
 };
-// Block DTOs re-exported (used by block_service, outline handlers, discovery, tests)
+// Block DTOs re-exported (used by block_service, discovery, tests)
 pub use blocks::{
     AncestorContext, BlockContextQuery, BlockDto, BlockRef, BlockWithContextResponse, BlocksQuery,
     BlocksResponse, CreateBlockRequest, EffectiveMarkerDto, ImportBlockRequest, InboundSampleDto,
@@ -262,7 +257,6 @@ pub fn create_router(
     broadcaster: Arc<WsBroadcaster>,
     hook_system: Arc<HookSystem>,
     backup_daemon: Option<Arc<BackupDaemon>>,
-    outline_manager: Arc<OutlineManager>,
 ) -> Router {
     let page_name_index = hook_system.page_name_index();
     let inheritance_index = hook_system.inheritance_index();
@@ -277,7 +271,6 @@ pub fn create_router(
         inheritance_index,
         hook_system,
         backup_daemon,
-        outline_manager,
         projection_cache,
         semantic_cache,
     };
@@ -295,8 +288,6 @@ pub fn create_router(
         .merge(backup::router())
         // Discovery endpoints (markers, stats, daily note, presence, attachments)
         .merge(discovery::router())
-        // Outline management + per-outline sync/blocks/search
-        .merge(outlines::router())
         .with_state(state)
 }
 
@@ -312,40 +303,13 @@ mod tests {
     use tower::{Service, ServiceExt};
     use yrs::Transact;
 
-    fn test_outline_manager(
-        dir: &std::path::Path,
-        store: &Arc<YDocStore>,
-        hook_system: &Arc<floatty_core::HookSystem>,
-        broadcaster: &Arc<crate::WsBroadcaster>,
-    ) -> Arc<crate::OutlineManager> {
-        let ctx = Arc::new(crate::OutlineContext::new_default(
-            Arc::clone(store),
-            Arc::clone(hook_system),
-            Arc::clone(broadcaster),
-            None,
-            None,
-        ));
-        let no_backup = crate::config::BackupConfig {
-            enabled: false,
-            ..Default::default()
-        };
-        Arc::new(crate::OutlineManager::new_with_default(dir, ctx, no_backup))
-    }
-
     fn test_app() -> (Router, tempfile::TempDir, Arc<YDocStore>) {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
         let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
         let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let outline_manager = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let router = create_router(
-            Arc::clone(&store),
-            broadcaster,
-            hook_system,
-            None,
-            outline_manager,
-        );
+        let router = create_router(Arc::clone(&store), broadcaster, hook_system, None);
         (router, dir, store)
     }
 
@@ -508,19 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_block_removes_from_parent_childids() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, _store) = test_app();
 
         // Create parent
         let response = app
@@ -613,19 +565,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_block_content() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, _store) = test_app();
 
         // Create block
         let response = app
@@ -830,19 +770,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_returns_results() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let router = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (router, _dir, _store) = test_app();
         let mut app = router.into_service();
 
         // Create a block with searchable content
@@ -911,19 +839,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reparent_block_to_new_parent() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, _store) = test_app();
 
         // Create parent A
         let response = app
@@ -1058,19 +974,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reparent_block_to_root() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, _store) = test_app();
 
         // Create parent
         let response = app
@@ -1179,19 +1083,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reparent_root_block_to_parent() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, _store) = test_app();
 
         // Create two root blocks
         let response = app
@@ -1353,19 +1245,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reparent_rejects_cycle() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, _store) = test_app();
 
         // Create parent -> child hierarchy
         let response = app
@@ -1428,19 +1308,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_export_binary_returns_ydoc() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, _store) = test_app();
 
         // Create a block first
         let _response = app
@@ -1495,19 +1363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_export_json_returns_valid_json() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, _store) = test_app();
 
         // Create a block first
         let _response = app
@@ -1572,19 +1428,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_updates_endpoint_returns_410_when_behind_compaction() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, store) = test_app();
 
         // Create some updates via API (creates blocks which generate Y.Doc updates)
         for i in 0..5 {
@@ -1646,19 +1490,7 @@ mod tests {
     async fn test_updates_endpoint_boundary_exact_match() {
         // Edge case: client's lastSeenSeq == compacted_through
         // This SHOULD work (they've seen everything up to compaction)
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let store = Arc::new(YDocStore::open(&db_path, "test").unwrap());
-        let broadcaster = Arc::new(crate::WsBroadcaster::new(64));
-        let hook_system = Arc::new(floatty_core::HookSystem::initialize(Arc::clone(&store)));
-        let om = test_outline_manager(dir.path(), &store, &hook_system, &broadcaster);
-        let app = create_router(
-            Arc::clone(&store),
-            Arc::clone(&broadcaster),
-            hook_system,
-            None,
-            om,
-        );
+        let (app, _dir, store) = test_app();
 
         // Create initial updates
         for i in 0..3 {

@@ -1,3 +1,5 @@
+> **Status**: superseded by ADR-006 (`apps/floatty/docs/adrs/ADR-006-retire-db-per-outline.md`). Retained for archaeology.
+
 # Multi-Outline Phase 1 — Code Review Summary
 
 **Date**: 2026-04-07

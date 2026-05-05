@@ -31,7 +31,6 @@ pub mod events;
 pub mod hooks;
 pub mod metadata;
 pub mod origin;
-pub mod outline;
 pub mod persistence;
 pub mod projections;
 pub mod search;
@@ -78,7 +77,6 @@ pub use hooks::{
 };
 pub use metadata::{BlockMetadata, Marker};
 pub use origin::Origin;
-pub use outline::{OutlineError, OutlineInfo, OutlineName};
 pub use persistence::{default_db_path, PersistenceError, YDocPersistence};
 pub use search::{
     IndexManager, SchemaFields, SearchError, SearchFilters, SearchHit, SearchService,

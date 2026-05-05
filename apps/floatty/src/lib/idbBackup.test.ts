@@ -44,10 +44,10 @@ describe('idbBackup namespace', () => {
 
     initBackupNamespace('my-workspace');
 
-    // Format: floatty-backup-{build}|{encodedWorkspace}|{encodedOutline}
+    // Format: floatty-backup-{build}|{encodedWorkspace}
     // | separator avoids collision with hyphenated names; encodeURIComponent escapes |
     expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.stringContaining('floatty-backup-dev|my-workspace|default')
+      expect.stringContaining('floatty-backup-dev|my-workspace')
     );
   });
 
@@ -91,7 +91,7 @@ describe('idbBackup namespace', () => {
 });
 
 describe('idbBackup namespace format', () => {
-  it('namespace follows pattern: floatty-backup-{build}-{workspace}', async () => {
+  it('namespace follows pattern: floatty-backup-{build}|{workspace}', async () => {
     // Reset modules to get fresh state
     vi.resetModules();
     const { initBackupNamespace } = await import('./idbBackup');
@@ -105,7 +105,7 @@ describe('idbBackup namespace format', () => {
     );
 
     expect(relevantCall).toBeDefined();
-    // Format: floatty-backup-{build}|{workspace}|{outline} (| separator, encodeURIComponent applied)
-    expect(relevantCall![0]).toMatch(/floatty-backup-(dev|release)\|format-test-ws\|default/);
+    // Format: floatty-backup-{build}|{workspace} (| separator, encodeURIComponent applied)
+    expect(relevantCall![0]).toMatch(/floatty-backup-(dev|release)\|format-test-ws/);
   });
 });

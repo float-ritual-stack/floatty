@@ -72,7 +72,7 @@ impl HookSystem {
         Self::initialize_at(store, index_path)
     }
 
-    /// Initialize with a custom search index path (for per-outline indexes).
+    /// Initialize with a custom search index path.
     ///
     /// Pass `None` for search_index_path to skip search initialization.
     ///

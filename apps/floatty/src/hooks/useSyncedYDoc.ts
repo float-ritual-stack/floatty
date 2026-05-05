@@ -1128,12 +1128,8 @@ function connectWebSocket() {
     return;
   }
 
-  // Convert http://localhost:8765 to ws://localhost:8765/ws(?outline=name)
-  const outline = getHttpClient().getOutline();
-  let wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
-  if (outline !== 'default') {
-    wsUrl += `?outline=${encodeURIComponent(outline)}`;
-  }
+  // Convert http://localhost:8765 to ws://localhost:8765/ws
+  const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
   wsLogger.info(`Connecting to ${wsUrl}`);
 
   try {
@@ -1517,8 +1513,7 @@ export function useSyncedYDoc(
           } catch (err) {
             logger.warn('Config IPC failed for namespace, using default', { err });
           }
-          const outlineName = getHttpClient().getOutline();
-          initBackupNamespace(workspaceName, outlineName);
+          initBackupNamespace(workspaceName);
 
           // Load persisted lastContiguousSeq for incremental sync after browser refresh
           // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:
