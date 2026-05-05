@@ -163,10 +163,10 @@
     <div class="av" title="Demo Dana — compliance">D</div>
     <div class="av" title="Nick">N</div>
   </div>
-  <div class="cmdk" role="button" aria-label="Search">
+  <button class="cmdk" type="button" aria-label="Search" aria-disabled="true">
     <span>jump to anywhere · search · ⌘K</span>
     <kbd>⌘K</kbd>
-  </div>
+  </button>
 </header>
 
 <div class="layout">
@@ -174,21 +174,21 @@
   <!-- LEFT RAIL: section nav -->
   <aside class="rail left">
     <h4>Hub</h4>
-    <a class="nav-item active" href="#overview">Overview</a>
+    <a class="nav-item active" href="#recent">Overview</a>
     <a class="nav-item" href="#recent">Recent Work</a>
-    <a class="nav-item" href="#decisions">Decisions</a>
-    <a class="nav-item" href="#meetings">Meetings</a>
-    <a class="nav-item" href="#docs">Docs &amp; Refs</a>
-    <a class="nav-item" href="#open">Open Questions</a>
+    <span class="nav-item" aria-disabled="true">Decisions</span>
+    <span class="nav-item" aria-disabled="true">Meetings</span>
+    <span class="nav-item" aria-disabled="true">Docs &amp; Refs</span>
+    <span class="nav-item" aria-disabled="true">Open Questions</span>
 
     <h4>Quick Filters</h4>
-    <a class="nav-item" href="#filter-week">this week</a>
-    <a class="nav-item" href="#filter-blockers">blockers only</a>
-    <a class="nav-item" href="#filter-ben">Ben-touched</a>
+    <span class="nav-item" aria-disabled="true">this week</span>
+    <span class="nav-item" aria-disabled="true">blockers only</span>
+    <span class="nav-item" aria-disabled="true">Ben-touched</span>
 
     <h4>Related Hubs</h4>
-    <a class="nav-item" href="#h-pharma">[[pharmacy]]</a>
-    <a class="nav-item" href="#h-floatty">[[floatty]]</a>
+    <span class="nav-item" aria-disabled="true">[[pharmacy]]</span>
+    <span class="nav-item" aria-disabled="true">[[floatty]]</span>
   </aside>
 
   <!-- MAIN COLUMN -->

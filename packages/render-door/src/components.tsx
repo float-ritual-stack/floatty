@@ -29,6 +29,32 @@ declare global {
 
 const sanitize = (html: string) => DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 
+/**
+ * Spec-supplied URLs may carry unsafe schemes (`javascript:`, `data:`, `vbscript:`).
+ * Allow only http/https/mailto/tel, anchor fragments, and relative paths.
+ * Returns the validated href, or null when the value should not be rendered as a link.
+ */
+function safeHref(href: string | undefined | null): string | null {
+  if (!href) return null;
+  const trimmed = href.trim();
+  if (!trimmed) return null;
+  // Anchor fragments and relative paths (no scheme, not protocol-relative)
+  if (trimmed.startsWith('#') || trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../')) {
+    return trimmed;
+  }
+  // Allowlist of safe schemes (case-insensitive)
+  const colonIdx = trimmed.indexOf(':');
+  if (colonIdx === -1) {
+    // No scheme → treat as relative
+    return trimmed;
+  }
+  const scheme = trimmed.slice(0, colonIdx).toLowerCase();
+  if (scheme === 'http' || scheme === 'https' || scheme === 'mailto' || scheme === 'tel') {
+    return trimmed;
+  }
+  return null;
+}
+
 function emitChirpNavigate(el: HTMLElement, target: string, sourceEvent: MouseEvent): void {
   el.dispatchEvent(new CustomEvent('chirp', {
     bubbles: true,
@@ -534,6 +560,7 @@ export function Text(props: BaseComponentProps<{
   weight?: string;
   color?: string;
   mono?: boolean;
+  markdown?: boolean;
 }>) {
   const fontSize = () => {
     switch (props.props.size) {
@@ -543,15 +570,19 @@ export function Text(props: BaseComponentProps<{
       default: return '13px';
     }
   };
+  const baseStyle = () => ({
+    'font-size': fontSize(),
+    'font-weight': props.props.weight === 'bold' ? '700' : props.props.weight === 'medium' ? '500' : '400',
+    color: props.props.color || `var(--color-text-primary, ${V.t})`,
+    'font-family': props.props.mono ? V.mono : 'inherit',
+  });
   return (
-    <span style={{
-      'font-size': fontSize(),
-      'font-weight': props.props.weight === 'bold' ? '700' : props.props.weight === 'medium' ? '500' : '400',
-      color: props.props.color || `var(--color-text-primary, ${V.t})`,
-      'font-family': props.props.mono ? V.mono : 'inherit',
-    }}>
-      {props.props.content}
-    </span>
+    <Show
+      when={props.props.markdown}
+      fallback={<span style={baseStyle()}>{props.props.content}</span>}
+    >
+      <span style={baseStyle()} innerHTML={sanitize(inlineFormat(props.props.content))} onClick={handleWikilinkClick} />
+    </Show>
   );
 }
 
@@ -6214,22 +6245,26 @@ export function Hero(props: BaseComponentProps<{
           }}>see also</span>
           <For each={props.props.actions ?? []}>{(action, i) => {
             const isPrimary = action.variant === 'primary';
+            const url = safeHref(action.href);
+            const linkStyle = {
+              color: isPrimary ? V.cy : V.td,
+              'text-decoration': 'none',
+              'border-bottom': `1px ${isPrimary ? 'solid' : 'dotted'} ${isPrimary ? V.cy : V.b2}`,
+              'padding-bottom': '1px',
+              'font-weight': isPrimary ? '600' : 'normal',
+              transition: 'color 0.15s, border-color 0.15s',
+            };
             return (
               <>
                 <Show when={i() > 0}>
                   <span style={{ color: V.tf }}>·</span>
                 </Show>
-                <a href={action.href ?? '#'} style={{
-                  color: isPrimary ? V.cy : V.td,
-                  'text-decoration': 'none',
-                  'border-bottom': `1px ${isPrimary ? 'solid' : 'dotted'} ${isPrimary ? V.cy : V.b2}`,
-                  'padding-bottom': '1px',
-                  'font-weight': isPrimary ? '600' : 'normal',
-                  transition: 'color 0.15s, border-color 0.15s',
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = V.cy; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = isPrimary ? V.cy : V.td; }}
-                >{action.label}</a>
+                <Show when={url} fallback={<span style={linkStyle}>{action.label}</span>}>
+                  <a href={url!} style={linkStyle}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = V.cy; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = isPrimary ? V.cy : V.td; }}
+                  >{action.label}</a>
+                </Show>
               </>
             );
           }}</For>
@@ -6301,7 +6336,7 @@ export function CardCover(props: BaseComponentProps<{
     return V.s2;
   };
 
-  const card = () => (
+  const Card = () => (
     <div style={{
         background: V.s1,
         border: `1px solid ${V.b2}`,
@@ -6369,11 +6404,12 @@ export function CardCover(props: BaseComponentProps<{
       </div>
   );
 
+  const href = () => safeHref(props.props.href);
   return (
-    <Show when={props.props.href} fallback={card()}>
-      <a href={props.props.href} style={{
+    <Show when={href()} fallback={<Card />}>
+      <a href={href()!} style={{
         display: 'block', 'text-decoration': 'none', color: 'inherit',
-      }}>{card()}</a>
+      }}><Card /></a>
     </Show>
   );
 }
