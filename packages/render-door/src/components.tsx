@@ -6020,6 +6020,48 @@ export function Strudel(props: BaseComponentProps<{
 // RICH-DOC PRIMITIVES — Callout, Hero, GalleryGrid, CardCover
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * BulletList — flat bulleted list, serif body text. Drop into Callout/
+ * Section bodies for the common "list of co-occurring items" shape.
+ * Inline formatting (bold, italic, [[wikilinks]]) supported per item.
+ */
+export function BulletList(props: BaseComponentProps<{ items: string[]; density?: 'comfortable' | 'compact' }>) {
+  const items = () => props.props.items ?? [];
+  const compact = () => props.props.density === 'compact';
+  const padY = () => compact() ? '2px' : '4px';
+  const fontSize = () => compact() ? '12px' : '13px';
+  return (
+    <ul style={{
+      margin: '4px 0',
+      padding: '0 0 0 20px',
+      'list-style': 'none',
+    }}>
+      <For each={items()}>
+        {(item) => (
+          <li style={{
+            position: 'relative',
+            padding: `${padY()} 0`,
+            'font-family': V.serif,
+            'font-size': fontSize(),
+            color: V.t,
+            'line-height': '1.55',
+          }}>
+            <span style={{
+              position: 'absolute',
+              left: '-14px',
+              top: padY(),
+              color: V.tf,
+              'font-family': V.mono,
+              'font-size': '12px',
+            }}>•</span>
+            <span innerHTML={sanitize(inlineFormat(item))} />
+          </li>
+        )}
+      </For>
+    </ul>
+  );
+}
+
 type CalloutType =
   | 'note' | 'info' | 'tip' | 'success' | 'warning'
   | 'danger' | 'failure' | 'bug' | 'example' | 'question'

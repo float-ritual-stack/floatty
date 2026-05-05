@@ -158,6 +158,15 @@ export const doorComponentDefinitions = {
     description: "Text display",
   },
 
+  BulletList: {
+    props: z.object({
+      items: z.array(z.string()).describe("Bulleted list items. Inline markdown is supported (bold, italic, [[wikilinks]])."),
+      density: z.enum(["comfortable", "compact"]).optional(),
+    }),
+    slots: [],
+    description: "Flat bulleted list, serif body text. Drop into Callout/Section bodies for the common 'list of co-occurring items' shape (failures, examples, applies-to). Use TreeView when items have hierarchy + status; this is for flat-equal lists. density:'compact' tightens spacing.",
+  },
+
   Callout: {
     props: z.object({
       type: z.enum([
