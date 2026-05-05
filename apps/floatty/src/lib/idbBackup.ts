@@ -45,6 +45,22 @@ export function initBackupNamespace(workspaceName: string): void {
       oldPromise.then(db => db.close()).catch(() => {});
     }
     logger.info(`Namespace set to: ${dbName}`);
+
+    // ADR-006 migration: clean up the legacy `floatty-backup-{build}|{ws}|default`
+    // database left behind by the retired multi-outline storage topology. The third
+    // segment was the outline name (always "default" in practice). Without this,
+    // stale IDBs accumulate in user storage with no path back. Idempotent: a
+    // deleteDatabase() request on a non-existent name is a no-op. Best-effort —
+    // failures don't block startup. Safe to delete this block once user fleet has
+    // cycled past the retirement. Guarded for non-IndexedDB environments (jsdom in
+    // tests, SSR contexts).
+    if (typeof indexedDB !== 'undefined') {
+      const legacyName = `floatty-backup-${build}|${ws}|default`;
+      const req = indexedDB.deleteDatabase(legacyName);
+      req.onsuccess = () => logger.info(`[ADR-006 migration] cleared legacy IDB: ${legacyName}`);
+      req.onerror = () => logger.warn(`[ADR-006 migration] failed to clear legacy IDB ${legacyName}: ${req.error?.message ?? 'unknown'}`);
+      req.onblocked = () => logger.warn(`[ADR-006 migration] legacy IDB ${legacyName} delete blocked (open elsewhere); will retry on next launch`);
+    }
   }
 }
 

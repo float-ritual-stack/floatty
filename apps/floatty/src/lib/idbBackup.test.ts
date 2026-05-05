@@ -18,6 +18,10 @@ vi.mock('./logger', () => ({
 // We need to mock IndexedDB since it's not available in Node
 const mockIndexedDB = {
   open: vi.fn(),
+  // Stubbed for the ADR-006 migration in initBackupNamespace — fire-and-forget
+  // deleteDatabase that lets the production code's `req.onsuccess = …` assignment
+  // succeed without erroring.
+  deleteDatabase: vi.fn(() => ({ onsuccess: null, onerror: null, onblocked: null })),
 };
 
 // Mock the global indexedDB
