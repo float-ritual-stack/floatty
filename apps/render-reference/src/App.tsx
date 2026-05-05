@@ -42,7 +42,7 @@ markDevtoolsActive();
 import { bbsCatalog } from '@render-door/catalog';
 import { registry as bbsRegistry } from '@render-door/registry';
 
-// Our 10 reference specs
+// Our 14 reference specs
 import { dailyNoteSpec } from './specs/daily-note';
 import { weeklyTrackerSpec } from './specs/weekly-tracker';
 import { meetingNotesSpec } from './specs/meeting-notes';
@@ -53,6 +53,10 @@ import { catalogAtomsSpec } from './specs/catalog-atoms';
 import { conceptualPatternsSpec } from './specs/conceptual-patterns';
 import { synthFidgetSpec } from './specs/synth-fidget';
 import { presetRigSpec } from './specs/preset-rig';
+import { hubStackSpec } from './specs/hub-stack';
+import { hubTuiGridSpec } from './specs/hub-tui-grid';
+import { hubFilteredSpec } from './specs/hub-filtered';
+import { hubRichSpec } from './specs/hub-rich';
 
 type LayoutEntry = {
   id: string;
@@ -121,6 +125,30 @@ const LAYOUTS: LayoutEntry[] = [
     label: '10. Preset Rig',
     description: 'Full techno-fidget rig assembled entirely from synth-presets.ts imports — drum kits, patterns, acid lines, euclidean classics, send recipes. Demonstrates compose-not-synthesize: agents grab from the library; remix by swapping one import name. Edit the spec to change recipes.',
     spec: presetRigSpec,
+  },
+  {
+    id: 'hub-stack',
+    label: '11. Hub · Card Stack',
+    description: 'Hub-page Option 1 (familiar dashboard). MetadataHeader + StatsBar → CollapsibleSection × 4 (recent / decisions / meetings / docs) → BacklinksFooter. One column, top-to-bottom, sections collapse for scan and expand for detail.',
+    spec: hubStackSpec,
+  },
+  {
+    id: 'hub-tui-grid',
+    label: '12. Hub · TUI Grid',
+    description: 'Hub-page Option 2 (terminal-feel status board). TuiStat row + 2-column TuiPanel grid: Recent + Decisions on the left, Meetings + Docs (TreeView) + Open Questions on the right. Information density over whitespace; tabular shape over collapsibles.',
+    spec: hubTuiGridSpec,
+  },
+  {
+    id: 'hub-filtered',
+    label: '13. Hub · TabNav Filtered',
+    description: 'Hub-page Option 3 (interactive). TabNav at top switches a single body section via $bindState — Recent / Decisions / Meetings / Docs cycle one at a time. Persistent header + footer; only the body changes. Same state-switching primitive as conceptual-patterns.',
+    spec: hubFilteredSpec,
+  },
+  {
+    id: 'hub-rich',
+    label: '14. Hub · Rich Primitives',
+    description: 'Uses the four new rich-doc components: Hero (page intro with eyebrow/cover/actions), GalleryGrid + CardCover (Notion-style collection of recent work with cover-icons + properties pills + footer), Callout (typed/nestable/foldable — info pinned at top with nested quote + warning, success/note/abstract/question section wrappers, nested bug callout in Open Questions). Plus existing LinkGraph and ActivityHeatmap to fill the visualization layer.',
+    spec: hubRichSpec,
   },
 ];
 

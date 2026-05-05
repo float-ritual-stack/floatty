@@ -742,31 +742,36 @@ export function TuiPanel(props: BaseComponentProps<{ title?: string; titleColor?
 }
 
 export function TuiStat(props: BaseComponentProps<{ label: string; value: string; color?: string }>) {
+  // Left-aligned typographic block — drops the equal-width-centered-card
+  // pattern that read as generic AI-slop dashboard. Label as inline kicker
+  // before the value so each stat has its own visual rhythm based on content
+  // length, not forced into uniform tiles.
   return (
     <div style={{
       display: 'flex',
       'flex-direction': 'column',
-      'align-items': 'center',
-      padding: '10px 16px',
-      border: `1px solid ${V.b}`,
-      background: V.s1,
-      'min-width': '80px',
+      'align-items': 'flex-start',
+      padding: '6px 14px 6px 0',
+      'border-right': `1px solid ${V.b}`,
+      'min-width': '0',
     }}>
       <span style={{
-        'font-size': '10px',
-        color: V.td,
-        'letter-spacing': '1px',
+        'font-size': '9px',
+        color: V.tf,
+        'letter-spacing': '0.16em',
         'text-transform': 'uppercase',
         'font-family': V.mono,
-        'margin-bottom': '4px',
       }}>
         {props.props.label}
       </span>
       <span style={{
-        'font-size': '20px',
-        'font-weight': '700',
+        'font-size': '18px',
+        'font-weight': '500',
         color: props.props.color || V.cy,
         'font-family': V.mono,
+        'line-height': '1.3',
+        'letter-spacing': '-0.01em',
+        'margin-top': '2px',
       }}>
         {props.props.value}
       </span>
@@ -1661,7 +1666,19 @@ export function MeetingDiff(props: BaseComponentProps<{
 // DECISION LOG — filterable decision list with status
 // ═══════════════════════════════════════════════════════════════
 
-interface Decision { date: string; meeting: string; text: string; status: string; source?: string; project?: string; }
+interface Decision {
+  date: string;
+  meeting: string;
+  /** What was the decision (the answer, the binary chosen, the resolution). */
+  text: string;
+  /** Optional: what was being decided (the question, the choice-frame).
+   *  When set, renders as a serif-italic kicker above the decision text so
+   *  readers can scan "what was the question" → "what was the answer". */
+  topic?: string;
+  status: string;
+  source?: string;
+  project?: string;
+}
 
 export function DecisionLog(props: BaseComponentProps<{
   decisions: Decision[];
@@ -1715,11 +1732,24 @@ export function DecisionLog(props: BaseComponentProps<{
                 <div style={{ 'font-family': V.mono, 'font-size': '9px', color: '#444' }}>{d.meeting}</div>
               </div>
               <div style={{ flex: '1', 'min-width': '0' }}>
+                <Show when={d.topic}>
+                  <div style={{
+                    'font-family': V.serif,
+                    'font-size': '11px',
+                    'font-style': 'italic',
+                    color: d.status === 'superseded' ? '#555' : V.td,
+                    'line-height': '1.35',
+                    'margin-bottom': '2px',
+                    'text-decoration': d.status === 'superseded' ? 'line-through' : 'none',
+                  }}>{d.topic}</div>
+                </Show>
                 <div style={{
-                  'font-family': V.serif, 'font-size': '12px',
+                  'font-family': V.serif,
+                  'font-size': '13px',
+                  'font-weight': d.topic ? '600' : 'normal',
                   color: d.status === 'superseded' ? '#666' : V.t,
                   'text-decoration': d.status === 'superseded' ? 'line-through' : 'none',
-                  'line-height': '1.4',
+                  'line-height': '1.45',
                 }}>{d.text}</div>
               </div>
               <div style={{
@@ -2173,9 +2203,24 @@ export function TabNav(props: BaseComponentProps<{
   active: unknown;
   variant?: 'horizontal' | 'pills';
 }>) {
-  const [activeRaw, setActive] = useBoundProp(props.props.active, props.bindings?.active);
-  // useBoundProp returns raw value OR signal depending on version — normalize to callable
-  const active = typeof activeRaw === 'function' ? activeRaw as () => unknown : () => activeRaw;
+  const [activeRaw, setActiveBound] = useBoundProp(props.props.active, props.bindings?.active);
+  // useBoundProp returns raw value OR signal depending on version. Wrapping
+  // a primitive in `() => activeRaw` captures the initial value FOREVER —
+  // visibility-bound bodies update via /$state, but the TabNav button-state
+  // reads stale. Mirror the bound value into a local signal so reads stay
+  // reactive AND clicks propagate up via setActiveBound.
+  const initialActive = typeof activeRaw === 'function' ? (activeRaw as () => unknown)() : activeRaw;
+  const [active, setLocalActive] = createSignal<unknown>(initialActive);
+  // Keep local signal in sync if the bound value changes externally
+  // (e.g., another component sets the same state path).
+  createEffect(() => {
+    const current = typeof activeRaw === 'function' ? (activeRaw as () => unknown)() : activeRaw;
+    setLocalActive(() => current);
+  });
+  const setActive = (id: unknown) => {
+    setLocalActive(() => id);
+    setActiveBound(id);
+  };
   const tabs = () => props.props.tabs ?? [];
   const isPills = () => props.props.variant === 'pills';
   return (
@@ -2255,7 +2300,36 @@ function TreeNodeRow(nodeProps: { node: TreeNode; depth: number; isLast: boolean
   const children = () => node.children ?? [];
 
   return (
-    <div style={{ 'margin-left': nodeProps.depth > 0 ? '16px' : '0' }}>
+    <div style={{
+      'margin-left': nodeProps.depth > 0 ? '14px' : '0',
+      position: 'relative',
+      // CSS-drawn tree connector — replaces the brittle ├ └ ASCII chars
+      // that rendered with mismatched line-height vs the content. Border
+      // pseudo-elements give pixel-perfect lines that scale with text.
+      ...(nodeProps.depth > 0 ? {
+        'border-left': `1px solid ${V.b}`,
+        'padding-left': '10px',
+      } : {}),
+    }}>
+      <Show when={nodeProps.depth > 0}>
+        <div style={{
+          position: 'absolute',
+          left: '0',
+          top: '13px',
+          width: '10px',
+          'border-top': `1px solid ${V.b}`,
+        }} />
+        <Show when={nodeProps.isLast}>
+          <div style={{
+            position: 'absolute',
+            left: '0',
+            top: '13px',
+            bottom: '0',
+            width: '1px',
+            background: V.s1,
+          }} />
+        </Show>
+      </Show>
       <div
         onClick={() => hasKids() && setExpanded(e => !e)}
         style={{
@@ -2267,16 +2341,6 @@ function TreeNodeRow(nodeProps: { node: TreeNode; depth: number; isLast: boolean
           'user-select': 'none',
         }}
       >
-        {/* branch glyph */}
-        <span style={{
-          'font-size': '10px',
-          color: V.tf,
-          'min-width': '10px',
-          'font-family': V.mono,
-          'line-height': '18px',
-        }}>
-          {nodeProps.depth > 0 ? (nodeProps.isLast ? '└' : '├') : ''}
-        </span>
 
         {/* expand/collapse or status icon */}
         <span style={{
@@ -5949,6 +6013,326 @@ export function Strudel(props: BaseComponentProps<{
         'letter-spacing': '0.05em',
       }}>cps {cps()} · pattern {pattern().length}b · iframe → strudel.cc</div>
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RICH-DOC PRIMITIVES — Callout, Hero, GalleryGrid, CardCover
+// ═══════════════════════════════════════════════════════════════
+
+type CalloutType =
+  | 'note' | 'info' | 'tip' | 'success' | 'warning'
+  | 'danger' | 'failure' | 'bug' | 'example' | 'question'
+  | 'quote' | 'abstract' | 'todo';
+
+const CALLOUT_TYPES: Record<CalloutType, { icon: string; color: string; label: string }> = {
+  note:     { icon: 'ℹ', color: V.cy,    label: 'Note' },
+  info:     { icon: 'ℹ', color: V.cy,    label: 'Info' },
+  tip:      { icon: '✦', color: V.green, label: 'Tip' },
+  success:  { icon: '✓', color: V.green, label: 'Success' },
+  warning:  { icon: '⚠', color: V.amb,   label: 'Warning' },
+  danger:   { icon: '✗', color: V.cor,   label: 'Danger' },
+  failure:  { icon: '✗', color: V.cor,   label: 'Failure' },
+  bug:      { icon: '☠', color: V.cor,   label: 'Bug' },
+  example:  { icon: '★', color: V.mag,   label: 'Example' },
+  question: { icon: '?', color: V.cy,    label: 'Question' },
+  quote:    { icon: '❝', color: V.td,    label: 'Quote' },
+  abstract: { icon: '◇', color: V.cy,    label: 'Abstract' },
+  todo:     { icon: '☐', color: V.amb,   label: 'Todo' },
+};
+
+/**
+ * Callout — typed, optionally collapsible, nestable. Obsidian-style.
+ * Per-type icon + accent color. Children render in the body slot, including
+ * other Callouts (nestable). Set `collapsible: true` for fold/unfold;
+ * `defaultExpanded: false` to start collapsed.
+ */
+export function Callout(props: BaseComponentProps<{
+  type?: CalloutType;
+  title?: string;
+  collapsible?: boolean;
+  defaultExpanded?: boolean;
+}>) {
+  const type = (): CalloutType => props.props.type ?? 'note';
+  const meta = () => CALLOUT_TYPES[type()];
+  const title = () => props.props.title ?? meta().label;
+  const collapsible = () => props.props.collapsible ?? false;
+  const [expanded, setExpanded] = createSignal(props.props.defaultExpanded ?? true);
+
+  return (
+    <div style={{
+      background: V.s1,
+      'border-left': `3px solid ${meta().color}`,
+      'border-radius': '4px',
+      'border-top': `1px solid ${V.b}`,
+      'border-right': `1px solid ${V.b}`,
+      'border-bottom': `1px solid ${V.b}`,
+      'margin-bottom': '8px',
+      overflow: 'hidden',
+    }}>
+      <div
+        style={{
+          display: 'flex',
+          'align-items': 'center',
+          gap: '8px',
+          padding: '8px 12px',
+          background: `${meta().color}11`,
+          cursor: collapsible() ? 'pointer' : 'default',
+          'user-select': 'none',
+          'font-family': V.mono,
+        }}
+        onClick={() => { if (collapsible()) setExpanded(e => !e); }}
+      >
+        <span style={{ color: meta().color, 'font-size': '14px', 'min-width': '14px', 'text-align': 'center' }}>{meta().icon}</span>
+        <span style={{ 'font-size': '12px', 'font-weight': '600', color: meta().color, 'letter-spacing': '0.04em' }}>{title()}</span>
+        <Show when={collapsible()}>
+          <span style={{ 'margin-left': 'auto', color: V.tf, 'font-size': '11px' }}>
+            {expanded() ? '▾' : '▸'}
+          </span>
+        </Show>
+      </div>
+      <Show when={expanded()}>
+        <div style={{ padding: '10px 14px 12px 14px', 'font-size': '13px', color: V.t, 'line-height': '1.55' }}>
+          {props.children}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * Hero — page-top visual statement. Eyebrow (small uppercase) + Title (large)
+ * + Subtitle + optional cover (gradient/color w/ icon) + optional actions row.
+ * For setting tone on hub pages, project landings, dispatch covers.
+ */
+export function Hero(props: BaseComponentProps<{
+  title: string;
+  subtitle?: string;
+  eyebrow?: string;
+  cover?: { gradient?: string; color?: string; icon?: string };
+  density?: 'full' | 'compact';
+  actions?: Array<{ label: string; href?: string; variant?: 'primary' | 'secondary' }>;
+}>) {
+  const density = () => props.props.density ?? 'full';
+  const cover = () => props.props.cover;
+  const padY = () => density() === 'compact' ? '20px' : '36px';
+  const titleSize = () => density() === 'compact' ? '22px' : '32px';
+
+  const bg = () => {
+    const c = cover();
+    if (!c) return V.s1;
+    if (c.gradient) return c.gradient;
+    if (c.color) return c.color;
+    return V.s1;
+  };
+
+  return (
+    <div style={{
+      background: bg(),
+      'border-radius': '10px',
+      border: `1px solid ${V.b2}`,
+      padding: `${padY()} 28px`,
+      display: 'flex',
+      'flex-direction': 'column',
+      gap: density() === 'compact' ? '6px' : '10px',
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <Show when={cover()?.icon}>
+        <div style={{
+          position: 'absolute', right: '20px', top: '50%', transform: 'translateY(-50%)',
+          'font-size': '92px', color: 'rgba(255,255,255,0.05)', 'pointer-events': 'none',
+          'line-height': '1',
+        }}>{cover()?.icon}</div>
+      </Show>
+      <Show when={props.props.eyebrow}>
+        <div style={{
+          'font-size': '10px', 'letter-spacing': '0.18em', 'text-transform': 'uppercase',
+          color: V.cy, 'font-family': V.mono, 'font-weight': '600',
+        }}>{props.props.eyebrow}</div>
+      </Show>
+      <h1 style={{
+        margin: '0', 'font-size': titleSize(), 'font-weight': '700', color: V.t,
+        'letter-spacing': '-0.01em', 'line-height': '1.1', 'font-family': V.serif,
+      }}>{props.props.title}</h1>
+      <Show when={props.props.subtitle}>
+        <div style={{
+          'font-size': density() === 'compact' ? '13px' : '15px', color: V.td,
+          'line-height': '1.5', 'max-width': '70ch', 'font-family': V.serif,
+        }}>{props.props.subtitle}</div>
+      </Show>
+      <Show when={props.props.actions && props.props.actions.length > 0}>
+        <div style={{
+          display: 'flex', gap: '14px', 'margin-top': '14px', 'flex-wrap': 'wrap',
+          'align-items': 'baseline', 'font-family': V.mono, 'font-size': '11px',
+        }}>
+          <span style={{
+            color: V.tf, 'text-transform': 'uppercase', 'letter-spacing': '0.16em',
+            'font-size': '9px',
+          }}>see also</span>
+          <For each={props.props.actions ?? []}>{(action, i) => {
+            const isPrimary = action.variant === 'primary';
+            return (
+              <>
+                <Show when={i() > 0}>
+                  <span style={{ color: V.tf }}>·</span>
+                </Show>
+                <a href={action.href ?? '#'} style={{
+                  color: isPrimary ? V.cy : V.td,
+                  'text-decoration': 'none',
+                  'border-bottom': `1px ${isPrimary ? 'solid' : 'dotted'} ${isPrimary ? V.cy : V.b2}`,
+                  'padding-bottom': '1px',
+                  'font-weight': isPrimary ? '600' : 'normal',
+                  transition: 'color 0.15s, border-color 0.15s',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = V.cy; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = isPrimary ? V.cy : V.td; }}
+                >{action.label}</a>
+              </>
+            );
+          }}</For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * GalleryGrid — responsive grid of children (typically CardCovers).
+ * Auto-fit columns with minmax; collapses on narrow viewports.
+ */
+export function GalleryGrid(props: BaseComponentProps<{
+  columns?: number | 'auto';
+  gap?: number;
+  minCardWidth?: string;
+}>) {
+  const columns = () => props.props.columns ?? 'auto';
+  const gap = () => props.props.gap ?? 14;
+  const minWidth = () => props.props.minCardWidth ?? '260px';
+  const template = () =>
+    columns() === 'auto'
+      ? `repeat(auto-fit, minmax(${minWidth()}, 1fr))`
+      : `repeat(${columns()}, minmax(0, 1fr))`;
+
+  return (
+    <div style={{
+      display: 'grid',
+      'grid-template-columns': template(),
+      gap: `${gap()}px`,
+    }}>
+      {props.children}
+    </div>
+  );
+}
+
+/**
+ * CardCover — Notion-style rich card. Optional cover area at top
+ * (gradient/color/icon), eyebrow/title/subtitle, properties pills,
+ * optional footer, optional href (whole-card click).
+ */
+export function CardCover(props: BaseComponentProps<{
+  title: string;
+  subtitle?: string;
+  eyebrow?: string;
+  cover?: { color?: string; gradient?: string; icon?: string; height?: string };
+  properties?: Array<{ label: string; value: string; color?: string }>;
+  footer?: string;
+  href?: string;
+  /** 'comfortable' (default) gives the header room to breathe; 'compact' tightens
+   *  the header (smaller eyebrow + title + padding) so the body has more room. */
+  density?: 'comfortable' | 'compact';
+}>) {
+  const cover = () => props.props.cover;
+  const compact = () => props.props.density === 'compact';
+  const coverHeight = () => cover()?.height ?? (compact() ? '52px' : '70px');
+  const padX = () => compact() ? '12px' : '14px';
+  const padY = () => compact() ? '9px' : '12px';
+  const gap = () => compact() ? '4px' : '6px';
+  const eyebrowSize = () => compact() ? '8px' : '9px';
+  const titleSize = () => compact() ? '13px' : '14px';
+  const subSize = () => compact() ? '11px' : '12px';
+  const coverBg = () => {
+    const c = cover();
+    if (!c) return null;
+    if (c.gradient) return c.gradient;
+    if (c.color) return c.color;
+    return V.s2;
+  };
+
+  const card = () => (
+    <div style={{
+        background: V.s1,
+        border: `1px solid ${V.b2}`,
+        'border-radius': '8px',
+        overflow: 'hidden',
+        display: 'flex',
+        'flex-direction': 'column',
+        height: '100%',
+        transition: 'border-color 0.15s, transform 0.15s',
+        cursor: props.props.href ? 'pointer' : 'default',
+      }}>
+        <Show when={cover()}>
+          <div style={{
+            background: coverBg() ?? V.s2,
+            height: coverHeight(),
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'center',
+            'font-size': '32px',
+            color: 'rgba(255,255,255,0.55)',
+            'border-bottom': `1px solid ${V.b}`,
+          }}>
+            <Show when={cover()?.icon}>{cover()?.icon}</Show>
+          </div>
+        </Show>
+        <div style={{ padding: `${padY()} ${padX()}`, display: 'flex', 'flex-direction': 'column', gap: gap(), flex: '1' }}>
+          <Show when={props.props.eyebrow}>
+            <div style={{
+              'font-size': eyebrowSize(), 'letter-spacing': '0.14em', 'text-transform': 'uppercase',
+              color: V.tf, 'font-family': V.mono,
+            }}>{props.props.eyebrow}</div>
+          </Show>
+          <div style={{
+            'font-size': titleSize(), 'font-weight': '600', color: V.t, 'line-height': '1.3', 'font-family': V.mono,
+          }}>{props.props.title}</div>
+          <Show when={props.props.subtitle}>
+            <div style={{ 'font-size': subSize(), color: V.td, 'line-height': '1.4' }}>{props.props.subtitle}</div>
+          </Show>
+          <Show when={props.children}>
+            <div style={{ 'font-size': '12px', color: V.td, 'margin-top': '4px' }}>{props.children}</div>
+          </Show>
+          <Show when={props.props.properties && props.props.properties.length > 0}>
+            <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '4px', 'margin-top': '8px' }}>
+              <For each={props.props.properties ?? []}>{(p) => (
+                <span style={{
+                  display: 'inline-flex', 'align-items': 'center', gap: '4px',
+                  padding: '2px 7px', 'border-radius': '999px',
+                  border: `1px solid ${p.color ?? V.b2}`,
+                  'font-family': V.mono, 'font-size': '10px',
+                  color: p.color ?? V.td,
+                }}>
+                  <span style={{ color: V.tf, 'font-size': '9px' }}>{p.label}</span>
+                  <span>{p.value}</span>
+                </span>
+              )}</For>
+            </div>
+          </Show>
+          <Show when={props.props.footer}>
+            <div style={{
+              'margin-top': 'auto', 'padding-top': '8px', 'border-top': `1px dashed ${V.b}`,
+              'font-size': '10px', color: V.tf, 'font-family': V.mono,
+            }}>{props.props.footer}</div>
+          </Show>
+        </div>
+      </div>
+  );
+
+  return (
+    <Show when={props.props.href} fallback={card()}>
+      <a href={props.props.href} style={{
+        display: 'block', 'text-decoration': 'none', color: 'inherit',
+      }}>{card()}</a>
+    </Show>
   );
 }
 
