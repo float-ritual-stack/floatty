@@ -1,15 +1,28 @@
 /**
  * Long-form BBS post / blog dispatch.
- * Uses: EntryHeader + QuoteBlock (tldr + pull-quote + bridges) +
- *       Section (variant=highlight/warning) for body chunks +
- *       RefSection + TagBar + BacklinksFooter.
+ *
+ * Demonstrates pushing past the "## → h2" markdown-cat floor by reaching
+ * for the right primitive per content-shape:
+ *   - QuoteBlock insight     pull-quote / claim summary (TLDR + doctrine line)
+ *   - Callout question       inline probe / asked-question
+ *   - Callout failure        confessional list (what was actually happening)
+ *   - Callout warning        escalation / why-this-matters with nested sub-claim
+ *   - Callout example        flat list of "where this applies"
+ *   - Callout tip            THE doctrine takeaway (the rule)
+ *   - Callout abstract       bridges / lateral synthesis
+ *   - TreeView               only where tree-shape + status is real (countermeasures)
+ *   - BulletList             flat list of co-occurring items inside Callouts
+ *
+ * What we used to do: DataBlock containing literal `├── └──` ASCII chars
+ * rendered as a <pre> block. Visually flat, semantically empty — the parser
+ * couldn't tell "warning" from "example" from "Q&A pair" from "checklist."
+ * The new shape preserves the source's voice and notation discipline (markers,
+ * the blackbar callouts in the original .md) while attaching real semantics
+ * to each block so the reader can SCAN it: pull-quotes for skimmers, typed
+ * callouts for asides, statused tree only where it's earned.
  *
  * Source: /opt/float/bbs/boards/consciousness-tech/
  *         2026-04-20-phantom-pantry-architecture-approximation-theater.md
- *
- * This is the SHAPE of a BBS post rendered through json-render — not a
- * markdown cat. EntryBody works for markdown-heavy inline content, but
- * breaking sections into their own blocks earns visual hierarchy.
  */
 
 import type { Spec } from '@json-render/core';
@@ -30,13 +43,12 @@ export const bbsPostSpec: Spec = {
         'sec-probe',
         'sec-countermeasures',
         'related-sec',
-        'bridges',
+        'bridges-callout',
         'tags',
         'backlinks',
       ],
     },
 
-    // EntryHeader is the BBS-post-native title block
     header: {
       type: 'EntryHeader',
       props: {
@@ -58,7 +70,7 @@ export const bbsPostSpec: Spec = {
       },
     },
 
-    // Opening summary as an insight quote — "the two halves of the same lie"
+    // ─── TLDR ─ pull-quote, the claim ───────────────────────────────
     tldr: {
       type: 'QuoteBlock',
       props: {
@@ -68,30 +80,47 @@ export const bbsPostSpec: Spec = {
       },
     },
 
-    // Section 1 — Today's instance (concrete → pattern)
+    // ─── SECTION 1 ─ Today's instance (concrete → pattern) ──────────
     'sec-instance': {
       type: 'Section',
       props: { title: "Today's instance (bridge::concrete → pattern)", variant: 'default' },
-      children: ['instance-prose', 'probe-quote', 'kitty-answer', 'instance-close'],
+      children: ['instance-prose', 'probe-pair', 'instance-close'],
     },
     'instance-prose': {
       type: 'Text',
       props: {
-        content: 'Asked kitty for a static json-render reference page — what layouts/components are possible, with docs links. Output looked fine. Pointed out missing components. Kitty went to "fix it" and started hand-rolling net-new HTML/CSS.\n\nCatch-probe deployed:',
+        content: 'Asked kitty for a static json-render reference page — what layouts/components are possible, with docs links. Output looked fine. Pointed out missing components. Kitty went to "fix it" and started hand-rolling net-new HTML/CSS.',
       },
     },
-    'probe-quote': {
-      type: 'QuoteBlock',
+    // The probe + answer as a Q&A Callout pair — outer question wraps
+    // the asked prompt, nested failure callout holds what was actually
+    // happening underneath. Replaces the prior DataBlock+ASCII-tree mess
+    // that made the relationship invisible.
+    'probe-pair': {
+      type: 'Callout',
+      props: { type: 'question', title: 'Catch-probe deployed', collapsible: false },
+      children: ['probe-q', 'probe-a'],
+    },
+    'probe-q': {
+      type: 'Text',
       props: {
-        type: 'quote',
-        text: 'are you hand rolling the html or are you leveraging json-render?',
+        content: '*are you hand rolling the html or are you leveraging json-render?*',
       },
     },
-    'kitty-answer': {
-      type: 'DataBlock',
+    'probe-a': {
+      type: 'Callout',
+      props: { type: 'failure', title: "kitty's honest answer", collapsible: false },
+      children: ['probe-a-list'],
+    },
+    'probe-a-list': {
+      type: 'BulletList',
       props: {
-        label: "kitty's honest answer",
-        content: '├── "hand-rolling HTML"\n├── approximating what json-render output would look like using CSS mimicry\n├── NOT actually running specs through @json-render/solid\'s Renderer\n└── storybook-style mock, not authoritative rendering',
+        items: [
+          '"hand-rolling HTML"',
+          'approximating what json-render output would look like using CSS mimicry',
+          'NOT actually running specs through @json-render/solid\'s Renderer',
+          'storybook-style mock, not authoritative rendering',
+        ],
       },
     },
     'instance-close': {
@@ -101,16 +130,41 @@ export const bbsPostSpec: Spec = {
       },
     },
 
-    // Section 2 — Why it's insidious
+    // ─── SECTION 2 ─ Why it's insidious (escalation + nested sub-claim) ─
     'sec-insidious': {
       type: 'Section',
       props: { title: "Why it's insidious", variant: 'warning' },
-      children: ['insidious-tree', 'insidious-close'],
+      children: ['insidious-callout', 'insidious-close'],
     },
-    'insidious-tree': {
-      type: 'DataBlock',
+    'insidious-callout': {
+      type: 'Callout',
+      props: { type: 'warning', title: 'Failure mode escalates silently', collapsible: false },
+      children: ['insidious-list', 'insidious-nested'],
+    },
+    'insidious-list': {
+      type: 'BulletList',
       props: {
-        content: '├── reads correct on first glance — passes visual sniff test\n├── drifts silently as real components evolve\n├── defeats the reference-page purpose entirely\n│   └── you think you have authoritative docs, you have a mural\n└── compounds downstream — readers trust the mural as ground truth',
+        items: [
+          'reads correct on first glance — passes visual sniff test',
+          'drifts silently as real components evolve',
+          'defeats the reference-page purpose entirely',
+          'compounds downstream — readers trust the mural as ground truth',
+        ],
+      },
+    },
+    // The "you think you have authoritative docs, you have a mural" line
+    // was nested under "defeats the reference-page purpose" in the source.
+    // Lift it as a nested Callout (danger) — the sub-claim earns its own
+    // visual register because IT is the load-bearing diagnosis.
+    'insidious-nested': {
+      type: 'Callout',
+      props: { type: 'danger', title: 'The diagnosis underneath', collapsible: false },
+      children: ['insidious-nested-text'],
+    },
+    'insidious-nested-text': {
+      type: 'Text',
+      props: {
+        content: 'You think you have authoritative docs. You have a mural.',
       },
     },
     'insidious-close': {
@@ -120,12 +174,13 @@ export const bbsPostSpec: Spec = {
       },
     },
 
-    // Section 3 — The catch-probe (highlight variant — this IS the doctrine)
+    // ─── SECTION 3 ─ The catch-probe (doctrine-grade — the takeaway) ─
     'sec-probe': {
       type: 'Section',
       props: { title: 'The catch-probe (doctrine-grade)', variant: 'highlight' },
-      children: ['probe-pull', 'probe-applies', 'probe-applicable', 'probe-upstream'],
+      children: ['probe-pull', 'probe-applicable', 'probe-upstream'],
     },
+    // THE doctrine line — pull-quote treatment so it scans first
     'probe-pull': {
       type: 'QuoteBlock',
       props: {
@@ -134,14 +189,25 @@ export const bbsPostSpec: Spec = {
         attribution: 'generalizable form',
       },
     },
-    'probe-applies': {
-      type: 'Text',
-      props: { content: 'Applies to:' },
-    },
+    // "Applies to" was a prose line + DataBlock-tree. Collapse to one
+    // Callout(example) holding a flat BulletList — the relationship is
+    // "list of categories where the probe applies", NOT a tree.
     'probe-applicable': {
-      type: 'DataBlock',
+      type: 'Callout',
+      props: { type: 'example', title: 'Where the catch-probe applies', collapsible: false },
+      children: ['probe-applicable-list'],
+    },
+    'probe-applicable-list': {
+      type: 'BulletList',
       props: {
-        content: '├── renders (this case)\n├── API calls claimed but not made\n├── test runs described but not executed\n├── linting/typechecking "passed" without invocation\n├── DB queries reasoned about instead of run\n└── anything where a plausible-looking result substitutes for a real one',
+        items: [
+          'renders (this case)',
+          'API calls claimed but not made',
+          'test runs described but not executed',
+          'linting/typechecking "passed" without invocation',
+          'DB queries reasoned about instead of run',
+          'anything where a plausible-looking result substitutes for a real one',
+        ],
       },
     },
     'probe-upstream': {
@@ -151,27 +217,79 @@ export const bbsPostSpec: Spec = {
       },
     },
 
-    // Section 4 — Countermeasures
+    // ─── SECTION 4 ─ Countermeasures (genuine tree, statused) ───────
     'sec-countermeasures': {
       type: 'Section',
       props: { title: 'Countermeasures', variant: 'default' },
-      children: ['counter-list', 'counter-rule'],
+      children: ['counter-tree', 'counter-rule'],
     },
-    'counter-list': {
-      type: 'DataBlock',
+    // FINALLY a place where TreeView is earned: 4 root countermeasures,
+    // one of them ("generate from source") branches into 3 statused
+    // implementation paths. The status-color (done/active) carries real
+    // signal — these are the actual paths used in render-reference.
+    'counter-tree': {
+      type: 'TreeView',
       props: {
-        content: '├── Treat "looks like X" output as unverified until pipeline runs\n├── For reference/doc work: generate from source, never describe from memory\n│   ├── SSR via Renderer → static HTML (authoritative)\n│   ├── real render via render:: door → screenshot → stitch (mid-trust)\n│   └── Vite+Solid playground importing the actual registry (stays in sync)\n├── Ask the probe explicitly at artifact-commit time\n└── Name the failure when it happens — naming creates a trust-verification vocabulary',
+        nodes: [
+          {
+            id: 'cm-1',
+            label: 'Treat "looks like X" output as unverified until pipeline runs',
+            status: 'active',
+          },
+          {
+            id: 'cm-2',
+            label: 'For reference/doc work: generate from source, never describe from memory',
+            status: 'active',
+            children: [
+              {
+                id: 'cm-2a',
+                label: 'SSR via Renderer → static HTML',
+                status: 'done',
+                detail: 'authoritative — output equals the rendered shape exactly',
+              },
+              {
+                id: 'cm-2b',
+                label: 'real render via render:: door → screenshot → stitch',
+                status: 'active',
+                detail: 'mid-trust — visual artifact is real, freeze-time risk',
+              },
+              {
+                id: 'cm-2c',
+                label: 'Vite+Solid playground importing the actual registry',
+                status: 'done',
+                detail: 'stays in sync — render-reference is exactly this shape',
+              },
+            ],
+          },
+          {
+            id: 'cm-3',
+            label: 'Ask the probe explicitly at artifact-commit time',
+            status: 'active',
+          },
+          {
+            id: 'cm-4',
+            label: 'Name the failure when it happens — naming creates a trust-verification vocabulary',
+            status: 'active',
+          },
+        ],
       },
     },
+    // The rule is THE doctrine takeaway — Callout tip gives it the
+    // strongest "remember this" affordance. Was a QuoteBlock (quote
+    // type) before; tip is a stronger semantic register for "the rule."
     'counter-rule': {
-      type: 'QuoteBlock',
+      type: 'Callout',
+      props: { type: 'tip', title: 'The rule', collapsible: false },
+      children: ['counter-rule-text'],
+    },
+    'counter-rule-text': {
+      type: 'Text',
       props: {
-        type: 'quote',
-        text: "The rule: if the artifact's purpose is *authoritative reference*, the artifact must be generated by the pipeline it documents. Anything else is a mural.",
+        content: 'If the artifact\'s purpose is *authoritative reference*, the artifact must be generated by the pipeline it documents. Anything else is a mural.',
       },
     },
 
-    // Related section — RefCards for each related concept
+    // ─── RELATED ─ RefCards for lateral concepts ────────────────────
     'related-sec': {
       type: 'RefSection',
       props: { label: 'Related' },
@@ -202,16 +320,26 @@ export const bbsPostSpec: Spec = {
       },
     },
 
-    // Bridges at the end — note-type quote
-    bridges: {
-      type: 'QuoteBlock',
+    // ─── BRIDGES ─ Callout abstract for lateral synthesis ───────────
+    // Was QuoteBlock(note); abstract callout gives it a clearer "this is
+    // the lateral-link block" register. The bridge:: lines are tagged
+    // navigation, not pulled prose.
+    'bridges-callout': {
+      type: 'Callout',
+      props: { type: 'abstract', title: 'Bridges', collapsible: false },
+      children: ['bridges-list'],
+    },
+    'bridges-list': {
+      type: 'BulletList',
       props: {
-        type: 'note',
-        text: 'bridge::approximation-theater → phantom-pantry-architecture\nbridge::phantom-pantry → trust-verification-probes',
+        items: [
+          'bridge::approximation-theater → phantom-pantry-architecture',
+          'bridge::phantom-pantry → trust-verification-probes',
+        ],
       },
     },
 
-    // Tags
+    // ─── TAGS + BACKLINKS ─ footer metadata (unchanged shape) ───────
     tags: {
       type: 'TagBar',
       props: { gap: 6 },
@@ -224,7 +352,6 @@ export const bbsPostSpec: Spec = {
     t5: { type: 'TagChip', props: { name: 'verification' } },
     t6: { type: 'TagChip', props: { name: 'vibe-code' } },
 
-    // Inbound + outbound links
     backlinks: {
       type: 'BacklinksFooter',
       props: {

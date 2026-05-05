@@ -99,7 +99,7 @@ const LAYOUTS: LayoutEntry[] = [
   {
     id: 'bbs-post',
     label: '6. BBS Post / Long-form',
-    description: 'EntryHeader + QuoteBlock tldr + Section per beat + pull-quote catch-probe + RefSection + TagBar + BacklinksFooter. Content-centric, not dashboard.',
+    description: 'EntryHeader + QuoteBlock tldr + Section per beat. Pushes past the "## → h2" markdown floor: Callout(question) wraps the catch-probe, nested Callout(failure) holds the honest answer, Callout(warning) escalates with a nested Callout(danger) for the load-bearing diagnosis, Callout(example) for "where it applies", TreeView only where genuinely tree-shaped (countermeasures with statused sub-paths), Callout(tip) for THE rule, Callout(abstract) for bridges. No pre-blocks of ASCII tree chars — each shape gets its right primitive.',
     spec: bbsPostSpec,
   },
   {
