@@ -2109,8 +2109,11 @@ pub(crate) fn delete_block(
 
 /// Full-text + filtered search over a Tantivy index, hydrated from Y.Doc.
 ///
-/// `inheritance_index` and `page_name_index` are optional. When absent,
-/// `ancestorContext.effectiveMarkers` and `ancestorContext.inbound*` stay empty.
+/// `inheritance_index` and `page_name_index` are optional.
+/// - Without `inheritance_index`, inherited marker contributions are unavailable
+///   (own markers may still populate `ancestorContext.effectiveMarkers`).
+/// - Without `page_name_index`, inbound fields rely on stored hints and otherwise
+///   default to empty values.
 pub(crate) fn search_blocks(
     store: &Arc<YDocStore>,
     index_manager: &Arc<IndexManager>,
