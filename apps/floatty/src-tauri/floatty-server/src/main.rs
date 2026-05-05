@@ -13,7 +13,7 @@ use floatty_server::{
     api, auth,
     backup::{self, BackupDaemon},
     config::{BackupConfig, ServerConfig},
-    start_heartbeat, ws, OutlineManager, WsBroadcaster,
+    start_heartbeat, ws, WsBroadcaster,
 };
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::KeyValue;
@@ -383,22 +383,6 @@ async fn main() {
         None
     };
 
-    // Create outline manager for multi-outline support
-    let data_dir = floatty_server::config::data_dir();
-    let default_context = Arc::new(floatty_server::OutlineContext::new_default(
-        Arc::clone(&store),
-        Arc::clone(&hook_system),
-        Arc::clone(&broadcaster),
-        Some(data_dir.join("search_index")),
-        backup_daemon.clone(),
-    ));
-    let outline_manager = Arc::new(OutlineManager::new_with_default(
-        &data_dir,
-        default_context,
-        backup_config.clone(),
-    ));
-    tracing::info!("Outline manager initialized");
-
     // CORS layer - allow requests from Tauri webview (localhost origins)
     let cors = CorsLayer::new()
         .allow_origin(Any) // Tauri uses tauri://localhost or http://localhost
@@ -420,7 +404,6 @@ async fn main() {
             Arc::clone(&broadcaster),
             Arc::clone(&hook_system),
             backup_daemon.clone(),
-            Arc::clone(&outline_manager),
         )
         .layer(middleware::from_fn_with_state(
             auth_state,
@@ -433,14 +416,12 @@ async fn main() {
             Arc::clone(&broadcaster),
             Arc::clone(&hook_system),
             backup_daemon.clone(),
-            Arc::clone(&outline_manager),
         )
     };
 
-    // WebSocket route — supports ?outline={name} for per-outline subscriptions
+    // WebSocket route
     let ws_state = ws::WsState {
-        default_broadcaster: Arc::clone(&broadcaster),
-        outline_manager: Arc::clone(&outline_manager),
+        broadcaster: Arc::clone(&broadcaster),
     };
     let ws_routes = Router::new()
         .route("/ws", get(ws::ws_handler))

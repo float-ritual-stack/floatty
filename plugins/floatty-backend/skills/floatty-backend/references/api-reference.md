@@ -304,8 +304,7 @@ GET /api/v1/search?q={query}&limit={limit}
 Every endpoint that returns a block-shaped response (`/blocks`,
 `/blocks/:id`, `/blocks/resolve/:prefix`, `/search`, `/pages/search`,
 `/presence`, `/daily/:date`, `/pages/:name` upsert,
-`/daily/:date/append`, all `/outlines/:name/...` siblings) carries
-`ancestorContext`.
+`/daily/:date/append`) carries `ancestorContext`.
 
 | Field | Always-on? | Description |
 |---|---|---|

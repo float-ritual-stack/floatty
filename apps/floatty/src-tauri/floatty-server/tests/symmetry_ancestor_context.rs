@@ -5,22 +5,21 @@
 //! Plan §"PR 2 commits" #9. Asserts that the SAME block, viewed through
 //! every shaping helper that funnels into a block-returning endpoint,
 //! produces a MATCHING `AncestorContext`. Regression net for the
-//! per-outline asymmetry surfaced during planning (`/api/v1/outlines/...`
-//! historically didn't even support `?include=` opt-ins).
+//! shape-consistency contract across `/api/v1/blocks/:id`,
+//! `/api/v1/search`, presence, daily, etc.
 //!
 //! ## Why this is the right shape of test
 //!
 //! Every endpoint funnels through one of:
 //! - `compute_ancestor_context` (singletons, presence, page-search, daily)
 //! - `attach_ancestor_context` (thin wrapper around the above)
-//! - `shape_search_hit` (BlockSearchHit, both top-level and per-outline)
+//! - `shape_search_hit` (BlockSearchHit)
 //!
 //! If those three produce matching shapes for the same Y.Doc fixture, every
 //! endpoint above them does too — they're projections of the same call. The
 //! plan's "every endpoint × matching ancestorContext" guarantee reduces to
-//! these three call sites because the per-outline asymmetry fix in commit 7
-//! collapsed the two surfaces (`/blocks/...` and `/outlines/:name/blocks/...`)
-//! through the same `block_service::*` helpers.
+//! these three call sites because all block-returning endpoints flow through
+//! the same `block_service::*` helpers.
 //!
 //! ## What this asserts (the contracts the plan calls out as load-bearing)
 //!
@@ -31,8 +30,8 @@
 //! 2. **Dedup-union** for `ancestor_outlinks` (resolved open-question:
 //!    deduped union of own + walked ancestors).
 //! 3. **`compute_*`, `attach_*`, `shape_search_hit` agree** on the same
-//!    fixture — i.e., per-outline endpoints can never drift again because
-//!    they all flow through the same shaping function.
+//!    fixture — i.e., block-returning endpoints can never drift again
+//!    because they all flow through the same shaping function.
 //! 4. **Empty-on-bare-root** — root block with no chain, no outlinks, no
 //!    inbound, no markers returns `None`. Keeps the wire terse.
 //! 5. **Cap honoured** — synthetic 12-deep chain exercises the walker's

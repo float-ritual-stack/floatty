@@ -74,7 +74,7 @@ PATCH /api/v1/blocks/:id
 3. `walk_spec_to_markdown(output.data.spec)` — new crude Rust walker in `floatty_core::projections`
 4. `walk_generic_json_to_markdown(output.data)` — last-resort fallback
 
-Cached in-memory via LRU keyed by `(block_id, hash(output.data))` — content-addressed invalidation, no WebSocket broadcasts. Walker wrapped in `catch_unwind` so malformed specs never 500. Applied to both `GET /api/v1/blocks/:id` and `GET /api/v1/outlines/:name/blocks/:id` for parity. Bulk reads (`GET /api/v1/blocks`, `GET /api/v1/outlines/:name/blocks`) stay outside the projection path to avoid N× walker cost.
+Cached in-memory via LRU keyed by `(block_id, hash(output.data))` — content-addressed invalidation, no WebSocket broadcasts. Walker wrapped in `catch_unwind` so malformed specs never 500. Applied to `GET /api/v1/blocks/:id`. Bulk read `GET /api/v1/blocks` stays outside the projection path to avoid N× walker cost.
 
 **Token efficiency**: crude walker output is ~0.19× raw spec JSON (81% reduction) on the motivating block `7f5ef11c-...`. Target consumer is agents, not humans — no visual formatting preserved, no round-trip fidelity.
 

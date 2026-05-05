@@ -321,14 +321,14 @@ pub struct CreateBlockRequest {
 
 /// Import block request — identity-preserving create for migration/curation workflows.
 ///
-/// Use POST /api/v1/blocks/import (or /api/v1/outlines/:name/blocks/import).
-/// The normal create endpoint (POST /api/v1/blocks) never accepts caller-supplied IDs —
-/// server always owns identity for ordinary creates.
+/// Use POST /api/v1/blocks/import. The normal create endpoint
+/// (POST /api/v1/blocks) never accepts caller-supplied IDs — server always
+/// owns identity for ordinary creates.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImportBlockRequest {
-    /// The block ID to preserve. Must be a valid UUID and must not already exist
-    /// in the destination outline.
+    /// The block ID to preserve. Must be a valid UUID and must not already
+    /// exist in the destination store.
     pub id: String,
     pub content: String,
     pub parent_id: Option<String>,

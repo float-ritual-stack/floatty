@@ -5,16 +5,11 @@
  * Server is spawned by Tauri on app start; this client connects to it.
  */
 
-import { createSignal } from 'solid-js';
 import { invoke } from './tauriTypes';
 import { base64ToBytes, bytesToBase64 } from './encoding';
 import { createLogger } from './logger';
 
 const logger = createLogger('httpClient');
-
-/** Reactive signal for current outline name */
-const [currentOutline, setCurrentOutline] = createSignal('default');
-export { currentOutline };
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -97,10 +92,6 @@ export interface FloattyHttpClient {
    * @returns Updates if available, or compactedThrough if client is too far behind
    */
   getUpdatesSince(since: number, limit?: number): Promise<UpdatesSinceResult>;
-  /** Set active outline. "default" uses legacy routes. */
-  setOutline(name: string): void;
-  /** Get active outline name */
-  getOutline(): string;
   /** Fetch a URL with the server auth header attached. */
   fetchWithAuth(url: string, init?: RequestInit): Promise<Response>;
 }
@@ -112,21 +103,10 @@ export interface FloattyHttpClient {
 class HttpClient implements FloattyHttpClient {
   private url: string;
   private apiKey: string;
-  private outlineName: string = 'default';
 
   constructor(serverInfo: ServerInfo) {
     this.url = serverInfo.url;
     this.apiKey = serverInfo.api_key;
-  }
-
-  /** Set the active outline. "default" uses legacy routes, others use /outlines/:name/ prefix. */
-  setOutline(name: string) {
-    this.outlineName = name;
-    setCurrentOutline(name);
-  }
-
-  getOutline(): string {
-    return this.outlineName;
   }
 
   fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
@@ -140,12 +120,9 @@ class HttpClient implements FloattyHttpClient {
     return fetch(url, { ...init, headers });
   }
 
-  /** API prefix: /api/v1 for default, /api/v1/outlines/:name for others */
+  /** API prefix: always /api/v1 */
   private api(path: string): string {
-    if (this.outlineName === 'default') {
-      return `${this.url}/api/v1${path}`;
-    }
-    return `${this.url}/api/v1/outlines/${encodeURIComponent(this.outlineName)}${path}`;
+    return `${this.url}/api/v1${path}`;
   }
 
   private headers(): HeadersInit {

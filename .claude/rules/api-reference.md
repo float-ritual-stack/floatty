@@ -38,7 +38,7 @@ PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 3. `walk_spec_to_markdown(output.data.spec)` — server-side Rust walker
 4. `walk_generic_json_to_markdown(output.data)` — last-resort fallback
 
-Agents consuming the API can rely on the field being populated. Walker output is ~0.19× raw spec JSON (agent-oriented crude walker, no visual formatting preserved). Cached in-memory via LRU keyed by `(block_id, hash(output.data))`. Applies to both `/api/v1/blocks/:id` and `/api/v1/outlines/:name/blocks/:id`. **Bulk endpoints** (`GET /api/v1/blocks`, `GET /api/v1/outlines/:name/blocks`) do NOT apply the projection — use per-block GETs if you need markdown for many doors.
+Agents consuming the API can rely on the field being populated. Walker output is ~0.19× raw spec JSON (agent-oriented crude walker, no visual formatting preserved). Cached in-memory via LRU keyed by `(block_id, hash(output.data))`. Applies to `GET /api/v1/blocks/:id`. **Bulk endpoint** `GET /api/v1/blocks` does NOT apply the projection — use per-block GETs if you need markdown for many doors.
 
 ### Short-Hash Resolution
 
@@ -97,8 +97,6 @@ the block's place in the outline. Surfaces:
 - `GET /api/v1/daily/:date` — daily note page, always-on `effectiveMarkers`
 - `POST /api/v1/pages/:name` (upsert) — newly-created or existing page, always-on
 - `POST /api/v1/daily/:date/append` — appended child, always-on
-- `GET /api/v1/outlines/:name/blocks` and `/search` and `/blocks/:id` —
-  same shapes as the top-level endpoints (per-outline asymmetry-fix)
 
 Wire shape (camelCase JSON):
 

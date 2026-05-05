@@ -19,20 +19,19 @@ let dbName = 'floatty-backup';
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 /**
- * Initialize the backup namespace based on build environment, workspace, and outline.
+ * Initialize the backup namespace based on build environment and workspace.
  * MUST be called BEFORE any backup operations (getBackup, saveBackup, etc.)
  *
- * Creates isolation between: dev/release builds, different workspaces, AND outlines.
- * e.g., 'floatty-backup-dev-default-default' vs 'floatty-backup-release-work-journal'
+ * Creates isolation between dev/release builds and different workspaces.
+ * e.g., 'floatty-backup-dev|default' vs 'floatty-backup-release|work-journal'
  */
-export function initBackupNamespace(workspaceName: string, outlineName: string = 'default'): void {
+export function initBackupNamespace(workspaceName: string): void {
   const build = import.meta.env.DEV ? 'dev' : 'release';
-  // Use | as delimiter (not -) so workspace names and outline names containing
-  // hyphens don't produce colliding DB names. encodeURIComponent encodes any |
-  // in the names themselves to %7C, keeping the delimiter unambiguous.
+  // Use | as delimiter (not -) so workspace names containing hyphens don't
+  // produce colliding DB names. encodeURIComponent encodes any | in the name
+  // itself to %7C, keeping the delimiter unambiguous.
   const ws = encodeURIComponent(workspaceName);
-  const ol = encodeURIComponent(outlineName);
-  const newDbName = `floatty-backup-${build}|${ws}|${ol}`;
+  const newDbName = `floatty-backup-${build}|${ws}`;
 
   if (newDbName !== dbName) {
     // CRITICAL: Null the promise SYNCHRONOUSLY before async close to prevent
@@ -46,6 +45,22 @@ export function initBackupNamespace(workspaceName: string, outlineName: string =
       oldPromise.then(db => db.close()).catch(() => {});
     }
     logger.info(`Namespace set to: ${dbName}`);
+
+    // ADR-006 migration: clean up the legacy `floatty-backup-{build}|{ws}|default`
+    // database left behind by the retired multi-outline storage topology. The third
+    // segment was the outline name (always "default" in practice). Without this,
+    // stale IDBs accumulate in user storage with no path back. Idempotent: a
+    // deleteDatabase() request on a non-existent name is a no-op. Best-effort —
+    // failures don't block startup. Safe to delete this block once user fleet has
+    // cycled past the retirement. Guarded for non-IndexedDB environments (jsdom in
+    // tests, SSR contexts).
+    if (typeof indexedDB !== 'undefined') {
+      const legacyName = `floatty-backup-${build}|${ws}|default`;
+      const req = indexedDB.deleteDatabase(legacyName);
+      req.onsuccess = () => logger.info(`[ADR-006 migration] cleared legacy IDB: ${legacyName}`);
+      req.onerror = () => logger.warn(`[ADR-006 migration] failed to clear legacy IDB ${legacyName}: ${req.error?.message ?? 'unknown'}`);
+      req.onblocked = () => logger.warn(`[ADR-006 migration] legacy IDB ${legacyName} delete blocked (open elsewhere); will retry on next launch`);
+    }
   }
 }
 

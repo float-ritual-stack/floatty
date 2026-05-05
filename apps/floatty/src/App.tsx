@@ -13,7 +13,6 @@ import { paneStore } from './hooks/usePaneStore';
 import { getWorkspacePersistence } from './hooks/useWorkspacePersistence';
 import { initHttpClient } from './lib/httpClient';
 import { hasPendingUpdates, forceSyncNow, getSyncStatus } from './hooks/useSyncedYDoc';
-import { pendingOutlineSwitch, setPendingOutlineSwitch } from './lib/events/appEvents';
 import * as navigationLib from './lib/navigation';
 import { paneLinkStore } from './hooks/usePaneLinkStore';
 import { useSyncHealth } from './hooks/useSyncHealth';
@@ -53,14 +52,13 @@ function App() {
   let workspaceLoadInFlight = false;
 
   // Shared connect helper — called on first mount AND on "Try Again" retry.
-  // Ensures the saved outline is always restored regardless of which path reconnects.
   const connectServer = async () => {
-    const client = await initHttpClient();
-    const savedOutline = localStorage.getItem('floatty-outline') || 'default';
-    if (savedOutline !== 'default') {
-      client.setOutline(savedOutline);
-      logger.info(`Restored outline '${savedOutline}' from localStorage`);
-    }
+    // ADR-006: defensive removal of the retired multi-outline localStorage key.
+    // No code reads it after the retirement; this keeps stale boot-state from
+    // accumulating. Idempotent — safe to delete this line once the user fleet has
+    // cycled past the retirement.
+    localStorage.removeItem('floatty-outline');
+    await initHttpClient();
     logger.info('HTTP client connected to floatty-server');
     setServerConnected(true);
   };
@@ -80,57 +78,6 @@ function App() {
   onMount(() => {
     registerHandlers();
   });
-
-  // React to outline switch requests from the outline:: handler.
-  // Strategy: save to localStorage then reload. Clean re-init avoids SolidJS store reset issues.
-  // Uses a typed module signal (appEvents.ts) instead of window.dispatchEvent per do-not.md.
-  createEffect(on(pendingOutlineSwitch, (name) => {
-    if (!name) return;
-    // Snapshot name and reset signal before async boundary (SolidJS rule #9).
-    const switchName = name;
-    setPendingOutlineSwitch(null);
-
-    const current = localStorage.getItem('floatty-outline') || 'default';
-    if (switchName === current) return;
-
-    logger.info(`Outline switch: ${current} → ${switchName}`);
-
-    void (async () => {
-      // Create outline if it doesn't exist — abort if we can't confirm
-      const serverUrl = window.__FLOATTY_SERVER_URL__;
-      const apiKey = window.__FLOATTY_API_KEY__;
-      if (serverUrl && apiKey) {
-        try {
-          const listResp = await fetch(`${serverUrl}/api/v1/outlines`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-          });
-          if (!listResp.ok) {
-            logger.error(`Outline switch aborted: could not list outlines (${listResp.status})`);
-            return;
-          }
-          const outlines: { name: string }[] = await listResp.json();
-          if (!outlines.some(o => o.name === switchName)) {
-            const createResp = await fetch(`${serverUrl}/api/v1/outlines`, {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: switchName }),
-            });
-            if (!createResp.ok) {
-              logger.error(`Outline switch aborted: could not create outline '${switchName}' (${createResp.status})`);
-              return;
-            }
-          }
-        } catch (err) {
-          logger.error(`Outline switch aborted: fetch error: ${err}`);
-          return;
-        }
-      }
-
-      // Save + reload — cleanest path, all singletons re-init from scratch
-      localStorage.setItem('floatty-outline', switchName);
-      window.location.reload();
-    })();
-  }));
 
   // Start sync health checking (polls every 30s, detects WS drift)
   useSyncHealth();
@@ -380,19 +327,6 @@ function App() {
       }
     });
     onCleanup(() => unlistenDeepLink());
-  });
-
-  // Listen for outline switch from native macOS menu (Rust → frontend)
-  onMount(async () => {
-    const unlistenOutlineSwitch = await listen<string>('switch-outline', (event) => {
-      const name = event.payload;
-      const current = localStorage.getItem('floatty-outline') || 'default';
-      if (name === current) return;
-      logger.info(`Menu: switching to outline '${name}'`);
-      localStorage.setItem('floatty-outline', name);
-      window.location.reload();
-    });
-    onCleanup(() => unlistenOutlineSwitch());
   });
 
   // FLO-350: Listen for orphan detection events from Rust background worker

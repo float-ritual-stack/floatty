@@ -18,6 +18,10 @@ vi.mock('./logger', () => ({
 // We need to mock IndexedDB since it's not available in Node
 const mockIndexedDB = {
   open: vi.fn(),
+  // Stubbed for the ADR-006 migration in initBackupNamespace — fire-and-forget
+  // deleteDatabase that lets the production code's `req.onsuccess = …` assignment
+  // succeed without erroring.
+  deleteDatabase: vi.fn(() => ({ onsuccess: null, onerror: null, onblocked: null })),
 };
 
 // Mock the global indexedDB
@@ -44,10 +48,10 @@ describe('idbBackup namespace', () => {
 
     initBackupNamespace('my-workspace');
 
-    // Format: floatty-backup-{build}|{encodedWorkspace}|{encodedOutline}
-    // | separator avoids collision with hyphenated names; encodeURIComponent escapes |
+    // Format: floatty-backup-{build}|{encodedWorkspace}
+    // End-anchored so a regression to the legacy 3-part `…|default` namespace fails.
     expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.stringContaining('floatty-backup-dev|my-workspace|default')
+      expect.stringMatching(/floatty-backup-dev\|my-workspace$/)
     );
   });
 
@@ -91,7 +95,7 @@ describe('idbBackup namespace', () => {
 });
 
 describe('idbBackup namespace format', () => {
-  it('namespace follows pattern: floatty-backup-{build}-{workspace}', async () => {
+  it('namespace follows pattern: floatty-backup-{build}|{workspace}', async () => {
     // Reset modules to get fresh state
     vi.resetModules();
     const { initBackupNamespace } = await import('./idbBackup');
@@ -105,7 +109,8 @@ describe('idbBackup namespace format', () => {
     );
 
     expect(relevantCall).toBeDefined();
-    // Format: floatty-backup-{build}|{workspace}|{outline} (| separator, encodeURIComponent applied)
-    expect(relevantCall![0]).toMatch(/floatty-backup-(dev|release)\|format-test-ws\|default/);
+    // Format: floatty-backup-{build}|{workspace} — end-anchored so a regression to
+    // the legacy 3-part `…|default` namespace fails.
+    expect(relevantCall![0]).toMatch(/floatty-backup-(dev|release)\|format-test-ws$/);
   });
 });

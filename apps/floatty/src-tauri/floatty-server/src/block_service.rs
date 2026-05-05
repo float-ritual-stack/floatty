@@ -1,11 +1,7 @@
-//! Block CRUD service — shared block semantics for all route families.
+//! Block CRUD service — shared block semantics for the route family.
 //!
-//! BlockService owns the canonical CRUD operations. Handlers (legacy and outline)
-//! are thin wrappers that resolve an OutlineContext, call BlockService, and
-//! format the HTTP response.
-//!
-//! **No route-awareness.** BlockService doesn't know whether the caller is
-//! a legacy route or an outline route. Route-specific behavior belongs in handlers.
+//! BlockService owns the canonical CRUD operations. API handlers are thin
+//! wrappers that call BlockService and format the HTTP response.
 
 use crate::api::{
     self, AncestorContext, ApiError, BlockDto, BlockRef, BlockSearchHit, BlockSearchQuery,
@@ -1215,9 +1211,7 @@ pub(crate) fn get_blocks(
 /// Get a single block by ID with optional context (?include= params).
 ///
 /// Optional `page_name_index` enables `ancestorContext.nearestPage*` and
-/// `ancestorContext.inbound*`. Without it, those fields stay `None`/`0`
-/// (per-outline endpoints that haven't ensured a hook system call us with
-/// `None` and degrade gracefully).
+/// `ancestorContext.inbound*`. Without it, those fields stay `None`/`0`.
 pub(crate) fn get_block(
     store: &Arc<YDocStore>,
     inheritance_index: &RwLock<InheritanceIndex>,
@@ -2114,12 +2108,12 @@ pub(crate) fn delete_block(
 // =========================================================================
 
 /// Full-text + filtered search over a Tantivy index, hydrated from Y.Doc.
-/// Used by both legacy and per-outline search handlers.
 ///
-/// `inheritance_index` and `page_name_index` are optional — the per-outline
-/// path passes `None` (per-outline endpoints don't share the legacy default
-/// outline's indices). When absent, `ancestorContext.effectiveMarkers` and
-/// `ancestorContext.inbound*` stay empty.
+/// `inheritance_index` and `page_name_index` are optional.
+/// - Without `inheritance_index`, inherited marker contributions are unavailable
+///   (own markers may still populate `ancestorContext.effectiveMarkers`).
+/// - Without `page_name_index`, inbound fields rely on stored hints and otherwise
+///   default to empty values.
 pub(crate) fn search_blocks(
     store: &Arc<YDocStore>,
     index_manager: &Arc<IndexManager>,
@@ -2212,10 +2206,6 @@ pub(crate) fn search_blocks(
 }
 
 /// Convert a `SearchHit` (Tantivy result) into a `BlockSearchHit` (wire DTO).
-///
-/// Extracted from `search_blocks` so the per-outline search handler can call
-/// it with the same shape — closes the `/outlines/` drift surfaced by the
-/// planning-time inventory.
 ///
 /// Always emits `block_type` (via parse_block_type on content); emits
 /// `breadcrumb` / `metadata` only when the caller opted in via the
