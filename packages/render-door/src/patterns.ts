@@ -101,4 +101,104 @@ Minimal shape reference (3 cols, 2 cards — expand with real data):
 Color hint by column status (detect from column content — "todo"/"backlog" → amber,
 "doing"/"in progress"/"active" → cyan, "done"/"shipped" → green, "blocked" → coral):
   amber #ffb300, cyan #00e5ff, green #98c379, coral #ff4444, magenta #e040a0
+
+RICH-DOC PRIMITIVES — pick the right shape for the content
+==========================================================
+
+The "## → h2 → Stack of Text" pass is the FLOOR. Reach for typed
+primitives when the content has a typed register. Each block should
+carry semantic load, not just decoration.
+
+CALLOUT — typed asides, foldable, nestable
+  When: any block that's an aside, warning, example, quote, or
+        Q&A pair. Replaces:
+          - QuoteBlock+wrapper combos
+          - CollapsibleSection+styled-text combos
+          - DataBlock with ├── └── ASCII tree chars (anti-pattern)
+  Types (13): note, info, tip, success, warning, danger, failure,
+              bug, example, question, quote, abstract, todo
+  Type → use:
+    note/info       general aside
+    tip             THE rule / takeaway / "remember this"
+    success         shipped / decision-active
+    warning         escalation / "this matters"
+    danger/failure  load-bearing diagnosis / known-broken
+    bug             folded-by-default known issue
+    example         "here's where this applies" + flat list
+    question        catch-probe / asked question / open Q
+    quote           pulled prose / direct attribution
+    abstract        bridges / lateral synthesis / TOC-shape
+    todo            unresolved action item
+  Nestable: children can be more Callouts. Q&A pattern:
+    outer Callout(question) wrapping the question prompt + nested
+    Callout(failure) carrying the answer is the canonical Q&A shape.
+  Foldable: collapsible: true + defaultExpanded: false hides
+    by-default; user clicks header to expand. Use for known-issues,
+    long-form details, deep references.
+
+  Anti-pattern: DO NOT put literal box-drawing chars (├── └── ─) in
+  Text content as faux-trees. That's the markdown source's notation;
+  the spec layer should attach the structure to nested elements
+  (BulletList for flat, Callout for typed, TreeView for tree+status).
+
+HERO — page-top visual statement
+  When: hub pages, project landings, dispatch covers, weekly zine
+        intros. Anywhere you'd write a big serif title with a
+        tagline + maybe some "see also" links.
+  vs MetadataHeader: Hero is visual+actions; MetadataHeader is
+        metadata+stats. Hub pages often use Hero up top + stats
+        elsewhere. Daily notes / trackers use MetadataHeader.
+  Props: eyebrow (small uppercase tag), title (serif), subtitle,
+         cover {gradient/color/icon}, density (full|compact),
+         actions (rendered as text-links, not pill buttons —
+         intentionally subtle since they're often decorative refs).
+
+GALLERY GRID + CARD COVER — Notion-style collection rendering
+  When: 3+ items that benefit from cover-style cards (recent work
+        gallery, doc browser, dispatch tiles, pinned references).
+  vs ShippedItem list: ShippedItem is a one-line bullet; CardCover
+        is a richer card with cover area + properties pills + footer.
+        Use ShippedItem for shipped-PR lists; use CardCover when
+        each item has its own visual identity worth surfacing.
+  vs KanbanCard: KanbanCard is column-bound + drag-target;
+        CardCover is layout-only.
+  CardCover density:
+    'comfortable' (default) — header has room to breathe
+    'compact' — tighter header, more body room (use in dense layouts)
+  Pattern: GalleryGrid columns:'auto' (CSS auto-fit) for responsive,
+           or columns:N for fixed-width grids.
+
+BULLET LIST — flat lists inside Callouts/Sections
+  When: list of co-occurring items where order doesn't carry meaning.
+  vs TreeView: TreeView is for genuine hierarchy + status. BulletList
+        is for the FLAT case where ASCII tree chars would be decoration
+        not structure.
+  Pattern: drop a BulletList inside a Callout body for the
+        canonical "typed-section + bulleted-evidence" shape:
+          Callout(failure) "kitty's honest answer"
+            └─ BulletList items=[...]
+  Inline formatting: items support **bold**, *italic*, [[wikilinks]].
+
+VISUAL HIERARCHY — multi-speed scanning
+  Long-form content (BBS posts, doctrine, weekly wraps) should read
+  at three speeds:
+
+  SKIM (5s)    pull-quotes (QuoteBlock insight) at TLDR + at the
+               doctrine takeaway; section headers; Callout(tip)
+               for THE rule.
+  BROWSE (30s) typed Callouts catch the eye via colored left-borders
+               (cyan info, amber warning, coral danger, green success,
+               magenta example, dim quote).
+  READ (full)  body prose (Text), bulleted evidence (BulletList),
+               statused checklists (TreeView).
+
+  TLDR/pull-quote = QuoteBlock(insight). Doctrine/rule = Callout(tip).
+  Asides = typed Callouts. Hierarchy = nested Callouts (depth carries
+  weight — "the diagnosis underneath" is a danger-callout nested inside
+  the warning-callout, two visual registers deep).
+
+  Anti-pattern: rendering a long doctrine post as one big Stack of
+  Text + DataBlock-ASCII-trees. That's the floor (markdown cat). The
+  ceiling is typed-callout structure with pull-quotes for the
+  load-bearing claims.
 `;

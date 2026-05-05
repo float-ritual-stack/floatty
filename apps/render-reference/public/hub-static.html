@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skills Platform — hub (unconstrained)</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-hi: #1c2330;
+    --line: #30363d;
+    --fg: #c9d1d9;
+    --fg-dim: #8b949e;
+    --fg-faint: #6e7681;
+    --cy: #00e5ff;
+    --gr: #98c379;
+    --am: #ffb300;
+    --mg: #e040a0;
+    --rd: #ff4444;
+    --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Menlo, monospace;
+    --serif: "Newsreader", "Iowan Old Style", Georgia, serif;
+  }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1.45; }
+  a { color: var(--cy); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .pill { display: inline-block; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; font-size: 10px; color: var(--fg-dim); margin-right: 4px; }
+  .pill.gr { color: var(--gr); border-color: var(--gr); }
+  .pill.cy { color: var(--cy); border-color: var(--cy); }
+  .pill.am { color: var(--am); border-color: var(--am); }
+  .pill.mg { color: var(--mg); border-color: var(--mg); }
+
+  /* ── Sticky top: title + chips + cmd-K stub ── */
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(13, 17, 23, 0.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 20px; display: flex; align-items: center; gap: 14px;
+  }
+  header.top .title { font-weight: 600; font-size: 15px; letter-spacing: 0.02em; }
+  header.top .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  header.top .spacer { flex: 1; }
+  header.top .cmdk {
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font-size: 11px; color: var(--fg-faint);
+    background: var(--panel); display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 240px;
+  }
+  header.top .cmdk kbd {
+    background: var(--panel-hi); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--fg-dim);
+  }
+  header.top .avatars { display: flex; }
+  header.top .avatars .av {
+    width: 26px; height: 26px; border-radius: 50%; background: var(--panel-hi); border: 2px solid var(--bg);
+    display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: var(--fg-dim);
+    margin-left: -8px;
+  }
+  header.top .avatars .av:first-child { margin-left: 0; }
+  header.top .avatars .av.lead { color: var(--cy); border-color: var(--cy); }
+
+  /* ── 3-column layout ── */
+  .layout { display: grid; grid-template-columns: 220px 1fr 280px; gap: 18px; padding: 18px 20px; max-width: 1480px; margin: 0 auto; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+
+  .rail h4 { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-faint); margin: 18px 0 8px; }
+  .rail h4:first-child { margin-top: 0; }
+  .rail .nav-item { display: block; padding: 5px 8px; border-radius: 4px; color: var(--fg-dim); font-size: 12px; }
+  .rail .nav-item.active { color: var(--cy); background: var(--panel); }
+  .rail .nav-item:hover { background: var(--panel); color: var(--fg); }
+
+  .main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+  /* ── Pull-quote callout (custom typography) ── */
+  .pullquote {
+    border-left: 3px solid var(--cy); padding: 14px 20px; background: var(--panel);
+    font-family: var(--serif); font-size: 17px; line-height: 1.5; color: var(--fg); font-style: italic;
+  }
+  .pullquote .by { font-family: var(--mono); font-style: normal; font-size: 11px; color: var(--fg-faint); margin-top: 6px; display: block; }
+
+  /* ── Comparison columns ── */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .compare .col { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; }
+  .compare .col h5 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-dim); }
+  .compare .col.this h5 { color: var(--gr); }
+  .compare .col.last h5 { color: var(--fg-faint); }
+  .compare .delta { font-family: var(--mono); font-size: 22px; font-weight: 600; }
+  .compare .delta.up { color: var(--gr); }
+  .compare .delta.down { color: var(--rd); }
+  .compare .row { display: flex; justify-content: space-between; padding: 4px 0; border-top: 1px dashed var(--line); font-size: 12px; }
+  .compare .row:first-of-type { border-top: none; }
+
+  /* ── Activity heatmap (GitHub-style calendar) ── */
+  .heatmap-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; }
+  .heatmap-wrap h5 { margin: 0 0 10px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-dim); display: flex; justify-content: space-between; }
+  .heatmap-wrap h5 .legend { font-size: 10px; color: var(--fg-faint); display: flex; align-items: center; gap: 4px; }
+  .heatmap { display: grid; grid-template-columns: repeat(26, 1fr); gap: 3px; }
+  .heatmap .cell { aspect-ratio: 1; border-radius: 2px; background: #1f2530; }
+  .heatmap .cell[data-l="1"] { background: #0e4429; }
+  .heatmap .cell[data-l="2"] { background: #006d32; }
+  .heatmap .cell[data-l="3"] { background: #26a641; }
+  .heatmap .cell[data-l="4"] { background: #39d353; }
+  .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 2px; }
+
+  /* ── Sparklines next to metrics ── */
+  .sparkrow { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .sparkrow .stat { display: flex; flex-direction: column; gap: 4px; }
+  .sparkrow .stat .label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-faint); }
+  .sparkrow .stat .value { font-size: 20px; font-weight: 600; color: var(--fg); }
+  .sparkrow .stat .delta { font-size: 11px; color: var(--gr); }
+  .sparkrow .stat .delta.down { color: var(--rd); }
+  .sparkrow .stat svg { display: block; margin-top: 4px; }
+
+  /* ── Section card with avatar stack ── */
+  .section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  .section h3 { margin: 0; padding: 12px 16px; font-size: 13px; letter-spacing: 0.04em; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+  .section h3 .count { font-size: 10px; color: var(--fg-faint); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
+  .section h3 .spacer { flex: 1; }
+  .section ul { list-style: none; padding: 0; margin: 0; }
+  .section li { display: flex; align-items: flex-start; gap: 10px; padding: 9px 16px; border-top: 1px solid var(--line); font-size: 12px; }
+  .section li:first-child { border-top: none; }
+  .section li .marker { color: var(--gr); font-weight: 600; }
+  .section li .meta { color: var(--fg-faint); font-size: 11px; }
+  .av-stack { display: flex; }
+  .av-stack .av { width: 22px; height: 22px; border-radius: 50%; background: var(--panel-hi); border: 2px solid var(--panel); display: flex; align-items: center; justify-content: center; font-size: 9px; color: var(--fg-dim); margin-left: -6px; }
+  .av-stack .av:first-child { margin-left: 0; }
+
+  /* ── Right rail: network graph (mini link map) ── */
+  .right h4 { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-faint); margin: 0 0 8px; }
+  .graphbox { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; margin-bottom: 18px; }
+  .graphbox svg { display: block; margin: 0 auto; }
+  .graphbox .legend { font-size: 10px; color: var(--fg-faint); margin-top: 8px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .graphbox .legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+  /* ── Card-stack pattern (overlapping upcoming) ── */
+  .cardstack { position: relative; height: 130px; margin-bottom: 18px; }
+  .cardstack .card {
+    position: absolute; left: 0; right: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    transition: transform 0.2s;
+  }
+  .cardstack .card:nth-child(1) { top: 0; z-index: 3; }
+  .cardstack .card:nth-child(2) { top: 8px; z-index: 2; transform: scale(0.97); opacity: 0.7; }
+  .cardstack .card:nth-child(3) { top: 16px; z-index: 1; transform: scale(0.94); opacity: 0.4; }
+  .cardstack:hover .card:nth-child(2) { transform: translateY(64px) scale(1); opacity: 1; }
+  .cardstack:hover .card:nth-child(3) { transform: translateY(132px) scale(1); opacity: 1; }
+  .cardstack .card .when { font-size: 10px; color: var(--am); letter-spacing: 0.12em; text-transform: uppercase; }
+  .cardstack .card .what { font-size: 13px; margin-top: 4px; }
+
+  /* ── Footer ── */
+  footer { padding: 30px 20px; color: var(--fg-faint); font-size: 11px; text-align: center; border-top: 1px solid var(--line); margin-top: 30px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <span class="title">Skills Platform</span>
+  <span class="chips">
+    <span class="pill cy">project::acme/skills-platform</span>
+    <span class="pill gr">status::active</span>
+    <span class="pill">alias [[skills-platform]]</span>
+  </span>
+  <span class="spacer"></span>
+  <div class="avatars" title="team: Demo Alex (lead) · Demo Dana (compliance) · Nick">
+    <div class="av lead" title="Demo Alex — tech lead">B</div>
+    <div class="av" title="Demo Dana — compliance">D</div>
+    <div class="av" title="Nick">N</div>
+  </div>
+  <button class="cmdk" type="button" aria-label="Search" aria-disabled="true">
+    <span>jump to anywhere · search · ⌘K</span>
+    <kbd>⌘K</kbd>
+  </button>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT RAIL: section nav -->
+  <aside class="rail left">
+    <h4>Hub</h4>
+    <a class="nav-item active" href="#recent">Overview</a>
+    <a class="nav-item" href="#recent">Recent Work</a>
+    <span class="nav-item" aria-disabled="true">Decisions</span>
+    <span class="nav-item" aria-disabled="true">Meetings</span>
+    <span class="nav-item" aria-disabled="true">Docs &amp; Refs</span>
+    <span class="nav-item" aria-disabled="true">Open Questions</span>
+
+    <h4>Quick Filters</h4>
+    <span class="nav-item" aria-disabled="true">this week</span>
+    <span class="nav-item" aria-disabled="true">blockers only</span>
+    <span class="nav-item" aria-disabled="true">Ben-touched</span>
+
+    <h4>Related Hubs</h4>
+    <span class="nav-item" aria-disabled="true">[[pharmacy]]</span>
+    <span class="nav-item" aria-disabled="true">[[floatty]]</span>
+  </aside>
+
+  <!-- MAIN COLUMN -->
+  <main class="main">
+
+    <!-- Pull quote: the hub's "what matters this week" voice -->
+    <div class="pullquote">
+      Two parallel ship-lines (chat-bones overnight + foundation-context v2) interwoven with the stakeholder sync afternoon. The week's cohesion is the plan-trim discipline — 1100 → 190 lines, journal cruft routed elsewhere, cowboy executed against a contract that fit on one screen.
+      <span class="by">— [[date-3]] daily-note arc summary</span>
+    </div>
+
+    <!-- Sparklines: trend-over-time metrics -->
+    <div class="sparkrow">
+      <div class="stat">
+        <span class="label">commits / week</span>
+        <span class="value">14 <span class="delta">+22%</span></span>
+        <svg width="100%" height="32" viewBox="0 0 200 32">
+          <polyline fill="none" stroke="#98c379" stroke-width="2" points="0,24 25,20 50,18 75,22 100,14 125,12 150,10 175,8 200,6" />
+        </svg>
+      </div>
+      <div class="stat">
+        <span class="label">open prs</span>
+        <span class="value">1 <span class="delta down">-3</span></span>
+        <svg width="100%" height="32" viewBox="0 0 200 32">
+          <polyline fill="none" stroke="#ff4444" stroke-width="2" points="0,8 25,8 50,10 75,12 100,16 125,18 150,22 175,24 200,28" />
+        </svg>
+      </div>
+      <div class="stat">
+        <span class="label">decisions logged</span>
+        <span class="value">8 <span class="delta">+2</span></span>
+        <svg width="100%" height="32" viewBox="0 0 200 32">
+          <polyline fill="none" stroke="#00e5ff" stroke-width="2" points="0,28 25,26 50,22 75,22 100,18 125,18 150,14 175,12 200,10" />
+        </svg>
+      </div>
+    </div>
+
+    <!-- Side-by-side comparison: this week vs last -->
+    <div class="compare">
+      <div class="col this">
+        <h5>This Week (W18)</h5>
+        <span class="delta up">14 commits</span>
+        <div class="row"><span>shipped</span><span>chat-bones · context-v2 · plan-trim</span></div>
+        <div class="row"><span>meetings</span><span>1 (stakeholder)</span></div>
+        <div class="row"><span>open compliance</span><span>region · data-upload</span></div>
+      </div>
+      <div class="col last">
+        <h5>Last Week (W17)</h5>
+        <span class="delta">11 commits</span>
+        <div class="row"><span>shipped</span><span>foundation-context v1 · stack lock</span></div>
+        <div class="row"><span>meetings</span><span>2 (Demo Alex + Demo Dana)</span></div>
+        <div class="row"><span>open compliance</span><span>region · data-upload · Q-Law25</span></div>
+      </div>
+    </div>
+
+    <!-- Activity heatmap: 6 months at a glance -->
+    <div class="heatmap-wrap">
+      <h5>Activity (last 26 weeks)
+        <span class="legend">less
+          <span class="swatch" style="background:#1f2530"></span>
+          <span class="swatch" style="background:#0e4429"></span>
+          <span class="swatch" style="background:#006d32"></span>
+          <span class="swatch" style="background:#26a641"></span>
+          <span class="swatch" style="background:#39d353"></span>
+          more
+        </span>
+      </h5>
+      <div class="heatmap" id="heat"></div>
+    </div>
+    <script>
+      // Synthetic activity data for demo
+      const cells = document.getElementById('heat');
+      const pattern = [0,1,0,2,1,3,2,2,1,0,2,3,4,3,2,1,2,3,4,4,3,2,3,4,3,2];
+      for (let week = 0; week < 26; week++) {
+        const lvl = pattern[week] || 0;
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.l = lvl;
+        cell.title = 'week ' + (week+1) + ': ' + (lvl * 4) + ' commits';
+        cells.appendChild(cell);
+      }
+    </script>
+
+    <!-- Recent work with avatar stack per item -->
+    <div class="section" id="recent">
+      <h3>Recent Work <span class="count">4</span><span class="spacer"></span><span class="meta">date-2 → 05-03</span></h3>
+      <ul>
+        <li>
+          <span class="marker">✦</span>
+          <div style="flex:1">
+            <div><a href="#">[[PR #42]]</a> chat-bones-scaffold — full chat loop end-to-end</div>
+            <div class="meta">merged date-2 · ai-elements + Streamdown + json-render · axe 3/3</div>
+          </div>
+          <div class="av-stack" title="contributors">
+            <div class="av" style="color:var(--cy);border-color:var(--cy)">B</div>
+            <div class="av">cb</div>
+          </div>
+        </li>
+        <li>
+          <span class="marker">✦</span>
+          <div style="flex:1">
+            <div><a href="#">[[1a2b3c4]]</a> Streamdown caret-on-stream wired</div>
+            <div class="meta">cowboy overnight · plan-trim 1100 → 190 lines</div>
+          </div>
+          <div class="av-stack"><div class="av">cb</div></div>
+        </li>
+        <li>
+          <span class="marker">✦</span>
+          <div style="flex:1">
+            <div><a href="#">foundation-context v2</a> published</div>
+            <div class="meta">stack lock confirmed live · ai 6.0.170 · gateway 3.0.105 · streamdown 2.5.0</div>
+          </div>
+          <div class="av-stack"><div class="av">E</div></div>
+        </li>
+        <li>
+          <span class="marker">·</span>
+          <div style="flex:1">
+            <div>plan-trim discipline applied recursively</div>
+            <div class="meta">cowboy detour 03:14 PM · 160 lines with file:line:constant verification</div>
+          </div>
+          <div class="av-stack"><div class="av">cb</div></div>
+        </li>
+      </ul>
+    </div>
+
+  </main>
+
+  <!-- RIGHT RAIL: graph + upcoming card-stack + status -->
+  <aside class="right">
+    <h4>Link Graph</h4>
+    <div class="graphbox">
+      <svg width="240" height="180" viewBox="0 0 240 180">
+        <line x1="120" y1="90" x2="60" y2="40" stroke="#30363d" stroke-width="1" />
+        <line x1="120" y1="90" x2="190" y2="50" stroke="#30363d" stroke-width="1" />
+        <line x1="120" y1="90" x2="50" y2="140" stroke="#30363d" stroke-width="1" />
+        <line x1="120" y1="90" x2="200" y2="135" stroke="#30363d" stroke-width="1" />
+        <line x1="120" y1="90" x2="120" y2="170" stroke="#30363d" stroke-width="1" />
+        <circle cx="120" cy="90" r="20" fill="#00e5ff" stroke="#0d1117" stroke-width="2" />
+        <text x="120" y="93" text-anchor="middle" font-size="9" font-family="ui-monospace" fill="#0d1117" font-weight="600">SFC</text>
+        <circle cx="60" cy="40" r="11" fill="#1c2330" stroke="#98c379" />
+        <text x="60" y="58" text-anchor="middle" font-size="9" font-family="ui-monospace" fill="#98c379">PR#18</text>
+        <circle cx="190" cy="50" r="11" fill="#1c2330" stroke="#ffb300" />
+        <text x="190" y="68" text-anchor="middle" font-size="9" font-family="ui-monospace" fill="#ffb300">ABC-101</text>
+        <circle cx="50" cy="140" r="11" fill="#1c2330" stroke="#e040a0" />
+        <text x="50" y="158" text-anchor="middle" font-size="9" font-family="ui-monospace" fill="#e040a0">Demo Alex</text>
+        <circle cx="200" cy="135" r="11" fill="#1c2330" stroke="#e040a0" />
+        <text x="200" y="153" text-anchor="middle" font-size="9" font-family="ui-monospace" fill="#e040a0">Demo Dana</text>
+        <circle cx="120" cy="170" r="9" fill="#1c2330" stroke="#8b949e" />
+      </svg>
+      <div class="legend">
+        <span><span class="dot" style="background:#98c379"></span>shipped</span>
+        <span><span class="dot" style="background:#ffb300"></span>compliance</span>
+        <span><span class="dot" style="background:#e040a0"></span>person</span>
+      </div>
+    </div>
+
+    <h4>Upcoming (Hover)</h4>
+    <div class="cardstack" title="hover to fan out">
+      <div class="card">
+        <div class="when">Mon May 5 · 10am</div>
+        <div class="what">Demo Dana — region residency answer for §X.Y.Z</div>
+      </div>
+      <div class="card">
+        <div class="when">Tue May 6 · 1pm</div>
+        <div class="what">Demo Alex — agent-review round on PR #42</div>
+      </div>
+      <div class="card">
+        <div class="when">Wed May 7 · 3pm</div>
+        <div class="what">Demo Sam — RichCallout expansion scope</div>
+      </div>
+    </div>
+
+    <h4>Status Line</h4>
+    <div class="graphbox" style="font-size:11px">
+      <div style="color:var(--gr)">✓ chat loop live at /en/chat</div>
+      <div style="color:var(--gr)">✓ axe 3/3 green</div>
+      <div style="color:var(--am)">○ region residency — open</div>
+      <div style="color:var(--am)">○ data-upload — open</div>
+      <div style="color:var(--rd)">! agent-review queued</div>
+    </div>
+  </aside>
+</div>
+
+<footer>
+  unconstrained html — no spec validation, no catalog, no providers · what's missing from our render-door catalog ↓
+</footer>
+
+</body>
+</html>

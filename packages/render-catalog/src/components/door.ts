@@ -153,9 +153,89 @@ export const doorComponentDefinitions = {
       weight: z.enum(["normal", "medium", "bold"]).optional(),
       color: z.string().optional(),
       mono: z.boolean().optional(),
+      markdown: z.boolean().optional().describe("If true, render `content` through the inline markdown parser so *emphasis*, **strong**, `code`, and [[wikilinks]] format inline. Default is plain text."),
     }),
     slots: [],
-    description: "Text display",
+    description: "Text display. Defaults to plain text; set markdown:true to enable inline markdown (emphasis/strong/code/wikilinks).",
+  },
+
+  BulletList: {
+    props: z.object({
+      items: z.array(z.string()).describe("Bulleted list items. Inline markdown is supported (bold, italic, [[wikilinks]])."),
+      density: z.enum(["comfortable", "compact"]).optional(),
+    }),
+    slots: [],
+    description: "Flat bulleted list, serif body text. Drop into Callout/Section bodies for the common 'list of co-occurring items' shape (failures, examples, applies-to). Use TreeView when items have hierarchy + status; this is for flat-equal lists. density:'compact' tightens spacing.",
+  },
+
+  Callout: {
+    props: z.object({
+      type: z.enum([
+        "note", "info", "tip", "success", "warning",
+        "danger", "failure", "bug", "example", "question",
+        "quote", "abstract", "todo",
+      ]).optional(),
+      title: z.string().optional(),
+      collapsible: z.boolean().optional(),
+      defaultExpanded: z.boolean().optional(),
+    }),
+    slots: ["default"],
+    description: "Obsidian-style typed callout. Per-type icon + accent color (note/info=cyan, tip/success=green, warning/todo=amber, danger/failure/bug=coral, example=magenta, question=cyan, quote=dim, abstract=cyan). Optionally collapsible (set collapsible:true; defaultExpanded:false to start collapsed). Slots default — children can include other Callouts (nestable). Use for typed sections in long-form content: warnings, examples, quotes, fold-by-default details. Replaces ad-hoc QuoteBlock+wrapping AND CollapsibleSection+styled-text combos.",
+  },
+
+  Hero: {
+    props: z.object({
+      title: z.string(),
+      subtitle: z.string().optional(),
+      eyebrow: z.string().optional(),
+      cover: z.object({
+        gradient: z.string().optional(),
+        color: z.string().optional(),
+        icon: z.string().optional(),
+      }).optional(),
+      density: z.enum(["full", "compact"]).optional(),
+      actions: z.array(z.object({
+        label: z.string(),
+        href: z.string().optional(),
+        variant: z.enum(["primary", "secondary"]).optional(),
+      })).optional(),
+    }),
+    slots: [],
+    description: "Page-top visual statement. Eyebrow (small uppercase tag) + Title (large serif) + Subtitle + optional cover (gradient/color background + decorative icon) + optional actions row (primary/secondary buttons). Density 'full' (default, big block) or 'compact' (slimmer for sub-sections). Use for hub-page intros, project landings, dispatch covers, weekly zine headers — anywhere you want to set tone visually rather than just label content.",
+  },
+
+  GalleryGrid: {
+    props: z.object({
+      columns: z.union([z.number(), z.literal("auto")]).optional(),
+      gap: z.number().optional(),
+      minCardWidth: z.string().optional(),
+    }),
+    slots: ["default"],
+    description: "Responsive grid of children, typically CardCovers. columns:'auto' (default) uses CSS auto-fit with minCardWidth (default 260px) so columns collapse on narrow viewports; columns:N forces exact column count. gap in pixels (default 14). Use for galleries of CardCovers, dispatch tiles, doc browsers, recent-work boards.",
+  },
+
+  CardCover: {
+    props: z.object({
+      title: z.string(),
+      subtitle: z.string().optional(),
+      eyebrow: z.string().optional(),
+      cover: z.object({
+        color: z.string().optional(),
+        gradient: z.string().optional(),
+        icon: z.string().optional(),
+        height: z.string().optional(),
+      }).optional(),
+      properties: z.array(z.object({
+        label: z.string(),
+        value: z.string(),
+        color: z.string().optional(),
+      })).optional(),
+      footer: z.string().optional(),
+      href: z.string().optional(),
+      density: z.enum(["comfortable", "compact"]).optional(),
+    }),
+    slots: ["default"],
+    description: "Notion-style rich card. Optional cover area at top (gradient/color/icon), eyebrow (small uppercase tag) + title + subtitle, optional properties row (key:value pills with optional color), optional footer (dashed-rule separated meta line), optional href (whole-card click target). Children render in body slot below subtitle. density:'comfortable' (default) gives header room to breathe; density:'compact' tightens header (smaller eyebrow/title/padding) for more body room. Pairs with GalleryGrid for collection views. Use anywhere the basic Card feels too plain — dispatch headers, recent-work items, pinned references, gallery cells.",
   },
 
   Card: {
@@ -353,7 +433,15 @@ export const doorComponentDefinitions = {
 
   DecisionLog: {
     props: z.object({
-      decisions: z.array(z.object({ date: z.string(), meeting: z.string(), text: z.string(), status: z.string(), source: z.string().optional(), project: z.string().optional() })),
+      decisions: z.array(z.object({
+        date: z.string(),
+        meeting: z.string(),
+        text: z.string().describe("The decision itself — what was chosen, the resolution"),
+        topic: z.string().optional().describe("Optional: what was being decided (the question, the choice-frame). Renders as serif-italic kicker above the decision text."),
+        status: z.string(),
+        source: z.string().optional(),
+        project: z.string().optional(),
+      })),
       title: z.string().optional(),
     }),
     slots: [],
