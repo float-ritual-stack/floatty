@@ -88,6 +88,47 @@ pub(crate) fn yrs_out_to_json<T: ReadTxn>(out: yrs::Out, txn: &T) -> serde_json:
     }
 }
 
+/// Convert serde_json::Value to yrs::Any recursively.
+///
+/// Used when REST callers POST/PATCH a block with an `output` field set
+/// (the projection-contract write path: agents writing
+/// title-as-content + spec-as-output instead of `render:: {json}` content).
+/// We store the value as `yrs::Any::Map` (JSON-like) which the
+/// `extract_metadata_from_yrs` / `yrs_out_to_json` read paths already
+/// handle alongside the embedded-Y.Map and JSON-string formats.
+pub(crate) fn json_value_to_yrs_any(value: serde_json::Value) -> yrs::Any {
+    match value {
+        serde_json::Value::Null => yrs::Any::Null,
+        serde_json::Value::Bool(b) => yrs::Any::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                yrs::Any::BigInt(i)
+            } else if let Some(f) = n.as_f64() {
+                yrs::Any::Number(f)
+            } else {
+                // serde_json numbers are always i64/u64/f64; this branch is
+                // unreachable in practice. Panic in debug, degrade in release.
+                debug_assert!(false, "unrepresentable serde_json::Number: {n}");
+                yrs::Any::Number(0.0)
+            }
+        }
+        serde_json::Value::String(s) => yrs::Any::String(s.into()),
+        serde_json::Value::Array(arr) => yrs::Any::Array(
+            arr.into_iter()
+                .map(json_value_to_yrs_any)
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        serde_json::Value::Object(obj) => {
+            let map: std::collections::HashMap<String, yrs::Any> = obj
+                .into_iter()
+                .map(|(k, v)| (k, json_value_to_yrs_any(v)))
+                .collect();
+            yrs::Any::Map(std::sync::Arc::new(map))
+        }
+    }
+}
+
 /// Convert yrs::Any to serde_json::Value recursively
 pub(crate) fn yrs_any_to_json(any: yrs::Any) -> serde_json::Value {
     match any {
@@ -3186,6 +3227,27 @@ mod tests {
         (status, json)
     }
 
+    /// Send a PATCH with a JSON body via the router (one-shot). Returns parsed JSON.
+    async fn patch_json_oneshot(
+        router: &Router,
+        path: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let request = Request::patch(path)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = if bytes.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+        };
+        (status, json)
+    }
+
     async fn get_json_oneshot(router: &Router, path: &str) -> (StatusCode, serde_json::Value) {
         let response = router
             .clone()
@@ -3492,5 +3554,140 @@ mod tests {
 
         // Token estimate should be present
         assert!(result.get("tokenEstimate").is_some());
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Render-door projection contract — agents writing
+    // {content: <title>, outputType: "door", output: <envelope>}
+    // ─────────────────────────────────────────────────────────────────
+
+    fn render_envelope(title: &str) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "view",
+            "doorId": "render",
+            "schema": 1,
+            "data": {
+                "spec": {
+                    "root": "r",
+                    "elements": {
+                        "r": { "type": "Text", "props": { "content": "hello" } }
+                    }
+                },
+                "title": title,
+                "generatedVia": "agent"
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn test_create_block_with_output_writes_projection() {
+        // POST /api/v1/blocks with content + output + outputType lands the
+        // door projection in one round-trip — agents no longer have to write
+        // `render:: {json}` content and rely on auto-execute.
+        let (router, _dir, _store) = test_app();
+
+        let envelope = render_envelope("Section Title");
+        let body = serde_json::json!({
+            "content": "Section Title",
+            "outputType": "door",
+            "output": envelope.clone(),
+            "outputStatus": "complete",
+        });
+        let (status, created) = post_json_oneshot(&router, "/api/v1/blocks", body).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(created["content"], "Section Title");
+        assert_eq!(created["outputType"], "door");
+        // Echoed back so agents can confirm without re-GET.
+        assert_eq!(created["output"], envelope);
+        assert_eq!(created["outputStatus"], "complete");
+
+        // GET should round-trip the envelope back through yrs storage —
+        // proves json_value_to_yrs_any + yrs_out_to_json are inverses for
+        // the render envelope shape.
+        let id = created["id"].as_str().unwrap();
+        let (get_status, fetched) =
+            get_json_oneshot(&router, &format!("/api/v1/blocks/{}", id)).await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_eq!(fetched["outputType"], "door");
+        assert_eq!(fetched["output"], envelope);
+        assert_eq!(fetched["outputStatus"], "complete");
+    }
+
+    #[tokio::test]
+    async fn test_create_block_output_without_output_type_rejected() {
+        // Pre-flight guard: an output envelope without an outputType tag
+        // would land as orphan data the frontend can't route to a renderer.
+        let (router, _dir, _store) = test_app();
+
+        let body = serde_json::json!({
+            "content": "ghost",
+            "output": render_envelope("ghost"),
+        });
+        let (status, _) = post_json_oneshot(&router, "/api/v1/blocks", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_update_block_patches_output_only() {
+        // PATCH a block to replace ONLY its output projection — content
+        // and structure unchanged. The render door's "regenerate spec"
+        // flow lands here.
+        let (router, _dir, _store) = test_app();
+
+        // Seed: create with initial output.
+        let initial = render_envelope("v1");
+        let (_, created) = post_json_oneshot(
+            &router,
+            "/api/v1/blocks",
+            serde_json::json!({
+                "content": "Section",
+                "outputType": "door",
+                "output": initial,
+            }),
+        )
+        .await;
+        let id = created["id"].as_str().unwrap().to_string();
+
+        // PATCH — output only.
+        let v2 = render_envelope("v2");
+        let (status, updated) = patch_json_oneshot(
+            &router,
+            &format!("/api/v1/blocks/{}", id),
+            serde_json::json!({ "output": v2.clone() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(updated["content"], "Section");
+        assert_eq!(updated["outputType"], "door"); // existing preserved
+        assert_eq!(updated["output"], v2);
+
+        // GET confirms persisted.
+        let (get_status, fetched) =
+            get_json_oneshot(&router, &format!("/api/v1/blocks/{}", id)).await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_eq!(fetched["output"], v2);
+    }
+
+    #[tokio::test]
+    async fn test_update_block_output_rejected_when_no_existing_output_type() {
+        // PATCH with output but no outputType, on a block that has no
+        // existing outputType, must be rejected — same invariant as POST.
+        let (router, _dir, _store) = test_app();
+
+        let (_, created) = post_json_oneshot(
+            &router,
+            "/api/v1/blocks",
+            serde_json::json!({ "content": "plain block" }),
+        )
+        .await;
+        let id = created["id"].as_str().unwrap().to_string();
+
+        let (status, _) = patch_json_oneshot(
+            &router,
+            &format!("/api/v1/blocks/{}", id),
+            serde_json::json!({ "output": render_envelope("orphan") }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

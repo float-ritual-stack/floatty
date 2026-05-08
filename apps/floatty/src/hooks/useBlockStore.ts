@@ -659,12 +659,27 @@ function createBlockStore() {
               if (change.action === 'add') {
                 blocksToRefresh.add(key);
 
-                // AUTO-EXECUTE: Block added with executable content = external origin
-                // Local creates use empty content, so non-empty + executable = API/sync
+                // AUTO-EXECUTE: Block added with executable content = external origin.
+                // Local creates use empty content, so non-empty + executable = API/sync.
+                //
+                // Output-presence guard mirrors the slim-path gate at lines 551-556.
+                // Without it, reconnect / state-vector sync / gap-fill 'add' events
+                // for already-projected blocks re-fire door.execute(), which writes
+                // output twice (sync + async title-gen) → DoorHost remounts → the
+                // contentEditable below bleeds the raw `render:: {json}` content
+                // through. That's the "render block randomly falls back to JSON"
+                // symptom — see render-door projection-contract proposal.
                 if (_autoExecuteHandler) {
                   const blockData = blocksMap.get(key);
                   const content = getValue(blockData, 'content') as string;
-                  if (content && isAutoExecutable(content)) {
+                  const existingOutput = getValue(blockData, 'output');
+                  const existingOutputType = getValue(blockData, 'outputType');
+                  if (
+                    content
+                    && isAutoExecutable(content)
+                    && !existingOutput
+                    && !existingOutputType
+                  ) {
                     // Queue for next tick to let state settle
                     setTimeout(() => {
                       try {
@@ -822,14 +837,45 @@ function createBlockStore() {
   };
 
   /**
-   * Set execution output on a block (for daily::, ai::, etc.)
-   * Automatically sets outputStatus to 'complete'
+   * Set execution output on a block (for daily::, ai::, render::, etc.)
+   * Automatically sets outputStatus to 'complete'.
+   *
+   * Idempotency gate: if (output, outputType, outputStatus) deeply match
+   * what's already in the Y.Doc, skip the transaction entirely. yjs
+   * empty-transactions emit no events (per ydoc-patterns.md rule 14), so
+   * skipping is clean — and it's load-bearing for door views.
+   *
+   * Why: the render door's `setOutputWithTitle` path writes output twice
+   * per execute (sync without title, then async with LLM-generated title
+   * ~1s later). It also re-fires on every auto-execute trigger. Each
+   * write currently mints a new envelope object reference, which causes
+   * Solid's `<Dynamic>` in DoorHost.tsx to unmount/remount the door
+   * view. During the unmount window the underlying contentEditable
+   * (showing raw `render:: {json}` content for agent-written blocks)
+   * bleeds through. The deep-equality skip eliminates the churn.
+   *
+   * `deepEqualJsonLike` is the canonical JSON-shape deep-equality helper
+   * in this module. It's key-order insensitive (so `{a:1,b:2}` and
+   * `{b:2,a:1}` are equal — JSON.stringify isn't), and it matches the
+   * door envelope contract (JSON-only, no Dates, no Maps, no cycles).
    */
   const setBlockOutput = (id: string, output: unknown, outputType: string, status: Block['outputStatus'] = 'complete') => {
     if (!_doc) { warnDocNotReady('setBlockOutput'); return; }
 
     _doc.transact(() => {
       const blocksMap = _doc.getMap('blocks');
+      const blockData = blocksMap.get(id);
+      if (blockData instanceof Y.Map) {
+        const existingOutput = getValue(blockData, 'output');
+        const existingOutputType = getValue(blockData, 'outputType');
+        const existingStatus = getValue(blockData, 'outputStatus');
+        const sameOutput = deepEqualJsonLike(existingOutput, output);
+        const sameType = existingOutputType === outputType;
+        const sameStatus = existingStatus === status;
+        if (sameOutput && sameType && sameStatus) {
+          return; // No-op transaction → no Y.Doc events emitted, no remount.
+        }
+      }
       setValueOnYMap(blocksMap, id, 'output', output);
       setValueOnYMap(blocksMap, id, 'outputType', outputType);
       setValueOnYMap(blocksMap, id, 'outputStatus', status);

@@ -229,6 +229,11 @@ pub(crate) fn read_block_dto<T: ReadTxn>(
         None
     };
 
+    let output_status = block_map.get(txn, "outputStatus").and_then(|v| match v {
+        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+        _ => None,
+    });
+
     let block_type = floatty_core::parse_block_type(&content);
 
     BlockDto {
@@ -244,6 +249,7 @@ pub(crate) fn read_block_dto<T: ReadTxn>(
         updated_at,
         output_type,
         output,
+        output_status,
         // Defaults to None — handler-side shaping helpers populate this
         // when the response surface calls for it. read_block_dto stays a
         // pure projection (no walks, no index reads).
@@ -1480,6 +1486,15 @@ fn create_block_inner(
     let created_at = explicit_created_at.unwrap_or(now);
     let updated_at = explicit_updated_at.unwrap_or(now);
 
+    // Pre-flight: output projection requires outputType so the frontend's
+    // isOutputBlock() / DoorHost mount path can route correctly.
+    // Otherwise output lands as orphan data and renders as nothing.
+    if req.output.is_some() && req.output_type.is_none() {
+        return Err(ApiError::InvalidRequest(
+            "outputType is required when output is set".to_string(),
+        ));
+    }
+
     let doc = store.doc();
     let doc_guard = doc.write().map_err(|_| ApiError::LockPoisoned)?;
 
@@ -1574,6 +1589,29 @@ fn create_block_inner(
         // Insert childIds as nested Y.Array (empty)
         let empty: Vec<yrs::Any> = vec![];
         block_map.insert(&mut txn, "childIds", ArrayPrelim::from(empty));
+
+        // Optional output projection (render-door projection contract).
+        // Agents writing `{ content: <title>, outputType: "door",
+        // output: <render envelope> }` land here. The pre-flight
+        // validation (output without outputType, output without spec)
+        // happens before the transaction — see top of this function.
+        if let Some(out_value) = req.output.clone() {
+            let yrs_value = api::json_value_to_yrs_any(out_value);
+            block_map.insert(&mut txn, "output", yrs_value);
+        }
+        if let Some(ref ot) = req.output_type {
+            block_map.insert(&mut txn, "outputType", yrs::Any::String(ot.clone().into()));
+        }
+        // outputStatus: write when output OR explicit status is provided.
+        // Default-to-"complete" only when output is set without an explicit
+        // status (matches frontend setBlockOutput default).
+        if req.output.is_some() || req.output_status.is_some() {
+            let status = req
+                .output_status
+                .clone()
+                .unwrap_or_else(|| "complete".to_string());
+            block_map.insert(&mut txn, "outputStatus", yrs::Any::String(status.into()));
+        }
 
         // Update parent's childIds or add to rootIds
         if let Some(ref parent_id) = req.parent_id {
@@ -1672,8 +1710,13 @@ fn create_block_inner(
         inherited_markers: None, // Computed on read
         created_at,
         updated_at,
-        output_type: None,
-        output: None,
+        // Echo back what the caller wrote so they can confirm the
+        // projection landed without a follow-up GET. Frontend
+        // setBlockOutput, hooks, and door re-execute may rewrite these
+        // post-create — agents wanting authoritative state must re-GET.
+        output_type: req.output_type,
+        output: req.output,
+        output_status: req.output_status,
         // Create response is the brand-new block — no ancestors yet (or one
         // shallow parent). Callers wanting context should re-GET.
         ancestor_context: None,
@@ -1751,6 +1794,7 @@ pub(crate) fn import_block(
         parent_id: req.parent_id.clone(),
         after_id: req.after_id.clone(),
         at_index: req.at_index,
+        ..Default::default()
     };
 
     create_block_inner(
@@ -1804,7 +1848,17 @@ pub(crate) fn update_block(
     };
 
     // Read existing block data
-    let (old_parent_id, child_ids, collapsed, existing_content, existing_metadata, created_at) = {
+    let (
+        old_parent_id,
+        child_ids,
+        collapsed,
+        existing_content,
+        existing_metadata,
+        created_at,
+        existing_output_type,
+        existing_output,
+        existing_output_status,
+    ) = {
         let txn = doc_guard.transact();
         let blocks_map = txn
             .get_map("blocks")
@@ -1859,6 +1913,24 @@ pub(crate) fn update_block(
             // Extract created_at (doesn't change on update)
             let created_at = extract_timestamp(block_map.get(&txn, "createdAt"));
 
+            // Read existing output / outputType so:
+            //   1. The PATCH preflight can allow `output` writes when
+            //      the block already has `outputType` set.
+            //   2. The response DTO returns authoritative output even
+            //      when the patch didn't touch it.
+            let existing_output_type = block_map.get(&txn, "outputType").and_then(|v| match v {
+                yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                _ => None,
+            });
+            let existing_output = block_map
+                .get(&txn, "output")
+                .map(|v| api::yrs_out_to_json(v, &txn));
+            let existing_output_status =
+                block_map.get(&txn, "outputStatus").and_then(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                });
+
             (
                 parent_id,
                 child_ids,
@@ -1866,11 +1938,23 @@ pub(crate) fn update_block(
                 existing_content,
                 existing_metadata,
                 created_at,
+                existing_output_type,
+                existing_output,
+                existing_output_status,
             )
         } else {
             return Err(ApiError::NotFound(id));
         }
     };
+
+    // Pre-flight: output projection requires outputType. Allow either
+    // the request to set it OR the existing block to already have it.
+    if req.output.is_some() && req.output_type.is_none() && existing_output_type.is_none() {
+        return Err(ApiError::InvalidRequest(
+            "outputType is required when output is set on a block without an existing outputType"
+                .to_string(),
+        ));
+    }
 
     // Determine final values
     let old_content = existing_content.clone();
@@ -1981,6 +2065,24 @@ pub(crate) fn update_block(
             if let Some(ref meta) = req.metadata {
                 let meta_str = serde_json::to_string(meta).unwrap_or_default();
                 block_map.insert(&mut txn, "metadata", meta_str);
+            }
+
+            // Optional output projection patch (render-door projection
+            // contract). Mirrors create_block_inner: agents writing
+            // a spec back to an existing block land here.
+            if let Some(out_value) = req.output.clone() {
+                let yrs_value = api::json_value_to_yrs_any(out_value);
+                block_map.insert(&mut txn, "output", yrs_value);
+            }
+            if let Some(ref ot) = req.output_type {
+                block_map.insert(&mut txn, "outputType", yrs::Any::String(ot.clone().into()));
+            }
+            if req.output.is_some() || req.output_status.is_some() {
+                let status = req
+                    .output_status
+                    .clone()
+                    .unwrap_or_else(|| "complete".to_string());
+                block_map.insert(&mut txn, "outputStatus", yrs::Any::String(status.into()));
             }
 
             // Handle reparenting or repositioning
@@ -2162,6 +2264,11 @@ pub(crate) fn update_block(
 
     let block_type = floatty_core::parse_block_type(&final_content);
 
+    // Compose the final output fields — patch fields win over existing.
+    let final_output_type = req.output_type.clone().or(existing_output_type);
+    let final_output = req.output.clone().or(existing_output);
+    let final_output_status = req.output_status.clone().or(existing_output_status);
+
     Ok(BlockDto {
         id: id.clone(),
         content: final_content,
@@ -2173,8 +2280,11 @@ pub(crate) fn update_block(
         inherited_markers: None, // Computed on read
         created_at,
         updated_at: now,
-        output_type: None,
-        output: None,
+        // Authoritative — reflects what the block actually has after
+        // this PATCH (existing fields preserved when not patched).
+        output_type: final_output_type,
+        output: final_output,
+        output_status: final_output_status,
         // Update response — caller should re-GET if they need recomputed
         // ancestor context (Tantivy index is async).
         ancestor_context: None,

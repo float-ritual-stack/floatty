@@ -63,6 +63,11 @@ pub struct BlockDto {
     /// Block output data (door envelope, eval result, etc.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<serde_json::Value>,
+    /// Block output status ("complete" / "running" / "error").
+    /// Mirrors the `outputStatus` Y.Doc field. Set via the matching
+    /// field on CreateBlockRequest / UpdateBlockRequest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_status: Option<String>,
     /// Navigation-layer surface — uniform across every block-returning
     /// endpoint. Populated by handler-side shaping helpers; left `None`
     /// when no fields would be set (e.g., a bare root block with no chain,
@@ -373,7 +378,7 @@ pub struct BlockWithContextResponse {
 }
 
 /// Create block request
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateBlockRequest {
     pub content: String,
@@ -385,6 +390,32 @@ pub struct CreateBlockRequest {
     /// Insert at this index in parent's childIds (0 = prepend)
     /// Mutually exclusive with after_id
     pub at_index: Option<usize>,
+
+    /// Door / executor output envelope to attach on creation.
+    ///
+    /// When set, the block lands with output already projected — agents
+    /// can write `{ content: <semantic title>, outputType: "door",
+    /// output: <render envelope> }` in one POST instead of writing
+    /// `render:: {json}` as content and relying on auto-execute. Letting
+    /// agents separate semantic source from materialised projection
+    /// removes the "title block shows raw JSON" / "rendered view
+    /// occasionally falls back to JSON" failure modes that selfRender
+    /// + content-as-spec produces.
+    ///
+    /// `output_type` is required when `output` is set. `output_status`
+    /// defaults to `"complete"` if omitted.
+    #[serde(default)]
+    pub output: Option<serde_json::Value>,
+
+    /// Output type tag (e.g., `"door"`, `"search-results"`,
+    /// `"eval-result"`). Mirrors the `outputType` Y.Doc field.
+    #[serde(default)]
+    pub output_type: Option<String>,
+
+    /// Output status (`"complete"` / `"running"` / `"error"`).
+    /// Defaults to `"complete"` when `output` is set without status.
+    #[serde(default)]
+    pub output_status: Option<String>,
     // NOTE: Origin field removed - origin is now handled via Y.Doc observation
     // with Origin::User for all frontend mutations. See hooks/system.rs.
 }
@@ -432,6 +463,23 @@ pub struct UpdateBlockRequest {
     /// Insert at this index in parent's childIds (0 = prepend)
     /// Mutually exclusive with after_id
     pub at_index: Option<usize>,
+
+    /// Door / executor output envelope. When provided, replaces the
+    /// existing output. When `null` is sent explicitly the field is
+    /// untouched (we use field absence to mean "no change"; clearing
+    /// output is not yet exposed — file a follow-up if needed).
+    #[serde(default)]
+    pub output: Option<serde_json::Value>,
+
+    /// Output type tag. Mirrors the `outputType` Y.Doc field.
+    /// Required when `output` is set on a block that doesn't already
+    /// have a `outputType` set.
+    #[serde(default)]
+    pub output_type: Option<String>,
+
+    /// Output status (`"complete"` / `"running"` / `"error"`).
+    #[serde(default)]
+    pub output_status: Option<String>,
     // NOTE: Origin field removed - origin is now handled via Y.Doc observation
     // with Origin::User for all frontend mutations. See hooks/system.rs.
 }
@@ -858,6 +906,7 @@ mod projection_injection_tests {
             updated_at: 0,
             output_type: Some("door".to_string()),
             output: Some(output),
+            output_status: None,
             ancestor_context: None,
         }
     }

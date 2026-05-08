@@ -261,3 +261,217 @@ Post-fix: `outputType: 'door', hasOutput: true`.
   > thats fine ... we have lots of 'well intentioned, well designed
   > architecture' that keeps going under leveraged because agents reach
   > for solving local instea of reading 5 lines above them"*
+
+---
+
+# Follow-up — 2026-05-08: Projection contract + steady-state degradation
+
+> Read after the body above. The 2026-04-29 fix above made
+> agent-created `render:: {json}` blocks **render** correctly on
+> arrival. This follow-up makes them **stay rendered** under load
+> and gives agents a cleaner write shape that doesn't conflate
+> semantic source with materialised projection.
+
+## The symptom this fixes
+
+Agent-created render:: blocks rendered fine when first written, then
+**randomly fell back to showing raw JSON** during normal app use —
+specifically after reconnects, sleep/wake, tab refocus, or any
+Y.Doc state-vector sync. The selfRender contract leaves the
+contentEditable visible underneath the door view, so when the door
+view briefly remounts, the user sees a wall of raw JSON bleed through.
+
+## Five root causes (all fixed in this PR)
+
+### 1. Fat-path auto-execute had no output-presence guard
+
+The slim path at `useBlockStore.ts:551-556` got the output guard in
+the 2026-04-29 fix above. The **fat-path observer** (the inline
+`if (_autoExecuteHandler) { ... }` block at lines 664-677, in the
+top-level YMapEvent branch) did NOT have the same guard. Reconnect /
+state-vector sync / gap-fill produces `'add'` events for already-
+projected blocks; without the guard, every sync re-fired
+`door.execute()` which wrote output twice (sync + async title-gen)
+and remounted the rendered view. **Mirror of the slim-path guard
+added.**
+
+### 2. `setBlockOutput` had no idempotency check
+
+`useBlockStore.ts::setBlockOutput` wrote `output + outputType +
+outputStatus + updatedAt` in every transaction unconditionally.
+Same-data writes still produced new envelope object references,
+which caused Solid's `<Dynamic>` in `DoorHost.tsx:65` to
+unmount/remount the door view. Combined with `setOutputWithTitle`
+writing twice per execute (sync without title, then async with
+LLM-generated title ~1s later), this produced visible flicker
+even on legitimate single auto-executes.
+
+**Fix**: deep-equality skip via `JSON.stringify` before the
+transaction. yjs empty-transactions emit no events
+(`ydoc-patterns.md` rule 14), so the skip is clean. Door envelopes
+are JSON-serialisable by construction — no Dates, no Maps, no
+cycles — `JSON.stringify` deep-equal is appropriate.
+
+### 3. API didn't accept `output` on POST/PATCH
+
+`CreateBlockRequest` and `UpdateBlockRequest` were
+`deny_unknown_fields` and accepted ONLY content / parentId / etc.
+Agents had **no way** to write the projection envelope directly —
+their only lever was `content`. Combined with `isAutoExecutable
+('render::')`, the only path agents could take was
+`content: "render:: {full JSON}"` which lands the spec inside
+contentEditable.
+
+**Fix**: add `output: Option<serde_json::Value>` + `output_type:
+Option<String>` + `output_status: Option<String>` to both request
+structs. Pre-flight validates `output requires outputType` (with
+PATCH allowing existing block's outputType to satisfy). New
+`json_value_to_yrs_any` helper in `api/mod.rs` converts the
+serde value to the yrs storage format the existing
+`yrs_out_to_json` read path already handles.
+
+### 4. MCP `add_block` / `patch_block` didn't forward output
+
+Even with the API extended, the MCP tool layer
+(`apps/outline-explorer/src/mcp/tools.ts`) only forwarded content /
+parentId / afterId. **Fix**: add `output` / `outputType` /
+`outputStatus` parameters to both tools, with cross-check
+validation (outputType required when output set) at the MCP
+boundary so agents get a clear error instead of opaque server
+rejection.
+
+### 5. Render-door agent system prompt had no projection guidance
+
+`render::agent` runs `claude -p --dangerously-skip-permissions`,
+which means the spawned agent has FULL tool access (MCP, shell,
+filesystem). When asked "make a few logical blocks for each
+section" the agent reasonably reached for `add_block` (or curl)
+and naturally wrote `render:: {full JSON}` because that's the
+simplest content prefix that auto-executes. The system prompt
+gave no guidance about the projection contract.
+
+**Fix**: extend `buildAgentSystemPrompt` in
+`packages/render-door/src/agent-schema.ts` with explicit guidance:
+default to ONE composed spec via Stack/Group/Tabs containers; if
+the user explicitly asks for separate blocks, use the
+projection-contract POST shape (content=title, output=envelope,
+outputType="door"); never write `content: "render:: {json}"`.
+
+## The projection contract
+
+**`content` is semantic source.** What the user (or agent) MEANT,
+in human-readable form. It's what the contentEditable shows when
+the door view is gone (briefly during remount, or permanently if
+the user toggles "view raw" / hits an error).
+
+**`output.data` is the materialized projection.** Computed from
+content (or supplied by the agent), renderable, regenerable,
+non-destructive. It's what the door view shows.
+
+For user-typed `render:: agent <prompt>`:
+- `content` = the prompt text (semantic, ≤80 chars, scannable)
+- `output.data.spec` = the generated spec
+- ContentEditable shows the prompt, door view shows the rendered spec
+
+For agent-written render blocks (the multi-block split case):
+- `content` = a semantic section title
+- `output.data.spec` = that section's spec
+- Same shape as user-typed; same clean visual layering
+
+**Anti-pattern**: writing `content: "render:: {full JSON}"`. Both
+layers carry the same information; toggling "show raw" or hitting
+a remount window dumps JSON-on-JSON onto the user.
+
+## Wire format
+
+POST `/api/v1/blocks` with projection-contract shape:
+
+```json
+{
+  "content": "Real Bugs Quartet — Test-First Territory",
+  "outputType": "door",
+  "output": {
+    "kind": "view",
+    "doorId": "render",
+    "schema": 1,
+    "data": {
+      "spec": { "root": "...", "elements": {...} },
+      "title": "Real Bugs Quartet — Test-First Territory",
+      "generatedVia": "agent"
+    }
+  },
+  "outputStatus": "complete",
+  "afterId": "<previous sibling block id>"
+}
+```
+
+PATCH `/api/v1/blocks/<id>` accepts the same fields. Per-field PATCH
+is allowed: e.g. `{"output": <new envelope>}` to refresh the
+projection without touching content. Pre-flight requires
+`outputType` whenever `output` is set, except on PATCH when the
+block already has an `outputType` (avoids forcing callers to
+re-state what hasn't changed).
+
+## Verification
+
+```bash
+KEY=$(grep '^api_key' ~/.floatty-dev/config.toml | cut -d'"' -f2)
+PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
+
+# Write a clean render block via projection contract
+curl -s -X POST -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content": "Test Section",
+    "outputType": "door",
+    "output": {
+      "kind": "view", "doorId": "render", "schema": 1,
+      "data": {
+        "spec": { "root": "r", "elements": { "r": { "type": "Text", "props": { "content": "hello" } } } },
+        "title": "Test Section"
+      }
+    }
+  }' \
+  "http://127.0.0.1:$PORT/api/v1/blocks" | jq '.id, .outputType'
+```
+
+Expected: returns the new block's id and `outputType: "door"`.
+ContentEditable in the outline shows "Test Section". Door view
+shows "hello". Toggling raw on the door shows the spec JSON.
+ContentEditable stays clean throughout.
+
+## Files involved (this follow-up)
+
+| File | What |
+|------|------|
+| `apps/floatty/src/hooks/useBlockStore.ts` | Fat-path auto-execute guard + setBlockOutput idempotency |
+| `apps/floatty/src-tauri/floatty-server/src/api/blocks.rs` | output / outputType / outputStatus on Create + Update |
+| `apps/floatty/src-tauri/floatty-server/src/block_service.rs` | Write output to Y.Doc; pre-flight validation; authoritative DTO returns |
+| `apps/floatty/src-tauri/floatty-server/src/api/mod.rs` | `json_value_to_yrs_any` converter; 4 new contract tests |
+| `apps/outline-explorer/src/mcp/tools.ts` | `add_block` / `patch_block` forward output fields |
+| `packages/render-door/src/agent-schema.ts` | System prompt projection-contract guidance |
+
+## What's deliberately NOT in this PR
+
+- **Source-hash gate on output writes** — would let `setBlockOutput`
+  also skip when the *content+children* hash matches a stored
+  `output.sourceHash`. Catches re-execute on stale closures
+  (`useContentSync` blur/remote race). Defer until we see the
+  symptom post-this-PR.
+- **Scoped `subscribeBlockChanges`** — the door subscribe currently
+  fans out to every block's content change. Add `scope: { blockId,
+  includeDescendants }` option so a render block only re-fires for
+  its own subtree. Defer; the idempotency gate above defangs the
+  fan-out's worst symptom.
+- **Decoupling LLM title-gen from the output write** — title-gen
+  could be a separate hook on `output.data.spec` arrival. Defer;
+  the idempotency gate makes the second write a no-op when the
+  title turns out to be similar.
+- **Selfrender contentEditable+door visual layering** — the
+  cohabitation pattern ("contentEditable above, door view below")
+  is what made the fall-back-to-JSON visible. Eliminating it (e.g.,
+  contentEditable only when in "edit source" mode) is a UX call,
+  not an architecture fix. Defer to a UX review.
+
+These are all real follow-ups; file as Linear tickets if/when the
+symptoms persist post-this-PR.
