@@ -84,10 +84,12 @@ export function BlockItem(props: BlockItemProps) {
 
   const block = createMemo(() => store.blocks[props.id]);
   // FLO-721/cowboy-audit-#1: read focus from paneStore directly instead of via
-  // prop-drilled focusedBlockId. The prop-drill caused N BlockItems to re-evaluate
-  // isFocused on every focus change because the prop value invalidated the prop
-  // surface across the recursive tree. Reading from the store gives granular
-  // reactivity — only the two affected blocks (old + new focused) refire.
+  // prop-drilled focusedBlockId. The prop drill invalidated the prop surface
+  // across the entire recursive tree on each focus change, cascading classList
+  // and downstream-memo recomputation in every visible BlockItem. Reading the
+  // store path narrows the invalidation surface — memo bodies still re-run
+  // (all readers of state.focusedBlockId[paneId]) but only the two BlockItems
+  // whose isFocused result actually flips propagate to downstream effects.
   const isFocused = createMemo(() => paneStore.getFocusedBlockId(props.paneId) === props.id);
   // pages:: children default collapsed — untrack parent content read to avoid
   // N×M reactivity (265 children re-evaluating on every keystroke in parent).

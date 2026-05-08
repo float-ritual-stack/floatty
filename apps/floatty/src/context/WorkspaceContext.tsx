@@ -155,11 +155,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   // FLO-721/cowboy-audit-F5: cache pages:: container id once, then read by id.
   // findPagesContainer iterates rootIds and checks each root's content — a broad
-  // reactive dep that refires whenever any root block's content changes. By
-  // separating the lookup into its own memo, downstream memos (pageNames,
-  // stubPageNameSet) only depend on this id + the container's childIds, not on
-  // every root block's content. Most edits don't touch root content, so this
-  // narrows refire frequency substantially.
+  // reactive dep that refires whenever any root block's content changes. The
+  // narrowing here is downstream only: this memo still has the broad dep, but
+  // the consumers (pageNames, stubPageNameSet) read the container by id with
+  // granular per-block deps. Net: pageNames/stubPageNameSet recomputation no
+  // longer fires on every root-block content edit.
+  // Future improvement: identify the pages:: container by structural marker
+  // (block type, metadata flag) instead of content-prefix scan, which would
+  // narrow this memo's dep too.
   const pagesContainerId = createMemo(() => {
     const container = findPagesContainer();
     return container?.id ?? null;
@@ -220,11 +223,21 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return index;
   });
 
-  // FLO-552: resolveAlias for the autocomplete suppression of "Create new page"
-  // when typing a `<hex-prefix>|alias` form. Lifted from BlockItem alongside the
-  // autocomplete itself — closes over the singleton shortHashIndex + blockStore.
-  const resolveAlias = (hex: string): boolean =>
-    resolveBlockIdPrefix(hex, Object.keys(store.blocks), shortHashIndex()) !== null;
+  // FLO-552/FLO-721: resolveAlias suppresses the "Create new page" suggestion
+  // when the typed query is a `<hex-prefix>|alias` form referencing an
+  // existing block. Fires per-keystroke while the autocomplete is open AND the
+  // user has typed a `|` after a hex prefix — narrow trigger but the call is
+  // hot when active. 8-char prefixes (the recommended form) hit the
+  // shortHashIndex O(1) and skip the Object.keys(store.blocks) build. Shorter
+  // prefixes (6-7 chars) fall back to the full scan via resolveBlockIdPrefix.
+  const resolveAlias = (hex: string): boolean => {
+    if (hex.length === 8) {
+      const idx = shortHashIndex();
+      const resolved = idx.get(hex.toLowerCase());
+      return resolved !== undefined && resolved !== '';
+    }
+    return resolveBlockIdPrefix(hex, Object.keys(store.blocks), shortHashIndex()) !== null;
+  };
 
   // Singleton autocomplete state machine. Only one block has focus at a time,
   // so a single instance is sufficient and avoids creating 169+ instances per

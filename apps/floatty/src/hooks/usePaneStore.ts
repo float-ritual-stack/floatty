@@ -594,10 +594,10 @@ function createPaneStore() {
 
     return {
       zoomedRootId: { ...state.zoomedRootId },
-      // FLO-721: structuredClone strips SolidJS proxies the same way
-      // JSON.parse(JSON.stringify(...)) did, but ~2-3× faster for deep
-      // nested objects. Persistence writes fire on every collapse toggle,
-      // focus change, and navigation event — keeping this cheap matters.
+      // FLO-721: structuredClone strips SolidJS proxies (same effect as
+      // JSON.parse(JSON.stringify(...))) and avoids the JSON serialize/parse
+      // roundtrip. Persistence writes fire on every collapse toggle, focus
+      // change, and navigation event — keeping this cheap matters.
       collapsed: structuredClone(state.collapsed),
       // FLO-77: Include focused block IDs in persistence
       focusedBlockId: { ...state.focusedBlockId },
