@@ -382,7 +382,11 @@ impl AncestorContextOpts {
     /// `tests/symmetry_ancestor_context.rs` can use the canonical
     /// constructor handlers funnel through.
     pub fn from_raw(includes: &HashSet<String>, inbound_sample_count: usize) -> Self {
-        Self::from_raw_with_caps(includes, inbound_sample_count, DEFAULT_CHILDREN_PREVIEW_COUNT)
+        Self::from_raw_with_caps(
+            includes,
+            inbound_sample_count,
+            DEFAULT_CHILDREN_PREVIEW_COUNT,
+        )
     }
 
     /// Construct from raw `?include=` + both cost caps. Lets search-layer
@@ -695,17 +699,11 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
 /// vitest run on 2026-05-08 caught this rule needing tightening.
 pub fn classify_block_kind(content: &str, has_children: bool) -> BlockKind {
     let block_type = parse_block_type(content);
-    let is_heading = matches!(
-        block_type,
-        BlockType::H1 | BlockType::H2 | BlockType::H3
-    );
+    let is_heading = matches!(block_type, BlockType::H1 | BlockType::H2 | BlockType::H3);
 
     let heading_only = is_heading && {
         // Everything after the first line, trim, see if anything's left.
-        let after_first = content
-            .split_once('\n')
-            .map(|(_, rest)| rest)
-            .unwrap_or("");
+        let after_first = content.split_once('\n').map(|(_, rest)| rest).unwrap_or("");
         after_first.trim().is_empty()
     };
 

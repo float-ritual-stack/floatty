@@ -921,12 +921,12 @@ fn classify_block_kind_fixture_parity() {
     // Same rows as the TS test's `cross-implementation parity fixture`.
     // Order matters — drift is detected by index match.
     let fixtures: &[(&str, bool, BlockKind)] = &[
-        ("## arcs",            true,  BlockKind::NavNode),
-        ("## empty",           false, BlockKind::LeafMarker),
-        ("## arcs\nbody",      true,  BlockKind::ContentBlock),
-        ("plain content",      true,  BlockKind::ContentBlock),
-        ("",                   false, BlockKind::ContentBlock),
-        ("## bones\n\n",       true,  BlockKind::NavNode),
+        ("## arcs", true, BlockKind::NavNode),
+        ("## empty", false, BlockKind::LeafMarker),
+        ("## arcs\nbody", true, BlockKind::ContentBlock),
+        ("plain content", true, BlockKind::ContentBlock),
+        ("", false, BlockKind::ContentBlock),
+        ("## bones\n\n", true, BlockKind::NavNode),
     ];
 
     for (idx, (content, has_children, expected)) in fixtures.iter().enumerate() {
@@ -973,7 +973,12 @@ fn children_preview_opt_in_and_cap_respected() {
     // Build a parent with 25 children so the cap-at-20 branch has room.
     let mut seeds_owned: Vec<(String, Option<String>, String, Vec<String>)> = Vec::new();
     seeds_owned.push(("root".to_string(), None, "root".to_string(), vec![]));
-    seeds_owned.push(("parent".to_string(), Some("root".to_string()), "parent".to_string(), vec![]));
+    seeds_owned.push((
+        "parent".to_string(),
+        Some("root".to_string()),
+        "parent".to_string(),
+        vec![],
+    ));
     for i in 0..25 {
         seeds_owned.push((
             format!("c{}", i),
@@ -1071,7 +1076,7 @@ fn children_preview_opt_in_and_cap_respected() {
 #[test]
 fn children_preview_truncates_long_content_utf8_safe() {
     // Content with multibyte chars near the 200-byte boundary.
-    let long_content = "x".repeat(195) + "你好世界";  // 195 + 12 bytes (4 chars × 3) = 207 bytes
+    let long_content = "x".repeat(195) + "你好世界"; // 195 + 12 bytes (4 chars × 3) = 207 bytes
     let doc = build_doc(&[
         ("root", None, "root", &[]),
         ("parent", Some("root"), "parent", &[]),
@@ -1180,7 +1185,9 @@ fn siblings_opt_in_respected() {
         opts_on,
     )
     .expect("c1 has chain → some ctx");
-    let sib = ctx_middle.siblings.expect("siblings populated when gate on");
+    let sib = ctx_middle
+        .siblings
+        .expect("siblings populated when gate on");
     assert_eq!(sib.before.len(), 1, "middle child: one before");
     assert_eq!(sib.before[0].id, "c0");
     assert_eq!(sib.after.len(), 1, "middle child: one after");
