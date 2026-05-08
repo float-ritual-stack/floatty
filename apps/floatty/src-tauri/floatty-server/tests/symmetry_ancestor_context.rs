@@ -522,6 +522,37 @@ fn parse_includes_handles_whitespace_and_multiples() {
     );
 }
 
+/// CONTRACT 8b (PR #303 review — CodeRabbit Major): `from_raw_with_caps`
+/// threads `children_preview_count` through and caps it at 20. The search-
+/// blocks path was using `from_raw` which ignored the caller's
+/// `children_preview_count` value, leaving the singleton path
+/// (`from_query` → cap respected) and search path asymmetric.
+///
+/// This test locks both the threading AND the cap. The actual symmetry
+/// fix lives at the `search_blocks` call site swap from `from_raw` →
+/// `from_raw_with_caps`; this test catches a regression that swapped it
+/// back.
+#[test]
+fn from_raw_with_caps_threads_children_preview_count() {
+    let mut includes = HashSet::new();
+    includes.insert("children_preview".to_string());
+
+    // Caller-supplied cap honoured.
+    let opts = AncestorContextOpts::from_raw_with_caps(&includes, 5, 12);
+    assert!(opts.include_children_preview);
+    assert_eq!(
+        opts.children_preview_count, 12,
+        "children_preview_count threaded through from_raw_with_caps"
+    );
+
+    // Cap at 20 — protects against per-hit cost blowup on broad searches.
+    let opts_huge = AncestorContextOpts::from_raw_with_caps(&includes, 5, 999);
+    assert_eq!(
+        opts_huge.children_preview_count, 20,
+        "children_preview_count capped at 20 regardless of caller"
+    );
+}
+
 /// CONTRACT 9: empty `ancestor_block_ids` for a root (no chain) does NOT
 /// trigger the rootmost-first reversal incorrectly — empty stays empty,
 /// not `vec![""]` or panic. Edge-case for the reversal logic.

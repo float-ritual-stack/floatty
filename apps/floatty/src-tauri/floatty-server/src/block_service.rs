@@ -593,50 +593,76 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         &hints,
     );
 
-    // BlockKind classification — opt-in. Reads block content + child
-    // presence; reuses parse_block_type from floatty-core so heading
-    // detection has ONE Rust source of truth (architecture-bypass audit
-    // recorded in the plan §"Symmetry check").
+    // Read child_ids once if either toggle wants them. Both nav_classification
+    // (needs has_children) AND children_preview (needs first-N ids) consume
+    // child_ids for the same block — sharing the read avoids the redundant
+    // Y.Doc walk flagged in PR #303 review.
+    let child_ids: Option<Vec<String>> =
+        if opts.include_nav_classification || opts.include_children_preview {
+            Some(read_block_child_ids(blocks_map, txn, block_id))
+        } else {
+            None
+        };
+
+    // BlockKind classification — opt-in. Reads block content + derives
+    // has_children from the shared child_ids; reuses parse_block_type from
+    // floatty-core so heading detection has ONE Rust source of truth
+    // (architecture-bypass audit recorded in the plan §"Symmetry check").
     let kind = if opts.include_nav_classification {
         let content = read_block_content(blocks_map, txn, block_id).unwrap_or_default();
-        let has_children = !read_block_child_ids(blocks_map, txn, block_id).is_empty();
+        // child_ids is Some on this branch by the read above.
+        let has_children = child_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
         Some(classify_block_kind(&content, has_children))
     } else {
         None
     };
 
-    // Children preview — opt-in. Composes get_children_refs with .take(N)
-    // + per-element content truncation, NOT a parallel walker (architecture-
-    // bypass audit, plan §"Symmetry check"). Same BlockRef shape as
-    // /blocks/:id?include=children — different invocation site (per-hit
-    // instead of per-singleton).
+    // Children preview — opt-in. Cap-aware: reads content for ONLY the first
+    // N children, NOT all of them then truncate. PR #303 review (CodeRabbit
+    // Major + Greptile P2) caught the prior version using `get_children_refs`
+    // which materialised every child's content before `.take(cap)` — for a
+    // nav-node with hundreds of children, opting into children_preview on a
+    // search query with M hits triggered `total_children × M` Y.Doc reads
+    // instead of the documented `cap × M`.
     let children_preview = if opts.include_children_preview {
         let cap = if opts.children_preview_count == 0 {
             DEFAULT_CHILDREN_PREVIEW_COUNT
         } else {
             opts.children_preview_count
         };
-        get_children_refs(blocks_map, txn, block_id)
-            .into_iter()
-            .take(cap)
-            .map(|mut r| {
-                if r.content.len() > CHILDREN_PREVIEW_CONTENT_LIMIT {
-                    // UTF-8-safe truncation: keep chars whose ENTIRE byte
-                    // range fits under the limit. A char starting before
-                    // the limit can extend past it (e.g. 3-byte CJK at
-                    // byte 198 spans 198..201) — those must be dropped.
-                    let safe_end = r
-                        .content
-                        .char_indices()
-                        .take_while(|(i, c)| i + c.len_utf8() <= CHILDREN_PREVIEW_CONTENT_LIMIT)
-                        .last()
-                        .map(|(i, c)| i + c.len_utf8())
-                        .unwrap_or(0);
-                    r.content.truncate(safe_end);
-                }
-                r
+        // child_ids is Some on this branch by the read above.
+        child_ids
+            .as_ref()
+            .map(|ids| {
+                ids.iter()
+                    .take(cap)
+                    .map(|id| {
+                        let mut content =
+                            read_block_content(blocks_map, txn, id).unwrap_or_default();
+                        if content.len() > CHILDREN_PREVIEW_CONTENT_LIMIT {
+                            // UTF-8-safe truncation: keep chars whose ENTIRE
+                            // byte range fits under the limit. A char
+                            // starting before the limit can extend past it
+                            // (e.g. 3-byte CJK at byte 198 spans 198..201)
+                            // — those must be dropped.
+                            let safe_end = content
+                                .char_indices()
+                                .take_while(|(i, c)| {
+                                    i + c.len_utf8() <= CHILDREN_PREVIEW_CONTENT_LIMIT
+                                })
+                                .last()
+                                .map(|(i, c)| i + c.len_utf8())
+                                .unwrap_or(0);
+                            content.truncate(safe_end);
+                        }
+                        BlockRef {
+                            id: id.clone(),
+                            content,
+                        }
+                    })
+                    .collect()
             })
-            .collect()
+            .unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -2314,7 +2340,17 @@ pub(crate) fn search_blocks(
     let want_metadata = query.include_metadata.unwrap_or(false);
     let includes = parse_includes(&query.include);
     let inbound_sample_count = query.inbound_sample_count.unwrap_or(5);
-    let ac_opts = AncestorContextOpts::from_raw(&includes, inbound_sample_count);
+    let children_preview_count = query
+        .children_preview_count
+        .unwrap_or(DEFAULT_CHILDREN_PREVIEW_COUNT);
+    // PR #303 review: search path was using from_raw, which silently ignored
+    // children_preview_count from the query. from_raw_with_caps threads the
+    // cap through symmetrically with the singleton path.
+    let ac_opts = AncestorContextOpts::from_raw_with_caps(
+        &includes,
+        inbound_sample_count,
+        children_preview_count,
+    );
 
     // Hydrate content from Y.Doc for each hit. Single read txn for the
     // whole batch — cheap, no lock thrash.

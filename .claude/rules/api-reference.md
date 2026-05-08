@@ -150,9 +150,11 @@ Field semantics:
   `apps/floatty/src/lib/backlinkClassify.ts`. NOT load-bearing for
   `is_empty()` — bare-root with `kind` alone still ships as `None`.
 - `childrenPreview` is the first N children as `BlockRef`s with
-  content truncated to 200 chars (UTF-8-safe). Recursive classification
-  is intentionally NOT carried — clients re-classify each preview
-  locally if `nav_classification` is also opted in.
+  content truncated to 200 bytes (UTF-8-safe — chars whose entire byte
+  range fits under the limit are kept; a char starting under-limit but
+  extending past it is dropped). Recursive classification is
+  intentionally NOT carried — clients re-classify each preview locally
+  if `nav_classification` is also opted in.
 - `siblings` is the prev/next preview within the parent's `childIds`
   via `get_siblings(radius=1)`. Same `SiblingContext` DTO as the
   per-singleton `/blocks/:id?include=siblings` field. Returns `null`
@@ -165,7 +167,7 @@ Cost-tier opt-ins (use `?include=` on search/presence; always-on for `/blocks/:i
 | `effective_markers` | Own + inherited markers with provenance | InheritanceIndex lookup |
 | `inbound_samples` | Top-N source-block previews (default 5, `&inbound_sample_count=N`) | Reverse-index walk |
 | `nav_classification` | Block's `kind` (`nav_node` / `content_block` / `leaf_marker`) | One yrs `content` read + child-list-empty check (~100ns) |
-| `children_preview` | First N child block_id+content (truncated 200) | N×1 yrs Map lookup; default 5, cap 20. ~1KB/hit when N=5 (`&children_preview_count=N`) |
+| `children_preview` | First N child block_id+content (truncated to 200 bytes, UTF-8-safe) | N×1 yrs Map lookup; default 5, cap 20. ~1KB/hit when N=5 (`&children_preview_count=N`) |
 | `siblings` | Prev/next sibling `BlockRef`s within parent's `childIds` | Two yrs lookups via parent's `child_ids`; ~200B/hit |
 
 Endpoints whose response is `None`/absent for `ancestorContext`:
