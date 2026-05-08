@@ -870,7 +870,6 @@ export function Outliner(props: OutlinerProps) {
                       id={id}
                       paneId={props.paneId}
                       depth={0}
-                      focusedBlockId={focusedBlockId()}
                       onFocus={handleFocus}
                       onNavigateUp={() => handleNavigateUp(id)}
                       onNavigateDown={() => handleNavigateDown(id)}
@@ -892,7 +891,6 @@ export function Outliner(props: OutlinerProps) {
                   id={zoomedRootId()!}
                   paneId={props.paneId}
                   depth={0}
-                  focusedBlockId={focusedBlockId()}
                   onFocus={handleFocus}
                   onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
                   onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}

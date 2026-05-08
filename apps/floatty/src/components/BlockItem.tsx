@@ -63,7 +63,6 @@ interface BlockItemProps {
   id: string;
   paneId: string;
   depth: number;
-  focusedBlockId: string | null;
   onFocus: (id: string) => void;
   // FLO-74: Multi-select
   isBlockSelected?: (id: string) => boolean;
@@ -84,7 +83,12 @@ export function BlockItem(props: BlockItemProps) {
   const blockId = props.id;
 
   const block = createMemo(() => store.blocks[props.id]);
-  const isFocused = createMemo(() => props.focusedBlockId === props.id);
+  // FLO-721/cowboy-audit-#1: read focus from paneStore directly instead of via
+  // prop-drilled focusedBlockId. The prop-drill caused N BlockItems to re-evaluate
+  // isFocused on every focus change because the prop value invalidated the prop
+  // surface across the recursive tree. Reading from the store gives granular
+  // reactivity — only the two affected blocks (old + new focused) refire.
+  const isFocused = createMemo(() => paneStore.getFocusedBlockId(props.paneId) === props.id);
   // pages:: children default collapsed — untrack parent content read to avoid
   // N×M reactivity (265 children re-evaluating on every keystroke in parent).
   // pages:: prefix is structural, doesn't change while children are mounted.
@@ -1077,7 +1081,6 @@ export function BlockItem(props: BlockItemProps) {
                   id={id}
                   paneId={props.paneId}
                   depth={props.depth + 1}
-                  focusedBlockId={props.focusedBlockId}
                   onFocus={props.onFocus}
                   isBlockSelected={props.isBlockSelected}
                   onSelect={props.onSelect}
