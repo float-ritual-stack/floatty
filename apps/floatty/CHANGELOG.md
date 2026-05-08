@@ -6,6 +6,24 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.14.2] - 2026-05-08
+
+Targeted follow-up to the v0.14.1 reactivity-narrowing pass. Cmd+Right and other native cursor-movement keystrokes were paying a per-keystroke `getAbsoluteCursorOffset` DOM walk inside `useBlockInput.handleKeyDown` — `cursor.snapshot()` was eager, but `useCursor`'s WeakMap cache invalidates on every `selectionchange`, so each keydown after a cursor move was a guaranteed cache miss + full traversal. `determineKeyAction` only consumes `cursorAtStart`/`cursorAtEnd`/`cursorOffset` on Enter/Tab/Backspace/plain-arrows; every other keydown — Cmd+Right (visual line end), modifier-only events, action keybinds (`deleteBlock`, `moveBlockUp/Down`, `zoomIn/Out`, `collapseBlock`), and printable characters — flowed through paths that never read the snapshot. This release gates the snapshot on a positive allowlist of cursor-consuming keys, with 10 new tests pinning the perf invariant including a Delete regression-pin (closest adjacency to Backspace, most likely candidate to grow a forward-merge consumer). ([[PR #300]])
+
+### ✨ Performance
+
+- **Lazy cursor snapshot in `handleKeyDown`** ([[PR #300]] / `3429c7a` — `apps/floatty/src/hooks/useBlockInput.ts`) — replaced eager `const snap = deps.cursor.snapshot()` with `cursorConsumingKey ? deps.cursor.snapshot() : null`. Allowlist matches the exact set of `determineKeyAction` branches that read cursor fields: Enter (any modifier), Tab (any modifier), Backspace, plain ArrowUp/ArrowDown (no shift). Every other key — Cmd+Right, Shift+Arrow block-selection paths, modifier-only, action keybinds, printable characters — skips the walk. The existing `snap?.atStart ?? false` / `snap?.offset ?? 0` defaults at the call site cover the null case for skipped branches (which all return early or hit `'none'` without consulting the defaulted fields).
+
+### 🧪 Tests
+
+- **10 new perf-invariant tests in `useBlockInput.test.ts`** ([[PR #300]] / `3429c7a` / `0f800ae` — `apps/floatty/src/hooks/useBlockInput.test.ts`) — pin both directions of the allowlist. Skipped: Cmd+Right, plain ArrowLeft/Right, Shift+ArrowUp/Down, printable chars (`a`/`1`/space), modifier-only events (Shift/Meta/Control), Delete + Shift+Delete (regression-pin against silent forward-merge addition). Take: Enter, Tab, Backspace, plain ArrowUp, plain ArrowDown. 1278/1278 vitest passing.
+
+### 📝 Docs
+
+- **`/floatty:release` collapsed to single approval gate** (`959f863` — `.claude/commands/floatty/release.md`) — multi-gate theater (separate prompts for push and GitHub Release after the changelog was already approved) replaced with end-to-end execution after the changelog gate. The push and GitHub-Release steps are predictable yes-es when the changelog is right; gating them was friction without information. v0.14.1 release surfaced this.
+
+---
+
 ## [0.14.1] - 2026-05-08
 
 Per-keystroke reactivity narrowing pass on the BlockItem path, plus a render-door null-safety fix that was masking the audit signal. Frontend perf audit on the 4795-block dev outline identified two compounding cost drivers — autocomplete state machines created 1:1 per BlockItem (4252 mounts in 10 minutes of navigation = 4252 instances) and a render-door PatternCard error-retry loop on collapse/zoom — and bundled five surgical narrowings: singleton autocomplete lift mirroring [[FLO-322]] pageNames, focused-block prop-drill removal (BlockItem reads `paneStore.getFocusedBlockId(paneId)` directly), pages:: container ID caching, `structuredClone` for paneStore persistence, and `resolveAlias` 8-char-prefix fast path. CodeRabbit caught a downstream regression — singleton state with per-block popup render → N stacked overlays — fixed by gating the popup mount to `state.activeBlockId === props.id`. Async GPT review surfaced four refinements and one cleanup. Net: navigation-churn + popup-stacking + persistence-clone overhead all narrowed. ([[PR #299]] / [[FLO-316]] / [[FLO-529]])
