@@ -35,8 +35,22 @@ The following actions do **NOT** need per-action confirmation when working on fl
 | `git push origin <existing-feature-branch>` | Iterating on an in-flight branch. Same reasoning. |
 | `gh pr create` for a feature branch into `main` | Solo dev, bot review. PR is reversible (`gh pr close`). |
 | `gh pr edit` / `gh pr comment` on your own PR | Routine review iteration. |
-| `pnpm --filter float-pty tauri:dev` (or `:dev:fresh`) when port `33333` isn't bound | The canonical verification surface per `feedback_verify_against_running_dev.md`. The `tauri:dev` script handles its own port/lock cleanup (`lsof -ti :8766 \| xargs kill 2>/dev/null \|\| true`). Run it; do live curl verification; leave it running for Evan. |
-| `lsof -iTCP:<port> -t \| xargs kill` to clear a stuck dev server | The kill-server script does this; equivalent direct invocation is fine. |
+| `pnpm --filter float-pty tauri:dev` (or `:dev:fresh`) | The canonical verification surface per `feedback_verify_against_running_dev.md`. See "Dev-server port handling" below for what to do based on port-`33333` state. |
+| `pnpm --filter float-pty kill-server` (the canonical multi-port cleanup) | Kills `8765`, `8766`, AND `33333`. **Note**: also kills the *release* server on `8765`, so only invoke when Evan has explicitly OK'd a release-floatty restart, OR when verifying a clean slate before `tauri:dev`. Otherwise prefer the targeted dev-only kill below. |
+| `lsof -iTCP:33333 -t \| xargs kill` (or `:8766`, the Tauri dev sidecar port) | Targeted kill of the dev floatty-server / dev sidecar. Safe — does not touch the release server on `8765`. |
+
+#### Dev-server port handling
+
+The dev REST API runs on **`33333`** (`DEV_PORT` constant in `floatty-server/src/config.rs`). The Tauri dev devtools sidecar uses **`8766`**. The release floatty (Evan's daily-driver) runs on **`8765`** — never auto-kill it.
+
+When invoking `tauri:dev`:
+
+- **Port `33333` is empty** → start `tauri:dev` directly. This is the most common case after a fresh shell.
+- **Port `33333` is bound and `lsof -iTCP:33333` shows a `floatty-server` process under the `target/debug/` path** → leave it running, reuse the existing dev session for curl verification. Restarting just to "be safe" wastes ~30s of compile.
+- **Port `33333` is bound but the process isn't a dev `floatty-server`** (e.g., orphan from a crashed iteration, or a non-floatty service) → `lsof -iTCP:33333 -t | xargs kill`, then start `tauri:dev`.
+- **Both `33333` and `8766` are bound from a previous dev session** → `lsof -iTCP:33333 -t | xargs kill; lsof -iTCP:8766 -t | xargs kill`, then start `tauri:dev`. (The `tauri:dev` npm script's built-in cleanup currently only handles `8766`; this rule's targeted kills cover the gap until that script grows multi-port cleanup of its own.)
+
+**Authorized port set for autonomous kills**: `33333`, `8766`, plus any process under `target/debug/floatty-server`. **Forbidden**: anything on `8765` or any process under `/Applications/floatty.app/` — that's the release path and falls under the gated table below.
 
 The following actions **STILL require explicit confirmation** even on floatty:
 
