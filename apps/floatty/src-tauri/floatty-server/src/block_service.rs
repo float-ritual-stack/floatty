@@ -637,6 +637,22 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         Vec::new()
     };
 
+    // Sibling preview — opt-in. Reuses get_siblings (radius=1) so prev/next
+    // surfaces with the same SiblingContext DTO as the existing per-singleton
+    // `/blocks/:id?include=siblings` path. Two surfaces, one helper. Returns
+    // None when the block has no parent (root) — empty before+after on a
+    // root would be misleading.
+    let siblings = if opts.include_siblings {
+        let parent_id = read_block_parent_id(blocks_map, txn, block_id);
+        if parent_id.is_some() {
+            Some(get_siblings(blocks_map, txn, block_id, 1))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let ctx = AncestorContext {
         nearest_page_block_id,
         nearest_page_name,
@@ -648,6 +664,7 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         inbound_samples,
         kind,
         children_preview,
+        siblings,
     };
 
     if ctx.is_empty() {

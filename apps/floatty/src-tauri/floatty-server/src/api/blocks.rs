@@ -201,6 +201,17 @@ pub struct AncestorContext {
     /// via the same heuristic, keeping the wire shape minimal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children_preview: Vec<BlockRef>,
+    /// Prev/next sibling preview within the parent's `childIds` — only
+    /// present when `?include=siblings` AND the block has a parent.
+    /// `before` carries the block immediately before this one in
+    /// `parent.childIds` (empty if this block is the first child),
+    /// `after` the one immediately after (empty if last). Reuses the
+    /// canonical `SiblingContext` DTO and `get_siblings` helper from the
+    /// existing `/blocks/:id?include=siblings` path with `radius=1`.
+    /// Two surfaces, one DTO, one helper — wire-shape parity by
+    /// construction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub siblings: Option<SiblingContext>,
 }
 
 impl AncestorContext {

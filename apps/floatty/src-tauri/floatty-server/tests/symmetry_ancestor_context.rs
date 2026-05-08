@@ -1113,6 +1113,137 @@ fn children_preview_truncates_long_content_utf8_safe() {
     let _: &str = preview.content.as_str();
 }
 
+/// CONTRACT 13: `siblings` is opt-in via `?include=siblings`. Without
+/// the directive, `siblings` is None. With the directive, the field
+/// populates with prev/next siblings (radius=1) via `get_siblings` —
+/// the SAME helper that powers `/blocks/:id?include=siblings`, so both
+/// surfaces have identical SiblingContext shape by construction.
+///
+/// Edge cases verified:
+/// - root block (no parent) → siblings None even with gate on
+/// - middle child → before+after both populated
+/// - first child → before empty, after populated
+/// - last child → before populated, after empty
+#[test]
+fn siblings_opt_in_respected() {
+    // root → parent → [c0, c1, c2]
+    let doc = build_doc(&[
+        ("root", None, "root", &[]),
+        ("parent", Some("root"), "parent", &[]),
+        ("c0", Some("parent"), "first child", &[]),
+        ("c1", Some("parent"), "middle child", &[]),
+        ("c2", Some("parent"), "last child", &[]),
+    ]);
+    {
+        let mut txn = doc.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let parent_map: yrs::MapRef = blocks.get_or_init(&mut txn, "parent");
+        let child_ids: Vec<Any> = vec![
+            Any::String("c0".into()),
+            Any::String("c1".into()),
+            Any::String("c2".into()),
+        ];
+        parent_map.insert(&mut txn, "childIds", ArrayPrelim::from(child_ids));
+    }
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+    let mut includes = HashSet::new();
+    includes.insert("siblings".to_string());
+    let opts_on = AncestorContextOpts::from_raw(&includes, 5);
+
+    // Gate off: middle child returns None for siblings.
+    let dto_c1 = read_skeletal_dto(&blocks_map, &txn, "c1");
+    let ctx_off = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "c1",
+        dto_c1.metadata.as_ref(),
+        None,
+        None,
+        AncestorContextOpts::default(),
+    )
+    .expect("c1 has chain → some ctx");
+    assert!(
+        ctx_off.siblings.is_none(),
+        "without `?include=siblings`, the field stays None"
+    );
+
+    // Gate on, middle child: before=c0, after=c2.
+    let ctx_middle = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "c1",
+        dto_c1.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("c1 has chain → some ctx");
+    let sib = ctx_middle.siblings.expect("siblings populated when gate on");
+    assert_eq!(sib.before.len(), 1, "middle child: one before");
+    assert_eq!(sib.before[0].id, "c0");
+    assert_eq!(sib.after.len(), 1, "middle child: one after");
+    assert_eq!(sib.after[0].id, "c2");
+
+    // First child: before empty, after has c1.
+    let dto_c0 = read_skeletal_dto(&blocks_map, &txn, "c0");
+    let ctx_first = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "c0",
+        dto_c0.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("c0 has chain → some ctx");
+    let sib_first = ctx_first.siblings.expect("siblings populated");
+    assert!(sib_first.before.is_empty(), "first child: before empty");
+    assert_eq!(sib_first.after.len(), 1);
+    assert_eq!(sib_first.after[0].id, "c1");
+
+    // Last child: before has c1, after empty.
+    let dto_c2 = read_skeletal_dto(&blocks_map, &txn, "c2");
+    let ctx_last = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "c2",
+        dto_c2.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("c2 has chain → some ctx");
+    let sib_last = ctx_last.siblings.expect("siblings populated");
+    assert_eq!(sib_last.before.len(), 1);
+    assert_eq!(sib_last.before[0].id, "c1");
+    assert!(sib_last.after.is_empty(), "last child: after empty");
+
+    // Root block (no parent): siblings stays None even with gate on.
+    // Skip — bare root would return None from compute_ancestor_context entirely
+    // (no chain, no outlinks). Use a root with an outlink so we get a ctx
+    // back, then assert siblings is None on that.
+    let doc2 = build_doc(&[("solo_root", None, "solo", &["A"])]);
+    let txn2 = doc2.transact();
+    let blocks_map2 = txn2.get_map("blocks").expect("blocks map");
+    let dto_solo = read_skeletal_dto(&blocks_map2, &txn2, "solo_root");
+    let ctx_solo = compute_ancestor_context(
+        &blocks_map2,
+        &txn2,
+        "solo_root",
+        dto_solo.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("root has own outlink → some ctx");
+    assert!(
+        ctx_solo.siblings.is_none(),
+        "root block (no parent) has no siblings — None even with gate on"
+    );
+}
+
 /// Edge case: trailing-newline shapes still count as heading-only. The
 /// edit-time DOM serialisation occasionally introduces trailing `\n` or
 /// `\n\n` on heading blocks; the classifier must tolerate them.
