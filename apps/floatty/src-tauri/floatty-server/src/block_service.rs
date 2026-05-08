@@ -4,11 +4,12 @@
 //! wrappers that call BlockService and format the HTTP response.
 
 use crate::api::{
-    self, AncestorContext, ApiError, BlockDto, BlockRef, BlockSearchHit, BlockSearchQuery,
-    BlockSearchResponse, BlocksResponse, EffectiveMarkerDto, InboundSampleDto, InheritedMarkerDto,
-    MarkerSource, SiblingContext, TokenEstimate, TreeNode,
+    self, AncestorContext, ApiError, BlockDto, BlockKind, BlockRef, BlockSearchHit,
+    BlockSearchQuery, BlockSearchResponse, BlocksResponse, EffectiveMarkerDto, InboundSampleDto,
+    InheritedMarkerDto, MarkerSource, SiblingContext, TokenEstimate, TreeNode,
 };
 use crate::WsBroadcaster;
+use floatty_core::block::{parse_block_type, BlockType};
 use floatty_core::events::BlockChange;
 use floatty_core::hooks::{tantivy_index, InheritanceIndex, PageNameIndex};
 use floatty_core::projections::{walk_ancestors, AncestorWalk, WalkTermination, YDocParentLookup};
@@ -588,6 +589,18 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         &hints,
     );
 
+    // BlockKind classification — opt-in. Reads block content + child
+    // presence; reuses parse_block_type from floatty-core so heading
+    // detection has ONE Rust source of truth (architecture-bypass audit
+    // recorded in the plan §"Symmetry check").
+    let kind = if opts.include_nav_classification {
+        let content = read_block_content(blocks_map, txn, block_id).unwrap_or_default();
+        let has_children = !read_block_child_ids(blocks_map, txn, block_id).is_empty();
+        Some(classify_block_kind(&content, has_children))
+    } else {
+        None
+    };
+
     let ctx = AncestorContext {
         nearest_page_block_id,
         nearest_page_name,
@@ -597,12 +610,55 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         subtree_size,
         inbound_count,
         inbound_samples,
+        kind,
     };
 
     if ctx.is_empty() {
         None
     } else {
         Some(ctx)
+    }
+}
+
+/// Classify a block by structural shape — `nav_node` (heading-only with
+/// children), `leaf_marker` (heading-only without children), or
+/// `content_block` (anything else).
+///
+/// Reuses `parse_block_type` from `floatty-core::block` for heading
+/// detection. The `heading_only` check (line-counting tail-trim) is the
+/// only piece this function adds beyond what `parse_block_type` already
+/// does — `parse_block_type` only categorizes the first-line prefix,
+/// doesn't tell you whether prose follows.
+///
+/// Mirror of `classifyBacklink` in `apps/floatty/src/lib/backlinkClassify.ts`.
+/// PR-A's vitest fixture in `apps/floatty/src/lib/backlinkClassify.test.ts`
+/// is the cross-implementation parity table — drift between sides is
+/// detected by re-running the matching fixture against either implementation.
+///
+/// Semantic note: leaf_marker requires heading_only too, NOT just
+/// `(heading + no_children)`. A heading WITH prose is a content block
+/// whether or not it has children — the prose IS the content. PR-A's
+/// vitest run on 2026-05-08 caught this rule needing tightening.
+pub fn classify_block_kind(content: &str, has_children: bool) -> BlockKind {
+    let block_type = parse_block_type(content);
+    let is_heading = matches!(
+        block_type,
+        BlockType::H1 | BlockType::H2 | BlockType::H3
+    );
+
+    let heading_only = is_heading && {
+        // Everything after the first line, trim, see if anything's left.
+        let after_first = content
+            .split_once('\n')
+            .map(|(_, rest)| rest)
+            .unwrap_or("");
+        after_first.trim().is_empty()
+    };
+
+    match (heading_only, has_children) {
+        (true, true) => BlockKind::NavNode,
+        (true, false) => BlockKind::LeafMarker,
+        _ => BlockKind::ContentBlock,
     }
 }
 

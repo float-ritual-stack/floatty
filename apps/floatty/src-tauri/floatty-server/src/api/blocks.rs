@@ -183,6 +183,13 @@ pub struct AncestorContext {
     /// to override).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inbound_samples: Vec<InboundSampleDto>,
+    /// Structural classification (`nav_node` / `content_block` /
+    /// `leaf_marker`) — only present when `?include=nav_classification`.
+    /// See `BlockKind` for semantics. NOT load-bearing for `is_empty()`
+    /// (mirrors `subtree_size` exemption — a bare-root `ContentBlock`
+    /// alone should not surface a non-empty context wrapper).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<BlockKind>,
 }
 
 impl AncestorContext {
@@ -276,6 +283,34 @@ pub struct TreeNode {
 pub struct SiblingContext {
     pub before: Vec<BlockRef>,
     pub after: Vec<BlockRef>,
+}
+
+/// Structural classification of a backlink/search-hit block. Derived from
+/// content-shape + child-presence at read time — NOT stored.
+///
+/// Lives in `floatty-server` (not `floatty-core::BlockType`) because it's a
+/// wire-shaping concept derived from BOTH content AND structure (children
+/// presence). `BlockType` is the closed ts-rs union of content-prefix
+/// variants; `BlockKind` is the navigation-layer projection on top of it.
+/// Keeping it server-side avoids leaking into the hand-off-y `BlockType.ts`
+/// generated union (per `.claude/rules/adding-block-types.md`).
+///
+/// Values mirror `BacklinkKind` in `apps/floatty/src/lib/backlinkClassify.ts`.
+/// Both sides compose over their respective block-type parsers
+/// (`parseBlockType` / `parse_block_type`); neither re-implements heading
+/// prefix detection (architecture-bypass audit, plan §"Symmetry check").
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockKind {
+    /// Heading-only + has children. The daily-note `## arcs` / `## bones`
+    /// case — auto-expand previews on the client; this block is the page's
+    /// section header, not the section's content.
+    NavNode,
+    /// Anything else — has prose, isn't a heading, etc. Default render.
+    ContentBlock,
+    /// Heading-only + no children. Pure crumb (e.g. `## empty section`).
+    /// Render muted / italic on the client.
+    LeafMarker,
 }
 
 /// Token/size estimate for a subtree

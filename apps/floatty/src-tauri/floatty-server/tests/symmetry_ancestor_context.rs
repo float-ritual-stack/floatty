@@ -48,10 +48,11 @@
 //! etc.) which already pass through `compute_ancestor_context`.
 
 use floatty_core::{InheritanceIndex, InheritedMarker, PageNameIndex};
-use floatty_server::api::{AncestorContext, BlockDto};
+use floatty_server::api::{AncestorContext, BlockDto, BlockKind};
 use floatty_server::block_service::{
-    attach_ancestor_context, compute_ancestor_context, compute_ancestor_context_with_hints,
-    parse_includes, shape_search_hit, AncestorContextHints, AncestorContextOpts,
+    attach_ancestor_context, classify_block_kind, compute_ancestor_context,
+    compute_ancestor_context_with_hints, parse_includes, shape_search_hit, AncestorContextHints,
+    AncestorContextOpts,
 };
 use std::collections::HashSet;
 use yrs::{Any, ArrayPrelim, Doc, Map, ReadTxn, Transact, WriteTxn};
@@ -844,6 +845,137 @@ fn shape_search_hit_without_blocks_map_defaults_timestamp_fields() {
     assert!(
         !json.contains("\"outputType\""),
         "skip_serializing_if drops None outputType: {json}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Backlinks legibility — nav_classification opt-in (PR-B Tier 2A)
+// ---------------------------------------------------------------------------
+
+/// CONTRACT 11: `kind` is opt-in via `?include=nav_classification`. Without
+/// the directive, `kind` is None even for a heading-shaped block. With the
+/// directive, the field populates with the classification derived from
+/// content-shape + child-presence.
+///
+/// `is_empty()` exclusion (mirrors subtree_size): a bare-root block with
+/// only `kind` populated should still return `None` from
+/// `compute_ancestor_context` — kind is not a navigation signal on its own.
+/// This test exercises a block with a real chain so the ctx surfaces and
+/// `kind` rides along, NOT a bare root that would be `None` regardless.
+#[test]
+fn nav_classification_opt_in_respected() {
+    // root → leaf, where leaf has heading-shaped content.
+    let doc = build_doc(&[
+        ("root", None, "root", &[]),
+        ("leaf", Some("root"), "## arcs", &[]),
+    ]);
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+    let dto = read_skeletal_dto(&blocks_map, &txn, "leaf");
+
+    // GATE OFF: default opts → no `nav_classification` directive → kind None.
+    let ctx_off = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        AncestorContextOpts::default(),
+    )
+    .expect("leaf has chain → some ctx");
+    assert_eq!(
+        ctx_off.kind, None,
+        "without `?include=nav_classification`, kind stays None — \
+         even when the block content is heading-shaped"
+    );
+
+    // GATE ON: opts include `nav_classification` → kind populated.
+    let mut includes = HashSet::new();
+    includes.insert("nav_classification".to_string());
+    let opts_on = AncestorContextOpts::from_raw(&includes, 5);
+    let ctx_on = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("leaf has chain → some ctx");
+    // "## arcs" with no children → leaf_marker (heading-only, no kids).
+    assert_eq!(
+        ctx_on.kind,
+        Some(BlockKind::LeafMarker),
+        "with `?include=nav_classification`, kind classifies the block — \
+         heading-only + no children → leaf_marker"
+    );
+}
+
+/// `classify_block_kind` direct unit tests. Mirror the 6-row fixture in
+/// `apps/floatty/src/lib/backlinkClassify.test.ts` so cross-implementation
+/// drift is detected by re-running the matching fixture against either side.
+#[test]
+fn classify_block_kind_fixture_parity() {
+    // Same rows as the TS test's `cross-implementation parity fixture`.
+    // Order matters — drift is detected by index match.
+    let fixtures: &[(&str, bool, BlockKind)] = &[
+        ("## arcs",            true,  BlockKind::NavNode),
+        ("## empty",           false, BlockKind::LeafMarker),
+        ("## arcs\nbody",      true,  BlockKind::ContentBlock),
+        ("plain content",      true,  BlockKind::ContentBlock),
+        ("",                   false, BlockKind::ContentBlock),
+        ("## bones\n\n",       true,  BlockKind::NavNode),
+    ];
+
+    for (idx, (content, has_children, expected)) in fixtures.iter().enumerate() {
+        let actual = classify_block_kind(content, *has_children);
+        assert_eq!(
+            actual, *expected,
+            "row {idx}: classify_block_kind({content:?}, has_children={has_children}) \
+             expected {expected:?}, got {actual:?}. Cross-implementation drift with \
+             apps/floatty/src/lib/backlinkClassify.test.ts — re-run that test for the \
+             matching row to identify which side moved."
+        );
+    }
+}
+
+/// Edge case: heading WITH prose + no children → content_block (NOT
+/// leaf_marker). Caught during PR-A vitest run on 2026-05-08 — the rule
+/// needed tightening from `(heading + no children → leaf)` to
+/// `(heading_only + no children → leaf)`. Documented in
+/// `block_service.rs::classify_block_kind` doc comment.
+#[test]
+fn classify_block_kind_heading_with_body_no_children_is_content() {
+    assert_eq!(
+        classify_block_kind("## arcs\nbody text", false),
+        BlockKind::ContentBlock,
+        "heading + body + no children must be content_block — the prose IS \
+         the content. A too-greedy `(heading + !has_children → leaf_marker)` \
+         rule mis-classifies this as leaf_marker."
+    );
+}
+
+/// Edge case: trailing-newline shapes still count as heading-only. The
+/// edit-time DOM serialisation occasionally introduces trailing `\n` or
+/// `\n\n` on heading blocks; the classifier must tolerate them.
+#[test]
+fn classify_block_kind_tolerates_trailing_newlines() {
+    assert_eq!(
+        classify_block_kind("## bones\n", true),
+        BlockKind::NavNode,
+        "trailing single newline still heading-only"
+    );
+    assert_eq!(
+        classify_block_kind("## tldr\n\n", true),
+        BlockKind::NavNode,
+        "trailing double newline still heading-only"
+    );
+    assert_eq!(
+        classify_block_kind("# top\n", false),
+        BlockKind::LeafMarker,
+        "trailing single newline + no children still heading-only → leaf_marker"
     );
 }
 
