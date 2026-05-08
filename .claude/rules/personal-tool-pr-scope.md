@@ -36,10 +36,11 @@ The following actions do **NOT** need per-action confirmation when working on fl
 | `gh pr create` for a feature branch into `main` | Solo dev, bot review. PR is reversible (`gh pr close`). |
 | `gh pr edit` / `gh pr comment` on your own PR | Routine review iteration. |
 | `pnpm --filter float-pty tauri:dev` (or `:dev:fresh`) | The canonical verification surface per `feedback_verify_against_running_dev.md`. See "Dev-server port handling" below for what to do based on port-`33333` state. |
-| `pnpm --filter float-pty kill-server` (the canonical multi-port cleanup) | Kills `8765`, `8766`, AND `33333`. **Note**: also kills the *release* server on `8765`, so only invoke when Evan has explicitly OK'd a release-floatty restart, OR when verifying a clean slate before `tauri:dev`. Otherwise prefer the targeted dev-only kill below. |
 | `lsof -iTCP:33333 -t \| xargs kill` (or `:8766`, the Tauri dev sidecar port) | Targeted kill of the dev floatty-server / dev sidecar. Safe — does not touch the release server on `8765`. |
 
-#### Dev-server port handling
+> **Note on `pnpm --filter float-pty kill-server`**: This script kills `8765`, `8766`, AND `33333` — i.e., it INCLUDES the release server on `8765`. It is therefore listed in the "Still gated" table below, NOT here. For routine `tauri:dev` prep, prefer the targeted dev-only `lsof` kill on `:33333` / `:8766`.
+
+### Dev-server port handling
 
 The dev REST API runs on **`33333`** (`DEV_PORT` constant in `floatty-server/src/config.rs`). The Tauri dev devtools sidecar uses **`8766`**. The release floatty (Evan's daily-driver) runs on **`8765`** — never auto-kill it.
 
@@ -60,6 +61,7 @@ The following actions **STILL require explicit confirmation** even on floatty:
 | `git push origin main` directly | Bypasses PR review (even bot review). |
 | `gh pr merge` (vs the bot auto-merge label flow) | Final ship action; one decision per session at most. |
 | Killing the **release** floatty (port `8765`, `/Applications/floatty.app`) | Evan's daily-driver tool. Per the `pkill_scope_matters` memory: dev kills go through port `33333` / `8766` / `target/debug` paths only. |
+| `pnpm --filter float-pty kill-server` (multi-port cleanup) | Includes port `8765` → would kill the release floatty. ALWAYS requires explicit approval first. The targeted dev-only `lsof -iTCP:33333` / `:8766` kills in the authorized table above are the unattended path. |
 | Anything that touches the user's working tree on a different branch | E.g., committing files Evan doesn't know are dirty. Stage selectively. |
 
 ### Practical cadence (the shape this enables)
