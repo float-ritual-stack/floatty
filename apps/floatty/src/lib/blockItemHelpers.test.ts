@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isOutputBlock, hasCollapsibleOutput, resolveImgFilename } from './blockItemHelpers';
+import { isOutputBlock, hasCollapsibleOutput, resolveImgFilename, deriveDoorTitle } from './blockItemHelpers';
 import type { Block } from './blockTypes';
 
 /** Minimal block factory — only fields these helpers read */
@@ -115,6 +115,117 @@ describe('isOutputBlock / hasCollapsibleOutput contract', () => {
         }
       }
     }
+  });
+});
+
+describe('deriveDoorTitle (v0.14.4 — fix cohabitation overlap)', () => {
+  // The contract: door blocks should always land in title-mode by default,
+  // hiding contentEditable to prevent the multiline raw-content overlap with
+  // the rendered door view. Title resolution covers both new (projection-
+  // contract) and legacy (`render:: {full JSON}`) shapes.
+
+  it('returns null for non-door blocks', () => {
+    expect(deriveDoorTitle(makeBlock({ outputType: 'eval-result', content: 'sh:: echo hi' }))).toBeNull();
+    expect(deriveDoorTitle(makeBlock({ outputType: 'search-results' }))).toBeNull();
+    expect(deriveDoorTitle(makeBlock({ content: 'plain text' }))).toBeNull();
+  });
+
+  it('returns null for door blocks without output (still pre-execute)', () => {
+    expect(deriveDoorTitle(makeBlock({ outputType: 'door', content: 'render:: foo' }))).toBeNull();
+  });
+
+  it('NEW path — uses content directly when content is the semantic title', () => {
+    const block = makeBlock({
+      outputType: 'door',
+      content: 'Real Bugs Quartet — Test-First Territory',
+      output: { data: { spec: { root: 'r', elements: {} } } },
+    });
+    expect(deriveDoorTitle(block)).toBe('Real Bugs Quartet — Test-First Territory');
+  });
+
+  it('NEW path — rejects content that looks like JSON (defensive)', () => {
+    const block = makeBlock({
+      outputType: 'door',
+      content: '{"root":"r","elements":{}}',
+      output: { data: { title: 'Fallback Title', spec: {} } },
+    });
+    // Content starts with `{` → reject → fall through to output.data.title
+    expect(deriveDoorTitle(block)).toBe('Fallback Title');
+  });
+
+  it('LEGACY path — uses output.data.title for `render:: {json}` blocks', () => {
+    const block = makeBlock({
+      outputType: 'door',
+      content: 'render:: {"root":"r","elements":{}}',
+      output: { data: { title: 'LLM-Generated Title' } },
+    });
+    expect(deriveDoorTitle(block)).toBe('LLM-Generated Title');
+  });
+
+  it('LEGACY path — falls back to spec.title when async title-gen has not landed', () => {
+    const block = makeBlock({
+      outputType: 'door',
+      content: 'render:: {"root":"r","title":"Spec Title","elements":{}}',
+      output: { data: { spec: { title: 'Spec Title', root: 'r', elements: {} } } },
+      // ↑ note: no top-level data.title (async title-gen race)
+    });
+    expect(deriveDoorTitle(block)).toBe('Spec Title');
+  });
+
+  it('LEGACY path — rejects long output titles (>120 chars)', () => {
+    const longTitle = 'x'.repeat(150);
+    const block = makeBlock({
+      outputType: 'door',
+      content: 'render:: {"root":"r","title":"Short Spec Title","elements":{}}',
+      output: { data: { title: longTitle, spec: { title: 'Short Spec Title' } } },
+    });
+    // Long title rejected, falls through to spec.title
+    expect(deriveDoorTitle(block)).toBe('Short Spec Title');
+  });
+
+  it('LEGACY path — rejects titles that look like JSON', () => {
+    const block = makeBlock({
+      outputType: 'door',
+      content: 'render:: {"root":"r","title":"Real Title","elements":{}}',
+      output: { data: { title: '{"oops":"json"}', spec: { title: 'Real Title' } } },
+    });
+    expect(deriveDoorTitle(block)).toBe('Real Title');
+  });
+
+  it('returns null when no resolution arm produces a clean title', () => {
+    const block = makeBlock({
+      outputType: 'door',
+      content: 'render:: {"oops":"no spec title"}',
+      output: { data: { spec: { root: 'r', elements: {} } } }, // no titles anywhere
+    });
+    // No clean title → caller falls back to contentEditable display
+    expect(deriveDoorTitle(block)).toBeNull();
+  });
+
+  it('NEW path beats LEGACY arms — content wins when not render:: shape', () => {
+    const block = makeBlock({
+      outputType: 'door',
+      content: 'New Path Title',
+      output: { data: { title: 'Should be ignored', spec: { title: 'Also ignored' } } },
+    });
+    expect(deriveDoorTitle(block)).toBe('New Path Title');
+  });
+
+  it('returns null for undefined block', () => {
+    expect(deriveDoorTitle(undefined)).toBeNull();
+  });
+
+  it('LEGACY path — leading whitespace on `render::` prefix routes to fallback arms (CodeRabbit fix)', () => {
+    // CR-flagged: "  render:: {...}" content used to slip through the
+    // !isLegacyRenderShape guard and return raw source as the "title".
+    // trimStart() in deriveDoorTitle now normalizes before the prefix check,
+    // so leading whitespace routes through output.data.title / spec.title.
+    const block = makeBlock({
+      outputType: 'door',
+      content: '  render:: {"root":"r","title":"Whitespace Title","elements":{}}',
+      output: { data: { title: 'LLM-Generated Title', spec: { title: 'Whitespace Title' } } },
+    });
+    expect(deriveDoorTitle(block)).toBe('LLM-Generated Title');
   });
 });
 

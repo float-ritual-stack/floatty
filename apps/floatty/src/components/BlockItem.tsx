@@ -14,7 +14,7 @@ import { paneLinkStore } from '../hooks/usePaneLinkStore';
 import { layoutStore } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
 import { resolveBlockIdPrefix, BLOCK_ID_PREFIX_RE } from '../lib/blockTypes';
-import { isOutputBlock, hasCollapsibleOutput, resolveImgFilename } from '../lib/blockItemHelpers';
+import { isOutputBlock, hasCollapsibleOutput, resolveImgFilename, deriveDoorTitle } from '../lib/blockItemHelpers';
 import { parseAllInlineTokens, hasWikilinkPatterns, hasTablePattern, parseTableToken } from '../lib/inlineParser';
 import { BlockDisplay, TableView } from './BlockDisplay';
 import { WikilinkAutocomplete } from './WikilinkAutocomplete';
@@ -160,32 +160,38 @@ export function BlockItem(props: BlockItemProps) {
     handleInput, handleBlurSync, updateContentFromDom,
   } = contentSync;
 
-  // render:: title toggle: show generated title instead of full prompt (Unit 1.3a)
+  // Door view title toggle: show derived title instead of source content.
   // Display-only — does NOT change isOutputBlock, focus, collapse, zoom, or navigation.
+  // Default ON for door blocks: agents writing the projection-contract shape
+  // (`content = title`, `output.data.spec` carries the spec) get clean visual layering;
+  // legacy `render:: {full JSON}` blocks ALSO get clean layering because the title
+  // falls back to `output.data.title` / `output.data.spec.title`.
   const [renderShowTitle, setRenderShowTitle] = createSignal(true);
 
-  // Does this render:: block have a valid generated title?
-  const renderTitle = createMemo(() => {
-    const b = block();
-    if (b?.outputType !== 'door' || !b?.output) return null;
-    if (!b?.content?.toLowerCase().startsWith('render::')) return null;
-    const title = (b.output as { data?: { title?: string } })?.data?.title;
-    if (!title || typeof title !== 'string') return null;
-    const trimmed = title.trim();
-    // Reject garbage: JSON blobs, excessive length
-    if (trimmed.length > 120 || trimmed.startsWith('{') || trimmed.startsWith('[')) return null;
-    return trimmed;
-  });
+  // Clean, visually-stable title for any door block (new or legacy).
+  // Resolution + rationale lives in `deriveDoorTitle` in blockItemHelpers.ts;
+  // tests pin the contract there.
+  const renderTitle = createMemo(() => deriveDoorTitle(block()));
 
   const effectiveDisplayContent = createMemo(() => {
     const title = renderTitle();
     if (!renderShowTitle() || !title) return displayContent();
+    // Legacy `render:: {json}` blocks: prepend the prefix so the title-wrapper
+    // shows `render:: <Generated Title>` (preserves the visual cue that this
+    // is a render block). New projection-contract blocks already have a
+    // semantic title in content — show it as-is, no prefix.
+    const content = block()?.content ?? '';
+    // trimStart() mirrors the legacy-shape detection in deriveDoorTitle so
+    // "  render:: {...}" content also gets the visual `render:: ` prefix.
+    if (!content.trimStart().toLowerCase().startsWith('render::')) return title;
     if (title.toLowerCase().startsWith('render::')) return title;
     return `render:: ${title}`;
   });
 
-  // FLO-569: title mode — true when render:: block has valid title and title display is enabled.
-  // When true: contentEditable hidden, render-title-wrapper drives height to title size.
+  // FLO-569 + 0.14.4: title mode — true when door block has a derivable title
+  // (new projection-contract content OR legacy output.data.title / spec.title)
+  // AND title display is enabled. When true: contentEditable hidden, render-
+  // title-wrapper drives height to title size. Door view renders below as usual.
   const isRenderTitleMode = createMemo(() => !!renderTitle() && renderShowTitle());
 
   // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
@@ -975,12 +981,12 @@ export function BlockItem(props: BlockItemProps) {
                 pageNameSet={pageNameSet()}
                 stubPageNameSet={stubPageNameSet()}
               />
-              {/* render:: title toggle — switch between generated title and full prompt */}
+              {/* Door title toggle — switch between title display and source-edit content */}
               <Show when={renderTitle()}>
                 <button
                   class="block-mode-toggle"
                   onClick={() => setRenderShowTitle(v => !v)}
-                  title={renderShowTitle() ? 'Show full prompt' : 'Show title'}
+                  title={renderShowTitle() ? 'Edit source' : 'Show title'}
                 >
                   {renderShowTitle() ? '⊞' : '⊟'}
                 </button>
