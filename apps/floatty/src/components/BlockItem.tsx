@@ -142,7 +142,7 @@ export function BlockItem(props: BlockItemProps) {
     getContentRef: () => contentRef,
     store,
     cursor,
-    onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref),
+    onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref, props.id),
     onContentChange: () => {
       // FLO-668 null contract: null → this block lives in a non-tab-hosted
       // pane (sidebar/floating); pinPane is tab-scoped, silent no-op.
@@ -1049,8 +1049,11 @@ export function BlockItem(props: BlockItemProps) {
             setInlineDoorRef={setInlineDoorRef}
           />
 
-          {/* FLO-376: Wikilink autocomplete popup */}
-          <Show when={autocomplete.state()}>
+          {/* FLO-376: Wikilink autocomplete popup. FLO-721: gated to the
+              block that triggered the autocomplete — the controller is a
+              singleton, so without this gate every visible BlockItem would
+              mount the popup component (CodeRabbit found this on PR #299). */}
+          <Show when={autocomplete.state()?.activeBlockId === props.id ? autocomplete.state() : null}>
             {(acState) => (
               <WikilinkAutocomplete
                 state={acState()}

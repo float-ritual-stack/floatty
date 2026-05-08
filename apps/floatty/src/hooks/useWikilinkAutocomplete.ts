@@ -37,6 +37,15 @@ export interface AutocompleteState {
   selectedIndex: number;
   /** Position rect for popup placement */
   anchorRect: DOMRect;
+  /**
+   * FLO-721: Block ID that triggered the autocomplete. The autocomplete
+   * controller is now a singleton (one instance for the whole app), so the
+   * popup render must be gated to the owning BlockItem — otherwise every
+   * visible BlockItem renders the popup component when state is non-null,
+   * stacking N overlays on the same anchor. Set by checkTrigger from the
+   * focused BlockItem's onAutocompleteCheck path.
+   */
+  activeBlockId: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -191,8 +200,13 @@ export function useWikilinkAutocomplete(
   /**
    * Check for [[ trigger after content/cursor changes.
    * Called from updateContentFromDom in BlockItem.
+   *
+   * FLO-721: blockId identifies which BlockItem owns the popup, so only
+   * that block renders the WikilinkAutocomplete component. Required after
+   * the singleton lift — without it, every visible BlockItem subscribed
+   * to the shared state and would mount duplicate popups.
    */
-  function checkTrigger(content: string, cursorOffset: number, contentRef: HTMLElement) {
+  function checkTrigger(content: string, cursorOffset: number, contentRef: HTMLElement, blockId: string) {
     const trigger = detectWikilinkTrigger(content, cursorOffset);
 
     if (!trigger) {
@@ -235,6 +249,7 @@ export function useWikilinkAutocomplete(
       suggestions,
       selectedIndex,
       anchorRect,
+      activeBlockId: blockId,
     });
   }
 
