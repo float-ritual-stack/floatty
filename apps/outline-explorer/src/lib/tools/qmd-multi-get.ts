@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
 
 export const qmdMultiGetTool = tool({
   description:
-    "Batch retrieve qmd documents by glob pattern or comma-separated list. Returns documents concatenated as plain markdown. Use when you need several related documents at once (e.g. a week of sysops-log posts).",
+    "Batch get / fetch / read / retrieve / load multiple qmd documents by glob pattern or comma-separated list. Returns documents concatenated as plain markdown. Use when you need several related documents at once (e.g. a week of sysops-log posts).",
   inputSchema: z.object({
     pattern: z
       .string()

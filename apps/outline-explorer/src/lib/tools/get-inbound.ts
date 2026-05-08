@@ -4,7 +4,7 @@ import { searchBlocks } from "../floatty-client";
 
 export const getInboundTool = tool({
   description:
-    "Find blocks that link TO a target page via [[wikilinks]]. Use to discover what references or connects to a page.",
+    "Find backlinks / inbound links / references / what-links-here — blocks that link TO a target page via [[wikilinks]] (the inverse of an outlink lookup). Use to discover what references, connects to, or cites a page.",
   inputSchema: z.object({
     target: z.string().describe("Page or link name to find backlinks for"),
   }),
