@@ -310,10 +310,28 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
     const store = deps.blockStore;
     const paneStore = deps.paneStore;
 
-    // FLO-387: Single cursor snapshot — one DOM walk produces all three
-    // boundary values instead of three consecutive walks per keystroke.
-    // Snapshot is cached per element until the next selection change.
-    const snap = deps.cursor.snapshot();
+    // Lazy cursor snapshot — only walk the DOM for keys whose
+    // determineKeyAction branch actually reads cursorAtStart/atEnd/offset.
+    // Cmd+Right (visual line end), Cmd+Left, modifier-only keys, action
+    // keybinds (deleteBlock, moveBlockUp, zoomIn/Out, collapseBlock), and
+    // bare printable characters all flow through paths that return without
+    // ever consulting the cursor fields — selectionchange invalidates the
+    // useCursor cache, so a wasted snapshot pays a full DOM walk on each
+    // keystroke after a cursor move. Cursor-consuming branches:
+    //   Enter       → cursorOffset
+    //   Tab         → cursorAtStart
+    //   Backspace   → cursorOffset, selectionCollapsed
+    //   ArrowUp/Down (no shift) → cursorAtStart / cursorAtEnd
+    // Shift+Arrow always block-selects regardless of cursor position, so
+    // it doesn't need the snapshot either. The snap?.atStart ?? false /
+    // snap?.offset ?? 0 fallbacks below cover the null case for every
+    // other branch (which returns 'none' anyway).
+    const cursorConsumingKey =
+      e.key === 'Enter' ||
+      e.key === 'Tab' ||
+      e.key === 'Backspace' ||
+      ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey);
+    const snap = cursorConsumingKey ? deps.cursor.snapshot() : null;
 
     // Use the pure logic function to determine action
     const keyAction = determineKeyAction(
