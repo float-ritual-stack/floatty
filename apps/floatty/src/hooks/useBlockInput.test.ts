@@ -761,3 +761,139 @@ describe('useBlockInput.handleKeyDown — FLO-646 flush-before-decide', () => {
     expect(flushContentUpdate).not.toHaveBeenCalled();
   });
 });
+
+// ─── Lazy cursor snapshot ─────────────────────────────────────────────
+// determineKeyAction only consumes cursorAtStart/atEnd/offset on a small
+// set of branches (Enter, Tab, Backspace, plain ArrowUp/Down). Every other
+// keydown — Cmd+Right (visual line end), Cmd+Left, modifier-only presses,
+// action keybinds like deleteBlock/moveBlockUp/zoomInBlock, plain printable
+// characters — flows through paths that return without ever reading those
+// fields. selectionchange invalidates the useCursor cache, so a wasted
+// snapshot is a full DOM walk on every keystroke after a cursor move.
+// These tests pin the perf invariant.
+
+describe('useBlockInput.handleKeyDown — lazy cursor snapshot', () => {
+  beforeAll(() => {
+    registerHandlers();
+    // jsdom doesn't implement document.execCommand, but the Tab/insert_spaces
+    // path uses it for undo support. The snapshot we're testing fires BEFORE
+    // the action executes, so the spy assertion happens regardless — but we
+    // stub execCommand so the test doesn't crash on the side effect.
+    if (typeof (document as unknown as { execCommand?: unknown }).execCommand !== 'function') {
+      (document as unknown as { execCommand: () => boolean }).execCommand = () => true;
+    }
+  });
+
+  function createSpyingCursor(): { cursor: CursorState; snapshotSpy: ReturnType<typeof vi.fn> } {
+    const snapshotSpy = vi.fn(() => ({
+      offset: 0,
+      atStart: false,
+      atEnd: false,
+      contentLength: 12,
+    }));
+    const cursor: CursorState = {
+      isAtStart: () => false,
+      isAtEnd: () => false,
+      getOffset: () => 0,
+      setOffset: () => {},
+      isSelectionCollapsed: () => true,
+      snapshot: snapshotSpy,
+      invalidate: () => {},
+    };
+    return { cursor, snapshotSpy };
+  }
+
+  function setup(): { handleKeyDown: (e: KeyboardEvent) => void; snapshotSpy: ReturnType<typeof vi.fn> } {
+    const { cursor, snapshotSpy } = createSpyingCursor();
+    const getBlock = (): Block => ({
+      id: 'test-block',
+      content: 'some text content',
+      type: 'text',
+      parentId: null,
+      childIds: [],
+      collapsed: false,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    const deps: BlockInputDependencies = {
+      ...createMinimalDeps(getBlock, () => {}),
+      cursor,
+    };
+    const { handleKeyDown } = useBlockInput(deps);
+    return { handleKeyDown, snapshotSpy };
+  }
+
+  it('skips snapshot for Cmd+Right (visual line end)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowRight', metaKey: true }));
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips snapshot for plain ArrowRight / ArrowLeft (browser handles cursor movement)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips snapshot for Shift+ArrowUp/Down (block-selection paths never read cursor)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips snapshot for printable characters', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'a' }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: '1' }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: ' ' }));
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips snapshot for modifier-only events', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Shift' }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Meta' }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Control' }));
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  // Regression-pin: Delete is adjacent to Backspace and the most likely key
+  // to grow a forward-merge consumer (e.g., delete-into-next-block at end of
+  // content). If a future change adds a `key === 'Delete'` branch in
+  // determineKeyAction that reads any cursor field, this test will fail —
+  // forcing the allowlist above to be updated alongside the new branch
+  // instead of silently regressing the perf invariant.
+  it('skips snapshot for Delete (no cursor-consuming branch today; pin against silent regression)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Delete' }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Delete', shiftKey: true }));
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it('TAKES snapshot for Enter (cursorOffset drives split / sibling-create)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('TAKES snapshot for Tab (cursorAtStart drives indent vs insert-spaces)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Tab' }));
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('TAKES snapshot for Backspace (cursorOffset drives merge-with-previous)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Backspace' }));
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('TAKES snapshot for plain ArrowUp/Down (cursorAtStart/atEnd drives boundary navigation)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(snapshotSpy).toHaveBeenCalledTimes(2);
+  });
+});
