@@ -122,7 +122,7 @@ export interface WorkspaceContextValue {
   /** Short-hash index: 8-char prefix → full UUID (empty string = ambiguous). */
   shortHashIndex: Accessor<ReadonlyMap<string, string>>;
   /**
-   * Singleton wikilink autocomplete instance (FLO-721 perf-audit lift).
+   * Singleton wikilink autocomplete instance (FLO-316 perf-audit lift).
    * Previously instantiated per-BlockItem (1:1 with mounts → 4252 instances
    * across 10 min of navigation). Lifted here so navigation doesn't churn
    * autocomplete state machines. Mirrors the FLO-322 pageNames lift.
@@ -153,7 +153,7 @@ interface WorkspaceProviderProps {
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const store = props.blockStore ?? realBlockStore;
 
-  // FLO-721/cowboy-audit-F5: cache pages:: container id once, then read by id.
+  // FLO-316/cowboy-audit-F5: cache pages:: container id once, then read by id.
   // findPagesContainer iterates rootIds and checks each root's content — a broad
   // reactive dep that refires whenever any root block's content changes. The
   // narrowing here is downstream only: this memo still has the broad dep, but
@@ -223,7 +223,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return index;
   });
 
-  // FLO-552/FLO-721: resolveAlias suppresses the "Create new page" suggestion
+  // FLO-552/FLO-316: resolveAlias suppresses the "Create new page" suggestion
   // when the typed query is a `<hex-prefix>|alias` form referencing an
   // existing block. Fires per-keystroke while the autocomplete is open AND the
   // user has typed a `|` after a hex prefix — narrow trigger but the call is
@@ -246,7 +246,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   // Dismiss autocomplete on scroll (anchorRect goes stale). Singleton — one
   // listener for the whole app, registered when popup opens, removed when it
-  // closes. Pre-FLO-721 lift this effect lived per-BlockItem; with N visible
+  // closes. Pre-FLO-316 lift this effect lived per-BlockItem; with N visible
   // BlockItems it would have registered N scroll listeners on every open.
   createEffect(on(() => wikilinkAutocomplete.isOpen(), (open) => {
     if (!open) return;

@@ -594,7 +594,7 @@ function createPaneStore() {
 
     return {
       zoomedRootId: { ...state.zoomedRootId },
-      // FLO-721: structuredClone strips SolidJS proxies (same effect as
+      // FLO-316: structuredClone strips SolidJS proxies (same effect as
       // JSON.parse(JSON.stringify(...))) and avoids the JSON serialize/parse
       // roundtrip. Persistence writes fire on every collapse toggle, focus
       // change, and navigation event — keeping this cheap matters.

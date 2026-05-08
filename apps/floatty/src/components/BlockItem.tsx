@@ -83,7 +83,7 @@ export function BlockItem(props: BlockItemProps) {
   const blockId = props.id;
 
   const block = createMemo(() => store.blocks[props.id]);
-  // FLO-721/cowboy-audit-#1: read focus from paneStore directly instead of via
+  // FLO-529/cowboy-audit-#1: read focus from paneStore directly instead of via
   // prop-drilled focusedBlockId. The prop drill invalidated the prop surface
   // across the entire recursive tree on each focus change, cascading classList
   // and downstream-memo recomputation in every visible BlockItem. Reading the
@@ -218,7 +218,7 @@ export function BlockItem(props: BlockItemProps) {
     }
   });
 
-  // FLO-376/FLO-322/FLO-552/FLO-721: wikilinkAutocomplete is a singleton in
+  // FLO-376/FLO-322/FLO-552/FLO-316: wikilinkAutocomplete is a singleton in
   // WorkspaceContext. Pulled from useWorkspace() above so this BlockItem
   // doesn't create its own state machine. The scroll-dismiss effect that
   // used to live here also moved to WorkspaceProvider — keeping it here
@@ -1051,7 +1051,7 @@ export function BlockItem(props: BlockItemProps) {
             setInlineDoorRef={setInlineDoorRef}
           />
 
-          {/* FLO-376: Wikilink autocomplete popup. FLO-721: gated to the
+          {/* FLO-376: Wikilink autocomplete popup. FLO-316: gated to the
               block that triggered the autocomplete — the controller is a
               singleton, so without this gate every visible BlockItem would
               mount the popup component (CodeRabbit found this on PR #299). */}

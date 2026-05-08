@@ -38,7 +38,7 @@ export interface AutocompleteState {
   /** Position rect for popup placement */
   anchorRect: DOMRect;
   /**
-   * FLO-721: Block ID that triggered the autocomplete. The autocomplete
+   * FLO-316: Block ID that triggered the autocomplete. The autocomplete
    * controller is now a singleton (one instance for the whole app), so the
    * popup render must be gated to the owning BlockItem — otherwise every
    * visible BlockItem renders the popup component when state is non-null,
@@ -201,7 +201,7 @@ export function useWikilinkAutocomplete(
    * Check for [[ trigger after content/cursor changes.
    * Called from updateContentFromDom in BlockItem.
    *
-   * FLO-721: blockId identifies which BlockItem owns the popup, so only
+   * FLO-316: blockId identifies which BlockItem owns the popup, so only
    * that block renders the WikilinkAutocomplete component. Required after
    * the singleton lift — without it, every visible BlockItem subscribed
    * to the shared state and would mount duplicate popups.
