@@ -2017,6 +2017,58 @@ body.block-dragging * {
   pointer-events: auto;
 }
 
+/* ─── Backlink kind classification (Tier 1) ─────────────────────────
+   classifyBacklink() returns nav_node | content_block | leaf_marker.
+   content_block uses the default style above; the other two get extra
+   visual cues so daily-note `## arcs` / `## bones` headers stop reading
+   as identical opaque refs. */
+
+.linked-reference-item--nav {
+  border-left: 3px solid var(--color-accent);
+  padding-left: 9px; /* 12 base padding - 3 border to keep content alignment */
+}
+
+.linked-reference-item--leaf {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.linked-reference-children-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-fg-muted);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.linked-reference-children-preview {
+  list-style: none;
+  margin: 6px 0 0 0;
+  padding: 0;
+  border-left: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  padding-left: 8px;
+}
+
+.linked-reference-children-preview > li {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.linked-reference-children-more {
+  font-style: italic;
+  opacity: 0.8;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Navigation Highlight Animation
    Used by navigateToBlock() when highlight: true

@@ -14,6 +14,10 @@ import { layoutStore, findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { isMac } from '../lib/keybinds';
 import { BlockDisplay } from './BlockDisplay';
 import type { Block } from '../lib/blockTypes';
+import { classifyBacklink } from '../lib/backlinkClassify';
+
+const CHILD_PREVIEW_COUNT = 3;
+const CHILD_PREVIEW_MAX_CHARS = 80;
 
 interface LinkedReferencesProps {
   /** The block ID we're showing references to (the zoomed page) */
@@ -121,23 +125,55 @@ export function LinkedReferences(props: LinkedReferencesProps) {
         </div>
         <div class="linked-references-list">
           <For each={backlinks()}>
-            {(backlinkBlock) => (
-              <div
-                class="linked-reference-item"
-                role="button"
-                tabIndex={0}
-                onClick={(e) => handleBacklinkClick(backlinkBlock, e)}
-                onKeyDown={(e) => handleBacklinkKeyDown(backlinkBlock, e)}
-                aria-label={`Navigate to block: ${backlinkBlock.content.slice(0, 50)}`}
-              >
-                <div class="linked-reference-content">
-                  <BlockDisplay
-                    content={backlinkBlock.content}
-                    onWikilinkClick={handleWikilinkClick}
-                  />
+            {(backlinkBlock) => {
+              // Classify once per render — backlinks rarely change content
+              // mid-session, recomputation is cheap, no memo needed.
+              const kind = classifyBacklink(backlinkBlock);
+              const childCount = backlinkBlock.childIds.length;
+              return (
+                <div
+                  class="linked-reference-item"
+                  classList={{
+                    'linked-reference-item--nav': kind === 'nav_node',
+                    'linked-reference-item--leaf': kind === 'leaf_marker',
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => handleBacklinkClick(backlinkBlock, e)}
+                  onKeyDown={(e) => handleBacklinkKeyDown(backlinkBlock, e)}
+                  aria-label={`Navigate to block: ${backlinkBlock.content.slice(0, 50)}`}
+                >
+                  <div class="linked-reference-content">
+                    <BlockDisplay
+                      content={backlinkBlock.content}
+                      onWikilinkClick={handleWikilinkClick}
+                    />
+                    <Show when={kind === 'nav_node'}>
+                      <span class="linked-reference-children-chip">
+                        +{childCount} {childCount === 1 ? 'child' : 'children'}
+                      </span>
+                    </Show>
+                  </div>
+                  <Show when={kind === 'nav_node'}>
+                    <ul class="linked-reference-children-preview">
+                      <For each={backlinkBlock.childIds.slice(0, CHILD_PREVIEW_COUNT)}>
+                        {(childId) => {
+                          const child = blockStore.blocks[childId];
+                          if (!child) return null;
+                          const preview = child.content.slice(0, CHILD_PREVIEW_MAX_CHARS);
+                          return <li>{preview}</li>;
+                        }}
+                      </For>
+                      <Show when={childCount > CHILD_PREVIEW_COUNT}>
+                        <li class="linked-reference-children-more">
+                          +{childCount - CHILD_PREVIEW_COUNT} more
+                        </li>
+                      </Show>
+                    </ul>
+                  </Show>
                 </div>
-              </div>
-            )}
+              );
+            }}
           </For>
         </div>
       </div>
