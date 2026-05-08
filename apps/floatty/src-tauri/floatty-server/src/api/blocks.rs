@@ -214,7 +214,13 @@ impl AncestorContext {
 pub struct BlockContextQuery {
     /// Comma-separated include directives. Recognised:
     /// `ancestors`, `siblings`, `children`, `tree`, `token_estimate`,
-    /// `effective_markers`, `inbound_samples`.
+    /// `effective_markers`, `inbound_samples`, `nav_classification`,
+    /// `children_preview`.
+    ///
+    /// Note: `siblings` directive on this endpoint controls the
+    /// per-singleton `siblings` field on `BlockWithContextResponse`. The
+    /// same directive ALSO populates `ancestorContext.siblings` (radius=1
+    /// preview shape). Both surfaces use the same `SiblingContext` DTO.
     #[serde(default)]
     pub include: Option<String>,
     /// Number of siblings before/after to include (default: 2)
@@ -227,6 +233,10 @@ pub struct BlockContextQuery {
     /// `?include=inbound_samples` is present in `include`.
     #[serde(default = "default_inbound_sample_count")]
     pub inbound_sample_count: usize,
+    /// Cap for `ancestorContext.children_preview` (default 5; max 20). Only
+    /// honoured when `?include=children_preview` is present.
+    #[serde(default = "default_children_preview_count")]
+    pub children_preview_count: usize,
 }
 
 fn default_sibling_radius() -> usize {
@@ -236,6 +246,9 @@ fn default_max_depth() -> usize {
     50
 }
 fn default_inbound_sample_count() -> usize {
+    5
+}
+fn default_children_preview_count() -> usize {
     5
 }
 

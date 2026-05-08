@@ -345,6 +345,18 @@ pub struct AncestorContextOpts {
     pub include_inbound_samples: bool,
     /// Override for the inbound-samples cap; min(value, 50) at use site.
     pub inbound_sample_count: usize,
+    /// Populate `kind` (BlockKind classification — nav_node / content_block /
+    /// leaf_marker). Opt-in via `?include=nav_classification`.
+    pub include_nav_classification: bool,
+    /// Populate `childrenPreview` (first N child BlockRefs with content
+    /// truncated). Opt-in via `?include=children_preview`. Default 5; cap
+    /// honoured from `children_preview_count`.
+    pub include_children_preview: bool,
+    /// Override for the children-preview cap; min(value, 20) at use site.
+    pub children_preview_count: usize,
+    /// Populate `siblings` (prev/next sibling BlockRefs via parent's
+    /// childIds, radius=1). Opt-in via `?include=siblings`.
+    pub include_siblings: bool,
 }
 
 impl AncestorContextOpts {
@@ -356,6 +368,10 @@ impl AncestorContextOpts {
             include_effective_markers: includes.contains("effective_markers"),
             include_inbound_samples: includes.contains("inbound_samples"),
             inbound_sample_count: query.inbound_sample_count.min(50),
+            include_nav_classification: includes.contains("nav_classification"),
+            include_children_preview: includes.contains("children_preview"),
+            children_preview_count: query.children_preview_count.min(20),
+            include_siblings: includes.contains("siblings"),
         }
     }
 
@@ -365,10 +381,25 @@ impl AncestorContextOpts {
     /// `tests/symmetry_ancestor_context.rs` can use the canonical
     /// constructor handlers funnel through.
     pub fn from_raw(includes: &HashSet<String>, inbound_sample_count: usize) -> Self {
+        Self::from_raw_with_caps(includes, inbound_sample_count, DEFAULT_CHILDREN_PREVIEW_COUNT)
+    }
+
+    /// Construct from raw `?include=` + both cost caps. Lets search-layer
+    /// handlers thread `children_preview_count` through alongside
+    /// `inbound_sample_count`.
+    pub fn from_raw_with_caps(
+        includes: &HashSet<String>,
+        inbound_sample_count: usize,
+        children_preview_count: usize,
+    ) -> Self {
         Self {
             include_effective_markers: includes.contains("effective_markers"),
             include_inbound_samples: includes.contains("inbound_samples"),
             inbound_sample_count: inbound_sample_count.min(50),
+            include_nav_classification: includes.contains("nav_classification"),
+            include_children_preview: includes.contains("children_preview"),
+            children_preview_count: children_preview_count.min(20),
+            include_siblings: includes.contains("siblings"),
         }
     }
 
@@ -379,6 +410,14 @@ impl AncestorContextOpts {
         self
     }
 }
+
+/// Default cap for `children_preview` when the caller doesn't specify
+/// `children_preview_count`. Matches the inbound_samples default.
+pub const DEFAULT_CHILDREN_PREVIEW_COUNT: usize = 5;
+
+/// Max chars per child-preview content snippet. Matches inbound_samples
+/// truncation policy (~200 char wire footprint per item).
+pub const CHILDREN_PREVIEW_CONTENT_LIMIT: usize = 200;
 
 /// Pre-computed hints to skip walks/lookups inside `compute_ancestor_context`.
 ///
