@@ -22,7 +22,7 @@ export type { BatchBlockOp } from '../hooks/useBlockStore';
 import { paneStore as realPaneStore, type NavigationEntry } from '../hooks/usePaneStore';
 import type { Block } from '../lib/blockTypes';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
-import { sortPageNames, getPageNamesWithTimestamps, useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
+import { sortPageNames, useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { findPagesContainer, getPageTitle } from '../hooks/useBacklinkNavigation';
 import { resolveBlockIdPrefix } from '../lib/blockTypes';
 
@@ -153,12 +153,32 @@ interface WorkspaceProviderProps {
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const store = props.blockStore ?? realBlockStore;
 
+  // FLO-721/cowboy-audit-F5: cache pages:: container id once, then read by id.
+  // findPagesContainer iterates rootIds and checks each root's content — a broad
+  // reactive dep that refires whenever any root block's content changes. By
+  // separating the lookup into its own memo, downstream memos (pageNames,
+  // stubPageNameSet) only depend on this id + the container's childIds, not on
+  // every root block's content. Most edits don't touch root content, so this
+  // narrows refire frequency substantially.
+  const pagesContainerId = createMemo(() => {
+    const container = findPagesContainer();
+    return container?.id ?? null;
+  });
+
   // FLO-322: Singleton pageNames memo — one computation instead of N per BlockItem.
   // Previously each useWikilinkAutocomplete() created its own identical memo,
   // causing N×M recomputation on every block change (N blocks × M page lookups).
-  const pageNames = createMemo(() =>
-    sortPageNames(getPageNamesWithTimestamps(store))
-  );
+  const pageNames = createMemo(() => {
+    const containerId = pagesContainerId();
+    if (!containerId) return [];
+    const container = store.blocks[containerId];
+    if (!container) return [];
+    const pages = container.childIds
+      .map(id => store.blocks[id])
+      .filter(Boolean)
+      .map(b => ({ name: getPageTitle(b.content), updatedAt: b.updatedAt ?? 0 }));
+    return sortPageNames(pages);
+  });
 
   const pageNameSet = createMemo(() =>
     new Set(pageNames().map(n => n.toLowerCase()))
@@ -168,7 +188,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // (0 children, or single child with empty/whitespace content)
   const stubPageNameSet = createMemo(() => {
     const stubs = new Set<string>();
-    const container = findPagesContainer();
+    const containerId = pagesContainerId();
+    if (!containerId) return stubs;
+    const container = store.blocks[containerId];
     if (!container) return stubs;
     for (const childId of container.childIds) {
       const page = store.blocks[childId];
