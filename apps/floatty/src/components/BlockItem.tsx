@@ -225,6 +225,15 @@ export function BlockItem(props: BlockItemProps) {
   // would register N scroll listeners (one per visible BlockItem) for one
   // singleton open-state. Mirrors the FLO-322 pageNames lift.
 
+  // Singleton-aware popup gate: returns the autocomplete state only for the
+  // BlockItem that triggered the autocomplete (state.activeBlockId === props.id),
+  // null otherwise. Single accessor read per evaluation; the Show below mounts
+  // the popup component on exactly one BlockItem.
+  const autocompleteStateForThisBlock = createMemo(() => {
+    const acState = autocomplete.state();
+    return acState?.activeBlockId === props.id ? acState : null;
+  });
+
   // Shared chirp listener for inline door output (FM #9: cleanup on unmount/re-run)
   useDoorChirpListener(inlineDoorRef, {
     getBlockId: () => props.id,
@@ -1055,7 +1064,7 @@ export function BlockItem(props: BlockItemProps) {
               block that triggered the autocomplete — the controller is a
               singleton, so without this gate every visible BlockItem would
               mount the popup component (CodeRabbit found this on PR #299). */}
-          <Show when={autocomplete.state()?.activeBlockId === props.id ? autocomplete.state() : null}>
+          <Show when={autocompleteStateForThisBlock()}>
             {(acState) => (
               <WikilinkAutocomplete
                 state={acState()}
