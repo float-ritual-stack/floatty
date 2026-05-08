@@ -88,16 +88,21 @@ export function registerDataTools(server: McpServer) {
   // subsection calls out.
   server.tool(
     "expand_page",
-    "Open / load / fetch / view / read / expand a page's subtree by title (page name like 'FLO-679' or 'floatty'). Use when you have a page name and need its full subtree — content, children, structure. For block IDs use get_block; for full-text search use search_blocks. Returns tree (rendered string AND structured treeNodes array), tokenEstimate, blockCount, ancestorContext, and freshness (createdAt/updatedAt).",
+    "Open / load / fetch / view / read / expand a page's subtree by title (page name like 'FLO-679' or 'floatty'). Use when you have a page name and need its full subtree — content, children, structure. For block IDs use get_block; for full-text search use search_blocks. Returns tree (rendered string AND structured treeNodes array), tokenEstimate, blockCount, ancestorContext (with `kind`, `childrenPreview`, `siblings`, `effectiveMarkers` — heading-only-with-children blocks classified as `nav_node`, leaf headings as `leaf_marker`), and freshness (createdAt/updatedAt).",
     { title: z.string().describe("Page title to look up") },
     async ({ title }: { title: string }) => {
       try {
-        // include= is opt-in for the costlier fields; effective_markers is
-        // useful for navigating to a specific project page.
+        // include= opts into the navigation-layer surfaces:
+        //   effective_markers     — own + inherited markers with provenance
+        //   nav_classification    — kind: nav_node | content_block | leaf_marker
+        //   children_preview      — first 5 children (id + 200-char preview)
+        //   siblings              — prev/next sibling refs within parent
+        // Tier 1+2 of FLO-679 (PR #302 + #303). Default-on so agents
+        // see the rendering-legibility signals without per-call opt-in.
         const params = new URLSearchParams({
           prefix: title,
           limit: "5",
-          include: "effective_markers",
+          include: "effective_markers,nav_classification,children_preview,siblings",
         });
         const pagesRes = await floattyFetch<{ pages: PageSearchHit[] }>(
           `/api/v1/pages/search?${params}`,
@@ -182,7 +187,12 @@ export function registerDataTools(server: McpServer) {
     },
     async ({ blockId, includeTree = true }: { blockId: string; includeTree?: boolean }) => {
       try {
-        const includes = ["ancestors"];
+        // Tier 1+2 of FLO-679 (PR #302/#303) opt-ins are surfaced on every
+        // block-returning endpoint. Default-on for symmetry with search_blocks
+        // and get_inbound — the rendering-legibility signals are cheap relative
+        // to a tree fetch and let agents disambiguate nav-nodes vs content-blocks
+        // without a second call.
+        const includes = ["ancestors", "nav_classification", "children_preview", "siblings"];
         if (includeTree) {
           includes.push("tree");
           includes.push("token_estimate");
@@ -280,13 +290,15 @@ export function registerDataTools(server: McpServer) {
 
   // 3. search_blocks — full-text search across all blocks
   //
-  // Every hit carries `ancestorContext` (cheap fields always-on;
-  // effective_markers + inbound_samples opt-in via include=). Default
-  // include includes effective_markers so the search hit answers "which
-  // project does this hit belong to" without a follow-up call.
+  // Every hit carries `ancestorContext` (cheap fields always-on; nav-layer
+  // surfaces opt-in via include=). Default include opts into effective_markers
+  // (which-project), nav_classification (kind: nav_node|content_block|
+  // leaf_marker), children_preview (first 5 children), and siblings
+  // (prev/next refs) — agents see rendering-legibility signals + answer
+  // "which page does this hit belong to" without a follow-up call.
   server.tool(
     "search_blocks",
-    "Search / find / lookup / query / grep blocks by full-text content across the knowledge graph. Use when you don't have a block ID or page title and need to find blocks containing specific text. Returns matching blocks with breadcrumb context AND ancestorContext (nearestPageName, effectiveMarkers, inboundCount) — usually no follow-up call needed for orientation. Pass parentId to scope the search to a specific subtree (e.g. paginate within a large page). For backlinks use get_inbound; for known IDs use get_block.",
+    "Search / find / lookup / query / grep blocks by full-text content across the knowledge graph. Use when you don't have a block ID or page title and need to find blocks containing specific text. Returns matching blocks with breadcrumb context AND ancestorContext (nearestPageName, effectiveMarkers, inboundCount, **kind** [`nav_node`/`content_block`/`leaf_marker`], **childrenPreview** [first 5 children], **siblings** [prev/next]) — usually no follow-up call needed for orientation. Pass parentId to scope the search to a specific subtree (e.g. paginate within a large page). For backlinks use get_inbound; for known IDs use get_block.",
     {
       query: z.string().describe("Search query. Pass empty string with parentId to list-paginate a subtree by recency without keyword filtering."),
       limit: z
@@ -308,7 +320,19 @@ export function registerDataTools(server: McpServer) {
           limit: String(limit),
           include_breadcrumb: "true",
           include_metadata: "true",
-          include: "effective_markers",
+          // Tier 1+2 of FLO-679 (PR #302/#303):
+          //   effective_markers     → own + inherited project/marker provenance
+          //   nav_classification    → kind: nav_node | content_block | leaf_marker
+          //                            (Tier 1 of the doctrine — heading-only-with-
+          //                            children blocks tag as nav_node so renderers
+          //                            can preview their first child instead of
+          //                            stacking three identical "## arcs" hits)
+          //   children_preview      → first 5 children (id + 200-char preview)
+          //                            (Tier 2 — auto-expand affordance for nav-nodes)
+          //   siblings              → prev/next sibling refs within parent
+          // Cost: ~1KB/hit when children_preview fires. Acceptable for the
+          // navigation-legibility win.
+          include: "effective_markers,nav_classification,children_preview,siblings",
         });
         if (parentId !== undefined) params.set("parent_id", parentId);
 
@@ -357,7 +381,7 @@ export function registerDataTools(server: McpServer) {
   // `get_block` per result.
   server.tool(
     "get_inbound",
-    "Find backlinks / inbound links / references / what-links-here — blocks that link TO a target page via [[wikilinks]] (the inverse of an outlink lookup). Use to discover what references, connects to, or cites a page. Each result includes the block's markers, outgoing outlinks, timestamps, and outputType for further graph traversal and recency sorting.",
+    "Find backlinks / inbound links / references / what-links-here — blocks that link TO a target page via [[wikilinks]] (the inverse of an outlink lookup). Use to discover what references, connects to, or cites a page. Each result includes the block's markers, outgoing outlinks, timestamps, outputType for further graph traversal and recency sorting, AND ancestorContext (nearestPageName, effectiveMarkers, **kind** [`nav_node`/`content_block`/`leaf_marker`], **childrenPreview** [first 5 children for nav-nodes], **siblings** [prev/next]) so backlinks renderers can show heading-only-with-children inbound refs distinctly from content blocks.",
     {
       target: z.string().describe("Page or link name to find backlinks for"),
       limit: z
@@ -389,10 +413,23 @@ export function registerDataTools(server: McpServer) {
           limit: String(limit),
           include_breadcrumb: "true",
           include_metadata: "true",
-          // Match search_blocks: opt into effective_markers so inherited
-          // ancestor context surfaces on inbound hits too. Daddy's
-          // 2026-04-26 ancestor-context test pass flagged the gap.
-          include: "effective_markers",
+          // Match search_blocks: full nav-layer opt-in.
+          // Tier 1+2 of FLO-679 (PR #302/#303):
+          //   effective_markers     → own + inherited project/marker provenance
+          //   nav_classification    → kind: nav_node | content_block | leaf_marker
+          //                            (Tier 1 — three "## arcs" backlinks tag as
+          //                            nav_node + carry distinct subtreeSize, so
+          //                            backlink renderers can disambiguate
+          //                            visually instead of showing three identical
+          //                            "## arcs" rows)
+          //   children_preview      → first 5 children (id + 200-char preview)
+          //                            (Tier 2 — auto-expand the section header's
+          //                            top-of-content for inline preview without a
+          //                            follow-up get_block)
+          //   siblings              → prev/next sibling refs within parent
+          //                            (Tier 2 — adjacent context for backlink
+          //                            disambiguation)
+          include: "effective_markers,nav_classification,children_preview,siblings",
         });
         if (metaFilter === "with-meta") {
           params.set("has_markers", "true");
