@@ -859,6 +859,19 @@ describe('useBlockInput.handleKeyDown — lazy cursor snapshot', () => {
     expect(snapshotSpy).not.toHaveBeenCalled();
   });
 
+  // Regression-pin: Delete is adjacent to Backspace and the most likely key
+  // to grow a forward-merge consumer (e.g., delete-into-next-block at end of
+  // content). If a future change adds a `key === 'Delete'` branch in
+  // determineKeyAction that reads any cursor field, this test will fail —
+  // forcing the allowlist above to be updated alongside the new branch
+  // instead of silently regressing the perf invariant.
+  it('skips snapshot for Delete (no cursor-consuming branch today; pin against silent regression)', () => {
+    const { handleKeyDown, snapshotSpy } = setup();
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Delete' }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Delete', shiftKey: true }));
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
   it('TAKES snapshot for Enter (cursorOffset drives split / sibling-create)', () => {
     const { handleKeyDown, snapshotSpy } = setup();
     handleKeyDown(new KeyboardEvent('keydown', { key: 'Enter' }));
