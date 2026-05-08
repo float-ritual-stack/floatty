@@ -6,6 +6,31 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.14.4] - 2026-05-08
+
+Closes the deferred-item from v0.14.3's render-door projection-contract proposal AND opens the Tier 2 navigation surface to MCP consumers. Two user-visible improvements bundled because they surfaced from probing the same v0.14.3 release. Headline: agent-written `render:: {full JSON}` blocks no longer **visually overlap with their rendered door view** during normal use — selfRender doors now hide contentEditable by default and surface a clean derived title instead, with a per-block toggle to switch into source-edit mode. A 229-block one-shot migration ran against the live outline to compress legacy `render:: {json}` content into semantic titles in-place. Separately, the MCP wrappers in `outline-explorer` (`search_blocks`, `get_inbound`, `get_block`, `expand_page`) now opt into `nav_classification` / `children_preview` / `siblings` so agents see Tier 1+2 nav-layer signals (`kind`, prev/next, first-N children) the v0.14.3 server already emits — closing the wire-vs-wrapper gap a probe-test caught.
+
+### ✨ Features
+
+- **Generalized door-block title-mode** ([[PR #305]] / `5f08613` — `apps/floatty/src/lib/blockItemHelpers.ts`, `apps/floatty/src/components/BlockItem.tsx`) — extracted `deriveDoorTitle()` as a pure function in `blockItemHelpers.ts` (canonical resolution: content-as-title for new projection-contract blocks → `output.data.title` for legacy → `output.data.spec.title` synchronous fallback). `BlockItem.tsx`'s `renderTitle()` memo now delegates to it, generalizing the FLO-569 `isRenderTitleMode` mechanism so it fires for **every** door block with output (not just `render::`-prefixed content). ContentEditable hides by default; toggle button label updated to "Edit source" / "Show title" so it reads correctly for both new-path and legacy blocks. 12 pinned tests cover the contract.
+- **MCP wrappers opt into Tier 1+2 nav-layer surfaces** ([[PR #305]] / `5f08613` — `apps/outline-explorer/src/mcp/tools.ts`) — `search_blocks`, `get_inbound`, `get_block`, and `expand_page` now pass `include=effective_markers,nav_classification,children_preview,siblings`. Tool descriptions surface the new fields so agents discover them via natural-language tool-search. Live-verified the "## arcs" disambiguation case — three identical-content backlinks tag as `nav_node` with distinct `subtreeSize` (16/6/9) and one as `leaf_marker`. Closes the gap between the v0.14.3 server's wire data and what MCP consumers could see.
+
+### 🐛 Fixes
+
+- **Door-block visual cohabitation overlap eliminated** ([[PR #305]] / `5f08613` — `apps/floatty/src/components/BlockItem.tsx`, `apps/floatty/src/lib/blockItemHelpers.ts`) — selfRender doors used to stack contentEditable above + door view below, and when content was multiline (every legacy `render:: {full JSON}` block), the layers physically overlapped producing doubled/garbled text. The generalized title-mode hides contentEditable by default for door blocks with output. `trimStart()` in the legacy-shape detection ensures `'  render:: {...}'` (leading whitespace) routes through fallback arms instead of surfacing raw source as the "title" (CR-flagged Minor).
+- **`expand_page` MCP description matches actual response** ([[PR #305]] / `5f08613` — `apps/outline-explorer/src/mcp/tools.ts`) — description listed `blockCount` but payload returns `childCount` + `treeBlockCount` (CR-flagged Minor).
+- **Migration script defends against malformed API content** ([[PR #305]] / `5f08613` — `scripts/migrate-render-projection-contract.mjs`) — extracted `safeContent = full.content ?? ''` so a missing/null content field doesn't TypeError mid-loop after the backup is already written (Greptile P2).
+
+### 🧪 Tests
+
+- **12 new `deriveDoorTitle` tests** ([[PR #305]] / `5f08613` — `apps/floatty/src/lib/blockItemHelpers.test.ts`) — pin the contract across new-path, legacy, garbage-fallback, leading-whitespace, and null-block scenarios. 1309/1309 vitest passing.
+
+### 🛠 Migration
+
+- **One-shot legacy-render-block migration** ([[PR #305]] / `5f08613` — `scripts/migrate-render-projection-contract.mjs`) — walks the outline, finds blocks with `outputType === 'door'` and `content` starting with `render::`, and PATCHes content to a derived semantic title. Output (`output.data.spec`) untouched. Run against live release outline (port 8765 / v0.14.3): **229 blocks migrated, 12 skipped (no derivable title), 0 failed**. Backup at `/tmp/floatty-render-migration-2026-05-08-182602.json`. Closes the deferred follow-up from v0.14.3's PR #304 proposal doc.
+
+---
+
 ## [0.14.3] - 2026-05-08
 
 Render-door durability pass + ancestor-context Tier 2 opt-ins + backlinks structural-depth classification. Headline: agent-written `render:: {json}` blocks no longer **randomly fall back to displaying raw JSON during normal use** — five root causes ([[PR #304]]) collapsed under one "projection contract" doctrine where `content` carries semantic source and `output.data` carries the materialized projection. Frontend gets a fat-path auto-execute guard + idempotency check on `setBlockOutput`; API gains `output` / `outputType` / `outputStatus` on POST/PATCH so agents can write title-as-content + spec-as-output in one round-trip; MCP `add_block` / `patch_block` forwards those fields with cross-check validation; render-door's claude-p agent prompt is updated to default to one composed spec (Stack/Group/Tabs containers) and only reach for separate-block writes when the user explicitly asks. Tier 2 of [[FLO-679]] ships three navigation-layer opt-ins (`nav_classification`, `children_preview`, `siblings`) on every block-returning endpoint via the symmetry harness ([[PR #303]]). Backlinks gain Tier 1 structural-depth classification — heading-only-with-children vs leaf — so the `LinkedReferences` view can preview vs muted-render correctly ([[PR #302]]). Plus a docs grant for routine push + tauri:dev standing authorization ([[PR #301]]).
