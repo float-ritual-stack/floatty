@@ -63,6 +63,11 @@ pub struct BlockDto {
     /// Block output data (door envelope, eval result, etc.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<serde_json::Value>,
+    /// Block output status ("complete" / "running" / "error").
+    /// Mirrors the `outputStatus` Y.Doc field. Set via the matching
+    /// field on CreateBlockRequest / UpdateBlockRequest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_status: Option<String>,
     /// Navigation-layer surface — uniform across every block-returning
     /// endpoint. Populated by handler-side shaping helpers; left `None`
     /// when no fields would be set (e.g., a bare root block with no chain,
@@ -901,6 +906,7 @@ mod projection_injection_tests {
             updated_at: 0,
             output_type: Some("door".to_string()),
             output: Some(output),
+            output_status: None,
             ancestor_context: None,
         }
     }

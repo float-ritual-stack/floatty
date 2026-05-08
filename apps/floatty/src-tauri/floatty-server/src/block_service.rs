@@ -229,6 +229,11 @@ pub(crate) fn read_block_dto<T: ReadTxn>(
         None
     };
 
+    let output_status = block_map.get(txn, "outputStatus").and_then(|v| match v {
+        yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+        _ => None,
+    });
+
     let block_type = floatty_core::parse_block_type(&content);
 
     BlockDto {
@@ -244,6 +249,7 @@ pub(crate) fn read_block_dto<T: ReadTxn>(
         updated_at,
         output_type,
         output,
+        output_status,
         // Defaults to None — handler-side shaping helpers populate this
         // when the response surface calls for it. read_block_dto stays a
         // pure projection (no walks, no index reads).
@@ -1710,6 +1716,7 @@ fn create_block_inner(
         // post-create — agents wanting authoritative state must re-GET.
         output_type: req.output_type,
         output: req.output,
+        output_status: req.output_status,
         // Create response is the brand-new block — no ancestors yet (or one
         // shallow parent). Callers wanting context should re-GET.
         ancestor_context: None,
@@ -1850,6 +1857,7 @@ pub(crate) fn update_block(
         created_at,
         existing_output_type,
         existing_output,
+        existing_output_status,
     ) = {
         let txn = doc_guard.transact();
         let blocks_map = txn
@@ -1917,6 +1925,11 @@ pub(crate) fn update_block(
             let existing_output = block_map
                 .get(&txn, "output")
                 .map(|v| api::yrs_out_to_json(v, &txn));
+            let existing_output_status =
+                block_map.get(&txn, "outputStatus").and_then(|v| match v {
+                    yrs::Out::Any(yrs::Any::String(s)) => Some(s.to_string()),
+                    _ => None,
+                });
 
             (
                 parent_id,
@@ -1927,6 +1940,7 @@ pub(crate) fn update_block(
                 created_at,
                 existing_output_type,
                 existing_output,
+                existing_output_status,
             )
         } else {
             return Err(ApiError::NotFound(id));
@@ -2253,6 +2267,7 @@ pub(crate) fn update_block(
     // Compose the final output fields — patch fields win over existing.
     let final_output_type = req.output_type.clone().or(existing_output_type);
     let final_output = req.output.clone().or(existing_output);
+    let final_output_status = req.output_status.clone().or(existing_output_status);
 
     Ok(BlockDto {
         id: id.clone(),
@@ -2269,6 +2284,7 @@ pub(crate) fn update_block(
         // this PATCH (existing fields preserved when not patched).
         output_type: final_output_type,
         output: final_output,
+        output_status: final_output_status,
         // Update response — caller should re-GET if they need recomputed
         // ancestor context (Tantivy index is async).
         ancestor_context: None,

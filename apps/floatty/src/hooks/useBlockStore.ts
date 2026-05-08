@@ -854,8 +854,10 @@ function createBlockStore() {
    * (showing raw `render:: {json}` content for agent-written blocks)
    * bleeds through. The deep-equality skip eliminates the churn.
    *
-   * `JSON.stringify` is fine for deep-equality here: door envelopes
-   * are JSON-serialisable by construction, no Dates, no Maps, no cycles.
+   * `deepEqualJsonLike` is the canonical JSON-shape deep-equality helper
+   * in this module. It's key-order insensitive (so `{a:1,b:2}` and
+   * `{b:2,a:1}` are equal — JSON.stringify isn't), and it matches the
+   * door envelope contract (JSON-only, no Dates, no Maps, no cycles).
    */
   const setBlockOutput = (id: string, output: unknown, outputType: string, status: Block['outputStatus'] = 'complete') => {
     if (!_doc) { warnDocNotReady('setBlockOutput'); return; }
@@ -867,7 +869,7 @@ function createBlockStore() {
         const existingOutput = getValue(blockData, 'output');
         const existingOutputType = getValue(blockData, 'outputType');
         const existingStatus = getValue(blockData, 'outputStatus');
-        const sameOutput = JSON.stringify(existingOutput) === JSON.stringify(output);
+        const sameOutput = deepEqualJsonLike(existingOutput, output);
         const sameType = existingOutputType === outputType;
         const sameStatus = existingStatus === status;
         if (sameOutput && sameType && sameStatus) {

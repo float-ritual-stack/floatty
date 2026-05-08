@@ -119,6 +119,7 @@ fn read_skeletal_dto<T: ReadTxn>(blocks_map: &yrs::MapRef, txn: &T, id: &str) ->
         updated_at: 0,
         output_type: None,
         output: None,
+        output_status: None,
         ancestor_context: None,
     }
 }

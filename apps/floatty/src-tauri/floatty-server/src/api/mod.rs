@@ -106,6 +106,9 @@ pub(crate) fn json_value_to_yrs_any(value: serde_json::Value) -> yrs::Any {
             } else if let Some(f) = n.as_f64() {
                 yrs::Any::Number(f)
             } else {
+                // serde_json numbers are always i64/u64/f64; this branch is
+                // unreachable in practice. Panic in debug, degrade in release.
+                debug_assert!(false, "unrepresentable serde_json::Number: {n}");
                 yrs::Any::Number(0.0)
             }
         }
@@ -3596,6 +3599,7 @@ mod tests {
         assert_eq!(created["outputType"], "door");
         // Echoed back so agents can confirm without re-GET.
         assert_eq!(created["output"], envelope);
+        assert_eq!(created["outputStatus"], "complete");
 
         // GET should round-trip the envelope back through yrs storage —
         // proves json_value_to_yrs_any + yrs_out_to_json are inverses for
@@ -3606,6 +3610,7 @@ mod tests {
         assert_eq!(get_status, StatusCode::OK);
         assert_eq!(fetched["outputType"], "door");
         assert_eq!(fetched["output"], envelope);
+        assert_eq!(fetched["outputStatus"], "complete");
     }
 
     #[tokio::test]
