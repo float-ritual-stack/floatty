@@ -33,12 +33,17 @@ pub struct PageSearchQuery {
     #[serde(default)]
     pub fuzzy: bool,
     /// Comma-separated `?include=` directives for AncestorContext.
-    /// Recognised: `effective_markers`, `inbound_samples`. Always-on cheap
+    /// Recognised: `effective_markers`, `inbound_samples`,
+    /// `nav_classification`, `children_preview`, `siblings`. Always-on cheap
     /// fields populate regardless. Stubs (no block_id) skip ancestor_context.
     #[serde(default)]
     pub include: Option<String>,
     #[serde(default)]
     pub inbound_sample_count: Option<usize>,
+    /// Cap for `ancestorContext.childrenPreview` (default 5; max 20). Only
+    /// honoured when `include=children_preview`.
+    #[serde(default)]
+    pub children_preview_count: Option<usize>,
 }
 
 fn default_limit() -> usize {
@@ -100,7 +105,8 @@ pub struct BlockSearchQuery {
     #[serde(default)]
     pub exclude_types: Option<String>,
     /// Comma-separated `?include=` directives for AncestorContext.
-    /// Recognised: `effective_markers`, `inbound_samples`. Cheap fields are
+    /// Recognised: `effective_markers`, `inbound_samples`,
+    /// `nav_classification`, `children_preview`, `siblings`. Cheap fields are
     /// always-on regardless of this parameter.
     #[serde(default)]
     pub include: Option<String>,
@@ -108,6 +114,10 @@ pub struct BlockSearchQuery {
     /// `include=inbound_samples`.
     #[serde(default)]
     pub inbound_sample_count: Option<usize>,
+    /// Cap for `ancestorContext.childrenPreview` (default 5; max 20). Only
+    /// honoured when `include=children_preview`.
+    #[serde(default)]
+    pub children_preview_count: Option<usize>,
 }
 
 fn default_search_limit() -> usize {
@@ -210,9 +220,12 @@ async fn search_pages(
         .read()
         .map_err(|_| ApiError::LockPoisoned)?;
     let includes = crate::block_service::parse_includes(&query.include);
-    let ac_opts = crate::block_service::AncestorContextOpts::from_raw(
+    let ac_opts = crate::block_service::AncestorContextOpts::from_raw_with_caps(
         &includes,
         query.inbound_sample_count.unwrap_or(5),
+        query
+            .children_preview_count
+            .unwrap_or(crate::block_service::DEFAULT_CHILDREN_PREVIEW_COUNT),
     );
 
     let doc = state.store.doc();

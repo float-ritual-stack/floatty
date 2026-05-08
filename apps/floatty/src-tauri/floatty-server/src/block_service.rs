@@ -4,11 +4,12 @@
 //! wrappers that call BlockService and format the HTTP response.
 
 use crate::api::{
-    self, AncestorContext, ApiError, BlockDto, BlockRef, BlockSearchHit, BlockSearchQuery,
-    BlockSearchResponse, BlocksResponse, EffectiveMarkerDto, InboundSampleDto, InheritedMarkerDto,
-    MarkerSource, SiblingContext, TokenEstimate, TreeNode,
+    self, AncestorContext, ApiError, BlockDto, BlockKind, BlockRef, BlockSearchHit,
+    BlockSearchQuery, BlockSearchResponse, BlocksResponse, EffectiveMarkerDto, InboundSampleDto,
+    InheritedMarkerDto, MarkerSource, SiblingContext, TokenEstimate, TreeNode,
 };
 use crate::WsBroadcaster;
+use floatty_core::block::{parse_block_type, BlockType};
 use floatty_core::events::BlockChange;
 use floatty_core::hooks::{tantivy_index, InheritanceIndex, PageNameIndex};
 use floatty_core::projections::{walk_ancestors, AncestorWalk, WalkTermination, YDocParentLookup};
@@ -345,6 +346,18 @@ pub struct AncestorContextOpts {
     pub include_inbound_samples: bool,
     /// Override for the inbound-samples cap; min(value, 50) at use site.
     pub inbound_sample_count: usize,
+    /// Populate `kind` (BlockKind classification — nav_node / content_block /
+    /// leaf_marker). Opt-in via `?include=nav_classification`.
+    pub include_nav_classification: bool,
+    /// Populate `childrenPreview` (first N child BlockRefs with content
+    /// truncated). Opt-in via `?include=children_preview`. Default 5; cap
+    /// honoured from `children_preview_count`.
+    pub include_children_preview: bool,
+    /// Override for the children-preview cap; min(value, 20) at use site.
+    pub children_preview_count: usize,
+    /// Populate `siblings` (prev/next sibling BlockRefs via parent's
+    /// childIds, radius=1). Opt-in via `?include=siblings`.
+    pub include_siblings: bool,
 }
 
 impl AncestorContextOpts {
@@ -356,6 +369,10 @@ impl AncestorContextOpts {
             include_effective_markers: includes.contains("effective_markers"),
             include_inbound_samples: includes.contains("inbound_samples"),
             inbound_sample_count: query.inbound_sample_count.min(50),
+            include_nav_classification: includes.contains("nav_classification"),
+            include_children_preview: includes.contains("children_preview"),
+            children_preview_count: query.children_preview_count.min(20),
+            include_siblings: includes.contains("siblings"),
         }
     }
 
@@ -365,10 +382,29 @@ impl AncestorContextOpts {
     /// `tests/symmetry_ancestor_context.rs` can use the canonical
     /// constructor handlers funnel through.
     pub fn from_raw(includes: &HashSet<String>, inbound_sample_count: usize) -> Self {
+        Self::from_raw_with_caps(
+            includes,
+            inbound_sample_count,
+            DEFAULT_CHILDREN_PREVIEW_COUNT,
+        )
+    }
+
+    /// Construct from raw `?include=` + both cost caps. Lets search-layer
+    /// handlers thread `children_preview_count` through alongside
+    /// `inbound_sample_count`.
+    pub fn from_raw_with_caps(
+        includes: &HashSet<String>,
+        inbound_sample_count: usize,
+        children_preview_count: usize,
+    ) -> Self {
         Self {
             include_effective_markers: includes.contains("effective_markers"),
             include_inbound_samples: includes.contains("inbound_samples"),
             inbound_sample_count: inbound_sample_count.min(50),
+            include_nav_classification: includes.contains("nav_classification"),
+            include_children_preview: includes.contains("children_preview"),
+            children_preview_count: children_preview_count.min(20),
+            include_siblings: includes.contains("siblings"),
         }
     }
 
@@ -379,6 +415,14 @@ impl AncestorContextOpts {
         self
     }
 }
+
+/// Default cap for `children_preview` when the caller doesn't specify
+/// `children_preview_count`. Matches the inbound_samples default.
+pub const DEFAULT_CHILDREN_PREVIEW_COUNT: usize = 5;
+
+/// Max chars per child-preview content snippet. Matches inbound_samples
+/// truncation policy (~200 char wire footprint per item).
+pub const CHILDREN_PREVIEW_CONTENT_LIMIT: usize = 200;
 
 /// Pre-computed hints to skip walks/lookups inside `compute_ancestor_context`.
 ///
@@ -549,6 +593,96 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         &hints,
     );
 
+    // Read child_ids once if either toggle wants them. Both nav_classification
+    // (needs has_children) AND children_preview (needs first-N ids) consume
+    // child_ids for the same block — sharing the read avoids the redundant
+    // Y.Doc walk flagged in PR #303 review.
+    let child_ids: Option<Vec<String>> =
+        if opts.include_nav_classification || opts.include_children_preview {
+            Some(read_block_child_ids(blocks_map, txn, block_id))
+        } else {
+            None
+        };
+
+    // BlockKind classification — opt-in. Reads block content + derives
+    // has_children from the shared child_ids; reuses parse_block_type from
+    // floatty-core so heading detection has ONE Rust source of truth
+    // (architecture-bypass audit recorded in the plan §"Symmetry check").
+    let kind = if opts.include_nav_classification {
+        let content = read_block_content(blocks_map, txn, block_id).unwrap_or_default();
+        // child_ids is Some on this branch by the read above.
+        let has_children = child_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+        Some(classify_block_kind(&content, has_children))
+    } else {
+        None
+    };
+
+    // Children preview — opt-in. Cap-aware: reads content for ONLY the first
+    // N children, NOT all of them then truncate. PR #303 review (CodeRabbit
+    // Major + Greptile P2) caught the prior version using `get_children_refs`
+    // which materialised every child's content before `.take(cap)` — for a
+    // nav-node with hundreds of children, opting into children_preview on a
+    // search query with M hits triggered `total_children × M` Y.Doc reads
+    // instead of the documented `cap × M`.
+    let children_preview = if opts.include_children_preview {
+        let cap = if opts.children_preview_count == 0 {
+            DEFAULT_CHILDREN_PREVIEW_COUNT
+        } else {
+            opts.children_preview_count
+        };
+        // child_ids is Some on this branch by the read above.
+        child_ids
+            .as_ref()
+            .map(|ids| {
+                ids.iter()
+                    .take(cap)
+                    .map(|id| {
+                        let mut content =
+                            read_block_content(blocks_map, txn, id).unwrap_or_default();
+                        if content.len() > CHILDREN_PREVIEW_CONTENT_LIMIT {
+                            // UTF-8-safe truncation: keep chars whose ENTIRE
+                            // byte range fits under the limit. A char
+                            // starting before the limit can extend past it
+                            // (e.g. 3-byte CJK at byte 198 spans 198..201)
+                            // — those must be dropped.
+                            let safe_end = content
+                                .char_indices()
+                                .take_while(|(i, c)| {
+                                    i + c.len_utf8() <= CHILDREN_PREVIEW_CONTENT_LIMIT
+                                })
+                                .last()
+                                .map(|(i, c)| i + c.len_utf8())
+                                .unwrap_or(0);
+                            content.truncate(safe_end);
+                        }
+                        BlockRef {
+                            id: id.clone(),
+                            content,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Sibling preview — opt-in. Reuses get_siblings (radius=1) so prev/next
+    // surfaces with the same SiblingContext DTO as the existing per-singleton
+    // `/blocks/:id?include=siblings` path. Two surfaces, one helper. Returns
+    // None when the block has no parent (root) — empty before+after on a
+    // root would be misleading.
+    let siblings = if opts.include_siblings {
+        let parent_id = read_block_parent_id(blocks_map, txn, block_id);
+        if parent_id.is_some() {
+            Some(get_siblings(blocks_map, txn, block_id, 1))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let ctx = AncestorContext {
         nearest_page_block_id,
         nearest_page_name,
@@ -558,12 +692,51 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         subtree_size,
         inbound_count,
         inbound_samples,
+        kind,
+        children_preview,
+        siblings,
     };
 
     if ctx.is_empty() {
         None
     } else {
         Some(ctx)
+    }
+}
+
+/// Classify a block by structural shape — `nav_node` (heading-only with
+/// children), `leaf_marker` (heading-only without children), or
+/// `content_block` (anything else).
+///
+/// Reuses `parse_block_type` from `floatty-core::block` for heading
+/// detection. The `heading_only` check (line-counting tail-trim) is the
+/// only piece this function adds beyond what `parse_block_type` already
+/// does — `parse_block_type` only categorizes the first-line prefix,
+/// doesn't tell you whether prose follows.
+///
+/// Mirror of `classifyBacklink` in `apps/floatty/src/lib/backlinkClassify.ts`.
+/// PR-A's vitest fixture in `apps/floatty/src/lib/backlinkClassify.test.ts`
+/// is the cross-implementation parity table — drift between sides is
+/// detected by re-running the matching fixture against either implementation.
+///
+/// Semantic note: leaf_marker requires heading_only too, NOT just
+/// `(heading + no_children)`. A heading WITH prose is a content block
+/// whether or not it has children — the prose IS the content. PR-A's
+/// vitest run on 2026-05-08 caught this rule needing tightening.
+pub fn classify_block_kind(content: &str, has_children: bool) -> BlockKind {
+    let block_type = parse_block_type(content);
+    let is_heading = matches!(block_type, BlockType::H1 | BlockType::H2 | BlockType::H3);
+
+    let heading_only = is_heading && {
+        // Everything after the first line, trim, see if anything's left.
+        let after_first = content.split_once('\n').map(|(_, rest)| rest).unwrap_or("");
+        after_first.trim().is_empty()
+    };
+
+    match (heading_only, has_children) {
+        (true, true) => BlockKind::NavNode,
+        (true, false) => BlockKind::LeafMarker,
+        _ => BlockKind::ContentBlock,
     }
 }
 
@@ -2167,7 +2340,17 @@ pub(crate) fn search_blocks(
     let want_metadata = query.include_metadata.unwrap_or(false);
     let includes = parse_includes(&query.include);
     let inbound_sample_count = query.inbound_sample_count.unwrap_or(5);
-    let ac_opts = AncestorContextOpts::from_raw(&includes, inbound_sample_count);
+    let children_preview_count = query
+        .children_preview_count
+        .unwrap_or(DEFAULT_CHILDREN_PREVIEW_COUNT);
+    // PR #303 review: search path was using from_raw, which silently ignored
+    // children_preview_count from the query. from_raw_with_caps threads the
+    // cap through symmetrically with the singleton path.
+    let ac_opts = AncestorContextOpts::from_raw_with_caps(
+        &includes,
+        inbound_sample_count,
+        children_preview_count,
+    );
 
     // Hydrate content from Y.Doc for each hit. Single read txn for the
     // whole batch — cheap, no lock thrash.

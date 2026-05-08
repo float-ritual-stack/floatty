@@ -115,7 +115,16 @@ Wire shape (camelCase JSON):
     ],
     "inboundSamples": [
       { "blockId": "src-uuid", "content": "see [[FLO-679]] for context" }
-    ]
+    ],
+    "kind": "nav_node",
+    "childrenPreview": [
+      { "id": "child-uuid-1", "content": "first child preview, truncated…" },
+      { "id": "child-uuid-2", "content": "second child preview" }
+    ],
+    "siblings": {
+      "before": [{ "id": "prev-uuid", "content": "prev sibling content" }],
+      "after":  [{ "id": "next-uuid", "content": "next sibling content" }]
+    }
   }
 }
 ```
@@ -134,6 +143,22 @@ Field semantics:
   (1000); use as a "navigate vs. read" hint.
 - `inboundCount` is how many blocks point at this block's nearest page —
   load-bearing-block signal.
+- `kind` is a navigation-layer projection over content + structure
+  (`nav_node` / `content_block` / `leaf_marker`). Derived via
+  `classify_block_kind` (which reuses `parse_block_type` from
+  `floatty-core::block`); mirrors `classifyBacklink` in
+  `apps/floatty/src/lib/backlinkClassify.ts`. NOT load-bearing for
+  `is_empty()` — bare-root with `kind` alone still ships as `None`.
+- `childrenPreview` is the first N children as `BlockRef`s with
+  content truncated to 200 bytes (UTF-8-safe — chars whose entire byte
+  range fits under the limit are kept; a char starting under-limit but
+  extending past it is dropped). Recursive classification is
+  intentionally NOT carried — clients re-classify each preview locally
+  if `nav_classification` is also opted in.
+- `siblings` is the prev/next preview within the parent's `childIds`
+  via `get_siblings(radius=1)`. Same `SiblingContext` DTO as the
+  per-singleton `/blocks/:id?include=siblings` field. Returns `null`
+  for root blocks (no parent).
 
 Cost-tier opt-ins (use `?include=` on search/presence; always-on for `/blocks/:id`):
 
@@ -141,6 +166,9 @@ Cost-tier opt-ins (use `?include=` on search/presence; always-on for `/blocks/:i
 |---|---|---|
 | `effective_markers` | Own + inherited markers with provenance | InheritanceIndex lookup |
 | `inbound_samples` | Top-N source-block previews (default 5, `&inbound_sample_count=N`) | Reverse-index walk |
+| `nav_classification` | Block's `kind` (`nav_node` / `content_block` / `leaf_marker`) | One yrs `content` read + child-list-empty check (~100ns) |
+| `children_preview` | First N child block_id+content (truncated to 200 bytes, UTF-8-safe) | N×1 yrs Map lookup; default 5, cap 20. ~1KB/hit when N=5 (`&children_preview_count=N`) |
+| `siblings` | Prev/next sibling `BlockRef`s within parent's `childIds` | Two yrs lookups via parent's `child_ids`; ~200B/hit |
 
 Endpoints whose response is `None`/absent for `ancestorContext`:
 

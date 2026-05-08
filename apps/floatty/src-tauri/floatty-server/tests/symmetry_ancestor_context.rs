@@ -48,10 +48,11 @@
 //! etc.) which already pass through `compute_ancestor_context`.
 
 use floatty_core::{InheritanceIndex, InheritedMarker, PageNameIndex};
-use floatty_server::api::{AncestorContext, BlockDto};
+use floatty_server::api::{AncestorContext, BlockDto, BlockKind};
 use floatty_server::block_service::{
-    attach_ancestor_context, compute_ancestor_context, compute_ancestor_context_with_hints,
-    parse_includes, shape_search_hit, AncestorContextHints, AncestorContextOpts,
+    attach_ancestor_context, classify_block_kind, compute_ancestor_context,
+    compute_ancestor_context_with_hints, parse_includes, shape_search_hit, AncestorContextHints,
+    AncestorContextOpts,
 };
 use std::collections::HashSet;
 use yrs::{Any, ArrayPrelim, Doc, Map, ReadTxn, Transact, WriteTxn};
@@ -521,6 +522,37 @@ fn parse_includes_handles_whitespace_and_multiples() {
     );
 }
 
+/// CONTRACT 8b (PR #303 review — CodeRabbit Major): `from_raw_with_caps`
+/// threads `children_preview_count` through and caps it at 20. The search-
+/// blocks path was using `from_raw` which ignored the caller's
+/// `children_preview_count` value, leaving the singleton path
+/// (`from_query` → cap respected) and search path asymmetric.
+///
+/// This test locks both the threading AND the cap. The actual symmetry
+/// fix lives at the `search_blocks` call site swap from `from_raw` →
+/// `from_raw_with_caps`; this test catches a regression that swapped it
+/// back.
+#[test]
+fn from_raw_with_caps_threads_children_preview_count() {
+    let mut includes = HashSet::new();
+    includes.insert("children_preview".to_string());
+
+    // Caller-supplied cap honoured.
+    let opts = AncestorContextOpts::from_raw_with_caps(&includes, 5, 12);
+    assert!(opts.include_children_preview);
+    assert_eq!(
+        opts.children_preview_count, 12,
+        "children_preview_count threaded through from_raw_with_caps"
+    );
+
+    // Cap at 20 — protects against per-hit cost blowup on broad searches.
+    let opts_huge = AncestorContextOpts::from_raw_with_caps(&includes, 5, 999);
+    assert_eq!(
+        opts_huge.children_preview_count, 20,
+        "children_preview_count capped at 20 regardless of caller"
+    );
+}
+
 /// CONTRACT 9: empty `ancestor_block_ids` for a root (no chain) does NOT
 /// trigger the rootmost-first reversal incorrectly — empty stays empty,
 /// not `vec![""]` or panic. Edge-case for the reversal logic.
@@ -844,6 +876,431 @@ fn shape_search_hit_without_blocks_map_defaults_timestamp_fields() {
     assert!(
         !json.contains("\"outputType\""),
         "skip_serializing_if drops None outputType: {json}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Backlinks legibility — nav_classification opt-in (PR-B Tier 2A)
+// ---------------------------------------------------------------------------
+
+/// CONTRACT 11: `kind` is opt-in via `?include=nav_classification`. Without
+/// the directive, `kind` is None even for a heading-shaped block. With the
+/// directive, the field populates with the classification derived from
+/// content-shape + child-presence.
+///
+/// `is_empty()` exclusion (mirrors subtree_size): a bare-root block with
+/// only `kind` populated should still return `None` from
+/// `compute_ancestor_context` — kind is not a navigation signal on its own.
+/// This test exercises a block with a real chain so the ctx surfaces and
+/// `kind` rides along, NOT a bare root that would be `None` regardless.
+#[test]
+fn nav_classification_opt_in_respected() {
+    // root → leaf, where leaf has heading-shaped content.
+    let doc = build_doc(&[
+        ("root", None, "root", &[]),
+        ("leaf", Some("root"), "## arcs", &[]),
+    ]);
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+    let dto = read_skeletal_dto(&blocks_map, &txn, "leaf");
+
+    // GATE OFF: default opts → no `nav_classification` directive → kind None.
+    let ctx_off = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        AncestorContextOpts::default(),
+    )
+    .expect("leaf has chain → some ctx");
+    assert_eq!(
+        ctx_off.kind, None,
+        "without `?include=nav_classification`, kind stays None — \
+         even when the block content is heading-shaped"
+    );
+
+    // GATE ON: opts include `nav_classification` → kind populated.
+    let mut includes = HashSet::new();
+    includes.insert("nav_classification".to_string());
+    let opts_on = AncestorContextOpts::from_raw(&includes, 5);
+    let ctx_on = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "leaf",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("leaf has chain → some ctx");
+    // "## arcs" with no children → leaf_marker (heading-only, no kids).
+    assert_eq!(
+        ctx_on.kind,
+        Some(BlockKind::LeafMarker),
+        "with `?include=nav_classification`, kind classifies the block — \
+         heading-only + no children → leaf_marker"
+    );
+}
+
+/// `classify_block_kind` direct unit tests. Mirror the 6-row fixture in
+/// `apps/floatty/src/lib/backlinkClassify.test.ts` so cross-implementation
+/// drift is detected by re-running the matching fixture against either side.
+#[test]
+fn classify_block_kind_fixture_parity() {
+    // Same rows as the TS test's `cross-implementation parity fixture`.
+    // Order matters — drift is detected by index match.
+    let fixtures: &[(&str, bool, BlockKind)] = &[
+        ("## arcs", true, BlockKind::NavNode),
+        ("## empty", false, BlockKind::LeafMarker),
+        ("## arcs\nbody", true, BlockKind::ContentBlock),
+        ("plain content", true, BlockKind::ContentBlock),
+        ("", false, BlockKind::ContentBlock),
+        ("## bones\n\n", true, BlockKind::NavNode),
+    ];
+
+    for (idx, (content, has_children, expected)) in fixtures.iter().enumerate() {
+        let actual = classify_block_kind(content, *has_children);
+        assert_eq!(
+            actual, *expected,
+            "row {idx}: classify_block_kind({content:?}, has_children={has_children}) \
+             expected {expected:?}, got {actual:?}. Cross-implementation drift with \
+             apps/floatty/src/lib/backlinkClassify.test.ts — re-run that test for the \
+             matching row to identify which side moved."
+        );
+    }
+}
+
+/// Edge case: heading WITH prose + no children → content_block (NOT
+/// leaf_marker). Caught during PR-A vitest run on 2026-05-08 — the rule
+/// needed tightening from `(heading + no children → leaf)` to
+/// `(heading_only + no children → leaf)`. Documented in
+/// `block_service.rs::classify_block_kind` doc comment.
+#[test]
+fn classify_block_kind_heading_with_body_no_children_is_content() {
+    assert_eq!(
+        classify_block_kind("## arcs\nbody text", false),
+        BlockKind::ContentBlock,
+        "heading + body + no children must be content_block — the prose IS \
+         the content. A too-greedy `(heading + !has_children → leaf_marker)` \
+         rule mis-classifies this as leaf_marker."
+    );
+}
+
+/// CONTRACT 12: `children_preview` is opt-in via
+/// `?include=children_preview`. Without the directive, `children_preview`
+/// is empty (Vec::is_empty drops it from the wire). With the directive,
+/// the field populates with the first N children as `BlockRef`s. The cap
+/// `&children_preview_count=N` is honoured (capped at 20).
+///
+/// Tests three branches:
+/// 1. gate off → empty
+/// 2. gate on, N=2 → exactly 2 children, content present
+/// 3. gate on, N=999 → capped at 20 by AncestorContextOpts::from_query
+///    constructor (caller can't bypass the cost-cap by passing huge N)
+#[test]
+fn children_preview_opt_in_and_cap_respected() {
+    // Build a parent with 25 children so the cap-at-20 branch has room.
+    let mut seeds_owned: Vec<(String, Option<String>, String, Vec<String>)> = Vec::new();
+    seeds_owned.push(("root".to_string(), None, "root".to_string(), vec![]));
+    seeds_owned.push((
+        "parent".to_string(),
+        Some("root".to_string()),
+        "parent".to_string(),
+        vec![],
+    ));
+    for i in 0..25 {
+        seeds_owned.push((
+            format!("c{}", i),
+            Some("parent".to_string()),
+            format!("child {} content", i),
+            vec![],
+        ));
+    }
+    let seeds: Vec<Seed<'_>> = seeds_owned
+        .iter()
+        .map(|(id, p, c, _)| (id.as_str(), p.as_deref(), c.as_str(), &[][..]))
+        .collect();
+    let doc = build_doc(&seeds);
+    // Wire children into parent's childIds Y.Array. build_doc sets each block
+    // to empty childIds — patch parent's childIds to include c0..c24 so
+    // get_children_refs sees them.
+    {
+        let mut txn = doc.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let parent_map: yrs::MapRef = blocks.get_or_init(&mut txn, "parent");
+        let child_id_strs: Vec<Any> = (0..25)
+            .map(|i| Any::String(format!("c{}", i).into()))
+            .collect();
+        parent_map.insert(&mut txn, "childIds", ArrayPrelim::from(child_id_strs));
+    }
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+    let dto = read_skeletal_dto(&blocks_map, &txn, "parent");
+
+    // Branch 1: gate off → empty.
+    let ctx_off = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "parent",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        AncestorContextOpts::default(),
+    )
+    .expect("parent has chain → some ctx");
+    assert!(
+        ctx_off.children_preview.is_empty(),
+        "without `?include=children_preview`, the field is empty"
+    );
+
+    // Branch 2: gate on, N=2 → exactly 2 children, content non-empty.
+    let mut includes = HashSet::new();
+    includes.insert("children_preview".to_string());
+    let opts_n2 = AncestorContextOpts::from_raw_with_caps(&includes, 5, 2);
+    let ctx_n2 = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "parent",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts_n2,
+    )
+    .expect("parent has chain → some ctx");
+    assert_eq!(
+        ctx_n2.children_preview.len(),
+        2,
+        "N=2 returns exactly 2 children"
+    );
+    assert_eq!(
+        ctx_n2.children_preview[0].id, "c0",
+        "first child preserves childIds order"
+    );
+    assert_eq!(
+        ctx_n2.children_preview[0].content, "child 0 content",
+        "content under truncation cap survives intact"
+    );
+
+    // Branch 3: gate on, N=999 → capped at 20 by from_raw_with_caps.
+    let opts_huge = AncestorContextOpts::from_raw_with_caps(&includes, 5, 999);
+    let ctx_huge = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "parent",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts_huge,
+    )
+    .expect("parent has chain → some ctx");
+    assert_eq!(
+        ctx_huge.children_preview.len(),
+        20,
+        "N=999 capped at 20 — protects against per-hit cost blowup on broad searches"
+    );
+}
+
+/// CONTRACT 12b: content truncation at CHILDREN_PREVIEW_CONTENT_LIMIT (200).
+/// Long child content gets sliced UTF-8-safely; short content survives intact.
+#[test]
+fn children_preview_truncates_long_content_utf8_safe() {
+    // Content with multibyte chars near the 200-byte boundary.
+    let long_content = "x".repeat(195) + "你好世界"; // 195 + 12 bytes (4 chars × 3) = 207 bytes
+    let doc = build_doc(&[
+        ("root", None, "root", &[]),
+        ("parent", Some("root"), "parent", &[]),
+        ("only_child", Some("parent"), &long_content, &[]),
+    ]);
+    {
+        let mut txn = doc.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let parent_map: yrs::MapRef = blocks.get_or_init(&mut txn, "parent");
+        let child_ids: Vec<Any> = vec![Any::String("only_child".into())];
+        parent_map.insert(&mut txn, "childIds", ArrayPrelim::from(child_ids));
+    }
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+    let dto = read_skeletal_dto(&blocks_map, &txn, "parent");
+
+    let mut includes = HashSet::new();
+    includes.insert("children_preview".to_string());
+    let opts = AncestorContextOpts::from_raw_with_caps(&includes, 5, 5);
+    let ctx = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "parent",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts,
+    )
+    .expect("parent has chain → some ctx");
+
+    let preview = &ctx.children_preview[0];
+    assert!(
+        preview.content.len() <= 200,
+        "truncated to ≤ 200 bytes (got {})",
+        preview.content.len()
+    );
+    // Result must be valid UTF-8 (no half-character splits) — implicit via
+    // String type, but assert via roundtrip just to make the contract loud.
+    let _: &str = preview.content.as_str();
+}
+
+/// CONTRACT 13: `siblings` is opt-in via `?include=siblings`. Without
+/// the directive, `siblings` is None. With the directive, the field
+/// populates with prev/next siblings (radius=1) via `get_siblings` —
+/// the SAME helper that powers `/blocks/:id?include=siblings`, so both
+/// surfaces have identical SiblingContext shape by construction.
+///
+/// Edge cases verified:
+/// - root block (no parent) → siblings None even with gate on
+/// - middle child → before+after both populated
+/// - first child → before empty, after populated
+/// - last child → before populated, after empty
+#[test]
+fn siblings_opt_in_respected() {
+    // root → parent → [c0, c1, c2]
+    let doc = build_doc(&[
+        ("root", None, "root", &[]),
+        ("parent", Some("root"), "parent", &[]),
+        ("c0", Some("parent"), "first child", &[]),
+        ("c1", Some("parent"), "middle child", &[]),
+        ("c2", Some("parent"), "last child", &[]),
+    ]);
+    {
+        let mut txn = doc.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let parent_map: yrs::MapRef = blocks.get_or_init(&mut txn, "parent");
+        let child_ids: Vec<Any> = vec![
+            Any::String("c0".into()),
+            Any::String("c1".into()),
+            Any::String("c2".into()),
+        ];
+        parent_map.insert(&mut txn, "childIds", ArrayPrelim::from(child_ids));
+    }
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+
+    let mut includes = HashSet::new();
+    includes.insert("siblings".to_string());
+    let opts_on = AncestorContextOpts::from_raw(&includes, 5);
+
+    // Gate off: middle child returns None for siblings.
+    let dto_c1 = read_skeletal_dto(&blocks_map, &txn, "c1");
+    let ctx_off = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "c1",
+        dto_c1.metadata.as_ref(),
+        None,
+        None,
+        AncestorContextOpts::default(),
+    )
+    .expect("c1 has chain → some ctx");
+    assert!(
+        ctx_off.siblings.is_none(),
+        "without `?include=siblings`, the field stays None"
+    );
+
+    // Gate on, middle child: before=c0, after=c2.
+    let ctx_middle = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "c1",
+        dto_c1.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("c1 has chain → some ctx");
+    let sib = ctx_middle
+        .siblings
+        .expect("siblings populated when gate on");
+    assert_eq!(sib.before.len(), 1, "middle child: one before");
+    assert_eq!(sib.before[0].id, "c0");
+    assert_eq!(sib.after.len(), 1, "middle child: one after");
+    assert_eq!(sib.after[0].id, "c2");
+
+    // First child: before empty, after has c1.
+    let dto_c0 = read_skeletal_dto(&blocks_map, &txn, "c0");
+    let ctx_first = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "c0",
+        dto_c0.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("c0 has chain → some ctx");
+    let sib_first = ctx_first.siblings.expect("siblings populated");
+    assert!(sib_first.before.is_empty(), "first child: before empty");
+    assert_eq!(sib_first.after.len(), 1);
+    assert_eq!(sib_first.after[0].id, "c1");
+
+    // Last child: before has c1, after empty.
+    let dto_c2 = read_skeletal_dto(&blocks_map, &txn, "c2");
+    let ctx_last = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "c2",
+        dto_c2.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("c2 has chain → some ctx");
+    let sib_last = ctx_last.siblings.expect("siblings populated");
+    assert_eq!(sib_last.before.len(), 1);
+    assert_eq!(sib_last.before[0].id, "c1");
+    assert!(sib_last.after.is_empty(), "last child: after empty");
+
+    // Root block (no parent): siblings stays None even with gate on.
+    // Skip — bare root would return None from compute_ancestor_context entirely
+    // (no chain, no outlinks). Use a root with an outlink so we get a ctx
+    // back, then assert siblings is None on that.
+    let doc2 = build_doc(&[("solo_root", None, "solo", &["A"])]);
+    let txn2 = doc2.transact();
+    let blocks_map2 = txn2.get_map("blocks").expect("blocks map");
+    let dto_solo = read_skeletal_dto(&blocks_map2, &txn2, "solo_root");
+    let ctx_solo = compute_ancestor_context(
+        &blocks_map2,
+        &txn2,
+        "solo_root",
+        dto_solo.metadata.as_ref(),
+        None,
+        None,
+        opts_on,
+    )
+    .expect("root has own outlink → some ctx");
+    assert!(
+        ctx_solo.siblings.is_none(),
+        "root block (no parent) has no siblings — None even with gate on"
+    );
+}
+
+/// Edge case: trailing-newline shapes still count as heading-only. The
+/// edit-time DOM serialisation occasionally introduces trailing `\n` or
+/// `\n\n` on heading blocks; the classifier must tolerate them.
+#[test]
+fn classify_block_kind_tolerates_trailing_newlines() {
+    assert_eq!(
+        classify_block_kind("## bones\n", true),
+        BlockKind::NavNode,
+        "trailing single newline still heading-only"
+    );
+    assert_eq!(
+        classify_block_kind("## tldr\n\n", true),
+        BlockKind::NavNode,
+        "trailing double newline still heading-only"
+    );
+    assert_eq!(
+        classify_block_kind("# top\n", false),
+        BlockKind::LeafMarker,
+        "trailing single newline + no children still heading-only → leaf_marker"
     );
 }
 

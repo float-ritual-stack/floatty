@@ -152,10 +152,10 @@ pub use export::{
 };
 // Block DTOs re-exported (used by block_service, discovery, tests)
 pub use blocks::{
-    AncestorContext, BlockContextQuery, BlockDto, BlockRef, BlockWithContextResponse, BlocksQuery,
-    BlocksResponse, CreateBlockRequest, EffectiveMarkerDto, ImportBlockRequest, InboundSampleDto,
-    InheritedMarkerDto, MarkerSource, ResolveResponse, SiblingContext, TokenEstimate, TreeNode,
-    UpdateBlockRequest,
+    AncestorContext, BlockContextQuery, BlockDto, BlockKind, BlockRef, BlockWithContextResponse,
+    BlocksQuery, BlocksResponse, CreateBlockRequest, EffectiveMarkerDto, ImportBlockRequest,
+    InboundSampleDto, InheritedMarkerDto, MarkerSource, ResolveResponse, SiblingContext,
+    TokenEstimate, TreeNode, UpdateBlockRequest,
 };
 // Discovery DTOs re-exported (FLO-680 — presence struct-ified)
 pub use discovery::PresenceResponse;

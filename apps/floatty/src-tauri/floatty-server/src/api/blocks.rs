@@ -183,6 +183,35 @@ pub struct AncestorContext {
     /// to override).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inbound_samples: Vec<InboundSampleDto>,
+    /// Structural classification (`nav_node` / `content_block` /
+    /// `leaf_marker`) — only present when `?include=nav_classification`.
+    /// See `BlockKind` for semantics. NOT load-bearing for `is_empty()`
+    /// (mirrors `subtree_size` exemption — a bare-root `ContentBlock`
+    /// alone should not surface a non-empty context wrapper).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<BlockKind>,
+    /// First N children as `BlockRef`s with content truncated to
+    /// `CHILDREN_PREVIEW_CONTENT_LIMIT` (200) chars — only present when
+    /// `?include=children_preview`. N defaults to 5 (cap 20) via
+    /// `&children_preview_count=N`. Reuses the canonical `BlockRef` shape
+    /// from `/blocks/:id?include=children`; same DTO, different
+    /// invocation site (per-hit instead of per-singleton). Recursive
+    /// classification is intentionally NOT carried here — clients with
+    /// `nav_classification` opted in re-classify each preview locally
+    /// via the same heuristic, keeping the wire shape minimal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children_preview: Vec<BlockRef>,
+    /// Prev/next sibling preview within the parent's `childIds` — only
+    /// present when `?include=siblings` AND the block has a parent.
+    /// `before` carries the block immediately before this one in
+    /// `parent.childIds` (empty if this block is the first child),
+    /// `after` the one immediately after (empty if last). Reuses the
+    /// canonical `SiblingContext` DTO and `get_siblings` helper from the
+    /// existing `/blocks/:id?include=siblings` path with `radius=1`.
+    /// Two surfaces, one DTO, one helper — wire-shape parity by
+    /// construction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub siblings: Option<SiblingContext>,
 }
 
 impl AncestorContext {
@@ -214,7 +243,13 @@ impl AncestorContext {
 pub struct BlockContextQuery {
     /// Comma-separated include directives. Recognised:
     /// `ancestors`, `siblings`, `children`, `tree`, `token_estimate`,
-    /// `effective_markers`, `inbound_samples`.
+    /// `effective_markers`, `inbound_samples`, `nav_classification`,
+    /// `children_preview`.
+    ///
+    /// Note: `siblings` directive on this endpoint controls the
+    /// per-singleton `siblings` field on `BlockWithContextResponse`. The
+    /// same directive ALSO populates `ancestorContext.siblings` (radius=1
+    /// preview shape). Both surfaces use the same `SiblingContext` DTO.
     #[serde(default)]
     pub include: Option<String>,
     /// Number of siblings before/after to include (default: 2)
@@ -227,6 +262,10 @@ pub struct BlockContextQuery {
     /// `?include=inbound_samples` is present in `include`.
     #[serde(default = "default_inbound_sample_count")]
     pub inbound_sample_count: usize,
+    /// Cap for `ancestorContext.children_preview` (default 5; max 20). Only
+    /// honoured when `?include=children_preview` is present.
+    #[serde(default = "default_children_preview_count")]
+    pub children_preview_count: usize,
 }
 
 fn default_sibling_radius() -> usize {
@@ -236,6 +275,9 @@ fn default_max_depth() -> usize {
     50
 }
 fn default_inbound_sample_count() -> usize {
+    5
+}
+fn default_children_preview_count() -> usize {
     5
 }
 
@@ -263,6 +305,34 @@ pub struct TreeNode {
 pub struct SiblingContext {
     pub before: Vec<BlockRef>,
     pub after: Vec<BlockRef>,
+}
+
+/// Structural classification of a backlink/search-hit block. Derived from
+/// content-shape + child-presence at read time — NOT stored.
+///
+/// Lives in `floatty-server` (not `floatty-core::BlockType`) because it's a
+/// wire-shaping concept derived from BOTH content AND structure (children
+/// presence). `BlockType` is the closed ts-rs union of content-prefix
+/// variants; `BlockKind` is the navigation-layer projection on top of it.
+/// Keeping it server-side avoids leaking into the hand-off-y `BlockType.ts`
+/// generated union (per `.claude/rules/adding-block-types.md`).
+///
+/// Values mirror `BacklinkKind` in `apps/floatty/src/lib/backlinkClassify.ts`.
+/// Both sides compose over their respective block-type parsers
+/// (`parseBlockType` / `parse_block_type`); neither re-implements heading
+/// prefix detection (architecture-bypass audit, plan §"Symmetry check").
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockKind {
+    /// Heading-only + has children. The daily-note `## arcs` / `## bones`
+    /// case — auto-expand previews on the client; this block is the page's
+    /// section header, not the section's content.
+    NavNode,
+    /// Anything else — has prose, isn't a heading, etc. Default render.
+    ContentBlock,
+    /// Heading-only + no children. Pure crumb (e.g. `## empty section`).
+    /// Render muted / italic on the client.
+    LeafMarker,
 }
 
 /// Token/size estimate for a subtree
