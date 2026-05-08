@@ -601,6 +601,42 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         None
     };
 
+    // Children preview — opt-in. Composes get_children_refs with .take(N)
+    // + per-element content truncation, NOT a parallel walker (architecture-
+    // bypass audit, plan §"Symmetry check"). Same BlockRef shape as
+    // /blocks/:id?include=children — different invocation site (per-hit
+    // instead of per-singleton).
+    let children_preview = if opts.include_children_preview {
+        let cap = if opts.children_preview_count == 0 {
+            DEFAULT_CHILDREN_PREVIEW_COUNT
+        } else {
+            opts.children_preview_count
+        };
+        get_children_refs(blocks_map, txn, block_id)
+            .into_iter()
+            .take(cap)
+            .map(|mut r| {
+                if r.content.len() > CHILDREN_PREVIEW_CONTENT_LIMIT {
+                    // UTF-8-safe truncation: keep chars whose ENTIRE byte
+                    // range fits under the limit. A char starting before
+                    // the limit can extend past it (e.g. 3-byte CJK at
+                    // byte 198 spans 198..201) — those must be dropped.
+                    let safe_end = r
+                        .content
+                        .char_indices()
+                        .take_while(|(i, c)| i + c.len_utf8() <= CHILDREN_PREVIEW_CONTENT_LIMIT)
+                        .last()
+                        .map(|(i, c)| i + c.len_utf8())
+                        .unwrap_or(0);
+                    r.content.truncate(safe_end);
+                }
+                r
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let ctx = AncestorContext {
         nearest_page_block_id,
         nearest_page_name,
@@ -611,6 +647,7 @@ pub fn compute_ancestor_context_with_hints<T: ReadTxn>(
         inbound_count,
         inbound_samples,
         kind,
+        children_preview,
     };
 
     if ctx.is_empty() {

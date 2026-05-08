@@ -957,6 +957,162 @@ fn classify_block_kind_heading_with_body_no_children_is_content() {
     );
 }
 
+/// CONTRACT 12: `children_preview` is opt-in via
+/// `?include=children_preview`. Without the directive, `children_preview`
+/// is empty (Vec::is_empty drops it from the wire). With the directive,
+/// the field populates with the first N children as `BlockRef`s. The cap
+/// `&children_preview_count=N` is honoured (capped at 20).
+///
+/// Tests three branches:
+/// 1. gate off → empty
+/// 2. gate on, N=2 → exactly 2 children, content present
+/// 3. gate on, N=999 → capped at 20 by AncestorContextOpts::from_query
+///    constructor (caller can't bypass the cost-cap by passing huge N)
+#[test]
+fn children_preview_opt_in_and_cap_respected() {
+    // Build a parent with 25 children so the cap-at-20 branch has room.
+    let mut seeds_owned: Vec<(String, Option<String>, String, Vec<String>)> = Vec::new();
+    seeds_owned.push(("root".to_string(), None, "root".to_string(), vec![]));
+    seeds_owned.push(("parent".to_string(), Some("root".to_string()), "parent".to_string(), vec![]));
+    for i in 0..25 {
+        seeds_owned.push((
+            format!("c{}", i),
+            Some("parent".to_string()),
+            format!("child {} content", i),
+            vec![],
+        ));
+    }
+    let seeds: Vec<Seed<'_>> = seeds_owned
+        .iter()
+        .map(|(id, p, c, _)| (id.as_str(), p.as_deref(), c.as_str(), &[][..]))
+        .collect();
+    let doc = build_doc(&seeds);
+    // Wire children into parent's childIds Y.Array. build_doc sets each block
+    // to empty childIds — patch parent's childIds to include c0..c24 so
+    // get_children_refs sees them.
+    {
+        let mut txn = doc.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let parent_map: yrs::MapRef = blocks.get_or_init(&mut txn, "parent");
+        let child_id_strs: Vec<Any> = (0..25)
+            .map(|i| Any::String(format!("c{}", i).into()))
+            .collect();
+        parent_map.insert(&mut txn, "childIds", ArrayPrelim::from(child_id_strs));
+    }
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+    let dto = read_skeletal_dto(&blocks_map, &txn, "parent");
+
+    // Branch 1: gate off → empty.
+    let ctx_off = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "parent",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        AncestorContextOpts::default(),
+    )
+    .expect("parent has chain → some ctx");
+    assert!(
+        ctx_off.children_preview.is_empty(),
+        "without `?include=children_preview`, the field is empty"
+    );
+
+    // Branch 2: gate on, N=2 → exactly 2 children, content non-empty.
+    let mut includes = HashSet::new();
+    includes.insert("children_preview".to_string());
+    let opts_n2 = AncestorContextOpts::from_raw_with_caps(&includes, 5, 2);
+    let ctx_n2 = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "parent",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts_n2,
+    )
+    .expect("parent has chain → some ctx");
+    assert_eq!(
+        ctx_n2.children_preview.len(),
+        2,
+        "N=2 returns exactly 2 children"
+    );
+    assert_eq!(
+        ctx_n2.children_preview[0].id, "c0",
+        "first child preserves childIds order"
+    );
+    assert_eq!(
+        ctx_n2.children_preview[0].content, "child 0 content",
+        "content under truncation cap survives intact"
+    );
+
+    // Branch 3: gate on, N=999 → capped at 20 by from_raw_with_caps.
+    let opts_huge = AncestorContextOpts::from_raw_with_caps(&includes, 5, 999);
+    let ctx_huge = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "parent",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts_huge,
+    )
+    .expect("parent has chain → some ctx");
+    assert_eq!(
+        ctx_huge.children_preview.len(),
+        20,
+        "N=999 capped at 20 — protects against per-hit cost blowup on broad searches"
+    );
+}
+
+/// CONTRACT 12b: content truncation at CHILDREN_PREVIEW_CONTENT_LIMIT (200).
+/// Long child content gets sliced UTF-8-safely; short content survives intact.
+#[test]
+fn children_preview_truncates_long_content_utf8_safe() {
+    // Content with multibyte chars near the 200-byte boundary.
+    let long_content = "x".repeat(195) + "你好世界";  // 195 + 12 bytes (4 chars × 3) = 207 bytes
+    let doc = build_doc(&[
+        ("root", None, "root", &[]),
+        ("parent", Some("root"), "parent", &[]),
+        ("only_child", Some("parent"), &long_content, &[]),
+    ]);
+    {
+        let mut txn = doc.transact_mut();
+        let blocks = txn.get_or_insert_map("blocks");
+        let parent_map: yrs::MapRef = blocks.get_or_init(&mut txn, "parent");
+        let child_ids: Vec<Any> = vec![Any::String("only_child".into())];
+        parent_map.insert(&mut txn, "childIds", ArrayPrelim::from(child_ids));
+    }
+    let txn = doc.transact();
+    let blocks_map = txn.get_map("blocks").expect("blocks map");
+    let dto = read_skeletal_dto(&blocks_map, &txn, "parent");
+
+    let mut includes = HashSet::new();
+    includes.insert("children_preview".to_string());
+    let opts = AncestorContextOpts::from_raw_with_caps(&includes, 5, 5);
+    let ctx = compute_ancestor_context(
+        &blocks_map,
+        &txn,
+        "parent",
+        dto.metadata.as_ref(),
+        None,
+        None,
+        opts,
+    )
+    .expect("parent has chain → some ctx");
+
+    let preview = &ctx.children_preview[0];
+    assert!(
+        preview.content.len() <= 200,
+        "truncated to ≤ 200 bytes (got {})",
+        preview.content.len()
+    );
+    // Result must be valid UTF-8 (no half-character splits) — implicit via
+    // String type, but assert via roundtrip just to make the contract loud.
+    let _: &str = preview.content.as_str();
+}
+
 /// Edge case: trailing-newline shapes still count as heading-only. The
 /// edit-time DOM serialisation occasionally introduces trailing `\n` or
 /// `\n\n` on heading blocks; the classifier must tolerate them.

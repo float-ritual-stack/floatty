@@ -190,6 +190,17 @@ pub struct AncestorContext {
     /// alone should not surface a non-empty context wrapper).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<BlockKind>,
+    /// First N children as `BlockRef`s with content truncated to
+    /// `CHILDREN_PREVIEW_CONTENT_LIMIT` (200) chars — only present when
+    /// `?include=children_preview`. N defaults to 5 (cap 20) via
+    /// `&children_preview_count=N`. Reuses the canonical `BlockRef` shape
+    /// from `/blocks/:id?include=children`; same DTO, different
+    /// invocation site (per-hit instead of per-singleton). Recursive
+    /// classification is intentionally NOT carried here — clients with
+    /// `nav_classification` opted in re-classify each preview locally
+    /// via the same heuristic, keeping the wire shape minimal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children_preview: Vec<BlockRef>,
 }
 
 impl AncestorContext {
