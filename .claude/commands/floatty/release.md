@@ -8,6 +8,8 @@ allowed-tools: Bash(git *), Bash(pnpm *), Bash(jq *), Bash(date *), Bash(grep *)
 
 Run the full release workflow for floatty.
 
+**One gate**: changelog approval. After that, ship end-to-end (version bumps, commit, tag, push, GitHub Release) in a single motion. The push and GitHub-Release steps are predictable yes-es when the changelog is right; gating them is theater.
+
 ## Arguments
 
 - `$ARGUMENTS` - Version bump type (`patch`, `minor`, `major`) or explicit version (`0.13.7`)
@@ -24,108 +26,109 @@ All version-bearing files live under `apps/floatty/` — NOT the repo root.
 | `tauri.conf.json` | `apps/floatty/src-tauri/tauri.conf.json` |
 | `CHANGELOG.md` | `apps/floatty/CHANGELOG.md` |
 
-**Use the Edit tool for JSON edits**, NOT `jq … > tmp.json && mv tmp.json file.json`. Edit is atomic, doesn't litter `/tmp`, and produces a clean diff. (`mv -i` was historically aliased here and blocked confirmations; the alias is gone — see `~/.zsh/terminal-qol.zsh` — but the Edit-tool guidance still stands on its own merits.)
+**Use the Edit tool for JSON edits**, NOT `jq … > tmp.json && mv tmp.json file.json`. Edit is atomic, doesn't litter `/tmp`, and produces a clean diff.
 
-## Workflow Steps
+---
 
-### 1. Precondition Checks
+## Phase 1 — Silent prep (no user interaction)
 
-Run these checks FIRST, abort if any fail:
+Run all of these without prompting; abort only if something fails.
+
+### 1a. Preconditions
 
 ```bash
-# Must be on main branch (warn if not, ask to continue)
-git branch --show-current
-
-# Working tree must be clean
-git status --porcelain
-
-# Tests must pass — repo's canonical command (see CLAUDE.md)
-pnpm --filter float-pty test
+git branch --show-current        # must be main (warn-and-continue if not)
+git status --porcelain           # must be clean (untracked harness files like .claude/scheduled_tasks.lock are OK)
+pnpm --filter float-pty test     # must pass
 ```
 
-### 2. Symmetry / Drift Check (FLO-317)
+### 1b. Drift check (FLO-317) — scoped to release diff only
 
-Before releasing, verify no unguarded path fallbacks or pattern drift.
+Pre-existing patterns aren't release blockers; only NEW drifts since the last tag are. Run each grep against the release diff:
 
-Run ALL grep patterns AND the release assertions checklist from @.claude/commands/floatty/references/symmetry-check-patterns.md
+```bash
+LAST_TAG=$(git describe --tags --abbrev=0)
+git diff $LAST_TAG..HEAD apps/floatty/src-tauri/ -- '*.rs' | grep -E '^\+.*\.join\(".floatty'           # hardcoded paths
+git diff $LAST_TAG..HEAD apps/floatty/src-tauri/ -- '*.rs' | grep -E '^\+.*(data_dir|config_path|default_.*path)'
+git diff $LAST_TAG..HEAD apps/floatty/src/ -- '*.ts' '*.tsx' | grep -E '^\+(let |const.*= new )'        # module-level state
+git diff $LAST_TAG..HEAD apps/floatty/src/ | grep -E '^\+.*blockEventBus\.subscribe'                   # new subscribers
+git diff $LAST_TAG..HEAD apps/floatty/src/hooks/useBlockStore.ts | grep -E '^\+.*(removeChildId|rootIds\.delete)'
+```
 
-If any issues found, fix before continuing. This is the "FLO-317 never again" gate.
+Reference: `@.claude/commands/floatty/references/symmetry-check-patterns.md` for the full pattern catalog. If any release-diff hit surfaces a real issue, abort before phase 2.
 
-Scope the check to **this release's diff** (`git diff $(git describe --tags --abbrev=0)..HEAD --stat`) — pre-existing patterns inventoried by the grep are not release blockers; only NEW drifts introduced since the last tag are.
-
-### 3. Determine New Version
+### 1c. Determine new version
 
 ```bash
 CURRENT=$(jq -r '.version' apps/floatty/package.json)
-echo "Current version: $CURRENT"
 ```
 
-If `$ARGUMENTS` is `patch`/`minor`/`major`, calculate the bump:
-- `patch`: 0.13.6 → 0.13.7
-- `minor`: 0.13.6 → 0.14.0
-- `major`: 0.13.6 → 1.0.0
+If `$ARGUMENTS` is `patch`/`minor`/`major`, calculate the bump. If explicit (`0.14.0`), use that.
 
-If `$ARGUMENTS` is explicit (like `0.14.0`), use that.
-
-### 4. Generate Changelog Entry
-
-Get commits since last tag:
+### 1d. Gather changelog raw material
 
 ```bash
-git log $(git describe --tags --abbrev=0)..HEAD --oneline --no-merges
+git log $LAST_TAG..HEAD --oneline --no-merges     # commits in scope
+git diff $LAST_TAG..HEAD --stat                   # file scope
+head -90 apps/floatty/CHANGELOG.md                # format reference (read recent entries)
 ```
 
-Read recent CHANGELOG entries to match format:
+### 1e. Draft the changelog entry
 
-```bash
-head -40 apps/floatty/CHANGELOG.md
-```
+Standard sections (omit unused): `### ✨ Features` / `### ✨ Performance` / `### 🐛 Fixes` / `### ♻️ Refactors` / `### 📝 Docs` / `### 🧪 Tests`.
 
-Standard sections (omit unused): `### ✨ Features` / `### 🐛 Fixes` / `### 📝 Docs` / `### 🧪 Tests`. Each release opens with a 2–4 sentence narrative paragraph naming the user-visible symptom in plain language. Bullets carry `(commit-sha / [[PR #N]] / [[FLO-N]] — file paths)` refs.
+Each release opens with a **2-4 sentence narrative paragraph naming the user-visible symptom in plain language** — not "we did X" but "this fixes Y." Bullets carry `(commit-sha / [[PR #N]] / [[FLO-N]] — file paths)` refs. Group meaningfully — don't just list commits.
 
-**IMPORTANT**: Show the proposed changelog entry to the user and ask for approval before proceeding.
+---
 
-### 5. Update Version Numbers (use Edit tool, NOT jq+mv)
+## Phase 2 — The single gate
 
-Update ALL version locations:
+Show the proposed changelog entry to the user with this framing:
 
-**`apps/floatty/package.json`** — single `"version": "..."` line. Use Edit tool with the exact old→new string.
+> **Any changes to the changelog? Otherwise shipping end-to-end (version bumps → commit → tag → push → GitHub Release).**
 
-**`apps/floatty/src-tauri/Cargo.toml`** — TWO `version = "..."` lines (`[workspace.package]` and `[package]`). Use Edit tool with `replace_all: true` since both are the same pre-bump string.
+Iteration is fine: if the user wants edits, apply them and re-ask. Once the user approves (or says "looks good" / "ship it" / similar), proceed to phase 3 without further gates.
 
-**`apps/floatty/src-tauri/tauri.conf.json`** — single `"version": "..."` line at top level. Use Edit tool.
+If the user explicitly opts out of push or GitHub Release ("hold off on the push" / "skip the release page"), respect that — but don't ask preemptively. The default is end-to-end.
 
-**`apps/floatty/src-tauri/Cargo.lock`** — sync after the manifest change so the locked workspace versions match. Run from the workspace root:
+---
+
+## Phase 3 — Ship end-to-end (one motion, no further gates)
+
+After phase-2 approval, execute steps 3a–3g in a single batch.
+
+### 3a. Update version files
+
+| File | Approach |
+|---|---|
+| `apps/floatty/package.json` | `Edit` tool — single `"version": "..."` line |
+| `apps/floatty/src-tauri/Cargo.toml` | `Edit` tool with `replace_all: true` — TWO `version = "..."` lines (workspace.package + package) |
+| `apps/floatty/src-tauri/tauri.conf.json` | `Edit` tool — single `"version": "..."` line |
+
+### 3b. Sync Cargo.lock
 
 ```bash
 (cd apps/floatty/src-tauri && cargo update --workspace)
 ```
 
-`cargo update --workspace` targets the workspace packages' versions; per Cargo docs and known issues (rust-lang/cargo#5530, #16926, #12599) the resolver may also touch transitive entries during the dependency-graph re-resolution, so review the diff before staging. Without this step, `Cargo.lock` keeps the old workspace versions and any subsequent `cargo build` produces a dirty working tree on a fresh checkout of the tag — see drift history below.
+Without this, `Cargo.lock` keeps the old workspace versions and a fresh checkout of the tag produces a dirty working tree on first `cargo build` (drift caught in v0.13.7).
 
-**`apps/floatty/CHANGELOG.md`** — prepend the new release section (see step 6).
+### 3c. Update CHANGELOG.md
 
-After all edits, verify they synced:
+Prepend the approved phase-2 entry between `## [Unreleased]` and the previous release section. Header: `## [x.y.z] - YYYY-MM-DD` (use `date "+%Y-%m-%d"`).
+
+### 3d. Verify all 5 locations synced
 
 ```bash
 echo "package.json:        $(jq -r '.version' apps/floatty/package.json)"
 echo "tauri.conf.json:     $(jq -r '.version' apps/floatty/src-tauri/tauri.conf.json)"
-echo "Cargo.toml count:    $(grep -c "^version = \"$NEW_VERSION\"" apps/floatty/src-tauri/Cargo.toml) (expected 2)"
-echo "Cargo.lock count:    $(grep -A1 'name = "float-pty"\|name = "floatty-server"' apps/floatty/src-tauri/Cargo.lock | grep -c "version = \"$NEW_VERSION\"") (expected 2)"
+echo "Cargo.toml count:    $(grep -c '^version = \"$NEW_VERSION\"' apps/floatty/src-tauri/Cargo.toml) (expected 2)"
+echo "Cargo.lock float-pty:    $(grep -A1 '^name = \"float-pty\"$' apps/floatty/src-tauri/Cargo.lock | grep '^version')"
+echo "Cargo.lock floatty-server: $(grep -A1 '^name = \"floatty-server\"$' apps/floatty/src-tauri/Cargo.lock | grep '^version')"
 grep "^## \[$NEW_VERSION\]" apps/floatty/CHANGELOG.md
 ```
 
-### 6. Update CHANGELOG.md
-
-Insert the new entry between `## [Unreleased]` and the previous release section. Use today's date:
-
-```bash
-date "+%Y-%m-%d"
-```
-
-Format header: `## [x.y.z] - YYYY-MM-DD`. Use the canonical narrative+sections shape per step 4.
-
-### 7. Create Release Commit
+### 3e. Commit
 
 ```bash
 git add apps/floatty/package.json \
@@ -136,7 +139,9 @@ git add apps/floatty/package.json \
 git commit -m "chore: release v$NEW_VERSION — <one-line headline matching CHANGELOG narrative>"
 ```
 
-### 8. Create Annotated Tag (with substantive body)
+### 3f. Annotated tag (substantive body)
+
+The body matters — `gh release create --notes-from-tag` reads it back to populate the GitHub Release page. Bare `-m "Release vX.Y.Z"` produces empty Release pages.
 
 ```bash
 git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION
@@ -148,55 +153,39 @@ git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION
 <refs to PRs / Linear issues>"
 ```
 
-The body matters: step 10 reads it back via `gh release create --notes-from-tag` to populate the GitHub Release page. Don't ship a bare `-m "Release vX.Y.Z"` — that produces an empty Release page.
-
-### 9. Push (requires explicit user approval)
+### 3g. Push + GitHub Release (no gate — phase 2 already approved)
 
 ```bash
 git push origin main --tags
-```
-
-Ask the user before pushing. Show: version old→new, commit hash, tag, files changed.
-
-### 10. Publish GitHub Release (optional — ask user)
-
-After the push lands, offer to publish a GitHub Release page from the annotated tag:
-
-```bash
 gh release create v$NEW_VERSION \
   --notes-from-tag \
   --title "v$NEW_VERSION — <one-line headline>"
-```
-
-Verify:
-
-```bash
 gh release view v$NEW_VERSION --json url,publishedAt,name | jq
 ```
 
-Notes:
+---
 
-- `--notes-from-tag` reads the annotated tag's body (step 8). Bare-tag annotations produce empty Release pages — that's why step 8 mandates a substantive body.
-- This step is OPTIONAL. Floatty's published-Release history is sparse (latest published Release was `v0.2.3` in Jan 2026 before today's `v0.13.7`); pushing the tag alone is the established convention. Publish the Release page when the user wants the surface for sharing/distribution; skip it otherwise.
+## Final report
 
-### 11. Summary & Next Steps
+After phase 3 completes, emit:
 
-Show in final response:
 - Version: old → new
-- Files changed (list)
+- Files changed
 - Commit hash
-- Tag created
-- Pushed: yes/no
-- GitHub Release published: yes/no (with URL if yes)
+- Tag SHA + push status
+- GitHub Release URL
 
-## Important Notes
+That's it. The release is live.
 
-- **Never push without explicit user confirmation** (step 9 is a gate).
-- **Never publish a GitHub Release without explicit user confirmation** (step 10 is also a gate).
-- If anything fails mid-workflow, show what was done and what remains. Partial state is fine; resume by running the failing step manually.
-- The changelog entry should be substantive — don't just list commits, group and describe meaningfully. Prose-readable narrative paragraph + categorized bullets with file:commit refs.
+---
+
+## Important notes
+
+- **One gate** (phase 2 — changelog approval). After that, end-to-end. Don't gate push or GitHub Release separately — those are predictable yes-es.
+- The changelog entry should be substantive — narrative paragraph + categorized bullets with file:commit refs. Don't just list commits.
 - Annotated tag body and CHANGELOG entry should be the same content, lightly compressed for the tag.
-- The release is local-only until step 9. Step 10 doesn't fire without step 9.
+- If anything fails mid-phase-3, show what was done and what remains. Partial state is fine; resume by running the failing step manually. Don't auto-rollback.
+- User can opt out of push or GitHub Release if they explicitly say so — but ask once at the changelog gate, not separately at each step.
 
 ## Drift history (so we don't relearn)
 
@@ -209,3 +198,4 @@ These have been wrong in past versions of this skill — fix-on-sight if any fut
 - Bare `-m "Release vX.Y.Z"` tag bodies (breaks `--notes-from-tag` for GitHub Release)
 - Missing GitHub Release step entirely
 - Missing `Cargo.lock` sync (released v0.13.7 with manifest at 0.13.7, lockfile still at 0.13.6 — fresh checkout produces dirty working tree on first `cargo build`)
+- **Multi-gate theater**: separate approval prompts for push and GitHub Release after the changelog was already approved. v0.14.1 release surfaced this — the answer is always yes after the changelog is right. One gate, end-to-end.
