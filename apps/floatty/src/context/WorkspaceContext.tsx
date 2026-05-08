@@ -14,7 +14,7 @@
  *     </WorkspaceProvider>
  *   ));
  */
-import { createContext, useContext, createMemo, onMount, onCleanup } from 'solid-js';
+import { createContext, useContext, createMemo, createEffect, on, onMount, onCleanup } from 'solid-js';
 import { createLogger } from '../lib/logger';
 import type { JSX, Accessor } from 'solid-js';
 import { blockStore as realBlockStore, setAutoExecuteHandler, type BatchBlockOp } from '../hooks/useBlockStore';
@@ -22,8 +22,9 @@ export type { BatchBlockOp } from '../hooks/useBlockStore';
 import { paneStore as realPaneStore, type NavigationEntry } from '../hooks/usePaneStore';
 import type { Block } from '../lib/blockTypes';
 import { registry, executeHandler, createHookBlockStore } from '../lib/handlers';
-import { sortPageNames, getPageNamesWithTimestamps } from '../hooks/useWikilinkAutocomplete';
+import { sortPageNames, useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { findPagesContainer, getPageTitle } from '../hooks/useBacklinkNavigation';
+import { resolveBlockIdPrefix } from '../lib/blockTypes';
 
 // ═══════════════════════════════════════════════════════════════
 // STORE TYPE INTERFACES
@@ -120,6 +121,13 @@ export interface WorkspaceContextValue {
   stubPageNameSet: Accessor<ReadonlySet<string>>;
   /** Short-hash index: 8-char prefix → full UUID (empty string = ambiguous). */
   shortHashIndex: Accessor<ReadonlyMap<string, string>>;
+  /**
+   * Singleton wikilink autocomplete instance (FLO-316 perf-audit lift).
+   * Previously instantiated per-BlockItem (1:1 with mounts → 4252 instances
+   * across 10 min of navigation). Lifted here so navigation doesn't churn
+   * autocomplete state machines. Mirrors the FLO-322 pageNames lift.
+   */
+  wikilinkAutocomplete: ReturnType<typeof useWikilinkAutocomplete>;
 }
 
 const logger = createLogger('AutoExecute');
@@ -145,12 +153,35 @@ interface WorkspaceProviderProps {
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const store = props.blockStore ?? realBlockStore;
 
+  // FLO-316/cowboy-audit-F5: cache pages:: container id once, then read by id.
+  // findPagesContainer iterates rootIds and checks each root's content — a broad
+  // reactive dep that refires whenever any root block's content changes. The
+  // narrowing here is downstream only: this memo still has the broad dep, but
+  // the consumers (pageNames, stubPageNameSet) read the container by id with
+  // granular per-block deps. Net: pageNames/stubPageNameSet recomputation no
+  // longer fires on every root-block content edit.
+  // Future improvement: identify the pages:: container by structural marker
+  // (block type, metadata flag) instead of content-prefix scan, which would
+  // narrow this memo's dep too.
+  const pagesContainerId = createMemo(() => {
+    const container = findPagesContainer();
+    return container?.id ?? null;
+  });
+
   // FLO-322: Singleton pageNames memo — one computation instead of N per BlockItem.
   // Previously each useWikilinkAutocomplete() created its own identical memo,
   // causing N×M recomputation on every block change (N blocks × M page lookups).
-  const pageNames = createMemo(() =>
-    sortPageNames(getPageNamesWithTimestamps(store))
-  );
+  const pageNames = createMemo(() => {
+    const containerId = pagesContainerId();
+    if (!containerId) return [];
+    const container = store.blocks[containerId];
+    if (!container) return [];
+    const pages = container.childIds
+      .map(id => store.blocks[id])
+      .filter(Boolean)
+      .map(b => ({ name: getPageTitle(b.content), updatedAt: b.updatedAt ?? 0 }));
+    return sortPageNames(pages);
+  });
 
   const pageNameSet = createMemo(() =>
     new Set(pageNames().map(n => n.toLowerCase()))
@@ -160,7 +191,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // (0 children, or single child with empty/whitespace content)
   const stubPageNameSet = createMemo(() => {
     const stubs = new Set<string>();
-    const container = findPagesContainer();
+    const containerId = pagesContainerId();
+    if (!containerId) return stubs;
+    const container = store.blocks[containerId];
     if (!container) return stubs;
     for (const childId of container.childIds) {
       const page = store.blocks[childId];
@@ -190,6 +223,38 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return index;
   });
 
+  // FLO-552/FLO-316: resolveAlias suppresses the "Create new page" suggestion
+  // when the typed query is a `<hex-prefix>|alias` form referencing an
+  // existing block. Fires per-keystroke while the autocomplete is open AND the
+  // user has typed a `|` after a hex prefix — narrow trigger but the call is
+  // hot when active. 8-char prefixes (the recommended form) hit the
+  // shortHashIndex O(1) and skip the Object.keys(store.blocks) build. Shorter
+  // prefixes (6-7 chars) fall back to the full scan via resolveBlockIdPrefix.
+  const resolveAlias = (hex: string): boolean => {
+    if (hex.length === 8) {
+      const idx = shortHashIndex();
+      const resolved = idx.get(hex.toLowerCase());
+      return resolved !== undefined && resolved !== '';
+    }
+    return resolveBlockIdPrefix(hex, Object.keys(store.blocks), shortHashIndex()) !== null;
+  };
+
+  // Singleton autocomplete state machine. Only one block has focus at a time,
+  // so a single instance is sufficient and avoids creating 169+ instances per
+  // navigation. checkTrigger is invoked from the focused block's useContentSync.
+  const wikilinkAutocomplete = useWikilinkAutocomplete(pageNames, resolveAlias);
+
+  // Dismiss autocomplete on scroll (anchorRect goes stale). Singleton — one
+  // listener for the whole app, registered when popup opens, removed when it
+  // closes. Pre-FLO-316 lift this effect lived per-BlockItem; with N visible
+  // BlockItems it would have registered N scroll listeners on every open.
+  createEffect(on(() => wikilinkAutocomplete.isOpen(), (open) => {
+    if (!open) return;
+    const handler = () => wikilinkAutocomplete.dismiss();
+    window.addEventListener('scroll', handler, { capture: true, passive: true });
+    onCleanup(() => window.removeEventListener('scroll', handler, { capture: true }));
+  }));
+
   const value: WorkspaceContextValue = {
     blockStore: store,
     paneStore: props.paneStore ?? realPaneStore,
@@ -197,6 +262,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     pageNameSet,
     stubPageNameSet,
     shortHashIndex,
+    wikilinkAutocomplete,
   };
 
   // Wire up auto-execute handler for externally-created blocks (API/CRDT sync).

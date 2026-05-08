@@ -594,12 +594,15 @@ function createPaneStore() {
 
     return {
       zoomedRootId: { ...state.zoomedRootId },
-      // Deep clone nested structure to strip SolidJS proxies
-      collapsed: JSON.parse(JSON.stringify(state.collapsed)),
+      // FLO-316: structuredClone strips SolidJS proxies (same effect as
+      // JSON.parse(JSON.stringify(...))) and avoids the JSON serialize/parse
+      // roundtrip. Persistence writes fire on every collapse toggle, focus
+      // change, and navigation event — keeping this cheap matters.
+      collapsed: structuredClone(state.collapsed),
       // FLO-77: Include focused block IDs in persistence
       focusedBlockId: { ...state.focusedBlockId },
       // FLO-180: Include navigation history (capped)
-      navigationHistory: JSON.parse(JSON.stringify(cappedHistory)),
+      navigationHistory: structuredClone(cappedHistory),
     };
   };
 

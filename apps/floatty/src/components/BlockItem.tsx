@@ -1,11 +1,10 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, on, untrack } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
 import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
-import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { useContentSync } from '../hooks/useContentSync';
 import { useDoorChirpListener } from '../hooks/useDoorChirpListener';
@@ -64,7 +63,6 @@ interface BlockItemProps {
   id: string;
   paneId: string;
   depth: number;
-  focusedBlockId: string | null;
   onFocus: (id: string) => void;
   // FLO-74: Multi-select
   isBlockSelected?: (id: string) => boolean;
@@ -74,7 +72,7 @@ interface BlockItemProps {
 }
 
 export function BlockItem(props: BlockItemProps) {
-  const { blockStore, paneStore, pageNames, pageNameSet, stubPageNameSet, shortHashIndex } = useWorkspace();
+  const { blockStore, paneStore, pageNameSet, stubPageNameSet, shortHashIndex, wikilinkAutocomplete: autocomplete } = useWorkspace();
   const config = useConfig();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
@@ -85,7 +83,14 @@ export function BlockItem(props: BlockItemProps) {
   const blockId = props.id;
 
   const block = createMemo(() => store.blocks[props.id]);
-  const isFocused = createMemo(() => props.focusedBlockId === props.id);
+  // FLO-529/cowboy-audit-#1: read focus from paneStore directly instead of via
+  // prop-drilled focusedBlockId. The prop drill invalidated the prop surface
+  // across the entire recursive tree on each focus change, cascading classList
+  // and downstream-memo recomputation in every visible BlockItem. Reading the
+  // store path narrows the invalidation surface — memo bodies still re-run
+  // (all readers of state.focusedBlockId[paneId]) but only the two BlockItems
+  // whose isFocused result actually flips propagate to downstream effects.
+  const isFocused = createMemo(() => paneStore.getFocusedBlockId(props.paneId) === props.id);
   // pages:: children default collapsed — untrack parent content read to avoid
   // N×M reactivity (265 children re-evaluating on every keystroke in parent).
   // pages:: prefix is structural, doesn't change while children are mounted.
@@ -139,7 +144,7 @@ export function BlockItem(props: BlockItemProps) {
     getContentRef: () => contentRef,
     store,
     cursor,
-    onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref),
+    onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref, props.id),
     onContentChange: () => {
       // FLO-668 null contract: null → this block lives in a non-tab-hosted
       // pane (sidebar/floating); pinPane is tab-scoped, silent no-op.
@@ -213,21 +218,21 @@ export function BlockItem(props: BlockItemProps) {
     }
   });
 
-  // FLO-376: Wikilink autocomplete (FLO-322: pageNames from singleton context)
-  // FLO-552: resolveAlias lets the autocomplete suppress "Create new page"
-  // when the typed text is a `<hex-prefix>|alias` referencing an existing block.
-  const resolveAlias = (hex: string): boolean =>
-    resolveBlockIdPrefix(hex, Object.keys(blockStore.blocks), shortHashIndex()) !== null;
-  const autocomplete = useWikilinkAutocomplete(pageNames, resolveAlias);
+  // FLO-376/FLO-322/FLO-552/FLO-316: wikilinkAutocomplete is a singleton in
+  // WorkspaceContext. Pulled from useWorkspace() above so this BlockItem
+  // doesn't create its own state machine. The scroll-dismiss effect that
+  // used to live here also moved to WorkspaceProvider — keeping it here
+  // would register N scroll listeners (one per visible BlockItem) for one
+  // singleton open-state. Mirrors the FLO-322 pageNames lift.
 
-  // Dismiss autocomplete on scroll (anchorRect goes stale)
-  createEffect(on(() => autocomplete.isOpen(), (open) => {
-    if (!open) return;
-    const handler = () => autocomplete.dismiss();
-    // Capture phase catches scroll on any ancestor
-    window.addEventListener('scroll', handler, { capture: true, passive: true });
-    onCleanup(() => window.removeEventListener('scroll', handler, { capture: true }));
-  }));
+  // Singleton-aware popup gate: returns the autocomplete state only for the
+  // BlockItem that triggered the autocomplete (state.activeBlockId === props.id),
+  // null otherwise. Single accessor read per evaluation; the Show below mounts
+  // the popup component on exactly one BlockItem.
+  const autocompleteStateForThisBlock = createMemo(() => {
+    const acState = autocomplete.state();
+    return acState?.activeBlockId === props.id ? acState : null;
+  });
 
   // Shared chirp listener for inline door output (FM #9: cleanup on unmount/re-run)
   useDoorChirpListener(inlineDoorRef, {
@@ -1055,8 +1060,11 @@ export function BlockItem(props: BlockItemProps) {
             setInlineDoorRef={setInlineDoorRef}
           />
 
-          {/* FLO-376: Wikilink autocomplete popup */}
-          <Show when={autocomplete.state()}>
+          {/* FLO-376: Wikilink autocomplete popup. FLO-316: gated to the
+              block that triggered the autocomplete — the controller is a
+              singleton, so without this gate every visible BlockItem would
+              mount the popup component (CodeRabbit found this on PR #299). */}
+          <Show when={autocompleteStateForThisBlock()}>
             {(acState) => (
               <WikilinkAutocomplete
                 state={acState()}
@@ -1087,7 +1095,6 @@ export function BlockItem(props: BlockItemProps) {
                   id={id}
                   paneId={props.paneId}
                   depth={props.depth + 1}
-                  focusedBlockId={props.focusedBlockId}
                   onFocus={props.onFocus}
                   isBlockSelected={props.isBlockSelected}
                   onSelect={props.onSelect}
