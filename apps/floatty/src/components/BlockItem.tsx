@@ -181,7 +181,9 @@ export function BlockItem(props: BlockItemProps) {
     // is a render block). New projection-contract blocks already have a
     // semantic title in content — show it as-is, no prefix.
     const content = block()?.content ?? '';
-    if (!content.toLowerCase().startsWith('render::')) return title;
+    // trimStart() mirrors the legacy-shape detection in deriveDoorTitle so
+    // "  render:: {...}" content also gets the visual `render:: ` prefix.
+    if (!content.trimStart().toLowerCase().startsWith('render::')) return title;
     if (title.toLowerCase().startsWith('render::')) return title;
     return `render:: ${title}`;
   });

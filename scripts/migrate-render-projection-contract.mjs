@@ -142,19 +142,23 @@ for (const b of renderCandidates) {
   }
   const full = await fullRes.json();
   const title = deriveDoorTitle(full);
+  // Defensive against a malformed API response that omits/nulls `content`:
+  // a TypeError on .slice/.trim mid-loop would abort migration after the
+  // backup is already written, leaving skipped/failed counts wrong.
+  const safeContent = full.content ?? '';
   if (!title) {
-    skipped.push({ id: b.id, reason: 'no clean title derivable', content: full.content.slice(0, 80) });
+    skipped.push({ id: b.id, reason: 'no clean title derivable', content: safeContent.slice(0, 80) });
     continue;
   }
-  if (title === full.content.trim()) {
-    skipped.push({ id: b.id, reason: 'content already matches title (no-op)', content: full.content.slice(0, 80) });
+  if (title === safeContent.trim()) {
+    skipped.push({ id: b.id, reason: 'content already matches title (no-op)', content: safeContent.slice(0, 80) });
     continue;
   }
   migrations.push({
     id: b.id,
-    originalContent: full.content,
+    originalContent: safeContent,
     newContent: title,
-    contentLen: full.content.length,
+    contentLen: safeContent.length,
     titleLen: title.length,
   });
 }

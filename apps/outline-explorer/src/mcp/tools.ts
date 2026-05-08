@@ -88,7 +88,7 @@ export function registerDataTools(server: McpServer) {
   // subsection calls out.
   server.tool(
     "expand_page",
-    "Open / load / fetch / view / read / expand a page's subtree by title (page name like 'FLO-679' or 'floatty'). Use when you have a page name and need its full subtree — content, children, structure. For block IDs use get_block; for full-text search use search_blocks. Returns tree (rendered string AND structured treeNodes array), tokenEstimate, blockCount, ancestorContext (with `kind`, `childrenPreview`, `siblings`, `effectiveMarkers` — heading-only-with-children blocks classified as `nav_node`, leaf headings as `leaf_marker`), and freshness (createdAt/updatedAt).",
+    "Open / load / fetch / view / read / expand a page's subtree by title (page name like 'FLO-679' or 'floatty'). Use when you have a page name and need its full subtree — content, children, structure. For block IDs use get_block; for full-text search use search_blocks. Returns tree (rendered string AND structured treeNodes array), tokenEstimate, childCount (direct children), treeBlockCount (full subtree size), ancestorContext (with `kind`, `childrenPreview`, `siblings`, `effectiveMarkers` — heading-only-with-children blocks classified as `nav_node`, leaf headings as `leaf_marker`), and freshness (createdAt/updatedAt).",
     { title: z.string().describe("Page title to look up") },
     async ({ title }: { title: string }) => {
       try {

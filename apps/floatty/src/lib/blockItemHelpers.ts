@@ -64,7 +64,10 @@ export function deriveDoorTitle(block: Block | undefined): string | null {
   if (!block || block.outputType !== 'door' || !block.output) return null;
 
   const content = block.content ?? '';
-  const isLegacyRenderShape = content.toLowerCase().startsWith('render::');
+  // Normalize leading whitespace before the legacy-shape check so values like
+  // "  render:: {...}" route through the legacy fallback arms (output.data.title
+  // / spec.title) rather than getting returned as a "raw" title via arm (1).
+  const isLegacyRenderShape = content.trimStart().toLowerCase().startsWith('render::');
 
   // (1) Projection-contract path — content is the title.
   if (!isLegacyRenderShape && isCleanTitle(content)) {

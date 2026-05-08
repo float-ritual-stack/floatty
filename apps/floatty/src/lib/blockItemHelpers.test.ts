@@ -214,6 +214,19 @@ describe('deriveDoorTitle (v0.14.4 — fix cohabitation overlap)', () => {
   it('returns null for undefined block', () => {
     expect(deriveDoorTitle(undefined)).toBeNull();
   });
+
+  it('LEGACY path — leading whitespace on `render::` prefix routes to fallback arms (CodeRabbit fix)', () => {
+    // CR-flagged: "  render:: {...}" content used to slip through the
+    // !isLegacyRenderShape guard and return raw source as the "title".
+    // trimStart() in deriveDoorTitle now normalizes before the prefix check,
+    // so leading whitespace routes through output.data.title / spec.title.
+    const block = makeBlock({
+      outputType: 'door',
+      content: '  render:: {"root":"r","title":"Whitespace Title","elements":{}}',
+      output: { data: { title: 'LLM-Generated Title', spec: { title: 'Whitespace Title' } } },
+    });
+    expect(deriveDoorTitle(block)).toBe('LLM-Generated Title');
+  });
 });
 
 describe('resolveImgFilename', () => {
