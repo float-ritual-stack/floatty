@@ -130,7 +130,8 @@ function typeAccent(type?: string): string {
 // MARKDOWN
 // ═══════════════════════════════════════════════════════════════
 
-function inlineFormat(s: string): string {
+function inlineFormat(s: string | undefined | null): string {
+  if (typeof s !== 'string') return '';
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
@@ -142,7 +143,8 @@ function inlineFormat(s: string): string {
   return s;
 }
 
-function renderMarkdown(text: string): string {
+function renderMarkdown(text: string | undefined | null): string {
+  if (typeof text !== 'string' || !text) return '';
   let s = text;
 
   // Code fences — protect from inline formatting

@@ -1,11 +1,10 @@
-import { Show, createMemo, createEffect, createSignal, onCleanup, on, untrack } from 'solid-js';
+import { Show, createMemo, createEffect, createSignal, on, untrack } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
 import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
-import { useWikilinkAutocomplete } from '../hooks/useWikilinkAutocomplete';
 import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
 import { useContentSync } from '../hooks/useContentSync';
 import { useDoorChirpListener } from '../hooks/useDoorChirpListener';
@@ -74,7 +73,7 @@ interface BlockItemProps {
 }
 
 export function BlockItem(props: BlockItemProps) {
-  const { blockStore, paneStore, pageNames, pageNameSet, stubPageNameSet, shortHashIndex } = useWorkspace();
+  const { blockStore, paneStore, pageNameSet, stubPageNameSet, shortHashIndex, wikilinkAutocomplete: autocomplete } = useWorkspace();
   const config = useConfig();
   const store = blockStore;
   const { findNextVisibleBlock, findPrevVisibleBlock, findFocusAfterDelete } = useBlockOperations();
@@ -213,21 +212,12 @@ export function BlockItem(props: BlockItemProps) {
     }
   });
 
-  // FLO-376: Wikilink autocomplete (FLO-322: pageNames from singleton context)
-  // FLO-552: resolveAlias lets the autocomplete suppress "Create new page"
-  // when the typed text is a `<hex-prefix>|alias` referencing an existing block.
-  const resolveAlias = (hex: string): boolean =>
-    resolveBlockIdPrefix(hex, Object.keys(blockStore.blocks), shortHashIndex()) !== null;
-  const autocomplete = useWikilinkAutocomplete(pageNames, resolveAlias);
-
-  // Dismiss autocomplete on scroll (anchorRect goes stale)
-  createEffect(on(() => autocomplete.isOpen(), (open) => {
-    if (!open) return;
-    const handler = () => autocomplete.dismiss();
-    // Capture phase catches scroll on any ancestor
-    window.addEventListener('scroll', handler, { capture: true, passive: true });
-    onCleanup(() => window.removeEventListener('scroll', handler, { capture: true }));
-  }));
+  // FLO-376/FLO-322/FLO-552/FLO-721: wikilinkAutocomplete is a singleton in
+  // WorkspaceContext. Pulled from useWorkspace() above so this BlockItem
+  // doesn't create its own state machine. The scroll-dismiss effect that
+  // used to live here also moved to WorkspaceProvider — keeping it here
+  // would register N scroll listeners (one per visible BlockItem) for one
+  // singleton open-state. Mirrors the FLO-322 pageNames lift.
 
   // Shared chirp listener for inline door output (FM #9: cleanup on unmount/re-run)
   useDoorChirpListener(inlineDoorRef, {
