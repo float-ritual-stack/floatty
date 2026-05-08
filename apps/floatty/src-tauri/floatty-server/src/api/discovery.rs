@@ -457,6 +457,7 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), A
                         parent_id: None,
                         after_id: None,
                         at_index: None,
+                        ..Default::default()
                     },
                 )?;
                 cache.pages_container_id = Some(container.id.clone());
@@ -475,6 +476,7 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), A
             parent_id: Some(pages_container_id),
             after_id: None,
             at_index: None,
+            ..Default::default()
         },
     )?;
 
@@ -636,6 +638,7 @@ async fn append_to_daily_note(
             parent_id: Some(daily_id),
             after_id: None,
             at_index: None,
+            ..Default::default()
         },
     )?;
 

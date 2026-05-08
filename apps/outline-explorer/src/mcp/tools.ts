@@ -687,15 +687,27 @@ export function registerDataTools(server: McpServer) {
   // etc.) — we surface server errors verbatim rather than re-validating.
 
   // 10. add_block — create a new block under a parent or after a sibling
+  //
+  // Door projection contract (preferred for door blocks like render::):
+  // pass content = SEMANTIC TITLE and output = ENVELOPE. The block lands
+  // with the rendered view ready and contentEditable showing a clean title.
+  //
+  // Anti-pattern (avoid): writing content as `render:: {full JSON spec}`
+  // and relying on auto-execute. The full spec sits in contentEditable
+  // looking like garbage until the door projects it, and any reconnect /
+  // sync re-fire can briefly unmount the rendered view, exposing the JSON.
   server.tool(
     "add_block",
-    "Add / create / insert / make / write / post / append a new block in the outline. Pass parentId (nest under this block as last child) OR afterId (insert as a sibling after this block) — exactly one. Returns the created block's UUID and ancestorContext for orientation. Use create_page for named pages, append_to_daily for daily-note children — those wrap the same API but autocreate the parent.",
+    "Add / create / insert / make / write / post / append a new block in the outline. Pass parentId (nest under this block as last child) OR afterId (insert as a sibling after this block) — exactly one. Returns the created block's UUID and ancestorContext for orientation. Use create_page for named pages, append_to_daily for daily-note children — those wrap the same API but autocreate the parent. For DOOR blocks (render::, daily::, etc.), prefer the projection-contract shape: content = a semantic title, output = the door envelope, outputType = 'door'. That keeps contentEditable clean and the rendered view stable. Writing `content: 'render:: {json}'` and relying on auto-execute is supported for back-compat but produces a worse UX (raw JSON shows in contentEditable until projected; reconnect / sync events can briefly unmount the rendered view).",
     {
-      content: z.string().describe("Block content (markdown / floatty syntax allowed)."),
+      content: z.string().describe("Block content (markdown / floatty syntax allowed). For door blocks, prefer a semantic title here and pass the spec via `output`."),
       parentId: z.string().optional().describe("Parent block UUID or 6+ hex prefix. Mutually exclusive with afterId."),
       afterId: z.string().optional().describe("Insert after this sibling block (UUID or prefix). Mutually exclusive with parentId."),
+      output: z.unknown().optional().describe("Door / executor output envelope. For render:: this is `{ kind: 'view', doorId: 'render', schema: 1, data: { spec: <json-render spec>, title: <string>, generatedVia: 'agent' } }`. Required when outputType is 'door'."),
+      outputType: z.string().optional().describe("Output type tag. Use 'door' for render::/daily::/etc. Required when output is set."),
+      outputStatus: z.enum(["complete", "running", "error"]).optional().describe("Output status. Defaults to 'complete' when output is set."),
     },
-    async ({ content, parentId, afterId }: { content: string; parentId?: string; afterId?: string }) => {
+    async ({ content, parentId, afterId, output, outputType, outputStatus }: { content: string; parentId?: string; afterId?: string; output?: unknown; outputType?: string; outputStatus?: "complete" | "running" | "error" }) => {
       try {
         // XOR enforcement at the MCP boundary so agents get a clear actionable
         // message instead of bubbling up an opaque server error. Server enforces
@@ -705,10 +717,20 @@ export function registerDataTools(server: McpServer) {
             "Exactly one of parentId or afterId must be provided. parentId nests as last child; afterId inserts as a following sibling."
           );
         }
+        // Output projection contract: outputType is required when output is
+        // set. Server enforces the same; this is the friendly cross-check.
+        if (output !== undefined && outputType === undefined) {
+          return errorResult(
+            "outputType is required when output is set. Use 'door' for render::/daily::/etc."
+          );
+        }
 
         const body: Record<string, unknown> = { content };
         if (parentId !== undefined) body.parentId = parentId;
         if (afterId !== undefined) body.afterId = afterId;
+        if (output !== undefined) body.output = output;
+        if (outputType !== undefined) body.outputType = outputType;
+        if (outputStatus !== undefined) body.outputStatus = outputStatus;
 
         const block = await floattyFetch<Block>("/api/v1/blocks", {
           method: "POST",
@@ -720,6 +742,7 @@ export function registerDataTools(server: McpServer) {
           content: block.content,
           blockType: block.blockType,
           childCount: block.childIds?.length ?? 0,
+          outputType: block.outputType ?? null,
           ancestorContext: block.ancestorContext ?? null,
         });
       } catch (e) {
@@ -731,25 +754,31 @@ export function registerDataTools(server: McpServer) {
   // 11. patch_block — update an existing block
   server.tool(
     "patch_block",
-    "Update / edit / modify / patch / change / rewrite / move / rename / reparent / collapse / uncollapse an existing block. All fields except blockId are optional — pass only what changes. content edits text (rename / rewrite); parentId moves the block to a new parent (move / reparent / relocate); collapsed toggles the per-pane collapse state (Y.Doc-persisted). Returns the updated block.",
+    "Update / edit / modify / patch / change / rewrite / move / rename / reparent / collapse / uncollapse an existing block, or replace its door / executor output projection. All fields except blockId are optional — pass only what changes. content edits text (rename / rewrite); parentId moves the block to a new parent (move / reparent / relocate); collapsed toggles the per-pane collapse state (Y.Doc-persisted); output / outputType / outputStatus replace the block's projection envelope (use to refresh a door's rendered view without re-typing the trigger). Returns the updated block.",
     {
       blockId: z.string().describe("Block UUID or 6+ hex short-hash prefix."),
       content: z.string().optional().describe("New block content."),
       parentId: z.string().optional().describe("New parent block UUID or prefix (moves the block)."),
       collapsed: z.boolean().optional().describe("Set the block's collapsed state."),
+      output: z.unknown().optional().describe("Replace the door / executor output envelope. For render:: this is `{ kind: 'view', doorId: 'render', schema: 1, data: { spec, title, generatedVia } }`."),
+      outputType: z.string().optional().describe("Output type tag (e.g. 'door'). Required when output is set on a block that doesn't already have an outputType."),
+      outputStatus: z.enum(["complete", "running", "error"]).optional().describe("Output status."),
     },
-    async ({ blockId, content, parentId, collapsed }: { blockId: string; content?: string; parentId?: string; collapsed?: boolean }) => {
+    async ({ blockId, content, parentId, collapsed, output, outputType, outputStatus }: { blockId: string; content?: string; parentId?: string; collapsed?: boolean; output?: unknown; outputType?: string; outputStatus?: "complete" | "running" | "error" }) => {
       try {
         const body: Record<string, unknown> = {};
         if (content !== undefined) body.content = content;
         if (parentId !== undefined) body.parentId = parentId;
         if (collapsed !== undefined) body.collapsed = collapsed;
+        if (output !== undefined) body.output = output;
+        if (outputType !== undefined) body.outputType = outputType;
+        if (outputStatus !== undefined) body.outputStatus = outputStatus;
 
         // Empty-body guard — caller passed only blockId. Surface a clear UX
         // error at the MCP boundary rather than making a no-op API call.
         if (Object.keys(body).length === 0) {
           return errorResult(
-            "No updates requested. Provide at least one of: content, parentId, collapsed."
+            "No updates requested. Provide at least one of: content, parentId, collapsed, output, outputType, outputStatus."
           );
         }
 
@@ -763,6 +792,7 @@ export function registerDataTools(server: McpServer) {
           content: block.content,
           blockType: block.blockType,
           childCount: block.childIds?.length ?? 0,
+          outputType: block.outputType ?? null,
           ancestorContext: block.ancestorContext ?? null,
         });
       } catch (e) {
