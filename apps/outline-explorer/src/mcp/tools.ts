@@ -88,7 +88,7 @@ export function registerDataTools(server: McpServer) {
   // subsection calls out.
   server.tool(
     "expand_page",
-    "Fetch a page's subtree by title. Use when you need to see the content tree of a specific page in the knowledge graph.",
+    "Open / load / fetch / view / read / expand a page's subtree by title (page name like 'FLO-679' or 'floatty'). Use when you have a page name and need its full subtree — content, children, structure. For block IDs use get_block; for full-text search use search_blocks. Returns tree (rendered string AND structured treeNodes array), tokenEstimate, blockCount, ancestorContext, and freshness (createdAt/updatedAt).",
     { title: z.string().describe("Page title to look up") },
     async ({ title }: { title: string }) => {
       try {
@@ -166,9 +166,16 @@ export function registerDataTools(server: McpServer) {
   );
 
   // 2. get_block — fetch a specific block by UUID or short-hash prefix with subtree
+  //
+  // Description leads with an alias bouquet ("Get / fetch / read / retrieve /
+  // look up / load a block by id") so tool_search surfaces this for the full
+  // range of natural-language verbs agents reach for ("get block by id",
+  // "read block", "look up block", etc.). Without the aliases the description
+  // only matched "fetch", and agents searching "get block by id" missed the
+  // tool and concluded the capability didn't exist.
   server.tool(
     "get_block",
-    "Fetch a block by full UUID or 6+ hex char short-hash prefix (e.g. '37371679' or a [[37371679]] wikilink with brackets stripped). Server resolves prefixes via /api/v1/blocks/:id. Returns block content, breadcrumb (ancestors), subtree (both rendered string AND structured treeNodes array), tokenEstimate, outlinks, and ancestorContext. On ambiguous prefix the server returns 409 — broaden the prefix or use search_blocks to disambiguate.",
+    "Get / fetch / read / retrieve / look up / load a block by id (full UUID or 6+ hex char short-hash prefix, e.g. '37371679' or a [[37371679]] wikilink with brackets stripped). Use this when you already have a block ID, short hash, or [[wikilink]] hash and need the block's content, ancestors (breadcrumb), or subtree — not for searching by text (use search_blocks for that). Server resolves prefixes via /api/v1/blocks/:id. Returns block content, breadcrumb (ancestors), subtree (both rendered string AND structured treeNodes array), tokenEstimate, outlinks, and ancestorContext. On ambiguous prefix the server returns 409 — broaden the prefix or use search_blocks to disambiguate.",
     {
       blockId: z.string().describe("Full block UUID or 6+ hex character short-hash prefix (case-insensitive). Strip [[ ]] from wikilink form before passing."),
       includeTree: z.boolean().optional().describe("Include full subtree (default true). When true, response carries `tree` (rendered string), `treeNodes` (structured array of {id, content, depth, childIds}), and `tokenEstimate`. Use estimate_subtree first if you suspect a large subtree."),
@@ -243,7 +250,7 @@ export function registerDataTools(server: McpServer) {
   // get_block(includeTree:true) when you only need to size the response.
   server.tool(
     "estimate_subtree",
-    "Get size estimate for a block's subtree WITHOUT fetching content. Use to decide whether to expand a tree before paying the token cost. Returns blockCount, totalChars, maxDepth, estimatedTokens (chars/4), and directChildren. Heuristics: blockCount <50 = pull all safely; 50-200 = consider scoping; >200 = paginate via search_blocks({parentId}) instead.",
+    "Estimate / measure / preview / size-check / count a block's subtree WITHOUT fetching content. Use to decide whether to expand a tree before paying the token cost. Returns blockCount, totalChars, maxDepth, estimatedTokens (chars/4), and directChildren. Heuristics: blockCount <50 = pull all safely; 50-200 = consider scoping; >200 = paginate via search_blocks({parentId}) instead.",
     {
       blockId: z.string().describe("Block UUID or 6+ hex short-hash prefix to size."),
     },
@@ -279,7 +286,7 @@ export function registerDataTools(server: McpServer) {
   // project does this hit belong to" without a follow-up call.
   server.tool(
     "search_blocks",
-    "Full-text search across all blocks in the knowledge graph. Returns matching blocks with breadcrumb context AND ancestorContext (nearestPageName, effectiveMarkers, inboundCount) — usually no follow-up call needed for orientation. Pass parentId to scope the search to a specific subtree (e.g. paginate within a large page).",
+    "Search / find / lookup / query / grep blocks by full-text content across the knowledge graph. Use when you don't have a block ID or page title and need to find blocks containing specific text. Returns matching blocks with breadcrumb context AND ancestorContext (nearestPageName, effectiveMarkers, inboundCount) — usually no follow-up call needed for orientation. Pass parentId to scope the search to a specific subtree (e.g. paginate within a large page). For backlinks use get_inbound; for known IDs use get_block.",
     {
       query: z.string().describe("Search query. Pass empty string with parentId to list-paginate a subtree by recency without keyword filtering."),
       limit: z
@@ -350,7 +357,7 @@ export function registerDataTools(server: McpServer) {
   // `get_block` per result.
   server.tool(
     "get_inbound",
-    "Find blocks that link TO a target page via [[wikilinks]]. Use to discover what references or connects to a page. Each result includes the block's markers, outgoing outlinks, timestamps, and outputType for further graph traversal and recency sorting.",
+    "Find backlinks / inbound links / references / what-links-here — blocks that link TO a target page via [[wikilinks]] (the inverse of an outlink lookup). Use to discover what references, connects to, or cites a page. Each result includes the block's markers, outgoing outlinks, timestamps, and outputType for further graph traversal and recency sorting.",
     {
       target: z.string().describe("Page or link name to find backlinks for"),
       limit: z
@@ -450,7 +457,7 @@ export function registerDataTools(server: McpServer) {
   // 6. qmd_search — search external knowledge base
   server.tool(
     "qmd_search",
-    "Search the QMD knowledge base — 4900+ markdown documents across Linear issues, daily notes, sysops logs, technical writing, patterns, conversation exports, and more. Use when the outline references something (like a [[FLO-NNN]] issue, a person, a pattern, a decision) that isn't in the outline itself.",
+    "Search / find / lookup / query the QMD knowledge base — 4900+ markdown documents across Linear issues, daily notes, sysops logs, technical writing, patterns, conversation exports, and more. Use when the outline references something (like a [[FLO-NNN]] issue, a person, a pattern, a decision) that isn't in the outline itself.",
     {
       query: z
         .string()
@@ -533,7 +540,7 @@ export function registerDataTools(server: McpServer) {
   // 7. qmd_get — retrieve a single qmd document as plain text
   server.tool(
     "qmd_get",
-    "Retrieve a single qmd document by file path (or docid). Returns plain markdown text. Use after qmd_search to pull the full body of a hit. This is the text-content adapter for the cowork bridge — use instead of mcp__qmd__get when working inside cowork artifacts.",
+    "Get / fetch / read / retrieve / load / open a single qmd document by file path (or docid). Returns plain markdown text. Use after qmd_search to pull the full body of a hit. This is the text-content adapter for the cowork bridge — use instead of mcp__qmd__get when working inside cowork artifacts.",
     {
       file: z
         .string()
@@ -578,7 +585,7 @@ export function registerDataTools(server: McpServer) {
   // 8. qmd_multi_get — batch retrieve qmd documents as plain text
   server.tool(
     "qmd_multi_get",
-    "Batch retrieve qmd documents by glob pattern or comma-separated list. Returns documents concatenated as plain markdown. Use instead of mcp__qmd__multi_get when working inside cowork artifacts.",
+    "Batch get / fetch / read / retrieve / load multiple qmd documents by glob pattern or comma-separated list (e.g. 'sysops-log/2026-04-*'). Returns documents concatenated as plain markdown. Use instead of mcp__qmd__multi_get when working inside cowork artifacts.",
     {
       pattern: z
         .string()
@@ -625,7 +632,7 @@ export function registerDataTools(server: McpServer) {
   // user's current focus is now one fetch.
   server.tool(
     "presence",
-    "Get the user's currently-focused block in floatty, with ancestorContext (nearestPageName, effectiveMarkers, inboundCount) so you can orient on what they're looking at without a follow-up call. Returns null when no focus is set.",
+    "Get / check / where-is the user's current focus / active block / cursor position in floatty, with ancestorContext (nearestPageName, effectiveMarkers, inboundCount) so you can orient on what they're looking at right now without a follow-up call. Returns null when no focus is set.",
     {
       includeInboundSamples: z
         .boolean()
@@ -682,7 +689,7 @@ export function registerDataTools(server: McpServer) {
   // 10. add_block — create a new block under a parent or after a sibling
   server.tool(
     "add_block",
-    "Create a new block. Pass parentId (nest under this block as last child) OR afterId (insert as a sibling after this block) — exactly one. Returns the created block's UUID and ancestorContext for orientation. Use create_page for named pages, append_to_daily for daily-note children — those wrap the same API but autocreate the parent.",
+    "Add / create / insert / make / write / post / append a new block in the outline. Pass parentId (nest under this block as last child) OR afterId (insert as a sibling after this block) — exactly one. Returns the created block's UUID and ancestorContext for orientation. Use create_page for named pages, append_to_daily for daily-note children — those wrap the same API but autocreate the parent.",
     {
       content: z.string().describe("Block content (markdown / floatty syntax allowed)."),
       parentId: z.string().optional().describe("Parent block UUID or 6+ hex prefix. Mutually exclusive with afterId."),
@@ -724,7 +731,7 @@ export function registerDataTools(server: McpServer) {
   // 11. patch_block — update an existing block
   server.tool(
     "patch_block",
-    "Update an existing block. All fields except blockId are optional — pass only what changes. content edits text; parentId moves the block to a new parent; collapsed toggles the per-pane collapse state (Y.Doc-persisted). Returns the updated block.",
+    "Update / edit / modify / patch / change / rewrite / move / rename / reparent / collapse / uncollapse an existing block. All fields except blockId are optional — pass only what changes. content edits text (rename / rewrite); parentId moves the block to a new parent (move / reparent / relocate); collapsed toggles the per-pane collapse state (Y.Doc-persisted). Returns the updated block.",
     {
       blockId: z.string().describe("Block UUID or 6+ hex short-hash prefix."),
       content: z.string().optional().describe("New block content."),
@@ -772,7 +779,7 @@ export function registerDataTools(server: McpServer) {
   // hand-rolling pages:: container manipulation through add_block.
   server.tool(
     "create_page",
-    "Get-or-create a named page (idempotent). Use for any named page in the knowledge graph: daily notes, project pages, sysop notes, MOCs. Server autocreates the `pages::` container if missing, returns existing page if name matches (case-insensitive). Returns the page block with ancestorContext.",
+    "Create / make / new / upsert / ensure / get-or-create / find-or-create a named page (idempotent). Use for any named page in the knowledge graph: daily notes, project pages, sysop notes, MOCs. Server autocreates the `pages::` container if missing, returns existing page if name matches (case-insensitive). Returns the page block with ancestorContext.",
     {
       name: z.string().trim().min(1).describe("Page name. Must be non-empty after trimming whitespace."),
     },
@@ -814,7 +821,7 @@ export function registerDataTools(server: McpServer) {
   // prevent orphan pages that GET /api/v1/daily/:date can't resolve.
   server.tool(
     "append_to_daily",
-    "Append a child block under a daily note (autocreates the daily note if missing). Date format must be YYYY-MM-DD. Returns the new child block. Use this instead of resolving the daily note by name and calling add_block — server handles autocreation atomically.",
+    "Append / add / log / write / post / record / journal a child block under a daily note (autocreates the daily note if missing). Date format must be YYYY-MM-DD. Returns the new child block. Use this instead of resolving the daily note by name and calling add_block — server handles autocreation atomically.",
     {
       date: z
         .string()

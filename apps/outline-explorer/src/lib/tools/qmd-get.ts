@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
 
 export const qmdGetTool = tool({
   description:
-    "Retrieve a single qmd document by file path (or docid). Returns plain markdown text. Use after qmd_search to pull the full body of a hit. Pairs with qmdSearchTool — search returns snippets + source paths, this returns full bodies.",
+    "Get / fetch / read / retrieve / load / open a single qmd document by file path (or docid). Returns plain markdown text. Use after qmd_search to pull the full body of a hit. Pairs with qmdSearchTool — search returns snippets + source paths, this returns full bodies.",
   inputSchema: z.object({
     file: z
       .string()

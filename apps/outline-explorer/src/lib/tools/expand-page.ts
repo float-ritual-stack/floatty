@@ -5,7 +5,7 @@ import { resolvePageTitle } from "../page-resolver";
 
 export const expandPageTool = tool({
   description:
-    "Fetch a page's subtree by title. Use when you need to see the content tree of a specific page in the knowledge graph.",
+    "Open / load / fetch / view / read / expand a page's subtree by title (page name like 'FLO-679' or 'floatty'). Use when you have a page name and need its full subtree — content, children, structure. For block IDs use get_block; for full-text search use search_blocks.",
   inputSchema: z.object({
     title: z.string().describe("Page title to look up"),
   }),

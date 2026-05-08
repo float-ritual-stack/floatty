@@ -4,7 +4,7 @@ import { searchBlocks } from "../floatty-client";
 
 export const searchBlocksTool = tool({
   description:
-    "Full-text search across all blocks in the knowledge graph. Returns matching blocks with breadcrumb context.",
+    "Search / find / lookup / query / grep blocks by full-text content across the knowledge graph. Use when you don't have a block ID or page title and need to find blocks containing specific text. Returns matching blocks with breadcrumb context. For backlinks use get_inbound; for known IDs use get_block.",
   inputSchema: z.object({
     query: z.string().describe("Search query"),
     limit: z.number().optional().describe("Max results (default 15)"),

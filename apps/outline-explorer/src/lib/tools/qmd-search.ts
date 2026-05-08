@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
 
 export const qmdSearchTool = tool({
   description:
-    "Search the QMD knowledge base — 4900+ markdown documents across Linear issues, daily notes, sysops logs, technical writing, patterns, conversation exports, and more. Use when the outline references something (like a [[FLO-NNN]] issue, a person, a pattern, a decision) that isn't in the outline itself. Also useful for finding historical context about topics mentioned in blocks.",
+    "Search / find / lookup / query the QMD knowledge base — 4900+ markdown documents across Linear issues, daily notes, sysops logs, technical writing, patterns, conversation exports, and more. Use when the outline references something (like a [[FLO-NNN]] issue, a person, a pattern, a decision) that isn't in the outline itself. Also useful for finding historical context about topics mentioned in blocks.",
   inputSchema: z.object({
     query: z
       .string()

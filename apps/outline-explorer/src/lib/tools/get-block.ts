@@ -4,7 +4,7 @@ import { getBlock } from "../floatty-client";
 
 export const getBlockTool = tool({
   description:
-    "Fetch a specific block by its UUID, including its subtree. Use when you have a block ID and need to see its content and children.",
+    "Get / fetch / read / retrieve / look up / load a specific block by its UUID (or 6+ hex char short-hash prefix), including its subtree. Use when you already have a block ID, short hash, or [[wikilink]] hash and need to see its content and children — not for searching by text (use search_blocks for that).",
   inputSchema: z.object({
     blockId: z.string().describe("Block UUID to fetch"),
     includeTree: z
