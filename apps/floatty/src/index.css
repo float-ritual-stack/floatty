@@ -2050,9 +2050,8 @@ body.block-dragging * {
 .linked-reference-children-preview {
   list-style: none;
   margin: 6px 0 0 0;
-  padding: 0;
+  padding: 0 0 0 8px;
   border-left: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
-  padding-left: 8px;
 }
 
 .linked-reference-children-preview > li {

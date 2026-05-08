@@ -149,8 +149,15 @@ export function LinkedReferences(props: LinkedReferencesProps) {
                       onWikilinkClick={handleWikilinkClick}
                     />
                     <Show when={kind === 'nav_node'}>
+                      {/*
+                        Total-count chip, no `+` prefix. The `+` would
+                        imply "more not shown", but for childCount ≤ 3
+                        the inline preview below shows them all. Overflow
+                        signaling lives on the inline list ("+N more"),
+                        not here. (PR #302 review feedback.)
+                      */}
                       <span class="linked-reference-children-chip">
-                        +{childCount} {childCount === 1 ? 'child' : 'children'}
+                        {childCount} {childCount === 1 ? 'child' : 'children'}
                       </span>
                     </Show>
                   </div>

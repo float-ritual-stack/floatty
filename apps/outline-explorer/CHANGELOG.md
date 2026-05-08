@@ -6,7 +6,7 @@ Format: date · headline · PR. Bullets describe what's NEW or DIFFERENT after t
 
 ---
 
-## [[2026-05-08]] · Tool description discoverability sweep — alias bouquets across MCP + AI SDK surfaces
+## [[2026-05-08]] · Tool description discoverability sweep — alias bouquets across MCP + AI SDK surfaces · [[PR `#302`]]
 
 ### Why
 
