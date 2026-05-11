@@ -138,7 +138,7 @@ export const hubTuiGridSpec: Spec = {
       props: { title: '▒ OPEN QUESTIONS ▒', titleColor: '#ff4444' },
       children: ['oq1', 'oq2'],
     },
-    oq1: { type: 'Text', props: { content: '? Region residency for embedded docs — answer needed for Demo Dana\'s §X.Y.Z' } },
-    oq2: { type: 'Text', props: { content: '? agent-review round on PR #42 — bot-reviewer panel queued' } },
+    oq1: { type: 'Paragraph', props: { content: '? Region residency for embedded docs — answer needed for Demo Dana\'s §X.Y.Z' } },
+    oq2: { type: 'Paragraph', props: { content: '? agent-review round on PR #42 — bot-reviewer panel queued' } },
   },
 };

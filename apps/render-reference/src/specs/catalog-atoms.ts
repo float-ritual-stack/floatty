@@ -362,7 +362,7 @@ export const catalogAtomsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // PRIMITIVES
     // ═══════════════════════════════════════════════════════════════
-    's-primitives-h': { type: 'Text', props: { content: 'Primitives', size: 'xl', weight: 'bold' } },
+    's-primitives-h': { type: 'Heading', props: { level: 1, content: 'Primitives' } },
     's-primitives': {
       type: 'Stack',
       props: { direction: 'vertical', gap: 12 },
@@ -374,7 +374,7 @@ export const catalogAtomsSpec: Spec = {
       props: { title: 'Example card', subtitle: 'subtitle slot' },
       children: ['pc-card-demo-body'],
     },
-    'pc-card-demo-body': { type: 'Text', props: { content: 'Card body content goes in the default slot.' } },
+    'pc-card-demo-body': { type: 'Paragraph', props: { content: 'Card body content goes in the default slot.' } },
     'pc-metric-demo': { type: 'Metric', props: { label: 'active sessions', value: '42' } },
     'pc-button-demo': {
       type: 'Stack',
@@ -396,7 +396,7 @@ export const catalogAtomsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // DISPLAY CHIPS & REFS
     // ═══════════════════════════════════════════════════════════════
-    's-display-h': { type: 'Text', props: { content: 'Display chips & refs', size: 'xl', weight: 'bold' } },
+    's-display-h': { type: 'Heading', props: { level: 1, content: 'Display chips & refs' } },
     's-display': {
       type: 'Stack',
       props: { direction: 'vertical', gap: 12 },
@@ -440,7 +440,7 @@ export const catalogAtomsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // NAVIGATION CONTROLS
     // ═══════════════════════════════════════════════════════════════
-    's-navigation-h': { type: 'Text', props: { content: 'Navigation controls', size: 'xl', weight: 'bold' } },
+    's-navigation-h': { type: 'Heading', props: { level: 1, content: 'Navigation controls' } },
     's-navigation': {
       type: 'Stack',
       props: { direction: 'vertical', gap: 12 },
@@ -451,7 +451,7 @@ export const catalogAtomsSpec: Spec = {
       props: { title: 'Toggle me', expanded: true, count: 3, color: '#00e5ff' },
       children: ['pc-collapsible-body'],
     },
-    'pc-collapsible-body': { type: 'Text', props: { content: 'This content lives inside the collapsible slot.' } },
+    'pc-collapsible-body': { type: 'Paragraph', props: { content: 'This content lives inside the collapsible slot.' } },
     'pc-filter-demo': {
       type: 'FilterButtons',
       props: {
@@ -480,7 +480,7 @@ export const catalogAtomsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // INPUT
     // ═══════════════════════════════════════════════════════════════
-    's-input-h': { type: 'Text', props: { content: 'Input', size: 'xl', weight: 'bold' } },
+    's-input-h': { type: 'Heading', props: { level: 1, content: 'Input' } },
     's-input': {
       type: 'Stack',
       props: { direction: 'vertical', gap: 12 },
@@ -492,7 +492,7 @@ export const catalogAtomsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // TUI
     // ═══════════════════════════════════════════════════════════════
-    's-tui-h': { type: 'Text', props: { content: 'TUI', size: 'xl', weight: 'bold' } },
+    's-tui-h': { type: 'Heading', props: { level: 1, content: 'TUI' } },
     's-tui': {
       type: 'Stack',
       props: { direction: 'vertical', gap: 12 },
@@ -520,7 +520,7 @@ export const catalogAtomsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // TEMPORAL / TIMELINE
     // ═══════════════════════════════════════════════════════════════
-    's-temporal-h': { type: 'Text', props: { content: 'Temporal & timelines', size: 'xl', weight: 'bold' } },
+    's-temporal-h': { type: 'Heading', props: { level: 1, content: 'Temporal & timelines' } },
     's-temporal': {
       type: 'Stack',
       props: { direction: 'vertical', gap: 12 },
@@ -559,7 +559,7 @@ export const catalogAtomsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // VISUALIZATIONS
     // ═══════════════════════════════════════════════════════════════
-    's-viz-h': { type: 'Text', props: { content: 'Visualizations', size: 'xl', weight: 'bold' } },
+    's-viz-h': { type: 'Heading', props: { level: 1, content: 'Visualizations' } },
     's-viz': {
       type: 'Stack',
       props: { direction: 'vertical', gap: 12 },
@@ -681,7 +681,7 @@ export const catalogAtomsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // LAYOUT (DocLayout + Nav family)
     // ═══════════════════════════════════════════════════════════════
-    's-layout-h': { type: 'Text', props: { content: 'Layout & sidebar nav', size: 'xl', weight: 'bold' } },
+    's-layout-h': { type: 'Heading', props: { level: 1, content: 'Layout & sidebar nav' } },
     's-layout': {
       type: 'Stack',
       props: { direction: 'vertical', gap: 12 },

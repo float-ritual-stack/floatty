@@ -31,21 +31,21 @@ export const standupHeadlineSpec: Spec = {
       },
     },
 
-    'highlights-h': { type: 'Text', props: { content: '## Morning highlights', size: 'lg', weight: 'bold' } },
+    'highlights-h': { type: 'Heading', props: { level: 2, content: 'Morning highlights' } },
     h1: {
-      type: 'Text',
+      type: 'Paragraph',
       props: {
         content: '◆ **[[PR #2131]]** BMI validation + routing ([[#2078]] + [[#2129]]) polished: Vercel build error fixed (discriminated-union spread cast `as BuilderNode`), Zustand direct mutation cleaned up to immutable `setNodes` map, `NodeType`/`QuestionType` enum types replace string literals. 5 commits, **482 tests green**, CodeRabbit clean, Vercel deployments passing.',
       },
     },
     h2: {
-      type: 'Text',
+      type: 'Paragraph',
       props: {
         content: '◆ **Nico sync confirmed** via Sam: out-of-range BMI → Block (Red) is the right behavior for [[#2129]] — greenlit to ship.',
       },
     },
     h3: {
-      type: 'Text',
+      type: 'Paragraph',
       props: {
         content: '◆ **[[PR #2156]]** [[#2130]] Block label fix shipped — assessment responses flagged `ReviewFlag.block` now display with "Block" badge + filter label instead of "Warning". 2 files / 2 lines, Chrome-MCP screenshot verified.',
       },
@@ -65,7 +65,7 @@ export const standupHeadlineSpec: Spec = {
       },
     },
 
-    'blockers-h': { type: 'Text', props: { content: '## Blockers', size: 'lg', weight: 'bold', color: '#98c379' } },
+    'blockers-h': { type: 'Heading', props: { level: 2, content: 'Blockers' } },
     unblocked: {
       type: 'GapItem',
       props: {
@@ -74,7 +74,7 @@ export const standupHeadlineSpec: Spec = {
       },
     },
 
-    'sync-h': { type: 'Text', props: { content: '## 12:12 PM Sam Sync', size: 'lg', weight: 'bold' } },
+    'sync-h': { type: 'Heading', props: { level: 2, content: '12:12 PM Sam Sync' } },
 
     qa1: {
       type: 'QuoteBlock',
@@ -94,9 +94,9 @@ export const standupHeadlineSpec: Spec = {
       },
     },
 
-    'next-h': { type: 'Text', props: { content: '## Next', size: 'lg', weight: 'bold' } },
+    'next-h': { type: 'Heading', props: { level: 2, content: 'Next' } },
     next: {
-      type: 'Text',
+      type: 'Paragraph',
       props: {
         content: 'Afternoon: [[#2113]] staging verification (now unblocked by [[PR #2086]]). Sample orders, run cron endpoint, verify dispatch. Monitor [[PR #2131]] merge status.',
       },

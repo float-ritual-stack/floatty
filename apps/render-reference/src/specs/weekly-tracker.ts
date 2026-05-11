@@ -31,7 +31,7 @@ export const weeklyTrackerSpec: Spec = {
       },
     },
 
-    'carry-h': { type: 'Text', props: { content: '## Carry-forward from W16', size: 'lg', weight: 'bold' } },
+    'carry-h': { type: 'Heading', props: { level: 2, content: 'Carry-forward from W16' } },
     'carry-table': {
       type: 'EntryBody',
       props: {
@@ -45,14 +45,14 @@ export const weeklyTrackerSpec: Spec = {
       },
     },
 
-    'headlines-h': { type: 'Text', props: { content: '## Daily Headlines', size: 'lg', weight: 'bold' } },
+    'headlines-h': { type: 'Heading', props: { level: 2, content: 'Daily Headlines' } },
     headlines: {
       type: 'Stack',
       props: { direction: 'vertical', gap: 6 },
       children: ['h-mon'],
     },
     'h-mon': {
-      type: 'Text',
+      type: 'Paragraph',
       props: {
         content: '• [[2026-04-20-monday-headlines|Mon Apr 20]]: brain-boot (0 PRs). Sam sync 01:17 PM — basket bug (Kai-flagged, Jordan fixing), code-divergence anti-pattern named, "complete assessment warning" too thin. Alex standby, [project::generi-co/skills-app] until pulled back.',
       },
@@ -89,7 +89,7 @@ export const weeklyTrackerSpec: Spec = {
       },
     },
 
-    'ownership-h': { type: 'Text', props: { content: '## Meeting Ownership', size: 'lg', weight: 'bold' } },
+    'ownership-h': { type: 'Heading', props: { level: 2, content: 'Meeting Ownership' } },
     'ownership-table': {
       type: 'EntryBody',
       props: {
@@ -102,7 +102,7 @@ export const weeklyTrackerSpec: Spec = {
       },
     },
 
-    'hypothesis-h': { type: 'Text', props: { content: '## Hypothesis Validation', size: 'lg', weight: 'bold' } },
+    'hypothesis-h': { type: 'Heading', props: { level: 2, content: 'Hypothesis Validation' } },
     'hypothesis-table': {
       type: 'EntryBody',
       props: {

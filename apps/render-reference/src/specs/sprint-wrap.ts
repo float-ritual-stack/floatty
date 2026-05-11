@@ -46,9 +46,9 @@ export const sprintWrapSpec: Spec = {
       },
     },
 
-    'pharma-app-h': { type: 'Text', props: { content: '>>> pharma-app', size: 'lg', weight: 'bold', color: '#ffb300' } },
+    'pharma-app-h': { type: 'Heading', props: { level: 2, content: 'pharma-app' } },
     'pharma-app-intro': {
-      type: 'Text',
+      type: 'Paragraph',
       props: {
         content: "The week opened with a database query that was summoning SQL like a pentagram: the coupons **94 statements per page load**. Cowboy batch-fixed it to 5. The benches `query()` / `serviceQuery()` mismatch was generating 30-second loads from stale 5-status predicates. Confirmed. Sam sync approved both fixes same-day, correctness-first posture before Thursday launch-prep.",
       },
@@ -69,13 +69,13 @@ export const sprintWrapSpec: Spec = {
       children: ['sl1', 'sl2'],
     },
     sl1: {
-      type: 'Text',
+      type: 'Paragraph',
       props: {
         content: "[[PR #2131]] committed directly to main — *like a contractor who reno'd the bathroom without closing the water main first.* Hard reset to eb54cf02, reverts on main, cherry-picks to fix/bmi-validation-routing → branch cleaned, PR pending Monday.",
       },
     },
     sl2: {
-      type: 'Text',
+      type: 'Paragraph',
       props: { content: 'Follow-up assessment E2E tests dispatched to cowboy — scope scoped, will land W16' },
     },
 
@@ -87,7 +87,7 @@ export const sprintWrapSpec: Spec = {
       },
     },
 
-    'patterns-h': { type: 'Text', props: { content: '>>> Patterns that crystallized this week', size: 'lg', weight: 'bold', color: '#ffb300' } },
+    'patterns-h': { type: 'Heading', props: { level: 2, content: 'Patterns that crystallized this week' } },
 
     'pattern-1': {
       type: 'PatternCard',

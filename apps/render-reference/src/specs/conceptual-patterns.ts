@@ -80,7 +80,7 @@ export const conceptualPatternsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // 1. VISIBILITY CONDITIONS
     // ═══════════════════════════════════════════════════════════════
-    's-visibility-h': { type: 'Text', props: { content: 'Visibility Conditions', size: 'xl', weight: 'bold' } },
+    's-visibility-h': { type: 'Heading', props: { level: 1, content: 'Visibility Conditions' } },
     'p-visibility': {
       type: 'PatternCard',
       props: {
@@ -143,7 +143,7 @@ export const conceptualPatternsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // 2. TABNAV + VISIBILITY SWITCHING
     // ═══════════════════════════════════════════════════════════════
-    's-tabnav-h': { type: 'Text', props: { content: 'TabNav + visibility switching', size: 'xl', weight: 'bold' } },
+    's-tabnav-h': { type: 'Heading', props: { level: 1, content: 'TabNav + visibility switching' } },
     'p-tabnav': {
       type: 'PatternCard',
       props: {
@@ -162,7 +162,7 @@ export const conceptualPatternsSpec: Spec = {
       props: {
         language: 'json',
         content:
-          '{\n  "state": { "demo_tab": "overview" },\n  "tabs": {\n    "type": "TabNav",\n    "props": {\n      "tabs": [\n        { "id": "overview", "label": "Overview" },\n        { "id": "details",  "label": "Details"  }\n      ],\n      "active": { "$bindState": "/demo_tab" },\n      "variant": "pills"\n    }\n  },\n  "overview-section": {\n    "type": "Text",\n    "props": { "content": "Overview content" },\n    // first tab: visible when /demo_tab=overview OR not set\n    "visible": { "$or": [\n      { "$state": "/demo_tab", "eq": "overview" },\n      { "$state": "/demo_tab", "not": true }\n    ]}\n  },\n  "details-section": {\n    "type": "Text",\n    "props": { "content": "Details content" },\n    "visible": { "$state": "/demo_tab", "eq": "details" }\n  }\n}',
+          '{\n  "state": { "demo_tab": "overview" },\n  "tabs": {\n    "type": "TabNav",\n    "props": {\n      "tabs": [\n        { "id": "overview", "label": "Overview" },\n        { "id": "details",  "label": "Details"  }\n      ],\n      "active": { "$bindState": "/demo_tab" },\n      "variant": "pills"\n    }\n  },\n  "overview-section": {\n    "type": "Paragraph",\n    "props": { "content": "Overview content" },\n    // first tab: visible when /demo_tab=overview OR not set\n    "visible": { "$or": [\n      { "$state": "/demo_tab", "eq": "overview" },\n      { "$state": "/demo_tab", "not": true }\n    ]}\n  },\n  "details-section": {\n    "type": "Paragraph",\n    "props": { "content": "Details content" },\n    "visible": { "$state": "/demo_tab", "eq": "details" }\n  }\n}',
       },
     },
     'p-tabnav-demo': {
@@ -193,7 +193,7 @@ export const conceptualPatternsSpec: Spec = {
       },
     },
     'p-tabnav-overview-body': {
-      type: 'Text',
+      type: 'Paragraph',
       props: { content: 'This content shows when /demo_tab is "overview" OR not yet set (first-tab default pattern via $or).' },
     },
     'p-tabnav-details': {
@@ -203,14 +203,14 @@ export const conceptualPatternsSpec: Spec = {
       visible: { $state: '/demo_tab', eq: 'details' },
     },
     'p-tabnav-details-body': {
-      type: 'Text',
+      type: 'Paragraph',
       props: { content: 'This content shows only when /demo_tab = "details" — plain $eq, no $or needed since this is not the default.' },
     },
 
     // ═══════════════════════════════════════════════════════════════
     // 3. DYNAMIC CONTENT VIA SIBLING VISIBILITY
     // ═══════════════════════════════════════════════════════════════
-    's-dynamic-h': { type: 'Text', props: { content: 'Dynamic content (via sibling visibility)', size: 'xl', weight: 'bold' } },
+    's-dynamic-h': { type: 'Heading', props: { level: 1, content: 'Dynamic content (via sibling visibility)' } },
     'p-dynamic': {
       type: 'PatternCard',
       props: {
@@ -229,7 +229,7 @@ export const conceptualPatternsSpec: Spec = {
       props: {
         language: 'json',
         content:
-          '{\n  "state": { "cond_role": "admin" },\n  "ctrl": {\n    "type": "TabNav",\n    "props": {\n      "tabs": [\n        { "id": "admin", "label": "role: admin" },\n        { "id": "user",  "label": "role: user"  }\n      ],\n      "active": { "$bindState": "/cond_role" },\n      "variant": "pills"\n    }\n  },\n  "title-admin": {\n    "type": "Text",\n    "props": { "content": "Admin Dashboard", "size": "xl", "weight": "bold" },\n    "visible": { "$state": "/cond_role", "eq": "admin" }\n  },\n  "title-user": {\n    "type": "Text",\n    "props": { "content": "User Dashboard",  "size": "xl", "weight": "bold" },\n    "visible": { "$state": "/cond_role", "eq": "user"  }\n  }\n}',
+          '{\n  "state": { "cond_role": "admin" },\n  "ctrl": {\n    "type": "TabNav",\n    "props": {\n      "tabs": [\n        { "id": "admin", "label": "role: admin" },\n        { "id": "user",  "label": "role: user"  }\n      ],\n      "active": { "$bindState": "/cond_role" },\n      "variant": "pills"\n    }\n  },\n  "title-admin": {\n    "type": "Heading",\n    "props": { "level": 1, "content": "Admin Dashboard" },\n    "visible": { "$state": "/cond_role", "eq": "admin" }\n  },\n  "title-user": {\n    "type": "Heading",\n    "props": { "level": 1, "content": "User Dashboard" },\n    "visible": { "$state": "/cond_role", "eq": "user"  }\n  }\n}',
       },
     },
     'p-dynamic-demo': {
@@ -249,20 +249,20 @@ export const conceptualPatternsSpec: Spec = {
       },
     },
     'p-dynamic-admin': {
-      type: 'Text',
-      props: { content: 'Admin Dashboard', size: 'xl', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 1, content: 'Admin Dashboard' },
       visible: { $state: '/cond_role', eq: 'admin' },
     },
     'p-dynamic-user': {
-      type: 'Text',
-      props: { content: 'User Dashboard', size: 'xl', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 1, content: 'User Dashboard' },
       visible: { $state: '/cond_role', eq: 'user' },
     },
 
     // ═══════════════════════════════════════════════════════════════
     // 4. $cond — CONDITIONAL PROP VALUES
     // ═══════════════════════════════════════════════════════════════
-    's-cond-h': { type: 'Text', props: { content: '$cond — conditional prop values', size: 'xl', weight: 'bold' } },
+    's-cond-h': { type: 'Heading', props: { level: 1, content: '$cond — conditional prop values' } },
     'p-cond': {
       type: 'PatternCard',
       props: {
@@ -281,7 +281,7 @@ export const conceptualPatternsSpec: Spec = {
       props: {
         language: 'json',
         content:
-          '// One element, one prop varies by state\n{\n  "title": {\n    "type": "Text",\n    "props": {\n      "size": "xl",\n      "weight": "bold",\n      "content": {\n        "$cond": { "$state": "/cond_role", "eq": "admin" },\n        "$then": "Admin Dashboard",\n        "$else": "User Dashboard"\n      }\n    }\n  }\n}',
+          '// One element, one prop varies by state\n{\n  "title": {\n    "type": "Heading",\n    "props": {\n      "level": 1,\n      "content": {\n        "$cond": { "$state": "/cond_role", "eq": "admin" },\n        "$then": "Admin Dashboard",\n        "$else": "User Dashboard"\n      }\n    }\n  }\n}',
       },
     },
     'p-cond-demo': {
@@ -301,10 +301,9 @@ export const conceptualPatternsSpec: Spec = {
       },
     },
     'p-cond-title': {
-      type: 'Text',
+      type: 'Heading',
       props: {
-        size: 'xl',
-        weight: 'bold',
+        level: 1,
         content: {
           $cond: { $state: '/cond_role', eq: 'admin' },
           $then: 'Admin Dashboard',
@@ -316,7 +315,7 @@ export const conceptualPatternsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // 5. REPEAT + $item / $template
     // ═══════════════════════════════════════════════════════════════
-    's-repeat-h': { type: 'Text', props: { content: 'Repeat + $item / $template', size: 'xl', weight: 'bold' } },
+    's-repeat-h': { type: 'Heading', props: { level: 1, content: 'Repeat + $item / $template' } },
     'p-repeat': {
       type: 'PatternCard',
       props: {
@@ -356,7 +355,7 @@ export const conceptualPatternsSpec: Spec = {
     // ═══════════════════════════════════════════════════════════════
     // 6. STACK + SECTIONS
     // ═══════════════════════════════════════════════════════════════
-    's-stack-h': { type: 'Text', props: { content: 'Stack + Section composition', size: 'xl', weight: 'bold' } },
+    's-stack-h': { type: 'Heading', props: { level: 1, content: 'Stack + Section composition' } },
     'p-stack': {
       type: 'PatternCard',
       props: {
@@ -388,18 +387,18 @@ export const conceptualPatternsSpec: Spec = {
       props: { title: 'Default', variant: 'default' },
       children: ['p-stack-t1'],
     },
-    'p-stack-t1': { type: 'Text', props: { content: 'Default variant — gray treatment.' } },
+    'p-stack-t1': { type: 'Paragraph', props: { content: 'Default variant — gray treatment.' } },
     'p-stack-highlight': {
       type: 'Section',
       props: { title: 'Highlight', variant: 'highlight' },
       children: ['p-stack-t2'],
     },
-    'p-stack-t2': { type: 'Text', props: { content: 'Highlight variant — cyan accent, for important groupings.' } },
+    'p-stack-t2': { type: 'Paragraph', props: { content: 'Highlight variant — cyan accent, for important groupings.' } },
     'p-stack-warning': {
       type: 'Section',
       props: { title: 'Warning', variant: 'warning' },
       children: ['p-stack-t3'],
     },
-    'p-stack-t3': { type: 'Text', props: { content: 'Warning variant — amber accent, for caveats and gotchas.' } },
+    'p-stack-t3': { type: 'Paragraph', props: { content: 'Warning variant — amber accent, for caveats and gotchas.' } },
   },
 };
