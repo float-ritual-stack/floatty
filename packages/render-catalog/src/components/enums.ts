@@ -20,3 +20,20 @@ export const gapTypeEnum = z.enum([
 /** Confidence scale used by PatternCard (and any future component that wants
  *  the same three-bucket discrete confidence). */
 export const confidenceEnum = z.enum(["high", "medium", "low"]);
+
+/** Documented color token set for briefing/narrative atoms (Chip, SectionLabel,
+ *  PatternCluster, StatusLine). Pinned to the set that `accentColor()` in
+ *  render-door's components.tsx actually maps; the React-side renderer in
+ *  outline-explorer uses the same vocabulary. Locks the schema→renderer
+ *  contract: an LLM emission outside this enum is rejected by `validateSpec`
+ *  and by `--json-schema` constrained decoding, so the silent-fallback-to-
+ *  muted bug (CodeRabbit + Greptile P1, PR #306) can't recur. */
+export const colorTokenEnum = z.enum([
+  "cyan",
+  "magenta",
+  "coral",
+  "amber",
+  "green",
+  "purple",
+  "dim",
+]);

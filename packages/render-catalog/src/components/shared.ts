@@ -1,6 +1,9 @@
-// Set A — 12 shared components consumed by both render-door (SolidJS) and
-// outline-explorer (React). Per FLO-657 + Option A canonicalization decisions
-// in .float/work/floatty-catalog-extraction/PLAN.md.
+// Set A — shared components consumed by both render-door (SolidJS) and
+// outline-explorer (React). `shared.ts` is the symmetry contract — every
+// component declared here MUST have both a Solid impl (render-door
+// components.tsx) and a React impl (outline-explorer renderers/). Surface-
+// bound exceptions live in door.ts (music — Tauri+Tone+Strudel) and
+// explorer.ts (workflow UI — RenderPrompt/SearchQuery/ShellCommand).
 //
 // Consumer assembly:
 //   import { defineCatalog } from '@json-render/core';
@@ -9,7 +12,7 @@
 //   defineCatalog(schema, { components: { ...sharedComponentDefinitions, ...domain }, actions: ... });
 
 import { z } from "zod";
-import { severityEnum, gapTypeEnum, confidenceEnum } from "./enums";
+import { severityEnum, gapTypeEnum, confidenceEnum, colorTokenEnum } from "./enums";
 
 export const sharedComponentDefinitions = {
   // ─── Layout ──────────────────────────────────────────────────────────────
@@ -159,5 +162,252 @@ export const sharedComponentDefinitions = {
     }),
     slots: [],
     description: "Side-by-side before/after diff. Before items with removed:true get red strikethrough, after items with added:true get green highlight. Good for meeting diffs, process changes, status transitions.",
+  },
+
+  // ─── Briefing / narrative atoms (promoted from explorer.ts) ──────────────
+  // 21 components moved here as the symmetry contract — both Solid (render-
+  // door) and React (outline-explorer) renderers implement these.
+
+  BlockRef: {
+    props: z.object({
+      title: z.string().describe("Display text for the block reference"),
+      blockId: z.string().optional().describe("Block UUID if known"),
+      page: z.string().optional().describe("Page title for navigation"),
+    }),
+    slots: [],
+    description:
+      "A clickable reference to a block or page in the graph. Renders as a wikilink-style chip.",
+  },
+
+  WalkChip: {
+    props: z.object({
+      page: z.string().describe("Page title to suggest exploring"),
+      reason: z.string().optional().describe("Why this page is worth visiting"),
+    }),
+    slots: [],
+    description:
+      "A clickable suggestion for the next page to explore. Renders as a compact chip.",
+  },
+
+  Prose: {
+    props: z.object({
+      content: z.string().describe("Markdown-ish text content"),
+    }),
+    slots: [],
+    description:
+      "A block of analysis text. Use for narrative explanations between structured components.",
+  },
+
+  StepIndicator: {
+    props: z.object({
+      tool: z.string().describe("Tool name that was called"),
+      target: z.string().describe("What was fetched"),
+      result: z.string().optional().describe("Brief result summary"),
+    }),
+    slots: [],
+    description:
+      "Shows a tool call step: what was fetched and why. Renders as a compact status line.",
+  },
+
+  Chip: {
+    props: z.object({
+      label: z.string().describe("Chip text"),
+      color: colorTokenEnum
+        .optional()
+        .describe("Color token — one of: cyan, magenta, coral, amber, green, purple, dim"),
+      icon: z
+        .string()
+        .optional()
+        .describe("Lucide icon name"),
+      clickable: z.boolean().optional().describe("Whether chip is clickable"),
+    }),
+    slots: [],
+    description:
+      "General-purpose inline pill/tag with optional icon and color.",
+  },
+
+  SectionLabel: {
+    props: z.object({
+      label: z.string().describe("Section label text"),
+      color: colorTokenEnum
+        .optional()
+        .describe("Color token — one of: cyan, magenta, coral, amber, green, purple, dim"),
+      icon: z.string().optional().describe("Lucide icon name"),
+    }),
+    slots: ["default"],
+    description:
+      "Section header with icon, label, and divider line. Groups related content.",
+  },
+
+  ConfidenceDot: {
+    props: z.object({
+      level: z
+        .enum(["high", "medium", "low", "partial"])
+        .describe("Confidence level"),
+    }),
+    slots: [],
+    description:
+      "Small colored dot with level label indicating confidence.",
+  },
+
+  ObservationCard: {
+    props: z.object({
+      number: z.string().describe("Observation number"),
+      title: z.string().describe("Observation heading"),
+      body: z.string().describe("Full observation text"),
+      severity: z
+        .enum(["surprising", "structural", "gap", "thread", "meta"])
+        .optional()
+        .describe("Observation classification"),
+      links: z
+        .array(z.string())
+        .optional()
+        .describe("Related wikilink targets"),
+    }),
+    slots: [],
+    description:
+      "Numbered, expandable observation card for bridge walks. Severity determines left border color.",
+  },
+
+  PatternCluster: {
+    props: z.object({
+      name: z.string().describe("Pattern cluster name"),
+      color: colorTokenEnum
+        .optional()
+        .describe("Color token — one of: cyan, magenta, coral, amber, green, purple, dim"),
+      instances: z
+        .array(z.string())
+        .describe("Specific instances of the pattern"),
+      connections: z
+        .array(z.string())
+        .optional()
+        .describe("Related clusters or concepts"),
+    }),
+    slots: [],
+    description:
+      "Pattern cluster visualization showing instances and connections.",
+  },
+
+  EnrichedStepCard: {
+    props: z.object({
+      tool: z.string().describe("Tool name"),
+      target: z.string().describe("What was fetched"),
+      reason: z
+        .string()
+        .optional()
+        .describe("Why this tool was called"),
+      result: z
+        .string()
+        .optional()
+        .describe("Brief result summary"),
+      preview: z
+        .string()
+        .optional()
+        .describe("Expandable preview of fetched content"),
+    }),
+    slots: [],
+    description:
+      "Enhanced tool step card with reason and expandable preview. Upgrade from StepIndicator.",
+  },
+
+  Heading: {
+    props: z.object({
+      level: z.number().int().min(1).max(3).describe("Heading level 1-3 (integer)"),
+      content: z.string().describe("Heading text"),
+    }),
+    slots: [],
+    description: "Styled heading for AI responses. Level 1 = large cyan, 2 = medium, 3 = small muted.",
+  },
+
+  Paragraph: {
+    props: z.object({
+      content: z.string().describe("Body text — supports **bold** and `code` inline markers"),
+    }),
+    slots: [],
+    description: "Body text paragraph with proper line height and spacing. Parses **bold** and `code` inline.",
+  },
+
+  Bold: {
+    props: z.object({
+      content: z.string().describe("Bold text content"),
+    }),
+    slots: [],
+    description: "Inline bold text span.",
+  },
+
+  InlineCode: {
+    props: z.object({
+      content: z.string().describe("Code text"),
+    }),
+    slots: [],
+    description: "Inline monospace code span with background.",
+  },
+
+  BulletList: {
+    props: z.object({
+      items: z.array(z.string()).describe("List items"),
+    }),
+    slots: [],
+    description: "Bulleted list of items.",
+  },
+
+  StatusLine: {
+    props: z.object({
+      label: z.string().describe("Status label (e.g. URGENT, SHIPPED, HELD)"),
+      color: colorTokenEnum
+        .optional()
+        .describe("Color token for the label — one of: cyan, magenta, coral, amber, green, purple, dim"),
+      content: z.string().describe("Status body text"),
+    }),
+    slots: [],
+    description:
+      "Colored ▸ LABEL: prefix followed by body text. Use for cold-start briefing status lines.",
+  },
+
+  Row: {
+    props: z.object({}),
+    slots: ["default"],
+    description:
+      "Horizontal flex row — wraps chip children with gap. Use for metadata chip rows and link rows.",
+  },
+
+  Timeline: {
+    props: z.object({}),
+    slots: ["default"],
+    description:
+      "Vertical container for TimelineEvent children. Use to group ordered ctx:: events, session arcs, or milestone sequences.",
+  },
+
+  HeadingBlock: {
+    props: z.object({
+      level: z.enum(["h1", "h2", "h3"]).describe("Heading depth"),
+      content: z.string().describe("Heading text"),
+    }),
+    slots: ["default"],
+    description: "Page/section heading block",
+  },
+
+  ContextMarker: {
+    props: z.object({
+      content: z.string().describe("Full ctx:: line content"),
+      timestamp: z.string().optional().describe("Parsed timestamp"),
+      project: z.string().optional().describe("Project marker value"),
+      mode: z.string().optional().describe("Mode marker value"),
+    }),
+    slots: [],
+    description:
+      "ctx:: timestamped event marker with project/mode badges",
+  },
+
+  OutlinerBlock: {
+    props: z.object({
+      content: z.string().describe("Block text content"),
+      blockType: z.string().describe("Original block type string"),
+      depth: z.number().optional().describe("Nesting depth"),
+      blockId: z.string().optional().describe("Block UUID"),
+    }),
+    slots: ["default"],
+    description:
+      "Generic outliner block — fallback for unrecognized types",
   },
 };

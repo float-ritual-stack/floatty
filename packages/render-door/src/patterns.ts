@@ -62,7 +62,8 @@ COMPOSITION RULES:
 - EntryBody for markdown-rich content (meeting notes, descriptions)
 - BacklinksFooter at section end for bidirectional outline links
 - WikilinkChip for inline [[bracket]] references
-- Text with size="sm" + mono=true for structured data lists
+- Heading for page/section titles (level 1-3); Paragraph for body prose;
+  Bold + InlineCode for inline emphasis; Prose for markdown-rich blocks
 - Color-code by severity: #ff4444 critical, #ffb300 warning, #98c379 ok, #00e5ff info
 
 KANBAN (FLO-587 — two-way bound):
@@ -88,7 +89,7 @@ Minimal shape reference (3 cols, 2 cards — expand with real data):
   "state":{"cards":{"<uuid-a>":{"content":"Task A"},"<uuid-b>":{"content":"Task B"}}},
   "elements":{
     "board":{"type":"Stack","props":{"direction":"vertical","gap":10},"children":["header","cols"]},
-    "header":{"type":"Text","props":{"content":"Sprint Board","size":"lg","weight":"bold","color":"#00e5ff"},"children":[]},
+    "header":{"type":"Heading","props":{"level":1,"content":"Sprint Board"},"children":[]},
     "cols":{"type":"Stack","props":{"direction":"horizontal","gap":8},"children":["col-todo","col-doing","col-done"]},
     "col-todo":{"type":"KanbanColumn","props":{"title":"Todo (1)","titleColor":"#ffb300","blockId":"<uuid-col-todo>","childCount":1},"children":["card-a"]},
     "col-doing":{"type":"KanbanColumn","props":{"title":"Doing (1)","titleColor":"#00e5ff","blockId":"<uuid-col-doing>","childCount":1},"children":["card-b"]},
@@ -137,8 +138,8 @@ CALLOUT — typed asides, foldable, nestable
     long-form details, deep references.
 
   Anti-pattern: DO NOT put literal box-drawing chars (├── └── ─) in
-  Text content as faux-trees. That's the markdown source's notation;
-  the spec layer should attach the structure to nested elements
+  Paragraph/Prose content as faux-trees. That's the markdown source's
+  notation; the spec layer should attach the structure to nested elements
   (BulletList for flat, Callout for typed, TreeView for tree+status).
 
 HERO — page-top visual statement
@@ -189,8 +190,8 @@ VISUAL HIERARCHY — multi-speed scanning
   BROWSE (30s) typed Callouts catch the eye via colored left-borders
                (cyan info, amber warning, coral danger, green success,
                magenta example, dim quote).
-  READ (full)  body prose (Text), bulleted evidence (BulletList),
-               statused checklists (TreeView).
+  READ (full)  body prose (Paragraph or Prose), bulleted evidence
+               (BulletList), statused checklists (TreeView).
 
   TLDR/pull-quote = QuoteBlock(insight). Doctrine/rule = Callout(tip).
   Asides = typed Callouts. Hierarchy = nested Callouts (depth carries
@@ -198,7 +199,7 @@ VISUAL HIERARCHY — multi-speed scanning
   the warning-callout, two visual registers deep).
 
   Anti-pattern: rendering a long doctrine post as one big Stack of
-  Text + DataBlock-ASCII-trees. That's the floor (markdown cat). The
-  ceiling is typed-callout structure with pull-quotes for the
+  Paragraph + DataBlock-ASCII-trees. That's the floor (markdown cat).
+  The ceiling is typed-callout structure with pull-quotes for the
   load-bearing claims.
 `;

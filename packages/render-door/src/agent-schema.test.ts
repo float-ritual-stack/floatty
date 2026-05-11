@@ -105,7 +105,7 @@ describe('BBS_SPEC_JSON_SCHEMA_LOOSE', () => {
     // catalog's stable surface; if they disappear the catalog has been
     // restructured and this test should fail loudly.
     const names = new Set(typeField?.enum as string[]);
-    for (const known of ['Card', 'Text', 'Stack', 'Section']) {
+    for (const known of ['Card', 'Heading', 'Stack', 'Section']) {
       expect(names, `loose schema must include "${known}" as a valid type`).toContain(known);
     }
   });
@@ -157,12 +157,12 @@ describe('BBS_AGENT_REQUEST_SCHEMA', () => {
 // =============================================================================
 
 describe('bbsCatalog.validate', () => {
-  it('accepts a minimal Card-with-Text spec', () => {
+  it('accepts a minimal Card-with-Paragraph spec', () => {
     const spec = {
       root: 'card',
       elements: {
-        card: { type: 'Card', props: { title: 'hi' }, children: ['text'] },
-        text: { type: 'Text', props: { content: 'hello' }, children: [] },
+        card: { type: 'Card', props: { title: 'hi' }, children: ['body'] },
+        body: { type: 'Paragraph', props: { content: 'hello' }, children: [] },
       },
     };
     const result = bbsCatalog.validate(spec);
