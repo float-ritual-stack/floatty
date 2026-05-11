@@ -46,7 +46,7 @@ export const sprintWrapSpec: Spec = {
       },
     },
 
-    'pharma-app-h': { type: 'Heading', props: { level: 2, content: '>>> pharma-app' } },
+    'pharma-app-h': { type: 'Heading', props: { level: 2, content: 'pharma-app' } },
     'pharma-app-intro': {
       type: 'Paragraph',
       props: {
@@ -87,7 +87,7 @@ export const sprintWrapSpec: Spec = {
       },
     },
 
-    'patterns-h': { type: 'Heading', props: { level: 2, content: '>>> Patterns that crystallized this week' } },
+    'patterns-h': { type: 'Heading', props: { level: 2, content: 'Patterns that crystallized this week' } },
 
     'pattern-1': {
       type: 'PatternCard',

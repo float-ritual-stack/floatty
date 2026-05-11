@@ -31,7 +31,7 @@ export const standupHeadlineSpec: Spec = {
       },
     },
 
-    'highlights-h': { type: 'Heading', props: { level: 2, content: '## Morning highlights' } },
+    'highlights-h': { type: 'Heading', props: { level: 2, content: 'Morning highlights' } },
     h1: {
       type: 'Paragraph',
       props: {
@@ -65,7 +65,7 @@ export const standupHeadlineSpec: Spec = {
       },
     },
 
-    'blockers-h': { type: 'Heading', props: { level: 2, content: '## Blockers' } },
+    'blockers-h': { type: 'Heading', props: { level: 2, content: 'Blockers' } },
     unblocked: {
       type: 'GapItem',
       props: {
@@ -74,7 +74,7 @@ export const standupHeadlineSpec: Spec = {
       },
     },
 
-    'sync-h': { type: 'Heading', props: { level: 2, content: '## 12:12 PM Sam Sync' } },
+    'sync-h': { type: 'Heading', props: { level: 2, content: '12:12 PM Sam Sync' } },
 
     qa1: {
       type: 'QuoteBlock',
@@ -94,7 +94,7 @@ export const standupHeadlineSpec: Spec = {
       },
     },
 
-    'next-h': { type: 'Heading', props: { level: 2, content: '## Next' } },
+    'next-h': { type: 'Heading', props: { level: 2, content: 'Next' } },
     next: {
       type: 'Paragraph',
       props: {

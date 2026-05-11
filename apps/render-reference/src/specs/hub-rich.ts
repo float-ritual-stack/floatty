@@ -73,7 +73,7 @@ export const hubRichSpec: Spec = {
     },
 
     // ─── RECENT WORK ─ Notion-style gallery (comfortable density) ─
-    'recent-h': { type: 'Heading', props: { level: 2, content: '## Recent Work' } },
+    'recent-h': { type: 'Heading', props: { level: 2, content: 'Recent Work' } },
     'recent-gallery': {
       type: 'GalleryGrid',
       props: { columns: 'auto', gap: 14, minCardWidth: '260px' },
@@ -166,7 +166,7 @@ export const hubRichSpec: Spec = {
     },
 
     // ─── COMPACT VARIANT — same cards, tightened header ──────────
-    'compact-h': { type: 'Heading', props: { level: 2, content: '## Same cards · density: compact (variant)' } },
+    'compact-h': { type: 'Heading', props: { level: 2, content: 'Same cards · density: compact (variant)' } },
     'compact-gallery': {
       type: 'GalleryGrid',
       props: { columns: 'auto', gap: 10, minCardWidth: '220px' },
@@ -257,7 +257,7 @@ export const hubRichSpec: Spec = {
     },
 
     // ─── SECTIONS HEADER ────────────────────────────────────────
-    'sections-h': { type: 'Heading', props: { level: 2, content: '## Sections' } },
+    'sections-h': { type: 'Heading', props: { level: 2, content: 'Sections' } },
 
     // ─── DECISIONS ─ Callout success, with topic+text hierarchy ──
     'sec-decisions': {

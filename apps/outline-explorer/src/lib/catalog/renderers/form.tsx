@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useBoundProp } from "@json-render/react";
 import { colors } from "./shared";
 
@@ -40,6 +40,7 @@ function ButtonRenderer({ element, emit }: any) {
 function TextInputRenderer({ element, bindings }: any) {
   const label = element.props.label as string | undefined;
   const placeholder = element.props.placeholder as string | undefined;
+  const inputId = useId();
   const [value, setValue] = useBoundProp<string>(
     typeof element.props.value === "string" ? element.props.value : undefined,
     bindings?.value,
@@ -49,6 +50,7 @@ function TextInputRenderer({ element, bindings }: any) {
     <div className="mb-2">
       {label && (
         <label
+          htmlFor={inputId}
           className="block text-[10px] font-mono uppercase tracking-wider mb-1"
           style={{ color: colors.muted }}
         >
@@ -56,6 +58,7 @@ function TextInputRenderer({ element, bindings }: any) {
         </label>
       )}
       <input
+        id={inputId}
         type="text"
         value={value ?? ""}
         onChange={(e) => setValue(e.target.value)}
@@ -76,6 +79,7 @@ function TextAreaRenderer({ element, bindings }: any) {
   const label = element.props.label as string | undefined;
   const placeholder = element.props.placeholder as string | undefined;
   const rows = (element.props.rows as number | undefined) ?? 4;
+  const textareaId = useId();
   const [value, setValue] = useBoundProp<string>(
     typeof element.props.value === "string" ? element.props.value : undefined,
     bindings?.value,
@@ -85,6 +89,7 @@ function TextAreaRenderer({ element, bindings }: any) {
     <div className="mb-2">
       {label && (
         <label
+          htmlFor={textareaId}
           className="block text-[10px] font-mono uppercase tracking-wider mb-1"
           style={{ color: colors.muted }}
         >
@@ -92,6 +97,7 @@ function TextAreaRenderer({ element, bindings }: any) {
         </label>
       )}
       <textarea
+        id={textareaId}
         value={value ?? ""}
         onChange={(e) => setValue(e.target.value)}
         placeholder={placeholder}

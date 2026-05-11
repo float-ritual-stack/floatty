@@ -31,7 +31,7 @@ export const weeklyTrackerSpec: Spec = {
       },
     },
 
-    'carry-h': { type: 'Heading', props: { level: 2, content: '## Carry-forward from W16' } },
+    'carry-h': { type: 'Heading', props: { level: 2, content: 'Carry-forward from W16' } },
     'carry-table': {
       type: 'EntryBody',
       props: {
@@ -45,7 +45,7 @@ export const weeklyTrackerSpec: Spec = {
       },
     },
 
-    'headlines-h': { type: 'Heading', props: { level: 2, content: '## Daily Headlines' } },
+    'headlines-h': { type: 'Heading', props: { level: 2, content: 'Daily Headlines' } },
     headlines: {
       type: 'Stack',
       props: { direction: 'vertical', gap: 6 },
@@ -89,7 +89,7 @@ export const weeklyTrackerSpec: Spec = {
       },
     },
 
-    'ownership-h': { type: 'Heading', props: { level: 2, content: '## Meeting Ownership' } },
+    'ownership-h': { type: 'Heading', props: { level: 2, content: 'Meeting Ownership' } },
     'ownership-table': {
       type: 'EntryBody',
       props: {
@@ -102,7 +102,7 @@ export const weeklyTrackerSpec: Spec = {
       },
     },
 
-    'hypothesis-h': { type: 'Heading', props: { level: 2, content: '## Hypothesis Validation' } },
+    'hypothesis-h': { type: 'Heading', props: { level: 2, content: 'Hypothesis Validation' } },
     'hypothesis-table': {
       type: 'EntryBody',
       props: {
