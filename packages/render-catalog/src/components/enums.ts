@@ -21,6 +21,12 @@ export const gapTypeEnum = z.enum([
  *  the same three-bucket discrete confidence). */
 export const confidenceEnum = z.enum(["high", "medium", "low"]);
 
+/** Sidebar / nav accent palette used by NavSection. */
+export const accentEnum = z.enum(["magenta", "cyan", "coral", "amber", "muted"]);
+
+/** Entry document type used by EntryHeader (synthesis / archaeology / bbs-source). */
+export const entryTypeEnum = z.enum(["synthesis", "archaeology", "bbs-source"]);
+
 /** Documented color token set for briefing/narrative atoms (Chip, SectionLabel,
  *  PatternCluster, StatusLine). Pinned to the set that `accentColor()` in
  *  render-door's components.tsx actually maps; the React-side renderer in
