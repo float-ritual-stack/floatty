@@ -12,7 +12,7 @@
 //   defineCatalog(schema, { components: { ...sharedComponentDefinitions, ...domain }, actions: ... });
 
 import { z } from "zod";
-import { severityEnum, gapTypeEnum, confidenceEnum } from "./enums";
+import { severityEnum, gapTypeEnum, confidenceEnum, colorTokenEnum } from "./enums";
 
 export const sharedComponentDefinitions = {
   // ─── Layout ──────────────────────────────────────────────────────────────
@@ -212,10 +212,9 @@ export const sharedComponentDefinitions = {
   Chip: {
     props: z.object({
       label: z.string().describe("Chip text"),
-      color: z
-        .string()
+      color: colorTokenEnum
         .optional()
-        .describe("Color token name: cyan, magenta, coral, amber, green, purple, dim"),
+        .describe("Color token — one of: cyan, magenta, coral, amber, green, purple, dim"),
       icon: z
         .string()
         .optional()
@@ -230,10 +229,9 @@ export const sharedComponentDefinitions = {
   SectionLabel: {
     props: z.object({
       label: z.string().describe("Section label text"),
-      color: z
-        .string()
+      color: colorTokenEnum
         .optional()
-        .describe("Color token name"),
+        .describe("Color token — one of: cyan, magenta, coral, amber, green, purple, dim"),
       icon: z.string().optional().describe("Lucide icon name"),
     }),
     slots: ["default"],
@@ -274,10 +272,9 @@ export const sharedComponentDefinitions = {
   PatternCluster: {
     props: z.object({
       name: z.string().describe("Pattern cluster name"),
-      color: z
-        .string()
+      color: colorTokenEnum
         .optional()
-        .describe("Color token name"),
+        .describe("Color token — one of: cyan, magenta, coral, amber, green, purple, dim"),
       instances: z
         .array(z.string())
         .describe("Specific instances of the pattern"),
@@ -357,10 +354,9 @@ export const sharedComponentDefinitions = {
   StatusLine: {
     props: z.object({
       label: z.string().describe("Status label (e.g. URGENT, SHIPPED, HELD)"),
-      color: z
-        .string()
+      color: colorTokenEnum
         .optional()
-        .describe("Color token for the label: coral, green, purple, amber, cyan"),
+        .describe("Color token for the label — one of: cyan, magenta, coral, amber, green, purple, dim"),
       content: z.string().describe("Status body text"),
     }),
     slots: [],
