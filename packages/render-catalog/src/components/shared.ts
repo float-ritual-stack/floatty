@@ -315,7 +315,7 @@ export const sharedComponentDefinitions = {
 
   Heading: {
     props: z.object({
-      level: z.number().min(1).max(3).describe("Heading level 1-3"),
+      level: z.number().int().min(1).max(3).describe("Heading level 1-3 (integer)"),
       content: z.string().describe("Heading text"),
     }),
     slots: [],

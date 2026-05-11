@@ -103,16 +103,24 @@ const V = {
   b: '#222',
   b2: '#333',
   green: '#98c379',
+  purple: '#a366ff',
   mono: "'Space Mono', 'JetBrains Mono', monospace",
   serif: "'Crimson Pro', Georgia, serif",
 } as const;
 
+// Documented color tokens for the briefing/narrative atoms (Chip,
+// SectionLabel, PatternCluster, StatusLine): cyan, magenta, coral, amber,
+// green, purple, dim. Unknown tokens fall back to the muted default —
+// `dim` is the explicit "render muted" choice and shares the fallback path.
 function accentColor(accent?: string): string {
   switch (accent) {
     case 'magenta': return V.mag;
     case 'cyan': return V.cy;
     case 'coral': return V.cor;
     case 'amber': return V.amb;
+    case 'green': return V.green;
+    case 'purple': return V.purple;
+    case 'dim': return V.tf;
     default: return V.td;
   }
 }
@@ -6489,6 +6497,10 @@ export function ObservationCard(props: BaseComponentProps<{
   severity?: 'surprising' | 'structural' | 'gap' | 'thread' | 'meta';
   links?: string[];
 }>) {
+  // Schema describes this as "expandable" — start collapsed (header-only),
+  // click the header to toggle the body + links. Mirrors the affordance the
+  // shared catalog promises and matches the React-side outline-explorer impl.
+  const [expanded, setExpanded] = createSignal(false);
   const borderColor = () => {
     switch (props.props.severity) {
       case 'surprising': return V.mag;
@@ -6504,28 +6516,38 @@ export function ObservationCard(props: BaseComponentProps<{
       'border-left': `3px solid ${borderColor()}`, background: V.s1,
       padding: '10px 14px', margin: '8px 0',
     }}>
-      <div style={{ display: 'flex', gap: '10px', 'align-items': 'baseline' }}>
-        <span style={{ color: V.tf, 'font-family': V.mono, 'font-size': '11px' }}>#{props.props.number}</span>
+      <div
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          display: 'flex', gap: '10px', 'align-items': 'baseline',
+          cursor: 'pointer', 'user-select': 'none',
+        }}
+      >
+        <span style={{ color: V.tf, 'font-family': V.mono, 'font-size': '11px' }}>
+          {expanded() ? '▾' : '▸'} #{props.props.number}
+        </span>
         <span style={{ color: V.t, 'font-weight': '600', 'font-family': V.mono, 'font-size': '12px' }}>{props.props.title}</span>
       </div>
-      <div
-        style={{ 'margin-top': '6px', color: V.t, 'font-family': V.serif, 'font-size': '13px', 'line-height': '1.5' }}
-        innerHTML={sanitize(renderMarkdown(props.props.body))}
-        onClick={handleWikilinkClick}
-      />
-      <Show when={props.props.links && props.props.links.length}>
-        <div style={{ 'margin-top': '6px', display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-          <For each={props.props.links}>
-            {(link) => (
-              <span
-                class="bbs-wikilink"
-                data-wikilink={link}
-                onClick={handleWikilinkClick}
-                style={{ color: V.cy, 'font-family': V.mono, 'font-size': '10px', cursor: 'pointer' }}
-              >[[{link}]]</span>
-            )}
-          </For>
-        </div>
+      <Show when={expanded()}>
+        <div
+          style={{ 'margin-top': '6px', color: V.t, 'font-family': V.serif, 'font-size': '13px', 'line-height': '1.5' }}
+          innerHTML={sanitize(renderMarkdown(props.props.body))}
+          onClick={handleWikilinkClick}
+        />
+        <Show when={props.props.links && props.props.links.length}>
+          <div style={{ 'margin-top': '6px', display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
+            <For each={props.props.links}>
+              {(link) => (
+                <span
+                  class="bbs-wikilink"
+                  data-wikilink={link}
+                  onClick={handleWikilinkClick}
+                  style={{ color: V.cy, 'font-family': V.mono, 'font-size': '10px', cursor: 'pointer' }}
+                >[[{link}]]</span>
+              )}
+            </For>
+          </div>
+        </Show>
       </Show>
     </div>
   );
