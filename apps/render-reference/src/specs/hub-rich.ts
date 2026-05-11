@@ -50,7 +50,7 @@ export const hubRichSpec: Spec = {
       children: ['note-body', 'note-quote', 'note-warning'],
     },
     'note-body': {
-      type: 'Text',
+      type: 'Paragraph',
       props: { content: 'Two parallel ship-lines (chat-bones overnight + foundation-context v2) interwoven with Casey sync afternoon. Plan-trim discipline (1100 → 190 lines) is the pattern that made overnight cowboy execution clean.' },
     },
     'note-quote': {
@@ -59,7 +59,7 @@ export const hubRichSpec: Spec = {
       children: ['note-quote-text'],
     },
     'note-quote-text': {
-      type: 'Text',
+      type: 'Paragraph',
       props: { content: '"BYOK via AI Gateway — our keys, our contracts. OpenRouter off-path for compliance."' },
     },
     'note-warning': {
@@ -68,12 +68,12 @@ export const hubRichSpec: Spec = {
       children: ['note-warning-text'],
     },
     'note-warning-text': {
-      type: 'Text',
+      type: 'Paragraph',
       props: { content: 'Embedded-doc residency for Demo Dana\'s §X.Y.Z compliance requirement still unresolved. Blocking nothing today; will block before the data-upload work begins.' },
     },
 
     // ─── RECENT WORK ─ Notion-style gallery (comfortable density) ─
-    'recent-h': { type: 'Text', props: { content: '## Recent Work', size: 'lg', weight: 'bold' } },
+    'recent-h': { type: 'Heading', props: { level: 2, content: '## Recent Work' } },
     'recent-gallery': {
       type: 'GalleryGrid',
       props: { columns: 'auto', gap: 14, minCardWidth: '260px' },
@@ -166,7 +166,7 @@ export const hubRichSpec: Spec = {
     },
 
     // ─── COMPACT VARIANT — same cards, tightened header ──────────
-    'compact-h': { type: 'Text', props: { content: '## Same cards · density: compact (variant)', size: 'lg', weight: 'bold' } },
+    'compact-h': { type: 'Heading', props: { level: 2, content: '## Same cards · density: compact (variant)' } },
     'compact-gallery': {
       type: 'GalleryGrid',
       props: { columns: 'auto', gap: 10, minCardWidth: '220px' },
@@ -257,7 +257,7 @@ export const hubRichSpec: Spec = {
     },
 
     // ─── SECTIONS HEADER ────────────────────────────────────────
-    'sections-h': { type: 'Text', props: { content: '## Sections', size: 'lg', weight: 'bold' } },
+    'sections-h': { type: 'Heading', props: { level: 2, content: '## Sections' } },
 
     // ─── DECISIONS ─ Callout success, with topic+text hierarchy ──
     'sec-decisions': {
@@ -367,15 +367,15 @@ export const hubRichSpec: Spec = {
       props: { type: 'question', title: 'Open Questions', collapsible: true, defaultExpanded: true },
       children: ['oq1', 'oq2', 'oq-bug'],
     },
-    oq1: { type: 'Text', props: { content: '? Region residency for embedded docs — answer needed for §X.Y.Z by data-upload work start' } },
-    oq2: { type: 'Text', props: { content: '? agent-review round on PR #42 — bot-reviewer panel queued' } },
+    oq1: { type: 'Paragraph', props: { content: '? Region residency for embedded docs — answer needed for §X.Y.Z by data-upload work start' } },
+    oq2: { type: 'Paragraph', props: { content: '? agent-review round on PR #42 — bot-reviewer panel queued' } },
     'oq-bug': {
       type: 'Callout',
       props: { type: 'bug', title: 'Known issue (folded)', collapsible: true, defaultExpanded: false },
       children: ['oq-bug-text'],
     },
     'oq-bug-text': {
-      type: 'Text',
+      type: 'Paragraph',
       props: { content: 'Streamdown caret occasionally repaints during long token bursts. Cosmetic, low-priority. Reproduces once-per-session at ~6000+ char responses.' },
     },
 

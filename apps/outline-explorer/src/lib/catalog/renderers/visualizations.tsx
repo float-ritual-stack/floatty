@@ -247,6 +247,32 @@ export const visualizationRenderers = {
   BarChart: ({ element, children }: any) => {
     const title = element.props.title;
     const maxHeight = element.props.maxHeight ?? 120;
+    // Compute a chart-level max so all BarItems share the same scale. Use the
+    // explicit `max` prop when supplied; otherwise derive from children values.
+    // Without this, each BarItem fell back to its own value and every bar
+    // rendered at 100% (CodeRabbit Major on PR #307).
+    const childArray = Array.isArray(children) ? children : [children].filter(Boolean);
+    const computedMax = (() => {
+      if (typeof element.props.max === "number") return element.props.max;
+      const values: number[] = [];
+      for (const child of childArray) {
+        const v = child?.props?.element?.props?.value;
+        if (typeof v === "number") values.push(v);
+      }
+      return values.length ? Math.max(...values) : 1;
+    })();
+    // Inject the computed max into each BarItem child via the element.props.
+    // BarItem reads element.props.max first; this thread-down is what makes
+    // the auto-scale contract honest.
+    const scaledChildren = childArray.map((child: any, i: number) => {
+      if (!child?.props?.element) return child;
+      const el = child.props.element;
+      // Don't clobber an item-level explicit max if the spec set one.
+      if (typeof el.props?.max === "number") return child;
+      const scaledElement = { ...el, props: { ...el.props, max: computedMax } };
+      const Component = child.type;
+      return <Component key={el.key ?? i} {...child.props} element={scaledElement} />;
+    });
     return (
       <div className="bg-surface rounded-md p-2.5 mb-2" style={{ border: `1px solid ${colors.border}` }}>
         {title && (
@@ -255,7 +281,7 @@ export const visualizationRenderers = {
           </div>
         )}
         <div className="flex items-end gap-2" style={{ height: maxHeight }}>
-          {children}
+          {scaledChildren}
         </div>
       </div>
     );
@@ -365,6 +391,26 @@ export const visualizationRenderers = {
       return time >= arc.start && time <= arc.end;
     }
 
+    // Parse "HH:MM" → minutes since midnight; returns NaN for malformed input.
+    function timeToMinutes(t: string): number {
+      const [h, m] = t.split(":").map((n) => Number.parseInt(n, 10));
+      if (Number.isNaN(h) || Number.isNaN(m)) return Number.NaN;
+      return h * 60 + m;
+    }
+
+    // Format minutes → "Xh Ym" / "Ym" (drop the hour when 0). Used for arc duration.
+    function formatDuration(start: string, end: string): string | null {
+      const s = timeToMinutes(start);
+      const e = timeToMinutes(end);
+      if (Number.isNaN(s) || Number.isNaN(e) || e < s) return null;
+      const total = e - s;
+      const h = Math.floor(total / 60);
+      const m = total % 60;
+      if (h === 0) return `${m}m`;
+      if (m === 0) return `${h}h`;
+      return `${h}h ${m}m`;
+    }
+
     const orphanEntries = entries.filter((e) => !arcs.some((a) => inArc(e.time, a)));
 
     return (
@@ -392,6 +438,7 @@ export const visualizationRenderers = {
                 <button
                   type="button"
                   onClick={() => setExpanded((s) => ({ ...s, [key]: !isOpen }))}
+                  aria-expanded={isOpen}
                   className="w-full flex items-center justify-between gap-2 px-2 py-1.5 text-left"
                 >
                   <div className="flex items-center gap-2 min-w-0">
@@ -401,15 +448,30 @@ export const visualizationRenderers = {
                     <span className="text-[9px] font-mono shrink-0" style={{ color: colors.muted }}>
                       {arc.start}–{arc.end}
                     </span>
+                    {(() => {
+                      const dur = formatDuration(arc.start, arc.end);
+                      return dur ? (
+                        <span className="text-[9px] font-mono shrink-0" style={{ color: colors.dim }}>
+                          · {dur}
+                        </span>
+                      ) : null;
+                    })()}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
+                    <span
+                      className="text-[8px] font-mono uppercase px-1.5 py-px rounded font-bold"
+                      style={{ color: colors.green, backgroundColor: colors.green + "12", border: `1px solid ${colors.green}40` }}
+                      title="completed session"
+                    >
+                      DONE
+                    </span>
                     <span className="text-[8px] font-mono uppercase px-1.5 py-px rounded" style={{ color: c, backgroundColor: c + "15" }}>
                       {arc.project}
                     </span>
-                    <span className="text-[9px] font-mono" style={{ color: colors.muted }}>
+                    <span className="text-[9px] font-mono" style={{ color: colors.muted }} title="entry count">
                       {arcEntries.length}
                     </span>
-                    <span className="text-[9px] font-mono" style={{ color: colors.dim }}>
+                    <span className="text-[9px] font-mono" style={{ color: colors.dim }} aria-hidden="true">
                       {isOpen ? "▾" : "▸"}
                     </span>
                   </div>
@@ -536,20 +598,33 @@ export const visualizationRenderers = {
       const c = node.status ? treeStatusColors[node.status] ?? colors.dim : colors.text;
       const hasChildren = !!(node.children && node.children.length > 0);
       const open = isExpanded(node.id);
+      const rowInner = (
+        <>
+          <span className="shrink-0 w-3 text-center" style={{ color: colors.dim }} aria-hidden="true">
+            {hasChildren ? (open ? "▾" : "▸") : "·"}
+          </span>
+          <span className="shrink-0" style={{ color: c }}>{node.label}</span>
+          {node.detail && (
+            <span className="truncate" style={{ color: colors.muted }}>— {node.detail}</span>
+          )}
+        </>
+      );
       return (
         <div key={node.id} className="flex flex-col" style={{ marginLeft: depth * 12 }}>
-          <div
-            className="flex items-start gap-1.5 py-0.5 text-[10px] font-mono leading-snug cursor-pointer"
-            onClick={hasChildren ? () => toggle(node.id) : undefined}
-          >
-            <span className="shrink-0 w-3 text-center" style={{ color: colors.dim }}>
-              {hasChildren ? (open ? "▾" : "▸") : "·"}
-            </span>
-            <span className="shrink-0" style={{ color: c }}>{node.label}</span>
-            {node.detail && (
-              <span className="truncate" style={{ color: colors.muted }}>— {node.detail}</span>
-            )}
-          </div>
+          {hasChildren ? (
+            <button
+              type="button"
+              className="flex w-full items-start gap-1.5 py-0.5 text-[10px] font-mono leading-snug cursor-pointer text-left"
+              aria-expanded={open}
+              onClick={() => toggle(node.id)}
+            >
+              {rowInner}
+            </button>
+          ) : (
+            <div className="flex items-start gap-1.5 py-0.5 text-[10px] font-mono leading-snug">
+              {rowInner}
+            </div>
+          )}
           {hasChildren && open && (
             <div>{node.children!.map((child) => renderNode(child, depth + 1))}</div>
           )}
@@ -660,6 +735,13 @@ export const visualizationRenderers = {
 
     const projects = Array.from(new Set(captures.map((c) => c.project))).filter(Boolean);
     const [activeFilter, setActiveFilter] = useState<string | null>(null);
+    // Per-entry expansion state — schema promises "Click to expand entries"
+    // so each capture row toggles between truncated and full text. Keyed by
+    // capture index since captures have no stable id (matches the render-key
+    // pattern below).
+    const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({});
+    const toggleRow = (i: number) =>
+      setExpandedRows((s) => ({ ...s, [i]: !s[i] }));
 
     const visible = activeFilter
       ? captures.filter((c) => c.project === activeFilter)
@@ -710,10 +792,14 @@ export const visualizationRenderers = {
         <div className="flex flex-col gap-1">
           {visible.map((cap, i) => {
             const c = projectColor(cap.project);
+            const open = !!expandedRows[i];
             return (
-              <div
+              <button
                 key={i}
-                className="flex items-start gap-2 text-[10px] font-mono leading-snug px-1.5 py-1 rounded"
+                type="button"
+                onClick={() => toggleRow(i)}
+                aria-expanded={open}
+                className="flex items-start gap-2 text-[10px] font-mono leading-snug px-1.5 py-1 rounded text-left w-full hover:brightness-110 transition"
                 style={{ backgroundColor: colors.surface2 }}
               >
                 <span className="shrink-0" style={{ color: colors.dim }}>{cap.time}</span>
@@ -729,8 +815,20 @@ export const visualizationRenderers = {
                 >
                   {cap.mode}
                 </span>
-                <span className="min-w-0" style={{ color: colors.text }}>{cap.text}</span>
-              </div>
+                <span
+                  className={`min-w-0 flex-1 ${open ? "whitespace-pre-wrap break-words" : "truncate"}`}
+                  style={{ color: colors.text }}
+                >
+                  {cap.text}
+                </span>
+                <span
+                  className="shrink-0 text-[9px] font-mono ml-1"
+                  style={{ color: colors.dim }}
+                  aria-hidden="true"
+                >
+                  {open ? "▾" : "▸"}
+                </span>
+              </button>
             );
           })}
         </div>

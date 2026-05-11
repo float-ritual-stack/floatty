@@ -32,7 +32,7 @@ export const meetingNotesSpec: Spec = {
       },
     },
 
-    'decisions-h': { type: 'Text', props: { content: '## Key Decisions', size: 'lg', weight: 'bold' } },
+    'decisions-h': { type: 'Heading', props: { level: 2, content: '## Key Decisions' } },
 
     d1: {
       type: 'PatternCard',
@@ -61,7 +61,7 @@ export const meetingNotesSpec: Spec = {
     },
 
     // MeetingDiff — shows process change from the meeting
-    'diff-h': { type: 'Text', props: { content: '## Process delta', size: 'lg', weight: 'bold' } },
+    'diff-h': { type: 'Heading', props: { level: 2, content: '## Process delta' } },
     diff: {
       type: 'MeetingDiff',
       props: {
@@ -92,7 +92,7 @@ export const meetingNotesSpec: Spec = {
       },
     },
 
-    'next-h': { type: 'Text', props: { content: '## Next Steps', size: 'lg', weight: 'bold' } },
+    'next-h': { type: 'Heading', props: { level: 2, content: '## Next Steps' } },
     'next-table': {
       type: 'EntryBody',
       props: {

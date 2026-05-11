@@ -88,8 +88,8 @@ export const presetRigSpec: Spec = {
     },
 
     'drums-h': {
-      type: 'Text',
-      props: { content: '## Drums — drumKits.technoPure + drumPatterns.fourOnFloor', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## Drums — drumKits.technoPure + drumPatterns.fourOnFloor' },
     },
 
     drums: {
@@ -106,8 +106,8 @@ export const presetRigSpec: Spec = {
     },
 
     'bass-h': {
-      type: 'Text',
-      props: { content: '## Bass — acidLines.rolling + sendRecipes.acid', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## Bass — acidLines.rolling + sendRecipes.acid' },
     },
 
     bass: {
@@ -123,8 +123,8 @@ export const presetRigSpec: Spec = {
     },
 
     'euclid-h': {
-      type: 'Text',
-      props: { content: '## Polyrhythm — euclidClassics.cascading + sendRecipes.echoes', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## Polyrhythm — euclidClassics.cascading + sendRecipes.echoes' },
     },
 
     euclid: {
@@ -140,8 +140,8 @@ export const presetRigSpec: Spec = {
     },
 
     'pads-h': {
-      type: 'Text',
-      props: { content: '## Pads (one-shot) — drumPadKits.bash', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## Pads (one-shot) — drumPadKits.bash' },
     },
 
     pads: {
@@ -156,8 +156,8 @@ export const presetRigSpec: Spec = {
     },
 
     'tones-h': {
-      type: 'Text',
-      props: { content: '## Melodic — scales.minorPent', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## Melodic — scales.minorPent' },
     },
 
     'tones-row': {

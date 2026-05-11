@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   colors,
   resolveColor,
+  resolveIcon,
   Terminal,
   Paintbrush,
   Search,
@@ -87,25 +88,39 @@ function CalloutRenderer({ element, children }: any) {
         backgroundColor: `${style.color}10`,
       }}
     >
-      <div
-        className={`flex items-center gap-1.5 px-2 py-1 ${collapsible ? "cursor-pointer select-none" : ""}`}
-        onClick={collapsible ? () => setExpanded((v) => !v) : undefined}
-      >
-        <span className="text-[12px] leading-none shrink-0" style={{ color: style.color }}>
-          {style.glyph}
-        </span>
-        <span
-          className="text-[11px] uppercase font-bold tracking-wider"
-          style={{ color: style.color }}
+      {collapsible ? (
+        <button
+          type="button"
+          className="flex w-full items-center gap-1.5 px-2 py-1 cursor-pointer select-none text-left"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v: boolean) => !v)}
         >
-          {element.props.title ?? type}
-        </span>
-        {collapsible && (
-          <span className="ml-auto text-[10px]" style={{ color: colors.dim }}>
+          <span className="text-[12px] leading-none shrink-0" style={{ color: style.color }}>
+            {style.glyph}
+          </span>
+          <span
+            className="text-[11px] uppercase font-bold tracking-wider"
+            style={{ color: style.color }}
+          >
+            {element.props.title ?? type}
+          </span>
+          <span className="ml-auto text-[10px]" style={{ color: colors.dim }} aria-hidden="true">
             {expanded ? "▾" : "▸"}
           </span>
-        )}
-      </div>
+        </button>
+      ) : (
+        <div className="flex items-center gap-1.5 px-2 py-1">
+          <span className="text-[12px] leading-none shrink-0" style={{ color: style.color }}>
+            {style.glyph}
+          </span>
+          <span
+            className="text-[11px] uppercase font-bold tracking-wider"
+            style={{ color: style.color }}
+          >
+            {element.props.title ?? type}
+          </span>
+        </div>
+      )}
       {showBody && children && (
         <div className="px-2 pb-2 text-[11px]" style={{ color: colors.text }}>
           {children}
@@ -616,9 +631,6 @@ export const blockPrimitiveRenderers = {
   ),
 };
 
-// Silence unused-import lint when these icons are only referenced indirectly via
-// the CALLOUT_STYLES iconName lookup (resolved via resolveIcon). Direct exports
-// keep the iconMap warm in dev.
-void Info;
-void AlertTriangle;
-void AlertCircle;
+// No icon warm-up needed here. CALLOUT_STYLES is glyph-only; Hero and
+// CardCover route their cover.icon prop through resolveIcon() which reads
+// the iconMap populated in ./shared on module load.

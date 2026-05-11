@@ -64,8 +64,8 @@ export const synthFidgetSpec: Spec = {
     },
 
     'rig-h': {
-      type: 'Text',
-      props: { content: '## 0. Rig — multi-block sync via MasterClock + MasterFX', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## 0. Rig — multi-block sync via MasterClock + MasterFX' },
     },
 
     'rig-readme': {
@@ -173,8 +173,8 @@ export const synthFidgetSpec: Spec = {
     },
 
     'tone-h': {
-      type: 'Text',
-      props: { content: '## 1. Tone — single voice', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## 1. Tone — single voice' },
     },
 
     'tone-row': {
@@ -191,8 +191,8 @@ export const synthFidgetSpec: Spec = {
     'tone-sq': { type: 'Tone', props: { freq: 110.0, label: 'A2 sq', wave: 'square', color: '#ffb300', duration: 350 } },
 
     'drumpad-h': {
-      type: 'Text',
-      props: { content: '## 2. DrumPad — click to bash', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## 2. DrumPad — click to bash' },
     },
 
     drumpad: {
@@ -214,8 +214,8 @@ export const synthFidgetSpec: Spec = {
     },
 
     'stepseq-h': {
-      type: 'Text',
-      props: { content: '## 3. StepSequencer — 16-step transport', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## 3. StepSequencer — 16-step transport' },
     },
 
     stepseq: {
@@ -241,8 +241,8 @@ export const synthFidgetSpec: Spec = {
     },
 
     'acidbass-h': {
-      type: 'Text',
-      props: { content: '## 4. AcidBass — 303-style mono bass', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## 4. AcidBass — 303-style mono bass' },
     },
 
     acidbass: {
@@ -265,8 +265,8 @@ export const synthFidgetSpec: Spec = {
     },
 
     'euclid-h': {
-      type: 'Text',
-      props: { content: '## 5. EuclideanDrums — Bjorklund n-of-k', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## 5. EuclideanDrums — Bjorklund n-of-k' },
     },
 
     euclid: {
@@ -285,8 +285,8 @@ export const synthFidgetSpec: Spec = {
     },
 
     'xypad-h': {
-      type: 'Text',
-      props: { content: '## 6. XYPad — drone with filter sweep', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## 6. XYPad — drone with filter sweep' },
     },
 
     'xypad-row': {
@@ -319,8 +319,8 @@ export const synthFidgetSpec: Spec = {
     },
 
     'strudel-h': {
-      type: 'Text',
-      props: { content: '## 7. Strudel — pattern REPL via strudel.cc iframe', size: 'lg', weight: 'bold' },
+      type: 'Heading',
+      props: { level: 2, content: '## 7. Strudel — pattern REPL via strudel.cc iframe' },
     },
 
     'strudel-demo': {
