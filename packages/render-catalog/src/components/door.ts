@@ -146,28 +146,6 @@ export const doorComponentDefinitions = {
     description: "Layout container, stacks children vertically or horizontally. Supports width/flex for column layouts.",
   },
 
-  Text: {
-    props: z.object({
-      content: z.string(),
-      size: z.enum(["sm", "md", "lg", "xl"]).optional(),
-      weight: z.enum(["normal", "medium", "bold"]).optional(),
-      color: z.string().optional(),
-      mono: z.boolean().optional(),
-      markdown: z.boolean().optional().describe("If true, render `content` through the inline markdown parser so *emphasis*, **strong**, `code`, and [[wikilinks]] format inline. Default is plain text."),
-    }),
-    slots: [],
-    description: "Text display. Defaults to plain text; set markdown:true to enable inline markdown (emphasis/strong/code/wikilinks).",
-  },
-
-  BulletList: {
-    props: z.object({
-      items: z.array(z.string()).describe("Bulleted list items. Inline markdown is supported (bold, italic, [[wikilinks]])."),
-      density: z.enum(["comfortable", "compact"]).optional(),
-    }),
-    slots: [],
-    description: "Flat bulleted list, serif body text. Drop into Callout/Section bodies for the common 'list of co-occurring items' shape (failures, examples, applies-to). Use TreeView when items have hierarchy + status; this is for flat-equal lists. density:'compact' tightens spacing.",
-  },
-
   Callout: {
     props: z.object({
       type: z.enum([

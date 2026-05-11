@@ -556,38 +556,6 @@ export function Stack(props: BaseComponentProps<{
   );
 }
 
-export function Text(props: BaseComponentProps<{
-  content: string;
-  size?: string;
-  weight?: string;
-  color?: string;
-  mono?: boolean;
-  markdown?: boolean;
-}>) {
-  const fontSize = () => {
-    switch (props.props.size) {
-      case 'sm': return '12px';
-      case 'lg': return '16px';
-      case 'xl': return '20px';
-      default: return '13px';
-    }
-  };
-  const baseStyle = () => ({
-    'font-size': fontSize(),
-    'font-weight': props.props.weight === 'bold' ? '700' : props.props.weight === 'medium' ? '500' : '400',
-    color: props.props.color || `var(--color-text-primary, ${V.t})`,
-    'font-family': props.props.mono ? V.mono : 'inherit',
-  });
-  return (
-    <Show
-      when={props.props.markdown}
-      fallback={<span style={baseStyle()}>{props.props.content}</span>}
-    >
-      <span style={baseStyle()} innerHTML={sanitize(inlineFormat(props.props.content))} onClick={handleWikilinkClick} />
-    </Show>
-  );
-}
-
 export function Divider(_props: BaseComponentProps<Record<string, never>>) {
   return <hr style={{ border: 'none', 'border-top': `1px solid ${V.b}`, margin: '8px 0' }} />;
 }
@@ -6053,48 +6021,6 @@ export function Strudel(props: BaseComponentProps<{
 // RICH-DOC PRIMITIVES — Callout, Hero, GalleryGrid, CardCover
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * BulletList — flat bulleted list, serif body text. Drop into Callout/
- * Section bodies for the common "list of co-occurring items" shape.
- * Inline formatting (bold, italic, [[wikilinks]]) supported per item.
- */
-export function BulletList(props: BaseComponentProps<{ items: string[]; density?: 'comfortable' | 'compact' }>) {
-  const items = () => props.props.items ?? [];
-  const compact = () => props.props.density === 'compact';
-  const padY = () => compact() ? '2px' : '4px';
-  const fontSize = () => compact() ? '12px' : '13px';
-  return (
-    <ul style={{
-      margin: '4px 0',
-      padding: '0 0 0 20px',
-      'list-style': 'none',
-    }}>
-      <For each={items()}>
-        {(item) => (
-          <li style={{
-            position: 'relative',
-            padding: `${padY()} 0`,
-            'font-family': V.serif,
-            'font-size': fontSize(),
-            color: V.t,
-            'line-height': '1.55',
-          }}>
-            <span style={{
-              position: 'absolute',
-              left: '-14px',
-              top: padY(),
-              color: V.tf,
-              'font-family': V.mono,
-              'font-size': '12px',
-            }}>•</span>
-            <span innerHTML={sanitize(inlineFormat(item))} />
-          </li>
-        )}
-      </For>
-    </ul>
-  );
-}
-
 type CalloutType =
   | 'note' | 'info' | 'tip' | 'success' | 'warning'
   | 'danger' | 'failure' | 'bug' | 'example' | 'question'
@@ -6426,4 +6352,442 @@ export function injectBodyStyles() {
   }
   installKanbanStyles();
   installKanbanNavShim();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BRIEFING / NARRATIVE ATOMS (promoted from explorer.ts → shared.ts)
+// ═══════════════════════════════════════════════════════════════
+//
+// 21 components moved from outline-explorer into the shared catalog as part
+// of the parity ship. Both Solid (this file) and React (apps/outline-explorer
+// renderers) implement these. See shared.ts in @float/render-catalog.
+
+export function BlockRef(props: BaseComponentProps<{ title: string; blockId?: string; page?: string }>) {
+  const target = () => props.props.page || props.props.blockId || props.props.title;
+  return (
+    <span
+      class="bbs-wikilink"
+      data-wikilink={target()}
+      onClick={handleWikilinkClick}
+      style={{
+        color: V.cy, 'font-family': V.mono, 'font-size': '12px',
+        cursor: 'pointer', 'text-decoration': 'underline dotted',
+      }}
+    >{props.props.title}</span>
+  );
+}
+
+export function WalkChip(props: BaseComponentProps<{ page: string; reason?: string }>) {
+  return (
+    <span
+      class="bbs-wikilink"
+      data-wikilink={props.props.page}
+      onClick={handleWikilinkClick}
+      style={{
+        display: 'inline-flex', 'align-items': 'center', gap: '6px',
+        padding: '2px 8px', background: V.s1, border: `1px solid ${V.b}`,
+        color: V.cy, 'font-family': V.mono, 'font-size': '11px',
+        'border-radius': '4px', cursor: 'pointer',
+      }}
+      title={props.props.reason}
+    >→ {props.props.page}</span>
+  );
+}
+
+export function Prose(props: BaseComponentProps<{ content: string }>) {
+  return (
+    <div
+      class="bbs-entry-body"
+      style={{ 'font-family': V.serif, 'font-size': '13px', color: V.t, 'line-height': '1.55', margin: '8px 0' }}
+      innerHTML={sanitize(renderMarkdown(props.props.content))}
+      onClick={handleWikilinkClick}
+    />
+  );
+}
+
+export function StepIndicator(props: BaseComponentProps<{ tool: string; target: string; result?: string }>) {
+  return (
+    <div style={{
+      display: 'flex', 'align-items': 'center', gap: '8px', padding: '4px 0',
+      'font-family': V.mono, 'font-size': '11px', color: V.td,
+    }}>
+      <span style={{ color: V.cy }}>▸ {props.props.tool}</span>
+      <span style={{ color: V.tf }}>{props.props.target}</span>
+      <Show when={props.props.result}>
+        <span style={{ color: V.green }}>→ {props.props.result}</span>
+      </Show>
+    </div>
+  );
+}
+
+export function Chip(props: BaseComponentProps<{ label: string; color?: string; icon?: string; clickable?: boolean }>) {
+  const color = () => accentColor(props.props.color);
+  return (
+    <span style={{
+      display: 'inline-flex', 'align-items': 'center', gap: '4px',
+      padding: '2px 8px', 'border-radius': '10px',
+      background: V.s1, border: `1px solid ${color()}`,
+      color: color(), 'font-family': V.mono, 'font-size': '11px',
+      cursor: props.props.clickable ? 'pointer' : 'default',
+    }}>
+      <Show when={props.props.icon}>
+        <span style={{ 'font-size': '10px' }}>{props.props.icon}</span>
+      </Show>
+      {props.props.label}
+    </span>
+  );
+}
+
+export function SectionLabel(props: BaseComponentProps<{ label: string; color?: string; icon?: string }>) {
+  const color = () => accentColor(props.props.color);
+  return (
+    <div style={{ margin: '12px 0 6px 0' }}>
+      <div style={{
+        display: 'flex', 'align-items': 'center', gap: '8px',
+        'font-family': V.mono, 'font-size': '11px', color: color(),
+        'text-transform': 'uppercase', 'letter-spacing': '1px',
+      }}>
+        <Show when={props.props.icon}>
+          <span>{props.props.icon}</span>
+        </Show>
+        <span>{props.props.label}</span>
+        <span style={{ flex: 1, 'border-top': `1px solid ${V.b}`, 'margin-left': '4px' }} />
+      </div>
+      {props.children}
+    </div>
+  );
+}
+
+export function ConfidenceDot(props: BaseComponentProps<{ level: 'high' | 'medium' | 'low' | 'partial' }>) {
+  const color = () => {
+    switch (props.props.level) {
+      case 'high': return V.green;
+      case 'medium': return V.amb;
+      case 'low': return V.tf;
+      case 'partial': return V.cy;
+      default: return V.tf;
+    }
+  };
+  return (
+    <span style={{
+      display: 'inline-flex', 'align-items': 'center', gap: '4px',
+      'font-family': V.mono, 'font-size': '10px',
+    }}>
+      <span style={{
+        display: 'inline-block', width: '6px', height: '6px',
+        'border-radius': '50%', background: color(),
+      }} />
+      <span style={{ color: color(), 'text-transform': 'uppercase' }}>{props.props.level}</span>
+    </span>
+  );
+}
+
+export function ObservationCard(props: BaseComponentProps<{
+  number: string;
+  title: string;
+  body: string;
+  severity?: 'surprising' | 'structural' | 'gap' | 'thread' | 'meta';
+  links?: string[];
+}>) {
+  const borderColor = () => {
+    switch (props.props.severity) {
+      case 'surprising': return V.mag;
+      case 'structural': return V.cy;
+      case 'gap': return V.cor;
+      case 'thread': return V.amb;
+      case 'meta': return V.green;
+      default: return V.b2;
+    }
+  };
+  return (
+    <div style={{
+      'border-left': `3px solid ${borderColor()}`, background: V.s1,
+      padding: '10px 14px', margin: '8px 0',
+    }}>
+      <div style={{ display: 'flex', gap: '10px', 'align-items': 'baseline' }}>
+        <span style={{ color: V.tf, 'font-family': V.mono, 'font-size': '11px' }}>#{props.props.number}</span>
+        <span style={{ color: V.t, 'font-weight': '600', 'font-family': V.mono, 'font-size': '12px' }}>{props.props.title}</span>
+      </div>
+      <div
+        style={{ 'margin-top': '6px', color: V.t, 'font-family': V.serif, 'font-size': '13px', 'line-height': '1.5' }}
+        innerHTML={sanitize(renderMarkdown(props.props.body))}
+        onClick={handleWikilinkClick}
+      />
+      <Show when={props.props.links && props.props.links.length}>
+        <div style={{ 'margin-top': '6px', display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
+          <For each={props.props.links}>
+            {(link) => (
+              <span
+                class="bbs-wikilink"
+                data-wikilink={link}
+                onClick={handleWikilinkClick}
+                style={{ color: V.cy, 'font-family': V.mono, 'font-size': '10px', cursor: 'pointer' }}
+              >[[{link}]]</span>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+export function PatternCluster(props: BaseComponentProps<{ name: string; color?: string; instances: string[]; connections?: string[] }>) {
+  const color = () => accentColor(props.props.color);
+  return (
+    <div style={{
+      background: V.s1, border: `1px solid ${V.b}`,
+      'border-top': `2px solid ${color()}`, padding: '10px 12px', margin: '8px 0',
+    }}>
+      <div style={{
+        color: color(), 'font-family': V.mono, 'font-size': '12px',
+        'text-transform': 'uppercase', 'letter-spacing': '1px', 'margin-bottom': '6px',
+      }}>{props.props.name}</div>
+      <ul style={{ margin: '0 0 6px 0', padding: '0 0 0 16px' }}>
+        <For each={props.props.instances}>
+          {(inst) => (
+            <li style={{ color: V.t, 'font-family': V.serif, 'font-size': '12px', 'line-height': '1.55' }}>{inst}</li>
+          )}
+        </For>
+      </ul>
+      <Show when={props.props.connections && props.props.connections.length}>
+        <div style={{ 'font-size': '11px', color: V.td, 'font-family': V.mono }}>
+          → {(props.props.connections ?? []).join(', ')}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+export function EnrichedStepCard(props: BaseComponentProps<{
+  tool: string;
+  target: string;
+  reason?: string;
+  result?: string;
+  preview?: string;
+}>) {
+  const [expanded, setExpanded] = createSignal(false);
+  return (
+    <div style={{ background: V.s1, border: `1px solid ${V.b}`, padding: '8px 12px', margin: '6px 0' }}>
+      <div style={{
+        display: 'flex', 'align-items': 'baseline', gap: '8px',
+        'font-family': V.mono, 'font-size': '11px',
+      }}>
+        <span style={{ color: V.cy }}>▸ {props.props.tool}</span>
+        <span style={{ color: V.tf }}>{props.props.target}</span>
+        <Show when={props.props.preview}>
+          <span
+            onClick={() => setExpanded((v) => !v)}
+            style={{ color: V.td, cursor: 'pointer', 'margin-left': 'auto', 'font-size': '10px' }}
+          >{expanded() ? '▾' : '▸'} preview</span>
+        </Show>
+      </div>
+      <Show when={props.props.reason}>
+        <div style={{ 'font-size': '11px', color: V.td, 'margin-top': '4px', 'font-family': V.mono }}>
+          why: {props.props.reason}
+        </div>
+      </Show>
+      <Show when={props.props.result}>
+        <div style={{ 'font-size': '11px', color: V.green, 'margin-top': '4px', 'font-family': V.mono }}>
+          → {props.props.result}
+        </div>
+      </Show>
+      <Show when={expanded() && props.props.preview}>
+        <pre style={{
+          'margin-top': '6px', background: V.bg, border: `1px solid ${V.b}`,
+          padding: '6px 8px', 'font-size': '11px', color: V.t, overflow: 'auto',
+        }}>{props.props.preview}</pre>
+      </Show>
+    </div>
+  );
+}
+
+export function Heading(props: BaseComponentProps<{ level: number; content: string }>) {
+  const fontSize = () => {
+    switch (props.props.level) {
+      case 1: return '16px';
+      case 2: return '13px';
+      case 3: return '11px';
+      default: return '13px';
+    }
+  };
+  const color = () => {
+    switch (props.props.level) {
+      case 1: return V.cy;
+      case 2: return V.t;
+      case 3: return V.td;
+      default: return V.t;
+    }
+  };
+  const weight = () => (props.props.level === 1 ? '700' : '600');
+  return (
+    <div style={{
+      'font-size': fontSize(), color: color(), 'font-weight': weight(),
+      'font-family': V.mono, 'line-height': '1.4',
+      'margin-top': '12px', 'margin-bottom': '6px',
+    }}>{props.props.content}</div>
+  );
+}
+
+export function Paragraph(props: BaseComponentProps<{ content: string }>) {
+  return (
+    <p
+      style={{
+        'font-family': V.serif, 'font-size': '13px', color: V.t,
+        'line-height': '1.55', margin: '6px 0',
+      }}
+      innerHTML={sanitize(inlineFormat(props.props.content))}
+      onClick={handleWikilinkClick}
+    />
+  );
+}
+
+export function Bold(props: BaseComponentProps<{ content: string }>) {
+  return <strong style={{ 'font-weight': '700', color: V.t }}>{props.props.content}</strong>;
+}
+
+export function InlineCode(props: BaseComponentProps<{ content: string }>) {
+  return (
+    <code style={{
+      'font-family': V.mono, 'font-size': '0.9em', background: V.s1,
+      border: `1px solid ${V.b}`, padding: '1px 4px', 'border-radius': '3px', color: V.green,
+    }}>{props.props.content}</code>
+  );
+}
+
+export function BulletList(props: BaseComponentProps<{ items: string[] }>) {
+  const items = () => props.props.items ?? [];
+  return (
+    <ul style={{ margin: '4px 0', padding: '0 0 0 20px', 'list-style': 'none' }}>
+      <For each={items()}>
+        {(item) => (
+          <li style={{
+            position: 'relative', padding: '3px 0',
+            'font-family': V.serif, 'font-size': '13px', color: V.t, 'line-height': '1.55',
+          }}>
+            <span style={{
+              position: 'absolute', left: '-14px', top: '3px',
+              color: V.tf, 'font-family': V.mono, 'font-size': '12px',
+            }}>•</span>
+            <span
+              innerHTML={sanitize(inlineFormat(item))}
+              onClick={handleWikilinkClick}
+            />
+          </li>
+        )}
+      </For>
+    </ul>
+  );
+}
+
+export function StatusLine(props: BaseComponentProps<{ label: string; color?: string; content: string }>) {
+  const color = () => accentColor(props.props.color);
+  return (
+    <div style={{
+      display: 'flex', 'align-items': 'baseline', gap: '8px', margin: '4px 0',
+      'font-family': V.mono, 'font-size': '12px',
+    }}>
+      <span style={{
+        color: color(), 'text-transform': 'uppercase', 'letter-spacing': '1px', 'font-weight': '600',
+      }}>▸ {props.props.label}:</span>
+      <span style={{ color: V.t }}>{props.props.content}</span>
+    </div>
+  );
+}
+
+export function Row(props: BaseComponentProps<Record<string, never>>) {
+  return (
+    <div style={{
+      display: 'flex', 'flex-wrap': 'wrap', gap: '6px',
+      'align-items': 'center', margin: '4px 0',
+    }}>
+      {props.children}
+    </div>
+  );
+}
+
+export function Timeline(props: BaseComponentProps<Record<string, never>>) {
+  return (
+    <div style={{
+      display: 'flex', 'flex-direction': 'column', gap: '4px',
+      'border-left': `1px solid ${V.b2}`, 'padding-left': '12px', margin: '8px 0',
+    }}>
+      {props.children}
+    </div>
+  );
+}
+
+export function HeadingBlock(props: BaseComponentProps<{ level: 'h1' | 'h2' | 'h3'; content: string }>) {
+  const fontSize = () => {
+    switch (props.props.level) {
+      case 'h1': return '18px';
+      case 'h2': return '15px';
+      case 'h3': return '12px';
+      default: return '13px';
+    }
+  };
+  return (
+    <div style={{ margin: '12px 0' }}>
+      <div style={{
+        'font-size': fontSize(), color: V.cy, 'font-weight': '700',
+        'font-family': V.mono, 'line-height': '1.3',
+      }}>{props.props.content}</div>
+      {props.children}
+    </div>
+  );
+}
+
+export function ContextMarker(props: BaseComponentProps<{
+  content: string;
+  timestamp?: string;
+  project?: string;
+  mode?: string;
+}>) {
+  return (
+    <div style={{
+      display: 'flex', 'align-items': 'baseline', gap: '8px', 'flex-wrap': 'wrap',
+      padding: '4px 8px', background: V.s1, 'border-left': `2px solid ${V.cy}`,
+      margin: '4px 0', 'font-family': V.mono, 'font-size': '11px',
+    }}>
+      <Show when={props.props.timestamp}>
+        <span style={{ color: V.cy }}>{props.props.timestamp}</span>
+      </Show>
+      <Show when={props.props.project}>
+        <span style={{ color: V.mag }}>[project::{props.props.project}]</span>
+      </Show>
+      <Show when={props.props.mode}>
+        <span style={{ color: V.amb }}>[mode::{props.props.mode}]</span>
+      </Show>
+      <span style={{ color: V.t, flex: 1 }}>{props.props.content}</span>
+    </div>
+  );
+}
+
+export function OutlinerBlock(props: BaseComponentProps<{
+  content: string;
+  blockType: string;
+  depth?: number;
+  blockId?: string;
+}>) {
+  const indent = () => (props.props.depth ?? 0) * 16;
+  return (
+    <div
+      data-block-id={props.props.blockId}
+      style={{
+        'padding-left': `${indent()}px`,
+        'padding-top': '3px', 'padding-bottom': '3px',
+        'font-family': V.mono, 'font-size': '12px', color: V.t,
+      }}
+    >
+      <Show when={props.props.blockType && props.props.blockType !== 'default'}>
+        <span style={{ color: V.tf, 'font-size': '10px', 'margin-right': '6px' }}>
+          {props.props.blockType}::
+        </span>
+      </Show>
+      <span
+        innerHTML={sanitize(inlineFormat(props.props.content))}
+        onClick={handleWikilinkClick}
+      />
+      {props.children}
+    </div>
+  );
 }

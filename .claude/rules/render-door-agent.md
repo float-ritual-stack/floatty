@@ -23,7 +23,7 @@ Before editing any file in `paths:` above, read these in this order:
 | 4 | `~/projects/_reference/json-render/packages/core/src/spec-validator.ts` | What `validateSpec` checks; what counts as a valid spec |
 | 5 | `~/float-hub/float.dispatch/references/json-render-docs.md` | Snapshot of https://json-render.dev/docs (frontmatter dates the snapshot) |
 | 6 | https://json-render.dev/docs | Live published docs — refresh the snapshot if the live version has diverged |
-| 7 | `packages/render-door/src/catalog.ts` | The actual `bbsCatalog` — single source of truth for which 44 components + 3 actions exist |
+| 7 | `packages/render-door/src/catalog.ts` | The actual `bbsCatalog` — canonical list of available components and door-defined actions (count is derivable from the file; do not assert it in prose) |
 
 The cloned source under `~/projects/_reference/json-render/` is **authoritative**. The bundled `node_modules/.../@json-render/core/dist/*.d.ts` is a build artifact — readable, but pre-flattened by the bundler. Read source, not dist.
 
@@ -62,6 +62,10 @@ The agent path uses `--output-format json` with `--json-schema` — the parsed r
 ### SpecStream / `pipeJsonRender` exists but is NOT used by render-door today
 
 The docs describe a JSONL streaming format (RFC 6902 patches) for progressive rendering (`@json-render/core::createSpecStreamCompiler`, `@json-render/react::useUIStream`, `pipeJsonRender`). The render door currently uses one-shot `claude -p` and parses a complete spec — streaming is a future enhancement, not the current state. Don't conflate the two when reading docs.
+
+### `shared.ts` is the symmetry contract
+
+`packages/render-catalog/src/components/shared.ts` is the parity contract between render-door (SolidJS) and outline-explorer (React). Every component declared in `shared.ts` MUST have BOTH a Solid impl (in `packages/render-door/src/components.tsx`, registered via `registry.ts`) AND a React impl (in `apps/outline-explorer/src/lib/catalog/renderers/`). Surface-bound exceptions live in `door.ts` (music — Tauri+Tone+Strudel runtime) and `explorer.ts` (workflow UI: `RenderPrompt`/`SearchQuery`/`ShellCommand`). Do **not** add to `shared.ts` without both impls landing in the same PR — the silent-drop bug fires immediately on whichever surface is missing the renderer.
 
 ## Anti-patterns (additions to do-not.md scope)
 
