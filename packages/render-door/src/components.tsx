@@ -12,6 +12,7 @@ import { Show, For, createSignal, createMemo, onMount, createEffect, onCleanup, 
 import { useBoundProp } from '@json-render/solid';
 import type { BaseComponentProps } from '@json-render/solid';
 import DOMPurify from 'dompurify';
+import { STREAM_PROJECT_COLORS, STREAM_MODE_COLORS, UNKNOWN_COLOR } from '@float/render-catalog';
 // NOTE: Do NOT import from httpClient.ts — the door bundle is a separate compiled
 // module. The singleton clientInstance is never initialized in the bundle context.
 // Use window.__FLOATTY_SERVER_URL__ / __FLOATTY_API_KEY__ globals instead.
@@ -1848,15 +1849,9 @@ export function DependencyChain(props: BaseComponentProps<{
 // CONTEXT STREAM — filterable ctx:: capture timeline
 // ═══════════════════════════════════════════════════════════════
 
-const STREAM_PROJECT_COLORS: Record<string, string> = {
-  floatty: V.cy, 'floatty/doors-v2': V.cy, 'json-render': V.mag,
-  'rangle/pharmacy': V.amb, 'rangle/skills-for-change': V.green, 'float-hub': V.green,
-};
-const STREAM_MODE_COLORS: Record<string, string> = {
-  debugging: V.cor, 'session-archaeology': '#c678dd', digest: V.green,
-  'float-loop': V.cy, 'incoming-requirements': V.amb, onboarding: V.green,
-  meeting: V.mag, 'post-meeting': V.mag,
-};
+// STREAM_PROJECT_COLORS + STREAM_MODE_COLORS now sourced from @float/render-catalog
+// so the same maps power both this component and the $projectColor / $ctxColor
+// directives. Single source of truth — see packages/render-catalog/src/colors.ts.
 
 interface CtxCapture { time: string; project: string; mode: string; text: string; }
 
@@ -1898,7 +1893,7 @@ export function ContextStream(props: BaseComponentProps<{
         }}>all</button>
         <For each={projects()}>
           {(p) => {
-            const pc = STREAM_PROJECT_COLORS[p] ?? '#888';
+            const pc = STREAM_PROJECT_COLORS[p] ?? UNKNOWN_COLOR;
             return (
               <button onClick={() => setProjectFilter(projectFilter() === p ? null : p)} style={{
                 padding: '3px 8px', border: 'none', 'border-radius': '3px', cursor: 'pointer',
@@ -1915,8 +1910,8 @@ export function ContextStream(props: BaseComponentProps<{
           {(ctx, i) => {
             const isTransition = () => transitions().includes(i());
             const isExpanded = () => expandedIdx() === i();
-            const projColor = STREAM_PROJECT_COLORS[ctx.project] ?? '#888';
-            const modeColor = STREAM_MODE_COLORS[ctx.mode] ?? '#888';
+            const projColor = STREAM_PROJECT_COLORS[ctx.project] ?? UNKNOWN_COLOR;
+            const modeColor = STREAM_MODE_COLORS[ctx.mode] ?? UNKNOWN_COLOR;
             return (
               <div>
                 <Show when={isTransition()}>
