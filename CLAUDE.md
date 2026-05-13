@@ -41,10 +41,14 @@ See @.claude/rules/architecture.md for full file inventory, data flows, and comp
 pnpm install                              # Install JS deps (workspace-aware)
 pnpm --filter float-pty tauri:dev         # Dev mode (hot reload, rebuilds Rust)
 pnpm lint --force                         # ESLint across all packages via turbo
-pnpm --filter float-pty typecheck         # tsc --noEmit
-pnpm --filter float-pty test              # vitest run (1251 tests, run-and-exit)
+pnpm typecheck                            # tsc --noEmit across workspace via turbo
+pnpm test                                 # vitest run across workspace (1416 tests)
+pnpm build                                # production builds across workspace
+pnpm --filter float-pty typecheck         # single-package variants when needed
 pnpm --filter float-pty test:watch        # vitest watch (TDD mode)
 ```
+
+All turbo tasks cache their outputs (`dist/**`, `.next/**`, `coverage/**`). Warm-cache runs are sub-100ms ("FULL TURBO"). Cache invalidates correctly across workspace-dep source changes via the `transit` task pattern in `turbo.json`.
 
 ### Rust Tests (IMPORTANT)
 
