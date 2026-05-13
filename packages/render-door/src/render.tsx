@@ -21,12 +21,10 @@
 import { createSignal, Show } from 'solid-js';
 import {
   Renderer,
-  StateProvider,
-  ActionProvider,
-  VisibilityProvider,
-  ValidationProvider,
+  JSONUIProvider,
 } from '@json-render/solid';
 import type { Spec, UIElement } from '@json-render/core';
+import { floattyDirectives } from '@float/render-catalog';
 
 // The render door extends UIElement with `bindings` — a map of prop-name →
 // JSON Pointer state path that useBoundProp() in components.tsx reads at
@@ -630,7 +628,7 @@ const RENDER_TOOL_SCHEMA = {
 const CLAUDE_SYSTEM_PROMPT = [
   'You are a UI spec generator for a dark-themed terminal outliner app called floatty.',
   '',
-  bbsCatalog.prompt(),
+  bbsCatalog.prompt({ directives: floattyDirectives }),
   '',
   'Rules: every children key must exist in elements. Use realistic data. gap is a number (not string).',
   'Colors: #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber), #e5c07b (yellow)',
@@ -1154,12 +1152,13 @@ function RenderView(props: DoorViewProps) {
       </div>
     }>
       <div style={{ padding: '8px 0', 'font-family': 'JetBrains Mono, monospace' }}>
-        <StateProvider
+        <RenderViewInner
+          spec={spec()!}
+          onNavigate={props.onNavigate}
+          onChirp={props.onChirp}
           initialState={spec()?.state || {}}
           onStateChange={(changes) => handleRenderStateChange(changes, props.onChirp)}
-        >
-          <RenderViewInner spec={spec()!} onNavigate={props.onNavigate} onChirp={props.onChirp} />
-        </StateProvider>
+        />
         <Show when={generatedVia() || sessionId()}>
           <div style={{
             'margin-top': '8px',
@@ -1225,6 +1224,8 @@ function RenderViewInner(props: {
   spec: Spec;
   onNavigate?: (target: string, opts?: { type?: 'page' | 'block' }) => void;
   onChirp?: (message: string, data?: unknown) => void;
+  initialState: Record<string, unknown>;
+  onStateChange: (changes: Array<{ path: string; value: unknown }>) => void;
 }) {
   const actionHandlers = {
     navigate: async (params: Record<string, unknown>) => {
@@ -1247,13 +1248,15 @@ function RenderViewInner(props: {
 
   return (
     <div>
-      <ActionProvider handlers={actionHandlers}>
-        <VisibilityProvider>
-          <ValidationProvider>
-            <Renderer spec={props.spec} registry={bbsRegistry} />
-          </ValidationProvider>
-        </VisibilityProvider>
-      </ActionProvider>
+      <JSONUIProvider
+        registry={bbsRegistry}
+        initialState={props.initialState}
+        onStateChange={props.onStateChange}
+        handlers={actionHandlers}
+        directives={floattyDirectives}
+      >
+        <Renderer spec={props.spec} registry={bbsRegistry} />
+      </JSONUIProvider>
     </div>
   );
 }
@@ -1406,7 +1409,7 @@ export const door = {
     }
 
     if (arg === 'prompt') {
-      const prompt = bbsCatalog.prompt();
+      const prompt = bbsCatalog.prompt({ directives: floattyDirectives });
       setOutputWithTitle({
         title: 'catalog prompt',
         generatedVia: 'prompt',

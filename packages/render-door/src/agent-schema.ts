@@ -12,6 +12,7 @@
 
 import { bbsCatalog } from './catalog';
 import { LAYOUT_PATTERNS } from './patterns';
+import { floattyDirectives } from '@float/render-catalog';
 
 // =============================================================================
 // JSON Schema export — for `claude -p --json-schema <schema>` and the
@@ -76,7 +77,11 @@ export const BBS_AGENT_REQUEST_SCHEMA: object = (() => {
 let _cachedCatalogPrompt: string | null = null;
 
 export function buildAgentSystemPrompt(): string {
-  const catalogPrompt = _cachedCatalogPrompt ??= bbsCatalog.prompt();
+  // Pass floattyDirectives so each directive's `description` lands in the
+  // catalog prompt. The agent learns about $projectColor, $ctxColor, $wikilink,
+  // and the bundled standardDirectives ($format/$math/$concat/$count/etc.) —
+  // emits them in widened prop slots instead of inlining resolved values.
+  const catalogPrompt = _cachedCatalogPrompt ??= bbsCatalog.prompt({ directives: floattyDirectives });
   const stateIdx = catalogPrompt.indexOf('INITIAL STATE');
   const componentSection = stateIdx !== -1 ? catalogPrompt.substring(stateIdx) : catalogPrompt;
 
