@@ -10,6 +10,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
     "preview": "pnpm --filter float-pty preview",
     "tauri": "pnpm --filter float-pty tauri",
     "tauri:dev": "pnpm --filter float-pty tauri:dev",
