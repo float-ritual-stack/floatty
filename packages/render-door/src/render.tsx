@@ -90,6 +90,17 @@ interface SpecGenerationError extends Error {
 }
 
 /** Narrow unknown caught value to a printable message string. */
+// Guard initialState against non-object spec.state values. The @json-render
+// Spec type allows `state` to be undefined; in practice the agent / hand-rolled
+// specs occasionally emit truthy non-object values (e.g. legacy fixtures with
+// `state: ""`). CodeRabbit flagged on PR #308 — defensive coerce to {} keeps
+// downstream StateStore initialization predictable.
+function safeInitialState(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {};
+}
+
 function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === 'string') return e;
@@ -631,7 +642,8 @@ const CLAUDE_SYSTEM_PROMPT = [
   bbsCatalog.prompt({ directives: floattyDirectives }),
   '',
   'Rules: every children key must exist in elements. Use realistic data. gap is a number (not string).',
-  'Colors: #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber), #e5c07b (yellow)',
+  'Color preference: when a value represents a [project::X] or a [mode::Y] semantic, prefer the directive form — { "$projectColor": "X" } or { "$ctxColor": "Y" } — over inlining hex. Only fall back to raw hex when no project/mode semantic applies.',
+  'Ad-hoc palette (fallback when no directive applies): #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber), #e5c07b (yellow)',
   'Use TuiPanel for bordered containers, TuiStat for metrics, BarChart+BarItem for data viz.',
   'Use ShippedItem for completed items, PatternCard for expandable technical notes.',
   'Use BacklinksFooter for bidirectional links, WikilinkChip for [[bracket]] links.',
@@ -1156,7 +1168,7 @@ function RenderView(props: DoorViewProps) {
           spec={spec()!}
           onNavigate={props.onNavigate}
           onChirp={props.onChirp}
-          initialState={spec()?.state || {}}
+          initialState={safeInitialState(spec()?.state)}
           onStateChange={(changes) => handleRenderStateChange(changes, props.onChirp)}
         />
         <Show when={generatedVia() || sessionId()}>

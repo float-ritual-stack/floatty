@@ -124,5 +124,20 @@ export const floattyDirectives = [
  *   // Render-time props.color: string | undefined
  */
 export function directiveOr<T extends z.ZodType>(schema: T): T {
-  return z.union([schema, z.record(z.string(), z.unknown())]) as unknown as T;
+  // Restrict the record branch to objects with at least one `$`-prefixed key —
+  // matches the actual directive contract: directives have ONE `$`-key plus
+  // sibling args (e.g. `{ $math: "add", a: 1, b: 2 }` or
+  // `{ $format: "currency", value: 42, currency: "USD" }`).
+  //
+  // A non-directive object like `{ color: "cyan" }` would otherwise pass
+  // wire-time validation but resolve to `undefined` at render time (silent
+  // failure). The refine catches it loudly. Per CodeRabbit + Greptile on PR
+  // #308 — using `.refine()` instead of regex'd record keys so siblings of
+  // the `$`-key don't cause false rejections.
+  const directiveShape = z
+    .record(z.string(), z.unknown())
+    .refine((obj) => Object.keys(obj).some((k) => k.startsWith("$")), {
+      message: "Directive object must include at least one `$`-prefixed key",
+    });
+  return z.union([schema, directiveShape]) as unknown as T;
 }

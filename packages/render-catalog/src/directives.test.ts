@@ -92,19 +92,25 @@ describe("$wikilink", () => {
 });
 
 describe("floattyDirectives", () => {
-  it("bundles the 7 standardDirectives + 3 floatty-specific entries", () => {
-    expect(floattyDirectives.length).toBe(10);
-    const names = floattyDirectives.map((d) => d.name).sort();
+  it("bundles standardDirectives + 3 floatty-specific entries", () => {
+    // Count only the floatty-specific additions so the test doesn't break if
+    // @json-render/directives gains or loses standardDirectives entries in
+    // a future 0.19.x patch (Greptile suggestion on PR #308).
+    const floattyNames = new Set(["$projectColor", "$ctxColor", "$wikilink"]);
+    const floattyAdded = floattyDirectives.filter((d) =>
+      floattyNames.has(d.name),
+    );
+    expect(floattyAdded).toHaveLength(3);
+    const names = floattyDirectives.map((d) => d.name);
+    // floatty-specific directives present
     expect(names).toContain("$projectColor");
     expect(names).toContain("$ctxColor");
     expect(names).toContain("$wikilink");
+    // sanity-check that the bundled standardDirectives are still reachable
+    // (drop entries if upstream removes them; don't pin to a fixed count).
     expect(names).toContain("$format");
     expect(names).toContain("$math");
     expect(names).toContain("$concat");
-    expect(names).toContain("$count");
-    expect(names).toContain("$truncate");
-    expect(names).toContain("$pluralize");
-    expect(names).toContain("$join");
   });
 
   it("interleaves with $concat for composed agent emissions", () => {
@@ -137,6 +143,17 @@ describe("directiveOr", () => {
     expect(schema.safeParse(42).success).toBe(false);
     expect(schema.safeParse(true).success).toBe(false);
     expect(schema.safeParse(null).success).toBe(false);
+  });
+
+  it("rejects non-directive objects (keys must start with `$`)", () => {
+    // CodeRabbit + Greptile flagged: previously z.record(z.string(), unknown)
+    // accepted any object, so `{ color: "cyan" }` would pass validation but
+    // resolve to undefined at render time (silent failure). Constrained the
+    // record key shape to /^\$/ — non-directive objects now reject loudly.
+    const schema = directiveOr(z.string());
+    expect(schema.safeParse({ color: "cyan" }).success).toBe(false);
+    expect(schema.safeParse({ foo: "bar", baz: 42 }).success).toBe(false);
+    expect(schema.safeParse({}).success).toBe(false);
   });
 
   it("works with non-string base schemas (numeric slots)", () => {
