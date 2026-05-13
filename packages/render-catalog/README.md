@@ -36,6 +36,16 @@ export const catalog = defineCatalog(schema, {
 });
 ```
 
+## Directives + colors (FLO-730, json-render 0.19)
+
+Alongside component definitions, this package exports:
+
+| Export | Source | Purpose |
+|---|---|---|
+| `floattyDirectives` | `src/directives.ts` | Bundle: `standardDirectives` from `@json-render/directives` (`$format`, `$math`, `$concat`, `$count`, `$truncate`, `$pluralize`, `$join`) plus 3 floatty-specific entries: `$projectColor`, `$ctxColor`, `$wikilink`. Pass to a `JSONUIProvider` and `catalog.prompt` for token-efficient agent emissions. |
+| `directiveOr<T>(schema)` | `src/directives.ts` | Helper for widening prop slots in `shared.ts`. Validates the inner schema OR any `$`-prefixed record. Type-asserts return as `T` because renderers receive resolved values post-`resolvePropValue`. See helper docblock for the two-layer contract. |
+| `STREAM_PROJECT_COLORS` / `STREAM_MODE_COLORS` / `UNKNOWN_COLOR` | `src/colors.ts` | Color maps consumed by `$projectColor` / `$ctxColor` directives AND directly by render-door's `ContextStream` component. Single source of truth — keep them here so directive and component never drift. |
+
 ## Component sets
 
 | Set | Source file | Purpose |

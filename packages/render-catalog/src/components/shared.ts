@@ -13,6 +13,7 @@
 
 import { z } from "zod";
 import { severityEnum, gapTypeEnum, confidenceEnum, colorTokenEnum, accentEnum, entryTypeEnum } from "./enums";
+import { directiveOr } from "../directives";
 
 export const sharedComponentDefinitions = {
   // ─── Layout ──────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ export const sharedComponentDefinitions = {
       severity: severityEnum.optional().describe("How important this gap is — critical=red+⏺, warning=amber+◆, info=cyan+◇"),
       gapType: gapTypeEnum.optional().describe("Classification of the gap — stub/orphan/empty/asymmetric/unanswered"),
       evidence: z.string().optional().describe("Supporting evidence or context for the gap"),
-      target: z.string().optional().describe("Target page or issue to link to"),
+      target: directiveOr(z.string()).optional().describe("Target page or issue to link to"),
     }),
     slots: [],
     description: "An identified gap: missing content, orphan link, unanswered question, empty stub. Use for next-action lists, audit findings, asymmetry triage.",
@@ -62,7 +63,7 @@ export const sharedComponentDefinitions = {
     props: z.object({
       label: z.string().describe("Left half of the pill (dark)"),
       value: z.string().describe("Right half of the pill (colored)"),
-      color: z.string().optional().describe("Hex or CSS color for the value half (default: theme accent)"),
+      color: directiveOr(z.string()).optional().describe("Hex or CSS color for the value half (default: theme accent)"),
     }),
     slots: [],
     description: "Inline pill-shaped stat: label half + value half. More compact than a full Metric block. Good for stat rows inside a horizontal Stack.",
@@ -72,7 +73,7 @@ export const sharedComponentDefinitions = {
     props: z.object({
       time: z.string().describe('Time string — typically "HH:MM" or "Mar 9"'),
       label: z.string().describe("Short event description"),
-      color: z.string().optional().describe("Color for the spine dot — use to distinguish workstreams (e.g. cyan=float, amber=pharmacy)"),
+      color: directiveOr(z.string()).optional().describe("Color for the spine dot — use to distinguish workstreams (e.g. cyan=float, amber=pharmacy)"),
     }),
     slots: [],
     description: "Single event on a vertical timeline spine. Stack multiple TimelineEvents inside a Section or Stack to render a chronology.",
@@ -80,7 +81,7 @@ export const sharedComponentDefinitions = {
 
   WikilinkChip: {
     props: z.object({
-      target: z.string().describe("The wikilink target — page name, block hash, or issue ID"),
+      target: directiveOr(z.string()).describe("The wikilink target — page name, block hash, or issue ID"),
       label: z.string().optional().describe("Optional display text — defaults to target"),
     }),
     slots: [],
@@ -94,7 +95,7 @@ export const sharedComponentDefinitions = {
       nodes: z.array(z.object({
         id: z.string(),
         label: z.string(),
-        color: z.string().optional(),
+        color: directiveOr(z.string()).optional(),
         weight: z.number().optional(),
         center: z.boolean().optional(),
         ring: z.number().optional(),
@@ -113,7 +114,7 @@ export const sharedComponentDefinitions = {
         label: z.string(),
         value: z.number(),
       })).describe("Cell list — label is shown on hover, value scales brightness"),
-      color: z.string().optional().describe("Base hex color (default: theme accent)"),
+      color: directiveOr(z.string()).optional().describe("Base hex color (default: theme accent)"),
       title: z.string().optional(),
     }),
     slots: [],
@@ -447,13 +448,13 @@ export const sharedComponentDefinitions = {
       eyebrow: z.string().optional(),
       cover: z.object({
         gradient: z.string().optional(),
-        color: z.string().optional(),
+        color: directiveOr(z.string()).optional(),
         icon: z.string().optional(),
       }).optional(),
       density: z.enum(["full", "compact"]).optional(),
       actions: z.array(z.object({
         label: z.string(),
-        href: z.string().optional(),
+        href: directiveOr(z.string()).optional(),
         variant: z.enum(["primary", "secondary"]).optional(),
       })).optional(),
     }),
@@ -477,7 +478,7 @@ export const sharedComponentDefinitions = {
       subtitle: z.string().optional(),
       eyebrow: z.string().optional(),
       cover: z.object({
-        color: z.string().optional(),
+        color: directiveOr(z.string()).optional(),
         gradient: z.string().optional(),
         icon: z.string().optional(),
         height: z.string().optional(),
@@ -485,10 +486,10 @@ export const sharedComponentDefinitions = {
       properties: z.array(z.object({
         label: z.string(),
         value: z.string(),
-        color: z.string().optional(),
+        color: directiveOr(z.string()).optional(),
       })).optional(),
       footer: z.string().optional(),
-      href: z.string().optional(),
+      href: directiveOr(z.string()).optional(),
       density: z.enum(["comfortable", "compact"]).optional(),
     }),
     slots: ["default"],
@@ -649,7 +650,7 @@ export const sharedComponentDefinitions = {
     props: z.object({
       title: z.string(),
       expanded: z.boolean().optional(),
-      color: z.string().optional(),
+      color: directiveOr(z.string()).optional(),
       count: z.number().optional(),
     }),
     slots: ["default"],
@@ -753,7 +754,7 @@ export const sharedComponentDefinitions = {
       title: z.string(),
       body: z.string().optional(),
       tags: z.array(z.string()).optional(),
-      color: z.string().optional(),
+      color: directiveOr(z.string()).optional(),
     }),
     slots: [],
     description: "Timeline entry row: time dot on left spine, title + optional body + tags on right. Good for timelogs, session entries, daily notes.",
@@ -783,7 +784,7 @@ export const sharedComponentDefinitions = {
     props: z.object({
       label: z.string(),
       value: z.string(),
-      color: z.string().optional(),
+      color: directiveOr(z.string()).optional(),
     }),
     slots: [],
     description: "Centered metric card: label above, bold value below",
@@ -824,7 +825,7 @@ export const sharedComponentDefinitions = {
       label: z.string(),
       value: z.number(),
       max: z.number().optional(),
-      color: z.string().optional(),
+      color: directiveOr(z.string()).optional(),
     }),
     slots: [],
     description: "Single bar in a BarChart. Height = value/max * 100%. Inherits max from parent BarChart if not set on individual item.",
@@ -865,7 +866,7 @@ export const sharedComponentDefinitions = {
   KanbanCard: {
     props: z.object({
       content: z.string().optional(),
-      color: z.string().optional(),
+      color: directiveOr(z.string()).optional(),
       blockId: z.string().optional(),
       parentId: z.string().nullable().optional(),
       index: z.number().optional(),
@@ -918,7 +919,7 @@ export const sharedComponentDefinitions = {
       stats: z.array(z.object({
         label: z.string(),
         value: z.string(),
-        color: z.string().optional(),
+        color: directiveOr(z.string()).optional(),
       })),
       layout: z.enum(["row", "grid"]).optional(),
     }),

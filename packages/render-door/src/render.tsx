@@ -21,12 +21,10 @@
 import { createSignal, Show } from 'solid-js';
 import {
   Renderer,
-  StateProvider,
-  ActionProvider,
-  VisibilityProvider,
-  ValidationProvider,
+  JSONUIProvider,
 } from '@json-render/solid';
 import type { Spec, UIElement } from '@json-render/core';
+import { floattyDirectives } from '@float/render-catalog';
 
 // The render door extends UIElement with `bindings` — a map of prop-name →
 // JSON Pointer state path that useBoundProp() in components.tsx reads at
@@ -92,6 +90,17 @@ interface SpecGenerationError extends Error {
 }
 
 /** Narrow unknown caught value to a printable message string. */
+// Guard initialState against non-object spec.state values. The @json-render
+// Spec type allows `state` to be undefined; in practice the agent / hand-rolled
+// specs occasionally emit truthy non-object values (e.g. legacy fixtures with
+// `state: ""`). CodeRabbit flagged on PR #308 — defensive coerce to {} keeps
+// downstream StateStore initialization predictable.
+function safeInitialState(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {};
+}
+
 function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === 'string') return e;
@@ -630,10 +639,11 @@ const RENDER_TOOL_SCHEMA = {
 const CLAUDE_SYSTEM_PROMPT = [
   'You are a UI spec generator for a dark-themed terminal outliner app called floatty.',
   '',
-  bbsCatalog.prompt(),
+  bbsCatalog.prompt({ directives: floattyDirectives }),
   '',
   'Rules: every children key must exist in elements. Use realistic data. gap is a number (not string).',
-  'Colors: #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber), #e5c07b (yellow)',
+  'Color preference: when a value represents a [project::X] or a [mode::Y] semantic, prefer the directive form — { "$projectColor": "X" } or { "$ctxColor": "Y" } — over inlining hex. Only fall back to raw hex when no project/mode semantic applies.',
+  'Ad-hoc palette (fallback when no directive applies): #00e5ff (cyan), #e040a0 (magenta), #ff4444 (coral), #98c379 (green), #ffb300 (amber), #e5c07b (yellow)',
   'Use TuiPanel for bordered containers, TuiStat for metrics, BarChart+BarItem for data viz.',
   'Use ShippedItem for completed items, PatternCard for expandable technical notes.',
   'Use BacklinksFooter for bidirectional links, WikilinkChip for [[bracket]] links.',
@@ -1154,12 +1164,13 @@ function RenderView(props: DoorViewProps) {
       </div>
     }>
       <div style={{ padding: '8px 0', 'font-family': 'JetBrains Mono, monospace' }}>
-        <StateProvider
-          initialState={spec()?.state || {}}
+        <RenderViewInner
+          spec={spec()!}
+          onNavigate={props.onNavigate}
+          onChirp={props.onChirp}
+          initialState={safeInitialState(spec()?.state)}
           onStateChange={(changes) => handleRenderStateChange(changes, props.onChirp)}
-        >
-          <RenderViewInner spec={spec()!} onNavigate={props.onNavigate} onChirp={props.onChirp} />
-        </StateProvider>
+        />
         <Show when={generatedVia() || sessionId()}>
           <div style={{
             'margin-top': '8px',
@@ -1225,6 +1236,8 @@ function RenderViewInner(props: {
   spec: Spec;
   onNavigate?: (target: string, opts?: { type?: 'page' | 'block' }) => void;
   onChirp?: (message: string, data?: unknown) => void;
+  initialState: Record<string, unknown>;
+  onStateChange: (changes: Array<{ path: string; value: unknown }>) => void;
 }) {
   const actionHandlers = {
     navigate: async (params: Record<string, unknown>) => {
@@ -1247,13 +1260,15 @@ function RenderViewInner(props: {
 
   return (
     <div>
-      <ActionProvider handlers={actionHandlers}>
-        <VisibilityProvider>
-          <ValidationProvider>
-            <Renderer spec={props.spec} registry={bbsRegistry} />
-          </ValidationProvider>
-        </VisibilityProvider>
-      </ActionProvider>
+      <JSONUIProvider
+        registry={bbsRegistry}
+        initialState={props.initialState}
+        onStateChange={props.onStateChange}
+        handlers={actionHandlers}
+        directives={floattyDirectives}
+      >
+        <Renderer spec={props.spec} registry={bbsRegistry} />
+      </JSONUIProvider>
     </div>
   );
 }
@@ -1406,7 +1421,7 @@ export const door = {
     }
 
     if (arg === 'prompt') {
-      const prompt = bbsCatalog.prompt();
+      const prompt = bbsCatalog.prompt({ directives: floattyDirectives });
       setOutputWithTitle({
         title: 'catalog prompt',
         generatedVia: 'prompt',

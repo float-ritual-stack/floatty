@@ -6,7 +6,7 @@ Full context: `apps/render-reference/README.md`.
 
 ## Stack
 
-SolidJS + Vite + `@json-render/solid` (^0.18.0) + `@solid-primitives/keyed` for provider re-key on tab switch.
+SolidJS + Vite + `@json-render/solid` (^0.19.0) + `@solid-primitives/keyed` for provider re-key on tab switch.
 
 ## Commands
 

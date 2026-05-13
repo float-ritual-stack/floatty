@@ -11,3 +11,5 @@
 // See .float/work/floatty-catalog-extraction/PLAN.md for the full migration plan.
 
 export * from "./components";
+export * from "./colors";
+export * from "./directives";
