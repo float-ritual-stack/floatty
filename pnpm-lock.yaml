@@ -18,8 +18,8 @@ importers:
         specifier: ^0.2.5
         version: 0.2.5(solid-js@1.9.12)
       '@json-render/solid':
-        specifier: ^0.18.0
-        version: 0.18.0(solid-js@1.9.12)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(solid-js@1.9.12)(zod@4.3.6)
       '@solid-primitives/keyed':
         specifier: ^1.5.2
         version: 1.5.3(solid-js@1.9.12)
@@ -145,11 +145,11 @@ importers:
         specifier: ^3.0.52
         version: 3.0.99(zod@4.3.6)
       '@json-render/core':
-        specifier: ^0.17.0
-        version: 0.17.0(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(zod@4.3.6)
       '@json-render/ink':
-        specifier: ^0.17.0
-        version: 0.17.0(ink@6.8.0(@types/react@19.2.3)(react@19.2.4))(react@19.2.4)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(ink@6.8.0(@types/react@19.2.3)(react@19.2.4))(react@19.2.4)(zod@4.3.6)
       ai:
         specifier: ^6.0.33
         version: 6.0.162(zod@4.3.6)
@@ -191,14 +191,14 @@ importers:
         specifier: workspace:*
         version: link:../../packages/render-catalog
       '@json-render/core':
-        specifier: ^0.18.0
-        version: 0.18.0(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(zod@4.3.6)
       '@json-render/mcp':
-        specifier: ^0.18.0
-        version: 0.18.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)
       '@json-render/react':
-        specifier: ^0.18.0
-        version: 0.18.0(react@19.2.4)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(react@19.2.4)(zod@4.3.6)
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.29.0(zod@4.3.6)
@@ -276,14 +276,14 @@ importers:
         specifier: workspace:*
         version: link:../../packages/render-door
       '@json-render/core':
-        specifier: ^0.18.0
-        version: 0.18.0(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(zod@4.3.6)
       '@json-render/devtools-solid':
-        specifier: ^0.18.0
-        version: 0.18.0(solid-js@1.9.12)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(solid-js@1.9.12)(zod@4.3.6)
       '@json-render/solid':
-        specifier: ^0.18.0
-        version: 0.18.0(solid-js@1.9.12)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(solid-js@1.9.12)(zod@4.3.6)
       '@solid-primitives/keyed':
         specifier: ^1.5.0
         version: 1.5.3(solid-js@1.9.12)
@@ -307,18 +307,21 @@ importers:
   packages/render-catalog:
     dependencies:
       '@json-render/core':
-        specifier: ^0.18.0
-        version: 0.18.0(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(zod@4.3.6)
+      '@json-render/directives':
+        specifier: ^0.19.0
+        version: 0.19.0(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
       '@json-render/react':
-        specifier: ^0.18.0
-        version: 0.18.0(react@19.2.4)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(react@19.2.4)(zod@4.3.6)
       '@json-render/solid':
-        specifier: ^0.18.0
-        version: 0.18.0(solid-js@1.9.12)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(solid-js@1.9.12)(zod@4.3.6)
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -332,11 +335,11 @@ importers:
         specifier: workspace:*
         version: link:../render-catalog
       '@json-render/core':
-        specifier: ^0.18.0
-        version: 0.18.0(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(zod@4.3.6)
       '@json-render/solid':
-        specifier: ^0.18.0
-        version: 0.18.0(solid-js@1.9.12)(zod@4.3.6)
+        specifier: ^0.19.0
+        version: 0.19.0(solid-js@1.9.12)(zod@4.3.6)
       dompurify:
         specifier: ^3.3.3
         version: 3.3.3
@@ -1151,32 +1154,32 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@json-render/core@0.17.0':
-    resolution: {integrity: sha512-8woFjU0RZqxDvJ9E1vxv21uv1lcXEGut/tcVWiVsduds3pcX3tCv5xKSjREjew/yS061CGjFAPr5vozYS39whg==}
+  '@json-render/core@0.19.0':
+    resolution: {integrity: sha512-vvcyZ+10EDZKbEyB1J2kXOGfDaiZR2LurZGSqi2r5STHyKr+Te85DWaBxTwRGgM7U1LtIvNx85BzzjElRKoAIg==}
     peerDependencies:
       zod: ^4.0.0
 
-  '@json-render/core@0.18.0':
-    resolution: {integrity: sha512-zm0K9cgxZLGshw5TmdKe3Xc6fpjbONdlj3v+Er+HhCYZ9fSJpv32d9VzQds4bDW36vPfdieAOcsPR9+EcTff7Q==}
-    peerDependencies:
-      zod: ^4.0.0
-
-  '@json-render/devtools-solid@0.18.0':
-    resolution: {integrity: sha512-0trJVDOtews0X+NChH6FN5j4vJes4IC4EHsVz6ZlUPq56/u9BgsxSqCV42AK7EsYNIJrlaTCipxbjPg9NkX22w==}
+  '@json-render/devtools-solid@0.19.0':
+    resolution: {integrity: sha512-Htgq+ZisTk2/m9F/VPMZbUcZaZzjo6YCmspK7JMS4Bk78MoR/71TSiTETHMP+Vc4KTjRviClMjhp55BJmTkOuA==}
     peerDependencies:
       solid-js: ^1.9.0
 
-  '@json-render/devtools@0.18.0':
-    resolution: {integrity: sha512-H5CuyJnIFGTT5eKB3YBHlTB4KNjvd3q85uNmkDA5hlYWm0qqWwiYrip2m3V7VEWzyZi+Dc+Pi0gaRX1reg1a+Q==}
+  '@json-render/devtools@0.19.0':
+    resolution: {integrity: sha512-ECToHJCDUIwrlpRi6kX5mEqOsDIZ5k3XMARiJVey36qPi3z53W2yJsNpujBiQZHTTY44iEtIi93JxDptKk1gdg==}
 
-  '@json-render/ink@0.17.0':
-    resolution: {integrity: sha512-+VHuTH45nz3UTB9AgOJABqTfq65lUBiTLQIruijdAxveFtuefWtX/6rBcn3TCIVJoZoyRo4JBQLwOkYVhIcjuw==}
+  '@json-render/directives@0.19.0':
+    resolution: {integrity: sha512-JOBzXWpmvf5Bmy/NihFyfIK2+JXVwfbB2i8703tSJ3c3aatDsSL5yIwZ3+/I7qzLtIQFL6ubwk3DvdzOpOKBnQ==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@json-render/ink@0.19.0':
+    resolution: {integrity: sha512-RPS321EW4MVKBnD6Y531h4lzXnYN+fj4nxfEcmFkJiLGxoZAr9PYOrotgwNzNIcsIyvNaZcgHGvYf7EhhGWDtw==}
     peerDependencies:
       ink: ^6.0.0
       react: ^19.0.0
 
-  '@json-render/mcp@0.18.0':
-    resolution: {integrity: sha512-uI6lLhzN5/w26qT4As5B3FP0/fgFASkkUCIXNWhYpcpZmcinkd6e1XNnEMyb0JVoNyzmhD3mGGPPR57SJwx4XQ==}
+  '@json-render/mcp@0.19.0':
+    resolution: {integrity: sha512-P2OEVjPHoQ3bZSTmZZxA2EYeKrcDLiGPYvwdEkRSvLk8eEuhWKgpO3wLwANgGoLWcLSN/wpA9IhCssxEyJxDgg==}
     peerDependencies:
       react: ^19.0.0
       react-dom: ^19.0.0
@@ -1186,13 +1189,13 @@ packages:
       react-dom:
         optional: true
 
-  '@json-render/react@0.18.0':
-    resolution: {integrity: sha512-rT0hJ9mK2BGfLxZ/ztS4UF1XqAz/o+FNtFgii7hea7VjD4u0wJYyRphe4a5DetS/dSMZFECXkmida+xi3wKl9A==}
+  '@json-render/react@0.19.0':
+    resolution: {integrity: sha512-kTW6b6cSNRrlEfCUf/69SLoLn+CufC968ruge9tnQlp9pDTGG/SK8pgM541FdgwMFA4zm3s5mpM3G8rdODKc/A==}
     peerDependencies:
       react: ^19.2.3
 
-  '@json-render/solid@0.18.0':
-    resolution: {integrity: sha512-nlny4Sxl+gtUUSur+Oy2Lx6jCRqJyIV+6DXOCx22Na9rY1B7eu1C2ziv199dX17DR4si/ft6rbE/GviY+xSUMA==}
+  '@json-render/solid@0.19.0':
+    resolution: {integrity: sha512-zMBf4XCvzU9FYpahfOatEBbxqZza4XJ6BSY2Ejfjt5IV9FfrKse0O6EqftuJQyHdjRL9q3/YoF1eAqNJ6QRqag==}
     peerDependencies:
       solid-js: ^1.9.0
       zod: ^4.0.0
@@ -5886,41 +5889,42 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@json-render/core@0.17.0(zod@4.3.6)':
+  '@json-render/core@0.19.0(zod@4.3.6)':
     dependencies:
       zod: 4.3.6
 
-  '@json-render/core@0.18.0(zod@4.3.6)':
+  '@json-render/devtools-solid@0.19.0(solid-js@1.9.12)(zod@4.3.6)':
     dependencies:
-      zod: 4.3.6
-
-  '@json-render/devtools-solid@0.18.0(solid-js@1.9.12)(zod@4.3.6)':
-    dependencies:
-      '@json-render/core': 0.18.0(zod@4.3.6)
-      '@json-render/devtools': 0.18.0(zod@4.3.6)
-      '@json-render/solid': 0.18.0(solid-js@1.9.12)(zod@4.3.6)
+      '@json-render/core': 0.19.0(zod@4.3.6)
+      '@json-render/devtools': 0.19.0(zod@4.3.6)
+      '@json-render/solid': 0.19.0(solid-js@1.9.12)(zod@4.3.6)
       solid-js: 1.9.12
     transitivePeerDependencies:
       - zod
 
-  '@json-render/devtools@0.18.0(zod@4.3.6)':
+  '@json-render/devtools@0.19.0(zod@4.3.6)':
     dependencies:
-      '@json-render/core': 0.18.0(zod@4.3.6)
+      '@json-render/core': 0.19.0(zod@4.3.6)
     transitivePeerDependencies:
       - zod
 
-  '@json-render/ink@0.17.0(ink@6.8.0(@types/react@19.2.3)(react@19.2.4))(react@19.2.4)(zod@4.3.6)':
+  '@json-render/directives@0.19.0(zod@4.3.6)':
     dependencies:
-      '@json-render/core': 0.17.0(zod@4.3.6)
+      '@json-render/core': 0.19.0(zod@4.3.6)
+      zod: 4.3.6
+
+  '@json-render/ink@0.19.0(ink@6.8.0(@types/react@19.2.3)(react@19.2.4))(react@19.2.4)(zod@4.3.6)':
+    dependencies:
+      '@json-render/core': 0.19.0(zod@4.3.6)
       ink: 6.8.0(@types/react@19.2.3)(react@19.2.4)
       marked: 17.0.6
       react: 19.2.4
     transitivePeerDependencies:
       - zod
 
-  '@json-render/mcp@0.18.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)':
+  '@json-render/mcp@0.19.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)':
     dependencies:
-      '@json-render/core': 0.18.0(zod@4.3.6)
+      '@json-render/core': 0.19.0(zod@4.3.6)
       '@modelcontextprotocol/ext-apps': 1.6.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.6)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
     optionalDependencies:
@@ -5931,16 +5935,16 @@ snapshots:
       - supports-color
       - zod
 
-  '@json-render/react@0.18.0(react@19.2.4)(zod@4.3.6)':
+  '@json-render/react@0.19.0(react@19.2.4)(zod@4.3.6)':
     dependencies:
-      '@json-render/core': 0.18.0(zod@4.3.6)
+      '@json-render/core': 0.19.0(zod@4.3.6)
       react: 19.2.4
     transitivePeerDependencies:
       - zod
 
-  '@json-render/solid@0.18.0(solid-js@1.9.12)(zod@4.3.6)':
+  '@json-render/solid@0.19.0(solid-js@1.9.12)(zod@4.3.6)':
     dependencies:
-      '@json-render/core': 0.18.0(zod@4.3.6)
+      '@json-render/core': 0.19.0(zod@4.3.6)
       solid-js: 1.9.12
       zod: 4.3.6
 
