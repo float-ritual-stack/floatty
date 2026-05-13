@@ -104,16 +104,25 @@ export const floattyDirectives = [
  * objects (any record with a `$`-prefixed key). Use in `shared.ts` for prop
  * slots that should accept agent-emitted directives (color, href, target).
  *
- * Runtime: validation succeeds for both string AND directive shapes; the
- * renderer's `resolvePropValue` evaluates the directive and the resulting
- * value flows to the component.
+ * **Two-layer contract:**
+ * - Runtime validation accepts the inner schema OR any record (directive shape).
+ * - JSON Schema export encodes the union, so `claude --json-schema` allows
+ *   the agent to emit `{ "$projectColor": "..." }` in a string slot.
+ * - **TypeScript-inferred type is the inner schema** — because renderers
+ *   receive values POST directive-resolution (the framework's `resolvePropValue`
+ *   resolves directives before props hit the component). At render time
+ *   `props.color` is always the inner type (e.g. `string | undefined`),
+ *   never a directive object.
+ *
+ * The type assertion below is intentional: it lies to TypeScript at the
+ * catalog-declaration site to keep renderer signatures honest about the
+ * value they actually receive. The runtime Zod schema is the full union.
  *
  * @example
  *   color: directiveOr(z.string()).optional()
- *   // Accepts: "#00e5ff"  OR  { "$projectColor": "floatty" }
+ *   // Wire-time validates: "#00e5ff" OR { "$projectColor": "floatty" }
+ *   // Render-time props.color: string | undefined
  */
-export function directiveOr<T extends z.ZodType>(
-  schema: T,
-): z.ZodUnion<readonly [T, z.ZodRecord<z.ZodString, z.ZodUnknown>]> {
-  return z.union([schema, z.record(z.string(), z.unknown())]);
+export function directiveOr<T extends z.ZodType>(schema: T): T {
+  return z.union([schema, z.record(z.string(), z.unknown())]) as unknown as T;
 }
