@@ -7,6 +7,8 @@ import {
   hasToolCall,
   wrapLanguageModel,
   gateway,
+  validateUIMessages,
+  TypeValidationError,
   type UIMessage,
   type ModelMessage,
 } from "ai";
@@ -17,9 +19,20 @@ import {
   EXPLORER_INSTRUCTIONS,
   getExplorerTools,
 } from "@/lib/agents/explorer-agent";
+import { getSession, updateSession } from "@/lib/sessions/store";
+import { extractBlockRefs } from "@/lib/sessions/block-index";
 
+// Per ai-sdk persistence doc, the canonical wire shape is:
+//   client sends `{ id, message }` (single new message)
+//   server loads previous messages from store, appends, streams response
+//   server saves the resulting messages array on stream finish
+// The client-side `prepareSendMessagesRequest` (configured in ai-panel.tsx)
+// trims the request body to this shape; legacy `{ messages }` is still
+// accepted for backwards compat / non-persisted ad-hoc calls.
 const requestSchema = z.object({
-  messages: z.array(z.any()),
+  id: z.string().optional(),
+  message: z.unknown().optional(),
+  messages: z.array(z.unknown()).optional(),
   maxSteps: z.number().int().min(1).max(20).optional(),
   maxTokens: z.number().int().min(500).max(16000).optional(),
 });
@@ -46,21 +59,92 @@ function filterEmptyTextParts(msgs: ModelMessage[]): ModelMessage[] {
 
 export async function POST(req: Request) {
   const body = requestSchema.parse(await req.json());
-  const messages = body.messages as UIMessage[];
   const steps = body.maxSteps ?? 8;
   const tokens = body.maxTokens ?? 4000;
 
+  // Resolve the message array to feed the model. Two paths:
+  //   1. Persisted-session path: client sent `{ id, message }`; we load
+  //      previous messages from the store and append.
+  //   2. Legacy/ad-hoc path: client sent the full `messages` array.
+  // We also remember `originalMessages` so the onFinish callback can append
+  // the assistant response and write it back to the store.
+  // Hoist origin metadata outside the persisted-session branch so the
+  // onFinish closure can pass it through to extractBlockRefs — otherwise
+  // the `context` source rows never get written to session_blocks and
+  // listSessionsByBlock(blockId) silently misses sessions started with
+  // that block in context. (Greptile P1.)
+  let messages: UIMessage[];
+  let sessionOriginPageId: string | null = null;
+  let sessionOriginSelected: string[] = [];
+  if (body.id && body.message !== undefined) {
+    const session = getSession(body.id);
+    sessionOriginPageId = session?.originPageId ?? null;
+    sessionOriginSelected = session?.originSelected ?? [];
+    const previous = (session?.messages ?? []) as UIMessage[];
+    messages = [...previous, body.message as UIMessage];
+  } else if (body.messages) {
+    messages = body.messages as UIMessage[];
+  } else {
+    return new Response(
+      JSON.stringify({ error: "Missing `id`+`message` or `messages`" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  const originalMessages = messages;
+  const sessionId = body.id ?? null;
+
   const stream = createUIMessageStream({
+    originalMessages,
+    onFinish: ({ messages: finalMessages }) => {
+      if (!sessionId) return; // ad-hoc call, no persistence
+      const blockRefs = extractBlockRefs({
+        messages: finalMessages as Parameters<typeof extractBlockRefs>[0]["messages"],
+        originPageId: sessionOriginPageId,
+        originSelectedIds: sessionOriginSelected,
+      });
+      updateSession(sessionId, {
+        messages: finalMessages,
+        blockRefs,
+      });
+    },
     execute: async ({ writer }) => {
-      const modelMessages = await convertToModelMessages(messages);
+      const tools = await getExplorerTools();
+
+      // Per ai-sdk persistence guide, validate loaded messages against the
+      // current tool schemas before sending to the model. If a stored session
+      // contains tool calls whose schemas have since changed, we'd otherwise
+      // pass malformed args downstream. Fall back to the unvalidated array on
+      // TypeValidationError — defensive, preserves existing sessions across
+      // tool-schema drift. Re-throws non-validation errors.
+      let validatedMessages = messages;
+      try {
+        validatedMessages = (await validateUIMessages({
+          messages,
+          // Cast: validateUIMessages' tools-shape generic is narrower than the
+          // ToolSet union we load (the `load_skill` tool is conditional). The
+          // runtime behavior is correct; the type asserts here keep TS happy
+          // without forcing every tool through the same shape.
+          tools: tools as Parameters<typeof validateUIMessages>[0]["tools"],
+        })) as UIMessage[];
+      } catch (err) {
+        if (!(err instanceof TypeValidationError)) throw err;
+        console.warn(
+          "[chat/route] message validation failed, proceeding with raw messages:",
+          err.message
+        );
+      }
+
+      const modelMessages = await convertToModelMessages(validatedMessages);
       const filteredMessages = filterEmptyTextParts(modelMessages);
 
       const model = wrapLanguageModel({
-        model: gateway("anthropic/claude-sonnet-4"),
+        // Vercel AI Gateway model IDs — fetched fresh via
+        // `curl https://ai-gateway.vercel.sh/v1/models`. Bump as new
+        // versions ship; do not pin a stale ID from memory.
+        model: gateway("anthropic/claude-sonnet-4.6"),
         middleware: devToolsMiddleware(),
       });
-
-      const tools = await getExplorerTools();
 
       const result = streamText({
         model,
@@ -84,6 +168,11 @@ export async function POST(req: Request) {
           });
         },
       });
+
+      // Ensure the stream runs to completion even if the client disconnects,
+      // so persistence still fires via onFinish. Per the AI SDK persistence
+      // guide: `consumeStream()` removes backpressure.
+      result.consumeStream();
 
       // Pipe through json-render transform — extracts ```spec fences as data parts
       writer.merge(pipeJsonRender(result.toUIMessageStream()));

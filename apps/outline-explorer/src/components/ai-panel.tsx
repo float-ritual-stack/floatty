@@ -9,6 +9,22 @@ import { AiActions, type AiActionWithPrompt } from "./ai-actions";
 import { WalkChip } from "./walk-chip";
 import { MessageBubble } from "./message-bubble";
 
+/**
+ * Session persistence wire-up:
+ *
+ * - On mount, fetch the most recent session (or create a new one if none exist)
+ *   and hydrate `useChat` via `setMessages`. Selection changes do NOT swap the
+ *   session — per the explicit-reset doctrine, only the ⟲ button creates a new
+ *   session row.
+ *
+ * - After every assistant turn completes (status transitions back to "ready"),
+ *   PATCH the session with the current message array. The server re-derives
+ *   the `session_blocks` index from the messages.
+ *
+ * - Reset (⟲) creates a fresh session row + clears messages, so the prior
+ *   thread is preserved in sqlite and surfaceable from PR 2's picker.
+ */
+
 interface AiPanelProps {
   selectedIds: string[];
   pageContextId: string | null;
@@ -30,11 +46,31 @@ export function AiPanel({
   const [streamSpec, setStreamSpec] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Session persistence — see header comment block.
+  // sessionId is declared *before* the transport so we can include it in
+  // every chat request via `prepareSendMessagesRequest`. The server uses it
+  // to load previous messages + persist on stream finish.
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = sessionId;
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: { maxSteps, maxTokens },
+        // Send only the latest user message + the session id; server loads
+        // prior messages from sqlite and appends. Matches the canonical
+        // `prepareSendMessagesRequest` pattern from the ai-sdk persistence
+        // guide and cuts request payload to O(1) on growing threads.
+        prepareSendMessagesRequest({ messages, id: chatId }) {
+          const last = messages[messages.length - 1];
+          const sid = sessionIdRef.current ?? chatId;
+          return {
+            body: sid
+              ? { id: sid, message: last, maxSteps, maxTokens }
+              : { messages, maxSteps, maxTokens }, // fallback: no session yet
+          };
+        },
       }),
     [maxSteps, maxTokens]
   );
@@ -51,6 +87,61 @@ export function AiPanel({
 
   const noContent = !pageContextId && selectedIds.length === 0;
   const isLoading = status !== "ready";
+
+  // Session hydrate on mount. Server-side persistence happens automatically
+  // via `onFinish` in /api/chat (see ai-sdk persistence canonical pattern),
+  // so the client only needs to:
+  //   • load the latest session's messages and seed useChat
+  //   • create a fresh session row when none exists
+  //   • create a fresh row on user-triggered reset (⟲)
+  // No client-side persist effect — server owns that.
+  const hydrateStarted = useRef(false);
+
+  useEffect(() => {
+    if (hydrateStarted.current) return;
+    hydrateStarted.current = true;
+
+    (async () => {
+      try {
+        const listRes = await fetch("/api/sessions?limit=1");
+        if (!listRes.ok) throw new Error(`list ${listRes.status}`);
+        const { sessions } = (await listRes.json()) as {
+          sessions: Array<{ id: string }>;
+        };
+
+        if (sessions.length > 0) {
+          const getRes = await fetch(`/api/sessions/${sessions[0].id}`);
+          if (!getRes.ok) throw new Error(`get ${getRes.status}`);
+          const { session } = (await getRes.json()) as {
+            session: { id: string; messages: ExplorerUIMessage[] };
+          };
+          setSessionId(session.id);
+          setMessages(session.messages);
+        } else {
+          const createRes = await fetch("/api/sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              originPageId: pageContextId,
+              originSelectedIds: selectedIds,
+            }),
+          });
+          if (!createRes.ok) throw new Error(`create ${createRes.status}`);
+          const { session } = (await createRes.json()) as { session: { id: string } };
+          setSessionId(session.id);
+        }
+      } catch (err) {
+        // Persistence failures should not break chat — surface to console,
+        // leave sessionId null. Server route will fall back to the legacy
+        // ad-hoc `{ messages }` shape when id is absent.
+        console.error("[ai-panel] session hydrate failed:", err);
+      }
+    })();
+    // Intentionally run once on mount — selection / pageContext changes should
+    // NOT re-hydrate (would re-introduce the "history evaporates on
+    // selection" bug at a different layer).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function buildContextMessage(taskPrompt: string): string {
     if (pageContextId) {
@@ -89,8 +180,37 @@ export function AiPanel({
     if (isLoading) return;
     const ok = window.confirm("Clear conversation history?");
     if (!ok) return;
+
+    // Clear UI immediately for responsiveness; fork a new session row in
+    // the background so the prior thread is preserved (surfaces in the
+    // picker once PR 2 lands). Null sessionId synchronously to close the
+    // race window: if the user submits another message before the POST
+    // resolves, `prepareSendMessagesRequest` would otherwise read the
+    // STALE id from `sessionIdRef.current` and write the new message into
+    // the OLD session's history. (Greptile P2.) The chat route falls
+    // back to the ad-hoc `{ messages }` shape when id is null — those
+    // messages won't persist until the new session id lands, which is
+    // the correct trade-off vs. mis-routing them.
     setMessages([]);
     setActiveAction(null);
+    setSessionId(null);
+    void (async () => {
+      try {
+        const res = await fetch("/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            originPageId: pageContextId,
+            originSelectedIds: selectedIds,
+          }),
+        });
+        if (!res.ok) throw new Error(`create ${res.status}`);
+        const { session } = (await res.json()) as { session: { id: string } };
+        setSessionId(session.id);
+      } catch (err) {
+        console.error("[ai-panel] new session create failed:", err);
+      }
+    })();
   }
 
   function handleCustomSubmit() {
