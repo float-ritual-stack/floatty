@@ -12,12 +12,23 @@ import { qmdSearchTool } from "../tools/qmd-search";
 import { qmdGetTool } from "../tools/qmd-get";
 import { qmdMultiGetTool } from "../tools/qmd-multi-get";
 
-// Inline the full catalog vocabulary into the system prompt at module load,
-// symmetric with packages/render-door/src/agent-schema.ts:84. Passing
-// floattyDirectives surfaces $projectColor/$ctxColor/$wikilink alongside the
-// bundled standardDirectives, so the model emits them in widened prop slots
-// instead of inlining resolved values.
-const _catalogPrompt = explorerCatalog.prompt({ directives: floattyDirectives });
+// Inline the full catalog vocabulary into the system prompt at module load.
+//
+// mode: "inline" is critical here — the inline-mode preamble tells the model
+// "respond conversationally, wrap JSONL in ```spec code fences" which is what
+// useJsonRenderMessage extracts client-side. The default "standalone" mode
+// (used by render-door, where the agent writes JSON to stdout via claude -p)
+// would tell the model to emit raw JSONL without fences, and the extractor
+// would miss it — JSON would land in the message as plain text. Different
+// modes for different surfaces; this surface is chat, so inline.
+//
+// Passing floattyDirectives surfaces $projectColor/$ctxColor/$wikilink
+// alongside the bundled standardDirectives so the model emits them in
+// widened prop slots instead of inlining resolved values.
+const _catalogPrompt = explorerCatalog.prompt({
+  mode: "inline",
+  directives: floattyDirectives,
+});
 
 export const EXPLORER_INSTRUCTIONS = `You are analyzing nodes in a 21,000+ block knowledge graph called floatty — a terminal outliner used as a cognitive prosthetic.
 
