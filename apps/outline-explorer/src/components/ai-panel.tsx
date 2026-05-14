@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, isToolUIPart, getToolName } from "ai";
-import { Sparkles, X, Send, Loader, Compass, Settings, PlayCircle, MessageSquarePlus } from "lucide-react";
+import { Sparkles, X, Send, Loader, Compass, Settings, PlayCircle, MessageSquarePlus, Pencil } from "lucide-react";
 import type { ExplorerUIMessage } from "@/lib/agents/explorer-agent";
 import { AiActions, type AiActionWithPrompt } from "./ai-actions";
 import { WalkChip } from "./walk-chip";
@@ -405,10 +405,17 @@ export function AiPanel({
             type="button"
             onClick={beginTitleEdit}
             disabled={!sessionId}
-            title="Rename session"
-            className="flex-1 min-w-0 bg-transparent border-none text-text text-[12px] font-medium truncate text-left cursor-text disabled:cursor-default px-0"
+            title="Click to rename"
+            aria-label="Rename session"
+            className="group/title flex-1 min-w-0 flex items-center gap-1 bg-transparent border-none text-text text-[12px] font-medium truncate text-left cursor-text disabled:cursor-default px-0"
           >
-            {sessionTitle || "New conversation"}
+            <span className="truncate">{sessionTitle || "New conversation"}</span>
+            {sessionId && (
+              <Pencil
+                size={9}
+                className="text-dim opacity-0 group-hover/title:opacity-100 transition-opacity shrink-0"
+              />
+            )}
           </button>
         )}
         <span className="text-dim text-[10px] shrink-0">

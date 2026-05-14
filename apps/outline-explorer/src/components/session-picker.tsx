@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { History, Search, X, Loader, Check } from "lucide-react";
+import { History, Search, X, Loader, Check, Pencil } from "lucide-react";
 import type { SessionListItem } from "@/lib/sessions/types";
 
 /**
@@ -250,12 +250,17 @@ export function SessionPicker({ activeSessionId, disabled, onLoad }: SessionPick
                           startEdit(s);
                         }}
                         disabled={isPending}
-                        className={`block w-full text-left bg-transparent border-none p-0 cursor-pointer text-text font-medium truncate ${
+                        title="Double-click to rename"
+                        className={`flex w-full items-center gap-1 text-left bg-transparent border-none p-0 cursor-pointer text-text font-medium truncate ${
                           isActive ? "text-cyan" : ""
                         }`}
                       >
-                        {isActive && <Check size={10} className="inline mr-1 text-cyan" />}
-                        {s.title}
+                        {isActive && <Check size={10} className="text-cyan shrink-0" />}
+                        <span className="truncate">{s.title}</span>
+                        <Pencil
+                          size={9}
+                          className="text-dim opacity-0 group-hover:opacity-60 transition-opacity shrink-0"
+                        />
                       </button>
                     )}
                     {s.preview && !isEditing && (
