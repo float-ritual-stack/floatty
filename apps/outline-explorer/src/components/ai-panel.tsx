@@ -181,11 +181,19 @@ export function AiPanel({
     const ok = window.confirm("Clear conversation history?");
     if (!ok) return;
 
-    // Clear UI immediately for responsiveness; fork a new session row in the
-    // background so the prior thread is preserved (surfaces in the picker
-    // once PR 2 lands).
+    // Clear UI immediately for responsiveness; fork a new session row in
+    // the background so the prior thread is preserved (surfaces in the
+    // picker once PR 2 lands). Null sessionId synchronously to close the
+    // race window: if the user submits another message before the POST
+    // resolves, `prepareSendMessagesRequest` would otherwise read the
+    // STALE id from `sessionIdRef.current` and write the new message into
+    // the OLD session's history. (Greptile P2.) The chat route falls
+    // back to the ad-hoc `{ messages }` shape when id is null — those
+    // messages won't persist until the new session id lands, which is
+    // the correct trade-off vs. mis-routing them.
     setMessages([]);
     setActiveAction(null);
+    setSessionId(null);
     void (async () => {
       try {
         const res = await fetch("/api/sessions", {

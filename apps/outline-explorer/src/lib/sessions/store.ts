@@ -44,6 +44,14 @@ let dbCachePath: string | null = null;
 function getDb(): Database.Database {
   const path = resolveDbPath();
   if (dbCache && dbCachePath === path) return dbCache;
+  // Path changed since last call (e.g., env-var swap mid-test, or a
+  // test that didn't call resetDb()). Close the old handle before
+  // opening the new one so we don't leak sqlite connections.
+  if (dbCache && dbCachePath !== path) {
+    dbCache.close();
+    dbCache = null;
+    dbCachePath = null;
+  }
 
   // Ensure parent dir exists for file-backed databases (skip `:memory:`).
   if (path !== ":memory:" && !existsSync(dirname(path))) {

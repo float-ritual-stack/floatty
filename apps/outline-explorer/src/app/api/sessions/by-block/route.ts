@@ -10,7 +10,13 @@ const query = z.object({
 export async function GET(req: NextRequest) {
   const parsed = query.safeParse(Object.fromEntries(req.nextUrl.searchParams));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Missing blockId" }, { status: 400 });
+    // Surface the actual zod failure so clients can distinguish a missing
+    // blockId from an invalid `limit` — hardcoded "Missing blockId" obscures
+    // the latter case.
+    return NextResponse.json(
+      { error: "Invalid query", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
   const sessions = listSessionsByBlock(parsed.data.blockId, parsed.data.limit ?? 20);
   return NextResponse.json({ sessions });

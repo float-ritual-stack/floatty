@@ -68,9 +68,18 @@ export async function POST(req: Request) {
   //   2. Legacy/ad-hoc path: client sent the full `messages` array.
   // We also remember `originalMessages` so the onFinish callback can append
   // the assistant response and write it back to the store.
+  // Hoist origin metadata outside the persisted-session branch so the
+  // onFinish closure can pass it through to extractBlockRefs — otherwise
+  // the `context` source rows never get written to session_blocks and
+  // listSessionsByBlock(blockId) silently misses sessions started with
+  // that block in context. (Greptile P1.)
   let messages: UIMessage[];
+  let sessionOriginPageId: string | null = null;
+  let sessionOriginSelected: string[] = [];
   if (body.id && body.message !== undefined) {
     const session = getSession(body.id);
+    sessionOriginPageId = session?.originPageId ?? null;
+    sessionOriginSelected = session?.originSelected ?? [];
     const previous = (session?.messages ?? []) as UIMessage[];
     messages = [...previous, body.message as UIMessage];
   } else if (body.messages) {
@@ -91,6 +100,8 @@ export async function POST(req: Request) {
       if (!sessionId) return; // ad-hoc call, no persistence
       const blockRefs = extractBlockRefs({
         messages: finalMessages as Parameters<typeof extractBlockRefs>[0]["messages"],
+        originPageId: sessionOriginPageId,
+        originSelectedIds: sessionOriginSelected,
       });
       updateSession(sessionId, {
         messages: finalMessages,

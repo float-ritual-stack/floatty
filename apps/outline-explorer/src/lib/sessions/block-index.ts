@@ -177,10 +177,12 @@ function collectIdsFromUnknown(
   const obj = value as Record<string, unknown>;
   for (const [k, v] of Object.entries(obj)) {
     if (typeof v === "string") {
-      if ((k === "blockId" || k === "block_id" || k === "id") && looksLikeUuid(v)) {
-        emit(v);
+      const normalized = v.trim();
+      if (!normalized) continue; // skip empty/whitespace — avoids `page:` entries
+      if ((k === "blockId" || k === "block_id" || k === "id") && looksLikeUuid(normalized)) {
+        emit(normalized);
       } else if (k === "target" || k === "page" || k === "pageName") {
-        emit(looksLikeUuid(v) ? v : `page:${v}`);
+        emit(looksLikeUuid(normalized) ? normalized : `page:${normalized}`);
       }
     } else {
       collectIdsFromUnknown(v, emit, depth + 1);
