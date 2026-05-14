@@ -17,9 +17,20 @@ import {
   EXPLORER_INSTRUCTIONS,
   getExplorerTools,
 } from "@/lib/agents/explorer-agent";
+import { getSession, updateSession } from "@/lib/sessions/store";
+import { extractBlockRefs } from "@/lib/sessions/block-index";
 
+// Per ai-sdk persistence doc, the canonical wire shape is:
+//   client sends `{ id, message }` (single new message)
+//   server loads previous messages from store, appends, streams response
+//   server saves the resulting messages array on stream finish
+// The client-side `prepareSendMessagesRequest` (configured in ai-panel.tsx)
+// trims the request body to this shape; legacy `{ messages }` is still
+// accepted for backwards compat / non-persisted ad-hoc calls.
 const requestSchema = z.object({
-  messages: z.array(z.any()),
+  id: z.string().optional(),
+  message: z.unknown().optional(),
+  messages: z.array(z.unknown()).optional(),
   maxSteps: z.number().int().min(1).max(20).optional(),
   maxTokens: z.number().int().min(500).max(16000).optional(),
 });
@@ -46,11 +57,44 @@ function filterEmptyTextParts(msgs: ModelMessage[]): ModelMessage[] {
 
 export async function POST(req: Request) {
   const body = requestSchema.parse(await req.json());
-  const messages = body.messages as UIMessage[];
   const steps = body.maxSteps ?? 8;
   const tokens = body.maxTokens ?? 4000;
 
+  // Resolve the message array to feed the model. Two paths:
+  //   1. Persisted-session path: client sent `{ id, message }`; we load
+  //      previous messages from the store and append.
+  //   2. Legacy/ad-hoc path: client sent the full `messages` array.
+  // We also remember `originalMessages` so the onFinish callback can append
+  // the assistant response and write it back to the store.
+  let messages: UIMessage[];
+  if (body.id && body.message !== undefined) {
+    const session = getSession(body.id);
+    const previous = (session?.messages ?? []) as UIMessage[];
+    messages = [...previous, body.message as UIMessage];
+  } else if (body.messages) {
+    messages = body.messages as UIMessage[];
+  } else {
+    return new Response(
+      JSON.stringify({ error: "Missing `id`+`message` or `messages`" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  const originalMessages = messages;
+  const sessionId = body.id ?? null;
+
   const stream = createUIMessageStream({
+    originalMessages,
+    onFinish: ({ messages: finalMessages }) => {
+      if (!sessionId) return; // ad-hoc call, no persistence
+      const blockRefs = extractBlockRefs({
+        messages: finalMessages as Parameters<typeof extractBlockRefs>[0]["messages"],
+      });
+      updateSession(sessionId, {
+        messages: finalMessages,
+        blockRefs,
+      });
+    },
     execute: async ({ writer }) => {
       const modelMessages = await convertToModelMessages(messages);
       const filteredMessages = filterEmptyTextParts(modelMessages);
@@ -84,6 +128,11 @@ export async function POST(req: Request) {
           });
         },
       });
+
+      // Ensure the stream runs to completion even if the client disconnects,
+      // so persistence still fires via onFinish. Per the AI SDK persistence
+      // guide: `consumeStream()` removes backpressure.
+      result.consumeStream();
 
       // Pipe through json-render transform — extracts ```spec fences as data parts
       writer.merge(pipeJsonRender(result.toUIMessageStream()));
