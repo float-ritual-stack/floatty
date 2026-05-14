@@ -6,6 +6,36 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.16.0] - 2026-05-14
+
+Hook and handler pipeline cleanup — the parallel `send::`/conversation-handler stack (`sendContextHook`, `conversation/{parser,builder,types,focusAdvance}`, `send.ts`, plus `services/execution.rs` + `commands/execution.rs`) and three big multi-turn-conversation docs removed wholesale: **~4400 lines deleted, ~330 added**. Replaced with `doorStdlib.ts`, a curated shared library exposed to door plugins via the `@floatty/stdlib` import shim (same pattern as the existing solid-js bindings in `doorLoader.ts`). Door authors no longer reach into app source via fragile paths — wikilink parsing, page helpers, exec/parseJSON wrappers, focused-child creation, AdvanceToNextInput, functional helpers (`pipe`/`sortByDesc`/`filterBy`/`take`/`groupBy`), and a markdown→batch-ops parser are all named exports off one module. Hook system docs (`FLOATTY_HOOK_SYSTEM`, `HOOK_PATTERNS`, `ADDING_HANDLERS`, `DOORS`) realigned in the same PR so future readers don't hunt deleted symbols. No user-facing UI change — `send::`-prefixed blocks (if any existed in active outlines) become inert; the door pattern (`render::`, `chirp::`, etc.) absorbs the surface.
+
+### ✨ Features
+
+- **`doorStdlib.ts` — shared library for door plugins** ([[PR #312]] / `94565ca` — `apps/floatty/src/lib/doorStdlib.ts`, `apps/floatty/src/lib/doorStdlib.test.ts`) — new module exposed via `window.__DOOR_STDLIB__` and accessed through a shim URL that rewrites `from '@floatty/stdlib'`. Same shim pattern as existing solid-js bindings. ~30 named exports across five domains: wikilink parsing (`findWikilinkEnd`, `parseWikilinkInner`, `extractAllWikilinkTargets`, `parseBracketedWikilink`), page helpers (`findPagesContainer`, `findPageBlock`), exec/JSON (`stripOSC`, `exec`, `execJSON`, `parseJSON`), focused-child + AdvanceToNextInput (`createFocusedChild`, `advanceToNextInput`, `addNewChildren`, `addNewChildrenTree`), functional helpers (`pipe`, `sortByDesc`, `filterBy`, `take`, `groupBy`), and markdown→ops parsing (`parseMarkdownToOps`, `BatchBlockOp`).
+
+### ♻️ Refactors
+
+- **`send::`/conversation handler stack removed** ([[PR #312]] / `94565ca` — `apps/floatty/src/lib/handlers/`, `apps/floatty/src-tauri/src/{services,commands}/execution.rs`) — ~1400 lines of TS removed (`conversation/index.ts` 277, `parser.ts` 198, `builder.ts` 180, `types.ts` 87, `focusAdvance.test.ts` 153, `sendContextHook.ts` 166, `sendContextHook.test.ts` 428, `send.ts` 160). Rust `services/execution.rs` collapsed by 175 lines; `commands/execution.rs` deleted (48). The door pattern (`render::`, `chirp::`, etc.) had absorbed the AI-execution surface in practice; the parallel handler stack was carrying weight without earning it.
+- **Block model + search schema refresh** ([[PR #312]] / `94565ca` — `apps/floatty/src-tauri/floatty-core/{bindings,src/block.rs,src/metadata.rs,src/search/}`, `floatty-core/src/hooks/{metadata_extraction.rs,parsing.rs}`) — Tauri bindings (`BlockMetadata.ts`, `BlockType.ts`, `Marker.ts`) regenerated; metadata extraction, hooks parsing, and search schema/service aligned with the revised block model.
+- **Frontend hooks + block input + markdown export realigned** ([[PR #312]] / `94565ca` — `apps/floatty/src/lib/{markdownExport.ts,outliner/types.ts,tauriTypes.ts}`, plus hook registry + block-input logic) — surface area follows the new handler architecture; no behavior change for outlines that didn't use `send::`.
+
+### 🐛 Fixes
+
+- **`doorStdlib.ts` nullish-vs-falsy mismatch** ([[PR #312]] / `1605b07` — `apps/floatty/src/lib/doorStdlib.ts:165`) — `resolvedNextId` used `??` (nullish-only) but `targetId` used `||` (also falsy-on-empty-string). A caller passing `nextId: ""` would have its content routed to a freshly-created block instead of the "provided" one. Both sides now use `??`. (Greptile P2.)
+- **`BLOCK_TYPE_PATTERNS.md` decision-tree label inverted** ([[PR #312]] / `1605b07` — `apps/floatty/docs/BLOCK_TYPE_PATTERNS.md:184`) — branch said `No → Require Enter to execute` but the examples (`sh::`, `dispatch::`) are side-effectful, so the correct branch is `Yes`. Doc fix. (CodeRabbit Minor.)
+
+### 📝 Docs
+
+- **Four legacy docs removed** ([[PR #312]] / `94565ca` — `apps/floatty/docs/FLO-200-MULTI-TURN-CONVERSATIONS.md` 1040, `tutorials/BUILDING_CHAT_WITH_HOOKS.md` 984, `tutorials/CHAT_WITH_VS_WITHOUT_HOOKS.md` 495, `guides/SEND.md` 63) — documented features that the same PR is removing. 2582 lines of stale tutorial/guide content out.
+- **Hook/door doc set realigned** ([[PR #312]] / `94565ca` — `apps/floatty/docs/architecture/FLOATTY_HOOK_SYSTEM.md`, `guides/HOOK_PATTERNS.md`, `guides/ADDING_HANDLERS.md`, `guides/DOORS.md`, `docs/README.md`, `docs/KEYBOARD.md`, `docs/ARCHITECTURE.md`, root `README.md`) — text aligned with the new handler architecture; next reader doesn't hunt deleted symbols.
+
+### 🧪 Tests
+
+- **`doorStdlib` coverage + workspace count** ([[PR #312]] / `94565ca`, `1605b07` — `apps/floatty/src/lib/doorStdlib.test.ts`, `apps/floatty/src/lib/blockTypes.test.ts`) — 113 lines added across initial commit + bot-review fix commit. Workspace test count: 1291/1291 passing (down from 1308 — `sendContextHook.test.ts` 428 + `focusAdvance.test.ts` 153 deleted alongside the deleted code).
+
+---
+
 ## [0.15.0] - 2026-05-13
 
 Token-efficient agent emissions via `@json-render/directives`. The render-door agent has been inlining hex colors and wikilink hrefs in every spec it generates — `{ "color": "#00e5ff" }` for a floatty pill, `{ "target": "FLO-679" }` for a wikilink chip. This release adopts json-render 0.19's directives system and adds three floatty-specific directives — `$projectColor`, `$ctxColor`, `$wikilink` — so the agent emits `{ "color": { "$projectColor": "floatty" } }` and the renderer resolves at runtime via the same color map that powers `ContextStream`. Same pixels on screen, fewer tokens out of the model, and color resolution moves from agent-knowledge to runtime catalog. Bundled with the published `standardDirectives` (`$format` / `$math` / `$concat` / `$count` / `$truncate` / `$pluralize` / `$join`) for free token wins on numeric and string-shaping slots. No `apps/floatty/` source changes — Tauri binary doesn't need a rebuild; the render-door bundle regenerates at build time and is fetched at runtime via the door loader. Run `./scripts/rebuild.sh` to refresh `/Applications/floatty.app`'s door bundle.
