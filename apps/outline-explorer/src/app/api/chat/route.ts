@@ -240,6 +240,13 @@ async function maybeGenerateTitle(
       .slice(0, 80);
     if (!title) return;
 
+    // Re-check the title BEFORE writing: the user may have renamed the
+    // session manually while we were generating, and we don't want to
+    // clobber their choice with the auto-generated one. (CodeRabbit Major.)
+    const latest = getSession(sessionId);
+    if (!latest) return;
+    if (latest.title && latest.title !== "New conversation") return;
+
     updateSession(sessionId, { title });
   } catch (err) {
     console.warn("[chat/route] auto-title failed:", err);

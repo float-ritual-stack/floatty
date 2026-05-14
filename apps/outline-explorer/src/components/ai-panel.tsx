@@ -95,6 +95,11 @@ export function AiPanel({
   const noContent = !pageContextId && selectedIds.length === 0;
   const isLoading = status !== "ready";
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Monotonic counter to discard out-of-order session-load responses. If
+  // request A is in flight and the user fires request B, A's stale response
+  // (when it arrives) must NOT overwrite B's already-applied state.
+  // (CodeRabbit Major.)
+  const sessionLoadSeq = useRef(0);
 
   // Session hydrate on mount. Server-side persistence happens automatically
   // via `onFinish` in /api/chat (see ai-sdk persistence canonical pattern),
@@ -183,6 +188,7 @@ export function AiPanel({
   async function loadSession(target: { id: string; title?: string }) {
     if (isLoading) return;
     if (target.id === sessionId) return;
+    const requestSeq = ++sessionLoadSeq.current;
     setLoadError(null);
     try {
       const res = await fetch(`/api/sessions/${target.id}`);
@@ -190,6 +196,10 @@ export function AiPanel({
       const { session } = (await res.json()) as {
         session: { id: string; messages: ExplorerUIMessage[] };
       };
+      // Discard out-of-order responses: a later request superseded this one
+      // while it was in flight, and applying this payload would clobber
+      // the newer session's state.
+      if (requestSeq !== sessionLoadSeq.current) return;
       // Flip the id BEFORE replacing messages so any in-flight render
       // (e.g. the auto-scroll effect) sees the new session id, not the
       // stale one. Mirrors the Greptile P2 fix in handleResetThread —
@@ -199,7 +209,11 @@ export function AiPanel({
       setActiveAction(null);
     } catch (err) {
       console.error("[ai-panel] load session failed:", err);
-      setLoadError(err instanceof Error ? err.message : "Failed to load session");
+      // Only surface the error for the LATEST request; older failed loads
+      // are no longer user-relevant.
+      if (requestSeq === sessionLoadSeq.current) {
+        setLoadError(err instanceof Error ? err.message : "Failed to load session");
+      }
     }
   }
 
