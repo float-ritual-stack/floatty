@@ -8,6 +8,7 @@ import type { ExplorerUIMessage } from "@/lib/agents/explorer-agent";
 import { AiActions, type AiActionWithPrompt } from "./ai-actions";
 import { WalkChip } from "./walk-chip";
 import { MessageBubble } from "./message-bubble";
+import { SessionPicker } from "./session-picker";
 
 /**
  * Session persistence wire-up:
@@ -28,6 +29,11 @@ import { MessageBubble } from "./message-bubble";
 interface AiPanelProps {
   selectedIds: string[];
   pageContextId: string | null;
+  /**
+   * Externally-requested session load (e.g. from a BlockChatBadge click).
+   * Object identity is significant — see ExplorerState.pendingSessionLoad.
+   */
+  pendingSessionLoad: { id: string } | null;
   onClose: () => void;
   onNavigateToPage: (title: string) => void | Promise<unknown>;
 }
@@ -35,6 +41,7 @@ interface AiPanelProps {
 export function AiPanel({
   selectedIds,
   pageContextId,
+  pendingSessionLoad,
   onClose,
   onNavigateToPage,
 }: AiPanelProps) {
@@ -172,6 +179,40 @@ export function AiPanel({
     sendMessage({ text: msg });
   }
 
+  async function loadSession(target: { id: string; title?: string }) {
+    if (isLoading) return;
+    if (target.id === sessionId) return;
+    try {
+      const res = await fetch(`/api/sessions/${target.id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { session } = (await res.json()) as {
+        session: { id: string; messages: ExplorerUIMessage[] };
+      };
+      // Flip the id BEFORE replacing messages so any in-flight render
+      // (e.g. the auto-scroll effect) sees the new session id, not the
+      // stale one. Mirrors the Greptile P2 fix in handleResetThread —
+      // same race shape (sync state flip before async-driven UI updates).
+      setSessionId(session.id);
+      setMessages(session.messages);
+      setActiveAction(null);
+    } catch (err) {
+      console.error("[ai-panel] load session failed:", err);
+    }
+  }
+
+  // Respond to externally-requested session loads (BlockChatBadge clicks,
+  // etc.). pendingSessionLoad is an object so identity changes per request
+  // — re-clicking the same session id after navigation re-fires the effect.
+  useEffect(() => {
+    if (!pendingSessionLoad) return;
+    void loadSession({ id: pendingSessionLoad.id });
+    // loadSession is stable enough — defined in component scope but
+    // depends on isLoading + sessionId (both reactive). We intentionally
+    // only respond to pendingSessionLoad identity changes to avoid
+    // re-firing on every status flip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSessionLoad]);
+
   function handleResetThread() {
     if (messages.length === 0) return;
     // Bail if a response is mid-stream — clearing under an in-flight write
@@ -283,6 +324,11 @@ export function AiPanel({
         <span className="text-dim text-[10px] ml-auto">
           {noContent ? "select content" : pageContextId ? "page context" : `${selectedIds.length} selected`}
         </span>
+        <SessionPicker
+          activeSessionId={sessionId}
+          disabled={isLoading}
+          onLoad={loadSession}
+        />
         <button
           type="button"
           onClick={handleResetThread}

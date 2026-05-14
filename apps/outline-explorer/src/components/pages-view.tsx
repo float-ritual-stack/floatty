@@ -2,6 +2,7 @@
 
 import { Square, CheckSquare, Sparkles } from "lucide-react";
 import { truncate } from "@/lib/constants";
+import { BlockChatBadge } from "./block-chat-badge";
 import type { PageListItem } from "@/lib/types";
 
 interface PagesViewProps {
@@ -10,6 +11,7 @@ interface PagesViewProps {
   onToggleSelect: (id: string) => void;
   onAnalyze: (id: string) => void;
   onNavigateToPage: (title: string) => void | Promise<unknown>;
+  onLoadAiSession: (sessionId: string) => void;
 }
 
 export function PagesView({
@@ -18,6 +20,7 @@ export function PagesView({
   onToggleSelect,
   onAnalyze,
   onNavigateToPage,
+  onLoadAiSession,
 }: PagesViewProps) {
   return (
     <div>
@@ -56,6 +59,14 @@ export function PagesView({
             >
               <Sparkles size={10} />
             </span>
+            {pg.blockId && (
+              <span className="shrink-0">
+                <BlockChatBadge
+                  blockId={pg.blockId}
+                  onLoadSession={(s) => onLoadAiSession(s.id)}
+                />
+              </span>
+            )}
             <span className="text-dim text-[9px] w-7 text-right">
               {pg.blockCount || ""}
             </span>

@@ -133,6 +133,7 @@ export function Explorer() {
                   onToggleSelect={state.toggleSelect}
                   onNavigate={state.navigateTo}
                   onNavigateToPage={state.navigateToPageByTitle}
+                  onLoadAiSession={state.loadAiSession}
                 />
               ) : state.view === "pages" ? (
                 <div>
@@ -150,6 +151,7 @@ export function Explorer() {
                     onToggleSelect={state.toggleSelect}
                     onAnalyze={state.analyzeAi}
                     onNavigateToPage={state.navigateToPageByTitle}
+                    onLoadAiSession={state.loadAiSession}
                   />
                 </div>
               ) : state.view === "search" ? (
@@ -181,6 +183,7 @@ export function Explorer() {
             <AiPanel
               selectedIds={[...state.selectedIds]}
               pageContextId={state.pageContextId}
+              pendingSessionLoad={state.pendingSessionLoad}
               onClose={state.closeAi}
               onNavigateToPage={state.navigateToPageByTitle}
             />

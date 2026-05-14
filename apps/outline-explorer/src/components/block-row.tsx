@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { getTypeColor } from "@/lib/constants";
 import { BlockContent } from "./block-content";
+import { BlockChatBadge } from "./block-chat-badge";
 import type { Block } from "@/lib/types";
 
 interface BlockRowProps {
@@ -17,6 +18,8 @@ interface BlockRowProps {
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onNavigate: (id: string) => void;
+  /** Optional — when present, renders the chat-badge for blocks with sessions. */
+  onLoadAiSession?: (sessionId: string) => void;
 }
 
 export function BlockRow({
@@ -25,6 +28,7 @@ export function BlockRow({
   selectedIds,
   onToggleSelect,
   onNavigate,
+  onLoadAiSession,
 }: BlockRowProps) {
   const isSelected = selectedIds.has(block.id);
   const [expanded, setExpanded] = useState(false);
@@ -106,6 +110,14 @@ export function BlockRow({
         >
           <BlockContent block={block} truncateAt={180} />
         </span>
+        {onLoadAiSession && (
+          <span className="shrink-0 mt-px">
+            <BlockChatBadge
+              blockId={block.id}
+              onLoadSession={(s) => onLoadAiSession(s.id)}
+            />
+          </span>
+        )}
         <span className="text-dim text-[9px] shrink-0 mt-0.5">
           {block.id.slice(0, 6)}
         </span>
@@ -119,6 +131,7 @@ export function BlockRow({
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
             onNavigate={onNavigate}
+            onLoadAiSession={onLoadAiSession}
           />
         ))}
     </>

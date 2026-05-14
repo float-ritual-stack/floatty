@@ -4,6 +4,7 @@ import { ArrowLeft, Sparkles, AlertTriangle } from "lucide-react";
 import { useBlock } from "@/hooks/use-block";
 import { BlockRow } from "./block-row";
 import { BlockContent } from "./block-content";
+import { BlockChatBadge } from "./block-chat-badge";
 import { getTypeColor } from "@/lib/constants";
 
 interface BlockFocusProps {
@@ -14,6 +15,7 @@ interface BlockFocusProps {
   onToggleSelect: (id: string) => void;
   onNavigate: (id: string) => void;
   onNavigateToPage: (title: string) => void | Promise<unknown>;
+  onLoadAiSession: (sessionId: string) => void;
 }
 
 export function BlockFocus({
@@ -24,6 +26,7 @@ export function BlockFocus({
   onToggleSelect,
   onNavigate,
   onNavigateToPage,
+  onLoadAiSession,
 }: BlockFocusProps) {
   const { block, loading, error } = useBlock(blockId, ["children", "ancestors"]);
 
@@ -66,6 +69,10 @@ export function BlockFocus({
         >
           <Sparkles size={9} /> analyze
         </button>
+        <BlockChatBadge
+          blockId={blockId}
+          onLoadSession={(s) => onLoadAiSession(s.id)}
+        />
       </div>
 
       {/* Block detail */}
@@ -100,6 +107,7 @@ export function BlockFocus({
           selectedIds={selectedIds}
           onToggleSelect={onToggleSelect}
           onNavigate={onNavigate}
+          onLoadAiSession={onLoadAiSession}
         />
       ))}
     </div>
