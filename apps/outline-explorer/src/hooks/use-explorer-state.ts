@@ -49,6 +49,15 @@ export interface ExplorerState {
   aiOpen: boolean;
   pageFilter: string;
   pageResolve: PageResolveState;
+  /**
+   * Session-load request bumped by `loadAiSession()`. AiPanel watches this
+   * and hydrates `useChat` when it changes. Object identity is significant
+   * (re-clicking the same session id should re-fire if the user navigated
+   * away mid-thread), so we wrap the id in an object — a bare-string state
+   * with the same value across two `loadAiSession()` calls wouldn't trip
+   * React's prop-changed check.
+   */
+  pendingSessionLoad: { id: string } | null;
 
   setView: (v: ViewMode) => void;
   setFocusBlockId: (id: string | null) => void;
@@ -57,6 +66,7 @@ export interface ExplorerState {
   toggleSelect: (id: string) => void;
   navigateTo: (id: string) => void;
   analyzeAi: (id: string) => void;
+  loadAiSession: (sessionId: string) => void;
   navigateToPageByTitle: (title: string) => Promise<NavigateToPageResult>;
   dismissPageResolve: () => void;
   choosePageResolveCandidate: (
@@ -74,6 +84,7 @@ export function useExplorerState(): ExplorerState {
   const [aiOpen, setAiOpen] = useState(false);
   const [pageFilter, setPageFilter] = useState("");
   const [pageResolve, setPageResolve] = useState<PageResolveState>(null);
+  const [pendingSessionLoad, setPendingSessionLoad] = useState<{ id: string } | null>(null);
 
   const setView = useCallback((v: ViewMode) => {
     setViewRaw(v);
@@ -100,6 +111,13 @@ export function useExplorerState(): ExplorerState {
     setPageResolve(null);
     setPageContextId(id);
     setSelectedIds(new Set());
+    setAiOpen(true);
+  }, []);
+
+  const loadAiSession = useCallback((sessionId: string) => {
+    // New object on every call so AiPanel's prop-changed effect fires even
+    // when reselecting the same session id after navigating away.
+    setPendingSessionLoad({ id: sessionId });
     setAiOpen(true);
   }, []);
 
@@ -230,12 +248,14 @@ export function useExplorerState(): ExplorerState {
     aiOpen,
     pageFilter,
     pageResolve,
+    pendingSessionLoad,
     setView,
     setFocusBlockId,
     setPageFilter,
     toggleSelect,
     navigateTo,
     analyzeAi,
+    loadAiSession,
     navigateToPageByTitle,
     dismissPageResolve,
     choosePageResolveCandidate,
