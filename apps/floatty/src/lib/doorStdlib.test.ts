@@ -178,6 +178,22 @@ describe('doorStdlib', () => {
     expect(focused).toEqual(['next']);
   });
 
+  it('advanceToNextInput does not treat a supplied empty next id as missing', () => {
+    const focused: string[] = [];
+    const updates: Array<[string, string]> = [];
+    const actions = {
+      createBlockAfter: () => {
+        throw new Error('should not create');
+      },
+      updateBlockContent: (id: string, content: string) => updates.push([id, content]),
+      focusBlock: (id: string) => focused.push(id),
+    };
+
+    expect(advanceToNextInput(actions, 'current', { nextId: '', content: 'ignored' })).toBe('');
+    expect(updates).toEqual([]);
+    expect(focused).toEqual(['']);
+  });
+
   it('advanceToNextInput resolves an existing next block', () => {
     const focused: string[] = [];
     const actions = {

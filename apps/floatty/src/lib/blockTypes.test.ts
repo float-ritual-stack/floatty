@@ -53,6 +53,11 @@ describe('parseBlockType', () => {
       expect(parseBlockType('DISPATCH::run task')).toBe('dispatch');
     });
 
+    it('detects daily:: trigger', () => {
+      expect(parseBlockType('daily::')).toBe('daily');
+      expect(parseBlockType('DAILY::2026-05-14')).toBe('daily');
+    });
+
     it('detects web:: trigger', () => {
       expect(parseBlockType('web:: https://example.com')).toBe('web');
       expect(parseBlockType('WEB::google.com')).toBe('web');

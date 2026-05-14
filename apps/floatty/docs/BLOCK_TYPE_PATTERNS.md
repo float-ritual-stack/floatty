@@ -180,7 +180,7 @@ Is this prefix typed once and left alone?
       │           Examples: daily::, web::, query::
       │
       └─ Has side effects or expensive?
-         └─ No → Require Enter to execute
+         └─ Yes → Require Enter to execute
                  Examples: sh::, dispatch::
 ```
 

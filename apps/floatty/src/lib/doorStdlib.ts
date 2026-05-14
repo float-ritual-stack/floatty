@@ -162,10 +162,11 @@ export function advanceToNextInput(
   options: AdvanceToNextInputOptions = {},
 ): string | null {
   const resolvedNextId = options.nextId ?? options.findNextId?.(blockId) ?? null;
-  const targetId = resolvedNextId || actions.createBlockAfter?.(blockId) || null;
-  if (!targetId) return null;
+  const shouldCreateFallback = resolvedNextId == null;
+  const targetId = resolvedNextId ?? actions.createBlockAfter?.(blockId) ?? null;
+  if (targetId == null) return null;
 
-  if (!resolvedNextId && options.content !== undefined) {
+  if (shouldCreateFallback && options.content !== undefined) {
     actions.updateBlockContent?.(targetId, options.content);
   }
 
