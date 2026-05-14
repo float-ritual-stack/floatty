@@ -1,5 +1,6 @@
 import {
   streamText,
+  generateText,
   convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -107,6 +108,11 @@ export async function POST(req: Request) {
         messages: finalMessages,
         blockRefs,
       });
+      // Fire-and-forget: name the session from the conversation arc once
+      // it has enough material (1+ assistant turn) and is still on the
+      // default "New conversation" title. Don't await — title generation
+      // shouldn't block the response stream from closing.
+      void maybeGenerateTitle(sessionId, finalMessages);
     },
     execute: async ({ writer }) => {
       const tools = await getExplorerTools();
@@ -180,4 +186,62 @@ export async function POST(req: Request) {
   });
 
   return createUIMessageStreamResponse({ stream });
+}
+
+/**
+ * Auto-name a session once it has enough conversation arc. Runs after the
+ * stream's onFinish fires, fire-and-forget so the response can close. Only
+ * acts when the session is still on the default "New conversation" title
+ * AND there is at least one user+assistant turn pair. Uses a small, cheap
+ * model (haiku) — title generation isn't worth the sonnet budget.
+ */
+async function maybeGenerateTitle(
+  sessionId: string,
+  finalMessages: UIMessage[]
+): Promise<void> {
+  try {
+    const session = getSession(sessionId);
+    if (!session) return;
+    if (session.title && session.title !== "New conversation") return;
+
+    const userTurns = finalMessages.filter((m) => m.role === "user").length;
+    const assistantTurns = finalMessages.filter((m) => m.role === "assistant").length;
+    if (userTurns < 1 || assistantTurns < 1) return;
+
+    // Compose a small digest of the first turns for titling — skip the
+    // contextual preamble baked into every user message by buildContextMessage.
+    const digestParts: string[] = [];
+    for (const msg of finalMessages.slice(0, 4)) {
+      const parts = (msg as { parts?: Array<{ type: string; text?: string }> }).parts;
+      if (!Array.isArray(parts)) continue;
+      for (const p of parts) {
+        if (p.type !== "text" || typeof p.text !== "string") continue;
+        const txt = p.text;
+        const marker = "Then:\n\n";
+        const idx = txt.lastIndexOf(marker);
+        const useful = idx >= 0 ? txt.slice(idx + marker.length) : txt;
+        digestParts.push(`${msg.role.toUpperCase()}: ${useful.slice(0, 400)}`);
+      }
+    }
+    if (digestParts.length === 0) return;
+
+    const result = await generateText({
+      model: gateway("anthropic/claude-haiku-4.5"),
+      maxOutputTokens: 60,
+      system:
+        "You write short titles for chat sessions. Output ONLY the title — 3 to 7 words, no quotes, no punctuation at the end, no leading verbs like 'discussing' or 'about'. Capture the topic, not the medium.",
+      prompt: `Title this chat session:\n\n${digestParts.join("\n\n")}`,
+    });
+
+    const title = result.text
+      .trim()
+      .replace(/^["'`]|["'`]$/g, "")
+      .replace(/\.$/, "")
+      .slice(0, 80);
+    if (!title) return;
+
+    updateSession(sessionId, { title });
+  } catch (err) {
+    console.warn("[chat/route] auto-title failed:", err);
+  }
 }

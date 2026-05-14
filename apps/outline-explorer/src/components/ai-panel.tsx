@@ -94,6 +94,7 @@ export function AiPanel({
 
   const noContent = !pageContextId && selectedIds.length === 0;
   const isLoading = status !== "ready";
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Session hydrate on mount. Server-side persistence happens automatically
   // via `onFinish` in /api/chat (see ai-sdk persistence canonical pattern),
@@ -182,6 +183,7 @@ export function AiPanel({
   async function loadSession(target: { id: string; title?: string }) {
     if (isLoading) return;
     if (target.id === sessionId) return;
+    setLoadError(null);
     try {
       const res = await fetch(`/api/sessions/${target.id}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -197,21 +199,23 @@ export function AiPanel({
       setActiveAction(null);
     } catch (err) {
       console.error("[ai-panel] load session failed:", err);
+      setLoadError(err instanceof Error ? err.message : "Failed to load session");
     }
   }
 
   // Respond to externally-requested session loads (BlockChatBadge clicks,
   // etc.). pendingSessionLoad is an object so identity changes per request
   // — re-clicking the same session id after navigation re-fires the effect.
+  //
+  // Re-fires on `status` change too: if the request arrives mid-stream the
+  // inner `isLoading` bail would silently drop it. Re-running when status
+  // flips to "ready" picks the request back up. (Greptile P2.)
   useEffect(() => {
     if (!pendingSessionLoad) return;
+    if (isLoading) return;
     void loadSession({ id: pendingSessionLoad.id });
-    // loadSession is stable enough — defined in component scope but
-    // depends on isLoading + sessionId (both reactive). We intentionally
-    // only respond to pendingSessionLoad identity changes to avoid
-    // re-firing on every status flip.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSessionLoad]);
+  }, [pendingSessionLoad, status]);
 
   function handleResetThread() {
     if (messages.length === 0) return;
@@ -423,6 +427,19 @@ export function AiPanel({
 
       {/* Response area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-2.5">
+        {loadError && (
+          <div className="flex items-start gap-1.5 px-2 py-1.5 mb-2 bg-coral/10 border border-coral/25 text-coral text-[11px] rounded">
+            <span className="flex-1">Failed to load session: {loadError}</span>
+            <button
+              type="button"
+              onClick={() => setLoadError(null)}
+              aria-label="Dismiss error"
+              className="bg-transparent border-none text-coral cursor-pointer opacity-70 hover:opacity-100"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        )}
         {messages
           .filter((m) => m.role === "assistant")
           .map((msg, i, arr) => (

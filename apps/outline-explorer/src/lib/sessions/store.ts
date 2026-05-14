@@ -246,7 +246,17 @@ function previewFromMessagesJson(json: string): string {
     const firstUser = arr.find((m) => m.role === "user");
     if (!firstUser) return "";
     const textPart = firstUser.parts?.find((p) => p.type === "text" && typeof p.text === "string");
-    return (textPart?.text ?? "").slice(0, 100);
+    const raw = textPart?.text ?? "";
+    // Strip the contextual preamble that `buildContextMessage` prepends to
+    // every user prompt (`"I'm looking at block ID..."` / `"I've selected N
+    // items..."` followed by `"Then:\n\n${userTaskOrInput}"`). The actual
+    // user intent comes after the last `"Then:\n\n"` marker — surface THAT
+    // in previews so the picker shows useful titles, not 100 chars of
+    // boilerplate identical to every other session.
+    const marker = "Then:\n\n";
+    const idx = raw.lastIndexOf(marker);
+    const useful = idx >= 0 ? raw.slice(idx + marker.length) : raw;
+    return useful.trim().slice(0, 100);
   } catch {
     return "";
   }

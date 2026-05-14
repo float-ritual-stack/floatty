@@ -33,6 +33,18 @@ export function SessionPicker({ activeSessionId, disabled, onLoad }: SessionPick
   const [editValue, setEditValue] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Defers single-click load so a double-click (which fires after two
+  // clicks) can cancel it and route to inline rename instead. The browser
+  // always fires the second `click` before `dblclick`, so without this the
+  // rename path is silently unreachable. (Greptile P1.)
+  const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function cancelDeferredLoad() {
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+  }
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -75,8 +87,12 @@ export function SessionPicker({ activeSessionId, disabled, onLoad }: SessionPick
   const filtered = sessions.filter((s) => {
     if (!query.trim()) return true;
     const q = query.toLowerCase();
+    // Defensive: preview is typed as string but the server can emit empty.
+    // Guard for null/undefined to match the runtime-shape assumption already
+    // visible in the JSX (`{s.preview && ...}`). (Greptile P1.)
     return (
-      s.title.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q)
+      s.title.toLowerCase().includes(q) ||
+      (s.preview ?? "").toLowerCase().includes(q)
     );
   });
 
@@ -94,7 +110,19 @@ export function SessionPicker({ activeSessionId, disabled, onLoad }: SessionPick
     }
   }
 
+  function handleRowClick(s: SessionListItem) {
+    // Defer the load so a follow-up double-click can cancel and route to
+    // rename. 220ms is a common dblclick threshold (browser default sits
+    // around 250-500ms but the OS event delivery is usually well under).
+    cancelDeferredLoad();
+    clickTimeoutRef.current = setTimeout(() => {
+      clickTimeoutRef.current = null;
+      void handleLoad(s);
+    }, 220);
+  }
+
   function startEdit(s: SessionListItem) {
+    cancelDeferredLoad();
     setEditingId(s.id);
     setEditValue(s.title);
   }
@@ -207,7 +235,7 @@ export function SessionPicker({ activeSessionId, disabled, onLoad }: SessionPick
                     ) : (
                       <button
                         type="button"
-                        onClick={() => handleLoad(s)}
+                        onClick={() => handleRowClick(s)}
                         onDoubleClick={(e) => {
                           e.preventDefault();
                           startEdit(s);
