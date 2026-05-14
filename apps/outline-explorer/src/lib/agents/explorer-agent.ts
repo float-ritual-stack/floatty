@@ -76,8 +76,8 @@ DEFAULT TO SPEC, NOT MARKDOWN:
 
 ALWAYS use spec for the predefined actions (Summarize, Patterns, Bridge Walk, Cold-Start, Gaps).
 
-ACTION TEMPLATES:
-Predefined actions ship with template skills (spec-summarize, spec-bridge-walk, spec-patterns, spec-gaps, spec-cold-start). Call load_skill("<skill-name>") to fetch the action-specific structural recipe (which components to compose in what order). The component CATALOG is already inlined below — load_skill is only for per-action templates, NOT for component discovery.
+ACTION TEMPLATES (optional):
+Predefined actions ship with template skills (spec-summarize, spec-bridge-walk, spec-patterns, spec-gaps, spec-cold-start). If the load_skill tool is available, you may call load_skill("<skill-name>") to fetch the action-specific structural recipe (which components to compose in what order). If load_skill is not in your toolset, proceed directly — the component CATALOG is already inlined below, so you have everything you need to compose specs without it. load_skill is only for per-action templates, NOT for component discovery.
 
 ${_catalogPrompt}`;
 
