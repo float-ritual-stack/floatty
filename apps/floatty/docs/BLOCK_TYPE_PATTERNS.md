@@ -22,7 +22,7 @@ The block type changes based on content prefix. Special rendering happens inline
 
 Parent block stays `text` type. Output spawns as child block(s).
 
-**Use when**: Executable blocks with async output (sh::, ai::, daily::)
+**Use when**: Executable blocks with async output (sh::, daily::, doors)
 
 **Example**: `sh:: ls -la` → stays type `text` → child block with `output::` content
 
@@ -35,7 +35,7 @@ Parent block stays `text` type. Output spawns as child block(s).
 1. No type mutation → no contentEditable remount → no focus loss
 2. Output is collapsible (collapse parent = hide output)
 3. Re-running can replace or append children
-4. Consistent with sh::/ai:: mental model
+4. Consistent with the sh::/door child-output mental model
 
 ## Adding a New Executor (Pattern B)
 
@@ -162,7 +162,6 @@ createEffect(() => {
 
 **When NOT to use** (keep Enter-to-execute):
 - `sh::` - runs shell commands (side effects!)
-- `ai::` - expensive API calls
 - `dispatch::` - triggers agent actions
 
 ## Decision Tree
@@ -181,8 +180,8 @@ Is this prefix typed once and left alone?
       │           Examples: daily::, web::, query::
       │
       └─ Has side effects or expensive?
-         └─ No → Require Enter to execute
-                 Examples: sh::, ai::, dispatch::
+         └─ Yes → Require Enter to execute
+                 Examples: sh::, dispatch::
 ```
 
 ## Focus Loss Gotcha

@@ -88,7 +88,7 @@ describe('blocksToMarkdown', () => {
       expect(result).toBe('> Quote');
     });
 
-    it('preserves special prefixes for sh/ai blocks', () => {
+    it('preserves special prefixes for sh blocks', () => {
       const blocks: Record<string, Block> = {
         'b1': createBlock({ id: 'b1', content: 'sh::ls -la', type: 'sh' }),
       };
@@ -108,17 +108,6 @@ describe('blocksToMarkdown', () => {
 
       const result = blocksToMarkdown(selected, blocks, visible);
       expect(result).toBe('### Subsection');
-    });
-
-    it('exports ai blocks with ai:: prefix', () => {
-      const blocks: Record<string, Block> = {
-        'b1': createBlock({ id: 'b1', content: 'ai::summarize this', type: 'ai' }),
-      };
-      const selected = new Set(['b1']);
-      const visible = ['b1'];
-
-      const result = blocksToMarkdown(selected, blocks, visible);
-      expect(result).toBe('ai::summarize this');
     });
 
     it('exports ctx blocks with ctx:: prefix', () => {

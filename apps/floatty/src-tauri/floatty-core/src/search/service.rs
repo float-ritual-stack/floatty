@@ -114,7 +114,7 @@ pub struct SearchHit {
 /// Filters for narrowing search results.
 #[derive(Debug, Clone, Default)]
 pub struct SearchFilters {
-    /// Filter to specific block types (e.g., ["sh", "ai"]).
+    /// Filter to specific block types (e.g., ["sh", "ctx"]).
     /// Uses OR logic - matches any of the specified types.
     pub block_types: Option<Vec<String>>,
 
@@ -561,7 +561,7 @@ mod tests {
     fn test_search_filter_block_type() {
         let (_dir, manager) = create_test_index(&[
             ("b1", "floatty shell command", "sh", false),
-            ("b2", "floatty ai prompt", "ai", false),
+            ("b2", "floatty ctx marker", "ctx", false),
             ("b3", "floatty text note", "text", false),
         ]);
 
@@ -587,18 +587,18 @@ mod tests {
     fn test_search_filter_multiple_types() {
         let (_dir, manager) = create_test_index(&[
             ("b1", "floatty shell", "sh", false),
-            ("b2", "floatty ai", "ai", false),
+            ("b2", "floatty ctx", "ctx", false),
             ("b3", "floatty text", "text", false),
         ]);
 
         let service = SearchService::new(manager);
 
-        // Filter to sh OR ai
+        // Filter to sh OR ctx
         let (_total, hits) = service
             .search_with_filters(
                 "floatty",
                 SearchFilters {
-                    block_types: Some(vec!["sh".into(), "ai".into()]),
+                    block_types: Some(vec!["sh".into(), "ctx".into()]),
                     ..Default::default()
                 },
                 10,
@@ -656,7 +656,7 @@ mod tests {
         let (_dir, manager) = create_test_index(&[
             ("b1", "floatty sh with markers", "sh", true),
             ("b2", "floatty sh without", "sh", false),
-            ("b3", "floatty ai with markers", "ai", true),
+            ("b3", "floatty ctx with markers", "ctx", true),
             ("b4", "floatty text", "text", false),
         ]);
 

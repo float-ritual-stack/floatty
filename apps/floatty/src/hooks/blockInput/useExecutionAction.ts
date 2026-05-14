@@ -1,5 +1,5 @@
 /**
- * useExecutionAction - Block handler execution (sh::, ai::, daily::, etc.)
+ * useExecutionAction - Block handler execution (sh::, daily::, doors, etc.)
  *
  * Handles: execute_block
  */

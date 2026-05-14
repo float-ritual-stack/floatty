@@ -13,7 +13,7 @@ import type { Marker } from "./Marker";
 export type BlockMetadata = { 
 /**
  * All :: markers found in this block.
- * Includes both prefix markers (sh::, ai::, ctx::) and tag markers ([project::X]).
+ * Includes both prefix markers (sh::, ctx::) and tag markers ([project::X]).
  */
 markers?: Array<Marker>, 
 /**

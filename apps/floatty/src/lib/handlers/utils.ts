@@ -63,7 +63,7 @@ export function formatRelativeTime(isoString: string | null): string {
 
 /**
  * Extract content after handler prefix
- * Used by sh.ts and ai.ts handlers
+ * Used by command-style handlers
  */
 export function extractContent(content: string, prefixes: string[]): string {
   const trimmed = content.trim();

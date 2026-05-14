@@ -10,7 +10,7 @@
  */
 export type Marker = { 
 /**
- * The marker type: "ctx", "project", "mode", "issue", "sh", "ai", etc.
+ * The marker type: "ctx", "project", "mode", "issue", "sh", etc.
  */
 markerType: string, 
 /**

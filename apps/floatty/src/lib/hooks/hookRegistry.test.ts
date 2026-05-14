@@ -481,7 +481,7 @@ describe('HookRegistry', () => {
 
       registry.register(
         createTestHook({
-          filter: HookFilters.byPrefix('ai::'),
+          filter: HookFilters.byPrefix('sh::'),
           handler,
         })
       );
@@ -496,7 +496,7 @@ describe('HookRegistry', () => {
       // Should match
       await registry.run(
         'block:create',
-        createTestContext({ block: createTestBlock({ content: 'ai:: prompt here' }) })
+        createTestContext({ block: createTestBlock({ content: 'sh:: echo hello' }) })
       );
       expect(handler).toHaveBeenCalled();
     });

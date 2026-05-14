@@ -1,7 +1,7 @@
 /**
  * Command Door Factory
  *
- * Creates handlers for command-style blocks (sh::, ai::, etc.)
+ * Creates handlers for command-style blocks (sh::, etc.)
  * that execute a backend command and display the output.
  *
  * This is the foundation for user-defined "doors" - specialized
@@ -139,14 +139,4 @@ export const shHandler = createCommandDoor({
   outputPrefix: 'output::',
   pendingMessage: 'Running...',
   logPrefix: 'sh',
-});
-
-/** AI prompt door - sends prompts to Ollama */
-export const aiHandler = createCommandDoor({
-  prefixes: ['ai::', 'chat::'],
-  backendCommand: 'execute_ai_command',
-  paramName: 'prompt',
-  outputPrefix: 'ai::',
-  pendingMessage: 'Thinking...',
-  logPrefix: 'ai',
 });

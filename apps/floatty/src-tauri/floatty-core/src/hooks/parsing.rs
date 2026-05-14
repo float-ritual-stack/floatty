@@ -15,8 +15,6 @@ use std::sync::LazyLock;
 const PREFIX_MARKERS: &[&str] = &[
     "sh",
     "term",
-    "ai",
-    "chat",
     "ctx",
     "dispatch",
     "pages",
@@ -507,10 +505,10 @@ mod tests {
     }
 
     #[test]
-    fn test_prefix_marker_ai() {
+    fn test_prefix_marker_retired_ai_is_not_special() {
         assert_eq!(
             extract_prefix_marker("ai:: explain this"),
-            Some("ai".to_string())
+            None
         );
     }
 
@@ -681,7 +679,7 @@ mod tests {
     #[test]
     fn test_standalone_prefix_markers_capture_value() {
         // Standalone filters all PREFIX_MARKERS except "ctx" — ctx:: values are dates
-        // we want to capture, while other prefixes (sh::, ai::) have command content as values.
+        // we want to capture, while other prefixes (sh::) have command content as values.
         let markers = extract_standalone_markers("ctx::2026-01-10 project::floatty");
         assert_eq!(markers.len(), 2);
         assert_eq!(markers[0].marker_type, "ctx");

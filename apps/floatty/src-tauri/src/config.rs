@@ -23,14 +23,11 @@ pub struct ServerInfo {
 pub struct AggregatorConfig {
     pub watch_path: String,
     pub ollama_endpoint: String,
-    /// Default Ollama model (fallback for ctx_model and send_model)
+    /// Default Ollama model (fallback for ctx_model)
     pub ollama_model: String,
     /// Model for ctx:: sidebar parsing (defaults to ollama_model if unset)
     #[serde(default)]
     pub ctx_model: Option<String>,
-    /// Model for /send conversations (defaults to ollama_model if unset)
-    #[serde(default)]
-    pub send_model: Option<String>,
     pub poll_interval_ms: u64,
     pub max_retries: i32,
     pub max_age_hours: u64,
@@ -154,8 +151,7 @@ impl Default for AggregatorConfig {
             watch_path: default_watcher.watch_path.to_string_lossy().to_string(),
             ollama_endpoint: "http://localhost:11434".to_string(),
             ollama_model: DEFAULT_OLLAMA_MODEL.to_string(),
-            ctx_model: None,  // Falls back to ollama_model
-            send_model: None, // Falls back to ollama_model
+            ctx_model: None, // Falls back to ollama_model
             poll_interval_ms: default_parser.poll_interval_ms,
             max_retries: default_parser.max_retries,
             max_age_hours: 72, // Default: last 3 days (matches CLAUDE.md docs)
@@ -269,15 +265,6 @@ impl AggregatorConfig {
             .unwrap_or(&self.ollama_model)
     }
 
-    /// Get the model for /send conversations.
-    /// Falls back to ollama_model if send_model is unset or empty.
-    pub fn get_send_model(&self) -> &str {
-        self.send_model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&self.ollama_model)
-    }
 }
 
 /// Status counts for sidebar

@@ -21,15 +21,13 @@ pub enum BlockType {
     Text,
     /// Shell block: prefix `sh::` or `term::`
     Sh,
-    /// Agent block: prefix `ai::` or `chat::`
-    Ai,
     /// Context block: prefix `ctx::`
     Ctx,
     /// Dispatch block: prefix `dispatch::`
     Dispatch,
     /// Web embed: prefix `web::` or `link::`
     Web,
-    /// Output from sh:: or ai:: execution
+    /// Output from sh:: execution
     Output,
     /// Error output from execution
     Error,
@@ -71,7 +69,6 @@ impl BlockType {
         match self {
             BlockType::Text => "text",
             BlockType::Sh => "sh",
-            BlockType::Ai => "ai",
             BlockType::Ctx => "ctx",
             BlockType::Dispatch => "dispatch",
             BlockType::Web => "web",
@@ -150,9 +147,6 @@ pub fn parse_block_type(content: &str) -> BlockType {
     // Magic triggers (case-insensitive)
     if lower.starts_with("sh::") || lower.starts_with("term::") {
         return BlockType::Sh;
-    }
-    if lower.starts_with("ai::") || lower.starts_with("chat::") {
-        return BlockType::Ai;
     }
     // ctx:: at line start OR bullet with ctx:: and date - block-level context marker
     // Matches: "ctx::..." or "- ctx::2024-01-15 ..."
@@ -292,9 +286,9 @@ mod tests {
         assert_eq!(parse_block_type("sh:: ls -la"), BlockType::Sh);
         assert_eq!(parse_block_type("SH:: uppercase"), BlockType::Sh);
         assert_eq!(parse_block_type("term:: pwd"), BlockType::Sh);
-        assert_eq!(parse_block_type("ai:: generate something"), BlockType::Ai);
-        assert_eq!(parse_block_type("chat:: hello"), BlockType::Ai);
-        assert_eq!(parse_block_type("  ai:: with leading space"), BlockType::Ai);
+        assert_eq!(parse_block_type("ai:: generate something"), BlockType::Text);
+        assert_eq!(parse_block_type("chat:: hello"), BlockType::Text);
+        assert_eq!(parse_block_type("  ai:: with leading space"), BlockType::Text);
     }
 
     #[test]

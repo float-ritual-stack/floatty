@@ -7,10 +7,8 @@
 
 import { registry } from './registry';
 import { shHandler } from './commandDoor';
-import { conversationHandler } from './conversation';
 import { searchHandler } from './search';
 import { pickHandler } from './pick';
-import { sendHandler } from './send';
 import { helpHandler } from './help';
 import { backupHandler } from './backup';
 import { infoHandler } from './info';
@@ -18,7 +16,6 @@ import { evalHandler } from './eval';
 import { artifactHandler } from './artifactHandler';
 import { echoCopyHandler } from './echoCopy';
 import { hookRegistry } from '../hooks';
-import { sendContextHook } from './hooks/sendContextHook';
 import { registerCtxRouterHook } from './hooks/ctxRouterHook';
 import { registerOutlinksHook } from './hooks/outlinksHook';
 import { registerOutputSummaryHook } from './hooks/outputSummaryHook';
@@ -67,20 +64,14 @@ export function registerHandlers(): void {
 
   // Register block handlers
   registry.register(shHandler);
-  registry.register(conversationHandler);
   registry.register(searchHandler);
   registry.register(pickHandler);
-  registry.register(sendHandler);
   registry.register(helpHandler);
   registry.register(backupHandler);
   registry.register(infoHandler);
   registry.register(evalHandler);
   registry.register(artifactHandler);
   registry.register(echoCopyHandler);
-
-  // Register hooks - THE ARCHITECTURE IN ACTION
-  // Hooks assemble context, handlers consume it
-  hookRegistry.register(sendContextHook);
 
   // Register EventBus subscriptions (block lifecycle hooks)
   registerCtxRouterHook();

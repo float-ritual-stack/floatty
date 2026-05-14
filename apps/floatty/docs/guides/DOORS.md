@@ -54,6 +54,7 @@ export const meta = {
   name: "My Door",
   version: "0.1.0",
   sidebarEligible: true,
+  advanceCursorOnExecute: true,
 };
 ```
 
@@ -89,10 +90,33 @@ Doors auto-reload when their files change on disk. The file watcher detects modi
 
 ## Standard Library
 
-Doors have access to `__DOOR_STDLIB__` with shared utilities. Import via the shim system:
+Doors have access to shared utilities through the stdlib shim:
 ```js
-import { someUtil } from '__DOOR_STDLIB__';
+import { createFocusedChild, advanceToNextInput } from '@floatty/stdlib';
 ```
+
+For long-running doors, prefer the declarative metadata flag when the desired behavior is simply "let the user keep typing in the next block while this executes":
+
+```js
+export const meta = {
+  id: "my-door",
+  name: "My Door",
+  advanceCursorOnExecute: true,
+};
+```
+
+For doors that need a custom continuation shape, use the stdlib helpers inside `execute` before awaiting slow work:
+
+```js
+async execute(blockId, content, ctx) {
+  const draftId = createFocusedChild(ctx.actions, blockId, "");
+  // user can type into draftId while async work continues
+  const result = await ctx.server.fetch("/api/v1/example");
+  return { data: await result.json() };
+}
+```
+
+`advanceToNextInput(ctx.actions, blockId, { nextId })` focuses an existing next block when the caller has already resolved one, or creates a sibling after `blockId` when none is provided. These helpers are block/focus primitives only; AI workflows belong in user-land doors such as `render:: ai` or future agent doors, not in Floatty core.
 
 ## SolidJS Sharing
 

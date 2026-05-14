@@ -30,25 +30,6 @@ pub async fn execute_shell_command(
     Ok(output)
 }
 
-/// Execute an AI prompt using Ollama
-///
-/// Tauri command wrapper - delegates to services::execution::execute_ai
-#[tauri::command]
-pub async fn execute_ai_command(
-    state: State<'_, AppState>,
-    prompt: String,
-) -> Result<String, String> {
-    let config = AggregatorConfig::load_from(&state.config_path);
-
-    execution::execute_ai(
-        prompt,
-        config.ollama_endpoint,
-        config.ollama_model,
-        config.max_shell_output_bytes,
-    )
-    .await
-}
-
 /// Open a URL in the default browser
 ///
 /// Validates URL scheme (http/https only) to prevent injection.
@@ -65,33 +46,4 @@ pub async fn open_url(url: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Failed to open URL: {e}"))?;
     Ok(())
-}
-
-/// Execute a multi-turn conversation using Ollama chat API
-///
-/// Tauri command wrapper - delegates to services::execution::execute_ai_conversation
-#[tauri::command]
-pub async fn execute_ai_conversation(
-    state: State<'_, AppState>,
-    messages: Vec<execution::ChatMessage>,
-    model: Option<String>,
-    max_tokens: Option<u32>,
-    temperature: Option<f32>,
-    system: Option<String>,
-) -> Result<String, String> {
-    let config = AggregatorConfig::load_from(&state.config_path);
-
-    // Use provided model or fall back to config
-    let model = model.unwrap_or(config.ollama_model);
-
-    execution::execute_ai_conversation(
-        messages,
-        config.ollama_endpoint,
-        model,
-        max_tokens,
-        temperature,
-        system,
-        config.max_shell_output_bytes,
-    )
-    .await
 }

@@ -25,7 +25,7 @@ use super::BlockHook;
 /// Hook that extracts metadata from block content.
 ///
 /// Extracts:
-/// - Prefix markers: `sh::`, `ctx::`, `ai::`, etc.
+/// - Prefix markers: `sh::`, `ctx::`, etc.
 /// - Tag markers: `[project::floatty]`, `[mode::dev]`, etc.
 /// - Wikilinks: `[[Page Name]]`, `[[Target|Alias]]`, nested `[[outer [[inner]]]]`
 ///
