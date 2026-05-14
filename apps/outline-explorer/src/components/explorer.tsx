@@ -25,7 +25,10 @@ export function Explorer() {
   const { width: aiWidth, onMouseDown: onResizeMouseDown } = useResizable({
     initialWidth: 380,
     min: 280,
-    max: 800,
+    // Rendered spec output (KEY ARTIFACTS cards, multi-column grids) needs
+    // more horizontal room than the original 800 cap allowed. User tested
+    // 1800 and confirmed it looks "surprisingly good" on dense spec output.
+    max: 1800,
     direction: "left",
   });
 

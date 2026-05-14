@@ -7,6 +7,8 @@ import {
   hasToolCall,
   wrapLanguageModel,
   gateway,
+  validateUIMessages,
+  TypeValidationError,
   type UIMessage,
   type ModelMessage,
 } from "ai";
@@ -96,15 +98,42 @@ export async function POST(req: Request) {
       });
     },
     execute: async ({ writer }) => {
-      const modelMessages = await convertToModelMessages(messages);
+      const tools = await getExplorerTools();
+
+      // Per ai-sdk persistence guide, validate loaded messages against the
+      // current tool schemas before sending to the model. If a stored session
+      // contains tool calls whose schemas have since changed, we'd otherwise
+      // pass malformed args downstream. Fall back to the unvalidated array on
+      // TypeValidationError — defensive, preserves existing sessions across
+      // tool-schema drift. Re-throws non-validation errors.
+      let validatedMessages = messages;
+      try {
+        validatedMessages = (await validateUIMessages({
+          messages,
+          // Cast: validateUIMessages' tools-shape generic is narrower than the
+          // ToolSet union we load (the `load_skill` tool is conditional). The
+          // runtime behavior is correct; the type asserts here keep TS happy
+          // without forcing every tool through the same shape.
+          tools: tools as Parameters<typeof validateUIMessages>[0]["tools"],
+        })) as UIMessage[];
+      } catch (err) {
+        if (!(err instanceof TypeValidationError)) throw err;
+        console.warn(
+          "[chat/route] message validation failed, proceeding with raw messages:",
+          err.message
+        );
+      }
+
+      const modelMessages = await convertToModelMessages(validatedMessages);
       const filteredMessages = filterEmptyTextParts(modelMessages);
 
       const model = wrapLanguageModel({
-        model: gateway("anthropic/claude-sonnet-4"),
+        // Vercel AI Gateway model IDs — fetched fresh via
+        // `curl https://ai-gateway.vercel.sh/v1/models`. Bump as new
+        // versions ship; do not pin a stale ID from memory.
+        model: gateway("anthropic/claude-sonnet-4.6"),
         middleware: devToolsMiddleware(),
       });
-
-      const tools = await getExplorerTools();
 
       const result = streamText({
         model,
