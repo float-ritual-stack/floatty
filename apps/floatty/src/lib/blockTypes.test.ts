@@ -19,14 +19,14 @@ describe('parseBlockType', () => {
       expect(parseBlockType('TERM::pwd')).toBe('sh');
     });
 
-    it('detects ai:: trigger', () => {
-      expect(parseBlockType('ai:: explain this code')).toBe('ai');
-      expect(parseBlockType('AI:: summarize')).toBe('ai');
+    it('treats retired ai:: trigger as text', () => {
+      expect(parseBlockType('ai:: explain this code')).toBe('text');
+      expect(parseBlockType('AI:: summarize')).toBe('text');
     });
 
-    it('detects chat:: as ai', () => {
-      expect(parseBlockType('chat:: what is 2+2?')).toBe('ai');
-      expect(parseBlockType('CHAT::hello')).toBe('ai');
+    it('treats retired chat:: trigger as text', () => {
+      expect(parseBlockType('chat:: what is 2+2?')).toBe('text');
+      expect(parseBlockType('CHAT::hello')).toBe('text');
     });
 
     it('detects ctx:: with timestamp trigger', () => {
@@ -158,7 +158,7 @@ describe('parseBlockType', () => {
   describe('edge cases', () => {
     it('handles trigger with no content after', () => {
       expect(parseBlockType('sh::')).toBe('sh');
-      expect(parseBlockType('ai::')).toBe('ai');
+      expect(parseBlockType('ai::')).toBe('text');
     });
 
     it('trims leading/trailing whitespace', () => {

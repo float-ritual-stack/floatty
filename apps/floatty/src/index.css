@@ -907,7 +907,6 @@ body.pane-dragging .terminal-pane-positioned {
 
 /* Bullet colors by block type - using ANSI palette for consistency */
 .block-bullet-sh { color: var(--color-ansi-green); }
-.block-bullet-ai { color: var(--color-ansi-magenta); }
 .block-bullet-ctx { color: var(--color-ansi-cyan); } /* Cyan matches timestamp color */
 .block-bullet-output { color: var(--color-ansi-cyan); }
 .block-bullet-error { color: var(--color-error); }
@@ -1447,7 +1446,6 @@ body.block-dragging * {
 .block-content-h2 { color: var(--color-ansi-bright-blue); }
 .block-content-h3 { color: var(--color-ansi-bright-magenta); }
 .block-content-sh { color: var(--color-ansi-bright-green); }
-.block-content-ai { color: var(--color-ansi-magenta); }
 /* ctx:: blocks: warm body text, let inline tokens provide structure */
 .block-content-ctx { color: var(--text-primary, var(--color-fg)); }
 .block-content-output { color: var(--color-ansi-bright-cyan); }

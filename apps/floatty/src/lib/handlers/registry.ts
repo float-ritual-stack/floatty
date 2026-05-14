@@ -1,7 +1,7 @@
 /**
  * Block Handler Registry
  * 
- * Central registry for all executable block handlers (sh::, ai::, daily::, etc.)
+ * Central registry for all executable block handlers (sh::, daily::, doors, etc.)
  * Provides registration and lookup functionality.
  */
 

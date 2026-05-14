@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
+  advanceToNextInput,
   findWikilinkEnd,
   parseWikilinkInner,
   extractAllWikilinkTargets,
   parseBracketedWikilink,
+  createFocusedChild,
   findPagesContainer,
   findPageBlock,
   localDateStr,
@@ -11,6 +13,17 @@ import {
 } from './doorStdlib';
 
 describe('doorStdlib', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   // ── Wikilink parsing (re-exported from wikilinkUtils) ──────
 
   it('findWikilinkEnd handles simple wikilink', () => {
@@ -119,5 +132,87 @@ describe('doorStdlib', () => {
 
   it('resolveDate passes through YYYY-MM-DD', () => {
     expect(resolveDate('2026-01-15')).toBe('2026-01-15');
+  });
+
+  // ── Async continuation helpers ─────────────────────────────
+
+  it('createFocusedChild creates an empty child, schedules focus, and returns id', () => {
+    const focused: string[] = [];
+    const actions = {
+      createBlockInside: (parentId: string) => `${parentId}-child`,
+      updateBlockContent: (id: string, content: string) => {
+        expect(id).toBe('parent-child');
+        expect(content).toBe('');
+      },
+      focusBlock: (id: string) => focused.push(id),
+    };
+
+    const id = createFocusedChild(actions, 'parent');
+
+    expect(id).toBe('parent-child');
+    expect(focused).toEqual(['parent-child']);
+  });
+
+  it('createFocusedChild writes custom content', () => {
+    const updates: Array<[string, string]> = [];
+    const actions = {
+      createBlockInside: () => 'child',
+      updateBlockContent: (id: string, content: string) => updates.push([id, content]),
+      focusBlock: () => {},
+    };
+
+    expect(createFocusedChild(actions, 'parent', 'draft')).toBe('child');
+    expect(updates).toEqual([['child', 'draft']]);
+  });
+
+  it('advanceToNextInput focuses a supplied next block', () => {
+    const focused: string[] = [];
+    const actions = {
+      createBlockAfter: () => {
+        throw new Error('should not create');
+      },
+      focusBlock: (id: string) => focused.push(id),
+    };
+
+    expect(advanceToNextInput(actions, 'current', { nextId: 'next' })).toBe('next');
+    expect(focused).toEqual(['next']);
+  });
+
+  it('advanceToNextInput resolves an existing next block', () => {
+    const focused: string[] = [];
+    const actions = {
+      createBlockAfter: () => {
+        throw new Error('should not create');
+      },
+      focusBlock: (id: string) => focused.push(id),
+    };
+
+    expect(advanceToNextInput(actions, 'current', { findNextId: () => 'resolved' })).toBe('resolved');
+    expect(focused).toEqual(['resolved']);
+  });
+
+  it('advanceToNextInput creates and focuses a sibling when no next block exists', () => {
+    const focused: string[] = [];
+    const updates: Array<[string, string]> = [];
+    const actions = {
+      createBlockAfter: (id: string) => `${id}-after`,
+      updateBlockContent: (id: string, content: string) => updates.push([id, content]),
+      focusBlock: (id: string) => focused.push(id),
+    };
+
+    expect(advanceToNextInput(actions, 'current', { content: 'next thought' })).toBe('current-after');
+    expect(updates).toEqual([['current-after', 'next thought']]);
+    expect(focused).toEqual(['current-after']);
+  });
+
+  it('continuation helpers do not throw when focusBlock is missing', () => {
+    const actions = {
+      createBlockInside: () => 'child',
+      createBlockAfter: () => 'after',
+      updateBlockContent: () => {},
+    };
+
+    expect(() => createFocusedChild(actions, 'parent')).not.toThrow();
+    expect(() => advanceToNextInput(actions, 'current')).not.toThrow();
   });
 });

@@ -40,9 +40,17 @@ describe('HandlerRegistry', () => {
   });
 
   it('isExecutableBlock delegates to findHandler', () => {
-    reg.register(stubHandler(['ai::']));
-    expect(reg.isExecutableBlock('ai:: prompt')).toBe(true);
+    reg.register(stubHandler(['sh::']));
+    expect(reg.isExecutableBlock('sh:: ls')).toBe(true);
     expect(reg.isExecutableBlock('not a command')).toBe(false);
+  });
+
+  it('does not treat retired core AI triggers as executable unless a door registers them', () => {
+    reg.register(stubHandler(['sh::']));
+    expect(reg.isExecutableBlock('ai:: prompt')).toBe(false);
+    expect(reg.isExecutableBlock('chat:: prompt')).toBe(false);
+    expect(reg.isExecutableBlock('/send')).toBe(false);
+    expect(reg.isExecutableBlock('::send')).toBe(false);
   });
 
   it('getRegisteredPrefixes returns all prefixes', () => {

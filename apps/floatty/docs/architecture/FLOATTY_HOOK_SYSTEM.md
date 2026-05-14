@@ -88,42 +88,26 @@ interface HookResult {
 
 ## Concrete Use Cases
 
-### 1. AI Context Assembly (Primary Use Case)
+### 1. Door Context Assembly
 
-Multi-turn conversation support for `ai::` blocks:
+Core `ai::` and `/send` conversation handlers were retired. Door-specific context assembly is still a primary hook use case:
 
 ```typescript
 registerHook({
-  id: 'ai-context-assembly',
+  id: 'door-context-assembly',
   event: 'execute:before',
-  filter: (block) => block.type === 'ai',
+  filter: (block) => block.content.startsWith('mydoor::'),
   priority: 0,
   
   handler: (ctx) => {
-    // Walk up tree to find conversation root
-    const conversationRoot = findConversationRoot(ctx.block, ctx.store);
-    
-    // Extract turns from ## N - role: pattern
-    const turns = extractTurns(conversationRoot, ctx.store);
-    
-    // Resolve [[references]] into actual content
-    const references = resolveReferences(ctx.content, ctx.store);
-    
-    // Apply TTL filtering (some refs expire after N turns)
-    const filtered = applyTTL(references, turns.length);
-    
     return {
-      context: {
-        messages: buildMessages(turns, filtered),
-        systemPrompt: findSystemPrompt(ctx.block, ctx.store),
-        turnCount: turns.length,
-      }
+      context: buildDoorContext(ctx.block, ctx.store)
     };
   }
 });
 ```
 
-**What this enables**: When you type `ai:: explain this further` in a multi-turn conversation, the hook automatically builds the full message array with conversation history.
+**What this enables**: A user-land door can receive precomputed outline context without putting that context assembly inside its execution body.
 
 ### 2. Shell Command Validation
 
@@ -264,25 +248,19 @@ registerHook({
 });
 ```
 
-### 7. Token Estimation (AI Cost Awareness)
+### 7. Expensive Handler Guard
 
-Warn before expensive API calls:
+Warn before expensive user-land door or agent work:
 
 ```typescript
 registerHook({
-  id: 'ai-token-estimate',
+  id: 'expensive-handler-guard',
   event: 'execute:before',
-  filter: (block) => block.type === 'ai',
-  priority: 10,  // After context assembly
+  filter: (block) => block.content.startsWith('render:: agent'),
+  priority: 10,
   
   handler: (ctx) => {
-    if (!ctx.context?.messages) return {};
-    
-    const tokens = estimateTokens(ctx.context.messages);
-    if (tokens > 50000) {
-      console.warn(`Large context: ~${tokens} tokens`);
-      // Could prompt for confirmation here
-    }
+    console.warn('Expensive render agent execution requested');
     return {};
   }
 });

@@ -116,7 +116,7 @@ EventFilters.fromOrigin(Origin.Remote) // remote sync only
 
 // Filter by content
 EventFilters.contentPrefix('sh::')     // sh:: blocks only
-EventFilters.byBlockType('ai')         // ai blocks only
+EventFilters.byBlockType('ctx')        // ctx blocks only
 EventFilters.hasWikilinks()            // blocks with [[links]]
 
 // Combine filters
@@ -128,7 +128,7 @@ EventFilters.all(
 
 EventFilters.any(
   EventFilters.contentPrefix('sh::'),
-  EventFilters.contentPrefix('ai::')
+  EventFilters.contentPrefix('render::')
 )
 ```
 

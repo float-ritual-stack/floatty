@@ -206,7 +206,7 @@ export const HookFilters = {
   hasWikilinks: (): HookFilter =>
     (block) => block.content.includes('[['),
 
-  /** Match executable blocks (sh::, ai::, daily::, etc.) */
+  /** Match executable blocks (sh::, daily::, doors, etc.) */
   isExecutable: (prefixes: string[]): HookFilter =>
     (block) => {
       const trimmed = block.content.trim().toLowerCase();

@@ -110,11 +110,11 @@ interface SelectionState {
 
 ### Block Type
 ```typescript
-type BlockType = 'text' | 'h1' | 'h2' | 'h3' | 'bullet' | 'todo' | 'quote' | 'sh' | 'ai' | ...;
+type BlockType = 'text' | 'h1' | 'h2' | 'h3' | 'bullet' | 'todo' | 'quote' | 'sh' | ...;
 ```
 
 **Affects:**
-- `Enter` on `sh::`/`ai::` block → execute command (not split)
+- `Enter` on executable blocks such as `sh::` or registered doors → execute command (not split)
 
 ---
 

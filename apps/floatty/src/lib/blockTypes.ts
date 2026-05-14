@@ -24,7 +24,7 @@ const logger = createLogger('blockTypes');
  *
  * **Execution output fields** (output, outputType, outputStatus) are client-only state
  * stored in Y.Doc but NOT synced to Rust. These track the transient state of executable
- * blocks (sh::, ai::, daily::) and are intentionally excluded from the Rust Block struct
+ * blocks (sh::, daily::, render:: doors) and are intentionally excluded from the Rust Block struct
  * because:
  *   1. Execution is frontend-only (no server-side execution yet)
  *   2. Output can be large and is ephemeral (regenerated on re-run)
@@ -45,7 +45,7 @@ export interface Block {
   updatedAt: number;
 
   /**
-   * Execution output for executable blocks (sh::, ai::, daily::).
+   * Execution output for executable blocks (sh::, daily::, render:: doors).
    * Client-only state, stored in Y.Doc but not synced to Rust.
    */
   output?: unknown;
@@ -122,7 +122,6 @@ export function parseBlockType(content: string): BlockType {
 
   // Magic triggers (case-insensitive)
   if (lower.startsWith('sh::') || lower.startsWith('term::')) return 'sh';
-  if (lower.startsWith('ai::') || lower.startsWith('chat::')) return 'ai';
   // ctx:: at line start OR bullet with ctx:: - block-level context marker
   // Other ctx:: (mid-line in headings, etc) handled by inline parser
   if (lower.startsWith('ctx::') || /^- ctx::\d{4}-\d{2}-\d{2}/i.test(trimmed)) return 'ctx';
@@ -132,7 +131,7 @@ export function parseBlockType(content: string): BlockType {
   if (lower.startsWith('error::')) return 'error';
   if (lower.startsWith('picker::')) return 'picker';
   if (lower.startsWith('ran::')) return 'ran';
-  // Note: daily:: uses child-output pattern (like sh::, ai::)
+  // Note: daily:: uses child-output pattern (like sh::)
   // See docs/BLOCK_TYPE_PATTERNS.md for when to use type-based vs child-output
   if (lower.startsWith('filter::')) return 'filter';
   if (lower.startsWith('search::')) return 'search';

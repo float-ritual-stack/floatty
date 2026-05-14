@@ -6,16 +6,14 @@
 
 | Guide | What You'll Learn |
 |-------|-------------------|
-| [Adding Handlers](guides/ADDING_HANDLERS.md) | Build executable block handlers (`sh::`, `ai::`, custom) |
+| [Adding Handlers](guides/ADDING_HANDLERS.md) | Build executable block handlers (`sh::`, doors, custom) |
+| [Doors](guides/DOORS.md) | Build user-land prefix handlers and views |
 | [Event System](guides/EVENT_SYSTEM.md) | EventBus (sync) + ProjectionScheduler (async batched) |
 | [Hook Patterns](guides/HOOK_PATTERNS.md) | Context assembly, validation, transformation |
 
 ## Tutorials
 
-| Tutorial | Description |
-|----------|-------------|
-| [Building Chat with Hooks](tutorials/BUILDING_CHAT_WITH_HOOKS.md) | Deep-dive into `/send` command and multi-turn conversations |
-| [Chat With vs Without Hooks](tutorials/CHAT_WITH_VS_WITHOUT_HOOKS.md) | Before/after comparison showing hook benefits |
+Retired `/send` tutorials have been removed from active docs. AI workflows now live in user-land doors such as `render:: ai` or future agent doors.
 
 ## Architecture
 

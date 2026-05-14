@@ -15,9 +15,9 @@
  * @example
  * // Register a hook
  * hookRegistry.register({
- *   id: 'ai-context-assembly',
+ *   id: 'handler-context-assembly',
  *   event: 'execute:before',
- *   filter: (block) => block.type === 'ai',
+ *   filter: (block) => block.type === 'sh',
  *   priority: 0,
  *   handler: (ctx) => {
  *     const messages = buildConversation(ctx.block, ctx.store);

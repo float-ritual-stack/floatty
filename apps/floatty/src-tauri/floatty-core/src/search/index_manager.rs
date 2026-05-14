@@ -55,7 +55,7 @@ pub struct SchemaFields {
     pub block_id: Field,
     /// Full-text searchable content.
     pub content: Field,
-    /// Block type for faceted filtering (sh, ai, ctx, etc.).
+    /// Block type for faceted filtering (sh, ctx, etc.).
     pub block_type: Field,
     /// Parent block ID for context retrieval.
     pub parent_id: Field,

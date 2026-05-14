@@ -59,7 +59,7 @@ export interface ExecutorActions {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Handler for executable block types (sh::, ai::, daily::, door::, etc.)
+ * Handler for executable block types (sh::, daily::, door::, etc.)
  */
 export interface BlockHandler {
   /** Prefixes that trigger this handler (e.g., ['sh::', 'term::']) */
@@ -75,9 +75,8 @@ export interface BlockHandler {
    * while the handler runs asynchronously. If no next visible sibling
    * exists, a new trailing block is created.
    *
-   * Handlers that manage their own placeholder + focus internally
-   * (conversationHandler, sendHandler) should leave this undefined — they
-   * own the focus target inside their execute body.
+   * Handlers that manage their own placeholder + focus internally should
+   * leave this undefined; they own the focus target inside execute.
    *
    * Intended for selfRender-style handlers (e.g. render::) where output
    * lands back on the same block and there's no placeholder child to focus.

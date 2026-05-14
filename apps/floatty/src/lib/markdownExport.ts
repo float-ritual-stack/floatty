@@ -77,7 +77,6 @@ function formatBlockLine(block: Block, indent: string): string {
     case 'todo':
     case 'quote':
     case 'sh':
-    case 'ai':
     case 'ctx':
     case 'dispatch':
       // Content already has prefix - just add indentation

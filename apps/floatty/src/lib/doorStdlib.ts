@@ -118,6 +118,61 @@ export function parseJSON(raw: string): unknown | null {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type BlockActions = any;
 
+function focusOnNextFrame(actions: BlockActions, id: string): void {
+  if (!actions.focusBlock) return;
+  const focus = () => actions.focusBlock(id);
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(focus);
+  } else {
+    focus();
+  }
+}
+
+/**
+ * Create a child block, initialize its content, focus it on the next frame,
+ * and return the new block id.
+ */
+export function createFocusedChild(
+  actions: BlockActions,
+  parentId: string,
+  content = '',
+): string {
+  const childId = actions.createBlockInside(parentId);
+  actions.updateBlockContent?.(childId, content);
+  focusOnNextFrame(actions, childId);
+  return childId;
+}
+
+export interface AdvanceToNextInputOptions {
+  /** Known next block id, when the caller already resolved it. */
+  nextId?: string | null;
+  /** Optional resolver for pane-aware next visible block lookup. */
+  findNextId?: (blockId: string) => string | null | undefined;
+  /** Content for the created fallback sibling. Defaults to empty. */
+  content?: string;
+}
+
+/**
+ * Focus the next input block at dispatch time. If no next block is provided or
+ * resolved, create a sibling after `blockId`, initialize it, and focus that.
+ */
+export function advanceToNextInput(
+  actions: BlockActions,
+  blockId: string,
+  options: AdvanceToNextInputOptions = {},
+): string | null {
+  const resolvedNextId = options.nextId ?? options.findNextId?.(blockId) ?? null;
+  const targetId = resolvedNextId || actions.createBlockAfter?.(blockId) || null;
+  if (!targetId) return null;
+
+  if (!resolvedNextId && options.content !== undefined) {
+    actions.updateBlockContent?.(targetId, options.content);
+  }
+
+  focusOnNextFrame(actions, targetId);
+  return targetId;
+}
+
 /**
  * Add children to a block, skipping any whose content already exists.
  * Flat variant — strips nested children from each op before inserting.

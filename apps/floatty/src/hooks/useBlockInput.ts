@@ -10,7 +10,7 @@
  * Sub-hooks (see hooks/blockInput/):
  *   useNavigationActions  — navigate_up/down, selection, create_trailing_block
  *   useEditingActions     — create, split, merge, delete, indent/outdent, text ops
- *   useExecutionAction    — execute_block (sh::, ai::, daily::, …)
+ *   useExecutionAction    — execute_block (sh::, daily::, doors, …)
  */
 
 import { createLogger } from '../lib/logger';
@@ -597,7 +597,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
           // Advance cursor to next block at dispatch time (NOT after completion)
           // so the user can keep typing while the handler runs asynchronously.
           // Opt-in per handler — selfRender doors like render:: set this; handlers
-          // that manage their own placeholder/focus (conversationHandler, send) don't.
+          // with custom continuation/focus behavior can manage that internally.
           if (handler.advanceCursorOnExecute) {
             const currentId = deps.getBlockId();
             let nextId = deps.findNextVisibleBlock(currentId, deps.paneId);

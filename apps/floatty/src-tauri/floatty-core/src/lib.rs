@@ -7,7 +7,7 @@
 //! # Architecture
 //!
 //! - **Block**: The fundamental unit - text with optional `::` prefixes that
-//!   determine behavior (e.g., `sh::` for shell, `ai::` for LLM).
+//!   determine behavior (e.g., `sh::` for shell, `ctx::` for context).
 //!
 //! - **Y.Doc**: CRDT-based state using yrs (Rust port of Yjs). Enables
 //!   real-time sync between multiple clients.

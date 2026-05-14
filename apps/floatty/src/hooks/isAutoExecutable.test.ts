@@ -9,7 +9,7 @@
  * rendered markdown projection.
  *
  * The allowlist gates auto-execute to *idempotent view-only* blocks. Any
- * handler with side effects (sh::, ai::, render:: agent which spawns
+ * handler with side effects (sh::, dispatch::, render:: agent which spawns
  * claude -p) is intentionally excluded. The render:: door's special-case
  * is documented inline in the function.
  *
@@ -60,16 +60,8 @@ describe('isAutoExecutable — allowlist', () => {
       expect(isAutoExecutable('sh:: ls')).toBe(false);
     });
 
-    it('ai:: — costs API tokens', () => {
-      expect(isAutoExecutable('ai:: write a haiku')).toBe(false);
-    });
-
     it('term:: — opens a terminal', () => {
       expect(isAutoExecutable('term:: zsh')).toBe(false);
-    });
-
-    it('chat:: — spawns conversation', () => {
-      expect(isAutoExecutable('chat:: hello')).toBe(false);
     });
 
     it('dispatch:: — runs an agent', () => {

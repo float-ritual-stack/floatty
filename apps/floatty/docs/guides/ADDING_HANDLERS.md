@@ -182,37 +182,25 @@ export const searchHandler: BlockHandler = {
 
 **Use when**: Output should be editable/deletable separately from input
 
-### Pattern 4: Conversation (Tree Context)
+### Pattern 4: Door Context
 
-For handlers that need context from parent blocks:
+Core AI conversation handlers were retired. For handlers that need context from parent blocks, prefer a user-land door plus stdlib continuation helpers:
 
 ```typescript
-export const conversationHandler: BlockHandler = {
-  prefixes: ['ai::', 'chat::'],
+import { createFocusedChild } from '@floatty/stdlib';
 
-  async execute(blockId, content, actions) {
-    // Build conversation by walking up the tree
-    const messages = buildConversation(blockId, actions);
+export const door = {
+  kind: 'block',
+  prefixes: ['mydoor::'],
 
-    // Create response block as child
-    const responseId = actions.createBlockInside(blockId);
-    actions.updateBlockContent(responseId, 'assistant:: Thinking...');
-    actions.setBlockStatus?.(responseId, 'running');
+  async execute(blockId, content, ctx) {
+    const nextId = createFocusedChild(ctx.actions, blockId);
+    const context = buildDoorContext(blockId, ctx.actions);
 
     try {
-      const response = await invoke<string>('execute_ai_conversation', {
-        messages,
-      });
-
-      actions.updateBlockContent(responseId, `assistant:: ${response}`);
-      actions.setBlockStatus?.(responseId, 'complete');
-
-      // Create empty block for next user input
-      const nextId = actions.createBlockInside(responseId);
-      actions.focusBlock?.(nextId);
+      await runAsyncWork(context, nextId);
     } catch (err) {
-      actions.updateBlockContent(responseId, `error:: ${err}`);
-      actions.setBlockStatus?.(responseId, 'error');
+      ctx.actions.updateBlockContent(nextId, `error:: ${err}`);
     }
   },
 };
@@ -264,11 +252,11 @@ Handlers can use hook-assembled context via `actions.hookContext`:
 
 ```typescript
 async execute(blockId, content, actions) {
-  // Context assembled by hooks (e.g., sendContextHook)
-  const messages = (actions as any).hookContext?.messages;
+  // Context assembled by hooks
+  const hookContext = (actions as any).hookContext;
 
-  if (messages) {
-    // Use pre-assembled conversation context
+  if (hookContext) {
+    // Use pre-assembled context
   }
 }
 ```

@@ -155,7 +155,7 @@ The outliner is a block-based editor backed by a Yjs CRDT document. Blocks suppo
 
 - **Inline formatting**: `**bold**`, `*italic*`, `` `code` `` rendered as overlays on contentEditable
 - **Wikilinks**: `[[Page Name]]` for inter-page navigation (Roam-style)
-- **Prefix types**: `sh::` (executable shell), `ai::` (AI context), `ctx::` (context markers)
+- **Prefix types**: `sh::` (executable shell), `ctx::` (context markers), and user-land doors such as `render::`
 - **Nested zoom**: `Cmd+Enter` zooms into any block's subtree, `Escape` zooms out
 - **Backlinks**: When zoomed into a page, linked references are shown below
 

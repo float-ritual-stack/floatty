@@ -207,10 +207,6 @@ interface TauriCommands {
     args: { command: string };
     returns: string;
   };
-  execute_ai_command: {
-    args: { prompt: string };
-    returns: string;
-  };
 
   // ─────────────────────────────────────────────────────────────
   // SHELL HOOKS

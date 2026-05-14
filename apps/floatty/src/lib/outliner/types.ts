@@ -17,7 +17,7 @@ export type BlockType =
   | 'text'
   | 'h1' | 'h2' | 'h3'
   | 'bullet' | 'todo' | 'quote'
-  | 'sh' | 'ai' | 'ctx' | 'dispatch' | 'web'
+  | 'sh' | 'ctx' | 'dispatch' | 'web'
   | 'output' | 'error';
 
 /**
@@ -102,7 +102,7 @@ export type KeyboardAction =
 export interface OutlinerProps {
   paneId: string;
 
-  // Optional: execution callback (for sh::, ai::, etc.)
+  // Optional: execution callback (for sh::, door handlers, etc.)
   onExecute?: (blockId: string, content: string) => void;
   isExecutable?: (content: string) => boolean;
 

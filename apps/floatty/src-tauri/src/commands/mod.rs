@@ -16,11 +16,11 @@ pub mod workspace;
 // Re-export command functions for registration
 pub use clipboard::{get_clipboard_info, save_clipboard_image};
 pub use ctx::{
-    clear_ctx_markers, get_ctx_config, get_ctx_counts, get_ctx_markers, get_send_model, get_theme,
-    set_ctx_config, set_theme, toggle_diagnostics,
+    clear_ctx_markers, get_ctx_config, get_ctx_counts, get_ctx_markers, get_theme, set_ctx_config,
+    set_theme, toggle_diagnostics,
 };
 pub use doors::{list_door_files, read_door_file};
-pub use execution::{execute_ai_command, execute_ai_conversation, execute_shell_command, open_url};
+pub use execution::{execute_shell_command, open_url};
 pub use help::read_help_file;
 pub use hooks::{check_hooks_installed, install_shell_hooks, uninstall_shell_hooks};
 pub use workspace::{clear_workspace, get_workspace_state, save_workspace_state};

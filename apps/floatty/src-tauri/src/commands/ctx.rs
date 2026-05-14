@@ -73,14 +73,6 @@ pub fn set_theme(state: State<AppState>, theme: String) -> Result<(), String> {
     ctx::set_theme(theme, &state.config_path)
 }
 
-/// Get the configured model for /send conversations
-/// Returns send_model if set, otherwise ollama_model
-#[tauri::command]
-pub fn get_send_model(state: State<AppState>) -> String {
-    let config = ctx::get_config(&state.config_path);
-    config.get_send_model().to_string()
-}
-
 /// Toggle diagnostics strip visibility (port, build type, config path)
 /// Returns the new value after toggle
 #[tauri::command]

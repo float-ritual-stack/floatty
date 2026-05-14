@@ -201,7 +201,7 @@ export const EventFilters = {
   notFromOrigin: (origin: OriginType): EventFilter =>
     (_event, envelope) => envelope.origin !== origin,
 
-  /** Match blocks with specific content prefix (e.g., 'ai::', 'sh::') */
+  /** Match blocks with specific content prefix (e.g., 'render::', 'sh::') */
   contentPrefix: (prefix: string): EventFilter =>
     (event) => event.block?.content.trim().toLowerCase().startsWith(prefix.toLowerCase()) ?? false,
 

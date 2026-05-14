@@ -61,7 +61,7 @@ where
 #[ts(export, rename_all = "camelCase")]
 #[serde(rename_all = "camelCase")]
 pub struct Marker {
-    /// The marker type: "ctx", "project", "mode", "issue", "sh", "ai", etc.
+    /// The marker type: "ctx", "project", "mode", "issue", "sh", etc.
     pub marker_type: String,
 
     /// Optional value following the marker.
@@ -101,7 +101,7 @@ impl Marker {
 #[serde(rename_all = "camelCase")]
 pub struct BlockMetadata {
     /// All :: markers found in this block.
-    /// Includes both prefix markers (sh::, ai::, ctx::) and tag markers ([project::X]).
+    /// Includes both prefix markers (sh::, ctx::) and tag markers ([project::X]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
 

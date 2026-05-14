@@ -112,41 +112,23 @@ export function registerHandlers(): void {
 
 ## Example: Context Assembly Hook
 
-The `sendContextHook` assembles conversation messages for the `/send` handler:
+Core `/send` and `ai::` conversation handlers were retired. If a user-land door needs context assembly, keep the hook door-specific and filter on that door prefix:
 
 ```typescript
-// src/lib/handlers/hooks/sendContextHook.ts
-
-export const sendContextHook: Hook = {
-  id: 'send-context-assembly',
+export const doorContextHook: Hook = {
+  id: 'my-door-context-assembly',
   event: 'execute:before',
-  priority: 0,  // Run early to assemble context
+  priority: 0,
 
   filter: (block) => {
     const content = block.content.trim().toLowerCase();
-    return content.startsWith('/send');
+    return content.startsWith('mydoor::');
   },
 
   handler: (ctx: HookContext): HookResult => {
     const { block, store } = ctx;
 
-    // Scan document for ## user / ## assistant markers
-    const messages = assembleConversation(block, store);
-
-    if (messages.length === 0) {
-      return { abort: true, reason: 'No conversation context found' };
-    }
-
-    // Validate: last message must be from user
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage.role !== 'user') {
-      return { abort: true, reason: 'Last message must be from user' };
-    }
-
-    // Pass messages to handler via context
-    return {
-      context: { messages },
-    };
+    return { context: assembleDoorContext(block, store) };
   },
 };
 ```
@@ -154,18 +136,16 @@ export const sendContextHook: Hook = {
 **Handler consumes the context:**
 
 ```typescript
-// In sendHandler
 async execute(blockId, content, actions) {
-  // Context assembled by sendContextHook
-  const messages = (actions as any).hookContext?.messages;
+  // Context assembled by the door-specific hook
+  const context = (actions as any).hookContext;
 
-  if (!messages) {
+  if (!context) {
     // Hook didn't run or failed
     return;
   }
 
-  // Use assembled messages
-  await invoke('execute_ai_conversation', { messages });
+  await runDoorWork(context);
 }
 ```
 
@@ -377,8 +357,8 @@ describe('myHook', () => {
     };
 
     const result = await registry.run('execute:before', {
-      block: { id: 'send-1', content: '/send' },
-      content: '/send',
+      block: { id: 'door-1', content: 'mydoor:: run' },
+      content: 'mydoor:: run',
       event: 'execute:before',
       store: mockStore,
     });
@@ -474,6 +454,5 @@ export const lifecycleHook: Hook = {
 
 - Hook registry: `src/lib/hooks/hookRegistry.ts`
 - Hook types: `src/lib/hooks/types.ts`
-- sendContextHook: `src/lib/handlers/hooks/sendContextHook.ts`
 - Executor: `src/lib/handlers/executor.ts`
 - Architecture: `docs/architecture/FLOATTY_HOOK_SYSTEM.md`

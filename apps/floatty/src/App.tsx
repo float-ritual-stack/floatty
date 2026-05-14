@@ -74,7 +74,7 @@ function App() {
     }
   });
 
-  // Register block handlers (sh::, ai::, daily::)
+  // Register block handlers (sh::, daily::, doors)
   onMount(() => {
     registerHandlers();
   });

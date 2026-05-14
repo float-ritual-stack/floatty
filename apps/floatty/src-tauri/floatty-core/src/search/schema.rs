@@ -6,7 +6,7 @@
 //! |-------|------|---------|---------|
 //! | block_id | TEXT | STRING, STORED | Primary key, term-based deletion |
 //! | content | TEXT | TEXT, STORED | Full-text search + snippet generation |
-//! | block_type | TEXT | STRING, FAST | Facet filtering (sh, ai, ctx, etc.) |
+//! | block_type | TEXT | STRING, FAST | Facet filtering (sh, ctx, etc.) |
 //! | parent_id | TEXT | STRING, STORED | Context retrieval |
 //! | updated_at | DATE | FAST, STORED | Recency sorting |
 //! | has_markers | BOOL | FAST, STORED | Filter for ctx:: blocks |
