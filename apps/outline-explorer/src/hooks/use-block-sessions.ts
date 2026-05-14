@@ -68,7 +68,15 @@ export function useBlockSessions(
   const [error, setError] = useState<Error | null>(null);
 
   const load = useCallback(async () => {
-    if (!blockId || !enabled) return;
+    // Reset local state when disabled or blockId cleared — otherwise stale
+    // sessions from a prior blockId would leak into the new "no data"
+    // shape. (CodeRabbit minor.)
+    if (!blockId || !enabled) {
+      setSessions([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     const cached = cache.get(blockId);
     if (cached) {
       setSessions(cached);
@@ -91,12 +99,24 @@ export function useBlockSessions(
   }, [load]);
 
   const refetch = useCallback(() => {
-    if (blockId) {
-      cache.delete(blockId);
-      inflight.delete(blockId);
-    }
-    void load();
-  }, [blockId, load]);
+    if (!blockId || !enabled) return;
+    // Wait for any in-flight request to settle BEFORE invalidating, so a
+    // pending older response can't repopulate the cache after we've cleared
+    // it. The await also catches a still-pending fetch's eventual rejection
+    // so refetch() doesn't surface it as a fresh error. (CodeRabbit major.)
+    void (async () => {
+      const pending = inflight.get(blockId);
+      if (pending) {
+        try {
+          await pending;
+        } catch {
+          // ignore — old request's failure isn't relevant to the new one
+        }
+      }
+      invalidateBlockSessions(blockId);
+      await load();
+    })();
+  }, [blockId, enabled, load]);
 
   return { sessions, loading, error, refetch };
 }
