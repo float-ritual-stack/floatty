@@ -111,9 +111,18 @@ export function SessionPicker({ activeSessionId, disabled, onLoad }: SessionPick
   }
 
   function handleRowClick(s: SessionListItem) {
-    // Defer the load so a follow-up double-click can cancel and route to
-    // rename. 220ms is a common dblclick threshold (browser default sits
-    // around 250-500ms but the OS event delivery is usually well under).
+    // For the active row, single-click is a no-op so the double-click can
+    // route to inline rename without the picker closing under it first.
+    // (User feedback 57b5ca1d: "current chat ... no way to rename it".)
+    if (s.id === activeSessionId) {
+      cancelDeferredLoad();
+      // Don't close the picker; let the user double-click to rename.
+      return;
+    }
+    // For non-active rows, defer the load so a follow-up double-click can
+    // cancel and route to rename. 220ms is a common dblclick threshold
+    // (browser default sits around 250-500ms but OS event delivery is
+    // usually well under).
     cancelDeferredLoad();
     clickTimeoutRef.current = setTimeout(() => {
       clickTimeoutRef.current = null;

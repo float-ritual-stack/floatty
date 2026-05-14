@@ -25,14 +25,28 @@ interface UseBlockSessionsResult {
 // the actual fetch result replaces it. Cleared by invalidateBlockSessions().
 const cache = new Map<string, SessionListItem[]>();
 const inflight = new Map<string, Promise<SessionListItem[]>>();
+// Subscribers: blockId → set of refetch callbacks. Each hook instance
+// registers on mount and unregisters on unmount; invalidateBlockSessions()
+// fires the relevant callbacks so live badges refresh after a chat turn
+// completes (badge would otherwise stay stale until next remount).
+const subscribers = new Map<string, Set<() => void>>();
+
+function notify(blockId: string): void {
+  const subs = subscribers.get(blockId);
+  if (!subs) return;
+  for (const sub of subs) sub();
+}
 
 export function invalidateBlockSessions(blockId?: string): void {
   if (blockId) {
     cache.delete(blockId);
     inflight.delete(blockId);
+    notify(blockId);
   } else {
+    const ids = Array.from(cache.keys());
     cache.clear();
     inflight.clear();
+    for (const id of ids) notify(id);
   }
 }
 
@@ -97,6 +111,27 @@ export function useBlockSessions(
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Subscribe to module-level invalidation so live badges refresh when a
+  // chat turn lands that touches our blockId. Without this, the cache is
+  // cleared but mounted instances continue rendering stale data until
+  // their next remount.
+  useEffect(() => {
+    if (!blockId || !enabled) return;
+    let subs = subscribers.get(blockId);
+    if (!subs) {
+      subs = new Set();
+      subscribers.set(blockId, subs);
+    }
+    const cb = () => {
+      void load();
+    };
+    subs.add(cb);
+    return () => {
+      subs!.delete(cb);
+      if (subs!.size === 0) subscribers.delete(blockId);
+    };
+  }, [blockId, enabled, load]);
 
   const refetch = useCallback(() => {
     if (!blockId || !enabled) return;

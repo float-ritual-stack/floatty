@@ -3,12 +3,14 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, isToolUIPart, getToolName } from "ai";
-import { Sparkles, X, Send, Loader, Compass, Settings, PlayCircle, RotateCcw } from "lucide-react";
+import { Sparkles, X, Send, Loader, Compass, Settings, PlayCircle, MessageSquarePlus } from "lucide-react";
 import type { ExplorerUIMessage } from "@/lib/agents/explorer-agent";
 import { AiActions, type AiActionWithPrompt } from "./ai-actions";
 import { WalkChip } from "./walk-chip";
 import { MessageBubble } from "./message-bubble";
+import { UserMessageBubble } from "./user-message-bubble";
 import { SessionPicker } from "./session-picker";
+import { invalidateBlockSessions } from "@/hooks/use-block-sessions";
 
 /**
  * Session persistence wire-up:
@@ -58,6 +60,9 @@ export function AiPanel({
   // every chat request via `prepareSendMessagesRequest`. The server uses it
   // to load previous messages + persist on stream finish.
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string>("");
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const sessionIdRef = useRef<string | null>(null);
   sessionIdRef.current = sessionId;
 
@@ -91,6 +96,22 @@ export function AiPanel({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Invalidate the block-sessions cache when a turn completes, so block
+  // chat-badges refresh to reflect the just-saved session_blocks rows.
+  // Tracks status transitions explicitly — only the "streaming/submitted
+  // → ready" edge counts. (User feedback 57b5ca1d: "badge doesn't update
+  // until I refresh".)
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    const wasStreaming = prevStatusRef.current !== "ready";
+    const isNowReady = status === "ready";
+    prevStatusRef.current = status;
+    if (wasStreaming && isNowReady && messages.length > 0) {
+      if (pageContextId) invalidateBlockSessions(pageContextId);
+      for (const id of selectedIds) invalidateBlockSessions(id);
+    }
+  }, [status, messages.length, pageContextId, selectedIds]);
 
   const noContent = !pageContextId && selectedIds.length === 0;
   const isLoading = status !== "ready";
@@ -126,9 +147,10 @@ export function AiPanel({
           const getRes = await fetch(`/api/sessions/${sessions[0].id}`);
           if (!getRes.ok) throw new Error(`get ${getRes.status}`);
           const { session } = (await getRes.json()) as {
-            session: { id: string; messages: ExplorerUIMessage[] };
+            session: { id: string; title: string; messages: ExplorerUIMessage[] };
           };
           setSessionId(session.id);
+          setSessionTitle(session.title ?? "");
           setMessages(session.messages);
         } else {
           const createRes = await fetch("/api/sessions", {
@@ -140,8 +162,9 @@ export function AiPanel({
             }),
           });
           if (!createRes.ok) throw new Error(`create ${createRes.status}`);
-          const { session } = (await createRes.json()) as { session: { id: string } };
+          const { session } = (await createRes.json()) as { session: { id: string; title: string } };
           setSessionId(session.id);
+          setSessionTitle(session.title ?? "");
         }
       } catch (err) {
         // Persistence failures should not break chat — surface to console,
@@ -194,7 +217,7 @@ export function AiPanel({
       const res = await fetch(`/api/sessions/${target.id}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { session } = (await res.json()) as {
-        session: { id: string; messages: ExplorerUIMessage[] };
+        session: { id: string; title: string; messages: ExplorerUIMessage[] };
       };
       // Discard out-of-order responses: a later request superseded this one
       // while it was in flight, and applying this payload would clobber
@@ -205,6 +228,7 @@ export function AiPanel({
       // stale one. Mirrors the Greptile P2 fix in handleResetThread —
       // same race shape (sync state flip before async-driven UI updates).
       setSessionId(session.id);
+      setSessionTitle(session.title ?? "");
       setMessages(session.messages);
       setActiveAction(null);
     } catch (err) {
@@ -253,6 +277,7 @@ export function AiPanel({
     setMessages([]);
     setActiveAction(null);
     setSessionId(null);
+    setSessionTitle("");
     void (async () => {
       try {
         const res = await fetch("/api/sessions", {
@@ -264,12 +289,37 @@ export function AiPanel({
           }),
         });
         if (!res.ok) throw new Error(`create ${res.status}`);
-        const { session } = (await res.json()) as { session: { id: string } };
+        const { session } = (await res.json()) as { session: { id: string; title: string } };
         setSessionId(session.id);
+        setSessionTitle(session.title ?? "");
       } catch (err) {
         console.error("[ai-panel] new session create failed:", err);
       }
     })();
+  }
+
+  async function commitTitleEdit() {
+    const next = titleDraft.trim();
+    setTitleEditing(false);
+    if (!sessionId) return;
+    if (!next || next === sessionTitle) return;
+    setSessionTitle(next); // optimistic
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error("[ai-panel] title rename failed:", err);
+    }
+  }
+
+  function beginTitleEdit() {
+    if (!sessionId) return;
+    setTitleDraft(sessionTitle);
+    setTitleEditing(true);
   }
 
   function handleCustomSubmit() {
@@ -337,9 +387,31 @@ export function AiPanel({
     <div className="flex flex-col h-full bg-surface">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/60 shrink-0">
-        <Sparkles size={14} className="text-magenta" />
-        <span className="text-magenta text-[13px] font-bold">AI</span>
-        <span className="text-dim text-[10px] ml-auto">
+        <Sparkles size={14} className="text-magenta shrink-0" />
+        {titleEditing ? (
+          <input
+            autoFocus
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={commitTitleEdit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void commitTitleEdit();
+              else if (e.key === "Escape") setTitleEditing(false);
+            }}
+            className="flex-1 min-w-0 bg-bg border border-cyan/40 rounded px-1 py-0.5 text-text text-[12px] outline-none"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={beginTitleEdit}
+            disabled={!sessionId}
+            title="Rename session"
+            className="flex-1 min-w-0 bg-transparent border-none text-text text-[12px] font-medium truncate text-left cursor-text disabled:cursor-default px-0"
+          >
+            {sessionTitle || "New conversation"}
+          </button>
+        )}
+        <span className="text-dim text-[10px] shrink-0">
           {noContent ? "select content" : pageContextId ? "page context" : `${selectedIds.length} selected`}
         </span>
         <SessionPicker
@@ -350,12 +422,12 @@ export function AiPanel({
         <button
           type="button"
           onClick={handleResetThread}
-          disabled={messages.length === 0 || isLoading}
-          title="Clear conversation history"
-          aria-label="Clear conversation history"
+          disabled={isLoading}
+          title="Start a new chat (current thread is saved in session history)"
+          aria-label="Start a new chat"
           className="bg-transparent border-none text-muted cursor-pointer hover:text-text transition-colors disabled:opacity-40 disabled:cursor-default"
         >
-          <RotateCcw size={12} />
+          <MessageSquarePlus size={12} />
         </button>
         <button
           onClick={() => setShowSettings(!showSettings)}
@@ -454,17 +526,30 @@ export function AiPanel({
             </button>
           </div>
         )}
-        {messages
-          .filter((m) => m.role === "assistant")
-          .map((msg, i, arr) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              onNavigateToPage={onNavigateToPage}
-              isStreaming={isLoading && i === arr.length - 1}
-              streamSpec={streamSpec}
-            />
-          ))}
+        {messages.map((msg, i, arr) => {
+          if (msg.role === "user") {
+            return <UserMessageBubble key={msg.id} message={msg} />;
+          }
+          if (msg.role === "assistant") {
+            // Streaming flag should track the LAST assistant message, not the
+            // last message overall — a trailing user message shouldn't make
+            // the prior assistant render as streaming.
+            const lastAssistantIdx = [...arr]
+              .map((m, idx) => ({ m, idx }))
+              .reverse()
+              .find((entry) => entry.m.role === "assistant")?.idx;
+            return (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                onNavigateToPage={onNavigateToPage}
+                isStreaming={isLoading && i === lastAssistantIdx}
+                streamSpec={streamSpec}
+              />
+            );
+          }
+          return null;
+        })}
 
         {isLoading && (
           <div className="flex items-center gap-2 text-magenta text-[12px] p-2">

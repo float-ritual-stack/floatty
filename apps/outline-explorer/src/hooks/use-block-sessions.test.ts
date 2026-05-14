@@ -100,16 +100,18 @@ describe("useBlockSessions", () => {
     expect(result.current.error?.message).toContain("500");
   });
 
-  it("invalidateBlockSessions(id) clears single entry", async () => {
+  it("invalidateBlockSessions(id) clears single entry and notifies live subscribers", async () => {
     mockFetchOnce([session("first")]);
-    const { result: r1 } = renderHook(() => useBlockSessions("block-clear"));
-    await waitFor(() => expect(r1.current.sessions).toHaveLength(1));
+    const { result } = renderHook(() => useBlockSessions("block-clear"));
+    await waitFor(() => expect(result.current.sessions[0]?.id).toBe("first"));
 
+    // Stack the next response BEFORE invalidating — the subscriber fires
+    // synchronously and triggers a refetch, so the mock needs to be ready.
+    mockFetchOnce([session("second")]);
     invalidateBlockSessions("block-clear");
 
-    // Next mount should fetch again.
-    mockFetchOnce([session("second")]);
-    const { result: r2 } = renderHook(() => useBlockSessions("block-clear"));
-    await waitFor(() => expect(r2.current.sessions[0]?.id).toBe("second"));
+    // Live subscriber re-fetches and the hook's `sessions` flips to v2
+    // without a remount.
+    await waitFor(() => expect(result.current.sessions[0]?.id).toBe("second"));
   });
 });
