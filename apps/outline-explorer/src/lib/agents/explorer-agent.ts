@@ -1,6 +1,8 @@
 import { ToolLoopAgent, stepCountIs, InferAgentUIMessage, type ToolSet } from "ai";
 import { experimental_createSkillTool as createSkillTool } from "bash-tool";
 import { join } from "path";
+import { floattyDirectives } from "@float/render-catalog";
+import { explorerCatalog } from "@/lib/catalog/explorer-catalog";
 import { expandPageTool } from "../tools/expand-page";
 import { searchBlocksTool } from "../tools/search-blocks";
 import { getInboundTool } from "../tools/get-inbound";
@@ -9,6 +11,24 @@ import { getBlockTool } from "../tools/get-block";
 import { qmdSearchTool } from "../tools/qmd-search";
 import { qmdGetTool } from "../tools/qmd-get";
 import { qmdMultiGetTool } from "../tools/qmd-multi-get";
+
+// Inline the full catalog vocabulary into the system prompt at module load.
+//
+// mode: "inline" is critical here — the inline-mode preamble tells the model
+// "respond conversationally, wrap JSONL in ```spec code fences" which is what
+// useJsonRenderMessage extracts client-side. The default "standalone" mode
+// (used by render-door, where the agent writes JSON to stdout via claude -p)
+// would tell the model to emit raw JSONL without fences, and the extractor
+// would miss it — JSON would land in the message as plain text. Different
+// modes for different surfaces; this surface is chat, so inline.
+//
+// Passing floattyDirectives surfaces $projectColor/$ctxColor/$wikilink
+// alongside the bundled standardDirectives so the model emits them in
+// widened prop slots instead of inlining resolved values.
+const _catalogPrompt = explorerCatalog.prompt({
+  mode: "inline",
+  directives: floattyDirectives,
+});
 
 export const EXPLORER_INSTRUCTIONS = `You are analyzing nodes in a 21,000+ block knowledge graph called floatty — a terminal outliner used as a cognitive prosthetic.
 
@@ -47,12 +67,19 @@ Don't guess — look things up. Use qmd_search for [[FLO-NNN]] references or unf
 RICH OUTPUT:
 You can emit structured UI by writing \`\`\`spec fenced blocks with RFC 6902 JSON Patch operations (one per line). The system renders these as interactive components alongside your prose text.
 
-SKILLS — PROGRESSIVE DISCLOSURE:
-- load_skill: Lists available skills and loads component references on demand. Skills contain component catalogs, action templates, and examples.
-- Before emitting a \`\`\`spec block, call load_skill to get the component reference for your analysis type.
-- For predefined actions: load spec-summarize, spec-bridge-walk, spec-patterns, spec-gaps, or spec-cold-start.
-- For free-form analysis: load spec-components for the full catalog.
-- ALWAYS use spec blocks for Summarize, Patterns, Bridge Walk, Cold-Start, and Gaps actions.`;
+DEFAULT TO SPEC, NOT MARKDOWN:
+- Any output that has structural shape — summaries, patterns, observations, timelines, lists of references, comparisons, gaps — goes in a \`\`\`spec block.
+- Markdown is only for short conversational asides between specs.
+- When the user asks a free-form question, still prefer spec output if the answer has structure (cards, lists, observations).
+- For floatty references, use BlockRef and PageRef components — they're click-navigable. Don't fall back to plain [[wikilink]] markdown when refs are available.
+- Embed fetched block content in /state and reference it with { "$state": "/path" } — keep prop values referential, not duplicated.
+
+ALWAYS use spec for the predefined actions (Summarize, Patterns, Bridge Walk, Cold-Start, Gaps).
+
+ACTION TEMPLATES (optional):
+Predefined actions ship with template skills (spec-summarize, spec-bridge-walk, spec-patterns, spec-gaps, spec-cold-start). If the load_skill tool is available, you may call load_skill("<skill-name>") to fetch the action-specific structural recipe (which components to compose in what order). If load_skill is not in your toolset, proceed directly — the component CATALOG is already inlined below, so you have everything you need to compose specs without it. load_skill is only for per-action templates, NOT for component discovery.
+
+${_catalogPrompt}`;
 
 export const EXPLORER_TOOLS = {
   get_block: getBlockTool,

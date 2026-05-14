@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, isToolUIPart, getToolName } from "ai";
-import { Sparkles, X, Send, Loader, Compass, Settings, PlayCircle } from "lucide-react";
+import { Sparkles, X, Send, Loader, Compass, Settings, PlayCircle, RotateCcw } from "lucide-react";
 import type { ExplorerUIMessage } from "@/lib/agents/explorer-agent";
 import { AiActions, type AiActionWithPrompt } from "./ai-actions";
 import { WalkChip } from "./walk-chip";
@@ -77,9 +77,20 @@ export function AiPanel({
 
   function handleAction(action: AiActionWithPrompt) {
     setActiveAction(action.id);
-    setMessages([]);
     const msg = buildContextMessage(action.prompt);
     sendMessage({ text: msg });
+  }
+
+  function handleResetThread() {
+    if (messages.length === 0) return;
+    // Bail if a response is mid-stream — clearing under an in-flight write
+    // would leave the UI in a contradictory state (history cleared, then new
+    // streamed output appears with no preceding context).
+    if (isLoading) return;
+    const ok = window.confirm("Clear conversation history?");
+    if (!ok) return;
+    setMessages([]);
+    setActiveAction(null);
   }
 
   function handleCustomSubmit() {
@@ -152,6 +163,16 @@ export function AiPanel({
         <span className="text-dim text-[10px] ml-auto">
           {noContent ? "select content" : pageContextId ? "page context" : `${selectedIds.length} selected`}
         </span>
+        <button
+          type="button"
+          onClick={handleResetThread}
+          disabled={messages.length === 0 || isLoading}
+          title="Clear conversation history"
+          aria-label="Clear conversation history"
+          className="bg-transparent border-none text-muted cursor-pointer hover:text-text transition-colors disabled:opacity-40 disabled:cursor-default"
+        >
+          <RotateCcw size={12} />
+        </button>
         <button
           onClick={() => setShowSettings(!showSettings)}
           className={`bg-transparent border-none cursor-pointer transition-colors ${showSettings ? "text-cyan" : "text-muted hover:text-text"}`}

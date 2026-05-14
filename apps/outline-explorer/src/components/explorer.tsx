@@ -176,7 +176,6 @@ export function Explorer() {
               onMouseDown={onResizeMouseDown}
             />
             <AiPanel
-              key={state.pageContextId || [...state.selectedIds].join(",")}
               selectedIds={[...state.selectedIds]}
               pageContextId={state.pageContextId}
               onClose={state.closeAi}
