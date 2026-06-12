@@ -369,6 +369,142 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
     })
 }
 
+/// Connect to a remote floatty-server instead of spawning a local subprocess (FLO-762).
+///
+/// Returns the same external-mode `ServerState` shape as the "reusing existing
+/// server" path in `spawn_server` (`process: None` = we don't own it, don't kill
+/// it). Never touches the PID-file/kill path — that machinery is for local
+/// subprocess lifecycle only.
+///
+/// Failure policy is error-and-surface, NOT fall-back-to-local-spawn: a silent
+/// local spawn would create a split-brain where edits land in a local outline
+/// while the user believes they're on the shared one.
+///
+/// Logging note: the configured URL is deliberately NOT formatted into tracing
+/// events (config-sourced URLs are sensitive by default — see
+/// .claude/rules/logging-discipline.md rule 1). Messages reference the
+/// `remote_server_url` config field instead, which is unambiguous.
+pub fn connect_remote_server(remote_url: &str, paths: &DataPaths) -> Option<ServerState> {
+    let url = remote_url.trim_end_matches('/').to_string();
+    let pid_file = paths.pid_file.clone();
+
+    // Probe with retries — tolerate transient tailnet blips / remote restart
+    // races at app launch. 3 × (2s probe timeout + 500ms gap) ≈ 7.5s worst case.
+    let max_attempts = 3;
+    let mut healthy = false;
+    for attempt in 1..=max_attempts {
+        if probe_server_health(&url, 2) {
+            tracing::info!(
+                attempt = attempt,
+                "Remote floatty-server health check passed"
+            );
+            healthy = true;
+            break;
+        }
+        if attempt < max_attempts {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+    if !healthy {
+        tracing::error!(
+            attempts = max_attempts,
+            "Remote floatty-server unreachable — check `remote_server_url` in config.toml \
+             and network (tailnet) connectivity. NOT falling back to local spawn."
+        );
+        return None;
+    }
+
+    // Version-skew visibility: desktop, laptop, and the remote authority are
+    // built independently and WILL drift. A mismatch isn't fatal (the API is
+    // versioned-by-convention), but it should never be invisible.
+    if let Some(health) = fetch_health_json(&url, 2) {
+        if let Some(server_version) = health.get("version").and_then(|v| v.as_str()) {
+            let client_version = env!("CARGO_PKG_VERSION");
+            if server_version != client_version {
+                tracing::warn!(
+                    client_version = client_version,
+                    server_version = server_version,
+                    "Version skew between this app and the remote floatty-server"
+                );
+            }
+        }
+    }
+
+    let api_key = read_api_key_from_config(&paths.config)?;
+
+    // Authed probe — /api/v1/health is unauthenticated, so a key mismatch
+    // would otherwise pass startup and surface as silent 401s on every
+    // subsequent API call (dead outline, no explanation).
+    match probe_authed_status(&url, "/api/v1/stats", &api_key, 2) {
+        Some(200) => {}
+        Some(401) | Some(403) => {
+            tracing::error!(
+                "API key rejected by remote floatty-server — local [server].api_key \
+                 must match the remote server's key. Refusing to start in remote mode."
+            );
+            return None;
+        }
+        Some(code) => {
+            // Unexpected but not an auth failure (e.g., 500). The health probe
+            // already passed, so let the app come up and surface errors in-UI.
+            tracing::warn!(
+                status = code,
+                "Unexpected status from authed probe of remote server; continuing"
+            );
+        }
+        None => {
+            tracing::warn!("Authed probe of remote server failed to execute; continuing");
+        }
+    }
+
+    tracing::info!("Connected to remote floatty-server (external mode, no local spawn)");
+
+    Some(ServerState {
+        info: ServerInfo { url, api_key },
+        process: None, // Remote server — we didn't spawn it, never kill it
+        pid_file,
+    })
+}
+
+/// Fetch and parse the remote server's health JSON (`{status, version, ...}`).
+/// Returns None on network failure or unparseable body.
+fn fetch_health_json(base_url: &str, timeout_secs: u32) -> Option<serde_json::Value> {
+    let health_url = format!("{}/api/v1/health", base_url);
+    let output = std::process::Command::new("curl")
+        .args(["-s", "-m", &timeout_secs.to_string(), &health_url])
+        .output()
+        .ok()?;
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Probe an authenticated endpoint, returning the HTTP status code.
+/// Returns None if curl itself failed to run or produced no parseable code.
+fn probe_authed_status(
+    base_url: &str,
+    path: &str,
+    api_key: &str,
+    timeout_secs: u32,
+) -> Option<u16> {
+    let full_url = format!("{}{}", base_url, path);
+    let auth_header = format!("Authorization: Bearer {}", api_key);
+    let output = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "-m",
+            &timeout_secs.to_string(),
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-H",
+            &auth_header,
+            &full_url,
+        ])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
 /// Read API key from config.toml [server].api_key
 fn read_api_key_from_config(config_path: &PathBuf) -> Option<String> {
     if !config_path.exists() {
@@ -531,4 +667,124 @@ fn wait_for_server_health(base_url: &str) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    /// Minimal blocking HTTP responder exercising the curl-based probes
+    /// end-to-end. Mirrors the real floatty-server auth split:
+    /// /api/v1/health is unauthenticated, /api/v1/stats requires the Bearer key.
+    fn spawn_mock_server(valid_key: &'static str, version: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(match stream.try_clone() {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                });
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    continue;
+                }
+                let mut authorized = false;
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if line.to_ascii_lowercase().starts_with("authorization:")
+                        && line.contains(valid_key)
+                    {
+                        authorized = true;
+                    }
+                }
+                let response = if request_line.starts_with("GET /api/v1/health") {
+                    let body = format!("{{\"status\":\"ok\",\"version\":\"{}\"}}", version);
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                } else if request_line.starts_with("GET /api/v1/stats") {
+                    if authorized {
+                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
+                            .to_string()
+                    } else {
+                        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .to_string()
+                    }
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_string()
+                };
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{}", addr)
+    }
+
+    fn temp_paths_with_key(key: Option<&str>) -> (tempfile::TempDir, DataPaths) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = DataPaths::from_root(dir.path().to_path_buf());
+        if let Some(key) = key {
+            std::fs::write(&paths.config, format!("[server]\napi_key = \"{}\"\n", key)).unwrap();
+        }
+        (dir, paths)
+    }
+
+    #[test]
+    fn remote_connect_happy_path_normalizes_url_and_returns_external_mode() {
+        let url = spawn_mock_server("test-key-123", env!("CARGO_PKG_VERSION"));
+        let (_dir, paths) = temp_paths_with_key(Some("test-key-123"));
+
+        // Trailing slash must be trimmed — downstream code concatenates paths.
+        let state = connect_remote_server(&format!("{}/", url), &paths)
+            .expect("healthy remote + matching key should connect");
+
+        assert_eq!(state.info.url, url);
+        assert_eq!(state.info.api_key, "test-key-123");
+        // External mode: we didn't spawn it, Drop must never kill it.
+        assert!(state.process.is_none());
+    }
+
+    #[test]
+    fn remote_connect_rejects_on_api_key_mismatch() {
+        // Mock accepts "right-key"; local config holds "wrong-key" →
+        // authed probe gets 401 → refuse to start (fail visibly, not
+        // silent 401s on every later call).
+        let url = spawn_mock_server("right-key", "0.0.0");
+        let (_dir, paths) = temp_paths_with_key(Some("wrong-key"));
+        assert!(connect_remote_server(&url, &paths).is_none());
+    }
+
+    #[test]
+    fn remote_connect_fails_when_unreachable() {
+        // Bind-then-drop to obtain a port with nothing listening.
+        // Connection-refused fails each probe instantly, so the 3-attempt
+        // retry loop completes in ~1s of sleeps, not probe timeouts.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let (_dir, paths) = temp_paths_with_key(Some("k"));
+        assert!(connect_remote_server(&format!("http://127.0.0.1:{}", port), &paths).is_none());
+    }
+
+    #[test]
+    fn remote_connect_fails_without_local_api_key() {
+        let url = spawn_mock_server("k", "0.0.0");
+        let (_dir, paths) = temp_paths_with_key(None);
+        assert!(connect_remote_server(&url, &paths).is_none());
+    }
 }

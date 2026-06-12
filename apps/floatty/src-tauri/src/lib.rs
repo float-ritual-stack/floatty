@@ -271,8 +271,18 @@ pub fn run() {
     // Use port from config (allows workspace-specific ports)
     let server_port = config.server_port;
 
-    // Spawn floatty-server subprocess (passes FLOATTY_DATA_DIR env)
-    let server_state = spawn_server(&paths, server_port);
+    // Server resolution (FLO-762): remote authority when remote_server_url is
+    // set, otherwise spawn/reuse the local floatty-server subprocess.
+    // Remote-unreachable is error-and-surface, never a silent local spawn.
+    let server_state = match config
+        .remote_server_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(remote_url) => server::connect_remote_server(remote_url, &paths),
+        None => spawn_server(&paths, server_port),
+    };
 
     // Try to initialize database and ctx aggregation
     let inner = match FloattyDb::open_at(&paths.database) {
