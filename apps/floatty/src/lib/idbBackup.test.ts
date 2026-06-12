@@ -48,10 +48,11 @@ describe('idbBackup namespace', () => {
 
     initBackupNamespace('my-workspace');
 
-    // Format: floatty-backup-{build}|{encodedWorkspace}
-    // End-anchored so a regression to the legacy 3-part `…|default` namespace fails.
+    // Format: floatty-backup-{build}|{encodedWorkspace}|{serverSlug}
+    // End-anchored so the third segment is verifiably the server slug
+    // ('local' when no slug is passed), not the retired ADR-006 outline name.
     expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.stringMatching(/floatty-backup-dev\|my-workspace$/)
+      expect.stringMatching(/floatty-backup-dev\|my-workspace\|local$/)
     );
   });
 
@@ -109,8 +110,58 @@ describe('idbBackup namespace format', () => {
     );
 
     expect(relevantCall).toBeDefined();
-    // Format: floatty-backup-{build}|{workspace} — end-anchored so a regression to
-    // the legacy 3-part `…|default` namespace fails.
-    expect(relevantCall![0]).toMatch(/floatty-backup-(dev|release)\|format-test-ws$/);
+    // Format: floatty-backup-{build}|{workspace}|{serverSlug} — end-anchored so
+    // the server-identity segment (FLO-762) is always present.
+    expect(relevantCall![0]).toMatch(/floatty-backup-(dev|release)\|format-test-ws\|local$/);
+  });
+});
+
+describe('deriveServerSlug (FLO-762)', () => {
+  it('returns "local" when URL is absent', async () => {
+    const { deriveServerSlug } = await import('./idbBackup');
+    expect(deriveServerSlug(undefined)).toBe('local');
+    expect(deriveServerSlug(null)).toBe('local');
+    expect(deriveServerSlug('')).toBe('local');
+  });
+
+  it('derives host:port from a remote URL', async () => {
+    const { deriveServerSlug } = await import('./idbBackup');
+    // ':' encodes to %3A — keeps the | namespace delimiter unambiguous
+    expect(deriveServerSlug('http://float-box:8765')).toBe('float-box%3A8765');
+    expect(deriveServerSlug('http://127.0.0.1:33333')).toBe('127.0.0.1%3A33333');
+  });
+
+  it('fills default port from protocol when URL omits it', async () => {
+    const { deriveServerSlug } = await import('./idbBackup');
+    expect(deriveServerSlug('https://floatty.example.com')).toBe('floatty.example.com%3A443');
+    expect(deriveServerSlug('http://floatty.example.com')).toBe('floatty.example.com%3A80');
+  });
+
+  it('distinct servers produce distinct slugs (the whole point)', async () => {
+    const { deriveServerSlug } = await import('./idbBackup');
+    expect(deriveServerSlug('http://127.0.0.1:8765')).not.toBe(
+      deriveServerSlug('http://float-box:8765')
+    );
+  });
+
+  it('falls back to encoded raw string for unparseable URLs', async () => {
+    const { deriveServerSlug } = await import('./idbBackup');
+    expect(deriveServerSlug('not a url')).toBe(encodeURIComponent('not a url'));
+  });
+
+  it('namespace incorporates the server slug — server flip = fresh namespace', async () => {
+    const { initBackupNamespace, deriveServerSlug } = await import('./idbBackup');
+    mockLogger.info.mockClear();
+
+    initBackupNamespace('slug-ws', deriveServerSlug('http://127.0.0.1:8765'));
+    initBackupNamespace('slug-ws', deriveServerSlug('http://float-box:8765'));
+
+    // Two distinct namespaces → two namespace-change logs
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.stringMatching(/floatty-backup-(dev|release)\|slug-ws\|127\.0\.0\.1%3A8765$/)
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.stringMatching(/floatty-backup-(dev|release)\|slug-ws\|float-box%3A8765$/)
+    );
   });
 });

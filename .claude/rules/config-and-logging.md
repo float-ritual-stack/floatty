@@ -24,6 +24,11 @@ max_retries = 3
 max_age_hours = 72
 workspace_name = "default"
 server_port = 8765
+# Remote authority mode (FLO-762): connect to a remote floatty-server instead
+# of spawning a local subprocess. server_port is ignored when set. The local
+# [server].api_key must match the remote server's key. Unreachable remote =
+# startup error (never a silent local spawn — split-brain guard).
+# remote_server_url = "http://float-box:8765"
 ```
 
 **Title bar**: `floatty (dev) - workspace_name v0.4.2 (abc1234)`

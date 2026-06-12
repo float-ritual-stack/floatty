@@ -87,3 +87,28 @@ describe('reconnect buffer overflow guards', () => {
     expect(shouldStartOverflowRecovery(false, false)).toBe(false);
   });
 });
+
+describe('buildWsUrl (FLO-762 WS auth)', () => {
+  it('converts http to ws and appends /ws', async () => {
+    const { buildWsUrl } = await import('./useSyncedYDoc');
+    expect(buildWsUrl('http://127.0.0.1:8765', undefined)).toBe('ws://127.0.0.1:8765/ws');
+  });
+
+  it('converts https to wss (tailscale serve case)', async () => {
+    const { buildWsUrl } = await import('./useSyncedYDoc');
+    expect(buildWsUrl('https://float-box.tailnet.ts.net', undefined)).toBe(
+      'wss://float-box.tailnet.ts.net/ws'
+    );
+  });
+
+  it('appends the API key as an encoded query token', async () => {
+    const { buildWsUrl } = await import('./useSyncedYDoc');
+    expect(buildWsUrl('http://float-box:8765', 'floatty-abc123')).toBe(
+      'ws://float-box:8765/ws?token=floatty-abc123'
+    );
+    // Characters needing encoding stay unambiguous in the query string
+    expect(buildWsUrl('http://float-box:8765', 'k&y=v')).toBe(
+      'ws://float-box:8765/ws?token=k%26y%3Dv'
+    );
+  });
+});

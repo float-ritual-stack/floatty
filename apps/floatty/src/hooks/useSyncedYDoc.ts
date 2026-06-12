@@ -18,6 +18,7 @@ import {
   clearBackup as clearBackupIDB,
   hasBackup as hasBackupIDB,
   initBackupNamespace,
+  deriveServerSlug,
   saveLastContiguousSeq as saveLastContiguousSeqIDB,
   getLastContiguousSeq as getLastContiguousSeqIDB,
 } from '../lib/idbBackup';
@@ -1109,6 +1110,11 @@ async function forceFlushOnReconnect() {
   }
 }
 
+// Re-exported so existing consumers/tests keep one import surface; canonical
+// home is lib/wsUrl.ts (shared with doorSandbox — FLO-762).
+import { buildWsUrl } from '../lib/wsUrl';
+export { buildWsUrl };
+
 /**
  * Connect to WebSocket for real-time updates from server.
  * Called once after initial state load.
@@ -1128,9 +1134,11 @@ function connectWebSocket() {
     return;
   }
 
-  // Convert http://localhost:8765 to ws://localhost:8765/ws
-  const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
-  wsLogger.info(`Connecting to ${wsUrl}`);
+  // Convert http://localhost:8765 to ws://localhost:8765/ws, with the API key
+  // as a query token (FLO-762 — see buildWsUrl).
+  const wsUrl = buildWsUrl(serverUrl, window.__FLOATTY_API_KEY__);
+  // Log the bare endpoint only — the token is a credential (logging-discipline §1).
+  wsLogger.info(`Connecting to ${wsUrl.split('?')[0]}`);
 
   try {
     sharedWebSocket = new WebSocket(wsUrl);
@@ -1513,7 +1521,10 @@ export function useSyncedYDoc(
           } catch (err) {
             logger.warn('Config IPC failed for namespace, using default', { err });
           }
-          initBackupNamespace(workspaceName);
+          // FLO-762: namespace includes server identity — flipping
+          // remote_server_url must never replay another server's seq baseline
+          // or diff-push a stale local backup into the new server.
+          initBackupNamespace(workspaceName, deriveServerSlug(window.__FLOATTY_SERVER_URL__));
 
           // Load persisted lastContiguousSeq for incremental sync after browser refresh
           // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:

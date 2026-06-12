@@ -55,6 +55,14 @@ pub struct AggregatorConfig {
     /// Server port (default: 8765)
     #[serde(default = "default_server_port")]
     pub server_port: u16,
+    /// Remote floatty-server URL (e.g., "http://float-box:8765"). When set, the
+    /// app connects to this server instead of spawning a local subprocess, and
+    /// `server_port` is ignored. The local `[server].api_key` must match the
+    /// remote server's key. Unreachable remote = startup error, NOT a silent
+    /// local spawn (avoids split-brain where edits land in a local outline
+    /// while the user believes they're on the shared one). FLO-762.
+    #[serde(default)]
+    pub remote_server_url: Option<String>,
     /// Collapse depth when splitting outliner panes (0 = disabled; recommended 2)
     /// Higher numbers show more levels: 1 = roots only, 2 = roots + children, etc.
     #[serde(default = "default_split_collapse_depth")]
@@ -163,6 +171,7 @@ impl Default for AggregatorConfig {
             max_shell_output_bytes: default_max_shell_output(),
             workspace_name: default_workspace_name(),
             server_port: default_server_port(),
+            remote_server_url: None,
             split_collapse_depth: default_split_collapse_depth(),
             initial_collapse_depth: default_initial_collapse_depth(),
             show_diagnostics: default_show_diagnostics(),
@@ -264,7 +273,6 @@ impl AggregatorConfig {
             .filter(|s| !s.is_empty())
             .unwrap_or(&self.ollama_model)
     }
-
 }
 
 /// Status counts for sidebar

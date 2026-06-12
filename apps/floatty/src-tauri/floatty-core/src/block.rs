@@ -288,7 +288,10 @@ mod tests {
         assert_eq!(parse_block_type("term:: pwd"), BlockType::Sh);
         assert_eq!(parse_block_type("ai:: generate something"), BlockType::Text);
         assert_eq!(parse_block_type("chat:: hello"), BlockType::Text);
-        assert_eq!(parse_block_type("  ai:: with leading space"), BlockType::Text);
+        assert_eq!(
+            parse_block_type("  ai:: with leading space"),
+            BlockType::Text
+        );
     }
 
     #[test]

@@ -7,6 +7,8 @@ KEY=$(grep '^api_key' ~/.floatty-dev/config.toml | cut -d'"' -f2)
 PORT=$(grep '^server_port' ~/.floatty-dev/config.toml | cut -d= -f2 | tr -d ' ')
 ```
 
+**Remote mode (FLO-762)**: when `remote_server_url` is set in config.toml, there is no local server — use that URL instead of `127.0.0.1:$PORT` (same `$KEY`; local key matches the remote's). Inside floatty terminals, prefer the injected `FLOATTY_URL` + `FLOATTY_API_KEY` env vars, which are correct in both modes.
+
 ## Block CRUD
 
 | Method | Endpoint | Purpose |
