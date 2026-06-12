@@ -506,10 +506,7 @@ mod tests {
 
     #[test]
     fn test_prefix_marker_retired_ai_is_not_special() {
-        assert_eq!(
-            extract_prefix_marker("ai:: explain this"),
-            None
-        );
+        assert_eq!(extract_prefix_marker("ai:: explain this"), None);
     }
 
     #[test]
