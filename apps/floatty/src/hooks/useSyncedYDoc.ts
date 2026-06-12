@@ -1110,6 +1110,11 @@ async function forceFlushOnReconnect() {
   }
 }
 
+// Re-exported so existing consumers/tests keep one import surface; canonical
+// home is lib/wsUrl.ts (shared with doorSandbox — FLO-762).
+import { buildWsUrl } from '../lib/wsUrl';
+export { buildWsUrl };
+
 /**
  * Connect to WebSocket for real-time updates from server.
  * Called once after initial state load.
@@ -1129,9 +1134,11 @@ function connectWebSocket() {
     return;
   }
 
-  // Convert http://localhost:8765 to ws://localhost:8765/ws
-  const wsUrl = serverUrl.replace(/^http/, 'ws') + '/ws';
-  wsLogger.info(`Connecting to ${wsUrl}`);
+  // Convert http://localhost:8765 to ws://localhost:8765/ws, with the API key
+  // as a query token (FLO-762 — see buildWsUrl).
+  const wsUrl = buildWsUrl(serverUrl, window.__FLOATTY_API_KEY__);
+  // Log the bare endpoint only — the token is a credential (logging-discipline §1).
+  wsLogger.info(`Connecting to ${wsUrl.split('?')[0]}`);
 
   try {
     sharedWebSocket = new WebSocket(wsUrl);

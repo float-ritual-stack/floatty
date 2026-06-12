@@ -18,6 +18,7 @@ import type {
 import type { ExecutorActions } from './types';
 import type { BatchBlockOp } from '../../hooks/useBlockStore';
 import { createLogger } from '../logger';
+import { buildWsUrl } from '../wsUrl';
 import { blockEventBus } from '../events/eventBus';
 import { EventFilters } from '../events/types';
 import type { EventFilter } from '../events/types';
@@ -69,7 +70,9 @@ export function createServerAccess(): DoorServerAccess {
     throw new Error('[doorSandbox] Server info not available — httpClient not initialized');
   }
 
-  const wsUrl = url.replace(/^http/, 'ws') + '/ws';
+  // FLO-762: token-bearing WS URL — doors connect to /ws with the same auth
+  // as the main sync socket (server enforces it for non-loopback peers).
+  const wsUrl = buildWsUrl(url, apiKey);
 
   return {
     url,

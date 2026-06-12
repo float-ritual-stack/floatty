@@ -419,9 +419,14 @@ async fn main() {
         )
     };
 
-    // WebSocket route
+    // WebSocket route — carries its own auth (FLO-762): /ws is merged outside
+    // the REST auth middleware, and with a non-loopback bind an open /ws is a
+    // read-only firehose of every block edit to anyone who can reach the port.
     let ws_state = ws::WsState {
         broadcaster: Arc::clone(&broadcaster),
+        auth: config
+            .auth_enabled
+            .then(|| auth::ApiKeyAuth::new(api_key.clone())),
     };
     let ws_routes = Router::new()
         .route("/ws", get(ws::ws_handler))
