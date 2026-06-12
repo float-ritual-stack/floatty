@@ -289,9 +289,7 @@ pub async fn ws_handler(
     if !authorize_ws(&addr, query.token.as_deref(), ws_state.auth.as_ref()) {
         // The token value is deliberately NOT logged (logging-discipline §1 —
         // it's a credential and this event ships to OTLP).
-        tracing::warn!(
-            "WebSocket upgrade rejected: missing/invalid token from non-loopback peer"
-        );
+        tracing::warn!("WebSocket upgrade rejected: missing/invalid token from non-loopback peer");
         return (StatusCode::UNAUTHORIZED, "Invalid or missing token").into_response();
     }
     let broadcaster = Arc::clone(&ws_state.broadcaster);
@@ -398,7 +396,11 @@ mod tests {
 
     #[test]
     fn ws_auth_remote_allows_matching_token() {
-        assert!(authorize_ws(&tailnet_peer(), Some("test-key"), Some(&auth())));
+        assert!(authorize_ws(
+            &tailnet_peer(),
+            Some("test-key"),
+            Some(&auth())
+        ));
     }
 
     #[test]
