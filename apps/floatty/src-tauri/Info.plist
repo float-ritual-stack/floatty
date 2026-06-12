@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    FLO-762: remote authority mode points the webview at a non-localhost
+    floatty-server (e.g. http://100.78.124.84:8765 over the tailnet). macOS
+    App Transport Security blocks plain-HTTP loads to anything but localhost,
+    so without this the webview's fetch/WebSocket to the remote server fails
+    with "TypeError: Load failed" and the app reports "server isn't up".
+
+    Scoped to web content only — native (NSURLSession) networking keeps full
+    ATS. The remote server is reached over a private tailnet and every REST
+    call + WS upgrade still requires the Bearer/token API key. The stronger
+    posture (tailscale serve TLS, https://...ts.net) removes the need for this
+    entirely; this keeps remote mode working without per-host TLS setup.
+  -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoadsInWebContent</key>
+    <true/>
+  </dict>
+</dict>
+</plist>
