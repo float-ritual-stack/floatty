@@ -119,6 +119,14 @@ export function findBacklinks(pageName: string): Block[] {
   const backlinks: Block[] = [];
 
   for (const block of Object.values(blocks)) {
+    // Fast path: a block with no '[[' can never be a backlink. At
+    // measurement time (2026-06-12) only ~3k of ~25.7k blocks carried
+    // outlinks, so this gate skips the page-title normalization and
+    // bracket-counting parse for the overwhelming majority. This memo
+    // re-runs on any block change while a page is zoomed — per-block
+    // cost is what keeps the main thread responsive.
+    if (!block.content.includes('[[')) continue;
+
     // Skip the page itself (we don't want self-references)
     const blockName = getPageTitle(block.content.trim()).toLowerCase();
     if (blockName === normalizedName) continue;

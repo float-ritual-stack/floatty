@@ -7,7 +7,7 @@
  */
 
 import { batch, createRoot, createSignal } from 'solid-js';
-import { createStore } from 'solid-js/store';
+import { createStore, unwrap } from 'solid-js/store';
 import { blockStore } from './useBlockStore';
 import { computeExpansion } from '../lib/expansionPolicy';
 import { createLogger } from '../lib/logger';
@@ -163,18 +163,39 @@ function createPaneStore() {
     return state.focusedBlockId[paneId] ?? null;
   };
 
+  // Trailing debounce for presence POSTs. Without it, rapid arrow-key
+  // navigation fires one HTTP request per block transition (measured 43
+  // POSTs in a single navigation burst, 2026-06-12 perf recon). The TUI
+  // follower only needs the resting position, so last-write-wins after a
+  // short quiet period.
+  const PRESENCE_DEBOUNCE_MS = 150;
+  let presenceTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingPresencePaneId: string | null = null;
+
   const setFocusedBlockId = (paneId: string, blockId: string | null) => {
     if (state.focusedBlockId[paneId] === blockId) return;
     setState('focusedBlockId', paneId, blockId);
     bumpPersistenceVersion();
     // Spike: broadcast cursor position for TUI follower
     if (blockId && window.__FLOATTY_SERVER_URL__) {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (window.__FLOATTY_API_KEY__) headers['Authorization'] = `Bearer ${window.__FLOATTY_API_KEY__}`;
-      fetch(`${window.__FLOATTY_SERVER_URL__}/api/v1/presence`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ blockId, paneId }),
-      }).catch(() => {});
+      pendingPresencePaneId = paneId;
+      if (presenceTimer) clearTimeout(presenceTimer);
+      presenceTimer = setTimeout(() => {
+        presenceTimer = null;
+        const targetPaneId = pendingPresencePaneId;
+        pendingPresencePaneId = null;
+        if (!targetPaneId) return;
+        // Re-read at fire time so the POST carries the resting position,
+        // not the position when the debounce window opened.
+        const currentBlockId = state.focusedBlockId[targetPaneId];
+        if (!currentBlockId) return;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (window.__FLOATTY_API_KEY__) headers['Authorization'] = `Bearer ${window.__FLOATTY_API_KEY__}`;
+        fetch(`${window.__FLOATTY_SERVER_URL__}/api/v1/presence`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ blockId: currentBlockId, paneId: targetPaneId }),
+        }).catch(() => {});
+      }, PRESENCE_DEBOUNCE_MS);
     }
   };
 
@@ -582,9 +603,17 @@ function createPaneStore() {
     focusedBlockId: Record<string, string | null>;
     navigationHistory: Record<string, NavigationState>;
   } => {
+    // structuredClone CANNOT clone Proxy objects — it throws DataCloneError
+    // unconditionally, and SolidJS store nodes are proxies. Cloning the
+    // store state directly broke every workspace save from PR #299
+    // (2026-05-08) until 2026-06-12 (~1k DataCloneError log lines per
+    // active day). unwrap() first to get the raw underlying objects, THEN
+    // structuredClone for a decoupled snapshot.
+    const rawHistory = unwrap(state.navigationHistory);
+
     // Cap history entries on save (defense in depth, push already caps)
     const cappedHistory: Record<string, NavigationState> = {};
-    for (const [paneId, historyState] of Object.entries(state.navigationHistory)) {
+    for (const [paneId, historyState] of Object.entries(rawHistory)) {
       const entries = historyState.entries.slice(-DEFAULT_MAX_HISTORY_SIZE);
       cappedHistory[paneId] = {
         entries,
@@ -594,11 +623,7 @@ function createPaneStore() {
 
     return {
       zoomedRootId: { ...state.zoomedRootId },
-      // FLO-316: structuredClone strips SolidJS proxies (same effect as
-      // JSON.parse(JSON.stringify(...))) and avoids the JSON serialize/parse
-      // roundtrip. Persistence writes fire on every collapse toggle, focus
-      // change, and navigation event — keeping this cheap matters.
-      collapsed: structuredClone(state.collapsed),
+      collapsed: structuredClone(unwrap(state.collapsed)),
       // FLO-77: Include focused block IDs in persistence
       focusedBlockId: { ...state.focusedBlockId },
       // FLO-180: Include navigation history (capped)

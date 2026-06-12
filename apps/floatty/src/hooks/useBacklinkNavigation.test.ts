@@ -58,3 +58,68 @@ describe('getPageTitle', () => {
     expect(getPageTitle('## #2817')).toBe('#2817');
   });
 });
+
+// ─── findBacklinks (2026-06-12 keyboard-lag recon) ──────────────────────────
+// The backlinks memo re-runs on any block change while a page is zoomed, over
+// EVERY block in the store (~25.7k at measurement time). The '[[' fast-path
+// gate added in the perf bundle must not change results — these tests pin the
+// behavior contract.
+
+import * as Y from 'yjs';
+import { findBacklinks } from './useBacklinkNavigation';
+import { blockStore } from './useBlockStore';
+
+function seedBlock(
+  blocksMap: Y.Map<unknown>,
+  rootIds: Y.Array<string>,
+  id: string,
+  content: string,
+): void {
+  const map = new Y.Map<unknown>();
+  map.set('id', id);
+  map.set('parentId', null);
+  map.set('content', content);
+  map.set('type', 'text');
+  map.set('metadata', null);
+  map.set('collapsed', false);
+  map.set('createdAt', 1);
+  map.set('updatedAt', 1);
+  map.set('childIds', new Y.Array<string>());
+  blocksMap.set(id, map);
+  rootIds.push([id]);
+}
+
+describe('findBacklinks', () => {
+  it('finds wikilink references, skips bracket-free blocks and the page itself', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap<unknown>('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+
+    doc.transact(() => {
+      seedBlock(blocksMap, rootIds, 'page-block', '# Target Page');
+      seedBlock(blocksMap, rootIds, 'linker-1', 'see [[Target Page]] for context');
+      seedBlock(blocksMap, rootIds, 'linker-2', 'case test [[target page]]');
+      seedBlock(blocksMap, rootIds, 'plain', 'no brackets here at all');
+      seedBlock(blocksMap, rootIds, 'other-link', 'mentions [[Some Other Page]] only');
+    });
+    blockStore.initFromYDoc(doc);
+
+    const hits = findBacklinks('# Target Page').map((b) => b.id).sort();
+
+    expect(hits).toEqual(['linker-1', 'linker-2']);
+  });
+
+  it('returns empty array when nothing links to the page', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap<unknown>('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+
+    doc.transact(() => {
+      seedBlock(blocksMap, rootIds, 'lonely-page', '# Lonely Page');
+      seedBlock(blocksMap, rootIds, 'unrelated', 'plain text without links');
+    });
+    blockStore.initFromYDoc(doc);
+
+    expect(findBacklinks('# Lonely Page')).toEqual([]);
+  });
+});
