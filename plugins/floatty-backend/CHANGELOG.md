@@ -7,6 +7,22 @@ semver ([semver.org](https://semver.org/)). The authoritative version lives
 in `marketplace.json` (per Claude Code's
 [relative-path plugin guidance](https://code.claude.com/docs/en/plugin-marketplaces#version-resolution-and-release-channels)).
 
+## [0.8.1] — 2026-06-12
+
+[[FLO-762]] remote-authority support in `scripts/floatty-api.sh`:
+
+- Honors `remote_server_url` from `config.toml` — when set, the app runs no
+  local server, so URL resolution uses the remote authority and skips
+  localhost probing. Explicit `FLOATTY_URL` still wins (ngrok / floatty
+  terminal injection).
+- Reads `api_key` from the **same** config that supplied the remote URL. A
+  release-config remote pointer paired with a dev-config key was a guaranteed
+  401 against the remote server.
+- Config parsing switched from `grep | head | cut` to grep + shell parameter
+  expansion: the `head`/`cut` pipe stage fails with "command not found" when
+  this script is sourced under zsh (the case for many agents). Hardened both
+  the URL and api_key readers.
+
 ## [0.8.0] — 2026-04-26
 
 [[FLO-679]] PR 2 / [[FLO-680]]: every block-returning floatty endpoint now

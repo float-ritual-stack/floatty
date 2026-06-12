@@ -31,8 +31,8 @@ The scripts read two environment variables. Auto-detection tries BOTH config pat
 
 Priority:
 
-- `FLOATTY_URL` — probes localhost:8765, then localhost:33333; falls back to the existing env var or `127.0.0.1:8765`. Set explicitly for ngrok / remote floatty.
-- `FLOATTY_API_KEY` — explicit env var wins; otherwise the first `api_key=` line found across the two config paths; otherwise the well-known bootstrap default (fine for localhost — **rotate the key if you tunnel publicly**; see the comment in `scripts/floatty-api.sh`).
+- `FLOATTY_URL` — explicit env var wins (floatty terminals pre-inject it; correct in both local and remote mode); else `remote_server_url` from `config.toml` (FLO-762 remote authority — when set, the app runs no local server, so localhost probing is skipped); else probes localhost:8765 then :33333; else `127.0.0.1:8765`.
+- `FLOATTY_API_KEY` — explicit env var wins; else the `api_key` from the **same** `config.toml` that supplied the remote URL (URL + key must match or the remote authority 401s); else dev-then-release config; else the well-known bootstrap default (fine for localhost — **rotate the key if you tunnel publicly**; see the comment in `scripts/floatty-api.sh`).
 
 ## Bug history
 
