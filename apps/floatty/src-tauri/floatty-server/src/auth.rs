@@ -30,7 +30,7 @@ impl ApiKeyAuth {
 /// Middleware function that validates Bearer token
 pub async fn auth_middleware(
     State(auth): State<ApiKeyAuth>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
@@ -45,11 +45,12 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // Skip auth for localhost connections (127.0.0.1 or ::1)
-    // Remote access still requires API key
-    if addr.ip().is_loopback() {
-        return next.run(request).await;
-    }
+    // FLO-762: no loopback bypass. The peer IP is NOT a trust signal — a
+    // same-host reverse proxy / SSH local-forward / relay makes a remote
+    // client appear as 127.0.0.1. The Bearer key is the only auth. Every
+    // shipped client (frontend HttpClient, pane store, doors) and the
+    // documented on-box `curl` convention already send the key. Kept
+    // symmetric with `ws::authorize_ws` (FLO-762 / audit S1).
 
     // Extract and validate Authorization header
     let auth_header = request

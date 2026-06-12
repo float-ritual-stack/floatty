@@ -262,20 +262,20 @@ pub struct WsAuthQuery {
 }
 
 /// Pure WS authorization decision — mirrors `auth::auth_middleware` semantics:
-/// auth disabled → allow; loopback peer → allow (on-box clients stay keyless);
-/// otherwise the query token must match the API key exactly.
+/// auth disabled → allow; otherwise the query token must match the API key
+/// exactly. The peer IP is NOT a trust signal (FLO-762 / audit S1): a same-host
+/// reverse proxy / SSH local-forward / relay makes a remote client appear as
+/// 127.0.0.1, so a loopback bypass would silently un-auth `/ws`. Every shipped
+/// client sends the token, so requiring it always costs nothing.
 /// Kept pure (no upgrade machinery) so it's unit-testable.
 pub fn authorize_ws(
-    addr: &SocketAddr,
+    _addr: &SocketAddr,
     token: Option<&str>,
     auth: Option<&crate::auth::ApiKeyAuth>,
 ) -> bool {
     let Some(auth) = auth else {
         return true; // auth_enabled = false
     };
-    if addr.ip().is_loopback() {
-        return true;
-    }
     token == Some(auth.key())
 }
 
@@ -289,7 +289,7 @@ pub async fn ws_handler(
     if !authorize_ws(&addr, query.token.as_deref(), ws_state.auth.as_ref()) {
         // The token value is deliberately NOT logged (logging-discipline §1 —
         // it's a credential and this event ships to OTLP).
-        tracing::warn!("WebSocket upgrade rejected: missing/invalid token from non-loopback peer");
+        tracing::warn!("WebSocket upgrade rejected: missing or invalid auth token");
         return (StatusCode::UNAUTHORIZED, "Invalid or missing token").into_response();
     }
     let broadcaster = Arc::clone(&ws_state.broadcaster);
@@ -380,8 +380,12 @@ mod tests {
     }
 
     #[test]
-    fn ws_auth_loopback_allows_without_token() {
-        assert!(authorize_ws(&loopback(), None, Some(&auth())));
+    fn ws_auth_loopback_still_requires_token() {
+        // FLO-762 / audit S1: the loopback bypass is gone — peer IP is not a
+        // trust signal (reverse-proxy / port-forward spoofs it). A loopback
+        // peer without the token is rejected; with the right token it's allowed.
+        assert!(!authorize_ws(&loopback(), None, Some(&auth())));
+        assert!(authorize_ws(&loopback(), Some("test-key"), Some(&auth())));
     }
 
     #[test]
