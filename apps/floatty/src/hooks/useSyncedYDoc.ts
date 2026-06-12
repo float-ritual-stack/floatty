@@ -18,6 +18,7 @@ import {
   clearBackup as clearBackupIDB,
   hasBackup as hasBackupIDB,
   initBackupNamespace,
+  deriveServerSlug,
   saveLastContiguousSeq as saveLastContiguousSeqIDB,
   getLastContiguousSeq as getLastContiguousSeqIDB,
 } from '../lib/idbBackup';
@@ -1513,7 +1514,10 @@ export function useSyncedYDoc(
           } catch (err) {
             logger.warn('Config IPC failed for namespace, using default', { err });
           }
-          initBackupNamespace(workspaceName);
+          // FLO-762: namespace includes server identity — flipping
+          // remote_server_url must never replay another server's seq baseline
+          // or diff-push a stale local backup into the new server.
+          initBackupNamespace(workspaceName, deriveServerSlug(window.__FLOATTY_SERVER_URL__));
 
           // Load persisted lastContiguousSeq for incremental sync after browser refresh
           // IMPORTANT: We persist lastContiguousSeq (not lastSeenSeq) because:

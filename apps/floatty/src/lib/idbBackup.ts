@@ -19,19 +19,44 @@ let dbName = 'floatty-backup';
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 /**
- * Initialize the backup namespace based on build environment and workspace.
+ * Derive a server-identity slug from the server URL (FLO-762).
+ *
+ * The backup AND lastContiguousSeq live in this database. Both are only
+ * meaningful against the server they were recorded from: the seq baseline
+ * indexes into one server's update log, and the startup reconciliation
+ * diff-pushes the backup INTO the connected server. Keying the namespace by
+ * server identity means flipping `remote_server_url` gets a fresh namespace —
+ * no stale seq replay, no stale backup merging into the wrong outline.
+ */
+export function deriveServerSlug(serverUrl: string | undefined | null): string {
+  if (!serverUrl) return 'local';
+  try {
+    const u = new URL(serverUrl);
+    const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+    return encodeURIComponent(`${u.hostname}:${port}`);
+  } catch {
+    // Unparseable URL — still better to key on the raw string than to
+    // collapse distinct servers into one namespace.
+    return encodeURIComponent(serverUrl);
+  }
+}
+
+/**
+ * Initialize the backup namespace based on build environment, workspace,
+ * and server identity (FLO-762).
  * MUST be called BEFORE any backup operations (getBackup, saveBackup, etc.)
  *
- * Creates isolation between dev/release builds and different workspaces.
- * e.g., 'floatty-backup-dev|default' vs 'floatty-backup-release|work-journal'
+ * Creates isolation between dev/release builds, workspaces, and servers.
+ * e.g., 'floatty-backup-dev|default|127.0.0.1%3A33333' vs
+ *       'floatty-backup-release|default|float-box%3A8765'
  */
-export function initBackupNamespace(workspaceName: string): void {
+export function initBackupNamespace(workspaceName: string, serverSlug: string = 'local'): void {
   const build = import.meta.env.DEV ? 'dev' : 'release';
   // Use | as delimiter (not -) so workspace names containing hyphens don't
   // produce colliding DB names. encodeURIComponent encodes any | in the name
   // itself to %7C, keeping the delimiter unambiguous.
   const ws = encodeURIComponent(workspaceName);
-  const newDbName = `floatty-backup-${build}|${ws}`;
+  const newDbName = `floatty-backup-${build}|${ws}|${serverSlug}`;
 
   if (newDbName !== dbName) {
     // CRITICAL: Null the promise SYNCHRONOUSLY before async close to prevent
@@ -60,6 +85,17 @@ export function initBackupNamespace(workspaceName: string): void {
       req.onsuccess = () => logger.info(`[ADR-006 migration] cleared legacy IDB: ${legacyName}`);
       req.onerror = () => logger.warn(`[ADR-006 migration] failed to clear legacy IDB ${legacyName}: ${req.error?.message ?? 'unknown'}`);
       req.onblocked = () => logger.warn(`[ADR-006 migration] legacy IDB ${legacyName} delete blocked (open elsewhere); will retry on next launch`);
+
+      // FLO-762 migration: clean up the pre-server-slug 2-segment database
+      // (`floatty-backup-{build}|{ws}`). Its backup + seq baseline were
+      // recorded against an unidentified server, so they're not safe to carry
+      // forward; the cost is one full resync on first launch after upgrade.
+      // Same idempotent best-effort semantics as the ADR-006 block above.
+      const preSlugName = `floatty-backup-${build}|${ws}`;
+      const preSlugReq = indexedDB.deleteDatabase(preSlugName);
+      preSlugReq.onsuccess = () => logger.info(`[FLO-762 migration] cleared pre-slug IDB: ${preSlugName}`);
+      preSlugReq.onerror = () => logger.warn(`[FLO-762 migration] failed to clear pre-slug IDB ${preSlugName}: ${preSlugReq.error?.message ?? 'unknown'}`);
+      preSlugReq.onblocked = () => logger.warn(`[FLO-762 migration] pre-slug IDB ${preSlugName} delete blocked (open elsewhere); will retry on next launch`);
     }
   }
 }
