@@ -114,8 +114,8 @@ After sourcing `floatty-api.sh`, later scripts (blocks/search/daily/garden/
 context/ops) auto-source it themselves via a `declare -F floatty_curl` guard, so
 re-sourcing is idempotent.
 
-**Server**: `http://127.0.0.1:8765` (local dev/release, override: `FLOATTY_URL` env var). Agents running inside a floatty terminal get `FLOATTY_URL` injected automatically and should use it as-is.
-**API Key**: `floatty-1890872e6255d2d0` (override: `FLOATTY_API_KEY` env var)
+**Server**: `http://127.0.0.1:8765` (local dev/release, override: `FLOATTY_URL` env var). Agents running inside a floatty terminal get `FLOATTY_URL` injected automatically and should use it as-is. **Remote-authority mode (FLO-762):** if `config.toml` sets `remote_server_url`, the app runs no local server — the helper scripts resolve `FLOATTY_URL` to that remote URL and read the API key from the same config. Don't hardcode `127.0.0.1`; source `floatty-api.sh` and use `$FLOATTY_URL`.
+**API Key**: `floatty-1890872e6255d2d0` (bootstrap default; override: `FLOATTY_API_KEY` env var). In remote mode the key comes from the same `config.toml` that supplied `remote_server_url` (must match the remote server's key).
 
 **jq availability**: `floatty-api.sh` auto-detects jq — checks PATH first, then `/tmp/jq` (where `floatctl` bootstrap installs it in claude.ai sandboxes), then falls back to `apt-get install`. If you've already bootstrapped floatctl, jq is ready.
 
