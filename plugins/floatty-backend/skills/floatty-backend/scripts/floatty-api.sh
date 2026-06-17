@@ -56,11 +56,16 @@ _floatty_read_remote_url_from() {
 # _floatty_cfg records which config.toml supplied a remote_server_url, so the
 # api_key below is read from the SAME file. A release-config remote pointer
 # paired with a dev-config key is a guaranteed 401 (FLO-762).
+#
+# Scan dev BEFORE release — consistent with the api_key fallback order and the
+# config precedence documented in README ("dev, then release"). A dev session
+# pointed at a remote dev authority should win over the release daily-driver;
+# either way the matching key is read from the same file via _floatty_cfg.
 _floatty_cfg=""
 if [[ -n "$FLOATTY_URL" ]]; then
   : # explicit env var wins — do nothing
 else
-  for _cfg in ~/.floatty/config.toml ~/.floatty-dev/config.toml; do
+  for _cfg in ~/.floatty-dev/config.toml ~/.floatty/config.toml; do
     _floatty_remote=$(_floatty_read_remote_url_from "$_cfg")
     if [[ -n "$_floatty_remote" ]]; then
       FLOATTY_URL="${_floatty_remote%/}"   # remote authority — skip localhost probe
@@ -109,7 +114,11 @@ _floatty_read_api_key_from() {
   local path="$1" line
   [[ -f "$path" ]] || return 1
   # grep + parameter expansion (no head/cut) — robust when sourced under zsh.
-  line=$(grep -E '^[[:space:]]*api_key[[:space:]]*=' "$path" | grep -v anthropic)
+  # The `^[[:space:]]*api_key` anchor already excludes `anthropic_api_key`
+  # (starts with "anthropic", not "api_key"), so no value-based filtering —
+  # filtering on "anthropic" would wrongly drop a server key whose value
+  # happened to contain that substring.
+  line=$(grep -E '^[[:space:]]*api_key[[:space:]]*=' "$path")
   line="${line%%$'\n'*}"          # first match (replaces head -1)
   line="${line#*\"}"; line="${line%%\"*}"   # value between quotes (replaces cut)
   [[ -n "$line" && "$line" != *api_key* ]] && printf '%s\n' "$line"
