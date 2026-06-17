@@ -7,7 +7,7 @@
  * paneStore — e.g. useBacklinkNavigation.test.ts).
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { paneStore } from './usePaneStore';
 import { findTabIdByPaneId, layoutStore } from './useLayoutStore';
 import type { TabLayout } from '../lib/layoutTypes';
@@ -209,5 +209,93 @@ describe('layoutStore.hydrateLayouts — registry reconciliation (FLO-668)', () 
     expect(findTabIdByPaneId(staleTabPane)).toBeNull();
     expect(findTabIdByPaneId(restoredPane)).toBe(restoredLayout.tabId);
     expect(findTabIdByPaneId(sidebarPane)).toBeNull(); // sidebar is not tab-hosted
+  });
+});
+
+describe('paneStore — persistence snapshot + presence debounce (2026-06-12 keyboard-lag recon)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    delete window.__FLOATTY_SERVER_URL__;
+  });
+
+  it('getPaneStateForPersistence returns structured-cloneable plain data (PR #299 DataCloneError regression)', () => {
+    const paneId = 'persist-snapshot-pane';
+    paneStore.setCollapsed(paneId, 'block-1', true);
+    paneStore.setCollapsed(paneId, 'block-2', false);
+    paneStore.pushNavigation(paneId, 'zoom-root-1', 'focus-1');
+    paneStore.pushNavigation(paneId, 'zoom-root-2', 'focus-2');
+
+    // Pre-fix this line threw DataCloneError: structuredClone was called
+    // directly on SolidJS store proxies, which the structured clone
+    // algorithm rejects unconditionally. Every workspace save failed from
+    // PR #299 (2026-05-08) until this fix.
+    const snapshot = paneStore.getPaneStateForPersistence();
+
+    expect(snapshot.collapsed[paneId]).toEqual({ 'block-1': true, 'block-2': false });
+    expect(snapshot.navigationHistory[paneId].entries.length).toBeGreaterThanOrEqual(2);
+
+    // The snapshot must survive a further structuredClone — a leaked proxy
+    // anywhere in the graph would throw here.
+    expect(() => structuredClone(snapshot)).not.toThrow();
+    // And the JSON round-trip that saveWorkspace actually performs.
+    expect(() => JSON.stringify(snapshot)).not.toThrow();
+
+    paneStore.removePane(paneId);
+  });
+
+  it('snapshot is decoupled from live store state (mutating store does not mutate snapshot)', () => {
+    const paneId = 'persist-decouple-pane';
+    paneStore.setCollapsed(paneId, 'block-a', true);
+
+    const snapshot = paneStore.getPaneStateForPersistence();
+    paneStore.setCollapsed(paneId, 'block-a', false);
+
+    expect(snapshot.collapsed[paneId]['block-a']).toBe(true);
+
+    paneStore.removePane(paneId);
+  });
+
+  it('debounces presence POSTs: rapid focus changes produce one trailing request with the resting block', () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.fn(() => Promise.resolve({} as Response));
+    vi.stubGlobal('fetch', fetchSpy);
+    window.__FLOATTY_SERVER_URL__ = 'http://127.0.0.1:9';
+
+    const paneId = 'presence-debounce-pane';
+    for (let i = 1; i <= 5; i++) {
+      paneStore.setFocusedBlockId(paneId, `block-${i}`);
+    }
+
+    // No POST during the burst
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(200);
+
+    // Exactly one POST, carrying the final resting position
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchSpy.mock.calls[0] as unknown[])[1] !== undefined
+      ? String(((fetchSpy.mock.calls[0] as unknown[])[1] as RequestInit).body)
+      : '{}');
+    expect(body.blockId).toBe('block-5');
+    expect(body.paneId).toBe(paneId);
+
+    paneStore.removePane(paneId);
+  });
+
+  it('presence POST is skipped entirely when focus clears before the debounce fires', () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.fn(() => Promise.resolve({} as Response));
+    vi.stubGlobal('fetch', fetchSpy);
+    window.__FLOATTY_SERVER_URL__ = 'http://127.0.0.1:9';
+
+    const paneId = 'presence-clear-pane';
+    paneStore.setFocusedBlockId(paneId, 'block-x');
+    paneStore.setFocusedBlockId(paneId, null);
+
+    vi.advanceTimersByTime(200);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    paneStore.removePane(paneId);
   });
 });
