@@ -17,10 +17,14 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # Server URL resolution (in priority order):
-# 1. FLOATTY_URL env var — if set, always wins (explicit > auto)
-# 2. Probe localhost:8765 (release server) — if it responds, use it
-# 3. Probe localhost:33333 (dev server) — if it responds, use it
-# 4. Fall back to release default (http://127.0.0.1:8765)
+# 1. FLOATTY_URL env var — if set, always wins (explicit > auto). Inside
+#    floatty terminals FLOATTY_URL is pre-injected and is correct in BOTH
+#    local and remote mode, so it's also the cleanest in-terminal path.
+# 2. remote_server_url from config.toml (FLO-762) — if set, the app runs NO
+#    local server; talk to the remote authority instead of probing localhost.
+# 3. Probe localhost:8765 (release server) — if it responds, use it
+# 4. Probe localhost:33333 (dev server) — if it responds, use it
+# 5. Fall back to release default (http://127.0.0.1:8765)
 #
 # PR #250 feedback: previously probes won over explicit FLOATTY_URL, which
 # broke the documented Desktop Daddy / ngrok remote-agent flow — callers
@@ -33,22 +37,62 @@ _floatty_probe_url() {
   curl -sf -o /dev/null --max-time 1 "$url/api/v1/health" 2>/dev/null
 }
 
+# FLO-762: read a live top-level `remote_server_url = "..."` from a config.toml.
+# A commented example (`# remote_server_url = ...`) starts with `#`, so the
+# `^\s*remote_server_url` anchor never matches it — only an active setting.
+_floatty_read_remote_url_from() {
+  local path="$1" line
+  [[ -f "$path" ]] || return 1
+  # NOTE: parse via grep + shell parameter expansion, NOT `grep | head | cut`.
+  # When this script is sourced under zsh (the case for many agents), the
+  # head/cut pipe stage intermittently fails with "command not found"; grep
+  # and builtin expansion are reliable across bash + zsh.
+  line=$(grep -E '^[[:space:]]*remote_server_url[[:space:]]*=' "$path")
+  line="${line%%$'\n'*}"          # first matching line only (replaces head -1)
+  line="${line#*\"}"; line="${line%%\"*}"   # value between quotes (replaces cut)
+  [[ -n "$line" && "$line" != *remote_server_url* ]] && printf '%s\n' "$line"
+}
+
+# _floatty_cfg records which config.toml supplied a remote_server_url, so the
+# api_key below is read from the SAME file. A release-config remote pointer
+# paired with a dev-config key is a guaranteed 401 (FLO-762).
+#
+# Scan dev BEFORE release — consistent with the api_key fallback order and the
+# config precedence documented in README ("dev, then release"). A dev session
+# pointed at a remote dev authority should win over the release daily-driver;
+# either way the matching key is read from the same file via _floatty_cfg.
+_floatty_cfg=""
 if [[ -n "$FLOATTY_URL" ]]; then
   : # explicit env var wins — do nothing
-elif _floatty_probe_url "http://localhost:8765"; then
-  FLOATTY_URL="http://localhost:8765"
-elif _floatty_probe_url "http://localhost:33333"; then
-  FLOATTY_URL="http://localhost:33333"
 else
-  FLOATTY_URL="http://127.0.0.1:8765"
+  for _cfg in ~/.floatty-dev/config.toml ~/.floatty/config.toml; do
+    _floatty_remote=$(_floatty_read_remote_url_from "$_cfg")
+    if [[ -n "$_floatty_remote" ]]; then
+      FLOATTY_URL="${_floatty_remote%/}"   # remote authority — skip localhost probe
+      _floatty_cfg="$_cfg"
+      break
+    fi
+  done
+  if [[ -z "$FLOATTY_URL" ]]; then
+    if _floatty_probe_url "http://localhost:8765"; then
+      FLOATTY_URL="http://localhost:8765"
+    elif _floatty_probe_url "http://localhost:33333"; then
+      FLOATTY_URL="http://localhost:33333"
+    else
+      FLOATTY_URL="http://127.0.0.1:8765"
+    fi
+  fi
 fi
 
 # API key resolution (priority order):
 #   1. $FLOATTY_API_KEY env var (always wins — the right lever for Desktop
 #      Daddy / remote MCP setups that have no config.toml access)
-#   2. api_key= line in ~/.floatty-dev/config.toml (dev build)
-#   3. api_key= line in ~/.floatty/config.toml (release build)
-#   4. bootstrap default (well-known, ships with floatty's default config)
+#   2. FLO-762: the key from the config.toml that supplied remote_server_url.
+#      URL and key MUST come from the same file — a release-config remote
+#      pointer with a dev-config key 401s against the remote authority.
+#   3. api_key= line in ~/.floatty-dev/config.toml (dev build)
+#   4. api_key= line in ~/.floatty/config.toml (release build)
+#   5. bootstrap default (well-known, ships with floatty's default config)
 #
 # Threat model for #4 (Greptile P2 on PR #250): the bootstrap key is the
 # literal default that every fresh `floatty` dev install writes into its
@@ -67,13 +111,24 @@ fi
 # would break those flows for the common case (same user on both ends). The
 # ergonomic default wins; rotate the key if you're exposing publicly.
 _floatty_read_api_key_from() {
-  local path="$1"
+  local path="$1" line
   [[ -f "$path" ]] || return 1
-  grep -E '^\s*api_key\s*=' "$path" | grep -v anthropic | head -1 | cut -d'"' -f2
+  # grep + parameter expansion (no head/cut) — robust when sourced under zsh.
+  # The `^[[:space:]]*api_key` anchor already excludes `anthropic_api_key`
+  # (starts with "anthropic", not "api_key"), so no value-based filtering —
+  # filtering on "anthropic" would wrongly drop a server key whose value
+  # happened to contain that substring.
+  line=$(grep -E '^[[:space:]]*api_key[[:space:]]*=' "$path")
+  line="${line%%$'\n'*}"          # first match (replaces head -1)
+  line="${line#*\"}"; line="${line%%\"*}"   # value between quotes (replaces cut)
+  [[ -n "$line" && "$line" != *api_key* ]] && printf '%s\n' "$line"
 }
 
 if [[ -z "$FLOATTY_API_KEY" ]]; then
-  FLOATTY_API_KEY=$(_floatty_read_api_key_from ~/.floatty-dev/config.toml)
+  # FLO-762: if a config supplied the remote URL, its key must win — that
+  # server only accepts that key. Otherwise fall back to dev-then-release.
+  [[ -n "$_floatty_cfg" ]] && FLOATTY_API_KEY=$(_floatty_read_api_key_from "$_floatty_cfg")
+  [[ -z "$FLOATTY_API_KEY" ]] && FLOATTY_API_KEY=$(_floatty_read_api_key_from ~/.floatty-dev/config.toml)
   [[ -z "$FLOATTY_API_KEY" ]] && FLOATTY_API_KEY=$(_floatty_read_api_key_from ~/.floatty/config.toml)
 fi
 FLOATTY_API_KEY="${FLOATTY_API_KEY:-floatty-1890872e6255d2d0}"
