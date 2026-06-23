@@ -6,6 +6,36 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.17.0] - 2026-06-23
+
+Multi-machine shared outline. floatty can now run as a thin client against a **remote** floatty-server — set `remote_server_url` in `config.toml` and the app connects to that authority instead of spawning a local subprocess. One Y.Doc authority, multiple machines as CRDT peers over the tailnet, no SQLite/`.ydoc` file sync (which corrupts under byte-level multi-host sync). Bundled with the keyboard-lag fixes from the 25.7k-block perf recon: workspace layout persistence is **restored** (a `DataCloneError` had silently broken every save since 2026-05-08), presence POSTs are debounced, and the backlinks scan is gated. Requires a Tauri rebuild (`./scripts/rebuild.sh`) — both Rust and frontend changed.
+
+### ✨ Features
+
+- **Remote-authority mode (`remote_server_url`)** ([[PR #313]] / [[FLO-762]] / `f99ea06` — `apps/floatty/src-tauri/src/{config.rs,lib.rs,server.rs}`) — when `config.toml` sets `remote_server_url`, `connect_remote_server` probes the remote (3 retries), validates the API key against an authed `GET /api/v1/stats`, warns on client↔server version skew, and returns the external-mode shape (`process: None` — never spawns or kills a local server). Unreachable remote = startup error, never a silent local spawn (split-brain guard). The local `[server].api_key` must match the remote's.
+- **WebSocket authentication** ([[PR #313]] / [[FLO-762]] / `f99ea06`, `d41e8b5` — `apps/floatty/src-tauri/floatty-server/src/{ws.rs,main.rs,auth.rs}`) — `/ws` now requires the API key (query token, since browsers can't set headers on `new WebSocket()`). The loopback auth bypass was removed from both `/ws` and the REST middleware — a same-host reverse proxy / port-forward makes a remote client appear as `127.0.0.1`, so peer IP is not a trust signal. The read-only WS update firehose is no longer exposed unauthenticated on a non-loopback bind.
+- **macOS ATS exception for remote webview access** ([[PR #313]] / [[FLO-762]] / `a9a7d48` — `apps/floatty/src-tauri/Info.plist`) — `NSAllowsArbitraryLoadsInWebContent` so the WKWebView can reach a non-localhost HTTP authority (without it, `fetch`/WebSocket to `http://<tailnet-ip>` fails with `TypeError: Load failed` and the app reports "server isn't up"). Scoped to web content; native networking keeps full ATS.
+- **Server-identity-keyed IndexedDB backup** ([[PR #313]] / [[FLO-762]] / `f99ea06` — `apps/floatty/src/lib/idbBackup.ts`, `apps/floatty/src/hooks/useSyncedYDoc.ts`) — the local backup namespace now includes the server's `host:port` slug. Flipping `remote_server_url` gets a fresh namespace, so a client switching servers can never replay another server's seq baseline or diff-push a stale local backup into the shared outline.
+
+### 🐛 Fixes
+
+- **Workspace layout persistence restored** ([[PR #314]] / `d1426f4` — `apps/floatty/src/hooks/usePaneStore.ts`) — `getPaneStateForPersistence` called `structuredClone()` directly on SolidJS store proxies (`state.collapsed`, `state.navigationHistory`); `structuredClone` throws `DataCloneError` unconditionally on a `Proxy`, so every workspace save failed from PR #299 (2026-05-08) onward — tabs/zoom/collapse silently not persisting, ~1k error log lines per active day. Now `unwrap()`s the store nodes before cloning. Regression test reproduces the exact production error.
+
+### ✨ Performance
+
+- **Presence POST debounce** ([[PR #314]] / `d1426f4` — `apps/floatty/src/hooks/usePaneStore.ts`) — 150ms trailing debounce on the cursor-presence POST. Arrow-key navigation fired one HTTP request per block transition (measured 43 POSTs in one burst); the TUI follower only needs the resting position. Re-reads position at fire time.
+- **`findBacklinks` fast-path gate** ([[PR #314]] / `d1426f4` — `apps/floatty/src/hooks/useBacklinkNavigation.ts`) — skip the page-title-normalize + bracket-count parse for blocks with no `[[` (~22.7k of ~25.7k blocks). The memo re-runs on every block change while a page is zoomed; per-block cost is what keeps the main thread responsive. No behavior change (pinned by contract tests).
+
+### 🔧 Tooling
+
+- **`floatty-backend` plugin → 0.8.1** ([[PR #315]] / `a004b24` — `plugins/floatty-backend/skills/floatty-backend/scripts/floatty-api.sh`) — the companion API-helper skill now honors `remote_server_url` (resolves `FLOATTY_URL` to the remote authority, reads the matching key from the same config) and parses config via grep + shell parameter expansion instead of `grep | head | cut` (head/cut fail when the script is sourced under zsh). Has its own changelog at `plugins/floatty-backend/CHANGELOG.md`.
+
+### 🧪 Tests
+
+- Coverage added across the release: WS auth (`authorize_ws` — 5 cases), `connect_remote_server` (mock-server integration — happy path / key mismatch / unreachable / no-key), IndexedDB server-slug namespace + migration, the workspace-persistence `DataCloneError` regression, presence debounce, and the `findBacklinks` contract. Full suite green (1306/1306).
+
+---
+
 ## [0.16.0] - 2026-05-14
 
 Hook and handler pipeline cleanup — the parallel `send::`/conversation-handler stack (`sendContextHook`, `conversation/{parser,builder,types,focusAdvance}`, `send.ts`, plus `services/execution.rs` + `commands/execution.rs`) and three big multi-turn-conversation docs removed wholesale: **~4400 lines deleted, ~330 added**. Replaced with `doorStdlib.ts`, a curated shared library exposed to door plugins via the `@floatty/stdlib` import shim (same pattern as the existing solid-js bindings in `doorLoader.ts`). Door authors no longer reach into app source via fragile paths — wikilink parsing, page helpers, exec/parseJSON wrappers, focused-child creation, AdvanceToNextInput, functional helpers (`pipe`/`sortByDesc`/`filterBy`/`take`/`groupBy`), and a markdown→batch-ops parser are all named exports off one module. Hook system docs (`FLOATTY_HOOK_SYSTEM`, `HOOK_PATTERNS`, `ADDING_HANDLERS`, `DOORS`) realigned in the same PR so future readers don't hunt deleted symbols. No user-facing UI change — `send::`-prefixed blocks (if any existed in active outlines) become inert; the door pattern (`render::`, `chirp::`, etc.) absorbs the surface.
