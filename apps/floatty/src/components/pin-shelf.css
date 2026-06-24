@@ -45,6 +45,7 @@
   border-radius: 4px;
   background: var(--color-bg);
   overflow: hidden;
+  position: relative; /* anchor for the .pin-drop-target drop-line ::before */
   /* Height is driven inline by PinItem's signal — this min-height acts as
    * a CSS floor if the inline style is ever missing; PIN_MIN_HEIGHT in
    * PinShelfView.tsx is the authoritative clamp during drag. */
@@ -79,12 +80,52 @@
   font-size: 11px;
   font-weight: 500;
   text-align: left;
-  cursor: pointer;
+  /* grab (not pointer): the whole header is a drag handle for reorder. Click
+     still toggles collapse — distinguished by a move threshold in JS. */
+  cursor: grab;
   user-select: none;
   transition: background 120ms ease;
 }
 .pin-shelf-item-header:hover {
   background: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-light));
+}
+
+/* ── Drag-to-reorder ───────────────────────────────────────────────────── */
+/* While a drag is active: grabbing cursor + suppress text selection across the
+   WHOLE shelf (dragging over another pin's Outliner must not select its text —
+   the second half of the "haunted accordion" guard; the first is JS click
+   suppression). */
+.pin-shelf-dragging,
+.pin-shelf-dragging .pin-shelf-item-header {
+  cursor: grabbing;
+}
+.pin-shelf-dragging {
+  user-select: none;
+}
+/* The dragged pin dims in place (no lift-and-follow ghost in v1). */
+.pin-shelf-item-dragging {
+  opacity: 0.4;
+}
+/* Drop indicator: accent line at the top edge of the target pin ("lands before
+   this pin"). top:0 stays inside overflow:hidden — no clipping, no layout shift. */
+.pin-drop-target::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-accent);
+  z-index: 6;
+  pointer-events: none;
+}
+/* Drop indicator for appending after the last pin — sits in the inter-pin gap. */
+.pin-drop-indicator-end {
+  flex: 0 0 auto;
+  height: 2px;
+  margin-top: -4px;
+  background: var(--color-accent);
+  border-radius: 1px;
 }
 .pin-shelf-item-chevron {
   flex: 0 0 auto;
