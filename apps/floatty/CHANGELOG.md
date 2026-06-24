@@ -6,6 +6,38 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.18.0] - 2026-06-24
+
+The pin sidebar grows up, and the outliner gets dense enough to actually use in split panes. Pins are now first-class: each has a navigation **floor** (zoom into children freely, but you can't accidentally escape above the pinned block), a **collapse-to-header** toggle (park a pin without unpinning), and **drag-to-reorder** by the header (with edge auto-scroll). Alongside, the outliner reclaims a lot of horizontal space so deeply-nested content stays readable in a half-width pane. Plus a theme-variable repair: several CSS colors referenced vars that don't exist (black-on-purple pin headers) and now use real theme tokens. Frontend-only — rebuild the app (`./scripts/rebuild.sh`), no server change.
+
+### ✨ Features
+
+- **Pin navigation scope (floor)** ([[PR #318]] / `76b353d` — `apps/floatty/src/hooks/usePaneStore.ts`, `apps/floatty/src/lib/navigation.ts`, `Breadcrumb.tsx`, `Outliner.tsx`, `PinShelfView.tsx`) — a general per-pane "floor" primitive (pins are the first consumer): the pinned block is the highest a pinned pane can zoom to. Cmd+Enter descends freely; Escape clamps to the floor; above-floor breadcrumb segments (◊, `pages::`, ancestors) render dimmed and route to the linked pane instead of escaping the pin. Every zoom trigger routes through one `requestPaneZoom` funnel. +9 policy tests.
+- **Collapse a pin to its header** ([[PR #317]] / `3bb14f4` — `apps/floatty/src/components/PinShelfView.tsx`, `pin-shelf.css`) — slim header strip (chevron + label); click to collapse a pin down to just that bar — park it without unpinning. The dragged height is preserved; the Outliner stays mounted (keeps zoom/scroll).
+- **Drag pin headers to reorder** ([[PR #318]] / `76b353d` — `apps/floatty/src/components/PinShelfView.tsx`, `pin-shelf.css`) — the header is a reorder handle (browser-tab feel); a drop is a `moveBlock` of the `pinned::` child to the new index (syncs across machines). 4px click-vs-drag threshold; edge auto-scroll brings off-screen drop targets into view when dragging past tall pins.
+- **Aliased pin titles** ([[PR #318]] / `76b353d` — `apps/floatty/src/components/PinShelfView.tsx`, `apps/floatty/src/lib/wikilinkUtils.ts`) — `[[96c10e9d|deep pin]]` shows "deep pin" in the header, not the raw id.
+
+### 🐛 Fixes
+
+- **Pin zoom-into-child no longer snaps back** ([[PR #317]] / `3bb14f4` — `apps/floatty/src/components/PinShelfView.tsx`) — Cmd+Enter into a child of a pinned item used to bounce back to the pin root. A bare `createEffect` tracked the `<Key>` item signal (recomputes on every blockStore change), re-firing the zoom — so a live pinned page (daily note gaining `ctx::`/`sh::` output, remote edits) reset it continuously. Wrapped in `on()` (solidjs-patterns §7).
+- **Theme variable repair** ([[PR #317]] / `3bb14f4` — `apps/floatty/src/index.css`, `apps/floatty/src/components/pin-shelf.css`) — the pin header rendered black-on-dark-purple via `--color-text-secondary` / `--color-text`, which don't exist in the theme (resolve empty). Audited every `--color-*` usage across all CSS + TS/TSX inline styles; repaired 6 usages of 4 undefined vars to the real `--color-fg-muted` token; header redone with real high-contrast theme tokens so it tracks every theme.
+
+### ✨ Density
+
+- **Outliner horizontal density** ([[PR #317]] / `3bb14f4` — `apps/floatty/src/index.css`) — deep nesting in split panes ate horizontal space fast. Drag handle floated to an absolute hover-overlay (reclaims 16px/row at every depth), base indent 28→18px with a responsive `@container` query (13px <540px pane, 9px <420px), zoom-header chrome 40→22px, bullet column 20→16. Deep trees stay readable in a half-width pane.
+
+### ♻️ Refactors
+
+- **Navigation funnel consolidation** ([[PR #318]] / `76b353d`, `6d7f7d7` — `apps/floatty/src/lib/navigation.ts`, `Breadcrumb.tsx`, `Outliner.tsx`, `useBlockInput.ts`) — the breadcrumb, Cmd+Enter/Escape, and output-close handlers stopped calling `paneStore.zoomTo` directly; all in-pane zoom now routes through `requestPaneZoom` / `requestPaneZoomOut` (scope-aware). One decision point — keeps the nav layer from regrowing the hydra it was consolidated out of.
+
+### 📝 Docs
+
+- **Remote deployment guide** ([[PR #316]] / `6d2904e` — `apps/floatty/docs/REMOTE_DEPLOYMENT.md`) — full runbook for the float-box authority + client build/update (FLO-762).
+
+### 🧪 Tests / Chore
+
+- +9 pane-scope policy tests (`apps/floatty/src/lib/navigation.test.ts` — in-scope / above-floor→linked / Escape-clamp). Full suite green (1315/1315). Removed a 25MB `github-skyline.stl` build artifact ([[PR #317]] / `e443249`).
+
 ## [0.17.0] - 2026-06-23
 
 Multi-machine shared outline. floatty can now run as a thin client against a **remote** floatty-server — set `remote_server_url` in `config.toml` and the app connects to that authority instead of spawning a local subprocess. One Y.Doc authority, multiple machines as CRDT peers over the tailnet, no SQLite/`.ydoc` file sync (which corrupts under byte-level multi-host sync). Bundled with the keyboard-lag fixes from the 25.7k-block perf recon: workspace layout persistence is **restored** (a `DataCloneError` had silently broken every save since 2026-05-08), presence POSTs are debounced, and the backlinks scan is gated. Requires a Tauri rebuild (`./scripts/rebuild.sh`) — both Rust and frontend changed.
