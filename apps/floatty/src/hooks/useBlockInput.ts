@@ -398,9 +398,13 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
 
       case 'zoom_out': {
         e.preventDefault();
-        // FLO-180: Zoom out to roots, then push destination (standard browser model)
-        paneStore.setZoomedRoot(deps.paneId, null);
-        paneStore.pushNavigation(deps.paneId, null, deps.getBlockId());
+        // Zoom out, clamped to the pane's scope floor. null = full tree for
+        // unbounded panes (unchanged); the pinned block for a floored pane, so
+        // Escape can't escape above the pin. Mirrors requestPaneZoomOut in
+        // lib/navigation.ts for this injected-store path.
+        const floor = paneStore.getFloor(deps.paneId);
+        paneStore.setZoomedRoot(deps.paneId, floor);
+        paneStore.pushNavigation(deps.paneId, floor, deps.getBlockId());
         return;
       }
 
@@ -424,10 +428,11 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         // No wikilink - toggle zoom behavior
         const currentZoom = paneStore.getZoomedRootId(deps.paneId);
         if (currentZoom === deps.getBlockId()) {
-          // Already zoomed into this block - zoom out
-          // FLO-180: Zoom out, then push destination (standard browser model)
-          paneStore.setZoomedRoot(deps.paneId, null);
-          paneStore.pushNavigation(deps.paneId, null, deps.getBlockId());
+          // Already zoomed into this block - zoom out (clamped to scope floor;
+          // null = full tree for unbounded panes, the pin block for floored).
+          const floor = paneStore.getFloor(deps.paneId);
+          paneStore.setZoomedRoot(deps.paneId, floor);
+          paneStore.pushNavigation(deps.paneId, floor, deps.getBlockId());
           return;
         }
 

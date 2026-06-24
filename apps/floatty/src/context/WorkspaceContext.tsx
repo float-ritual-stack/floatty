@@ -101,6 +101,9 @@ export interface PaneStoreInterface {
   // FLO-211: Unified navigation API
   zoomTo: (paneId: string, targetBlockId: string | null, options?: { skipHistory?: boolean; skipAutoExpand?: boolean; originBlockId?: string }) => void;
   consumeHistoryNavigation: (paneId: string) => boolean;
+  // Pane navigation scope (floor) — general primitive, pin shelf first consumer
+  getFloor: (paneId: string) => string | null;
+  setScope: (paneId: string, floorBlockId: string | null) => void;
   // Unit 12.0: Full-width block mode
   toggleFullWidth: (paneId: string, blockId: string) => void;
   isFullWidth: (paneId: string, blockId: string) => boolean;
@@ -408,6 +411,9 @@ export function createMockPaneStore(overrides: Partial<PaneStoreInterface> = {})
     // FLO-211: Unified navigation API
     zoomTo: () => {},
     consumeHistoryNavigation: () => false,
+    // Pane navigation scope (floor)
+    getFloor: () => null,
+    setScope: () => {},
     // Unit 12.0: Full-width
     toggleFullWidth: () => {},
     isFullWidth: () => false,

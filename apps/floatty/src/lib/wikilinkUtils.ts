@@ -79,6 +79,27 @@ export function parseWikilinkInner(inner: string): { target: string; alias: stri
 }
 
 /**
+ * Extract the FIRST wikilink in `content` as { target, alias }, or null if
+ * there is none. Unlike extractAllWikilinkTargets (targets only, recursive),
+ * this preserves the alias for display — e.g. the pin shelf shows the alias of
+ * `[[96c10e9d|deep pin]]` ("deep pin") in its header rather than the raw id.
+ *
+ * @param content - Text to scan
+ * @returns { target, alias } of the first wikilink, or null
+ */
+export function extractFirstWikilink(
+  content: string
+): { target: string; alias: string | null } | null {
+  const openIdx = content.indexOf('[[');
+  if (openIdx === -1) return null;
+  const endIdx = findWikilinkEnd(content, openIdx);
+  if (endIdx === -1) return null;
+  const inner = content.slice(openIdx + 2, endIdx - 2);
+  const parsed = parseWikilinkInner(inner);
+  return parsed.target ? parsed : null;
+}
+
+/**
  * Extract all wikilink targets from content, including nested ones.
  *
  * For `[[outer [[inner]]]]`, returns: ["outer [[inner]]", "inner"]

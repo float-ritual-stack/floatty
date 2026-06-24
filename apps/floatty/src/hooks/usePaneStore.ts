@@ -55,6 +55,11 @@ interface PaneState {
   collapsed: Record<string, Record<string, boolean>>;
   // Map of paneId -> zoomed root block ID (null = show all roots)
   zoomedRootId: Record<string, string | null>;
+  // Pane navigation scope floor: the highest block a pane may zoom to
+  // (null = unbounded). General primitive — the pin shelf is the first consumer
+  // (floor = the pinned block). Ephemeral: re-established by the pane's owner on
+  // mount, NOT persisted (like paneHost).
+  floorId: Record<string, string | null>;
   // FLO-77: Map of paneId -> focused block ID (for clone-on-split)
   focusedBlockId: Record<string, string | null>;
   // FLO-180: Map of paneId -> navigation history (back/forward)
@@ -70,6 +75,7 @@ function createPaneStore() {
   const [state, setState] = createStore<PaneState>({
     collapsed: {},
     zoomedRootId: {},
+    floorId: {},
     focusedBlockId: {},
     navigationHistory: {},
     fullWidth: {},
@@ -411,6 +417,33 @@ function createPaneStore() {
     setZoomedRoot(paneId, targetBlockId);
   };
 
+  // ── Pane navigation scope (floor) ───────────────────────────────────────
+  // The floor is the highest block a pane may zoom to. null = unbounded (normal
+  // panes — current behavior). resolvePaneZoom() in lib/navigation.ts reads this
+  // to clamp/redirect above-floor navigation. General primitive; pins are the
+  // first consumer. See apps/floatty/docs (pane-scope) for the policy.
+  const getFloor = (paneId: string): string | null => {
+    return state.floorId[paneId] ?? null;
+  };
+
+  const setFloor = (paneId: string, blockId: string | null) => {
+    if (state.floorId[paneId] === blockId) return;
+    setState('floorId', paneId, blockId);
+  };
+
+  /**
+   * Establish a pane's scope: set the floor AND zoom to it in one call.
+   * The pin shelf uses this to bind a pane to a block — it replaces the prior
+   * direct `zoomTo` call (centralizing scope creation, per CodeRabbit feedback
+   * on PR #317). `skipHistory` because this is external-state-driven retargeting
+   * (the pin's [[target]] resolving), not user navigation — it must not pollute
+   * the pane's Cmd+[ / Cmd+] history.
+   */
+  const setScope = (paneId: string, floorBlockId: string | null) => {
+    setFloor(paneId, floorBlockId);
+    zoomTo(paneId, floorBlockId, { skipHistory: true });
+  };
+
   /**
    * FLO-77: Clone pane state from source to target
    * Used when splitting an outliner pane to preserve view context
@@ -530,6 +563,11 @@ function createPaneStore() {
     // persistence write. Addresses PR #265 review (Greptile P2).
     if (state.paneHost[paneId] !== undefined) {
       setState('paneHost', paneId, undefined!);
+    }
+    // Pane scope floor: ephemeral (re-established on mount, excluded from
+    // persistence) — clear like paneHost without flipping `changed`.
+    if (state.floorId[paneId] !== undefined) {
+      setState('floorId', paneId, undefined!);
     }
 
     if (changed) {
@@ -669,6 +707,10 @@ function createPaneStore() {
     isFullWidth,
     // FLO-211: Unified navigation API
     zoomTo,
+    // Pane navigation scope (floor) — general primitive, pin shelf first consumer
+    getFloor,
+    setFloor,
+    setScope,
     consumeHistoryNavigation,
     // Clone state
     clonePaneState,
