@@ -37,7 +37,7 @@
   border: 2px solid var(--color-bg-dark);
 }
 .pin-shelf::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-secondary, var(--color-text));
+  background: var(--color-fg-muted);
 }
 
 .pin-shelf-item {
@@ -66,27 +66,32 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 3px 8px;
-  background: var(--color-bg-dark);
+  padding: 4px 8px;
+  /* Raised strip: --color-bg-light is LIGHTER than the pin body's --color-bg,
+     so the header reads as a distinct bar. Bright --color-fg title + accent
+     chevron. All real theme vars → tracks every theme (the previous
+     --color-text-secondary/--color-text don't exist → black-on-purple). */
+  background: var(--color-bg-light);
   border: none;
   border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-secondary, var(--color-text));
+  color: var(--color-fg);
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 11px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
   user-select: none;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 120ms ease;
 }
 .pin-shelf-item-header:hover {
-  background: var(--color-border);
-  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-light));
 }
 .pin-shelf-item-chevron {
   flex: 0 0 auto;
   width: 10px;
   font-size: 9px;
   text-align: center;
+  color: var(--color-accent);
 }
 .pin-shelf-item-title {
   flex: 1;
@@ -94,6 +99,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--color-fg);
 }
 
 /* Body holds the Outliner + resize handle; collapsing hides it, leaving just
@@ -149,7 +155,7 @@
   transform: translate(-50%, -50%);
   width: 40px;
   height: 2px;
-  background: var(--color-text-secondary, var(--color-text));
+  background: var(--color-fg-muted);
   opacity: 0.5;
   border-radius: 1px;
   pointer-events: none;
@@ -169,7 +175,7 @@
   padding: 12px;
   font-size: 12px;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
-  color: var(--color-text-secondary, var(--color-text));
+  color: var(--color-fg-muted);
   line-height: 1.5;
 }
 

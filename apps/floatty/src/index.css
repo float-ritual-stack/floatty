@@ -2423,7 +2423,7 @@ body.block-dragging * {
 
 .img-view-caption {
   font-size: 11px;
-  color: var(--color-text-muted, #666);
+  color: var(--color-fg-muted);
   margin-top: 3px;
   white-space: nowrap;
   overflow: hidden;
@@ -2434,7 +2434,7 @@ body.block-dragging * {
 .img-view-error {
   font-size: 12px;
   padding: 4px 8px;
-  color: var(--color-text-muted, #666);
+  color: var(--color-fg-muted);
   font-style: italic;
 }
 
@@ -2579,7 +2579,7 @@ body.block-dragging * {
 
 .filter-error-content {
   font-family: var(--font-mono);
-  color: var(--color-fg-secondary);
+  color: var(--color-fg-muted);
 }
 
 .filter-error-msg {
