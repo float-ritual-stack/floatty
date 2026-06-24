@@ -20,7 +20,7 @@
  */
 
 import { Key } from '@solid-primitives/keyed';
-import { createMemo, createEffect, createSignal, onMount, onCleanup } from 'solid-js';
+import { createMemo, createEffect, createSignal, on, onMount, onCleanup } from 'solid-js';
 import { Outliner } from './Outliner';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
@@ -127,9 +127,22 @@ function PinItem(props: { pin: () => Pin }) {
   // Uses paneStore.zoomTo with skipHistory per CLAUDE.md canonical-paths: we
   // don't want this external-state-driven retargeting to pollute nav history
   // (Cmd+[/Cmd+] are for user-initiated navigation only).
-  createEffect(() => {
-    paneStore.zoomTo(paneId, props.pin().resolvedBlockId, { skipHistory: true });
-  });
+  //
+  // on() is load-bearing (solidjs-patterns.md §7): a bare createEffect here
+  // tracks props.pin(), which reads the <Key> item signal — and that signal
+  // updates on EVERY pins() recompute (pins() iterates blockStore.blocks).
+  // So with a live pinned page (daily note gaining ctx:: markers, sh:: output,
+  // or remote edits syncing in), the effect re-fired and snapped the zoom back
+  // to the pin's root every time the user Cmd+Enter'd into a child. Restricting
+  // the trigger to the resolved-target VALUE changing lets in-pane zoom stick.
+  createEffect(on(
+    () => props.pin().resolvedBlockId,
+    (resolvedBlockId, prevResolvedBlockId) => {
+      if (resolvedBlockId && resolvedBlockId !== prevResolvedBlockId) {
+        paneStore.zoomTo(paneId, resolvedBlockId, { skipHistory: true });
+      }
+    }
+  ));
 
   // Pointer-capture drag pattern. Listeners attach to the handle itself
   // (not window) so capture keeps them live even if the cursor wanders off

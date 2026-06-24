@@ -6,8 +6,11 @@
 .pin-shelf {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 8px;
+  /* Density: tighter inter-pin gap + shelf padding. The per-pin Outliner indent
+     already compresses via the @container query in index.css (pins are narrow
+     panes → 9px/level), so this only trims the shelf's own chrome. */
+  gap: 8px;
+  padding: 6px;
   height: 100%;
   /* `scroll` (not `auto`) reserves a stable gutter so the bar is always
    * visibly present; required because macOS WKWebView's OS overlay
