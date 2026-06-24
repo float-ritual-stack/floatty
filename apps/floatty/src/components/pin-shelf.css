@@ -6,8 +6,11 @@
 .pin-shelf {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 8px;
+  /* Density: tighter inter-pin gap + shelf padding. The per-pin Outliner indent
+     already compresses via the @container query in index.css (pins are narrow
+     panes → 9px/level), so this only trims the shelf's own chrome. */
+  gap: 8px;
+  padding: 6px;
   height: 100%;
   /* `scroll` (not `auto`) reserves a stable gutter so the bar is always
    * visibly present; required because macOS WKWebView's OS overlay
@@ -34,7 +37,7 @@
   border: 2px solid var(--color-bg-dark);
 }
 .pin-shelf::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-secondary, var(--color-text));
+  background: var(--color-fg-muted);
 }
 
 .pin-shelf-item {
@@ -55,12 +58,74 @@
   flex-shrink: 0;
 }
 
-/* Outliner fills the pin item, leaving 6px at the bottom for the handle */
-.pin-shelf-item > .outliner-container,
-.pin-shelf-item > *:not(.pin-shelf-item-handle) {
+/* Collapse/expand header strip — slim clickable bar at the top of each pin.
+ * Doubles as the pin's label (target name). Click toggles collapse. */
+.pin-shelf-item-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  /* Raised strip: --color-bg-light is LIGHTER than the pin body's --color-bg,
+     so the header reads as a distinct bar. Bright --color-fg title + accent
+     chevron. All real theme vars → tracks every theme (the previous
+     --color-text-secondary/--color-text don't exist → black-on-purple). */
+  background: var(--color-bg-light);
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-fg);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease;
+}
+.pin-shelf-item-header:hover {
+  background: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-light));
+}
+.pin-shelf-item-chevron {
+  flex: 0 0 auto;
+  width: 10px;
+  font-size: 9px;
+  text-align: center;
+  color: var(--color-accent);
+}
+.pin-shelf-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-fg);
+}
+
+/* Body holds the Outliner + resize handle; collapsing hides it, leaving just
+ * the header strip. height() is preserved on the item so re-expand restores
+ * the dragged size. */
+.pin-shelf-item-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Outliner fills the body, leaving 6px at the bottom for the handle */
+.pin-shelf-item-body > .outliner-container,
+.pin-shelf-item-body > *:not(.pin-shelf-item-handle) {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+/* Collapsed: drop the 120px floor and hide the body → item shrinks to header */
+.pin-shelf-item-collapsed {
+  min-height: 0;
+}
+.pin-shelf-item-collapsed .pin-shelf-item-body {
+  display: none;
 }
 
 /* Custom drag handle — always-visible horizontal bar at the bottom of each
@@ -90,7 +155,7 @@
   transform: translate(-50%, -50%);
   width: 40px;
   height: 2px;
-  background: var(--color-text-secondary, var(--color-text));
+  background: var(--color-fg-muted);
   opacity: 0.5;
   border-radius: 1px;
   pointer-events: none;
@@ -110,7 +175,7 @@
   padding: 12px;
   font-size: 12px;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
-  color: var(--color-text-secondary, var(--color-text));
+  color: var(--color-fg-muted);
   line-height: 1.5;
 }
 

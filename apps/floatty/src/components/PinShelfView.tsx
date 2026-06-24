@@ -20,7 +20,7 @@
  */
 
 import { Key } from '@solid-primitives/keyed';
-import { createMemo, createEffect, createSignal, onMount, onCleanup } from 'solid-js';
+import { createMemo, createEffect, createSignal, on, onMount, onCleanup } from 'solid-js';
 import { Outliner } from './Outliner';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
@@ -115,6 +115,13 @@ function PinItem(props: { pin: () => Pin }) {
   // Custom drag handle + signal-driven height is fully reliable.
   const [height, setHeight] = createSignal(PIN_DEFAULT_HEIGHT);
 
+  // Collapse the whole pin down to just its header strip — lets the user park a
+  // pin without unpinning it. The dragged height() is preserved so re-expanding
+  // returns to the same size. The Outliner stays mounted (CSS display:none, not
+  // <Show>) per solidjs-patterns §4 — keeps its zoom/scroll/pane registration.
+  // In-memory for v1: persists for the session, resets on reload.
+  const [collapsed, setCollapsed] = createSignal(false);
+
   onMount(() => {
     paneStore.registerPane(paneId, { kind: 'sidebar' });
   });
@@ -127,9 +134,22 @@ function PinItem(props: { pin: () => Pin }) {
   // Uses paneStore.zoomTo with skipHistory per CLAUDE.md canonical-paths: we
   // don't want this external-state-driven retargeting to pollute nav history
   // (Cmd+[/Cmd+] are for user-initiated navigation only).
-  createEffect(() => {
-    paneStore.zoomTo(paneId, props.pin().resolvedBlockId, { skipHistory: true });
-  });
+  //
+  // on() is load-bearing (solidjs-patterns.md §7): a bare createEffect here
+  // tracks props.pin(), which reads the <Key> item signal — and that signal
+  // updates on EVERY pins() recompute (pins() iterates blockStore.blocks).
+  // So with a live pinned page (daily note gaining ctx:: markers, sh:: output,
+  // or remote edits syncing in), the effect re-fired and snapped the zoom back
+  // to the pin's root every time the user Cmd+Enter'd into a child. Restricting
+  // the trigger to the resolved-target VALUE changing lets in-pane zoom stick.
+  createEffect(on(
+    () => props.pin().resolvedBlockId,
+    (resolvedBlockId, prevResolvedBlockId) => {
+      if (resolvedBlockId && resolvedBlockId !== prevResolvedBlockId) {
+        paneStore.zoomTo(paneId, resolvedBlockId, { skipHistory: true });
+      }
+    }
+  ));
 
   // Pointer-capture drag pattern. Listeners attach to the handle itself
   // (not window) so capture keeps them live even if the cursor wanders off
@@ -166,17 +186,32 @@ function PinItem(props: { pin: () => Pin }) {
   return (
     <div
       class="pin-shelf-item"
+      classList={{ 'pin-shelf-item-collapsed': collapsed() }}
       data-pin-child-id={props.pin().childBlockId}
-      style={{ height: `${height()}px` }}
+      style={{ height: collapsed() ? undefined : `${height()}px` }}
     >
-      <Outliner paneId={paneId} />
-      <div
-        class="pin-shelf-item-handle"
-        role="separator"
-        aria-label="Resize pin"
-        aria-orientation="horizontal"
-        onPointerDown={onHandlePointerDown}
-      />
+      <button
+        type="button"
+        class="pin-shelf-item-header"
+        aria-expanded={!collapsed()}
+        aria-label={`${collapsed() ? 'Expand' : 'Collapse'} pin: ${props.pin().target}`}
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <span class="pin-shelf-item-chevron" aria-hidden="true">
+          {collapsed() ? '▶' : '▼'}
+        </span>
+        <span class="pin-shelf-item-title">{props.pin().target}</span>
+      </button>
+      <div class="pin-shelf-item-body">
+        <Outliner paneId={paneId} />
+        <div
+          class="pin-shelf-item-handle"
+          role="separator"
+          aria-label="Resize pin"
+          aria-orientation="horizontal"
+          onPointerDown={onHandlePointerDown}
+        />
+      </div>
     </div>
   );
 }
