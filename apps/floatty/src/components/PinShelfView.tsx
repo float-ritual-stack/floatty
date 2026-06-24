@@ -115,6 +115,13 @@ function PinItem(props: { pin: () => Pin }) {
   // Custom drag handle + signal-driven height is fully reliable.
   const [height, setHeight] = createSignal(PIN_DEFAULT_HEIGHT);
 
+  // Collapse the whole pin down to just its header strip — lets the user park a
+  // pin without unpinning it. The dragged height() is preserved so re-expanding
+  // returns to the same size. The Outliner stays mounted (CSS display:none, not
+  // <Show>) per solidjs-patterns §4 — keeps its zoom/scroll/pane registration.
+  // In-memory for v1: persists for the session, resets on reload.
+  const [collapsed, setCollapsed] = createSignal(false);
+
   onMount(() => {
     paneStore.registerPane(paneId, { kind: 'sidebar' });
   });
@@ -179,17 +186,32 @@ function PinItem(props: { pin: () => Pin }) {
   return (
     <div
       class="pin-shelf-item"
+      classList={{ 'pin-shelf-item-collapsed': collapsed() }}
       data-pin-child-id={props.pin().childBlockId}
-      style={{ height: `${height()}px` }}
+      style={{ height: collapsed() ? undefined : `${height()}px` }}
     >
-      <Outliner paneId={paneId} />
-      <div
-        class="pin-shelf-item-handle"
-        role="separator"
-        aria-label="Resize pin"
-        aria-orientation="horizontal"
-        onPointerDown={onHandlePointerDown}
-      />
+      <button
+        type="button"
+        class="pin-shelf-item-header"
+        aria-expanded={!collapsed()}
+        aria-label={`${collapsed() ? 'Expand' : 'Collapse'} pin: ${props.pin().target}`}
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <span class="pin-shelf-item-chevron" aria-hidden="true">
+          {collapsed() ? '▶' : '▼'}
+        </span>
+        <span class="pin-shelf-item-title">{props.pin().target}</span>
+      </button>
+      <div class="pin-shelf-item-body">
+        <Outliner paneId={paneId} />
+        <div
+          class="pin-shelf-item-handle"
+          role="separator"
+          aria-label="Resize pin"
+          aria-orientation="horizontal"
+          onPointerDown={onHandlePointerDown}
+        />
+      </div>
     </div>
   );
 }
