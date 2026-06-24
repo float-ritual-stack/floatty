@@ -44,7 +44,7 @@ import { tabStore } from '../hooks/useTabStore';
 import { layoutStore, findTabIdByPaneId } from '../hooks/useLayoutStore';
 import { IframePaneView } from './views/IframePaneView';
 import { DoorPaneView } from './views/DoorPaneView';
-import { handleChirpNavigate, navigateToBlock } from '../lib/navigation';
+import { handleChirpNavigate, navigateToBlock, requestPaneZoomOut } from '../lib/navigation';
 import type { EvalResult } from '../lib/evalEngine';
 import type { DoorViewOutput } from '../lib/handlers/doorTypes';
 
@@ -913,7 +913,7 @@ export function Outliner(props: OutlinerProps) {
                   url={String((store.blocks[zoomedRootId()!]?.output as EvalResult)?.data ?? '')}
                   blockId={zoomedRootId()!}
                   paneId={props.paneId}
-                  onClose={() => paneStore.zoomTo(props.paneId, paneStore.getFloor(props.paneId))}
+                  onClose={() => requestPaneZoomOut(props.paneId)}
                   onChirp={(message: string, data?: unknown) => {
                     if (message === 'navigate' && typeof data === 'object' && data) {
                       const nav = data as { target: string; type?: 'block' | 'page' | 'wikilink'; splitDirection?: 'horizontal' | 'vertical' };
@@ -932,7 +932,7 @@ export function Outliner(props: OutlinerProps) {
                   <div style={{ padding: '16px', color: 'var(--color-error)' }}>
                     <p>Door crashed: {String(err)}</p>
                     <button
-                      onClick={() => paneStore.zoomTo(props.paneId, paneStore.getFloor(props.paneId))}
+                      onClick={() => requestPaneZoomOut(props.paneId)}
                       style={{
                         'margin-top': '8px',
                         padding: '4px 12px',
@@ -952,7 +952,7 @@ export function Outliner(props: OutlinerProps) {
                     blockId={zoomedRootId()!}
                     paneId={props.paneId}
                     envelope={store.blocks[doorZoomBlockId()!]?.output as DoorViewOutput}
-                    onClose={() => paneStore.zoomTo(props.paneId, paneStore.getFloor(props.paneId))}
+                    onClose={() => requestPaneZoomOut(props.paneId)}
                     onNavigate={(target: string, opts?: { type?: string; splitDirection?: string }) => {
                       handleChirpNavigate(target, {
                         type: opts?.type as 'block' | 'page' | 'wikilink' | undefined,
