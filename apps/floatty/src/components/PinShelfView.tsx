@@ -111,8 +111,11 @@ export function PinShelfView() {
   const startReorder = (childId: string, e: PointerEvent) => {
     suppressClick = false;
     const headerEl = e.currentTarget as HTMLElement;
+    const shelf = headerEl.closest('.pin-shelf') as HTMLElement | null;
     const startY = e.clientY;
     let started = false;
+    let lastPointerY = startY;
+    let rafId = 0;
     try { headerEl.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
 
     // Insert-before index in the CURRENT array: first pin whose midpoint is
@@ -128,15 +131,42 @@ export function PinShelfView() {
       return items.length;
     };
 
+    // Edge auto-scroll: when the pointer nears the shelf's top/bottom edge while
+    // dragging, scroll the shelf so off-screen pins (and their drop boundaries)
+    // come into view — e.g. dropping below a tall pin whose bottom is off-screen.
+    // A rAF loop keeps scrolling while the pointer is HELD in the edge zone (a
+    // still pointer fires no pointermove). isConnected guards mid-drag unmount.
+    const EDGE = 48;      // px from edge that triggers scroll
+    const MAX_SPEED = 16; // px/frame at the very edge (ramps from 0 at zone entry)
+    const autoScrollTick = () => {
+      if (!started || !shelf || !shelf.isConnected) { rafId = 0; return; }
+      const rect = shelf.getBoundingClientRect();
+      let dy = 0;
+      if (lastPointerY < rect.top + EDGE) {
+        dy = -MAX_SPEED * Math.min(1, (rect.top + EDGE - lastPointerY) / EDGE);
+      } else if (lastPointerY > rect.bottom - EDGE) {
+        dy = MAX_SPEED * Math.min(1, (lastPointerY - (rect.bottom - EDGE)) / EDGE);
+      }
+      if (dy !== 0) {
+        shelf.scrollTop += dy;
+        setDropIndex(computeDrop(lastPointerY)); // re-evaluate target after scroll
+      }
+      rafId = requestAnimationFrame(autoScrollTick);
+    };
+
     const onMove = (ev: PointerEvent) => {
+      lastPointerY = ev.clientY;
       if (!started) {
         if (Math.abs(ev.clientY - startY) < 4) return; // click-vs-drag threshold
         started = true;
         setDraggingChildId(childId);
+        if (shelf && !rafId) rafId = requestAnimationFrame(autoScrollTick);
       }
       setDropIndex(computeDrop(ev.clientY));
     };
     const onUp = (ev: PointerEvent) => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
       try { headerEl.releasePointerCapture(ev.pointerId); } catch { /* not captured */ }
       headerEl.removeEventListener('pointermove', onMove);
       headerEl.removeEventListener('pointerup', onUp);
