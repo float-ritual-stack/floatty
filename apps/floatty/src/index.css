@@ -14,7 +14,14 @@
   --color-border: #2a2a4a;
   --color-indent-guide: color-mix(in srgb, var(--color-fg) 12%, var(--color-bg));
   --color-indent-guide-active: color-mix(in srgb, var(--color-fg) 25%, var(--color-bg));
-  --block-indent-width: 28px;
+
+  /* Outliner horizontal density model.
+     Per-row horizontal budget = outliner padding (16) + bullet (20) + indent
+     (--block-indent-width + 4 padding + 1 border) × depth. The drag handle is
+     an absolute hover-overlay (see .block-drag-handle), so it no longer reserves
+     row width. --block-indent-width is the single tuning knob; it shrinks in
+     narrow panes via the @container rules under .outliner-container. */
+  --block-indent-width: 18px;
 
   /* Accent colors */
   --color-accent: #7c3aed;
@@ -796,9 +803,26 @@ body.pane-dragging .terminal-pane-positioned {
   height: 100%;
   width: 100%;
   overflow-y: auto;
-  padding: 16px;
+  /* 16px → 8px: trims the top gap above the zoom breadcrumb and tightens the
+     left/right gutters (pairs with the indent-width density model above). */
+  padding: 8px;
   font-family: "JetBrains Mono", monospace;
   background: var(--color-bg);
+  /* Query container so the indent can respond to PANE width (not viewport) —
+     a split pane is narrow even on a wide screen. inline-size only (vertical
+     scroll/sticky unaffected). */
+  container-type: inline-size;
+  container-name: outliner;
+}
+
+/* Responsive indent: narrow (split) panes compress per-level indent so deep
+   content keeps a usable text column. Graduated to pane width. Tuning lives
+   here + the --block-indent-width default. */
+@container outliner (max-width: 540px) {
+  .block-children { --block-indent-width: 13px; }
+}
+@container outliner (max-width: 420px) {
+  .block-children { --block-indent-width: 9px; }
 }
 
 /* FLO-625: Reading column for body content.
@@ -843,8 +867,11 @@ body.pane-dragging .terminal-pane-positioned {
 .block-item {
   display: flex;
   align-items: flex-start;
-  gap: 4px;
+  /* 4→3: trims the bullet→content gap at every depth (left-density). */
+  gap: 3px;
   padding: 1px 0;
+  /* Anchor for the absolute drag-handle overlay (see .block-drag-handle). */
+  position: relative;
 }
 
 /* Subtle background hint when children are hidden behind collapse */
@@ -853,7 +880,13 @@ body.pane-dragging .terminal-pane-positioned {
   border-radius: 3px;
 }
 
+/* Drag handle is an absolute hover-overlay sitting in the gutter to the LEFT
+   of the bullet — it no longer reserves 16px of row width at every depth.
+   Revealed on row hover (see .block-item:hover rule below). */
 .block-drag-handle {
+  position: absolute;
+  left: -18px;
+  top: 1px;
   width: 16px;
   height: 22px;
   display: flex;
@@ -864,6 +897,8 @@ body.pane-dragging .terminal-pane-positioned {
   color: var(--color-fg-muted);
   cursor: grab;
   opacity: 0;
+  /* Not interactive until visible, so it can't eat clicks in the gutter. */
+  pointer-events: none;
   transition: opacity 0.1s ease, background 0.1s ease;
   user-select: none;
   touch-action: none;
@@ -872,6 +907,7 @@ body.pane-dragging .terminal-pane-positioned {
 .block-item:hover .block-drag-handle,
 .block-item.block-drag-source .block-drag-handle {
   opacity: 0.85;
+  pointer-events: auto;   /* grabbable once revealed */
 }
 
 .block-drag-handle:hover {
@@ -884,7 +920,11 @@ body.pane-dragging .terminal-pane-positioned {
 }
 
 .block-bullet {
-  width: 20px;
+  /* 20→16: reclaims 4px of left gutter on EVERY row at EVERY depth (the single
+     biggest compounding left-density win). Hit target stays ~20px via the
+     padding:2px / margin:-2px below; connector-tick geometry is unaffected
+     (it's anchored to the indent width, not the bullet width). */
+  width: 16px;
   height: 22px;
   display: flex;
   align-items: center;
@@ -1513,8 +1553,11 @@ body.block-dragging * {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 4px;
-  margin-bottom: 8px;
+  /* Zoom-header density: halve the vertical chrome above the first block.
+     Was 8px pad + 8px margin (24px of its own footprint); 4px/4px keeps the
+     divider legible without the dead band between breadcrumb and content. */
+  padding: 4px 4px;
+  margin-bottom: 4px;
   border-bottom: 1px solid var(--color-border);
   flex-wrap: wrap;
 }
