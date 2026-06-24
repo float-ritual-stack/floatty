@@ -153,6 +153,82 @@ export function navigateToBlock(blockId: string, options: NavigateOptions = {}):
   return { success: true, targetPaneId };
 }
 
+// ═══════════════════════════════════════════════════════════════
+// PANE SCOPE (FLOOR) — single decision point for in-pane zoom
+// ═══════════════════════════════════════════════════════════════
+//
+// Every zoom trigger (breadcrumb click, ◊ root button, Cmd+Enter zoom-in,
+// Escape zoom-out) routes through requestPaneZoom / requestPaneZoomOut instead
+// of calling paneStore.zoomTo directly. That direct-call scatter was the
+// navigation hydra; this is the one head left. A pane's "floor" (set via
+// paneStore.setScope, e.g. by the pin shelf) is the highest block it may zoom
+// to. Normal panes have no floor → identical to prior behavior.
+
+/**
+ * Is `blockId` the pane-floor or a descendant of it? Walks the parent chain
+ * upward; in-scope iff it reaches the floor. O(depth); the `seen` guard defends
+ * against malformed cycles.
+ */
+function isAtOrBelowFloor(blockId: string, floorId: string): boolean {
+  let cur: string | null = blockId;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    if (cur === floorId) return true;
+    seen.add(cur);
+    cur = blockStore.getBlock(cur)?.parentId ?? null;
+  }
+  return false;
+}
+
+/**
+ * True when `blockId` is navigable WITHIN `paneId` (no floor, or the floor /
+ * below it). Breadcrumb uses this to dim above-floor segments as "leaves this
+ * pane" affordances. `null` (◊ / full-tree) is above any floor.
+ */
+export function isWithinPaneScope(paneId: string, blockId: string | null): boolean {
+  const floor = paneStore.getFloor(paneId);
+  if (floor === null) return true;
+  if (blockId === null) return false;
+  return isAtOrBelowFloor(blockId, floor);
+}
+
+/**
+ * THE single entry for in-pane zoom navigation. Policy:
+ *   - in-scope target (no floor, or floor/below) → zoom in-pane (unchanged).
+ *   - above-floor target (incl. null/◊ on a floored pane) → ESCAPE: route to
+ *     the linked pane if one exists, else no-op (the pane holds at its floor).
+ */
+export function requestPaneZoom(
+  paneId: string,
+  targetId: string | null,
+  options: { originBlockId?: string } = {}
+): void {
+  if (isWithinPaneScope(paneId, targetId)) {
+    paneStore.zoomTo(paneId, targetId, { originBlockId: options.originBlockId });
+    return;
+  }
+
+  // Above the floor — escape attempt. Open in the linked pane, or swallow.
+  const linkedPane = resolveSameTabLink(paneId, targetId ?? undefined);
+  if (linkedPane === paneId) return; // no link → no-op, the pin holds
+
+  if (targetId === null) {
+    paneStore.zoomTo(linkedPane, null); // ◊ → linked pane at full tree
+  } else {
+    navigateToBlock(targetId, { paneId: linkedPane, highlight: true });
+  }
+}
+
+/**
+ * Escape / zoom-out, scope-clamped. Targets the pane's floor: `null` for normal
+ * panes (full tree, unchanged), the floor block for pinned panes (clamp — never
+ * above). Already at the floor → zoomTo guards same-value → no-op. Both
+ * behaviors fall out of one call; no separate pin branch.
+ */
+export function requestPaneZoomOut(paneId: string): void {
+  requestPaneZoom(paneId, paneStore.getFloor(paneId));
+}
+
 /**
  * Navigate to a page by name (find or create under pages::)
  *

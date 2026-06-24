@@ -1596,6 +1596,17 @@ body.block-dragging * {
   font-weight: 600;
 }
 
+/* Above the pane's pin/scope floor (floored panes only): dimmed + italic to
+   signal "leaves this pane." Clicking routes to the linked pane (or no-ops);
+   it does not navigate within the pinned pane. */
+.breadcrumb-above-floor {
+  opacity: 0.4;
+  font-style: italic;
+}
+.breadcrumb-above-floor:hover {
+  opacity: 0.7;
+}
+
 .breadcrumb-separator {
   color: var(--color-accent-muted);
   font-size: 10px;

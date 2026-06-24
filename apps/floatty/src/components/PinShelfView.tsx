@@ -25,7 +25,7 @@ import { Outliner } from './Outliner';
 import { blockStore } from '../hooks/useBlockStore';
 import { paneStore } from '../hooks/usePaneStore';
 import { useWorkspace } from '../context/WorkspaceContext';
-import { extractAllWikilinkTargets } from '../lib/wikilinkUtils';
+import { extractFirstWikilink } from '../lib/wikilinkUtils';
 import { resolveBlockIdPrefix } from '../lib/blockTypes';
 import { findPage, findRootBlockByPrefix } from '../hooks/useBacklinkNavigation';
 import './pin-shelf.css';
@@ -37,8 +37,10 @@ interface Pin {
   childBlockId: string;
   /** Resolved block id to zoom the Outliner at */
   resolvedBlockId: string;
-  /** Original wikilink target text — surfaced if we later want to show a header */
+  /** Original wikilink target text (block id / page name) */
   target: string;
+  /** Header label: the [[target|alias]] alias when present, else the target */
+  displayTitle: string;
 }
 
 export function PinShelfView() {
@@ -56,9 +58,11 @@ export function PinShelfView() {
       const child = blockStore.blocks[childId];
       if (!child) continue;
 
-      const targets = extractAllWikilinkTargets(child.content);
-      if (targets.length === 0) continue;
-      const target = targets[0];
+      // First wikilink, keeping its alias for the header. `[[id|deep pin]]`
+      // resolves on `id` but displays "deep pin".
+      const link = extractFirstWikilink(child.content);
+      if (!link) continue;
+      const target = link.target;
 
       // Same resolution ladder as BlockItem's wikilink click: short-hash/UUID
       // prefix first, page-name fallback. Both return a real block id.
@@ -69,7 +73,12 @@ export function PinShelfView() {
       }
       if (!resolvedBlockId) continue;
 
-      out.push({ childBlockId: childId, resolvedBlockId, target });
+      out.push({
+        childBlockId: childId,
+        resolvedBlockId,
+        target,
+        displayTitle: link.alias ?? target,
+      });
     }
     return out;
   });
@@ -129,11 +138,16 @@ function PinItem(props: { pin: () => Pin }) {
     paneStore.removePane(paneId);
   });
 
-  // Track the current resolved block — if the pin's child content is edited
-  // to point at a different block, follow the new target without remounting.
-  // Uses paneStore.zoomTo with skipHistory per CLAUDE.md canonical-paths: we
-  // don't want this external-state-driven retargeting to pollute nav history
-  // (Cmd+[/Cmd+] are for user-initiated navigation only).
+  // Track the current resolved block — if the pin's child content is edited to
+  // point at a different block, follow the new target without remounting.
+  //
+  // setScope sets the pane's navigation FLOOR to the pinned block AND zooms to
+  // it (skipHistory inside). The floor is what makes a pin un-escapable upward:
+  // breadcrumb segments above it route to the linked pane, Escape clamps to it,
+  // Cmd+Enter still descends freely. This replaces the prior direct
+  // paneStore.zoomTo call — scope creation is now one centralized primitive
+  // (resolves the CodeRabbit "don't call zoomTo directly" note on PR #317;
+  // navigateToBlock remains unsuitable — it pushes history + pickZoomTarget).
   //
   // on() is load-bearing (solidjs-patterns.md §7): a bare createEffect here
   // tracks props.pin(), which reads the <Key> item signal — and that signal
@@ -146,7 +160,7 @@ function PinItem(props: { pin: () => Pin }) {
     () => props.pin().resolvedBlockId,
     (resolvedBlockId, prevResolvedBlockId) => {
       if (resolvedBlockId && resolvedBlockId !== prevResolvedBlockId) {
-        paneStore.zoomTo(paneId, resolvedBlockId, { skipHistory: true });
+        paneStore.setScope(paneId, resolvedBlockId);
       }
     }
   ));
@@ -194,13 +208,13 @@ function PinItem(props: { pin: () => Pin }) {
         type="button"
         class="pin-shelf-item-header"
         aria-expanded={!collapsed()}
-        aria-label={`${collapsed() ? 'Expand' : 'Collapse'} pin: ${props.pin().target}`}
+        aria-label={`${collapsed() ? 'Expand' : 'Collapse'} pin: ${props.pin().displayTitle}`}
         onClick={() => setCollapsed((c) => !c)}
       >
         <span class="pin-shelf-item-chevron" aria-hidden="true">
           {collapsed() ? '▶' : '▼'}
         </span>
-        <span class="pin-shelf-item-title">{props.pin().target}</span>
+        <span class="pin-shelf-item-title">{props.pin().displayTitle}</span>
       </button>
       <div class="pin-shelf-item-body">
         <Outliner paneId={paneId} />
