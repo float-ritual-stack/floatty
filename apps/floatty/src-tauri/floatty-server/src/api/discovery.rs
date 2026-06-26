@@ -339,14 +339,37 @@ async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoRespons
         _ => "application/octet-stream",
     };
 
-    Ok((
-        StatusCode::OK,
-        [(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static(content_type),
-        )],
-        bytes,
-    ))
+    // Attachments are immutable — a filename always maps to the same bytes (a new
+    // image gets a new filename) — so a 1-year `immutable` Cache-Control lets the
+    // WKWebView HTTP cache hold them. The client-side LRU (attachmentCache.ts) is
+    // the deterministic layer; this header is the good-HTTP-citizen complement.
+    let mut headers = header::HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static(content_type),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+
+    // Weak validator from mtime + length, so an evicted cache can revalidate with
+    // a 304 instead of re-downloading. Best-effort: skip if metadata is missing.
+    if let Ok(meta) = tokio::fs::metadata(&file_path).await {
+        let mtime_secs = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if let Ok(etag) =
+            header::HeaderValue::from_str(&format!("\"{}-{}\"", mtime_secs, bytes.len()))
+        {
+            headers.insert(header::ETAG, etag);
+        }
+    }
+
+    Ok((StatusCode::OK, headers, bytes))
 }
 
 // ============================================================================
