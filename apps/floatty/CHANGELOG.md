@@ -6,6 +6,22 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.18.1] - 2026-06-26
+
+Opening an `img::` block stops re-downloading the file every time. Floatty used to fetch the attachment → blob URL on mount and **revoke it on unmount**, so closing and reopening a block re-downloaded the whole thing — a real lag for 6 MB images and 16–25 MB PDFs served from float-box over the tailnet in remote mode. Now a module-level LRU blob cache holds decoded attachments across mounts, so reopen is instant. This is Phase 1 (caching) of the image-system rewrite; display/UX (align, resize, paste-upload) is still to come. The client cache ships with this build; the new server cache headers only take effect after a float-box `floatty-server` redeploy.
+
+### ✨ Performance
+
+- **Attachment blob cache — no re-fetch on reopen** ([[PR #319]] / `868660a` — `apps/floatty/src/lib/attachmentCache.ts`, `apps/floatty/src/components/views/ImgView.tsx`) — a module-level LRU keyed by `serverUrl + filename`, with in-flight dedup (two mounts of the same image share one fetch) and a dual eviction budget (30 entries **or** 150 MB of blobs). Attachments are immutable (a filename always maps to fixed bytes), so cached entries never go stale — they're only evicted, and the object URL is revoked solely on eviction (plus an HMR-dispose sweep). `ImgView` no longer revokes on unmount (the cache owns blob lifetimes) and snapshots all request inputs to discard stale resolutions after a filename/server swap. +8 cache tests.
+
+### ✨ Server
+
+- **`Cache-Control` + `ETag` on `get_attachment`** ([[PR #319]] / `868660a` — `apps/floatty/src-tauri/floatty-server/src/api/discovery.rs`) — the attachment route returned only `Content-Type`, so the WKWebView HTTP cache stored nothing. Now sends `Cache-Control: private, max-age=31536000, immutable` (`private` because the route is behind auth middleware — never let a shared cache hold authenticated bytes) plus a weak `W/"<mtime>-<len>"` ETag for revalidation. Complements the client LRU (the deterministic layer). **Requires a float-box redeploy to take effect in remote mode.**
+
+### 🧪 Tests
+
+- +8 `attachmentCache` tests (hit/miss, auth header, in-flight dedup, LRU + byte-budget eviction, recency bump, cross-server keys). Full suite green (1323/1323) + 20 floatty-server tests.
+
 ## [0.18.0] - 2026-06-24
 
 The pin sidebar grows up, and the outliner gets dense enough to actually use in split panes. Pins are now first-class: each has a navigation **floor** (zoom into children freely, but you can't accidentally escape above the pinned block), a **collapse-to-header** toggle (park a pin without unpinning), and **drag-to-reorder** by the header (with edge auto-scroll). Alongside, the outliner reclaims a lot of horizontal space so deeply-nested content stays readable in a half-width pane. Plus a theme-variable repair: several CSS colors referenced vars that don't exist (black-on-purple pin headers) and now use real theme tokens. Frontend-only — rebuild the app (`./scripts/rebuild.sh`), no server change.
