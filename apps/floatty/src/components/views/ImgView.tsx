@@ -1,4 +1,5 @@
-import { createSignal, createEffect, onCleanup, Show } from 'solid-js';
+import { createSignal, createEffect, Show } from 'solid-js';
+import { getAttachment } from '../../lib/attachmentCache';
 
 export interface ImgViewProps {
   filename: string;
@@ -11,9 +12,14 @@ const IFRAME_RE = /\.(pdf|html|htm)$/i;
 
 /**
  * Renders a local attachment from {data_dir}/__attachments/.
- * Fetches with auth header → blob URL so the img src never exposes the API key.
+ * Resolves to a blob URL via the module-level LRU cache (see attachmentCache.ts)
+ * so reopening a block reuses the cached blob instead of re-downloading — and
+ * the img src never exposes the API key.
  * Images: full-bleed via CSS, resizable by dragging right edge.
  * PDFs: iframe with browser native renderer, height resizable via bottom edge.
+ *
+ * The blob URL is owned by the cache, NOT this component — so there is NO
+ * revoke-on-unmount. The cache revokes only on LRU eviction.
  */
 export function ImgView(props: ImgViewProps) {
   const isIframe = () => IFRAME_RE.test(props.filename);
@@ -27,8 +33,6 @@ export function ImgView(props: ImgViewProps) {
   // PDF height: default 700px, resizable by dragging bottom edge.
   const [pdfHeight, setPdfHeight] = createSignal(700);
 
-  let currentBlobUrl: string | null = null;
-
   createEffect(() => {
     const filename = props.filename;
     const serverUrl = props.serverUrl;
@@ -38,38 +42,19 @@ export function ImgView(props: ImgViewProps) {
     setLoading(true);
     setError(null);
 
-    // Revoke previous blob URL to avoid leaking memory
-    if (currentBlobUrl) {
-      URL.revokeObjectURL(currentBlobUrl);
-      currentBlobUrl = null;
-    }
-
-    fetch(`${serverUrl}/api/v1/attachments/${encodeURIComponent(filename)}`, {
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(`${res.status} ${res.statusText}`);
-        }
-        return res.blob();
-      })
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        currentBlobUrl = url;
+    getAttachment(serverUrl, filename, apiKey)
+      .then((url) => {
+        // Snapshot guard: if props.filename changed while the cache resolved,
+        // a newer effect run owns the UI — ignore this stale result.
+        if (props.filename !== filename) return;
         setBlobUrl(url);
         setLoading(false);
       })
       .catch((err: Error) => {
+        if (props.filename !== filename) return;
         setError(err.message);
         setLoading(false);
       });
-  });
-
-  onCleanup(() => {
-    if (currentBlobUrl) {
-      URL.revokeObjectURL(currentBlobUrl);
-      currentBlobUrl = null;
-    }
   });
 
   // Right-edge drag: constrain width from full-bleed
