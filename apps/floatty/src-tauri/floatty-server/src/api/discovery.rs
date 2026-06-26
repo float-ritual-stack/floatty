@@ -343,6 +343,9 @@ async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoRespons
     // image gets a new filename) — so a 1-year `immutable` Cache-Control lets the
     // WKWebView HTTP cache hold them. The client-side LRU (attachmentCache.ts) is
     // the deterministic layer; this header is the good-HTTP-citizen complement.
+    // `private` (not `public`): this route is behind `auth::auth_middleware`, so
+    // the bytes are authenticated — only the requesting browser may cache them,
+    // never a shared/intermediary cache.
     let mut headers = header::HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
@@ -350,7 +353,7 @@ async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoRespons
     );
     headers.insert(
         header::CACHE_CONTROL,
-        header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+        header::HeaderValue::from_static("private, max-age=31536000, immutable"),
     );
 
     // Weak validator from mtime + length, so an evicted cache can revalidate with
@@ -362,8 +365,10 @@ async fn get_attachment(Path(filename): Path<String>) -> Result<impl IntoRespons
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        // Weak validator (W/): mtime+len can collide if bytes are ever replaced
+        // in-place, so it must not be advertised as a strong validator.
         if let Ok(etag) =
-            header::HeaderValue::from_str(&format!("\"{}-{}\"", mtime_secs, bytes.len()))
+            header::HeaderValue::from_str(&format!("W/\"{}-{}\"", mtime_secs, bytes.len()))
         {
             headers.insert(header::ETAG, etag);
         }

@@ -39,19 +39,26 @@ export function ImgView(props: ImgViewProps) {
     const apiKey = props.apiKey;
     if (!filename || !serverUrl) return;
 
+    // True once any request input has changed since this effect run started —
+    // i.e. a newer effect run now owns the UI and this resolution is stale.
+    const isStale = () =>
+      props.filename !== filename || props.serverUrl !== serverUrl || props.apiKey !== apiKey;
+
     setLoading(true);
     setError(null);
 
     getAttachment(serverUrl, filename, apiKey)
       .then((url) => {
-        // Snapshot guard: if props.filename changed while the cache resolved,
-        // a newer effect run owns the UI — ignore this stale result.
-        if (props.filename !== filename) return;
+        // Snapshot guard: if any request input changed while the cache resolved,
+        // a newer effect run owns the UI — ignore this stale result. Guarding
+        // serverUrl/apiKey too prevents a slower request from a previous server
+        // (same filename) overwriting the newer image.
+        if (isStale()) return;
         setBlobUrl(url);
         setLoading(false);
       })
       .catch((err: Error) => {
-        if (props.filename !== filename) return;
+        if (isStale()) return;
         setError(err.message);
         setLoading(false);
       });
