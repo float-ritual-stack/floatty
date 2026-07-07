@@ -118,6 +118,35 @@ Highlights born as outline blocks collapse that loop to zero steps.
   (~40 channels already configured at `~/.config/television/cable/`).
 - This is where "recreated tv" fully lands. Explicitly horizon, not start.
 
+### v1.1 addendum — argument resolution: paths, aliases, context (2026-07-07)
+
+Origin: live dogfooding the night of the charter ([[81b2016c]] / [[0cbf3925]] on
+page [[2026-07-07]]) — a glob `sh:: ls` returned two context-lake paths and
+reading one meant manually prepending `sh:: cat`. Two gaps surfaced: ls:: should
+be able to take its scope from *block context*, and recurring directory sets
+want *names*.
+
+The `ls::` argument resolves in order:
+
+1. **Literal path** — `ls:: ~/float-hub/inbox`. The v1 form; ships in PR2.
+2. **Alias** — `ls:: rexall` → a configured multi-root set (e.g. the
+   `rangle-weekly/rexall` board + the Catalyst-Context-Lake records dir).
+   Listing renders grouped by root. Aliases are channels-lite — if v3 channels
+   land, aliases become the degenerate "list of directories" channel kind.
+3. **Contextual (bare `ls::`)** — no argument: resolve from **ancestor markers**.
+   Walk `effectiveMarkers` (inherited provenance — rides the existing
+   `InheritanceIndex`; do NOT add a parallel ancestor walk) for a `project::`
+   value that has an alias mapping. A parent
+   `ctx:: … [project::rangle/rexall-catalyst-context-lake]` block scopes a bare
+   `ls::` beneath it to that alias's roots. Same inheritance semantics markers
+   already have — the door reads context the way search already does.
+
+**Alias config home** (decided-enough-to-start): `config.toml` `[ls.aliases]` —
+simplest, no new outline convention, symmetric with existing config surface.
+Revisit outline-native config (an `aliases::` block, like `pages::`) if/when
+editing aliases in-outline earns its keep. Sequencing: aliases + contextual
+resolution come after PR3 wiring, before or alongside fs-watch liveness.
+
 ## Wiring contract
 
 ```
