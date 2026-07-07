@@ -13,7 +13,8 @@
  * - FLO-322: Batch transaction for bulk paste performance
  */
 
-import { parseMarkdownTree, hasMarkdownStructure, type ParsedBlock } from './markdownParser';
+import { parseMarkdownTree, hasMarkdownStructure } from './markdownParser';
+import { parsedToOps } from './handlers/utils';
 import type { BatchBlockOp } from '../hooks/useBlockStore';
 
 /** Actions needed for structured paste. */
@@ -26,17 +27,6 @@ export interface PasteActions {
   batchCreateBlocksAfter: (afterId: string, ops: BatchBlockOp[]) => string[];
   /** Batch create blocks as children of a block (single transaction) */
   batchCreateBlocksInside: (parentId: string, ops: BatchBlockOp[]) => string[];
-}
-
-/**
- * Convert ParsedBlock tree to BatchBlockOp tree.
- * Pure transformation — no side effects.
- */
-function parsedToOps(blocks: ParsedBlock[]): BatchBlockOp[] {
-  return blocks.map(block => ({
-    content: block.content,
-    children: block.children.length > 0 ? parsedToOps(block.children) : undefined,
-  }));
 }
 
 /**

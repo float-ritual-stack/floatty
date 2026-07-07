@@ -78,8 +78,9 @@ export function extractContent(content: string, prefixes: string[]): string {
 /**
  * Convert ParsedBlock tree to BatchBlockOp tree.
  * Pure transformation — no side effects.
+ * Single shared copy — pasteHandler imports this too (was duplicated pre-2026-07-06).
  */
-function parsedToOps(blocks: ParsedBlock[]): BatchBlockOp[] {
+export function parsedToOps(blocks: ParsedBlock[]): BatchBlockOp[] {
   return blocks.map(block => ({
     content: block.content,
     children: block.children.length > 0 ? parsedToOps(block.children) : undefined,

@@ -103,8 +103,10 @@ export const echoCopyHandler: BlockHandler = {
       return;
     }
 
-    // Parse markdown → block tree → create as children
-    const parsed = parseMarkdownTree(markdown);
+    // Parse markdown → block tree → create as children.
+    // nested mode: flattenSpecToMarkdown ENCODES tree depth as bullet
+    // indentation — items must reconstruct as hierarchy, not a literal list run.
+    const parsed = parseMarkdownTree(markdown, { lists: 'nested' });
     if (parsed.length === 0) {
       actions.updateBlockContent(blockId, `echoCopy:: error — empty rendered content`);
       return;

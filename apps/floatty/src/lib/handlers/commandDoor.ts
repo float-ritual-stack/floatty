@@ -96,12 +96,19 @@ export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
         if (cleanOutput) {
           const parsed = parseMarkdownTree(cleanOutput);
 
-          // Check if output is simple (single block, no children)
-          const isSimpleOutput = parsed.length === 1 && parsed[0].children.length === 0;
+          // Check if output is simple (single block, no children).
+          // Fence blocks are excluded: prefixing `output::` before ``` would
+          // break the fence's line-start position, so they insert as children.
+          const isSimpleOutput =
+            parsed.length === 1 &&
+            parsed[0].children.length === 0 &&
+            !parsed[0].content.startsWith('```');
 
           if (isSimpleOutput) {
-            // Simple output - just update the placeholder
-            actions.updateBlockContent(outputId, `${outputPrefix}${parsed[0].content}`);
+            // Simple output - just update the placeholder. trimEnd drops the
+            // parser's trailing BLOCK_SEPARATOR — a one-liner `output::` block
+            // shouldn't carry padding.
+            actions.updateBlockContent(outputId, `${outputPrefix}${parsed[0].content.trimEnd()}`);
           } else if (parsed.length > 0) {
             // Structured output - remove placeholder, insert tree
             if (actions.deleteBlock) {

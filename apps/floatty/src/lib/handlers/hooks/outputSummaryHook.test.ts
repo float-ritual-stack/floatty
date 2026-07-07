@@ -282,7 +282,8 @@ describe('flattenSpecToMarkdown — TreeView round-trips as nested bullets', () 
       'root',
     );
     const md = flattenSpecToMarkdown(out)!;
-    const parsed = parseMarkdownTree(md);
+    // nested mode — matches the echoCopy:: materialization call site
+    const parsed = parseMarkdownTree(md, { lists: 'nested' });
 
     // Find the Parent node and check it has 2 children, one of which has 1 grandchild.
     const findByContent = (
