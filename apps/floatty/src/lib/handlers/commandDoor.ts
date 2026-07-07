@@ -99,10 +99,12 @@ export function createCommandDoor(config: CommandDoorConfig): BlockHandler {
           // Check if output is simple (single block, no children).
           // Fence blocks are excluded: prefixing `output::` before ``` would
           // break the fence's line-start position, so they insert as children.
+          // trimStart: the parser preserves the raw opening line, so an
+          // indented fence starts with whitespace, not the backticks.
           const isSimpleOutput =
             parsed.length === 1 &&
             parsed[0].children.length === 0 &&
-            !parsed[0].content.startsWith('```');
+            !parsed[0].content.trimStart().startsWith('```');
 
           if (isSimpleOutput) {
             // Simple output - just update the placeholder. trimEnd drops the
