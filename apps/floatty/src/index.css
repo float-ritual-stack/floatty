@@ -1312,17 +1312,35 @@ body.pane-dragging .terminal-pane-positioned {
   /* Structural constants for full-width calc:
      --block-gutter: bullet (20px) + drag handle (16px) + gap (4px) = 40px
      --outliner-pad: outliner-container padding (16px)
-     --indent-per-level: indent-width (28px) + padding (4px) + border (1px) = 33px */
-  --block-gutter: 40px;
-  --outliner-pad: 16px;
-  --fw-pull-left: calc(var(--outliner-pad) + var(--block-depth, 0) * (var(--block-indent-width) + 5px) + var(--block-gutter));
-  --fw-pull-right: var(--outliner-pad);
+     --indent-per-level: indent-width (28px) + padding (4px) + border (1px) = 33px
+     --fw-col-margin: the FLO-625 reading column (--content-max-width, centered
+     via margin-inline:auto on .outliner-container > .block-wrapper) leaves
+     (container - column)/2 of dead space each side in wide panes. Full-width
+     must cancel that too — 100cqw resolves against the outliner container
+     (container-type: inline-size), max() floors it at 0 for panes narrower
+     than the column. */
+  /* Measured 2026-07-07 (dev, tauri-mcp probes): output containers
+     (.door-output, .table-block-container) sit 15px from the wrapper's
+     left edge — the original 40px (bullet+drag+gap theory) over-pulled by
+     25px, invisible while the reading column clamped the result. If a
+     specific output class measures differently, override --block-gutter
+     in a rule scoped to it (the pull calc resolves per-element). */
+  --block-gutter: 15px;
+  --outliner-pad: 8px; /* MUST match .outliner-container padding (was 16 — drift) */
+  --fw-col-margin: max(0px, calc((100cqw - var(--content-max-width)) / 2));
   border-left: 2px solid var(--color-accent);
 }
 
 .block-full-width .eval-output,
 .block-full-width .door-host-container,
-.block-full-width .search-results-view {
+.block-full-width .door-output,
+.block-full-width .search-results-view,
+.block-full-width .table-block-container {
+  /* Declared HERE (not on .block-full-width) so var refs — notably
+     --block-gutter — resolve on the pulled element and stay overridable
+     per output class. --block-depth inherits from the block-item. */
+  --fw-pull-left: calc(var(--fw-col-margin) + var(--outliner-pad) + var(--block-depth, 0) * (var(--block-indent-width) + 5px) + var(--block-gutter));
+  --fw-pull-right: calc(var(--fw-col-margin) + var(--outliner-pad));
   position: relative;
   z-index: 1;
   margin-left: calc(-1 * var(--fw-pull-left));
@@ -1330,6 +1348,13 @@ body.pane-dragging .terminal-pane-positioned {
   padding-left: var(--outliner-pad);
   padding-right: var(--outliner-pad);
   background: var(--color-bg);
+}
+
+/* Full-width tables: .table-block-container is width:100% of the (now wider)
+   line box, but the negative margins alone don't grow the box — width must
+   include the pulled span so table-layout:fixed distributes columns across it. */
+.block-full-width .table-block-container {
+  width: calc(100% + var(--fw-pull-left) + var(--fw-pull-right));
 }
 
 /* Editing (NOT selected): accent border when cursor is in block */
