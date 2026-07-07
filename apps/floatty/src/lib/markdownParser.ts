@@ -7,15 +7,21 @@
  *   ## H2 → child of nearest H1
  *   ### H3 → child of nearest H2
  *   **Bold** → acts like H7 (list heading)
- *   - item → child of current context
  *   Content → child of nearest heading
  *
- * List indentation (2 spaces or 1 tab = 1 level):
- *   - top level     → level 8
- *     - indent 1    → level 9 (child of level 8)
- *       - indent 2  → level 10 (child of level 9)
+ * Lists: a contiguous run of list lines becomes ONE block with the `- ` markers
+ * and indentation preserved verbatim — list indentation does NOT create outline
+ * hierarchy. (Markdown-list→outline-import is a different intent that deserves
+ * an explicit command; see docs/design/2026-07-06-slurp-format-and-box-rendering.md.)
  *
- * Logic ported from float-liner's parse_markdown_tree (Rust/pulldown_cmark)
+ * Code fences: ``` blocks are isolated into their own block, fence markers
+ * included, body verbatim (blank lines preserved).
+ *
+ * Leaf blocks (paragraph / list run / fence) get a trailing blank line
+ * (BLOCK_SEPARATOR) for visual separation in the outline. Headings don't —
+ * they get their weight from rendering and their children sit below anyway.
+ *
+ * Originally ported from float-liner's parse_markdown_tree (Rust/pulldown_cmark).
  */
 
 export interface ParsedBlock {
@@ -27,12 +33,14 @@ export interface ParsedBlock {
  * Detect if content has markdown structure worth parsing
  */
 export function hasMarkdownStructure(content: string): boolean {
-  // Check for headings, bold headings, or lists (bulleted, numbered, indented)
+  // Check for headings, bold headings, lists (bulleted, numbered, indented),
+  // or fenced code blocks
   return /^#{1,6}\s/m.test(content) ||
          /^\*\*[^*]+\*\*[:\s]*$/m.test(content) ||
          /^[-*]\s/m.test(content) ||
          /^\d+\.\s/m.test(content) ||
-         /^[ \t]+[-*\d]/m.test(content);  // indented lists
+         /^[ \t]+[-*\d]/m.test(content) ||  // indented lists
+         /^```/m.test(content);             // fenced code blocks
 }
 
 /**
@@ -57,42 +65,34 @@ function getHeadingLevel(line: string): number {
 }
 
 /**
- * Check if line is a list item and return its nesting level
- * Returns: 0 = not a list, 8+ = list item at indent level (8 = no indent, 9 = 1 level, etc.)
- *
- * Indentation: 2 spaces or 1 tab = 1 level
- * Stack uses 8+ for lists so they nest under headings (1-7)
+ * Check if a line is a list item (bulleted or numbered), at any indentation.
+ */
+function isListLine(line: string): boolean {
+  const trimmed = line.trim();
+  return /^[-*]\s/.test(trimmed) || /^\d+\.\s/.test(trimmed);
+}
+
+/**
+ * Nested-list mode only: list nesting level from indentation.
+ * Returns 8+ so list items nest under headings (levels 1-7).
+ * 2 spaces or 1 tab = 1 indent level.
  */
 function getListLevel(line: string): number {
-  const trimmed = line.trim();
-
-  // Check if it's a list item at all
-  if (!/^[-*]\s/.test(trimmed) && !/^\d+\.\s/.test(trimmed)) {
-    return 0;
-  }
-
-  // Count leading whitespace to determine indent level
-  // 2 spaces or 1 tab = 1 indent level
   let indent = 0;
   for (const char of line) {
     if (char === ' ') {
       indent++;
     } else if (char === '\t') {
-      indent += 2;  // treat tab as 2 spaces
+      indent += 2; // treat tab as 2 spaces
     } else {
       break;
     }
   }
-
-  // Convert to indent levels (2 spaces = 1 level)
-  const indentLevel = Math.floor(indent / 2);
-
-  // Return 8 + indentLevel so lists nest properly under headings
-  return 8 + indentLevel;
+  return 8 + Math.floor(indent / 2);
 }
 
 /**
- * Strip list prefix from line content
+ * Nested-list mode only: strip the list marker from a line.
  */
 function stripListPrefix(line: string): string {
   return line.trim()
@@ -101,10 +101,33 @@ function stripListPrefix(line: string): string {
 }
 
 /**
- * Parse markdown content into a tree of blocks based on heading hierarchy.
- * Returns flat list if no structure found, or nested structure if headings/lists present.
+ * Trailing separator appended to leaf blocks (paragraph / list run / fence)
+ * so slurped content gets visual breathing room in the outline. Literal
+ * list mode only.
  */
-export function parseMarkdownTree(content: string): ParsedBlock[] {
+const BLOCK_SEPARATOR = '\n\n';
+
+export interface ParseMarkdownOptions {
+  /**
+   * 'literal' (default): a contiguous run of list lines becomes ONE block with
+   * markers + indentation verbatim, and leaf blocks get a trailing blank line.
+   * The slurp behavior — paste, sh::, help::.
+   *
+   * 'nested': legacy import semantics — each list item is its own block,
+   * marker stripped, indentation becomes outline hierarchy, no separators.
+   * For paths where nested bullets ENCODE tree depth: echoCopy:: door
+   * materialization round-trips flattenSpecToMarkdown output through this.
+   */
+  lists?: 'literal' | 'nested';
+}
+
+/**
+ * Parse markdown content into a tree of blocks based on heading hierarchy.
+ * Returns flat list if no structure found, or nested structure if headings present.
+ * List runs and code fences each become a single leaf block (see module header),
+ * unless `lists: 'nested'` requests legacy item-per-block import semantics.
+ */
+export function parseMarkdownTree(content: string, options?: ParseMarkdownOptions): ParsedBlock[] {
   // If no structure, return flat blocks per non-empty line
   if (!hasMarkdownStructure(content)) {
     return content
@@ -113,93 +136,117 @@ export function parseMarkdownTree(content: string): ParsedBlock[] {
       .map(line => ({ content: line, children: [] }));
   }
 
+  const nestedLists = options?.lists === 'nested';
+  const separator = nestedLists ? '' : BLOCK_SEPARATOR;
+
   const lines = content.split('\n');
   const rootBlocks: ParsedBlock[] = [];
 
-  // Stack tracks: [{ level, block, isListParent }] where level 0 = root
-  // Level 1-6 = # headings, Level 7 = bold headings, Level 8 = list context
+  // Stack tracks context: level 0 = root, 1-6 = # headings, 7 = bold headings,
+  // 8+ = list items (nested mode only)
   type StackEntry = { level: number; block: ParsedBlock };
   const stack: StackEntry[] = [{ level: 0, block: { content: '', children: rootBlocks } }];
 
-  // Accumulate non-structural lines
-  let pendingContent: string[] = [];
+  // Three accumulators; at most one is non-empty at a time.
+  let pendingContent: string[] = []; // prose paragraph
+  let pendingList: string[] = []; // contiguous run of list lines, verbatim (literal mode)
+  let fenceLines: string[] | null = null; // non-null = inside a ``` fence
+
+  const pushLeaf = (text: string) => {
+    const parent = stack[stack.length - 1].block;
+    parent.children.push({ content: text + separator, children: [] });
+  };
 
   const flushPending = () => {
     if (pendingContent.length === 0) return;
-
-    const combinedContent = pendingContent.join('\n').trim();
-    if (!combinedContent) {
-      pendingContent = [];
-      return;
-    }
-
-    // Add as child of current context
-    const parent = stack[stack.length - 1].block;
-    parent.children.push({ content: combinedContent, children: [] });
+    const combined = pendingContent.join('\n').trim();
     pendingContent = [];
+    if (combined) pushLeaf(combined);
+  };
+
+  const flushList = () => {
+    if (pendingList.length === 0) return;
+    const combined = pendingList.join('\n');
+    pendingList = [];
+    pushLeaf(combined);
+  };
+
+  const flushFence = () => {
+    if (fenceLines === null) return;
+    const combined = fenceLines.join('\n');
+    fenceLines = null;
+    pushLeaf(combined);
   };
 
   for (const line of lines) {
     const trimmed = line.trim();
+
+    // Inside a fence: accumulate verbatim (blank lines included) until closing ```
+    if (fenceLines !== null) {
+      fenceLines.push(line);
+      if (trimmed.startsWith('```')) flushFence();
+      continue;
+    }
+
+    // Fence opens: isolate it from whatever was accumulating
+    if (trimmed.startsWith('```')) {
+      flushPending();
+      flushList();
+      fenceLines = [line];
+      continue;
+    }
+
     if (!trimmed) {
-      if (pendingContent.length > 0) flushPending();
+      flushPending();
+      flushList();
       continue;
     }
 
     const headingLevel = getHeadingLevel(line);
 
     if (headingLevel > 0) {
-      // Flush pending content first
       flushPending();
+      flushList();
 
       // Pop stack to find correct parent level
       while (stack.length > 1 && stack[stack.length - 1].level >= headingLevel) {
         stack.pop();
       }
 
-      // Create the heading block
-      const headingBlock: ParsedBlock = {
-        content: trimmed,
-        children: [],
-      };
-
-      // Add to parent's children
+      const headingBlock: ParsedBlock = { content: trimmed, children: [] };
       const parent = stack[stack.length - 1].block;
       parent.children.push(headingBlock);
-
-      // Push this heading onto stack as new context
       stack.push({ level: headingLevel, block: headingBlock });
-    } else {
-      const listLevel = getListLevel(line);
+    } else if (isListLine(line)) {
+      flushPending();
 
-      if (listLevel > 0) {
-        // Flush pending content first
-        flushPending();
+      if (nestedLists) {
+        // Legacy import semantics: item-per-block, marker stripped,
+        // indentation → hierarchy via the stack
+        const listLevel = getListLevel(line);
+        const itemBlock: ParsedBlock = { content: stripListPrefix(line), children: [] };
 
-        const itemContent = stripListPrefix(line);
-        const itemBlock: ParsedBlock = { content: itemContent, children: [] };
-
-        // Pop stack to find correct parent for this indent level
-        // listLevel is 8+ where 8 = no indent, 9 = 1 indent, etc.
         while (stack.length > 1 && stack[stack.length - 1].level >= listLevel) {
           stack.pop();
         }
 
-        // Add to current context (parent at lower level)
         const parent = stack[stack.length - 1].block;
         parent.children.push(itemBlock);
-
-        // Push onto stack so deeper items become children
         stack.push({ level: listLevel, block: itemBlock });
       } else {
-        // Regular content - accumulate
-        pendingContent.push(line);
+        // Literal: a list run interrupts prose; markers + indentation verbatim
+        pendingList.push(line.trimEnd());
       }
+    } else {
+      // Prose interrupts a list run
+      flushList();
+      pendingContent.push(line);
     }
   }
 
-  // Flush any remaining content
   flushPending();
+  flushList();
+  flushFence(); // unclosed fence at EOF still lands as its own block
 
   return rootBlocks;
 }

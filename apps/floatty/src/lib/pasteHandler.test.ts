@@ -81,7 +81,7 @@ Some content under heading`;
       expect(actions.updateBlockContent).toHaveBeenCalled();
     });
 
-    it('handles bulleted list', () => {
+    it('lets the browser handle a paste that is only a list (one block, no children)', () => {
       const actions = createMockActions();
       const markdown = `- Item one
 - Item two
@@ -89,12 +89,12 @@ Some content under heading`;
 
       const result = handleStructuredPaste('root', markdown, actions);
 
-      expect(result.handled).toBe(true);
-      // Should use batch create for sibling blocks
-      expect(actions.batchCreateBlocksAfter).toHaveBeenCalled();
+      // A list run is ONE block now; single flat block → browser default,
+      // same as pasting a single paragraph. Markers land verbatim in the block.
+      expect(result.handled).toBe(false);
     });
 
-    it('handles nested list', () => {
+    it('lets the browser handle a nested list too (one literal block)', () => {
       const actions = createMockActions();
       const markdown = `- Parent item
   - Child item
@@ -102,12 +102,7 @@ Some content under heading`;
 
       const result = handleStructuredPaste('root', markdown, actions);
 
-      expect(result.handled).toBe(true);
-      // Empty root → first block fills root, nested children inserted inside via batch
-      expect(actions.batchCreateBlocksInside).toHaveBeenCalled();
-      const ops = (actions.batchCreateBlocksInside as ReturnType<typeof vi.fn>).mock.calls[0][1];
-      expect(ops).toBeDefined();
-      expect(ops.length).toBe(2);
+      expect(result.handled).toBe(false);
     });
 
     it('handles heading with list underneath', () => {
@@ -119,6 +114,27 @@ Some content under heading`;
       const result = handleStructuredPaste('root', markdown, actions);
 
       expect(result.handled).toBe(true);
+    });
+
+    it('handles paragraph + list + paragraph as three sibling blocks ([[ae840d8a]] shape)', () => {
+      const actions = createMockActions();
+      actions.blocks.get('root')!.content = 'existing';
+
+      const markdown = `block of text yo yo yo
+
+- list
+- list
+
+more text`;
+
+      const result = handleStructuredPaste('root', markdown, actions);
+
+      expect(result.handled).toBe(true);
+      const ops = (actions.batchCreateBlocksAfter as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(ops.length).toBe(3);
+      expect(ops[0].content).toBe('block of text yo yo yo\n\n');
+      expect(ops[1].content).toBe('- list\n- list\n\n');
+      expect(ops[2].content).toBe('more text\n\n');
     });
   });
 
@@ -157,7 +173,9 @@ Some content under heading`;
       // Set root to have content
       actions.blocks.get('root')!.content = 'existing content';
 
-      const markdown = `- New item one
+      const markdown = `intro paragraph
+
+- New item one
 - New item two`;
 
       const result = handleStructuredPaste('root', markdown, actions);
@@ -172,9 +190,12 @@ Some content under heading`;
       const actions = createMockActions();
       actions.blocks.get('root')!.content = 'existing';
 
-      const markdown = `- Item one
+      const markdown = `intro paragraph
+
+- Item one
 - Item two
-- Item three`;
+
+closing paragraph`;
 
       const result = handleStructuredPaste('root', markdown, actions);
 
@@ -203,26 +224,31 @@ Some content under heading`;
       const [afterId, ops] = calls[0];
       expect(afterId).toBe('root');
       expect(ops[0].content).toBe('# Section');
-      // Section should have children (the list items)
+      // Section should have one child: the list run as a single block
       expect(ops[0].children).toBeDefined();
+      expect(ops[0].children!.length).toBe(1);
+      expect(ops[0].children![0].content).toBe('- Point one\n  - Sub point\n- Point two\n\n');
     });
 
     it('uses single batch call for multi-block paste (not per-block calls)', () => {
       const actions = createMockActions();
       actions.blocks.get('root')!.content = 'existing';
 
-      const markdown = `- Item 1
+      const markdown = `## A
+- Item 1
+
+## B
 - Item 2
-- Item 3
-- Item 4
-- Item 5`;
+
+## C
+- Item 3`;
 
       handleStructuredPaste('root', markdown, actions);
 
-      // One batch call, not 5 individual calls
+      // One batch call, not per-block calls
       expect(actions.batchCreateBlocksAfter).toHaveBeenCalledTimes(1);
       const ops = (actions.batchCreateBlocksAfter as ReturnType<typeof vi.fn>).mock.calls[0][1];
-      expect(ops.length).toBe(5);
+      expect(ops.length).toBe(3);
     });
   });
 });

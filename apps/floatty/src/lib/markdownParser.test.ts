@@ -52,7 +52,7 @@ More content`;
       expect(result).toHaveLength(1);
       expect(result[0].content).toBe('# Title');
       expect(result[0].children).toHaveLength(1);
-      expect(result[0].children[0].content).toBe('Some content under title\nMore content');
+      expect(result[0].children[0].content).toBe('Some content under title\nMore content\n\n');
     });
 
     it('nests ## under #', () => {
@@ -66,7 +66,7 @@ Content under H2`;
 
       const h2 = result[0].children[0];
       expect(h2.content).toBe('## H2');
-      expect(h2.children[0].content).toBe('Content under H2');
+      expect(h2.children[0].content).toBe('Content under H2\n\n');
     });
 
     it('nests ### under ## under #', () => {
@@ -78,7 +78,7 @@ Deep content`;
 
       const h3 = result[0].children[0].children[0];
       expect(h3.content).toBe('### H3');
-      expect(h3.children[0].content).toBe('Deep content');
+      expect(h3.children[0].content).toBe('Deep content\n\n');
     });
 
     it('handles sibling headings', () => {
@@ -114,7 +114,7 @@ Content here`;
 
       expect(result).toHaveLength(1);
       expect(result[0].content).toBe('**Section Title**');
-      expect(result[0].children[0].content).toBe('Content here');
+      expect(result[0].children[0].content).toBe('Content here\n\n');
     });
 
     it('bold heading with trailing colon', () => {
@@ -128,48 +128,170 @@ Content here`;
     });
   });
 
-  describe('list parsing', () => {
-    it('parses bullet lists as children', () => {
+  describe('list parsing (one block per run, markers intact)', () => {
+    it('keeps a list run as ONE child block with markers', () => {
       const md = `# Title
 - item one
 - item two`;
       const result = parseMarkdownTree(md);
 
       const h1 = result[0];
-      expect(h1.children).toHaveLength(2);
-      expect(h1.children[0].content).toBe('item one');
-      expect(h1.children[1].content).toBe('item two');
+      expect(h1.children).toHaveLength(1);
+      expect(h1.children[0].content).toBe('- item one\n- item two\n\n');
     });
 
-    it('strips list prefix from content', () => {
+    it('preserves the list marker', () => {
       const result = parseMarkdownTree('- bullet item');
-      expect(result[0].content).toBe('bullet item');
+      expect(result[0].content).toBe('- bullet item\n\n');
     });
 
-    it('handles indented lists', () => {
+    it('keeps indented lists as one literal block (no hierarchy)', () => {
       const md = `- parent
   - child
     - grandchild`;
       const result = parseMarkdownTree(md);
 
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toBe('- parent\n  - child\n    - grandchild\n\n');
+      expect(result[0].children).toEqual([]);
+    });
+
+    it('handles numbered lists as one block', () => {
+      const md = `1. first
+2. second`;
+      const result = parseMarkdownTree(md);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toBe('1. first\n2. second\n\n');
+    });
+
+    it('handles asterisk bullets', () => {
+      const result = parseMarkdownTree('* item');
+      expect(result[0].content).toBe('* item\n\n');
+    });
+
+    it('blank line splits two list runs into two blocks', () => {
+      const md = `- run one a
+- run one b
+
+- run two a`;
+      const result = parseMarkdownTree(md);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].content).toBe('- run one a\n- run one b\n\n');
+      expect(result[1].content).toBe('- run two a\n\n');
+    });
+
+    it('list stays separate from the paragraph before it ([[ae840d8a]] shape)', () => {
+      const md = `block of text yo yo yo
+
+- list
+- list
+
+more text`;
+      const result = parseMarkdownTree(md);
+
+      expect(result).toHaveLength(3);
+      expect(result[0].content).toBe('block of text yo yo yo\n\n');
+      expect(result[1].content).toBe('- list\n- list\n\n');
+      expect(result[2].content).toBe('more text\n\n');
+    });
+
+    it('prose line directly after a list ends the run', () => {
+      const md = `- item
+prose right after`;
+      const result = parseMarkdownTree(md);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].content).toBe('- item\n\n');
+      expect(result[1].content).toBe('prose right after\n\n');
+    });
+  });
+
+  describe('code fences', () => {
+    it('isolates a fence into its own block, markers included', () => {
+      const md = `intro text
+
+\`\`\`js
+const x = 1;
+\`\`\`
+
+outro text`;
+      const result = parseMarkdownTree(md);
+
+      expect(result).toHaveLength(3);
+      expect(result[0].content).toBe('intro text\n\n');
+      expect(result[1].content).toBe('```js\nconst x = 1;\n```\n\n');
+      expect(result[2].content).toBe('outro text\n\n');
+    });
+
+    it('preserves blank lines and list-like lines inside a fence', () => {
+      const md = `\`\`\`
+- not a list
+
+# not a heading
+\`\`\``;
+      const result = parseMarkdownTree(md);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toBe('```\n- not a list\n\n# not a heading\n```\n\n');
+      expect(result[0].children).toEqual([]);
+    });
+
+    it('fence interrupts a list run', () => {
+      const md = `- item
+\`\`\`
+code
+\`\`\``;
+      const result = parseMarkdownTree(md);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].content).toBe('- item\n\n');
+      expect(result[1].content).toBe('```\ncode\n```\n\n');
+    });
+
+    it('unclosed fence at EOF still becomes its own block', () => {
+      const md = `# Title
+\`\`\`sh
+echo unterminated`;
+      const result = parseMarkdownTree(md);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].children).toHaveLength(1);
+      expect(result[0].children[0].content).toBe('```sh\necho unterminated\n\n');
+    });
+
+    it('fence nests under the current heading', () => {
+      const md = `## Section
+\`\`\`
+tree art
+\`\`\``;
+      const result = parseMarkdownTree(md);
+
+      expect(result[0].content).toBe('## Section');
+      expect(result[0].children[0].content).toBe('```\ntree art\n```\n\n');
+    });
+  });
+
+  describe('nested-list mode (legacy import semantics — echoCopy:: path)', () => {
+    it('item-per-block, markers stripped, indentation → hierarchy, no separators', () => {
+      const md = `- parent
+  - child
+    - grandchild`;
+      const result = parseMarkdownTree(md, { lists: 'nested' });
+
+      expect(result).toHaveLength(1);
       expect(result[0].content).toBe('parent');
       expect(result[0].children[0].content).toBe('child');
       expect(result[0].children[0].children[0].content).toBe('grandchild');
     });
 
-    it('handles numbered lists', () => {
-      const md = `1. first
-2. second`;
-      const result = parseMarkdownTree(md);
+    it('paragraphs get no separator in nested mode', () => {
+      const md = `# Title
+Some content`;
+      const result = parseMarkdownTree(md, { lists: 'nested' });
 
-      expect(result).toHaveLength(2);
-      expect(result[0].content).toBe('first');
-      expect(result[1].content).toBe('second');
-    });
-
-    it('handles asterisk bullets', () => {
-      const result = parseMarkdownTree('* item');
-      expect(result[0].content).toBe('item');
+      expect(result[0].children[0].content).toBe('Some content');
     });
   });
 
@@ -189,11 +311,13 @@ Content here`;
 
       const features = project.children[0];
       expect(features.content).toBe('## Features');
-      expect(features.children).toHaveLength(2);
+      expect(features.children).toHaveLength(1);
+      expect(features.children[0].content).toBe('- Feature 1\n- Feature 2\n\n');
 
       const bugs = project.children[1];
       expect(bugs.content).toBe('## Bugs');
       expect(bugs.children).toHaveLength(1);
+      expect(bugs.children[0].content).toBe('- Bug 1\n\n');
     });
   });
 
