@@ -147,6 +147,38 @@ Revisit outline-native config (an `aliases::` block, like `pages::`) if/when
 editing aliases in-outline earns its keep. Sequencing: aliases + contextual
 resolution come after PR3 wiring, before or alongside fs-watch liveness.
 
+### v1.2 addendum — remote sources over SSH (2026-07-07)
+
+Applies to **both doors**, not just ls::.
+
+Origin: multi-device reality. Mutagen syncs `/opt/float/bbs` but not everything —
+live example the same night as the charter: reading this track's own STATE.md
+from the laptop took `sh:: ssh evan@evans-box cat …/.float/work/read-ls-doors/STATE.md`.
+The recurring shape: "ssh'd into a place in one pane, wanting to read its files
+in another."
+
+- **Syntax**: scp-style `[user@]host:path` accepted anywhere a path is —
+  `read:: evans-box:~/projects/…/STATE.md`, `ls:: evans-box:/opt/float/bbs/boards`,
+  and **alias roots may be remote**, so one alias can span machines.
+- **Transport**: ssh subprocess through the existing executor path. Rides the
+  user's `~/.ssh/config` + key auth (agent/keychain) — the door does zero
+  credential handling; a host that prompts for a password is a setup problem,
+  surfaced as stderr in the output, not something the door solves.
+- **Remote listing + diz must be ONE ssh invocation per refresh** — a single
+  remote command emitting structured lines (name / mtime / diz source), never N
+  round trips per file. Latency budget is one round trip.
+- **Liveness**: remote roots are refresh-on-demand only. The v2 fs-watch
+  primitive stays local; no remote watching.
+- **Non-goal**: not an sftp browser or FUSE mount. `ssh` + coreutils on the far
+  end is the whole contract.
+- Sequencing: with the aliases/resolution unit (post-PR3) — `read:: host:path`
+  is nearly free once read:: exists (`ssh host cat` instead of local read).
+
+Operational aside (outside the doors): `.float/work/` track state itself isn't
+synced across devices by design (`.float/` is gitignored). The low-friction
+answer if this bites again is a symlink into a mutagen-synced root — an infra
+choice, not a door feature.
+
 ## Wiring contract
 
 ```
