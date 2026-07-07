@@ -164,6 +164,12 @@ in another."
   user's `~/.ssh/config` + key auth (agent/keychain) — the door does zero
   credential handling; a host that prompts for a password is a setup problem,
   surfaced as stderr in the output, not something the door solves.
+- **Door ssh invocations always use `-o BatchMode=yes -o ConnectTimeout=5`.**
+  Evidence (2026-07-07): a stale Tailscale node (`evans-laptop`, offline 38d,
+  still in MagicDNS) made bare `ssh` hang indefinitely — a dead host must
+  render as a fast visible error in the block output, never a hung door.
+  BatchMode also converts any would-be password prompt into an immediate
+  failure instead of a block waiting on stdin forever.
 - **Remote listing + diz must be ONE ssh invocation per refresh** — a single
   remote command emitting structured lines (name / mtime / diz source), never N
   round trips per file. Latency budget is one round trip.
