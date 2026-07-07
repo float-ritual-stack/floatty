@@ -169,6 +169,12 @@ in another."
   round trips per file. Latency budget is one round trip.
 - **Liveness**: remote roots are refresh-on-demand only. The v2 fs-watch
   primitive stays local; no remote watching.
+- **No local-vs-remote detection — ever.** Host-qualified path → always ssh;
+  bare path → always local fs. `ssh evan@evans-box` works the same *from*
+  evans-box (Tailscale MagicDNS, ssh-to-self) as from the laptop, so the door
+  never asks "which machine am I on?" Loopback ssh overhead is noise for a
+  personal tool, and the payoff is that **alias configs are portable verbatim**
+  across devices — one config, identical resolution everywhere.
 - **Non-goal**: not an sftp browser or FUSE mount. `ssh` + coreutils on the far
   end is the whole contract.
 - Sequencing: with the aliases/resolution unit (post-PR3) — `read:: host:path`
