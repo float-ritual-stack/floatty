@@ -224,6 +224,38 @@ export async function getLastContiguousSeq(): Promise<number | null> {
 }
 
 /**
+ * Persist the server doc epoch this client last synced against.
+ *
+ * The epoch increments on every destructive server restore. On mismatch the
+ * client must hard-reset (adopt the server's state fresh) — CRDT-merging or
+ * diff-pushing across an epoch boundary resurrects deleted content
+ * (quirk-audit 2026-07-09, sync cluster).
+ */
+export async function saveKnownEpoch(epoch: number): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(epoch, 'knownEpoch');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** Get the persisted server doc epoch. Null if never synced. */
+export async function getKnownEpoch(): Promise<number | null> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const request = tx.objectStore(STORE_NAME).get('knownEpoch');
+    request.onsuccess = () => {
+      const result = request.result;
+      resolve(typeof result === 'number' ? result : null);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
  * Clear last contiguous sequence number (called on workspace switch).
  */
 export async function clearLastContiguousSeq(): Promise<void> {
