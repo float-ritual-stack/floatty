@@ -398,4 +398,21 @@ describe('hasLiveTextSelection', () => {
 
     expect(hasLiveTextSelection()).toBe(false);
   });
+
+  it('false: selection lives in a DIFFERENT editor than the focused one', () => {
+    // CodeRabbit round-1: a stale selection left in editor A must not
+    // suppress block gestures while the user is focused in editor B.
+    const editorA = buildFocusableCE('editor a text');
+    const editorB = buildFocusableCE('editor b text');
+    const range = document.createRange();
+    range.setStart(editorA.firstChild!, 0);
+    range.setEnd(editorA.firstChild!, 6);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    editorB.focus(); // focus moves; jsdom keeps the selection on editorA
+
+    expect(document.activeElement).toBe(editorB);
+    expect(hasLiveTextSelection()).toBe(false);
+  });
 });

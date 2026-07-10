@@ -333,5 +333,10 @@ export function hasLiveTextSelection(): boolean {
   const active = document.activeElement;
   if (!active || active.getAttribute('contenteditable') !== 'true') return false;
   const selection = window.getSelection();
-  return !!selection && !selection.isCollapsed;
+  if (!selection || selection.isCollapsed) return false;
+  // Scope to the focused editor: a non-collapsed selection left behind in
+  // ANOTHER contentEditable must not suppress block gestures in this one.
+  const { anchorNode, focusNode } = selection;
+  return !!anchorNode && !!focusNode
+    && active.contains(anchorNode) && active.contains(focusNode);
 }
