@@ -656,7 +656,12 @@ export function Outliner(props: OutlinerProps) {
         // the shortcut lands on whatever is currently rendered at the top or
         // bottom of this pane. Cmd+Up/Down are taken by moveBlockUp/Down
         // (FLO-75) — Shift added for reach semantics.
+        // A live text selection inside a contentEditable wins over the view
+        // jump: Cmd+Shift+Up/Down is macOS-native extend-to-boundary while
+        // selecting text, and hijacking it mid-selection yanks the user to
+        // the top/bottom of the pane (cluster B principle).
         '$mod+Shift+ArrowUp': (e) => {
+          if (hasLiveTextSelection()) return; // native text extension
           e.preventDefault();
           const ids = getVisibleBlockIds();
           if (ids.length === 0) return;
@@ -664,6 +669,7 @@ export function Outliner(props: OutlinerProps) {
           collapse.ensureVisibleFocus();
         },
         '$mod+Shift+ArrowDown': (e) => {
+          if (hasLiveTextSelection()) return; // native text extension
           e.preventDefault();
           const ids = getVisibleBlockIds();
           if (ids.length === 0) return;

@@ -1109,3 +1109,63 @@ describe('useBlockInput.handleKeyDown — zoom delete invariant restore', () => 
     expect(onFocus).toHaveBeenCalledWith('page-1'); // findFocusAfterDelete fallback
   });
 });
+
+// ─── Text selection wins over block selection (cluster B live-test) ────
+// Shift+Cmd+Right selects a line; Shift+Down must then EXTEND the text
+// selection to the next line — not flip to whole-block selection. Block
+// selection engages only from a collapsed cursor.
+
+describe('determineKeyAction — Shift+Arrow with a live text selection', () => {
+  it('returns none (browser extends text) when the selection is non-collapsed', () => {
+    for (const key of ['ArrowUp', 'ArrowDown']) {
+      const result = determineKeyAction(key, true, null, createDeps({
+        selectionCollapsed: false,
+      }));
+      expectAction(result, 'none');
+    }
+  });
+
+  it('still block-selects from a collapsed cursor', () => {
+    const down = determineKeyAction('ArrowDown', true, null, createDeps({
+      selectionCollapsed: true,
+    }));
+    expectAction(down, 'navigate_down_with_selection');
+    const up = determineKeyAction('ArrowUp', true, null, createDeps({
+      selectionCollapsed: true,
+    }));
+    expectAction(up, 'navigate_up_with_selection');
+  });
+});
+
+describe('useBlockInput.handleKeyDown — cedes Mod+Shift+Arrow', () => {
+  beforeAll(() => registerHandlers());
+
+  it('does nothing for ctrl/meta+shift+arrow (FLO-495 / native-text territory)', () => {
+    const onSelect = vi.fn();
+    const onFocus = vi.fn();
+    const deps: BlockInputDependencies = {
+      getBlockId: () => 'b1',
+      paneId: 'test-pane',
+      getBlock: () => createBlock({ id: 'b1', content: 'multi\nline' }),
+      isCollapsed: () => false,
+      blockStore: createMockBlockStore(),
+      paneStore: createMockPaneStore(),
+      cursor: createCursorMock(),
+      findNextVisibleBlock: () => 'b2',
+      findPrevVisibleBlock: () => 'b0',
+      findFocusAfterDelete: () => null,
+      onFocus,
+      onSelect,
+      flushContentUpdate: () => {},
+      getContentRef: () => undefined,
+    };
+    const { handleKeyDown } = useBlockInput(deps);
+
+    // jsdom: isMac=false → mod is ctrlKey; also cover metaKey for mac paths
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, ctrlKey: true }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, metaKey: true }));
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+});
