@@ -322,16 +322,37 @@ export function isCursorAtContentEnd(element: HTMLElement): boolean {
 
 
 /**
+ * THE canonical "is this element an editor" predicate.
+ *
+ * ROOT-CAUSE NOTE (2026-07-10 shift-click RCA): SolidJS renders the
+ * `contentEditable` JSX prop as `contenteditable=""` — an EMPTY string.
+ * The historical idiom `getAttribute('contenteditable') === 'true'` has
+ * therefore never matched a Solid-rendered editor in production; it only
+ * passed in tests whose hand-built DOM set the attribute to "true".
+ * Verified against the running app:
+ *   <div contenteditable="" class="block-content block-edit" ...>
+ *
+ * Semantics: attribute present → editable unless explicitly "false"
+ * ("", "true", "plaintext-only" all enable editing per spec). Attribute
+ * absent → fall back to the isContentEditable property (covers
+ * inheritance; jsdom lacks it, but jsdom elements always carry the
+ * attribute in our tests).
+ */
+export function isEditableElement(el: Element | null): boolean {
+  if (!el) return false;
+  const attr = el.getAttribute('contenteditable');
+  if (attr !== null) return attr.toLowerCase() !== 'false';
+  return (el as HTMLElement).isContentEditable === true;
+}
+
+/**
  * True when the user has a live (non-collapsed) text selection inside a
  * focused contentEditable — the signal that text-level gestures (Cmd+C,
  * shift+click range extension) should win over block-level selection.
- *
- * Uses the contenteditable attribute (not isContentEditable) to match the
- * outliner's isEditing idiom and stay observable under jsdom.
  */
 export function hasLiveTextSelection(): boolean {
   const active = document.activeElement;
-  if (!active || active.getAttribute('contenteditable') !== 'true') return false;
+  if (!isEditableElement(active)) return false;
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed) return false;
   // Scope to the focused editor: a non-collapsed selection left behind in
@@ -360,7 +381,7 @@ export function hasLiveTextSelection(): boolean {
  */
 export function isShiftClickTextGesture(target: EventTarget | null): boolean {
   const active = document.activeElement;
-  if (active && active.getAttribute('contenteditable') === 'true' && target instanceof Node) {
+  if (active && isEditableElement(active) && target instanceof Node) {
     if (active.contains(target)) return true;
     // Same-row clicks that DON'T land in the CE are still text gestures:
     // the display overlay's tokens (wikilink pills, z-index above the

@@ -25,7 +25,7 @@ import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
 import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
-import { hasLiveTextSelection } from '../lib/cursorUtils';
+import { hasLiveTextSelection, isEditableElement } from '../lib/cursorUtils';
 import { blocksToMarkdown } from '../lib/markdownExport';
 import { flushPendingContent } from '../hooks/useContentSync';
 import { useConfig } from '../context/ConfigContext';
@@ -266,7 +266,9 @@ export function Outliner(props: OutlinerProps) {
     const selected = selection.selectedBlockIds();
     const modKey = isMac ? e.metaKey : e.ctrlKey;
     const activeEl = document.activeElement;
-    const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+    // isEditableElement, NOT getAttribute === 'true': Solid renders the
+    // attribute as contenteditable="" (see cursorUtils.isEditableElement).
+    const isEditing = isEditableElement(activeEl);
 
     // FLO-74: Clear selection when typing starts (prevents accidental delete)
     if (selected.size > 0 && isEditing && e.key.length === 1 && !modKey && !e.ctrlKey && !e.altKey) {
@@ -467,7 +469,9 @@ export function Outliner(props: OutlinerProps) {
 
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
         const activeEl = document.activeElement as HTMLElement;
-        const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+        // isEditableElement, NOT getAttribute === 'true': Solid renders the
+    // attribute as contenteditable="" (see cursorUtils.isEditableElement).
+    const isEditing = isEditableElement(activeEl);
 
         // FLO-58: Let table cell inputs handle their own Cmd+A
         if (activeEl?.classList.contains('md-table-input') || activeEl?.classList.contains('md-table-raw')) {

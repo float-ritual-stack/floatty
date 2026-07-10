@@ -530,3 +530,68 @@ describe('isShiftClickTextGesture — same-row targets outside the CE', () => {
     expect(isShiftClickTextGesture(rowB.firstChild)).toBe(false);
   });
 });
+
+// ─── PRODUCTION DOM SHAPE (shift-click RCA, 2026-07-10) ───────────────
+// SolidJS renders the contentEditable prop as contenteditable="" (empty
+// string). getAttribute-based checks comparing === 'true' have never
+// matched in production; only hand-built test DOMs made them pass. These
+// tests use the REAL rendered shape, verified against the running app:
+//   <div contenteditable="" class="block-content block-edit" ...>
+describe('editable detection matches the Solid-rendered DOM', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+  });
+
+  function buildProdShapeCE(text: string): HTMLDivElement {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', ''); // ← what Solid actually renders
+    el.tabIndex = 0;
+    el.appendChild(document.createTextNode(text));
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it('hasLiveTextSelection: true for a selection in a contenteditable="" editor', () => {
+    const el = buildProdShapeCE('production shaped');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 10);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(hasLiveTextSelection()).toBe(true);
+  });
+
+  it('isShiftClickTextGesture: true for a caret + same-editor target with contenteditable=""', () => {
+    const el = buildProdShapeCE('click then shift click');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 2);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(isShiftClickTextGesture(el.firstChild)).toBe(true);
+  });
+
+  it('contenteditable="false" is NOT editable', () => {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', 'false');
+    el.tabIndex = 0;
+    el.appendChild(document.createTextNode('not editable'));
+    document.body.appendChild(el);
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 3);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(hasLiveTextSelection()).toBe(false);
+  });
+});
