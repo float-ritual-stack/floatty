@@ -46,3 +46,15 @@ Root-level [CLAUDE.md](../CLAUDE.md) contains:
 - Testing patterns
 - Key data flows
 - Keyboard shortcuts
+
+## Known doc gaps (2026-07-10 sweep)
+
+Features in code with no current doc — write when touched:
+- Pin shelf / navigation floor (shipped v0.18.0; FLO-137 spec describes a different, unbuilt model)
+- Tantivy search implementation (`floatty-core/src/search/`) — ADR-005 + the refreshed layers doc cover architecture; the module-level internals (service/writer/schema/index_manager) have no doc
+- Rust index hooks (`page_name_index.rs`, `inheritance_index.rs`)
+- `img::` attachments (Phase 1 caching shipped; only the design spec exists)
+
+Archive policy: point-in-time snapshots/audits/handoffs live under `archive/`
+(`audits-reviews/`, `snapshots/`, `spikes-migrations/`, `handoffs/`). Aspirational
+design docs stay in place with a `STATUS: ASPIRATIONAL` banner.

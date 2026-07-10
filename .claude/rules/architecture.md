@@ -26,7 +26,7 @@ Two-layer technique: display layer (styled tokens, pointer-events: none) on top 
 
 ## Wikilinks & Pages
 
-`pages::` block at root contains all linkable pages (stored with `# ` prefix). Clicking `[[link]]` creates page if missing, zooms to it. `LinkedReferences` shows backlinks when zoomed. Parser uses bracket-counting (not regex) for nested `[[outer [[inner]]]]`.
+`pages::` block at root contains all linkable pages (stored with a `#`-heading prefix). Clicking `[[link]]` creates page if missing, zooms to it. `LinkedReferences` shows backlinks when zoomed. Parser uses bracket-counting (not regex) for nested wikilinks like `[[outer [[inner]]]]`.
 
 ## Pane Linking (⌘L)
 
@@ -42,9 +42,9 @@ Unfocused panes dim to `unfocused_pane_opacity`. Linked partner gets cyan border
 
 JSONL files → CtxWatcher (file watcher) → SQLite (pending) → CtxParser (Ollama) → Sidebar (polls 2s).
 
-## Sequence Number Architecture (PR #119)
+## Sequence Number Architecture ([[PR #119]], hardened by #324/#326/#327)
 
-Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates?after=N&before=M`. Heartbeat every 30s reveals gaps. IndexedDB persists `lastKnownSeq` across reloads. Restore resets all client seq baselines.
+Server broadcasts seq numbers. Client detects gaps, fetches `GET /api/v1/updates?after=N&before=M`. Heartbeat every 30s reveals gaps (and carries the doc epoch). IndexedDB persists `lastKnownSeq` + `knownEpoch` across reloads. Destructive restores bump a persisted **doc epoch** — clients hard-reset (adopt, never CRDT-merge) on mismatch; `/state`'s `latestSeq` is the last seq APPLIED to the returned snapshot (paired under one read guard); the orphan sweep reattaches strays under a `recovered::` root instead of deleting (sync-integrity units, quirk-audit 2026-07-09 §3).
 
 ## Key File Inventory
 

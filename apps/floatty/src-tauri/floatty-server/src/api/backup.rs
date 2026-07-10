@@ -191,9 +191,13 @@ async fn backup_restore(
     }
 
     let block_count = state.store.reset_from_state(&state_bytes)?;
+    let epoch = state.store.doc_epoch();
 
     let new_state = state.store.get_full_state()?;
-    state.broadcaster.broadcast(new_state, None, None);
+    // Epoch-carrying frame — same rationale as /restore: a plain update
+    // broadcast lets clients CRDT-merge the restored state into their old doc
+    // and push resurrections back (quirk-audit 2026-07-09).
+    state.broadcaster.broadcast_restore(new_state, epoch);
 
     let rehydrated = state.hook_system.rehydrate_all_blocks(&state.store);
     tracing::info!("Rehydrated {} blocks after backup restore", rehydrated);
@@ -217,6 +221,7 @@ async fn backup_restore(
     Ok(Json(RestoreResponse {
         block_count,
         root_count,
+        epoch,
     }))
 }
 

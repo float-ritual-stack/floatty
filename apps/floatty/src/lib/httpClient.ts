@@ -29,6 +29,8 @@ export interface StateHashResponse {
   blockCount: number;
   /** Server timestamp (ms since epoch) */
   timestamp: number;
+  /** Doc epoch — increments on destructive restore. 0 on pre-epoch servers. */
+  epoch: number;
 }
 
 /** Single update entry from incremental sync */
@@ -69,6 +71,8 @@ export interface FullStateResponse {
   state: Uint8Array;
   /** Latest sequence number (for re-seeding seq tracking after full sync) */
   latestSeq: number | null;
+  /** Doc epoch this snapshot belongs to. Null on pre-epoch servers. */
+  epoch: number | null;
 }
 
 /** HTTP client interface for Y.Doc sync */
@@ -151,6 +155,7 @@ class HttpClient implements FloattyHttpClient {
     return {
       state: base64ToBytes(data.state),
       latestSeq: data.latestSeq ?? null,
+      epoch: typeof data.epoch === 'number' ? data.epoch : null,
     };
   }
 
@@ -224,6 +229,7 @@ class HttpClient implements FloattyHttpClient {
       hash: data.hash,
       blockCount: data.blockCount,
       timestamp: data.timestamp,
+      epoch: typeof data.epoch === 'number' ? data.epoch : 0,
     };
   }
 

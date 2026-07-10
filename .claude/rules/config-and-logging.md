@@ -31,7 +31,7 @@ server_port = 8765
 # remote_server_url = "http://float-box:8765"
 ```
 
-**Title bar**: `floatty (dev) - workspace_name v0.4.2 (abc1234)`
+**Title bar**: `floatty (dev) - workspace_name vX.Y.Z (abc1234)`
 
 ## Server Ports
 
@@ -69,12 +69,10 @@ See `apps/floatty/docs/architecture/LOGGING_STRATEGY.md` for complete guide.
 
 `hooks/system.rs` uses `tracing::info!(target: "floatty_startup", ...)` for startup phase timing (`search_init_complete`, `cold_start_rehydration_complete`, `hook_system_init_complete`). `EnvFilter` matches on the **target string**, not the crate path — so `floatty_core=info` does NOT match `target: "floatty_startup"`. Any new target override needs its own filter entry.
 
-Default filter (`setup_logging()` in `floatty-server/src/main.rs`):
-```
-floatty_server=info,floatty_core=info,floatty_startup=info,tower_http=warn,hyper=warn,reqwest=warn,opentelemetry=off
-```
-
-The `hyper=warn,reqwest=warn,opentelemetry=off` entries exist to prevent telemetry-induced-telemetry loops — the OTLP exporter's HTTP client would otherwise emit its own tracing events on every log export, recursing through the same log pipeline.
+The canonical filter default lives in `logging-discipline.md` §6 (single
+source — this file used to duplicate the literal string and the two copies
+were a drift risk on every filter change). The `hyper=warn,reqwest=warn,opentelemetry=off`
+entries prevent telemetry-induced-telemetry loops — see that file.
 
 ## OTLP Log Export (Loki Direct)
 

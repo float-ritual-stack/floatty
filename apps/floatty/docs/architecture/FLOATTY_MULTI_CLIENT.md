@@ -4,6 +4,12 @@
 
 ---
 
+> **FRESHNESS (2026-07-10):** the status matrix below is a January snapshot. Since
+> then: remote-authority mode shipped (FLO-762 — float-box runs the Y.Doc authority,
+> apps are thin clients; see `docs/REMOTE_DEPLOYMENT.md`), WS auth landed, and the
+> sync layer gained doc-epoch lineage + offline boot-from-backup (quirk-audit
+> sync-integrity units, 2026-07). The multi-client CONCEPTS below still hold.
+
 ## Implementation Status (2026-01-15)
 
 ```

@@ -20,7 +20,8 @@ use yrs::{Map, ReadTxn, Transact};
 
 use super::{ApiError, AppState, BlockContextQuery, BlockWithContextResponse};
 use crate::api::{self, AncestorContext, BlockDto};
-use crate::block_service::{lookup_inherited, read_block_dto};
+use crate::block_service::{lookup_inherited, read_block_child_ids, read_block_dto};
+use floatty_core::hooks::page_name_index::page_title_from_content;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -471,6 +472,19 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), A
             .map_err(|_| ApiError::LockPoisoned)?;
         index.pages_container_id().map(String::from)
     };
+
+    // Slow path: scan the container's children directly in the Y.Doc. Closes
+    // the hook-lag window for pages created by paths that populate NEITHER
+    // the index (async hook hasn't landed) NOR this server's semantic cache
+    // (frontend wikilink-click creation, raw POST /blocks) — previously those
+    // raced this endpoint into duplicate pages (quirk-audit cluster F).
+    if let Some(ref container_id) = pages_container_id {
+        if let Some(id) = scan_pages_container_for_name(state, container_id, &name_key)? {
+            cache.pages.insert(name_key, id.clone());
+            return Ok((id, true));
+        }
+    }
+
     let pages_container_id = match pages_container_id {
         Some(id) => id,
         None => match cache.pages_container_id.clone() {
@@ -510,6 +524,58 @@ fn find_or_create_page(state: &AppState, name: &str) -> Result<(String, bool), A
 
     cache.pages.insert(name_key, page.id.clone());
     Ok((page.id, false))
+}
+
+/// Scan the `pages::` container's children directly in the Y.Doc for a page
+/// whose extracted title matches `name_key` (lowercased, trimmed).
+///
+/// Uses `page_title_from_content` so the comparison is EXACTLY how the
+/// PageNameIndex extracts names — any divergence here recreates the
+/// collision-check bypass this closes.
+fn scan_pages_container_for_name(
+    state: &AppState,
+    container_id: &str,
+    name_key: &str,
+) -> Result<Option<String>, ApiError> {
+    let doc = state.store.doc();
+    let doc_guard = doc.read().map_err(|_| ApiError::LockPoisoned)?;
+    let txn = doc_guard.transact();
+
+    let Some(blocks_map) = txn.get_map("blocks") else {
+        return Ok(None);
+    };
+
+    // Oldest-createdAt wins among matches — the SAME tie-break the
+    // PageNameIndex applies. Returning the first childIds match could cache
+    // a newer twin during the hook-lag window and diverge from the index's
+    // eventual resolution.
+    let mut oldest: Option<(String, i64)> = None;
+    for child_id in read_block_child_ids(&blocks_map, &txn, container_id) {
+        let Some(yrs::Out::YMap(child_map)) = blocks_map.get(&txn, &child_id) else {
+            continue;
+        };
+        let content = match child_map.get(&txn, "content") {
+            Some(yrs::Out::Any(yrs::Any::String(s))) => s.to_string(),
+            _ => continue,
+        };
+        if page_title_from_content(&content).to_lowercase() != name_key {
+            continue;
+        }
+        // i64::MAX when unknown (extract_timestamp yields 0 for missing —
+        // FLO-684 treats 0 as "no timestamp") — an unknown-age match never
+        // beats a known one (mirrors ExistingPageEntry semantics).
+        let created_at =
+            match crate::block_service::extract_timestamp(child_map.get(&txn, "createdAt")) {
+                0 => i64::MAX,
+                ts => ts,
+            };
+        match oldest {
+            Some((_, best)) if created_at >= best => {}
+            _ => oldest = Some((child_id, created_at)),
+        }
+    }
+
+    Ok(oldest.map(|(id, _)| id))
 }
 
 /// Read a page block as a `BlockDto` for returning from the upsert handler.
@@ -583,7 +649,12 @@ async fn upsert_page(
     Path(name): Path<String>,
     Json(_req): Json<UpsertPageRequest>,
 ) -> Result<(StatusCode, Json<BlockDto>), ApiError> {
-    if name.trim().is_empty() {
+    // Normalize ONCE at the boundary: the index registers TRIMMED titles
+    // (page_title_from_content trims), so an untrimmed name here would bypass
+    // the collision check, create `# {name-with-edges}`, and then hijack the
+    // index entry when the hook lands (quirk-audit cluster F).
+    let name = name.trim().to_string();
+    if name.is_empty() {
         return Err(ApiError::InvalidRequest(
             "Page name cannot be empty".to_string(),
         ));

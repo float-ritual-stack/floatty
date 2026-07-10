@@ -1,0 +1,7 @@
+# CodeRabbit reviews PRs into main by default. The quirk-audit work flows
+# through integration branches (integration-branch discipline — architecture
+# work doesn't land on main directly), and those PRs need bot review too:
+# floatty is solo-dev + bot-review-only.
+reviews:
+  base_branches:
+    - "feat/integration-.*"
