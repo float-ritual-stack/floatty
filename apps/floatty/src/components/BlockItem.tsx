@@ -1123,7 +1123,6 @@ export function BlockItem(props: BlockItemProps) {
             onFocus={props.onFocus}
             cancelContentUpdate={cancelContentUpdate}
             isBlockSelected={props.isBlockSelected}
-                  isFocusedInPane={props.isFocusedInPane}
             setInlineDoorRef={setInlineDoorRef}
           />
 
