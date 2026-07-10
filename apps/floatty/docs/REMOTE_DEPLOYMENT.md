@@ -136,6 +136,26 @@ sudo systemctl restart floatty-server     # or: kill the nohup PID + relaunch (1
 curl -s http://100.78.124.84:8765/api/v1/health   # confirm version bumped
 ```
 
+**Unattended restarts (agent-driven deploys)**: `sudo systemctl restart` needs an
+interactive password, so a remote agent can't complete the deploy on its own — the
+v0.19.0 deploy stalled exactly here (and the kill-based workaround is blocked by
+`protect-release-server.sh`, working as designed). Allow this ONE command
+passwordless with a drop-in sudoers rule (on float-box):
+
+```bash
+# Write to a temp file and validate BEFORE installing — a typo or interrupted
+# write must never land in /etc/sudoers.d live. visudo -cf validates the
+# candidate file without touching the active configuration.
+echo 'evan ALL=(root) NOPASSWD: /usr/bin/systemctl restart floatty-server' > /tmp/floatty-restart
+sudo visudo -cf /tmp/floatty-restart && \
+  sudo install -m 0440 -o root -g root /tmp/floatty-restart /etc/sudoers.d/floatty-restart
+rm /tmp/floatty-restart
+```
+
+Scope is deliberately the full literal command — no wildcards, no `stop`, no other
+units — so the blast radius of a compromised agent session stays "restart the
+floatty server" and nothing else.
+
 The data dir (`/opt/float/floatty-data`) is untouched by updates — the outline
 persists across rebuilds (SQLite + `.ydoc` snapshots in `backups/`).
 
