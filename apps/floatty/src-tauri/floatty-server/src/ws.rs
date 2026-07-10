@@ -80,6 +80,11 @@ pub struct BroadcastMessage {
     /// Presence: focused block ID (spike for TUI follower)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub presence: Option<PresenceInfo>,
+    /// Doc epoch. Present on restore frames (data + epoch, no seq — client
+    /// must ADOPT the state, never merge/push) and on heartbeats (lets a
+    /// client that missed the restore frame detect the epoch change).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<i64>,
 }
 
 /// Lightweight presence payload
@@ -124,6 +129,7 @@ impl WsBroadcaster {
             tx_id,
             data: Some(BASE64.encode(&update)),
             presence: None,
+            epoch: None,
         };
         // Mark that we sent an update (heartbeat will skip if true)
         self.update_sent_since_heartbeat
@@ -151,19 +157,58 @@ impl WsBroadcaster {
         }
     }
 
-    /// Broadcast a heartbeat message with only the latest sequence number.
-    /// Used to trigger client gap detection without sending actual data.
+    /// Broadcast a destructive-restore frame: the full restored state plus the
+    /// new doc epoch, no seq. Clients receiving an epoch ahead of their own
+    /// must ADOPT this state into a fresh Y.Doc — CRDT-merging it into the old
+    /// doc (or pushing the old doc back) resurrects deleted content
+    /// (quirk-audit 2026-07-09, sync cluster).
+    pub fn broadcast_restore(&self, update: Vec<u8>, epoch: i64) {
+        let update_len = update.len();
+        let msg = BroadcastMessage {
+            seq: None,
+            tx_id: None,
+            data: Some(BASE64.encode(&update)),
+            presence: None,
+            epoch: Some(epoch),
+        };
+        self.update_sent_since_heartbeat
+            .store(true, Ordering::Relaxed);
+        match self.tx.send(msg) {
+            Ok(receiver_count) => {
+                tracing::info!(
+                    "Restore broadcast: {} bytes (epoch={}) to {} client(s)",
+                    update_len,
+                    epoch,
+                    receiver_count
+                );
+            }
+            Err(_) => {
+                tracing::debug!("Restore broadcast skipped (no WebSocket clients connected)");
+            }
+        }
+    }
+
+    /// Broadcast a heartbeat message with the latest sequence number and epoch.
+    /// Used to trigger client gap detection without sending actual data —
+    /// the epoch lets a client that missed a restore frame (zombied socket,
+    /// reconnect window) detect the lineage change.
     /// Called periodically (every 30s) when no updates have been broadcast.
-    pub fn broadcast_heartbeat(&self, seq: i64) {
+    pub fn broadcast_heartbeat(&self, seq: i64, epoch: i64) {
         let msg = BroadcastMessage {
             seq: Some(seq),
             tx_id: None,
             data: None,
             presence: None,
+            epoch: Some(epoch),
         };
         match self.tx.send(msg) {
             Ok(receiver_count) => {
-                tracing::debug!("Heartbeat seq={} to {} client(s)", seq, receiver_count);
+                tracing::debug!(
+                    "Heartbeat seq={} epoch={} to {} client(s)",
+                    seq,
+                    epoch,
+                    receiver_count
+                );
             }
             Err(_) => {
                 // No clients connected, heartbeat not needed
@@ -182,6 +227,7 @@ impl WsBroadcaster {
             tx_id: None,
             data: None,
             presence: Some(info),
+            epoch: None,
         };
         let _ = self.tx.send(msg);
     }
@@ -224,7 +270,7 @@ pub fn start_heartbeat(broadcaster: Arc<WsBroadcaster>, store: Arc<YDocStore>) {
             // Get latest seq from store
             match store.get_latest_seq() {
                 Ok(Some(seq)) => {
-                    broadcaster.broadcast_heartbeat(seq);
+                    broadcaster.broadcast_heartbeat(seq, store.doc_epoch());
                 }
                 Ok(None) => {
                     // No updates in database, nothing to heartbeat
@@ -418,16 +464,18 @@ mod tests {
 
     #[test]
     fn test_broadcast_message_serialization_heartbeat() {
-        // Heartbeat: seq present, no data, no txId
+        // Heartbeat: seq + epoch present, no data, no txId
         let msg = BroadcastMessage {
             seq: Some(525),
             tx_id: None,
             data: None,
             presence: None,
+            epoch: Some(3),
         };
         let json = serde_json::to_string(&msg).unwrap();
 
         assert!(json.contains("\"seq\":525"), "Should have seq field");
+        assert!(json.contains("\"epoch\":3"), "Should have epoch field");
         assert!(
             !json.contains("\"data\""),
             "Should NOT have data field (skip_serializing_if)"
@@ -437,38 +485,46 @@ mod tests {
         // Verify it parses as expected JSON shape
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.get("seq").unwrap(), 525);
+        assert_eq!(parsed.get("epoch").unwrap(), 3);
         assert!(parsed.get("data").is_none());
         assert!(parsed.get("txId").is_none());
     }
 
     #[test]
     fn test_broadcast_message_serialization_update() {
-        // Normal update: seq + txId + data
+        // Normal update: seq + txId + data, NO epoch (kept off the hot path)
         let msg = BroadcastMessage {
             seq: Some(526),
             tx_id: Some("tx-abc".into()),
             data: Some("AQID".into()), // base64
             presence: None,
+            epoch: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
 
         assert!(json.contains("\"seq\":526"), "Should have seq");
         assert!(json.contains("\"data\":\"AQID\""), "Should have data");
         assert!(json.contains("\"txId\":\"tx-abc\""), "Should have txId");
+        assert!(
+            !json.contains("\"epoch\""),
+            "Should NOT have epoch field (skip_serializing_if)"
+        );
     }
 
     #[test]
     fn test_broadcast_message_serialization_restore() {
-        // Restore/full-state: data present, no seq (legacy)
+        // Restore/full-state: data + epoch present, no seq
         let msg = BroadcastMessage {
             seq: None,
             tx_id: None,
             data: Some("AQID".into()),
             presence: None,
+            epoch: Some(7),
         };
         let json = serde_json::to_string(&msg).unwrap();
 
         assert!(json.contains("\"data\""), "Should have data field");
+        assert!(json.contains("\"epoch\":7"), "Should have epoch field");
         assert!(!json.contains("\"seq\""), "Should NOT have seq field");
         assert!(!json.contains("\"txId\""), "Should NOT have txId field");
 
@@ -476,6 +532,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(parsed.get("seq").is_none(), "seq should be absent");
         assert_eq!(parsed.get("data").unwrap(), "AQID");
+        assert_eq!(parsed.get("epoch").unwrap(), 7);
     }
 
     // ═══════════════════════════════════════════════════════════════

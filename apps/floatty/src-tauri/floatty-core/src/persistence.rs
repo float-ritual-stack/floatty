@@ -284,6 +284,103 @@ impl YDocPersistence {
         Ok(snapshot_seq)
     }
 
+    /// Get the document epoch (0 if never reset).
+    ///
+    /// The epoch increments on every destructive reset (`reset_with_snapshot`).
+    /// Clients compare epochs to detect that the server's doc is no longer the
+    /// lineage they synced against — on mismatch they must hard-reset (adopt the
+    /// server state fresh), never CRDT-merge or push local diffs.
+    pub fn get_doc_epoch(&self, doc_key: &str) -> Result<i64, PersistenceError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
+        let result: Result<i64, _> = conn.query_row(
+            "SELECT value FROM sync_meta WHERE doc_key = ? AND key = 'doc_epoch'",
+            [doc_key],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+            Err(e) => Err(PersistenceError::Sqlite(e)),
+        }
+    }
+
+    /// Destructively replace a document's persisted state with a single snapshot,
+    /// atomically.
+    ///
+    /// One SQLite transaction covering: delete all updates, insert the snapshot,
+    /// record the compaction boundary, and bump the doc epoch. A crash at any
+    /// point leaves either the old state or the new state — never an empty log
+    /// (the failure mode of the previous separate clear_updates + append_update
+    /// calls; quirk-audit 2026-07-09, sync cluster).
+    ///
+    /// Returns `(snapshot_seq, new_epoch)`.
+    pub fn reset_with_snapshot(
+        &self,
+        doc_key: &str,
+        snapshot: &[u8],
+    ) -> Result<(i64, i64), PersistenceError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
+        let tx = conn.unchecked_transaction()?;
+
+        let max_seq_before: Option<i64> = tx
+            .query_row(
+                "SELECT MAX(id) FROM ydoc_updates WHERE doc_key = ?",
+                [doc_key],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        tx.execute("DELETE FROM ydoc_updates WHERE doc_key = ?", [doc_key])?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        tx.execute(
+            "INSERT INTO ydoc_updates (doc_key, update_data, created_at) VALUES (?, ?, ?)",
+            params![doc_key, snapshot, now],
+        )?;
+        let snapshot_seq = tx.last_insert_rowid();
+
+        // Old seqs are unfetchable after a reset — same boundary semantics as compact().
+        if let Some(old_max) = max_seq_before {
+            tx.execute(
+                "INSERT OR REPLACE INTO sync_meta (doc_key, key, value) VALUES (?, 'compacted_through', ?)",
+                params![doc_key, old_max],
+            )?;
+        }
+
+        let new_epoch: i64 = tx
+            .query_row(
+                "SELECT value FROM sync_meta WHERE doc_key = ? AND key = 'doc_epoch'",
+                [doc_key],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0)
+            + 1;
+        tx.execute(
+            "INSERT OR REPLACE INTO sync_meta (doc_key, key, value) VALUES (?, 'doc_epoch', ?)",
+            params![doc_key, new_epoch],
+        )?;
+
+        tx.commit()?;
+        log::info!(
+            "Reset Y.Doc '{}' to snapshot (seq {}, epoch {}), compacted_through: {:?}",
+            doc_key,
+            snapshot_seq,
+            new_epoch,
+            max_seq_before
+        );
+        Ok((snapshot_seq, new_epoch))
+    }
+
     /// Check if any updates exist for a document.
     pub fn has_updates(&self, doc_key: &str) -> Result<bool, PersistenceError> {
         let conn = self
@@ -588,5 +685,60 @@ mod tests {
 
         assert_eq!(a_updates.len(), 2);
         assert_eq!(b_updates.len(), 1);
+    }
+
+    #[test]
+    fn test_doc_epoch_defaults_to_zero() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+        assert_eq!(persistence.get_doc_epoch("test").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_reset_with_snapshot_replaces_log_and_bumps_epoch() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        let seq1 = persistence.append_update("test", b"u1").unwrap();
+        let seq2 = persistence.append_update("test", b"u2").unwrap();
+        assert!(seq2 > seq1);
+
+        let (snap_seq, epoch) = persistence
+            .reset_with_snapshot("test", b"snapshot")
+            .unwrap();
+
+        // Single row remains: the snapshot, with a seq past the old log
+        assert!(snap_seq > seq2);
+        assert_eq!(epoch, 1);
+        let updates = persistence.get_updates("test").unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0], b"snapshot");
+        assert_eq!(persistence.get_latest_seq("test").unwrap(), Some(snap_seq));
+
+        // Old seqs are behind the compaction boundary
+        assert_eq!(
+            persistence.get_compacted_through("test").unwrap(),
+            Some(seq2)
+        );
+
+        // A second reset increments the epoch again
+        let (_, epoch2) = persistence
+            .reset_with_snapshot("test", b"snapshot2")
+            .unwrap();
+        assert_eq!(epoch2, 2);
+        assert_eq!(persistence.get_doc_epoch("test").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_reset_with_snapshot_is_doc_key_scoped() {
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        persistence.append_update("doc-a", b"a1").unwrap();
+        persistence.append_update("doc-b", b"b1").unwrap();
+
+        persistence.reset_with_snapshot("doc-a", b"snap-a").unwrap();
+
+        // doc-b untouched, its epoch unchanged
+        assert_eq!(persistence.get_updates("doc-b").unwrap().len(), 1);
+        assert_eq!(persistence.get_doc_epoch("doc-b").unwrap(), 0);
+        assert_eq!(persistence.get_doc_epoch("doc-a").unwrap(), 1);
     }
 }

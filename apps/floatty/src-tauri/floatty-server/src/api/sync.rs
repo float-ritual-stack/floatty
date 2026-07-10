@@ -50,7 +50,13 @@ pub struct HealthResponse {
 #[serde(rename_all = "camelCase")]
 pub struct StateResponse {
     pub state: String,
+    /// Seq of the last update APPLIED to the returned snapshot — captured under
+    /// the same doc read guard as the encode, so a client seeding its baseline
+    /// from this value never skips an update the snapshot doesn't contain.
     pub latest_seq: Option<i64>,
+    /// Doc epoch. Increments on every destructive restore; clients hard-reset
+    /// (adopt, never merge/push) on mismatch.
+    pub epoch: i64,
 }
 
 #[derive(Serialize)]
@@ -64,6 +70,10 @@ pub struct StateHashResponse {
     pub hash: String,
     pub block_count: usize,
     pub timestamp: u128,
+    /// Doc epoch — lets the periodic drift detector (useSyncHealth polls this
+    /// route) notice a missed restore even when block counts happen to match.
+    #[serde(default)]
+    pub epoch: i64,
 }
 
 #[derive(Deserialize)]
@@ -90,7 +100,14 @@ pub struct UpdateEntry {
 pub struct UpdatesResponse {
     pub updates: Vec<UpdateEntry>,
     pub compacted_through: Option<i64>,
+    /// Highest seq in the persisted log (pagination bound — may briefly run
+    /// ahead of the in-memory doc under persist-first ordering; that is fine
+    /// for "is there more to fetch").
     pub latest_seq: Option<i64>,
+    /// Doc epoch — a client gap-filling across a restore boundary must detect
+    /// the epoch change and hard-reset instead of merging foreign updates.
+    #[serde(default)]
+    pub epoch: i64,
 }
 
 #[derive(Serialize)]
@@ -115,10 +132,15 @@ pub struct RestoreRequest {
     pub state: String,
 }
 
+// NOTE: no rename_all — this response predates the camelCase convention and
+// consumers (binary-import script) read snake_case fields. `epoch` is
+// casing-neutral. Don't "fix" the casing without migrating consumers.
 #[derive(Serialize)]
 pub struct RestoreResponse {
     pub block_count: usize,
     pub root_count: usize,
+    /// The new doc epoch after this restore.
+    pub epoch: i64,
 }
 
 // ============================================================================
@@ -168,13 +190,18 @@ async fn get_state(State(state): State<AppState>) -> Result<Json<StateResponse>,
         .transact()
         .encode_state_as_update_v1(&StateVector::default());
     let encode_us = encode_start.elapsed().as_micros() as u64;
+
+    // Read the sync position UNDER the same guard as the encode. Persist-first
+    // ordering means persistence MAX(id) can run ahead of the doc; reporting
+    // that value with this snapshot would let a client baseline past an update
+    // it never received (quirk-audit 2026-07-09, sync cluster).
+    let latest_seq = state.store.last_applied_seq();
+    let epoch = state.store.doc_epoch();
     drop(doc_guard); // release the read lock before doing base64
 
     let base64_start = Instant::now();
     let encoded = BASE64.encode(&update);
     let base64_us = base64_start.elapsed().as_micros() as u64;
-
-    let latest_seq = state.store.get_latest_seq()?;
 
     tracing::info!(
         lock_acquire_us,
@@ -187,6 +214,7 @@ async fn get_state(State(state): State<AppState>) -> Result<Json<StateResponse>,
     Ok(Json(StateResponse {
         state: encoded,
         latest_seq,
+        epoch,
     }))
 }
 
@@ -281,6 +309,7 @@ async fn get_state_hash(
         hash,
         block_count,
         timestamp,
+        epoch: state.store.doc_epoch(),
     }))
 }
 
@@ -334,8 +363,12 @@ async fn restore_state(
     }
 
     let block_count = state.store.reset_from_state(&state_bytes)?;
+    let epoch = state.store.doc_epoch();
     let new_state = state.store.get_full_state()?;
-    state.broadcaster.broadcast(new_state, None, None);
+    // Epoch-carrying frame: clients MUST hard-reset (adopt, never CRDT-merge,
+    // never push their local diff) — a plain update broadcast here was the
+    // deleted-content resurrection vector (quirk-audit 2026-07-09).
+    state.broadcaster.broadcast_restore(new_state, epoch);
 
     let rehydrated = state.hook_system.rehydrate_all_blocks(&state.store);
     tracing::info!("Rehydrated {} blocks after restore", rehydrated);
@@ -358,6 +391,7 @@ async fn restore_state(
     Ok(Json(RestoreResponse {
         block_count,
         root_count,
+        epoch,
     }))
 }
 
@@ -398,5 +432,6 @@ async fn get_updates_since(
         updates,
         compacted_through,
         latest_seq,
+        epoch: state.store.doc_epoch(),
     }))
 }

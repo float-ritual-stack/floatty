@@ -246,6 +246,19 @@ pub struct YDocStore {
     doc_key: String,
     /// Counter to avoid SELECT on every keystroke
     updates_since_compact_check: AtomicI64,
+    /// Seq of the last update APPLIED to the in-memory doc (0 = none).
+    ///
+    /// Distinct from persistence MAX(id): apply_update persists FIRST, so the
+    /// SQLite max can run ahead of the doc between the append and the apply.
+    /// Snapshot endpoints must report THIS value alongside an encode taken
+    /// under the same doc read guard — otherwise a client seeds its baseline
+    /// past an update its snapshot doesn't contain and never fetches it
+    /// (quirk-audit 2026-07-09, sync cluster).
+    last_applied_seq: AtomicI64,
+    /// Doc epoch, mirrors persistence sync_meta 'doc_epoch'. Bumped on
+    /// reset_from_state. Cached here so hot paths (heartbeat, /state) don't
+    /// query SQLite.
+    doc_epoch: AtomicI64,
     /// Optional callback for block change notifications.
     /// Set via `set_change_callback()` to enable hook integration.
     change_callback: RwLock<Option<ChangeCallback>>,
@@ -348,11 +361,18 @@ impl YDocStore {
             open_start.elapsed().as_millis()
         );
 
+        // Seed sync-position state: the whole persisted log was just replayed
+        // into the doc, so last-applied == persistence max.
+        let initial_seq = persistence.get_latest_seq(doc_key)?.unwrap_or(0);
+        let initial_epoch = persistence.get_doc_epoch(doc_key)?;
+
         Ok(Self {
             doc: Arc::new(RwLock::new(doc)),
             persistence,
             doc_key: doc_key.to_string(),
             updates_since_compact_check: AtomicI64::new(0),
+            last_applied_seq: AtomicI64::new(initial_seq),
+            doc_epoch: AtomicI64::new(initial_epoch),
             change_callback: RwLock::new(None),
             broadcast_callback: std::sync::Mutex::new(None),
         })
@@ -733,6 +753,11 @@ impl YDocStore {
                 .map_err(|e| StoreError::UpdateApply(e.to_string()))?;
         }
 
+        // Advance last-applied WHILE the doc write guard is held: readers
+        // holding the read guard therefore always see a (doc, seq) pair that
+        // matches (see field doc on last_applied_seq).
+        self.last_applied_seq.store(seq, Ordering::Release);
+
         // Check for compaction (periodic, not on every update)
         self.maybe_compact(&doc)?;
 
@@ -775,6 +800,11 @@ impl YDocStore {
         let seq = self
             .persistence
             .append_update(&self.doc_key, update_bytes)?;
+
+        // Memory already contains this change, so the applied position advances
+        // with the assigned seq. (fetch_max, not store: a concurrent
+        // apply_update may have already advanced past us.)
+        self.last_applied_seq.fetch_max(seq, Ordering::AcqRel);
 
         // Check for compaction using current doc state
         let doc = self.doc.read().map_err(|_| StoreError::LockPoisoned)?;
@@ -902,25 +932,49 @@ impl YDocStore {
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
 
-        // 5. NOW clear persisted state (only after successful decode + apply + encode)
-        self.persistence.clear_updates(&self.doc_key)?;
+        // 5. Replace persisted state atomically (single SQLite transaction:
+        //    delete + snapshot insert + compaction boundary + epoch bump).
+        //    A crash leaves old state or new state, never an empty log.
+        let (snapshot_seq, new_epoch) = self
+            .persistence
+            .reset_with_snapshot(&self.doc_key, &full_state)?;
 
-        // 6. Persist the new state
-        self.persistence.append_update(&self.doc_key, &full_state)?;
-
-        // 7. Replace the in-memory doc (under write lock for thread safety)
+        // 6. Replace the in-memory doc (under write lock for thread safety),
+        //    and advance the sync position under the same guard so readers
+        //    never observe the new doc with a stale (seq, epoch) pair.
         {
             let mut doc_guard = self.doc.write().map_err(|_| StoreError::LockPoisoned)?;
             *doc_guard = new_doc;
+            self.last_applied_seq.store(snapshot_seq, Ordering::Release);
+            self.doc_epoch.store(new_epoch, Ordering::Release);
         }
 
         log::info!(
-            "Y.Doc reset complete: {} blocks restored from {} bytes",
+            "Y.Doc reset complete: {} blocks restored from {} bytes (epoch {})",
             block_count,
-            state_bytes.len()
+            state_bytes.len(),
+            new_epoch
         );
 
         Ok(block_count)
+    }
+
+    /// Seq of the last update applied to the in-memory doc (None if empty).
+    ///
+    /// For a consistent (snapshot, seq) pair, call this while holding the doc
+    /// read guard the snapshot was encoded under.
+    pub fn last_applied_seq(&self) -> Option<i64> {
+        let seq = self.last_applied_seq.load(Ordering::Acquire);
+        if seq > 0 {
+            Some(seq)
+        } else {
+            None
+        }
+    }
+
+    /// Current doc epoch. Increments on every reset_from_state.
+    pub fn doc_epoch(&self) -> i64 {
+        self.doc_epoch.load(Ordering::Acquire)
     }
 
     /// Get block metadata as JSON Value (for change events).
@@ -1920,5 +1974,92 @@ mod tests {
             recorded.is_empty(),
             "persist_update should NOT fire broadcast callback"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Sync position (last_applied_seq / doc_epoch) — quirk-audit 2026-07-09
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Encode a standalone doc's full state (a valid restore payload).
+    fn encode_test_state(block_id: &str, content: &str) -> Vec<u8> {
+        let doc = Doc::new();
+        {
+            let mut txn = doc.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            blocks.insert(&mut txn, block_id, content);
+        }
+        let txn = doc.transact();
+        let state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
+        drop(txn);
+        state
+    }
+
+    #[test]
+    fn test_last_applied_seq_starts_none_and_tracks_apply_update() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("t.db"), "test").unwrap();
+
+        assert_eq!(store.last_applied_seq(), None);
+
+        let update = encode_test_state("b1", "hello");
+        let seq = store.apply_update(&update).unwrap();
+        assert_eq!(store.last_applied_seq(), Some(seq));
+
+        let update2 = encode_test_state("b2", "world");
+        let seq2 = store.apply_update(&update2).unwrap();
+        assert!(seq2 > seq);
+        assert_eq!(store.last_applied_seq(), Some(seq2));
+    }
+
+    #[test]
+    fn test_last_applied_seq_tracks_persist_update() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("t.db"), "test").unwrap();
+
+        let update = {
+            let doc = store.doc();
+            let doc_guard = doc.write().unwrap();
+            let mut txn = doc_guard.transact_mut();
+            let blocks = txn.get_or_insert_map("blocks");
+            blocks.insert(&mut txn, "b1", "content");
+            txn.encode_update_v1()
+        };
+        let seq = store.persist_update(&update).unwrap();
+        assert_eq!(store.last_applied_seq(), Some(seq));
+    }
+
+    #[test]
+    fn test_last_applied_seq_seeds_from_persistence_on_open() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("t.db");
+        let seq = {
+            let store = YDocStore::open(&db, "test").unwrap();
+            store.apply_update(&encode_test_state("b1", "x")).unwrap()
+        };
+        // Reopen: whole log replayed → last-applied == persistence max
+        let store = YDocStore::open(&db, "test").unwrap();
+        assert_eq!(store.last_applied_seq(), Some(seq));
+    }
+
+    #[test]
+    fn test_reset_from_state_bumps_epoch_and_sets_position() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("t.db");
+        {
+            let store = YDocStore::open(&db, "test").unwrap();
+            assert_eq!(store.doc_epoch(), 0);
+            store.apply_update(&encode_test_state("b1", "old")).unwrap();
+
+            let restored = encode_test_state("b2", "restored");
+            store.reset_from_state(&restored).unwrap();
+
+            assert_eq!(store.doc_epoch(), 1);
+            // Position points at the snapshot row, consistent with persistence
+            assert_eq!(store.last_applied_seq(), store.get_latest_seq().unwrap());
+            assert!(store.last_applied_seq().is_some());
+        }
+        // Epoch survives restart (persisted in sync_meta)
+        let store = YDocStore::open(&db, "test").unwrap();
+        assert_eq!(store.doc_epoch(), 1);
     }
 }
