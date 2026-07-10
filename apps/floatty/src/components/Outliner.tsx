@@ -25,6 +25,7 @@ import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
 import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
+import { hasLiveTextSelection } from '../lib/cursorUtils';
 import { blocksToMarkdown } from '../lib/markdownExport';
 import { flushPendingContent } from '../hooks/useContentSync';
 import { useConfig } from '../context/ConfigContext';
@@ -275,8 +276,14 @@ export function Outliner(props: OutlinerProps) {
 
     // Progressive Cmd+A handled by tinykeys (see onMount)
 
-    // Cmd+C copy selection
+    // Cmd+C copy selection — but a live text selection inside a
+    // contentEditable wins: the user is copying WORDS, not blocks. Stale
+    // block-selection state must not hijack a hundred-times-a-day gesture;
+    // bail to the browser's native copy instead.
     if (modKey && e.key === 'c' && selected.size > 0) {
+      if (hasLiveTextSelection()) {
+        return; // native copy of the text selection
+      }
       e.preventDefault();
       selection.copySelection();
       return;

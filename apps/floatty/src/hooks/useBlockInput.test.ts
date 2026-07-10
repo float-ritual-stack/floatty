@@ -898,6 +898,68 @@ describe('useBlockInput.handleKeyDown — lazy cursor snapshot', () => {
   });
 });
 
+// ─── Selection-anchor getter (quirk-audit cluster B) ──────────────────
+// selectionAnchor used to be passed by VALUE into the hook deps. SolidJS
+// updates props on the same component instance, so the captured null never
+// refreshed: every Shift+Arrow looked like "the first one" and range growth
+// never happened (solidjs-patterns #6). The getter reads fresh each press.
+
+describe('useBlockInput.handleKeyDown — Shift+Arrow anchor growth', () => {
+  beforeAll(() => registerHandlers());
+
+  function setupSelectionScenario() {
+    // Mutable anchor mimics the parent's reactive prop: the first 'anchor'
+    // select sets it, subsequent presses must OBSERVE the new value.
+    let anchor: string | null = null;
+    const onSelect = vi.fn((id: string, mode: string) => {
+      if (mode === 'anchor') anchor = id;
+    });
+    const onFocus = vi.fn();
+
+    const deps: BlockInputDependencies = {
+      getBlockId: () => 'block-2',
+      paneId: 'test-pane',
+      getBlock: () => createBlock({ id: 'block-2', content: 'middle block' }),
+      isCollapsed: () => false,
+      blockStore: createMockBlockStore(),
+      paneStore: createMockPaneStore(),
+      cursor: createCursorMock(),
+      findNextVisibleBlock: () => 'block-3',
+      findPrevVisibleBlock: () => 'block-1',
+      findFocusAfterDelete: () => null,
+      onFocus,
+      onSelect,
+      getSelectionAnchor: () => anchor,
+      flushContentUpdate: () => {},
+      getContentRef: () => undefined,
+    };
+
+    const { handleKeyDown } = useBlockInput(deps);
+    return { handleKeyDown, onSelect, onFocus };
+  }
+
+  it('first Shift+ArrowDown sets the anchor, second extends the range', () => {
+    const { handleKeyDown, onSelect } = setupSelectionScenario();
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+    expect(onSelect).toHaveBeenNthCalledWith(1, 'block-2', 'anchor');
+
+    // The anchor is now set. With the old by-value dep this second press
+    // would STILL see null and re-anchor instead of extending.
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+    expect(onSelect).toHaveBeenNthCalledWith(2, 'block-2', 'range');
+  });
+
+  it('Shift+ArrowUp follows the same anchor-then-range progression', () => {
+    const { handleKeyDown, onSelect } = setupSelectionScenario();
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+
+    expect(onSelect.mock.calls.map(c => c[1])).toEqual(['anchor', 'range']);
+  });
+});
+
 // ─── Zoomed-root invariants (quirk-audit cluster A) ───────────────────
 // The zoomed root is the page title. Enter must never create siblings
 // (they land invisibly under the pages:: container), Backspace must never
