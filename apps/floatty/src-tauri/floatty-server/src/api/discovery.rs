@@ -545,6 +545,11 @@ fn scan_pages_container_for_name(
         return Ok(None);
     };
 
+    // Oldest-createdAt wins among matches — the SAME tie-break the
+    // PageNameIndex applies. Returning the first childIds match could cache
+    // a newer twin during the hook-lag window and diverge from the index's
+    // eventual resolution.
+    let mut oldest: Option<(String, i64)> = None;
     for child_id in read_block_child_ids(&blocks_map, &txn, container_id) {
         let Some(yrs::Out::YMap(child_map)) = blocks_map.get(&txn, &child_id) else {
             continue;
@@ -553,12 +558,24 @@ fn scan_pages_container_for_name(
             Some(yrs::Out::Any(yrs::Any::String(s))) => s.to_string(),
             _ => continue,
         };
-        if page_title_from_content(&content).to_lowercase() == name_key {
-            return Ok(Some(child_id));
+        if page_title_from_content(&content).to_lowercase() != name_key {
+            continue;
+        }
+        // i64::MAX when unknown (extract_timestamp yields 0 for missing —
+        // FLO-684 treats 0 as "no timestamp") — an unknown-age match never
+        // beats a known one (mirrors ExistingPageEntry semantics).
+        let created_at =
+            match crate::block_service::extract_timestamp(child_map.get(&txn, "createdAt")) {
+                0 => i64::MAX,
+                ts => ts,
+            };
+        match oldest {
+            Some((_, best)) if created_at >= best => {}
+            _ => oldest = Some((child_id, created_at)),
         }
     }
 
-    Ok(None)
+    Ok(oldest.map(|(id, _)| id))
 }
 
 /// Read a page block as a `BlockDto` for returning from the upsert handler.
