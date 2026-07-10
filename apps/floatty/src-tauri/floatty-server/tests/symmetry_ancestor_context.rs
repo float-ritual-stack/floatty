@@ -629,7 +629,7 @@ fn inbound_sample_cap_falls_back_when_hint_insufficient() {
     // Build a real PageNameIndex with the 8 inbound references registered
     // against "Target". Lowercased per the PageNameIndex contract.
     let mut pni = PageNameIndex::new();
-    pni.add_existing_page("target", "target_page");
+    pni.add_existing_page("target", "target_page", 100);
     for ref_id in [
         "ref1", "ref2", "ref3", "ref4", "ref5", "ref6", "ref7", "ref8",
     ] {

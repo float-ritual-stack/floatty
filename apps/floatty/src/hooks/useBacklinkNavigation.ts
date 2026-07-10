@@ -88,17 +88,25 @@ export function findPage(pageName: string): Block | null {
   const normalizedName = getPageTitle(pageName.trim()).toLowerCase();
   const { blocks } = blockStore;
 
+  // Collision contract (matches the server PageNameIndex tie-break): when
+  // duplicate pages share a name, the OLDEST block by createdAt wins — not
+  // childIds position. First-match diverged from the server's resolution, so
+  // the two sides could route the same [[wikilink]] to different twins
+  // (quirk-audit 2026-07-09, cluster F "split-brain resolution").
+  let oldest: Block | null = null;
   for (const childId of pagesContainer.childIds) {
     const child = blocks[childId];
     if (child) {
       const childName = getPageTitle(child.content.trim()).toLowerCase();
       if (childName === normalizedName) {
-        return child;
+        if (!oldest || (child.createdAt ?? Infinity) < (oldest.createdAt ?? Infinity)) {
+          oldest = child;
+        }
       }
     }
   }
 
-  return null;
+  return oldest;
 }
 
 /**

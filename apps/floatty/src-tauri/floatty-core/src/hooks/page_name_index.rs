@@ -56,6 +56,16 @@ impl PageSuggestion {
     }
 }
 
+/// Value side of the `existing` map — the block that owns a page name, plus
+/// its creation time for deterministic collision resolution (oldest wins).
+#[derive(Debug, Clone)]
+struct ExistingPageEntry {
+    block_id: String,
+    /// Block createdAt (ms). `i64::MAX` when unknown, so an unknown claimant
+    /// never steals a name from a block with a known age.
+    created_at: i64,
+}
+
 /// Fast index for page name autocomplete.
 ///
 /// Tracks existing pages (blocks under `pages::`) and referenced pages
@@ -65,9 +75,11 @@ impl PageSuggestion {
 ///
 /// Uses RwLock for concurrent read access during autocomplete.
 pub struct PageNameIndex {
-    /// Existing pages: normalized name → block ID.
+    /// Existing pages: normalized name → owning block entry.
     /// Blocks that are direct children of `pages::` container.
-    existing: HashMap<String, String>,
+    /// On name collision the OLDEST block (by createdAt) owns the name —
+    /// duplicates never silently steal it (quirk-audit 2026-07-09, cluster F).
+    existing: HashMap<String, ExistingPageEntry>,
 
     /// Reverse of `existing`: block ID → normalized page name. O(1) lookup
     /// for "what page does this block represent?" — used by hot paths
@@ -113,8 +125,8 @@ impl PageNameIndex {
         let mut existing_matches: Vec<_> = self
             .existing
             .iter()
-            .filter(|(name, _block_id)| name.starts_with(&normalized_prefix))
-            .map(|(name, block_id)| PageSuggestion::existing(name.clone(), block_id.clone()))
+            .filter(|(name, _entry)| name.starts_with(&normalized_prefix))
+            .map(|(name, entry)| PageSuggestion::existing(name.clone(), entry.block_id.clone()))
             .collect();
 
         let mut stub_matches: Vec<_> = self
@@ -195,7 +207,11 @@ impl PageNameIndex {
             .into_iter()
             .map(|(_, is_existing, name)| {
                 if is_existing {
-                    let block_id = self.existing.get(&name).cloned().unwrap_or_default();
+                    let block_id = self
+                        .existing
+                        .get(&name)
+                        .map(|e| e.block_id.clone())
+                        .unwrap_or_default();
                     PageSuggestion::existing(name, block_id)
                 } else {
                     PageSuggestion::stub(name)
@@ -211,7 +227,9 @@ impl PageNameIndex {
 
     /// Get the block ID for an existing page by name.
     pub fn page_block_id(&self, name: &str) -> Option<&str> {
-        self.existing.get(&name.to_lowercase()).map(|s| s.as_str())
+        self.existing
+            .get(&name.to_lowercase())
+            .map(|e| e.block_id.as_str())
     }
 
     /// Reverse lookup: given a block ID, return the page name it represents
@@ -263,38 +281,92 @@ impl PageNameIndex {
     ///
     /// `name` should be the page title with heading prefix stripped.
     /// `block_id` is the Y.Doc block ID of the page block.
+    /// `created_at` is the block's creation time (ms); pass `i64::MAX` when
+    /// unknown.
     ///
-    /// Maintains the `block_id_to_page_name` reverse index: if a previous
-    /// page was registered under the same name (rename via `add` after
-    /// `remove`), the reverse entry for the old block_id is dropped here.
-    pub fn add_existing_page(&mut self, name: &str, block_id: &str) {
+    /// Collision contract (quirk-audit 2026-07-09, cluster F): when two
+    /// DIFFERENT blocks claim the same name, the OLDEST block (by createdAt)
+    /// owns it — deterministic across restarts, unlike the previous
+    /// last-writer-wins insert whose winner flipped with HashMap iteration
+    /// order on rebuild. The loser is logged (duplicate-page observability)
+    /// and gets no index entry.
+    ///
+    /// Maintains the `block_id_to_page_name` reverse index in lockstep.
+    pub fn add_existing_page(&mut self, name: &str, block_id: &str, created_at: i64) {
         let normalized = name.to_lowercase();
-        let prev = self
-            .existing
-            .insert(normalized.clone(), block_id.to_string());
-        if let Some(ref old_block_id) = prev {
-            // Same name → different block_id (e.g. rename collision). Drop
-            // the stale reverse entry so we don't leak block_id → name.
-            if old_block_id != block_id {
-                self.block_id_to_page_name.remove(old_block_id);
+
+        if let Some(current) = self.existing.get(&normalized) {
+            if current.block_id == block_id {
+                // Same block re-registering (content refresh) — keep the
+                // freshest created_at knowledge (min: a real timestamp beats
+                // the i64::MAX unknown sentinel).
+                let refreshed = current.created_at.min(created_at);
+                self.existing.insert(
+                    normalized.clone(),
+                    ExistingPageEntry {
+                        block_id: block_id.to_string(),
+                        created_at: refreshed,
+                    },
+                );
+                return;
             }
-        }
-        self.block_id_to_page_name
-            .insert(block_id.to_string(), normalized);
-        if prev.is_none() {
+
+            // Different block claims an owned name: oldest createdAt wins.
+            if created_at < current.created_at {
+                log::warn!(
+                    "Duplicate page name '{}': block {} (created {}) displaces newer holder {} (created {})",
+                    name,
+                    block_id,
+                    created_at,
+                    current.block_id,
+                    current.created_at
+                );
+                self.block_id_to_page_name.remove(&current.block_id);
+            } else {
+                log::warn!(
+                    "Duplicate page name '{}': keeping older holder {} (created {}), ignoring {} (created {})",
+                    name,
+                    current.block_id,
+                    current.created_at,
+                    block_id,
+                    created_at
+                );
+                return;
+            }
+        } else {
             trace!("Added existing page: {} ({})", name, block_id);
         }
+
+        self.existing.insert(
+            normalized.clone(),
+            ExistingPageEntry {
+                block_id: block_id.to_string(),
+                created_at,
+            },
+        );
+        self.block_id_to_page_name
+            .insert(block_id.to_string(), normalized);
     }
 
-    /// Remove an existing page from the index.
+    /// Remove a block's page registration, id-guarded.
     ///
-    /// Maintains the `block_id_to_page_name` reverse index by clearing the
-    /// entry for the block id that was registered under this name.
-    pub fn remove_existing_page(&mut self, name: &str) {
-        let normalized = name.to_lowercase();
-        if let Some(block_id) = self.existing.remove(&normalized) {
-            self.block_id_to_page_name.remove(&block_id);
-            trace!("Removed existing page: {}", name);
+    /// Only removes the name entry this specific block owns (via the reverse
+    /// index). The previous name-keyed removal deleted whatever block was
+    /// registered under the name — so deleting ANY block whose first line
+    /// matched a page name evicted the real page, and deleting one duplicate
+    /// evicted the survivor (quirk-audit 2026-07-09, cluster F:
+    /// "deleting one twin makes three").
+    pub fn remove_existing_page_by_id(&mut self, block_id: &str) {
+        if let Some(name) = self.block_id_to_page_name.remove(block_id) {
+            // Only clear the forward entry if this block actually owns it.
+            let owns = self
+                .existing
+                .get(&name)
+                .is_some_and(|e| e.block_id == block_id);
+            if owns {
+                self.existing.remove(&name);
+                trace!("Removed existing page: {} ({})", name, block_id);
+            }
         }
     }
 
@@ -347,6 +419,41 @@ impl Default for PageNameIndex {
     }
 }
 
+/// Extract the page title from block content.
+///
+/// Mirrors the frontend's `getPageTitle()` in useBacklinkNavigation.ts:
+/// - Take the first line only (multi-line pages embed markers on subsequent lines)
+/// - Strip heading prefix (# ## ### etc)
+/// - Trim whitespace
+///
+/// A "heading prefix" is one-or-more `#` followed by at least one
+/// whitespace (per CommonMark). Bare `#name` (no whitespace after) is
+/// NOT a heading — it's a page whose name starts with `#`, e.g.
+/// `[[#2817]]` (FLO-573). Must stay in sync with the frontend
+/// `getPageTitle` in `useBacklinkNavigation.ts`.
+///
+/// Examples:
+///   "# My Page"                    → "My Page"
+///   "# Summary\n[board:: recon]"   → "Summary"
+///   "# #2817"                      → "#2817"
+///   "#2817"                        → "#2817"  (no whitespace, not a heading)
+///   "No prefix"                    → "No prefix"
+///
+/// Public: the server's `find_or_create_page` Y.Doc fallback scan must
+/// compare names EXACTLY the way the index extracts them.
+pub fn page_title_from_content(content: &str) -> &str {
+    let first_line = content.lines().next().unwrap_or(content);
+    let hash_count = first_line.bytes().take_while(|&b| b == b'#').count();
+    if hash_count == 0 {
+        return first_line.trim();
+    }
+    let after_hashes = &first_line[hash_count..];
+    match after_hashes.chars().next() {
+        Some(c) if c.is_whitespace() => after_hashes.trim(),
+        _ => first_line.trim(),
+    }
+}
+
 /// Hook that maintains the PageNameIndex.
 ///
 /// Subscribes to block changes and updates the autocomplete index:
@@ -375,37 +482,9 @@ impl PageNameIndexHook {
         Arc::clone(&self.index)
     }
 
-    /// Strip heading prefix (# ## ### etc) from content.
-    /// Extract the page title from block content.
-    ///
-    /// Mirrors the frontend's `getPageTitle()` in useBacklinkNavigation.ts:
-    /// - Take the first line only (multi-line pages embed markers on subsequent lines)
-    /// - Strip heading prefix (# ## ### etc)
-    /// - Trim whitespace
-    ///
-    /// A "heading prefix" is one-or-more `#` followed by at least one
-    /// whitespace (per CommonMark). Bare `#name` (no whitespace after) is
-    /// NOT a heading — it's a page whose name starts with `#`, e.g.
-    /// `[[#2817]]` (FLO-573). Must stay in sync with the frontend
-    /// `getPageTitle` in `useBacklinkNavigation.ts`.
-    ///
-    /// Examples:
-    ///   "# My Page"                    → "My Page"
-    ///   "# Summary\n[board:: recon]"   → "Summary"
-    ///   "# #2817"                      → "#2817"
-    ///   "#2817"                        → "#2817"  (no whitespace, not a heading)
-    ///   "No prefix"                    → "No prefix"
+    /// Strip heading prefix — see the free function [`page_title_from_content`].
     fn strip_heading_prefix(content: &str) -> &str {
-        let first_line = content.lines().next().unwrap_or(content);
-        let hash_count = first_line.bytes().take_while(|&b| b == b'#').count();
-        if hash_count == 0 {
-            return first_line.trim();
-        }
-        let after_hashes = &first_line[hash_count..];
-        match after_hashes.chars().next() {
-            Some(c) if c.is_whitespace() => after_hashes.trim(),
-            _ => first_line.trim(),
-        }
+        page_title_from_content(content)
     }
 
     /// Check if content starts with `pages::` (case-insensitive).
@@ -474,7 +553,11 @@ impl PageNameIndexHook {
             if parent_id == Some(container_id) {
                 let page_name = Self::strip_heading_prefix(content);
                 if !page_name.is_empty() {
-                    index.add_existing_page(page_name, id);
+                    let created_at = store
+                        .get_block(id)
+                        .map(|b| b.created_at)
+                        .unwrap_or(i64::MAX);
+                    index.add_existing_page(page_name, id, created_at);
                 }
             }
         }
@@ -520,15 +603,15 @@ impl PageNameIndexHook {
         if let Some(container_id) = index.pages_container_id() {
             if let Some(block) = store.get_block(id) {
                 if block.parent_id.as_deref() == Some(container_id) {
-                    // Remove old page name
-                    let old_name = Self::strip_heading_prefix(old_content);
-                    if !old_name.is_empty() {
-                        index.remove_existing_page(old_name);
-                    }
+                    // Remove whatever name THIS block owned (id-guarded — a
+                    // name-keyed remove could evict a different block that
+                    // legitimately owns old_name)
+                    let _ = old_content; // old name derivable, but ownership is by id
+                    index.remove_existing_page_by_id(id);
                     // Add new page name
                     let new_name = Self::strip_heading_prefix(new_content);
                     if !new_name.is_empty() {
-                        index.add_existing_page(new_name, id);
+                        index.add_existing_page(new_name, id, block.created_at);
                     }
                 }
             }
@@ -553,11 +636,11 @@ impl PageNameIndexHook {
             index.set_pages_container_id(None);
         }
 
-        // Remove from existing pages if it was one
-        let page_name = Self::strip_heading_prefix(content);
-        if !page_name.is_empty() {
-            index.remove_existing_page(page_name);
-        }
+        // Remove this block's page registration, id-guarded. The previous
+        // name-keyed removal evicted the index entry of ANY block whose first
+        // line matched a page name — deleting a `# 2026-06-30` note anywhere
+        // in the outline de-indexed the real 2026-06-30 page.
+        index.remove_existing_page_by_id(id);
 
         // Remove all references from this block
         index.remove_references(id);
@@ -600,7 +683,11 @@ impl PageNameIndexHook {
                         if block.parent_id.as_deref() == Some(cid.as_str()) {
                             let page_name = Self::strip_heading_prefix(&block.content);
                             if !page_name.is_empty() {
-                                index.add_existing_page(page_name, id);
+                                // Oldest-createdAt wins here too: rebuild order is
+                                // HashMap iteration (non-deterministic), and this
+                                // tie-break is what keeps the winner stable
+                                // across restarts when duplicates exist.
+                                index.add_existing_page(page_name, id, block.created_at);
                             }
                         }
                     }
@@ -644,17 +731,21 @@ impl PageNameIndexHook {
             return;
         }
 
-        // Check if moved out of pages::
+        // Check if moved out of pages:: (id-guarded — only this block's entry)
         if let Some(ref cid) = container_id {
             if old_parent_id == Some(cid.as_str()) && new_parent_id != Some(cid.as_str()) {
-                index.remove_existing_page(page_name);
+                index.remove_existing_page_by_id(id);
             }
         }
 
         // Check if moved into pages::
         if let Some(ref cid) = container_id {
             if new_parent_id == Some(cid.as_str()) && old_parent_id != Some(cid.as_str()) {
-                index.add_existing_page(page_name, id);
+                let created_at = store
+                    .get_block(id)
+                    .map(|b| b.created_at)
+                    .unwrap_or(i64::MAX);
+                index.add_existing_page(page_name, id, created_at);
             }
         }
     }
@@ -727,7 +818,7 @@ mod tests {
     #[test]
     fn test_add_existing_page() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("My Page", "page-1");
+        index.add_existing_page("My Page", "page-1", 100);
 
         assert!(index.page_exists("My Page"));
         assert!(index.page_exists("my page")); // Case-insensitive
@@ -737,8 +828,8 @@ mod tests {
     #[test]
     fn test_remove_existing_page() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("My Page", "page-1");
-        index.remove_existing_page("my page"); // Case-insensitive
+        index.add_existing_page("My Page", "page-1", 100);
+        index.remove_existing_page_by_id("page-1");
 
         assert!(!index.page_exists("My Page"));
     }
@@ -749,47 +840,100 @@ mod tests {
         // name registered for a given block_id, and stays in sync through
         // add → remove → re-add cycles.
         let mut index = PageNameIndex::new();
-        index.add_existing_page("My Page", "page-1");
-        index.add_existing_page("Other Page", "page-2");
+        index.add_existing_page("My Page", "page-1", 100);
+        index.add_existing_page("Other Page", "page-2", 100);
 
         assert_eq!(index.page_name_for_block("page-1"), Some("my page"));
         assert_eq!(index.page_name_for_block("page-2"), Some("other page"));
         assert_eq!(index.page_name_for_block("page-missing"), None);
 
         // Remove drops the reverse entry.
-        index.remove_existing_page("My Page");
+        index.remove_existing_page_by_id("page-1");
         assert_eq!(index.page_name_for_block("page-1"), None);
         // Other entry survives.
         assert_eq!(index.page_name_for_block("page-2"), Some("other page"));
 
         // Re-add under same block_id with new name.
-        index.add_existing_page("Brand New", "page-1");
+        index.add_existing_page("Brand New", "page-1", 100);
         assert_eq!(index.page_name_for_block("page-1"), Some("brand new"));
     }
 
     #[test]
-    fn test_page_name_for_block_handles_rename_collision() {
-        // When the same NAME is re-registered against a different block_id
-        // (rename collision in the outline), the old block_id's reverse
-        // entry must be dropped — otherwise a stale block_id → name mapping
-        // leaks and inbound counts get attributed to the wrong page.
+    fn test_name_collision_oldest_created_at_wins() {
+        // Two DIFFERENT blocks claim the same name: the older block (by
+        // createdAt) owns it, regardless of registration order. This is what
+        // keeps the winner stable across restarts (rebuild iterates a HashMap
+        // in arbitrary order) — quirk-audit 2026-07-09 cluster F.
         let mut index = PageNameIndex::new();
-        index.add_existing_page("Same Name", "block-old");
-        assert_eq!(index.page_name_for_block("block-old"), Some("same name"));
 
-        index.add_existing_page("Same Name", "block-new");
-        assert_eq!(index.page_name_for_block("block-new"), Some("same name"));
+        // Newer registered first; older claimant displaces it.
+        index.add_existing_page("Same Name", "block-newer", 200);
+        index.add_existing_page("Same Name", "block-older", 100);
+        assert_eq!(index.page_block_id("Same Name"), Some("block-older"));
+        assert_eq!(index.page_name_for_block("block-older"), Some("same name"));
         assert_eq!(
-            index.page_name_for_block("block-old"),
+            index.page_name_for_block("block-newer"),
             None,
-            "stale reverse entry must be dropped on rename collision"
+            "displaced holder must lose its reverse entry"
         );
+
+        // Older registered first; newer claimant is ignored (with a warn).
+        let mut index2 = PageNameIndex::new();
+        index2.add_existing_page("Same Name", "block-older", 100);
+        index2.add_existing_page("Same Name", "block-newer", 200);
+        assert_eq!(index2.page_block_id("Same Name"), Some("block-older"));
+        assert_eq!(
+            index2.page_name_for_block("block-newer"),
+            None,
+            "losing claimant must not gain a reverse entry"
+        );
+    }
+
+    #[test]
+    fn test_unknown_created_at_never_steals() {
+        let mut index = PageNameIndex::new();
+        index.add_existing_page("Page", "block-known", 100);
+        index.add_existing_page("Page", "block-unknown", i64::MAX);
+        assert_eq!(index.page_block_id("Page"), Some("block-known"));
+    }
+
+    #[test]
+    fn test_deleting_a_non_owner_does_not_evict_the_page() {
+        // Regression for "deleting one twin makes three": the loser of a name
+        // collision gets deleted — the survivor's index entry must stay.
+        let mut index = PageNameIndex::new();
+        index.add_existing_page("2026-06-30", "block-original", 100);
+        index.add_existing_page("2026-06-30", "block-duplicate", 200); // loses
+
+        // Deleting the duplicate (which does NOT own the name) is a no-op
+        // for the forward entry.
+        index.remove_existing_page_by_id("block-duplicate");
+        assert_eq!(index.page_block_id("2026-06-30"), Some("block-original"));
+
+        // Deleting an unrelated block whose first line merely MATCHES a page
+        // name must not evict the page either (id-guard, not name-guard).
+        index.remove_existing_page_by_id("some-random-note-block");
+        assert_eq!(index.page_block_id("2026-06-30"), Some("block-original"));
+
+        // Deleting the actual owner removes the entry.
+        index.remove_existing_page_by_id("block-original");
+        assert_eq!(index.page_block_id("2026-06-30"), None);
+    }
+
+    #[test]
+    fn test_same_block_reregistration_refreshes_created_at() {
+        let mut index = PageNameIndex::new();
+        index.add_existing_page("Page", "block-1", i64::MAX); // unknown at first
+        index.add_existing_page("Page", "block-1", 100); // now known
+                                                         // A newer different block still loses against the refreshed age.
+        index.add_existing_page("Page", "block-2", 150);
+        assert_eq!(index.page_block_id("Page"), Some("block-1"));
     }
 
     #[test]
     fn test_clear_resets_reverse_index() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("Page A", "block-a");
+        index.add_existing_page("Page A", "block-a", 100);
         index.clear();
         assert_eq!(index.page_name_for_block("block-a"), None);
     }
@@ -823,8 +967,8 @@ mod tests {
     #[test]
     fn test_search_existing_first() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("Alpha", "alpha-id");
-        index.add_existing_page("Bravo", "bravo-id");
+        index.add_existing_page("Alpha", "alpha-id", 100);
+        index.add_existing_page("Bravo", "bravo-id", 100);
         index.add_references("b1", &["Able".to_string()]); // Stub
 
         let results = index.search("a");
@@ -837,7 +981,7 @@ mod tests {
     #[test]
     fn test_search_case_insensitive() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("MyPage", "mypage-id");
+        index.add_existing_page("MyPage", "mypage-id", 100);
 
         assert_eq!(index.search("my").len(), 1);
         assert_eq!(index.search("MY").len(), 1);
@@ -847,9 +991,9 @@ mod tests {
     #[test]
     fn test_search_prefix_match() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("JavaScript", "js-id");
-        index.add_existing_page("Java", "java-id");
-        index.add_existing_page("Python", "python-id");
+        index.add_existing_page("JavaScript", "js-id", 100);
+        index.add_existing_page("Java", "java-id", 100);
+        index.add_existing_page("Python", "python-id", 100);
 
         let results = index.search("jav");
         assert_eq!(results.len(), 2);
@@ -860,7 +1004,7 @@ mod tests {
     #[test]
     fn test_stub_pages_excludes_existing() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("Real Page", "real-page-id");
+        index.add_existing_page("Real Page", "real-page-id", 100);
         index.add_references("b1", &["Real Page".to_string(), "Ghost Page".to_string()]);
 
         let stubs = index.stub_pages();
@@ -871,7 +1015,7 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut index = PageNameIndex::new();
-        index.add_existing_page("Page", "page-id");
+        index.add_existing_page("Page", "page-id", 100);
         index.add_references("b1", &["Ref".to_string()]);
         index.set_pages_container_id(Some("container".to_string()));
 
