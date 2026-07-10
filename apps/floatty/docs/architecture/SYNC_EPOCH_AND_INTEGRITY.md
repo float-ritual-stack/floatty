@@ -1,6 +1,6 @@
 # Sync Integrity: Doc Epoch, Applied Watermark, Orphan Recovery
 
-**Status**: SHIPPED (2026-07 — PRs #324, #326, #327 on the quirk-audit integration branch)
+**Status**: SHIPPED (2026-07 — [[PR #324]], [[PR #326]], [[PR #327]] on the quirk-audit integration branch)
 **Origin**: quirk-audit 2026-07-09 §3 (`docs/audits/2026-07-09-quirk-audit.md`) — four
 confirmed resurrection/data-loss holes, closed as prerequisites for the
 offline/fast-boot rewrite (`docs/design/2026-06-26-offline-and-fast-boot.md`).

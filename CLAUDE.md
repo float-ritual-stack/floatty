@@ -173,7 +173,7 @@ source of truth; this list is the human index):
 | `⌘⇧7` / `⌘⇧8` / `⌘⇧9` | Quick expand to depth 1/2/3 |
 | `⌘⇧0` | Collapse to homebase |
 | `⌘⇧E` / `⌘⇧E E` | Global expand (chords) |
-| `⌘⇧F` | Toggle full-width (escape reading-column clamp — tables/render doors too, PR #322) |
+| `⌘⇧F` | Toggle full-width (escape reading-column clamp — tables/render doors too, [[PR #322]]) |
 | `⌘↑` / `⌘↓` | Move block before previous / after next sibling (FLO-75, `keybinds.ts`) |
 | `⌘⇧↑` / `⌘⇧↓` | Focus first / last visible block in current view (FLO-495) |
 | `⌘⇧L` | Send focused block to linked pane (FLO-469 — requires prior `⌘L` link) |

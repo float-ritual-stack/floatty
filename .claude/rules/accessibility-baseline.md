@@ -7,8 +7,9 @@ this rule exists for the DISCIPLINE, plus floatty's specifics:
 - **Landmarks**: `role` on main layout regions (main / complementary sidebar /
   navigation tab bar / contentinfo status bar).
 - **Interactive elements**: `aria-label` on icon-only buttons ("Close tab
-  {title}"), `aria-pressed` on toggles, `role="button"` + `tabindex="0"` +
-  keyboard handler on custom controls.
+  {title}"), `aria-pressed` on toggles, `role="button"` + `tabindex="0"` on custom
+  controls, with a keyboard handler that activates on BOTH Enter and Space
+  (native button semantics).
 - **Dynamic status**: `aria-live="polite"` (errors only get `assertive`).
 - **Focus**: every interactive element gets a visible `:focus-visible` outline
   using `var(--color-accent)`.

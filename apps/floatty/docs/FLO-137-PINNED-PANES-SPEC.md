@@ -3,7 +3,7 @@
 > **STATUS: HISTORICAL DESIGN — SUPERSEDED IN PRACTICE (2026-07-10).** Pins SHIPPED in
 > v0.18.0 with a *different* model than this spec: the pin shelf (`PinShelfView.tsx`,
 > `pinned::` container, drag-reorder, collapse-to-header) plus a per-pane navigation
-> *floor* (`navigation.ts` floor-clamp, PR #318) — NOT this spec's preview-pane
+> *floor* (`navigation.ts` floor-clamp, [[PR #318]]) — NOT this spec's preview-pane
 > navigation model. Kept as design lineage; do not implement from this document.
 > Related: FLO-136 (ephemeral panes) was reverted — see
 > [`docs/archive/FLO-136-EPHEMERAL-PANES-POSTMORTEM.md`](archive/FLO-136-EPHEMERAL-PANES-POSTMORTEM.md).
