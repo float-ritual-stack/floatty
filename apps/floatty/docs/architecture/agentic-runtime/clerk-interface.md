@@ -1,5 +1,9 @@
 # Clerk Interface (Ingestion DSL)
 
+> **STATUS: ASPIRATIONAL (design/vision — not implemented as of 2026-07-10).**
+> No corresponding code exists yet; treat as direction, not description. If you
+> implement part of this, update this banner with what shipped.
+
 Clerk is not only a role. It is also an interaction surface.
 
 ## Forms of input

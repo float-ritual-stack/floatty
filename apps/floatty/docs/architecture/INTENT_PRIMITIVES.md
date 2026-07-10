@@ -1,5 +1,9 @@
 # Intent Primitives Architecture
 
+> **STATUS: ASPIRATIONAL (design/vision — not implemented as of 2026-07-10).**
+> No corresponding code exists yet; treat as direction, not description. If you
+> implement part of this, update this banner with what shipped.
+
 > **STATUS: DESIGN EXPLORATION — NOT IMPLEMENTED** — Intent classification, Lua scripting,
 > and the unified API vocabulary described here have not been built. No `intent::` prefix
 > exists in `src/lib/blockTypes.ts`. This is a design document only.

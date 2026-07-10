@@ -1,62 +1,18 @@
 # Accessibility Baseline (Proactive)
 
-When writing UI components, apply these patterns as baseline hygiene - don't wait for review findings.
+Build accessibility in while writing UI components — don't wait for review
+findings to bolt it on. Current models know the ARIA/focus/motion mechanics;
+this rule exists for the DISCIPLINE, plus floatty's specifics:
 
-## ARIA Landmarks
-
-Add `role` attributes to main layout regions:
-```tsx
-<div role="main">...</div>           // Primary content area
-<aside role="complementary">...</aside>  // Sidebar
-<nav role="navigation">...</nav>     // Tab bar, breadcrumbs
-<footer role="contentinfo">...</footer>  // Status bar
-```
-
-## Interactive Elements
-
-- Buttons need `aria-label` when icon-only or text isn't self-describing
-- Close buttons: `aria-label="Close tab {title}"`
-- Toggle buttons: `aria-pressed={isActive}`
-- Custom controls: `role="button"` + `tabindex="0"` + keyboard handler
-
-## Status Updates
-
-Use `aria-live` for dynamic content:
-```tsx
-<span aria-live="polite">{pendingCount} parsing...</span>
-```
-
-- `polite` = announce when user is idle (most cases)
-- `assertive` = interrupt immediately (errors only)
-
-## Focus Indicators
-
-All interactive elements need visible `:focus-visible`:
-```css
-.interactive:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-```
-
-## Motion
-
-Respect user preferences:
-```css
-@media (prefers-reduced-motion: reduce) {
-  .animated-element {
-    animation: none;
-    transition: none;
-  }
-}
-```
-
-## Color
-
-Never use color alone for state:
-- Red/green status → add icon or text label
-- Error states → add icon, not just red border
-
----
+- **Landmarks**: `role` on main layout regions (main / complementary sidebar /
+  navigation tab bar / contentinfo status bar).
+- **Interactive elements**: `aria-label` on icon-only buttons ("Close tab
+  {title}"), `aria-pressed` on toggles, `role="button"` + `tabindex="0"` +
+  keyboard handler on custom controls.
+- **Dynamic status**: `aria-live="polite"` (errors only get `assertive`).
+- **Focus**: every interactive element gets a visible `:focus-visible` outline
+  using `var(--color-accent)`.
+- **Motion**: honor `@media (prefers-reduced-motion: reduce)`.
+- **Color is never the only signal** — pair red/green state with an icon or label.
 
 This is baseline, not gold-plating. Build it in, don't bolt it on.

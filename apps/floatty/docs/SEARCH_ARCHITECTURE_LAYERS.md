@@ -1,9 +1,12 @@
 # Search Architecture: Layers & Feature Flows
 
-> **STATUS: PARTIALLY ASPIRATIONAL** — Part 1 (Current State) is accurate as of v0.11.4.
-> Parts 2-4 describe planned Tantivy integration, Hook Registry dispatch, and full-text search
-> architecture that **does not yet exist** (Tantivy is absent from Cargo.toml).
-> For current search state, see [`SEARCH_ARCHITECTURE_SNAPSHOT.md`](SEARCH_ARCHITECTURE_SNAPSHOT.md).
+> **STATUS: LARGELY SHIPPED (updated 2026-07-10).** Tantivy 0.25 is in
+> `floatty-core/Cargo.toml` and search is fully wired
+> (`floatty-core/src/search/{service,writer,schema,index_manager}.rs`); the index is
+> ephemeral per ADR-005 (rebuilt from Y.Doc on startup). Part 1's "current state" is
+> the JANUARY pre-Tantivy state — read it as history. The layered architecture in
+> Parts 2-4 broadly matches what shipped, but verify details against the code.
+> (The old companion SNAPSHOT doc is archived under `archive/snapshots/`.)
 
 **Generated**: 2026-01-10
 **Purpose**: Clear documentation for agents executing work units without full context

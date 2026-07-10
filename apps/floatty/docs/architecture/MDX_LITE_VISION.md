@@ -1,5 +1,9 @@
 # MDX-lite: Component Blocks via Outline Hierarchy
 
+> **STATUS: ASPIRATIONAL (design/vision — not implemented as of 2026-07-10).**
+> No corresponding code exists yet; treat as direction, not description. If you
+> implement part of this, update this banner with what shipped.
+
 A pattern where blocks with recognized prefixes render their children as structured component props, using the outline hierarchy as the container syntax.
 
 ## The Insight

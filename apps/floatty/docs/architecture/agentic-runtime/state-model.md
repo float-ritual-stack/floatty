@@ -1,5 +1,9 @@
 # Outline State Model
 
+> **STATUS: ASPIRATIONAL (design/vision — not implemented as of 2026-07-10).**
+> No corresponding code exists yet; treat as direction, not description. If you
+> implement part of this, update this banner with what shipped.
+
 This makes explicit what is already implied by the architecture.
 
 ## States

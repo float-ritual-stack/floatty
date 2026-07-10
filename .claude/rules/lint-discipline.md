@@ -33,7 +33,7 @@ Every lint surface and the canonical command to verify it. **Run from repo root 
 | Cargo clippy (workspace, all targets) | `cd apps/floatty/src-tauri && cargo clippy --workspace --all-targets` | 0 warnings *except documented carve-outs in §6* |
 | Cargo build (workspace, tests) | `cd apps/floatty/src-tauri && cargo build --workspace --tests` | clean |
 | Cargo test | `cd apps/floatty/src-tauri && cargo test --workspace` | all passing |
-| Vitest | `pnpm --filter float-pty test:run` | all passing |
+| Vitest | `pnpm --filter float-pty test` | all passing |
 
 **Why `--force` on `pnpm lint`**: turbo aggressively caches lint output by file hash. After a config change (e.g., adding a rule) or a tool upgrade, the cache may report stale clean output. `--force` re-runs even on cache hit. Skip `--force` only when you've made a code-only change since the last verified-clean run.
 
@@ -78,7 +78,7 @@ The gate's required output for any task that touches code:
 Verified clean:
 - pnpm lint --force         → 0 errors, 0 warnings
 - pnpm --filter float-pty typecheck    → clean
-- pnpm --filter float-pty test:run     → N/N passing
+- pnpm --filter float-pty test     → N/N passing
 - cd apps/floatty/src-tauri:
   - cargo fmt --all -- --check         → exit 0
   - cargo clippy --workspace --all-targets → 2 warnings (carve-outs per §6)

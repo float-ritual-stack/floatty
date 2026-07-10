@@ -1,8 +1,11 @@
 # Feature: Pinned Panes & Preview Navigation (FLO-137)
 
-> **STATUS: ASPIRATIONAL SPEC — NOT IMPLEMENTED** — No `pinnedPaneIds` in `useLayoutStore.ts`
-> or `usePaneStore.ts`. No Cmd+Shift+P handler. No pin indicators. This spec describes planned
-> behavior only. Related: FLO-136 (simpler ephemeral panes) was reverted — see
+> **STATUS: HISTORICAL DESIGN — SUPERSEDED IN PRACTICE (2026-07-10).** Pins SHIPPED in
+> v0.18.0 with a *different* model than this spec: the pin shelf (`PinShelfView.tsx`,
+> `pinned::` container, drag-reorder, collapse-to-header) plus a per-pane navigation
+> *floor* (`navigation.ts` floor-clamp, PR #318) — NOT this spec's preview-pane
+> navigation model. Kept as design lineage; do not implement from this document.
+> Related: FLO-136 (ephemeral panes) was reverted — see
 > [`docs/archive/FLO-136-EPHEMERAL-PANES-POSTMORTEM.md`](archive/FLO-136-EPHEMERAL-PANES-POSTMORTEM.md).
 
 ## Overview

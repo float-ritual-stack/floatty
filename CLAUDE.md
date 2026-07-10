@@ -42,7 +42,7 @@ pnpm install                              # Install JS deps (workspace-aware)
 pnpm --filter float-pty tauri:dev         # Dev mode (hot reload, rebuilds Rust)
 pnpm lint --force                         # ESLint across all packages via turbo
 pnpm typecheck                            # tsc --noEmit across workspace via turbo
-pnpm test                                 # vitest run across workspace (1416 tests)
+pnpm test                                 # vitest run across workspace
 pnpm build                                # production builds across workspace
 pnpm --filter float-pty typecheck         # single-package variants when needed
 pnpm --filter float-pty test:watch        # vitest watch (TDD mode)
@@ -90,11 +90,19 @@ apps/floatty/src-tauri/tauri.conf.json # .version
 ### Release Build
 
 ```bash
-./scripts/build-server.sh   # Build server sidecar
-npm run tauri build          # Build app (includes sidecar)
+apps/floatty/scripts/build-server.sh      # Build server sidecar
+pnpm --filter float-pty tauri build       # Build app (includes sidecar)
 ```
 
-Or use `./scripts/rebuild.sh` for full workflow (kill, build, install, launch, health check).
+Or use `apps/floatty/scripts/rebuild.sh` for the full workflow (kill, build,
+install, launch, health check). NOTE: its final health check polls
+`127.0.0.1:8765`, which always fails in remote mode (FLO-762) — a known
+false negative, not a build failure.
+
+**Dev-mode gotcha**: `tauri:dev` does NOT rebuild `floatty-server` —
+`target/debug/floatty-server` can be weeks stale. Run
+`cargo build -p floatty-server` (from `apps/floatty/src-tauri`) first
+whenever server code changed.
 
 ## API
 
@@ -134,16 +142,15 @@ Check this list when adding keybinds to avoid conflicts.
 
 **Reserved (pass through to terminal)**: `Ctrl+C/Z/D/A/E/K/U/W/L/R` (signals, readline)
 
-**Terminal/Global** (in `Terminal.tsx`):
-- `⌘T` / `Ctrl+T` - New tab
-- `⌘W` / `Ctrl+W` - Close tab
-- `⌘1-9` - Jump to tab N
-- `⌘⇧[` / `⌘⇧]` - Prev/next tab
-- `⌘\` - Toggle sidebar
-- `⌘K` - Command palette
-- `⌘L` - Link pane (overlay picker)
-- `⌘J` - Focus pane (overlay picker)
-- `⌘⌥Arrow` - Directional pane focus
+**Terminal/Global** (declarative map in `lib/keybinds.ts` — that file is the
+source of truth; this list is the human index):
+- `⌘T` / `Ctrl+T` - New tab · `⌘W` - Close tab · `⌘⇧W` - Close split
+- `⌘1-9` - Jump to tab N · `⌘⇧[` / `⌘⇧]` - Prev/next tab
+- `⌘D` / `⌘⇧D` - Split horizontal/vertical (terminal) · `⌘O` / `⌘⇧O` - Split with outliner
+- `⌘\` - Toggle sidebar · `⌘⇧P` - Toggle panel · `⌘;` - Next theme
+- `⌘K` - Command palette · `⌘L` - Link pane · `⌘J` - Focus pane · `⌘⌥Arrow` - Directional pane focus
+- `⌘=`/`⌘-`/`⌘0` - Terminal font zoom in/out/reset (NOT outline expand)
+- `Ctrl+⇧D` - Toggle dev visuals
 
 **Outliner** (in `Outliner.tsx` via tinykeys):
 
@@ -161,8 +168,12 @@ Check this list when adding keybinds to avoid conflicts.
 | `⌘⇧B` / `Ctrl+Shift+B` | Export binary Y.Doc (FLO-247) |
 | `⌘[` / `⌘]` | Navigation history back/forward |
 | `⌘Z` / `⌘⇧Z` | Undo/redo |
-| `⌘A` | Select all (escalates: text → block → tree) |
-| `⌘0-3` | Expand to level N |
+| `⌘A` | Select all (escalates: text → block → tree; chord `⌘A A A…` selects to depth N) |
+| `⌘E` / `⌘E E` / `⌘E E E` / `⌘E E E E` | Expand focused subtree to depth 1/2/3/∞ (chords) |
+| `⌘⇧7` / `⌘⇧8` / `⌘⇧9` | Quick expand to depth 1/2/3 |
+| `⌘⇧0` | Collapse to homebase |
+| `⌘⇧E` / `⌘⇧E E` | Global expand (chords) |
+| `⌘⇧F` | Toggle full-width (escape reading-column clamp — tables/render doors too, PR #322) |
 | `⌘↑` / `⌘↓` | Move block before previous / after next sibling (FLO-75, `keybinds.ts`) |
 | `⌘⇧↑` / `⌘⇧↓` | Focus first / last visible block in current view (FLO-495) |
 | `⌘⇧L` | Send focused block to linked pane (FLO-469 — requires prior `⌘L` link) |

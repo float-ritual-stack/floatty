@@ -1,5 +1,10 @@
 # Agentic Runtime (Alignment Layer)
 
+> **STATUS: ASPIRATIONAL (design/vision — not implemented as of 2026-07-10).**
+> No clerk/work-log/provenance code exists (grep-verified 2026-07-10); the role
+> VOCABULARY influenced ADR-003/ADR-004 (accepted), but the runtime described
+> here is unbuilt. Treat as direction, not description.
+
 This folder does not define new architecture.
 It formalizes runtime roles and execution boundaries on top of the existing architecture corpus, especially:
 
