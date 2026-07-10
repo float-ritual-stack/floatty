@@ -458,7 +458,7 @@ mod tests {
         // a → b → c, where c is registered in PageNameIndex as "Some Page".
         let lookup = map_lookup(&[("a", "b"), ("b", "c")]);
         let mut idx = PageNameIndex::new();
-        idx.add_existing_page("Some Page", "c");
+        idx.add_existing_page("Some Page", "c", 100);
         let walk = walk_ancestors(&lookup, "a", 10, Some(&idx));
         assert_eq!(walk.ids, vec!["b", "c"]);
         assert_eq!(
@@ -473,7 +473,7 @@ mod tests {
         // a → b (not a page) → c (page). nearest_page must be c, not b.
         let lookup = map_lookup(&[("a", "b"), ("b", "c")]);
         let mut idx = PageNameIndex::new();
-        idx.add_existing_page("Page C", "c");
+        idx.add_existing_page("Page C", "c", 100);
         let walk = walk_ancestors(&lookup, "a", 10, Some(&idx));
         assert_eq!(
             walk.nearest_page.as_ref().map(|(id, _)| id.as_str()),
@@ -486,8 +486,8 @@ mod tests {
         // a → b (page) → c (also a page). nearest_page must be b.
         let lookup = map_lookup(&[("a", "b"), ("b", "c")]);
         let mut idx = PageNameIndex::new();
-        idx.add_existing_page("Page B", "b");
-        idx.add_existing_page("Page C", "c");
+        idx.add_existing_page("Page B", "b", 100);
+        idx.add_existing_page("Page C", "c", 100);
         let walk = walk_ancestors(&lookup, "a", 10, Some(&idx));
         assert_eq!(
             walk.nearest_page.as_ref().map(|(id, _)| id.as_str()),
