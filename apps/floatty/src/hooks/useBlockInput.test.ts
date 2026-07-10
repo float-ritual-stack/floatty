@@ -897,3 +897,329 @@ describe('useBlockInput.handleKeyDown — lazy cursor snapshot', () => {
     expect(snapshotSpy).toHaveBeenCalledTimes(2);
   });
 });
+
+// ─── Selection-anchor getter (quirk-audit cluster B) ──────────────────
+// selectionAnchor used to be passed by VALUE into the hook deps. SolidJS
+// updates props on the same component instance, so the captured null never
+// refreshed: every Shift+Arrow looked like "the first one" and range growth
+// never happened (solidjs-patterns #6). The getter reads fresh each press.
+
+describe('useBlockInput.handleKeyDown — Shift+Arrow anchor growth', () => {
+  beforeAll(() => registerHandlers());
+
+  function setupSelectionScenario() {
+    // Mutable anchor mimics the parent's reactive prop: the first 'anchor'
+    // select sets it, subsequent presses must OBSERVE the new value.
+    let anchor: string | null = null;
+    const onSelect = vi.fn((id: string, mode: string) => {
+      if (mode === 'anchor') anchor = id;
+    });
+    const onFocus = vi.fn();
+
+    const deps: BlockInputDependencies = {
+      getBlockId: () => 'block-2',
+      paneId: 'test-pane',
+      getBlock: () => createBlock({ id: 'block-2', content: 'middle block' }),
+      isCollapsed: () => false,
+      blockStore: createMockBlockStore(),
+      paneStore: createMockPaneStore(),
+      cursor: createCursorMock(),
+      findNextVisibleBlock: () => 'block-3',
+      findPrevVisibleBlock: () => 'block-1',
+      findFocusAfterDelete: () => null,
+      onFocus,
+      onSelect,
+      getSelectionAnchor: () => anchor,
+      flushContentUpdate: () => {},
+      getContentRef: () => undefined,
+    };
+
+    const { handleKeyDown } = useBlockInput(deps);
+    return { handleKeyDown, onSelect, onFocus };
+  }
+
+  it('first Shift+ArrowDown sets the anchor, second extends the range', () => {
+    const { handleKeyDown, onSelect } = setupSelectionScenario();
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+    expect(onSelect).toHaveBeenNthCalledWith(1, 'block-2', 'anchor');
+
+    // The anchor is now set. With the old by-value dep this second press
+    // would STILL see null and re-anchor instead of extending.
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+    expect(onSelect).toHaveBeenNthCalledWith(2, 'block-2', 'range');
+  });
+
+  it('Shift+ArrowUp follows the same anchor-then-range progression', () => {
+    const { handleKeyDown, onSelect } = setupSelectionScenario();
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+
+    expect(onSelect.mock.calls.map(c => c[1])).toEqual(['anchor', 'range']);
+  });
+});
+
+// ─── Zoomed-root invariants (quirk-audit cluster A) ───────────────────
+// The zoomed root is the page title. Enter must never create siblings
+// (they land invisibly under the pages:: container), Backspace must never
+// merge the first child into the title, and deleting the last child must
+// restore the typeable-child guarantee that zoom-entry establishes.
+
+describe('determineKeyAction — Enter on the zoomed root', () => {
+  beforeAll(() => registerHandlers());
+
+  it('creates a child when cursor is at the end of the title', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'page-1', content: 'My Page' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 7,
+      content: 'My Page',
+    }));
+    expectAction(result, 'create_block_inside');
+  });
+
+  it('creates a child when cursor is at the start of the title', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'page-1', content: 'My Page' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 0,
+      content: 'My Page',
+    }));
+    expectAction(result, 'create_block_inside');
+  });
+
+  it('creates a child on an empty title (the empty-page dead-end)', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'page-1', content: '' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 0,
+      content: '',
+    }));
+    expectAction(result, 'create_block_inside');
+  });
+
+  it('splits the tail into the first child mid-title (no sibling truncation)', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'page-1', content: 'My Page' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 2,
+      content: 'My Page',
+    }));
+    const action = expectAction(result, 'split_to_child');
+    expect(action.offset).toBe(2);
+  });
+
+  it('leaves Enter on non-root blocks inside a zoomed view unchanged', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'child-1', content: 'some text' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 4,
+      content: 'some text',
+    }));
+    expectAction(result, 'split_block');
+  });
+});
+
+describe('determineKeyAction — Backspace merge guard at zoom boundary', () => {
+  it('does not merge the first child into the zoomed root (page title)', () => {
+    const result = determineKeyAction('Backspace', false, null, createDeps({
+      block: createBlock({ id: 'child-1', content: 'first child' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 0,
+      selectionCollapsed: true,
+      findPrevId: () => 'page-1',
+    }));
+    expectAction(result, 'none');
+  });
+
+  it('still merges into a non-root previous block inside the zoomed view', () => {
+    const result = determineKeyAction('Backspace', false, null, createDeps({
+      block: createBlock({ id: 'child-2', content: 'second child' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 0,
+      selectionCollapsed: true,
+      findPrevId: () => 'child-1',
+    }));
+    const action = expectAction(result, 'merge_with_previous');
+    expect(action.prevId).toBe('child-1');
+  });
+});
+
+describe('useBlockInput.handleKeyDown — zoom delete invariant restore', () => {
+  beforeAll(() => registerHandlers());
+
+  function setupDeleteScenario(zoomRootChildIdsAfterDelete: string[]) {
+    const deleteBlock = vi.fn(() => true);
+    const createBlockInside = vi.fn(() => 'restored-child');
+    const onFocus = vi.fn();
+
+    const blockStore = createMockBlockStore({
+      deleteBlock,
+      createBlockInside,
+      getBlock: (id: string) =>
+        id === 'page-1'
+          ? createBlock({ id: 'page-1', content: 'My Page', childIds: zoomRootChildIdsAfterDelete })
+          : undefined,
+    });
+    const paneStore = createMockPaneStore({
+      getZoomedRootId: () => 'page-1',
+    });
+
+    const deps: BlockInputDependencies = {
+      getBlockId: () => 'child-1',
+      paneId: 'test-pane',
+      getBlock: () => createBlock({ id: 'child-1', content: 'last child', parentId: 'page-1' }),
+      isCollapsed: () => false,
+      blockStore,
+      paneStore,
+      cursor: createCursorMock(),
+      findNextVisibleBlock: () => null,
+      findPrevVisibleBlock: () => null,
+      findFocusAfterDelete: () => 'page-1',
+      onFocus,
+      flushContentUpdate: () => {},
+      getContentRef: () => undefined,
+    };
+
+    const { handleKeyDown } = useBlockInput(deps);
+    return { handleKeyDown, deleteBlock, createBlockInside, onFocus };
+  }
+
+  it('recreates a typeable child after deleting the last child of the zoomed page', () => {
+    const { handleKeyDown, deleteBlock, createBlockInside, onFocus } =
+      setupDeleteScenario([]);
+
+    // jsdom has no navigator.platform → isMac=false → mod is ctrlKey
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Backspace', ctrlKey: true }));
+
+    expect(deleteBlock).toHaveBeenCalledWith('child-1');
+    expect(createBlockInside).toHaveBeenCalledWith('page-1');
+    expect(onFocus).toHaveBeenCalledWith('restored-child');
+  });
+
+  it('does not create a child when the zoomed page still has children', () => {
+    const { handleKeyDown, deleteBlock, createBlockInside, onFocus } =
+      setupDeleteScenario(['child-2']);
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Backspace', ctrlKey: true }));
+
+    expect(deleteBlock).toHaveBeenCalledWith('child-1');
+    expect(createBlockInside).not.toHaveBeenCalled();
+    expect(onFocus).toHaveBeenCalledWith('page-1'); // findFocusAfterDelete fallback
+  });
+});
+
+// ─── Text selection wins over block selection (cluster B live-test) ────
+// Shift+Cmd+Right selects a line; Shift+Down must then EXTEND the text
+// selection to the next line — not flip to whole-block selection. Block
+// selection engages only from a collapsed cursor.
+
+describe('determineKeyAction — Shift+Arrow with a live text selection', () => {
+  it('returns none (browser extends text) when the selection is non-collapsed', () => {
+    for (const key of ['ArrowUp', 'ArrowDown']) {
+      const result = determineKeyAction(key, true, null, createDeps({
+        selectionCollapsed: false,
+      }));
+      expectAction(result, 'none');
+    }
+  });
+
+  it('still block-selects from a collapsed cursor', () => {
+    const down = determineKeyAction('ArrowDown', true, null, createDeps({
+      selectionCollapsed: true,
+    }));
+    expectAction(down, 'navigate_down_with_selection');
+    const up = determineKeyAction('ArrowUp', true, null, createDeps({
+      selectionCollapsed: true,
+    }));
+    expectAction(up, 'navigate_up_with_selection');
+  });
+});
+
+describe('useBlockInput.handleKeyDown — cedes Mod+Shift+Arrow', () => {
+  beforeAll(() => registerHandlers());
+
+  it('does nothing for ctrl/meta+shift+arrow (FLO-495 / native-text territory)', () => {
+    const onSelect = vi.fn();
+    const onFocus = vi.fn();
+    const deps: BlockInputDependencies = {
+      getBlockId: () => 'b1',
+      paneId: 'test-pane',
+      getBlock: () => createBlock({ id: 'b1', content: 'multi\nline' }),
+      isCollapsed: () => false,
+      blockStore: createMockBlockStore(),
+      paneStore: createMockPaneStore(),
+      cursor: createCursorMock(),
+      findNextVisibleBlock: () => 'b2',
+      findPrevVisibleBlock: () => 'b0',
+      findFocusAfterDelete: () => null,
+      onFocus,
+      onSelect,
+      flushContentUpdate: () => {},
+      getContentRef: () => undefined,
+    };
+    const { handleKeyDown } = useBlockInput(deps);
+
+    // jsdom: isMac=false → mod is ctrlKey; also cover metaKey for mac paths
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, ctrlKey: true }));
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, metaKey: true }));
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+});
+
+describe('useBlockInput.handleKeyDown — shift-arrow gesture continuity', () => {
+  beforeAll(() => registerHandlers());
+
+  function setupContinuity() {
+    let collapsed = false; // live selection at gesture start
+    const onSelect = vi.fn();
+    const cursor = { ...createCursorMock(), isSelectionCollapsed: () => collapsed };
+    const deps: BlockInputDependencies = {
+      getBlockId: () => 'b1',
+      paneId: 'test-pane',
+      getBlock: () => createBlock({ id: 'b1', content: 'line one\nline two' }),
+      isCollapsed: () => false,
+      blockStore: createMockBlockStore(),
+      paneStore: createMockPaneStore(),
+      cursor,
+      findNextVisibleBlock: () => 'b2',
+      findPrevVisibleBlock: () => 'b0',
+      findFocusAfterDelete: () => null,
+      onFocus: () => {},
+      onSelect,
+      getSelectionAnchor: () => null,
+      flushContentUpdate: () => {},
+      getContentRef: () => undefined,
+    };
+    const { handleKeyDown } = useBlockInput(deps);
+    return { handleKeyDown, onSelect, setCollapsed: (v: boolean) => { collapsed = v; } };
+  }
+
+  it('Shift+Up passing through a collapsed selection stays a text gesture', () => {
+    const { handleKeyDown, onSelect, setCollapsed } = setupContinuity();
+
+    // ⇧⌘→ made a selection; first ⇧↑ shrinks it (still non-collapsed)
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+    // shrink lands EXACTLY on the anchor → collapsed mid-gesture
+    setCollapsed(true);
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+
+    // Without continuity this second press block-selects; with it, the
+    // browser keeps the text gesture.
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('any other key ends the gesture — next Shift+Arrow from collapsed block-selects', () => {
+    const { handleKeyDown, onSelect, setCollapsed } = setupContinuity();
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true })); // gesture starts
+    setCollapsed(true);
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowRight' })); // plain arrow ends it
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+
+    expect(onSelect).toHaveBeenCalledWith('b1', 'anchor'); // fresh block selection
+  });
+});

@@ -105,6 +105,10 @@ export interface ContentSyncDeps {
   getContentRef: () => HTMLDivElement | undefined;
   store: ContentSyncStore;
   onAutocompleteCheck?: (content: string, offset: number, ref: HTMLElement) => void;
+  /** Gate for the [[ prescreen: when the autocomplete popup is already open,
+   *  the per-input check must still run (to dismiss / narrow) even if the
+   *  content no longer contains a [[ trigger. */
+  isAutocompleteOpen?: () => boolean;
   onContentChange?: () => void;
   /**
    * FLO-387: Optional cursor state used to invalidate the snapshot cache
@@ -260,7 +264,11 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   // Cleanup: flush pending edits on unmount. If a block unmounts while dirty
   // (e.g., outline navigation, tab close, HMR reload) the user's in-flight
   // DOM content must be committed before teardown or it is lost.
+  // Reset the composition flag first: if compositionend never fired (element
+  // torn down mid-IME), a stuck true would make this final flush bail and
+  // silently drop the content.
   onCleanup(() => {
+    setIsComposing(false);
     flushContentUpdate();
   });
 
@@ -292,6 +300,13 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   // new store content.
   //
   // NOTE: Use innerText for comparison (preserves newlines from <br> elements)
+  //
+  // REACTIVITY CONTRACT: deps.getContentRef must be signal-backed (BlockItem
+  // passes a createSignal-mirror of the ref). CE mount/remount then re-runs
+  // this effect and hydrates the fresh editor from the store — the root fix
+  // for the "remounted editor is empty, next keystroke overwrites real
+  // content" family (quirk-audit cluster C). A plain `let` ref makes mounts
+  // invisible here and forces per-path DOM repairs at every remount site.
   createEffect(() => {
     const currentBlock = deps.getBlock();
     const contentRef = deps.getContentRef();
@@ -384,6 +399,11 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   //
   // NOTE: Caller (BlockItem) wraps this to also dismiss autocomplete.
   const handleBlurSync = () => {
+    // Blur ends any IME composition de facto. WebKit normally fires
+    // compositionend before blur, but if it didn't (focus stolen mid-IME,
+    // element hidden), a stuck isComposing would block THIS commit and every
+    // future one for the block. Reset before committing.
+    setIsComposing(false);
     // Commit any in-flight DOM content to Y.Doc before blur completes.
     flushContentUpdate();
 
@@ -435,8 +455,15 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
     setDisplayContent(content);
 
     // Autocomplete trigger check (callback to BlockItem).
+    // Prescreen (quirk-audit cluster D): getAbsoluteCursorOffset walks the
+    // DOM on EVERY input event. Content without a [[ anywhere cannot open
+    // the autocomplete, so skip the walk entirely — unless the popup is
+    // already open, where the check must still run to dismiss/narrow it.
     const contentRef = deps.getContentRef();
-    if (contentRef && deps.onAutocompleteCheck) {
+    if (
+      contentRef && deps.onAutocompleteCheck &&
+      (content.includes('[[') || deps.isAutocompleteOpen?.())
+    ) {
       const offset = getAbsoluteCursorOffset(contentRef);
       deps.onAutocompleteCheck(content, offset, contentRef);
     }

@@ -5,7 +5,7 @@ import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
 import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
-import { getAbsoluteCursorOffset, setCursorAtOffset } from '../lib/cursorUtils';
+import { getAbsoluteCursorOffset, setCursorAtOffset, isShiftClickTextGesture } from '../lib/cursorUtils';
 import { useContentSync } from '../hooks/useContentSync';
 import { useDoorChirpListener } from '../hooks/useDoorChirpListener';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
@@ -66,6 +66,9 @@ interface BlockItemProps {
   onFocus: (id: string) => void;
   // FLO-74: Multi-select
   isBlockSelected?: (id: string) => boolean;
+  /** Keyed focus selector from the pane host (createSelector in Outliner).
+   *  Optional: standalone hosts and tests fall back to the direct compare. */
+  isFocusedInPane?: (id: string) => boolean;
   onSelect?: (id: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => void;
   selectionAnchor?: string | null;
   getVisibleBlockIds?: () => string[];
@@ -90,7 +93,10 @@ export function BlockItem(props: BlockItemProps) {
   // store path narrows the invalidation surface — memo bodies still re-run
   // (all readers of state.focusedBlockId[paneId]) but only the two BlockItems
   // whose isFocused result actually flips propagate to downstream effects.
-  const isFocused = createMemo(() => paneStore.getFocusedBlockId(props.paneId) === props.id);
+  const isFocused = createMemo(() =>
+    props.isFocusedInPane
+      ? props.isFocusedInPane(props.id)
+      : paneStore.getFocusedBlockId(props.paneId) === props.id);
   // pages:: children default collapsed — untrack parent content read to avoid
   // N×M reactivity (265 children re-evaluating on every keystroke in parent).
   // pages:: prefix is structural, doesn't change while children are mounted.
@@ -123,6 +129,14 @@ export function BlockItem(props: BlockItemProps) {
   const [tableShowRaw, setTableShowRaw] = createSignal(false);
 
   let contentRef: HTMLDivElement | undefined;
+  // Signal mirror of contentRef — the reactive half of the CE ref. The sync
+  // effect in useContentSync tracks THIS, so a contentEditable that mounts
+  // late (table raw toggle, render-title exit, output-block Escape) re-runs
+  // the effect and hydrates from the store. The plain `let` above stays for
+  // the ~20 event-time readers that don't need reactivity. Root fix for
+  // quirk-audit cluster C — replaces the per-path DOM repairs that used to
+  // live below (FLO-58 / FLO-569 patches).
+  const [contentElSig, setContentElSig] = createSignal<HTMLDivElement | undefined>(undefined);
   // outputFocusRef previously lived here; moved into BlockOutputView when the
   // output-block focus contract was extracted. See output-block-patterns.md.
   let renderTitleRef: HTMLDivElement | undefined;
@@ -141,10 +155,14 @@ export function BlockItem(props: BlockItemProps) {
   const contentSync = useContentSync({
     getBlockId: () => props.id,
     getBlock: () => block(),
-    getContentRef: () => contentRef,
+    // Signal-backed on purpose — see the REACTIVITY CONTRACT note on the
+    // sync effect in useContentSync.ts. Event-time consumers below keep the
+    // plain contentRef variable.
+    getContentRef: () => contentElSig(),
     store,
     cursor,
     onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref, props.id),
+    isAutocompleteOpen: autocomplete.isOpen,
     onContentChange: () => {
       // FLO-668 null contract: null → this block lives in a non-tab-hosted
       // pane (sidebar/floating); pinPane is tab-scoped, silent no-op.
@@ -159,6 +177,17 @@ export function BlockItem(props: BlockItemProps) {
     cancelContentUpdate, flushContentUpdate,
     handleInput, handleBlurSync, updateContentFromDom,
   } = contentSync;
+
+  // Single binding point for BOTH CE ref sites (main + table-raw). Keeps the
+  // event-time variable and the reactive signal in lockstep. When a NEW
+  // element replaces a dead one (Show flip), any dirty flag from the old
+  // instance refers to DOM that no longer exists — clear it so the sync
+  // effect hydrates the fresh editor from the store instead of bailing.
+  const bindContentRef = (el: HTMLDivElement) => {
+    contentRef = el;
+    if (contentSync.hasLocalChanges()) cancelContentUpdate();
+    setContentElSig(el);
+  };
 
   // Door view title toggle: show derived title instead of source content.
   // Display-only — does NOT change isOutputBlock, focus, collapse, zoom, or navigation.
@@ -194,33 +223,19 @@ export function BlockItem(props: BlockItemProps) {
   // title-wrapper drives height to title size. Door view renders below as usual.
   const isRenderTitleMode = createMemo(() => !!renderTitle() && renderShowTitle());
 
-  // FLO-58: When entering table raw mode, sync content to contentEditable and focus it
-  // contentRef isn't reactive, so the main sync effect won't re-run when it mounts
+  // FLO-58 / FLO-569: focus the editor when a mode toggle mounts it (table
+  // raw mode entry, render-title exit). Content hydration is no longer done
+  // here — the ref is signal-backed (bindContentRef), so useContentSync's
+  // sync effect re-runs on mount and hydrates from the store. These effects
+  // only carry the FOCUS half of the old repairs.
   createEffect(() => {
     if (tableShowRaw() && isTableBlock()) {
-      queueMicrotask(() => {
-        if (contentRef) {
-          const content = block()?.content ?? '';
-          contentRef.innerText = content;
-          setDisplayContent(content);
-          contentRef.focus();
-        }
-      });
+      queueMicrotask(() => contentRef?.focus());
     }
   });
-
-  // FLO-569: Same pattern — when exiting render title mode (clicking ⊞ to show raw),
-  // contentEditable remounts but useContentSync won't re-run (contentRef isn't reactive)
   createEffect(() => {
     if (!renderShowTitle() && renderTitle()) {
-      queueMicrotask(() => {
-        if (contentRef) {
-          const content = block()?.content ?? '';
-          contentRef.innerText = content;
-          setDisplayContent(content);
-          contentRef.focus();
-        }
-      });
+      queueMicrotask(() => contentRef?.focus());
     }
   });
 
@@ -380,7 +395,7 @@ export function BlockItem(props: BlockItemProps) {
     flushContentUpdate,
     cancelContentUpdate,
     onSelect: props.onSelect,
-    selectionAnchor: props.selectionAnchor,
+    getSelectionAnchor: () => props.selectionAnchor,
     getWikilinkAtCursor,
     navigateToPage: navigateToPageForHook,
     isAutocompleteOpen: autocomplete.isOpen,
@@ -724,6 +739,27 @@ export function BlockItem(props: BlockItemProps) {
     handleBlurSync();
   };
 
+  // Structured paste into an EMPTY focused block writes the first parsed
+  // block to the store, but the focused CE's DOM keeps the raw pre-paste
+  // text (the sync effect skips focused+user updates). Without repair, the
+  // next keystroke commits the stale DOM over the pasted content — silent
+  // data loss. Write-through mirror of handleAutocompleteSelect above.
+  const repairAnchorAfterPaste = (anchorId: string) => {
+    const storeBlock = store.blocks[anchorId];
+    if (!contentRef || !storeBlock) return;
+    if (contentRef.innerText === storeBlock.content) return;
+    contentRef.innerText = storeBlock.content;
+    setDisplayContent(storeBlock.content);
+    setHasLocalChanges(false);
+    cursor.invalidate();
+    const endOffset = storeBlock.content.length;
+    queueMicrotask(() => {
+      if (contentRef && document.contains(contentRef) && document.activeElement === contentRef) {
+        setCursorAtOffset(contentRef, endOffset);
+      }
+    });
+  };
+
   // FLO-62, FLO-128: Smart paste with markdown structure parsing
   const handlePaste = (e: ClipboardEvent) => {
     // Get plain text only (fixes FLO-62: rich text causing duplicates)
@@ -740,6 +776,10 @@ export function BlockItem(props: BlockItemProps) {
     // clipboardData.files in Tauri WKWebView — readFiles() reads NSPasteboard directly)
     if (!text) {
       e.preventDefault();
+      // Snapshot before the async gap (solidjs-patterns #9): focus can move
+      // during readFiles(), and the paste must land in the block that
+      // received it, not whichever block is current when the promise settles.
+      const targetBlockId = props.id;
       readFiles().then((files) => {
         if (!files || files.length === 0) return;
         const paths = files.map(p => p.includes(' ') ? `"${p}"` : p).join('\n');
@@ -748,13 +788,16 @@ export function BlockItem(props: BlockItemProps) {
           contentRef.focus();
         }
         flushContentUpdate();
-        const result = handleStructuredPaste(props.id, paths, pasteActions);
-        if (result.handled && result.focusId) {
-          requestAnimationFrame(() => {
+        const result = handleStructuredPaste(targetBlockId, paths, pasteActions);
+        if (result.handled) {
+          repairAnchorAfterPaste(targetBlockId);
+          if (result.focusId) {
             requestAnimationFrame(() => {
-              props.onFocus(result.focusId!);
+              requestAnimationFrame(() => {
+                props.onFocus(result.focusId!);
+              });
             });
-          });
+          }
         } else {
           document.execCommand('insertText', false, paths);
         }
@@ -775,6 +818,7 @@ export function BlockItem(props: BlockItemProps) {
 
     if (result.handled) {
       e.preventDefault();
+      repairAnchorAfterPaste(props.id);
       // Focus last inserted block after DOM settles
       if (result.focusId) {
         requestAnimationFrame(() => {
@@ -783,8 +827,17 @@ export function BlockItem(props: BlockItemProps) {
           });
         });
       }
+      return;
     }
-    // If not handled, browser does default plain text paste
+
+    // Unhandled → insert as PLAIN text ourselves instead of letting the
+    // browser default run. Default paste inserts rich HTML (styled spans),
+    // which defeats the transparent-text overlay (color: transparent applies
+    // to text nodes, not styled children) and survives blur as garbage
+    // markup. execCommand('insertText') keeps undo history and fires the
+    // input event, so updateContentFromDom runs as if typed.
+    e.preventDefault();
+    document.execCommand('insertText', false, text);
   };
 
   const bulletClass = () => {
@@ -850,6 +903,16 @@ export function BlockItem(props: BlockItemProps) {
         onClick={(e: MouseEvent) => {
           // FLO-74: Handle selection modifiers
           if (props.onSelect) {
+            // Shift+click as a TEXT gesture: either extending from a caret
+            // inside the focused editor (target containment — the selection
+            // is still collapsed during the click event, so it can't be the
+            // signal), or extending an existing drag selection. Both must
+            // reach the browser untouched; block-selecting here hijacks the
+            // gesture and the follow-up Cmd+C. Shift+click on a different
+            // block still does block-range selection.
+            if (e.shiftKey && isShiftClickTextGesture(e.target)) {
+              return; // don't touch block selection OR focus routing
+            }
             if (e.shiftKey) {
               props.onSelect(props.id, 'range');
             } else if (e.metaKey || e.ctrlKey) {
@@ -1004,7 +1067,7 @@ export function BlockItem(props: BlockItemProps) {
                   ⊞
                 </button>
                 <div
-                  ref={contentRef}
+                  ref={bindContentRef}
                   contentEditable
                   class="block-content block-edit block-edit-raw"
                   spellcheck={false}
@@ -1030,7 +1093,7 @@ export function BlockItem(props: BlockItemProps) {
             {/* Skip for table raw mode - handled above with container */}
             <Show when={!tableShowRaw()}>
               <div
-                ref={contentRef}
+                ref={bindContentRef}
                 contentEditable
                 class="block-content block-edit"
                 spellcheck={false}
@@ -1103,6 +1166,7 @@ export function BlockItem(props: BlockItemProps) {
                   depth={props.depth + 1}
                   onFocus={props.onFocus}
                   isBlockSelected={props.isBlockSelected}
+                  isFocusedInPane={props.isFocusedInPane}
                   onSelect={props.onSelect}
                   selectionAnchor={props.selectionAnchor}
                   getVisibleBlockIds={props.getVisibleBlockIds}

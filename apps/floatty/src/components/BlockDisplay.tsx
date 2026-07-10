@@ -68,6 +68,7 @@ function renderNestedLinks(
         class="md-wikilink md-wikilink-nested"
         data-target={nestedTarget}
         onClick={(e: MouseEvent) => {
+          if (e.shiftKey) return; // selection gesture — bubble to the block row
           e.preventDefault();
           e.stopPropagation();
           onWikilinkClick?.(nestedTarget, e);
@@ -141,6 +142,7 @@ function renderWikilinkContent(
         class="md-wikilink md-wikilink-nested"
         data-target={nestedTarget}
         onClick={(e: MouseEvent) => {
+          if (e.shiftKey) return; // selection gesture — bubble to the block row
           e.preventDefault();
           e.stopPropagation();
           onWikilinkClick?.(nestedTarget, e);
@@ -789,6 +791,7 @@ function InlineTokenSpan(props: TokenSpanProps) {
         class={`${getClass()}${isStub() ? ' md-wikilink-stub' : ''}`}
         data-target={props.token.target}
         onClick={(e: MouseEvent) => {
+          if (e.shiftKey) return; // selection gesture — bubble to the block row
           e.preventDefault();
           e.stopPropagation();
           props.onWikilinkClick?.(props.token.target!, e);

@@ -13,7 +13,7 @@
  * and manage state correctly but will lose those specific shortcuts until
  * the keybind paths are generalized (see FLO-669 for the call-site audit).
  */
-import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
+import { batch, createSignal, createEffect, createMemo, createSelector, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
@@ -25,6 +25,7 @@ import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
 import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
+import { hasLiveTextSelection, isEditableElement } from '../lib/cursorUtils';
 import { blocksToMarkdown } from '../lib/markdownExport';
 import { flushPendingContent } from '../hooks/useContentSync';
 import { useConfig } from '../context/ConfigContext';
@@ -64,6 +65,13 @@ export function Outliner(props: OutlinerProps) {
 
   // FLO-77: Use paneStore for focusedBlockId (enables clone-on-split)
   const focusedBlockId = () => paneStore.getFocusedBlockId(props.paneId);
+  // Keyed selector for per-block focus checks: only the two BlockItems whose
+  // answer flips re-run on a focus change, instead of every mounted memo
+  // doing its own === against the pane's focused id (O(N) fanout —
+  // quirk-audit cluster D). Drilled through the recursive BlockItem tree as
+  // a STABLE function prop, so the prop surface never invalidates (the
+  // FLO-529 concern that removed the focusedBlockId value drill).
+  const isFocusedInPane = createSelector(focusedBlockId);
   const setFocusedBlockId = (id: string | null) => paneStore.setFocusedBlockId(props.paneId, id);
   const [confirmClear, setConfirmClear] = createSignal(false);
 
@@ -258,7 +266,9 @@ export function Outliner(props: OutlinerProps) {
     const selected = selection.selectedBlockIds();
     const modKey = isMac ? e.metaKey : e.ctrlKey;
     const activeEl = document.activeElement;
-    const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+    // isEditableElement, NOT getAttribute === 'true': Solid renders the
+    // attribute as contenteditable="" (see cursorUtils.isEditableElement).
+    const isEditing = isEditableElement(activeEl);
 
     // FLO-74: Clear selection when typing starts (prevents accidental delete)
     if (selected.size > 0 && isEditing && e.key.length === 1 && !modKey && !e.ctrlKey && !e.altKey) {
@@ -275,8 +285,14 @@ export function Outliner(props: OutlinerProps) {
 
     // Progressive Cmd+A handled by tinykeys (see onMount)
 
-    // Cmd+C copy selection
+    // Cmd+C copy selection — but a live text selection inside a
+    // contentEditable wins: the user is copying WORDS, not blocks. Stale
+    // block-selection state must not hijack a hundred-times-a-day gesture;
+    // bail to the browser's native copy instead.
     if (modKey && e.key === 'c' && selected.size > 0) {
+      if (hasLiveTextSelection()) {
+        return; // native copy of the text selection
+      }
       e.preventDefault();
       selection.copySelection();
       return;
@@ -453,7 +469,9 @@ export function Outliner(props: OutlinerProps) {
 
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
         const activeEl = document.activeElement as HTMLElement;
-        const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+        // isEditableElement, NOT getAttribute === 'true': Solid renders the
+    // attribute as contenteditable="" (see cursorUtils.isEditableElement).
+    const isEditing = isEditableElement(activeEl);
 
         // FLO-58: Let table cell inputs handle their own Cmd+A
         if (activeEl?.classList.contains('md-table-input') || activeEl?.classList.contains('md-table-raw')) {
@@ -642,7 +660,12 @@ export function Outliner(props: OutlinerProps) {
         // the shortcut lands on whatever is currently rendered at the top or
         // bottom of this pane. Cmd+Up/Down are taken by moveBlockUp/Down
         // (FLO-75) — Shift added for reach semantics.
+        // A live text selection inside a contentEditable wins over the view
+        // jump: Cmd+Shift+Up/Down is macOS-native extend-to-boundary while
+        // selecting text, and hijacking it mid-selection yanks the user to
+        // the top/bottom of the pane (cluster B principle).
         '$mod+Shift+ArrowUp': (e) => {
+          if (hasLiveTextSelection()) return; // native text extension
           e.preventDefault();
           const ids = getVisibleBlockIds();
           if (ids.length === 0) return;
@@ -650,6 +673,7 @@ export function Outliner(props: OutlinerProps) {
           collapse.ensureVisibleFocus();
         },
         '$mod+Shift+ArrowDown': (e) => {
+          if (hasLiveTextSelection()) return; // native text extension
           e.preventDefault();
           const ids = getVisibleBlockIds();
           if (ids.length === 0) return;
@@ -874,6 +898,7 @@ export function Outliner(props: OutlinerProps) {
                       onNavigateUp={() => handleNavigateUp(id)}
                       onNavigateDown={() => handleNavigateDown(id)}
                       isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
+                      isFocusedInPane={isFocusedInPane}
                       onSelect={selection.handleSelect}
                       selectionAnchor={selection.selectionAnchor()}
                       getVisibleBlockIds={getVisibleBlockIds}
@@ -895,6 +920,7 @@ export function Outliner(props: OutlinerProps) {
                   onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
                   onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
                   isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
+                      isFocusedInPane={isFocusedInPane}
                   onSelect={selection.handleSelect}
                   selectionAnchor={selection.selectionAnchor()}
                   getVisibleBlockIds={getVisibleBlockIds}

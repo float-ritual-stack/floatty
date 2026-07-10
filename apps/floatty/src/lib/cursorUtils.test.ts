@@ -14,6 +14,8 @@ import {
   setCursorAtOffset,
   isCursorAtContentStart,
   isCursorAtContentEnd,
+  hasLiveTextSelection,
+  isShiftClickTextGesture,
 } from './cursorUtils';
 
 /**
@@ -326,5 +328,308 @@ describe('cursorUtils', () => {
         expect(getAbsoluteCursorOffset(el)).toBe(i);
       }
     });
+  });
+});
+
+// ─── hasLiveTextSelection (quirk-audit cluster B) ─────────────────────
+// The predicate both Cmd+C and shift+click consult before block-selecting:
+// a non-collapsed selection inside a focused contentEditable means the user
+// is working with TEXT, and block-level gestures must stand down.
+
+describe('hasLiveTextSelection', () => {
+  function buildFocusableCE(text: string): HTMLDivElement {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', 'true');
+    el.tabIndex = 0; // jsdom focuses elements with tabIndex
+    el.appendChild(document.createTextNode(text));
+    document.body.appendChild(el);
+    return el;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('true: focused contentEditable with a non-collapsed selection', () => {
+    const el = buildFocusableCE('hello world');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 5); // "hello"
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(hasLiveTextSelection()).toBe(true);
+  });
+
+  it('false: focused contentEditable but the selection is collapsed (caret only)', () => {
+    const el = buildFocusableCE('hello world');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 3);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(hasLiveTextSelection()).toBe(false);
+  });
+
+  it('false: selection exists but focus is NOT in a contentEditable', () => {
+    const el = document.createElement('div');
+    el.appendChild(document.createTextNode('plain text'));
+    document.body.appendChild(el);
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 5);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    (document.activeElement as HTMLElement | null)?.blur?.();
+
+    expect(hasLiveTextSelection()).toBe(false);
+  });
+
+  it('false: no selection at all', () => {
+    const el = buildFocusableCE('hello');
+    el.focus();
+    window.getSelection()?.removeAllRanges();
+
+    expect(hasLiveTextSelection()).toBe(false);
+  });
+
+  it('false: selection lives in a DIFFERENT editor than the focused one', () => {
+    // CodeRabbit round-1: a stale selection left in editor A must not
+    // suppress block gestures while the user is focused in editor B.
+    const editorA = buildFocusableCE('editor a text');
+    const editorB = buildFocusableCE('editor b text');
+    const range = document.createRange();
+    range.setStart(editorA.firstChild!, 0);
+    range.setEnd(editorA.firstChild!, 6);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    editorB.focus(); // focus moves; jsdom keeps the selection on editorA
+
+    expect(document.activeElement).toBe(editorB);
+    expect(hasLiveTextSelection()).toBe(false);
+  });
+});
+
+// ─── isShiftClickTextGesture (cluster B live-test round 2) ────────────
+// Click places a caret; shift+click extends. The selection is COLLAPSED
+// during the click event, so the guard keys on target containment within
+// the focused editor — not on selection state.
+
+describe('isShiftClickTextGesture', () => {
+  function buildFocusableCE2(text: string): HTMLDivElement {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', 'true');
+    el.tabIndex = 0;
+    el.appendChild(document.createTextNode(text));
+    document.body.appendChild(el);
+    return el;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('true: shift+click target inside the FOCUSED editor, even with a collapsed caret', () => {
+    const el = buildFocusableCE2('click here then shift-click there');
+    el.focus();
+    // caret placed (collapsed) — the exact state during a click→shift+click
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 3);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(isShiftClickTextGesture(el.firstChild)).toBe(true);
+  });
+
+  it('false: shift+click on a DIFFERENT block (block-range selection)', () => {
+    const editorA = buildFocusableCE2('block a');
+    const blockB = document.createElement('div');
+    blockB.appendChild(document.createTextNode('block b'));
+    document.body.appendChild(blockB);
+    editorA.focus();
+    window.getSelection()?.removeAllRanges();
+
+    expect(isShiftClickTextGesture(blockB.firstChild)).toBe(false);
+  });
+
+  it('true: target outside the focused editor but a live selection exists (drag case)', () => {
+    const el = buildFocusableCE2('dragged selection');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 7);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const elsewhere = document.createElement('div');
+    document.body.appendChild(elsewhere);
+
+    expect(isShiftClickTextGesture(elsewhere)).toBe(true);
+  });
+
+  it('false: nothing focused, no selection', () => {
+    const el = buildFocusableCE2('inert');
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    window.getSelection()?.removeAllRanges();
+
+    expect(isShiftClickTextGesture(el.firstChild)).toBe(false);
+  });
+});
+
+// Round 3 (live-test): overlay tokens and row whitespace produce click
+// targets OUTSIDE the CE while the user extends within the same block.
+describe('isShiftClickTextGesture — same-row targets outside the CE', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('true: target in the display overlay of the SAME block-item as the focused CE', () => {
+    const row = document.createElement('div');
+    row.className = 'block-item';
+    const ce = document.createElement('div');
+    ce.setAttribute('contenteditable', 'true');
+    ce.tabIndex = 0;
+    ce.appendChild(document.createTextNode('text with [[pill]]'));
+    const overlay = document.createElement('span');
+    overlay.className = 'md-wikilink';
+    overlay.appendChild(document.createTextNode('pill'));
+    row.appendChild(ce);
+    row.appendChild(overlay);
+    document.body.appendChild(row);
+    ce.focus();
+
+    expect(isShiftClickTextGesture(overlay.firstChild)).toBe(true);
+  });
+
+  it('false: target in a DIFFERENT block-item row', () => {
+    const rowA = document.createElement('div');
+    rowA.className = 'block-item';
+    const ceA = document.createElement('div');
+    ceA.setAttribute('contenteditable', 'true');
+    ceA.tabIndex = 0;
+    rowA.appendChild(ceA);
+    const rowB = document.createElement('div');
+    rowB.className = 'block-item';
+    rowB.appendChild(document.createTextNode('other block'));
+    document.body.append(rowA, rowB);
+    ceA.focus();
+    window.getSelection()?.removeAllRanges();
+
+    expect(isShiftClickTextGesture(rowB.firstChild)).toBe(false);
+  });
+});
+
+// ─── PRODUCTION DOM SHAPE (shift-click RCA, 2026-07-10) ───────────────
+// SolidJS renders the contentEditable prop as contenteditable="" (empty
+// string). getAttribute-based checks comparing === 'true' have never
+// matched in production; only hand-built test DOMs made them pass. These
+// tests use the REAL rendered shape, verified against the running app:
+//   <div contenteditable="" class="block-content block-edit" ...>
+describe('editable detection matches the Solid-rendered DOM', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+  });
+
+  function buildProdShapeCE(text: string): HTMLDivElement {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', ''); // ← what Solid actually renders
+    el.tabIndex = 0;
+    el.appendChild(document.createTextNode(text));
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it('hasLiveTextSelection: true for a selection in a contenteditable="" editor', () => {
+    const el = buildProdShapeCE('production shaped');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 10);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(hasLiveTextSelection()).toBe(true);
+  });
+
+  it('isShiftClickTextGesture: true for a caret + same-editor target with contenteditable=""', () => {
+    const el = buildProdShapeCE('click then shift click');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 2);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(isShiftClickTextGesture(el.firstChild)).toBe(true);
+  });
+
+  it('contenteditable="false" is NOT editable', () => {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', 'false');
+    el.tabIndex = 0;
+    el.appendChild(document.createTextNode('not editable'));
+    document.body.appendChild(el);
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 3);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(hasLiveTextSelection()).toBe(false);
+  });
+});
+
+// Pins the DOM assumption isShiftClickTextGesture's row-containment relies
+// on: .block-item rows do NOT nest. Children render in .block-children, a
+// SIBLING of .block-item inside .block-wrapper (BlockItem.tsx:882/888/1158).
+// If the outliner DOM ever changes to nest rows, this test forces a revisit.
+describe('isShiftClickTextGesture — parent/child rows (real outliner DOM shape)', () => {
+  it('false: click on the PARENT row while a CHILD editor is focused', () => {
+    document.body.innerHTML = '';
+    // .block-wrapper > .block-item(parent) + .block-children > .block-wrapper > .block-item(child)
+    const wrapper = document.createElement('div');
+    wrapper.className = 'block-wrapper';
+    const parentRow = document.createElement('div');
+    parentRow.className = 'block-item';
+    parentRow.appendChild(document.createTextNode('parent overlay/whitespace'));
+    const childrenBox = document.createElement('div');
+    childrenBox.className = 'block-children';
+    const childWrapper = document.createElement('div');
+    childWrapper.className = 'block-wrapper';
+    const childRow = document.createElement('div');
+    childRow.className = 'block-item';
+    const childCE = document.createElement('div');
+    childCE.setAttribute('contenteditable', '');
+    childCE.tabIndex = 0;
+    childCE.appendChild(document.createTextNode('child editor'));
+    childRow.appendChild(childCE);
+    childWrapper.appendChild(childRow);
+    childrenBox.appendChild(childWrapper);
+    wrapper.append(parentRow, childrenBox);
+    document.body.appendChild(wrapper);
+    childCE.focus();
+    window.getSelection()?.removeAllRanges();
+
+    // Click target on the parent row: closest('.block-item') is the PARENT
+    // row, which does NOT contain the focused child editor → block-range
+    // selection proceeds (not suppressed).
+    expect(isShiftClickTextGesture(parentRow.firstChild)).toBe(false);
   });
 });

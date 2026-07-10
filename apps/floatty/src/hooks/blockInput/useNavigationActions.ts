@@ -33,7 +33,8 @@ export interface NavigationActionDeps {
   findPrevVisibleBlock: (id: string, paneId: string) => string | null;
   onFocus: (id: string) => void;
   onSelect?: (id: string, mode: SelectMode) => void;
-  selectionAnchor?: string | null;
+  // Getter, not value — see solidjs-patterns #6 (stale closure on props).
+  getSelectionAnchor?: () => string | null | undefined;
   cursor: Pick<CursorState, 'getOffset'>;
   getBlock: () => Block | undefined;
 }
@@ -62,7 +63,7 @@ export function useNavigationActions(deps: NavigationActionDeps) {
       case 'navigate_up_with_selection':
         e.preventDefault();
         if (action.prevId && deps.onSelect) {
-          if (!deps.selectionAnchor) {
+          if (!deps.getSelectionAnchor?.()) {
             // First Shift+Arrow: select current, set anchor, move focus only
             deps.onSelect(deps.getBlockId(), 'anchor');
           } else {
@@ -78,7 +79,7 @@ export function useNavigationActions(deps: NavigationActionDeps) {
       case 'navigate_down_with_selection':
         e.preventDefault();
         if (action.nextId && deps.onSelect) {
-          if (!deps.selectionAnchor) {
+          if (!deps.getSelectionAnchor?.()) {
             // First Shift+Arrow: select current, set anchor, move focus only
             deps.onSelect(deps.getBlockId(), 'anchor');
           } else {

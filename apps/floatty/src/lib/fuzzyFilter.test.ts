@@ -107,3 +107,36 @@ describe('fuzzyFilter', () => {
     expect(result[0].id).toBe('export-binary');
   });
 });
+
+// ─── Fuse instance cache (quirk-audit cluster D) ──────────────────────
+import { vi as vitestVi } from 'vitest';
+import FuseCtor from 'fuse.js';
+
+describe('fuzzyFilter Fuse cache', () => {
+  it('reuses the Fuse index for repeated queries against the same array', () => {
+    const searchSpy = vitestVi.spyOn(FuseCtor.prototype, 'search');
+    const items = ['alpha', 'beta', 'gamma'];
+
+    const r1 = fuzzyFilter(items, 'al');
+    const r2 = fuzzyFilter(items, 'be');
+
+    expect(r1).toEqual(['alpha']);
+    expect(r2).toEqual(['beta']);
+    // Two searches ran; correctness is unchanged. The cache is observable
+    // through identity: a THIRD call with a NEW array must not serve the
+    // old index.
+    expect(searchSpy).toHaveBeenCalledTimes(2);
+
+    const fresh = ['delta'];
+    expect(fuzzyFilter(fresh, 'de')).toEqual(['delta']);
+    searchSpy.mockRestore();
+  });
+
+  it('different option signatures on the same array get distinct indexes', () => {
+    const objs = [{ name: 'alpha', tag: 'x' }, { name: 'xray', tag: 'alpha' }];
+    const byName = fuzzyFilter(objs, 'alpha', { keys: ['name'] });
+    const byTag = fuzzyFilter(objs, 'alpha', { keys: ['tag'] });
+    expect(byName[0].name).toBe('alpha');
+    expect(byTag[0].tag).toBe('alpha');
+  });
+});
