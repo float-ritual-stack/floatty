@@ -26,7 +26,7 @@ Two-layer technique: display layer (styled tokens, pointer-events: none) on top 
 
 ## Wikilinks & Pages
 
-`pages::` block at root contains all linkable pages (stored with `# ` prefix). Clicking `[[link]]` creates page if missing, zooms to it. `LinkedReferences` shows backlinks when zoomed. Parser uses bracket-counting (not regex) for nested `[[outer [[inner]]`.
+`pages::` block at root contains all linkable pages (stored with a `#`-heading prefix). Clicking `[[link]]` creates page if missing, zooms to it. `LinkedReferences` shows backlinks when zoomed. Parser uses bracket-counting (not regex) for nested wikilinks like `[[outer [[inner]]]]`.
 
 ## Pane Linking (⌘L)
 
