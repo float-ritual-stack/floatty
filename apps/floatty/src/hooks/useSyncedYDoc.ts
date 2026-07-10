@@ -168,6 +168,13 @@ export function getSharedDoc(): Y.Doc {
  * Returns the number of duplicates removed. All removals happen in a single
  * transaction with 'system' origin (excluded from UndoManager).
  */
+// Well-known id for the orphan recovery root. Fixed (not random) because the
+// sweep runs on EVERY client: concurrent first-creations converge on one
+// blocksMap entry (CRDT last-writer-wins on the same key) instead of minting
+// parallel recovered:: containers. Duplicate rootIds pushes of this id are
+// cleaned by the sweep's own rootIds dedup on the next pass. "f10a77" ≈ float.
+const RECOVERY_ROOT_ID = '00000000-0000-4000-8000-f10a77000001';
+
 export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
   const doc = targetDoc;
   const blocksMap = doc.getMap('blocks');
@@ -282,6 +289,9 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
   const orphanEmptyShellIds: string[] = [];
   blocksMap.forEach((value, blockId) => {
     if (referenced.has(blockId)) return;
+    // Never classify the recovery root itself as an orphan (it would be
+    // reattached under itself); the write phase re-adds it to rootIds instead.
+    if (blockId === RECOVERY_ROOT_ID) return;
     if (!(value instanceof Y.Map)) {
       orphanEmptyShellIds.push(blockId);
       return;
@@ -367,7 +377,7 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
     // user data). The orphan is a subtree root, so reattaching it preserves
     // its whole subtree.
     if (orphanReattachIds.length > 0) {
-      // Find an existing recovery root, or create one.
+      // Find an existing recovery root, or create one at the well-known id.
       let recoveryRootId: string | null = null;
       for (const rid of rootIds.toArray()) {
         const rm = blocksMap.get(rid);
@@ -379,8 +389,14 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
           }
         }
       }
+      if (recoveryRootId === null && blocksMap.has(RECOVERY_ROOT_ID)) {
+        // Exists but fell out of rootIds — repair membership instead of
+        // creating a twin (or reattaching it under itself).
+        recoveryRootId = RECOVERY_ROOT_ID;
+        rootIds.push([RECOVERY_ROOT_ID]);
+      }
       if (recoveryRootId === null) {
-        recoveryRootId = crypto.randomUUID();
+        recoveryRootId = RECOVERY_ROOT_ID;
         const rootMap = new Y.Map<unknown>();
         rootMap.set('id', recoveryRootId);
         rootMap.set('parentId', null);

@@ -1577,6 +1577,54 @@ describe('deduplicateChildIds — orphan reattach (quirk-audit sync cluster)', (
     expect(findRecoveryRoot(doc)).toBeNull();
   });
 
+  it('converging sweeps use the same well-known recovery-root id', () => {
+    // Two independent docs that each run the sweep converge on the SAME
+    // recovery-root block id — no parallel recovered:: containers on merge.
+    const ids: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const doc = new Y.Doc();
+      const rootIds = doc.getArray<string>('rootIds');
+      doc.transact(() => {
+        makeBlock(doc, 'reachable', 'fine');
+        rootIds.push(['reachable']);
+        makeBlock(doc, `orphan-${i}`, 'stray');
+      });
+      deduplicateChildIds(doc);
+      ids.push(findRecoveryRoot(doc)!.id);
+    }
+    expect(ids[0]).toBe(ids[1]);
+  });
+
+  it('repairs rootIds membership instead of reattaching the recovery root under itself', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+
+    doc.transact(() => {
+      makeBlock(doc, 'reachable', 'fine');
+      rootIds.push(['reachable']);
+      makeBlock(doc, 'orphan-a', 'stray');
+    });
+    deduplicateChildIds(doc);
+    const recoveryId = findRecoveryRoot(doc)!.id;
+
+    // Simulate the recovery root falling out of rootIds
+    doc.transact(() => {
+      const idx = rootIds.toArray().indexOf(recoveryId);
+      rootIds.delete(idx, 1);
+      makeBlock(doc, 'orphan-b', 'another stray');
+    });
+    deduplicateChildIds(doc);
+
+    const recovery = findRecoveryRoot(doc);
+    expect(recovery).not.toBeNull();
+    expect(recovery!.id).toBe(recoveryId);
+    expect(recovery!.kids).toEqual(expect.arrayContaining(['orphan-a', 'orphan-b']));
+    // Not nested under itself
+    expect(recovery!.kids).not.toContain(recoveryId);
+    expect(blocksMap.has(recoveryId)).toBe(true);
+  });
+
   it('reuses an existing recovered:: root across sweeps', () => {
     const doc = new Y.Doc();
     const blocksMap = doc.getMap('blocks');
