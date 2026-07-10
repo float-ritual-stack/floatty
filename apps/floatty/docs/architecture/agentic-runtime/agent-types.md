@@ -1,5 +1,9 @@
 # Agent Types
 
+> **STATUS: ASPIRATIONAL (design/vision — not implemented as of 2026-07-10).**
+> No corresponding code exists yet; treat as direction, not description. If you
+> implement part of this, update this banner with what shipped.
+
 ## Outline-native agents
 
 Operate directly on the outline as shared cognitive substrate.

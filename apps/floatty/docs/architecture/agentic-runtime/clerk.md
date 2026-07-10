@@ -1,5 +1,9 @@
 # Clerk (Ingestion Boundary)
 
+> **STATUS: ASPIRATIONAL (design/vision — not implemented as of 2026-07-10).**
+> No corresponding code exists yet; treat as direction, not description. If you
+> implement part of this, update this banner with what shipped.
+
 ## Definition
 
 Clerk is the ingestion boundary between raw human/agent input and structured outline state.

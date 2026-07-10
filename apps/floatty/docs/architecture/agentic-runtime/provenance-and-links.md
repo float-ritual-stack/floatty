@@ -1,5 +1,9 @@
 # Provenance and Links
 
+> **STATUS: ASPIRATIONAL (design/vision — not implemented as of 2026-07-10).**
+> No corresponding code exists yet; treat as direction, not description. If you
+> implement part of this, update this banner with what shipped.
+
 ## Core rule
 
 No durable artifact without a backlink into the outline.

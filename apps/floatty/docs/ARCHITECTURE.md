@@ -1,5 +1,12 @@
 # Floatty Architecture Documentation
 
+> **FRESHNESS (2026-07-10):** core concepts hold, but two sections have drifted:
+> the sync flow predates FLO-387 (keystrokes now commit at BOUNDARIES — blur /
+> structural op / unmount via `useContentSync.ts`, not a 50ms per-keystroke
+> debounce; see `.claude/rules/ydoc-patterns.md` §5) and predates Tantivy search +
+> the doc-epoch sync hardening (2026-07). `.claude/rules/architecture.md` is the
+> maintained file inventory; treat this document as the conceptual overview.
+
 This document describes the current implementation of floatty's core systems. Written for context restoration after conversation compaction.
 
 ---
