@@ -301,6 +301,14 @@ export function determineKeyAction(
  * Create keyboard handler for a block
  */
 export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
+  // Shift+Arrow text-gesture continuity. A forward selection shrinks under
+  // Shift+Up before inverting (native semantics); at the instant it passes
+  // through COLLAPSED, an instantaneous check would flip the next press
+  // into block selection mid-gesture. Once a shift-arrow text extension
+  // starts, keep ceding to the browser until any other key ends the
+  // gesture.
+  let shiftArrowTextGesture = false;
+
   const handleKeyDown = (e: KeyboardEvent) => {
     let block = deps.getBlock();
     if (!block) return;
@@ -345,6 +353,19 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       e.shiftKey && (e.metaKey || e.ctrlKey)
     ) {
       return;
+    }
+
+    // Plain Shift+Arrow: text extension when a live selection exists OR a
+    // text gesture is already in flight (see shiftArrowTextGesture above).
+    // Block selection only engages from a genuinely fresh collapsed cursor.
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.shiftKey) {
+      if (!deps.cursor.isSelectionCollapsed() || shiftArrowTextGesture) {
+        shiftArrowTextGesture = true;
+        return; // browser extends (or shrinks through collapsed) natively
+      }
+    } else if (e.key !== 'Shift') {
+      // Any non-shift-arrow key ends the text gesture.
+      shiftArrowTextGesture = false;
     }
 
     // Lazy cursor snapshot — only walk the DOM for keys whose

@@ -1169,3 +1169,57 @@ describe('useBlockInput.handleKeyDown — cedes Mod+Shift+Arrow', () => {
     expect(onFocus).not.toHaveBeenCalled();
   });
 });
+
+describe('useBlockInput.handleKeyDown — shift-arrow gesture continuity', () => {
+  beforeAll(() => registerHandlers());
+
+  function setupContinuity() {
+    let collapsed = false; // live selection at gesture start
+    const onSelect = vi.fn();
+    const cursor = { ...createCursorMock(), isSelectionCollapsed: () => collapsed };
+    const deps: BlockInputDependencies = {
+      getBlockId: () => 'b1',
+      paneId: 'test-pane',
+      getBlock: () => createBlock({ id: 'b1', content: 'line one\nline two' }),
+      isCollapsed: () => false,
+      blockStore: createMockBlockStore(),
+      paneStore: createMockPaneStore(),
+      cursor,
+      findNextVisibleBlock: () => 'b2',
+      findPrevVisibleBlock: () => 'b0',
+      findFocusAfterDelete: () => null,
+      onFocus: () => {},
+      onSelect,
+      getSelectionAnchor: () => null,
+      flushContentUpdate: () => {},
+      getContentRef: () => undefined,
+    };
+    const { handleKeyDown } = useBlockInput(deps);
+    return { handleKeyDown, onSelect, setCollapsed: (v: boolean) => { collapsed = v; } };
+  }
+
+  it('Shift+Up passing through a collapsed selection stays a text gesture', () => {
+    const { handleKeyDown, onSelect, setCollapsed } = setupContinuity();
+
+    // ⇧⌘→ made a selection; first ⇧↑ shrinks it (still non-collapsed)
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+    // shrink lands EXACTLY on the anchor → collapsed mid-gesture
+    setCollapsed(true);
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true }));
+
+    // Without continuity this second press block-selects; with it, the
+    // browser keeps the text gesture.
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('any other key ends the gesture — next Shift+Arrow from collapsed block-selects', () => {
+    const { handleKeyDown, onSelect, setCollapsed } = setupContinuity();
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true })); // gesture starts
+    setCollapsed(true);
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowRight' })); // plain arrow ends it
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true }));
+
+    expect(onSelect).toHaveBeenCalledWith('b1', 'anchor'); // fresh block selection
+  });
+});
