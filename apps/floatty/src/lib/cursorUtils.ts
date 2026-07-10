@@ -322,16 +322,37 @@ export function isCursorAtContentEnd(element: HTMLElement): boolean {
 
 
 /**
+ * THE canonical "is this element an editor" predicate.
+ *
+ * ROOT-CAUSE NOTE (2026-07-10 shift-click RCA): SolidJS renders the
+ * `contentEditable` JSX prop as `contenteditable=""` — an EMPTY string.
+ * The historical idiom `getAttribute('contenteditable') === 'true'` has
+ * therefore never matched a Solid-rendered editor in production; it only
+ * passed in tests whose hand-built DOM set the attribute to "true".
+ * Verified against the running app:
+ *   <div contenteditable="" class="block-content block-edit" ...>
+ *
+ * Semantics: attribute present → editable unless explicitly "false"
+ * ("", "true", "plaintext-only" all enable editing per spec). Attribute
+ * absent → fall back to the isContentEditable property (covers
+ * inheritance; jsdom lacks it, but jsdom elements always carry the
+ * attribute in our tests).
+ */
+export function isEditableElement(el: Element | null): boolean {
+  if (!el) return false;
+  const attr = el.getAttribute('contenteditable');
+  if (attr !== null) return attr.toLowerCase() !== 'false';
+  return (el as HTMLElement).isContentEditable === true;
+}
+
+/**
  * True when the user has a live (non-collapsed) text selection inside a
  * focused contentEditable — the signal that text-level gestures (Cmd+C,
  * shift+click range extension) should win over block-level selection.
- *
- * Uses the contenteditable attribute (not isContentEditable) to match the
- * outliner's isEditing idiom and stay observable under jsdom.
  */
 export function hasLiveTextSelection(): boolean {
   const active = document.activeElement;
-  if (!active || active.getAttribute('contenteditable') !== 'true') return false;
+  if (!isEditableElement(active)) return false;
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed) return false;
   // Scope to the focused editor: a non-collapsed selection left behind in
@@ -339,4 +360,38 @@ export function hasLiveTextSelection(): boolean {
   const { anchorNode, focusNode } = selection;
   return !!anchorNode && !!focusNode
     && active.contains(anchorNode) && active.contains(focusNode);
+}
+
+/**
+ * True when a shift+click should be treated as a TEXT gesture (caret →
+ * click-point extension) rather than block-range selection.
+ *
+ * Two signals, either suffices:
+ * 1. The click landed INSIDE the currently-focused contentEditable —
+ *    click-to-place-caret then shift+click-to-extend starts from a
+ *    COLLAPSED caret, and WebKit's selection state is not reliably
+ *    non-collapsed yet during the click event, so target containment is
+ *    the dependable signal for the within-one-block case.
+ * 2. A live non-collapsed selection exists (hasLiveTextSelection) — the
+ *    drag-then-shift-click case, where the target may sit outside the
+ *    focused editor's subtree.
+ *
+ * Shift+click on a DIFFERENT block (focus elsewhere, no live selection)
+ * returns false — that's genuine block-range selection.
+ */
+export function isShiftClickTextGesture(target: EventTarget | null): boolean {
+  const active = document.activeElement;
+  if (active && isEditableElement(active) && target instanceof Node) {
+    if (active.contains(target)) return true;
+    // Same-row clicks that DON'T land in the CE are still text gestures:
+    // the display overlay's tokens (wikilink pills, z-index above the
+    // editor) and the row's whitespace (past end-of-line, gutter padding)
+    // both produce targets outside the CE while the user is plainly
+    // extending within the block they're editing. Same .block-item that
+    // contains the focused editor = same block.
+    const el = target instanceof Element ? target : target.parentElement;
+    const row = el?.closest?.('.block-item');
+    if (row && row.contains(active)) return true;
+  }
+  return hasLiveTextSelection();
 }

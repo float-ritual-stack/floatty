@@ -25,7 +25,7 @@ import { BlockItem } from './BlockItem';
 import { Breadcrumb } from './Breadcrumb';
 import { LinkedReferences, isPageBlock } from './LinkedReferences';
 import { isMac } from '../lib/keybinds';
-import { hasLiveTextSelection } from '../lib/cursorUtils';
+import { hasLiveTextSelection, isEditableElement } from '../lib/cursorUtils';
 import { blocksToMarkdown } from '../lib/markdownExport';
 import { flushPendingContent } from '../hooks/useContentSync';
 import { useConfig } from '../context/ConfigContext';
@@ -266,7 +266,9 @@ export function Outliner(props: OutlinerProps) {
     const selected = selection.selectedBlockIds();
     const modKey = isMac ? e.metaKey : e.ctrlKey;
     const activeEl = document.activeElement;
-    const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+    // isEditableElement, NOT getAttribute === 'true': Solid renders the
+    // attribute as contenteditable="" (see cursorUtils.isEditableElement).
+    const isEditing = isEditableElement(activeEl);
 
     // FLO-74: Clear selection when typing starts (prevents accidental delete)
     if (selected.size > 0 && isEditing && e.key.length === 1 && !modKey && !e.ctrlKey && !e.altKey) {
@@ -467,7 +469,9 @@ export function Outliner(props: OutlinerProps) {
 
       const expandSelectionToLevel = (level: number, e: KeyboardEvent) => {
         const activeEl = document.activeElement as HTMLElement;
-        const isEditing = activeEl?.getAttribute('contenteditable') === 'true';
+        // isEditableElement, NOT getAttribute === 'true': Solid renders the
+    // attribute as contenteditable="" (see cursorUtils.isEditableElement).
+    const isEditing = isEditableElement(activeEl);
 
         // FLO-58: Let table cell inputs handle their own Cmd+A
         if (activeEl?.classList.contains('md-table-input') || activeEl?.classList.contains('md-table-raw')) {
@@ -656,7 +660,12 @@ export function Outliner(props: OutlinerProps) {
         // the shortcut lands on whatever is currently rendered at the top or
         // bottom of this pane. Cmd+Up/Down are taken by moveBlockUp/Down
         // (FLO-75) — Shift added for reach semantics.
+        // A live text selection inside a contentEditable wins over the view
+        // jump: Cmd+Shift+Up/Down is macOS-native extend-to-boundary while
+        // selecting text, and hijacking it mid-selection yanks the user to
+        // the top/bottom of the pane (cluster B principle).
         '$mod+Shift+ArrowUp': (e) => {
+          if (hasLiveTextSelection()) return; // native text extension
           e.preventDefault();
           const ids = getVisibleBlockIds();
           if (ids.length === 0) return;
@@ -664,6 +673,7 @@ export function Outliner(props: OutlinerProps) {
           collapse.ensureVisibleFocus();
         },
         '$mod+Shift+ArrowDown': (e) => {
+          if (hasLiveTextSelection()) return; // native text extension
           e.preventDefault();
           const ids = getVisibleBlockIds();
           if (ids.length === 0) return;

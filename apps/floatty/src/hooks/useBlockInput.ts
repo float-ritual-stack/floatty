@@ -166,10 +166,13 @@ export function determineKeyAction(
 
   // Non-action keybinds
   if (key === 'ArrowUp') {
-    // Shift+Arrow: always do block selection regardless of cursor position.
-    // DESIGN DECISION: Outliner block selection wins over in-block text selection.
-    // Multi-line blocks lose Shift+Arrow text selection — use mouse drag instead.
+    // Shift+Arrow with a COLLAPSED cursor does block selection. But a live
+    // text selection inside the block wins (cluster B principle): return
+    // none and let the browser extend the selection line-by-line — this is
+    // what makes Shift+Cmd+Right → Shift+Up/Down grow a multi-line text
+    // selection instead of flipping to whole-block selection.
     if (shiftKey) {
+      if (!selectionCollapsed) return { type: 'none' }; // browser extends text
       const prevId = deps.findPrevId();
       if (!prevId) return { type: 'none' };  // At first block — can't extend selection up
       return { type: 'navigate_up_with_selection', prevId };
@@ -183,8 +186,10 @@ export function determineKeyAction(
   }
 
   if (key === 'ArrowDown') {
-    // Shift+Arrow: always do block selection regardless of cursor position.
+    // Shift+Arrow: block selection only from a collapsed cursor — a live
+    // text selection extends natively (see ArrowUp above).
     if (shiftKey) {
+      if (!selectionCollapsed) return { type: 'none' }; // browser extends text
       const nextId = deps.findNextId();
       if (nextId) {
         return { type: 'navigate_down_with_selection', nextId };
@@ -296,6 +301,14 @@ export function determineKeyAction(
  * Create keyboard handler for a block
  */
 export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
+  // Shift+Arrow text-gesture continuity. A forward selection shrinks under
+  // Shift+Up before inverting (native semantics); at the instant it passes
+  // through COLLAPSED, an instantaneous check would flip the next press
+  // into block selection mid-gesture. Once a shift-arrow text extension
+  // starts, keep ceding to the browser until any other key ends the
+  // gesture.
+  let shiftArrowTextGesture = false;
+
   const handleKeyDown = (e: KeyboardEvent) => {
     let block = deps.getBlock();
     if (!block) return;
@@ -328,6 +341,32 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
     const action = getActionForEvent(e);
     const store = deps.blockStore;
     const paneStore = deps.paneStore;
+
+    // Mod+Shift+Arrow is NOT block selection: it belongs to FLO-495
+    // (jump to first/last visible, handled by Outliner tinykeys) or, with
+    // a live text selection, to the browser's native extend-to-boundary.
+    // Without this guard the plain Shift+Arrow branch also fired (meta is
+    // invisible to determineKeyAction), block-selecting AND letting the
+    // FLO-495 jump run — two handlers fighting over one keystroke.
+    if (
+      (e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+      e.shiftKey && (e.metaKey || e.ctrlKey)
+    ) {
+      return;
+    }
+
+    // Plain Shift+Arrow: text extension when a live selection exists OR a
+    // text gesture is already in flight (see shiftArrowTextGesture above).
+    // Block selection only engages from a genuinely fresh collapsed cursor.
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.shiftKey) {
+      if (!deps.cursor.isSelectionCollapsed() || shiftArrowTextGesture) {
+        shiftArrowTextGesture = true;
+        return; // browser extends (or shrinks through collapsed) natively
+      }
+    } else if (e.key !== 'Shift') {
+      // Any non-shift-arrow key ends the text gesture.
+      shiftArrowTextGesture = false;
+    }
 
     // Lazy cursor snapshot — only walk the DOM for keys whose
     // determineKeyAction branch actually reads cursorAtStart/atEnd/offset.
@@ -378,7 +417,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         // ArrowDown/Up in trailing/leading newline regions: browser can't navigate
         // past the last bare <br> to (root, childCount). Let browser try first,
         // then exit block if cursor didn't actually move.
-        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && block.content) {
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.shiftKey && block.content) {
           const cursorOffset = deps.cursor.getOffset();
           const isTrailingNewlines = e.key === 'ArrowDown'
             && cursorOffset < block.content.length
