@@ -24,6 +24,7 @@ import {
   clearLastContiguousSeq as clearLastContiguousSeqIDB,
   saveKnownEpoch as saveKnownEpochIDB,
   getKnownEpoch as getKnownEpochIDB,
+  clearKnownEpoch as clearKnownEpochIDB,
 } from '../lib/idbBackup';
 import { configReady } from '../context/ConfigContext';
 import { SyncSequenceTracker } from '../lib/syncSequenceTracker';
@@ -405,18 +406,33 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
     // Step 0: Epoch guard BEFORE the push — if the server restored while we
     // were disconnected, pushing our old-lineage diff would resurrect deleted
     // content into the fresh log. getStateHash is cheap (hash, not state).
+    // FAIL CLOSED for the push: if lineage can't be positively verified
+    // (check failed, or the server has restore history we never recorded),
+    // skip the push and pull-only — never sync unverified local state.
+    let pushAllowed = false;
     try {
       const { epoch: serverEpoch } = await httpClient.getStateHash();
       if (knownEpoch !== null && serverEpoch !== knownEpoch) {
         await hardEpochReset(serverEpoch, 'resync epoch mismatch');
         return { pushedBytes: 0 }; // unreachable after reload; satisfies types
       }
+      // Known-matching lineage, or a server that has never restored
+      // (epoch 0) — nothing a push could resurrect.
+      pushAllowed = knownEpoch !== null || serverEpoch === 0;
+      if (!pushAllowed) {
+        logger.warn(
+          `Local lineage unknown but server has restore history (epoch ${serverEpoch}) — skipping push, adopting`
+        );
+      }
     } catch (epochErr) {
-      logger.warn('Epoch pre-check failed (continuing resync)', { err: epochErr });
+      logger.warn('Epoch pre-check failed — skipping push (pull-only resync)', { err: epochErr });
     }
 
     // Step 1: Push local-only changes to server (if any)
     try {
+      if (!pushAllowed) {
+        throw new Error('push skipped: lineage unverified');
+      }
       const serverStateVector = await httpClient.getStateVector();
       const localDiff = Y.encodeStateAsUpdate(sharedDoc, serverStateVector);
 
@@ -434,18 +450,21 @@ export async function triggerFullResync(): Promise<{ pushedBytes: number }> {
 
     // Step 2: Pull server state to local (existing behavior)
     const { state: serverState, latestSeq, epoch: pulledEpoch } = await httpClient.getState();
-    if (pulledEpoch !== null) {
-      knownEpoch = pulledEpoch;
-      saveKnownEpochIDB(pulledEpoch).catch((err: unknown) => {
-        logger.warn('Failed to persist known epoch', { err });
-      });
-    }
     if (serverState && serverState.length > 2) {
       try {
         isApplyingRemoteGlobal = true;
         Y.applyUpdate(sharedDoc, serverState, 'reconnect-authority');
       } finally {
         isApplyingRemoteGlobal = false;
+      }
+      // Adopt the pulled epoch only AFTER its state applied successfully —
+      // adopting first would mark a stale doc as new-lineage, letting a later
+      // resync push it.
+      if (pulledEpoch !== null) {
+        knownEpoch = pulledEpoch;
+        saveKnownEpochIDB(pulledEpoch).catch((err: unknown) => {
+          logger.warn('Failed to persist known epoch', { err });
+        });
       }
       // Re-seed seq tracking from server's latestSeq via tracker
       // Full state means all seqs up to latestSeq are covered + clears gap queue
@@ -718,6 +737,11 @@ async function hardEpochReset(newEpoch: number | null, reason: string): Promise<
     await clearLastContiguousSeqIDB();
     if (newEpoch !== null) {
       await saveKnownEpochIDB(newEpoch);
+    } else {
+      // Pre-epoch server restore: lineage unknowable — delete the record so
+      // the next boot doesn't compare a stale epoch against hash epoch 0 and
+      // discard valid backups / reset repeatedly.
+      await clearKnownEpochIDB();
     }
   } catch (err) {
     logger.error('Epoch reset: failed to clear stale persistence (reloading anyway)', { err });
@@ -1649,18 +1673,31 @@ export function useSyncedYDoc(
           // Stale-lineage guard: if the server restored while this app was
           // closed, the backup belongs to the OLD lineage — diff-pushing it
           // would resurrect deleted content. Detect via epoch before any push.
-          if (useBackup && knownEpoch !== null) {
+          let bootPushAllowed = false;
+          if (useBackup) {
             try {
               const { epoch: serverEpoch } = await httpClient.getStateHash();
-              if (serverEpoch !== knownEpoch) {
+              if (knownEpoch !== null && serverEpoch !== knownEpoch) {
                 logger.warn(
                   `Backup is from old doc lineage (epoch ${knownEpoch} vs server ${serverEpoch}) — discarding, adopting server state fresh`
                 );
-                clearBackup();
                 useBackup = null;
+                await clearBackupIDB().catch((err: unknown) => {
+                  logger.error('Failed to delete stale-lineage backup', { err });
+                });
+              } else {
+                // Push only with positively verified lineage: known-matching
+                // epoch, or a server that has never restored (epoch 0).
+                bootPushAllowed = knownEpoch !== null || serverEpoch === 0;
+                if (!bootPushAllowed) {
+                  logger.warn(
+                    `Local lineage unknown but server has restore history (epoch ${serverEpoch}) — pull-only boot, backup preserved`
+                  );
+                }
               }
             } catch (epochErr) {
-              logger.warn('Boot epoch check failed (continuing with reconcile)', { err: epochErr });
+              // Fail closed for the push: unverified lineage never syncs.
+              logger.warn('Boot epoch check failed — pull-only reconcile, backup preserved', { err: epochErr });
             }
           }
 
@@ -1685,10 +1722,14 @@ export function useSyncedYDoc(
 
               // If diff is substantial (empty diff is ~2 bytes), push our changes first
               hadLocalChanges = localDiff.length > 2;
-              if (hadLocalChanges) {
+              if (hadLocalChanges && bootPushAllowed) {
                 logger.debug(`Pushing local changes to server: ${localDiff.length} bytes`);
                 await httpClient.applyUpdate(localDiff);
                 localChangesPushed = true;
+              } else if (hadLocalChanges) {
+                logger.warn(
+                  `Local changes present (${localDiff.length} bytes) but lineage unverified — NOT pushing; backup preserved for a verified boot`
+                );
               }
 
               // Now get server's full state (which now includes our pushed changes)
@@ -1712,8 +1753,14 @@ export function useSyncedYDoc(
                 seqTracker.seedFromFullSync(latestSeq);
               }
 
-              logger.info(`Reconciliation complete, seq: ${latestSeq}, clearing backup`);
-              clearBackup();
+              if (localChangesPushed || !hadLocalChanges) {
+                logger.info(`Reconciliation complete, seq: ${latestSeq}, clearing backup`);
+                clearBackup();
+              } else {
+                logger.warn(
+                  `Reconciliation complete (seq: ${latestSeq}) but local changes were NOT pushed (lineage unverified) — backup preserved`
+                );
+              }
             } catch (reconcileErr) {
               logger.error('Reconciliation failed, falling back to server state', { err: reconcileErr });
 

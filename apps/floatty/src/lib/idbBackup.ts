@@ -255,6 +255,17 @@ export async function getKnownEpoch(): Promise<number | null> {
   });
 }
 
+/** Clear the persisted epoch (pre-epoch server reset — lineage unknowable). */
+export async function clearKnownEpoch(): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete('knownEpoch');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 /**
  * Clear last contiguous sequence number (called on workspace switch).
  */
