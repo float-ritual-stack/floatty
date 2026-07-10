@@ -143,10 +143,13 @@ v0.19.0 deploy stalled exactly here (and the kill-based workaround is blocked by
 passwordless with a drop-in sudoers rule (on float-box):
 
 ```bash
-echo 'evan ALL=(root) NOPASSWD: /usr/bin/systemctl restart floatty-server' | \
-  sudo tee /etc/sudoers.d/floatty-restart
-sudo chmod 0440 /etc/sudoers.d/floatty-restart
-sudo visudo -c    # syntax check — ALWAYS run after editing sudoers
+# Write to a temp file and validate BEFORE installing — a typo or interrupted
+# write must never land in /etc/sudoers.d live. visudo -cf validates the
+# candidate file without touching the active configuration.
+echo 'evan ALL=(root) NOPASSWD: /usr/bin/systemctl restart floatty-server' > /tmp/floatty-restart
+sudo visudo -cf /tmp/floatty-restart && \
+  sudo install -m 0440 -o root -g root /tmp/floatty-restart /etc/sudoers.d/floatty-restart
+rm /tmp/floatty-restart
 ```
 
 Scope is deliberately the full literal command — no wildcards, no `stop`, no other
