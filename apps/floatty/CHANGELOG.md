@@ -6,6 +6,34 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.19.0] - 2026-07-10
+
+The data-loss release — in the good sense. A 40-agent audit ([[PR #323]], `docs/audits/2026-07-09-quirk-audit.md`) traced every long-standing sync quirk to a root cause, and this release closes all five confirmed data-destroyers: destructive restores can no longer resurrect deleted content, a failed boot can no longer destroy your local backup, and the tree-integrity sweep now **recovers** orphaned blocks instead of deleting them. Slurped markdown also stops mangling: lists stay whole, code fences get their own block. **Both the server (float-box) and the app need this release** — the epoch protocol is end-to-end.
+
+### 🛡 Sync integrity ([[PR #324]] / [[PR #326]] / [[PR #327]] — quirk-audit cluster E)
+
+- **Doc epoch: restores are adopted, never merged.** Every destructive restore bumps a persisted epoch, carried on `/state`, `/state/hash`, `/updates`, WS restore frames, and heartbeats. On mismatch the client hard-resets — drops pending updates, clears the stale-lineage backup, reloads — instead of CRDT-merging the restored state into its old doc (which quietly resurrected deleted content and pushed it back to the server). Pushes fail closed: unverifiable lineage → pull-only.
+- **`latestSeq` can no longer overstate.** `GET /state` reports the seq last *applied to the returned snapshot* (read under the same lock as the encode), not the persistence max that could run ahead of it — a client can no longer seed its baseline past an update its snapshot doesn't contain. Corrupted-log replay freezes the watermark at the failure instead of lying past it.
+- **Atomic restore persistence.** Log replacement is one SQLite transaction (was: clear-then-append with a crash window that left an empty log). A write barrier serializes apply/persist/reset/compact critical sections.
+- **Offline boot-from-backup.** Server unreachable at boot + backup present → the outline loads from IndexedDB (backup preserved, reconciles on reconnect) instead of coming up empty after destroying the backup. First shipped piece of the offline/fast-boot design.
+- **Orphan sweep recovers instead of deleting.** Unreachable content-bearing blocks are reattached under a `recovered::` root (well-known id — concurrent sweeps converge) for review; only empty shells are removed. Previously they were hard-deleted, propagated, unrecoverable.
+
+### 📄 Page-name uniqueness ([[PR #325]] — quirk-audit cluster F)
+
+- Duplicate page names now resolve **deterministically**: the oldest block (by createdAt) owns the name, on both the server index and frontend wikilink resolution — the split-brain where `[[link]]` clicks and API calls landed on *different* twins is closed. `POST /api/v1/pages/:name` normalizes the name, scans the live Y.Doc through the hook-lag window, and never mints a twin. Deleting a duplicate no longer evicts the survivor from the index ("deleting one twin makes three").
+
+### ✨ Slurp formatting ([[PR #320]] — Track A)
+
+- Markdown ingested via paste / `sh:: cat` / `help::` keeps its shape: a list run becomes **one block with its `- ` markers intact** (was: exploded into bare per-item blocks), ``` code fences isolate into their own block (was: melted into prose), and ingested blocks get a trailing blank line for visual separation. `echoCopy::` door materialization keeps the legacy nested-import semantics via an explicit parser mode.
+
+### 📝 Docs & agent-instruction refresh ([[PR #328]])
+
+- 106 docs classified: 16 point-in-time files archived, 13 aspirational designs bannered as such, 4 stale docs corrected (FLO-137 pins spec marked historical — pins shipped with a different model; search layers doc updated — Tantivy is long shipped). New `architecture/SYNC_EPOCH_AND_INTEGRITY.md` documents this release's sync model. CLAUDE.md keybind registry rewritten against ground truth (the `⌘0-3` expand row was wrong for months); lint gate fixed to a script that exists.
+
+### 🧪 Tests
+
+- +30 across the release (epoch persistence & scoping, atomic reset, replay watermark incl. corruption freeze, sync-position pairing, page-collision tie-breaks both orders, twin-deletion regression, orphan reattach/convergence/membership-repair, slurp list/fence suites incl. the [[ae840d8a]] fixture verbatim). Suites: 1339 vitest + 325 core / 139 server cargo.
+
 ## [0.18.1] - 2026-06-26
 
 Opening an `img::` block stops re-downloading the file every time. Floatty used to fetch the attachment → blob URL on mount and **revoke it on unmount**, so closing and reopening a block re-downloaded the whole thing — a real lag for 6 MB images and 16–25 MB PDFs served from float-box over the tailnet in remote mode. Now a module-level LRU blob cache holds decoded attachments across mounts, so reopen is instant. This is Phase 1 (caching) of the image-system rewrite; display/UX (align, resize, paste-upload) is still to come. The client cache ships with this build; the new server cache headers only take effect after a float-box `floatty-server` redeploy.
