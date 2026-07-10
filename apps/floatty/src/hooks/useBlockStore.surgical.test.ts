@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
-import { deduplicateChildIds } from './useSyncedYDoc';
+import { deduplicateChildIds, reconcilePageTwins } from './useSyncedYDoc';
 
 // ═══════════════════════════════════════════════════════════════
 // TEST HELPERS — mirror the private helpers from useBlockStore.ts
@@ -1659,5 +1659,181 @@ describe('deduplicateChildIds — orphan reattach (quirk-audit sync cluster)', (
     expect(recoveryRoots).toHaveLength(1);
     const recovery = findRecoveryRoot(doc)!;
     expect(recovery.kids).toEqual(expect.arrayContaining(['orphan-1', 'orphan-2']));
+  });
+});
+
+// ─── reconcilePageTwins (quirk-audit cluster F, ladder step 5) ─────────
+
+describe('reconcilePageTwins — duplicate page healing', () => {
+  function makePage(doc: Y.Doc, id: string, content: string, opts: { createdAt?: number; childIds?: string[] } = {}) {
+    const blocksMap = doc.getMap('blocks');
+    const m = new Y.Map<unknown>();
+    m.set('id', id);
+    m.set('parentId', 'pages-root');
+    m.set('content', content);
+    m.set('collapsed', false);
+    m.set('createdAt', opts.createdAt ?? 1000);
+    m.set('updatedAt', opts.createdAt ?? 1000);
+    const arr = new Y.Array<string>();
+    if (opts.childIds?.length) arr.push(opts.childIds);
+    m.set('childIds', arr);
+    blocksMap.set(id, m);
+    return m;
+  }
+
+  function makeChild(doc: Y.Doc, id: string, parentId: string, content: string) {
+    const blocksMap = doc.getMap('blocks');
+    const m = new Y.Map<unknown>();
+    m.set('id', id);
+    m.set('parentId', parentId);
+    m.set('content', content);
+    m.set('collapsed', false);
+    m.set('createdAt', 1000);
+    m.set('updatedAt', 1000);
+    m.set('childIds', new Y.Array<string>());
+    blocksMap.set(id, m);
+  }
+
+  /** Standard fixture: pages:: root container in rootIds with given page ids as children. */
+  function makePagesContainer(doc: Y.Doc, pageIds: string[]) {
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+    const m = new Y.Map<unknown>();
+    m.set('id', 'pages-root');
+    m.set('parentId', null);
+    m.set('content', 'pages::');
+    m.set('collapsed', true);
+    m.set('createdAt', 1);
+    m.set('updatedAt', 1);
+    const arr = new Y.Array<string>();
+    arr.push(pageIds);
+    m.set('childIds', arr);
+    blocksMap.set('pages-root', m);
+    rootIds.push(['pages-root']);
+  }
+
+  function pageKids(doc: Y.Doc, id: string): string[] {
+    const m = doc.getMap('blocks').get(id);
+    const kids = m instanceof Y.Map ? m.get('childIds') : null;
+    return kids instanceof Y.Array ? (kids.toArray() as string[]) : [];
+  }
+
+  it('re-homes children to the oldest twin and deletes the pure-title shell', () => {
+    const doc = new Y.Doc();
+    doc.transact(() => {
+      makePage(doc, 'old-page', '# 2026-07-03', { createdAt: 100, childIds: ['kid-a'] });
+      makePage(doc, 'young-shell', '# 2026-07-03', { createdAt: 200, childIds: ['kid-b'] });
+      makeChild(doc, 'kid-a', 'old-page', 'first note');
+      makeChild(doc, 'kid-b', 'young-shell', 'second note');
+      makePagesContainer(doc, ['old-page', 'young-shell']);
+    });
+
+    const processed = reconcilePageTwins(doc);
+    const blocksMap = doc.getMap('blocks');
+
+    expect(processed).toBe(1);
+    // Winner keeps its child and gains the loser's, in order.
+    expect(pageKids(doc, 'old-page')).toEqual(['kid-a', 'kid-b']);
+    expect((blocksMap.get('kid-b') as Y.Map<unknown>).get('parentId')).toBe('old-page');
+    // Pure-title shell is gone — from the map AND the container.
+    expect(blocksMap.has('young-shell')).toBe(false);
+    expect(pageKids(doc, 'pages-root')).toEqual(['old-page']);
+  });
+
+  it('demotes a body-bearing loser under the winner instead of deleting it', () => {
+    const doc = new Y.Doc();
+    doc.transact(() => {
+      makePage(doc, 'winner', '# Project X', { createdAt: 100 });
+      makePage(doc, 'loser-with-body', '# Project X\nnotes that must survive', { createdAt: 200, childIds: ['loser-kid'] });
+      makeChild(doc, 'loser-kid', 'loser-with-body', 'child content');
+      makePagesContainer(doc, ['winner', 'loser-with-body']);
+    });
+
+    reconcilePageTwins(doc);
+    const blocksMap = doc.getMap('blocks');
+
+    // Loser survives as a child of the winner, AFTER the re-homed children.
+    expect(blocksMap.has('loser-with-body')).toBe(true);
+    expect(pageKids(doc, 'winner')).toEqual(['loser-kid', 'loser-with-body']);
+    expect((blocksMap.get('loser-with-body') as Y.Map<unknown>).get('parentId')).toBe('winner');
+    expect((blocksMap.get('loser-kid') as Y.Map<unknown>).get('parentId')).toBe('winner');
+    // Its own childIds were emptied (children moved up).
+    expect(pageKids(doc, 'loser-with-body')).toEqual([]);
+    expect(pageKids(doc, 'pages-root')).toEqual(['winner']);
+  });
+
+  it('normalizes titles: heading prefix + case differences still twin', () => {
+    const doc = new Y.Doc();
+    doc.transact(() => {
+      makePage(doc, 'plain', 'project catalyst', { createdAt: 100 });
+      makePage(doc, 'heading', '# Project Catalyst', { createdAt: 200 });
+      makePagesContainer(doc, ['plain', 'heading']);
+    });
+
+    expect(reconcilePageTwins(doc)).toBe(1);
+    expect(doc.getMap('blocks').has('heading')).toBe(false);
+    expect(pageKids(doc, 'pages-root')).toEqual(['plain']);
+  });
+
+  it('missing/zero createdAt loses to any real timestamp; ties break by id', () => {
+    const doc = new Y.Doc();
+    doc.transact(() => {
+      makePage(doc, 'no-timestamp', '# Page A', { createdAt: 0 });
+      makePage(doc, 'real-timestamp', '# Page A', { createdAt: 5000 });
+      makePage(doc, 'tie-b', '# Page B', { createdAt: 100 });
+      makePage(doc, 'tie-a', '# Page B', { createdAt: 100 });
+      makePagesContainer(doc, ['no-timestamp', 'real-timestamp', 'tie-b', 'tie-a']);
+    });
+
+    reconcilePageTwins(doc);
+    const blocksMap = doc.getMap('blocks');
+
+    // Real timestamp beats zero.
+    expect(blocksMap.has('real-timestamp')).toBe(true);
+    expect(blocksMap.has('no-timestamp')).toBe(false);
+    // Equal createdAt → lexicographically smaller id wins.
+    expect(blocksMap.has('tie-a')).toBe(true);
+    expect(blocksMap.has('tie-b')).toBe(false);
+  });
+
+  it('no-op when all page names are unique', () => {
+    const doc = new Y.Doc();
+    doc.transact(() => {
+      makePage(doc, 'p1', '# Alpha', { createdAt: 100 });
+      makePage(doc, 'p2', '# Beta', { createdAt: 200 });
+      makePagesContainer(doc, ['p1', 'p2']);
+    });
+
+    expect(reconcilePageTwins(doc)).toBe(0);
+    expect(pageKids(doc, 'pages-root')).toEqual(['p1', 'p2']);
+  });
+
+  it('reconciles twins split across TWO pages:: containers', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+    doc.transact(() => {
+      makePage(doc, 'in-first', '# Daily', { createdAt: 100 });
+      makePage(doc, 'in-second', '# Daily', { createdAt: 200 });
+      makePagesContainer(doc, ['in-first']);
+      // Second container (hook-lag twin of pages:: itself)
+      const m = new Y.Map<unknown>();
+      m.set('id', 'pages-root-2');
+      m.set('parentId', null);
+      m.set('content', 'pages::');
+      m.set('collapsed', true);
+      m.set('createdAt', 2);
+      m.set('updatedAt', 2);
+      const arr = new Y.Array<string>();
+      arr.push(['in-second']);
+      m.set('childIds', arr);
+      blocksMap.set('pages-root-2', m);
+      rootIds.push(['pages-root-2']);
+    });
+
+    expect(reconcilePageTwins(doc)).toBe(1);
+    expect(blocksMap.has('in-first')).toBe(true);
+    expect(blocksMap.has('in-second')).toBe(false);
+    expect(pageKids(doc, 'pages-root-2')).toEqual([]);
   });
 });

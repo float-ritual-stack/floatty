@@ -37,6 +37,7 @@ import {
   recordCrossParentFixes,
 } from '../lib/syncDiagnostics';
 import { createLogger } from '../lib/logger';
+import { getPageTitle } from '../lib/pageTitle';
 
 const logger = createLogger('useSyncedYDoc');
 const wsLogger = createLogger('WS');
@@ -479,6 +480,163 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
   }
 
   return totalRemoved;
+}
+
+/**
+ * Merge duplicate pages under the pages:: container(s) — quirk-audit
+ * cluster F, ladder step 5 (steps 1-4 shipped server+frontend in PR #325).
+ *
+ * Twins arise from the PageNameIndex hook-lag window, offline creation on
+ * two clients, and the pre-#325 name-keyed index eviction. Steps 1-4 stop
+ * NEW twins and make both sides RESOLVE existing twins consistently
+ * (oldest-createdAt wins); this pass is the healing half that makes the
+ * twins actually disappear.
+ *
+ * Policy (mirrors the 2026-07-10 prod twin-tidy, preserve-everything):
+ * - Winner: oldest createdAt (missing/0 loses to any real timestamp);
+ *   tie-break: lexicographically smaller id. Deterministic — this runs on
+ *   every client (startup, post-resync) and concurrent runs must converge.
+ * - Losers' children are re-homed to the winner (order preserved).
+ * - A loser whose content is a single line (the title itself — twin-group
+ *   membership means that line normalizes to the same name) is a pure
+ *   shell: deleted.
+ * - A loser with body content beyond the title line is DEMOTED under the
+ *   winner as a regular child — content preserved for manual review/absorb.
+ *
+ * Single 'system'-origin transaction (authoritative for the sync effect,
+ * excluded from UndoManager), sibling of deduplicateChildIds above.
+ * Returns the number of loser pages processed (demoted + deleted).
+ */
+export function reconcilePageTwins(targetDoc: Y.Doc = sharedDoc): number {
+  const doc = targetDoc;
+  const blocksMap = doc.getMap('blocks');
+  const rootIds = doc.getArray<string>('rootIds');
+
+  // ── Read phase ──
+  // All pages:: containers (normally one; hook-lag can twin the container
+  // itself — children of every container participate in one name space).
+  const containerIds: string[] = [];
+  for (const rid of rootIds.toArray()) {
+    const rm = blocksMap.get(rid);
+    if (rm instanceof Y.Map) {
+      const c = rm.get('content');
+      if (typeof c === 'string' && c.trim() === 'pages::') containerIds.push(rid);
+    }
+  }
+  if (containerIds.length === 0) return 0;
+  if (containerIds.length > 1) {
+    logger.warn(`reconcilePageTwins: ${containerIds.length} pages:: containers found — reconciling pages across all of them`);
+  }
+
+  interface PageEntry {
+    id: string;
+    containerId: string;
+    createdAt: number; // missing/0 → Infinity (loses to any real timestamp)
+    singleLine: boolean;
+    childIds: string[];
+  }
+  const byName = new Map<string, PageEntry[]>();
+  for (const containerId of containerIds) {
+    const cm = blocksMap.get(containerId);
+    if (!(cm instanceof Y.Map)) continue;
+    const kids = cm.get('childIds');
+    if (!(kids instanceof Y.Array)) continue;
+    for (const pageId of kids.toArray() as string[]) {
+      const pm = blocksMap.get(pageId);
+      if (!(pm instanceof Y.Map)) continue;
+      const content = typeof pm.get('content') === 'string' ? (pm.get('content') as string) : '';
+      const name = getPageTitle(content.trim()).toLowerCase();
+      if (!name) continue; // empty titles don't participate
+      const rawCreated = pm.get('createdAt');
+      const createdAt = typeof rawCreated === 'number' && rawCreated > 0 ? rawCreated : Infinity;
+      const pageKids = pm.get('childIds');
+      const entry: PageEntry = {
+        id: pageId,
+        containerId,
+        createdAt,
+        singleLine: !content.trim().includes('\n'),
+        childIds: pageKids instanceof Y.Array ? (pageKids.toArray() as string[]) : [],
+      };
+      const list = byName.get(name) || [];
+      list.push(entry);
+      byName.set(name, list);
+    }
+  }
+
+  interface TwinGroup { winner: PageEntry; losers: PageEntry[] }
+  const groups: TwinGroup[] = [];
+  // Deterministic group order (map iteration order varies with insertion,
+  // which varies with container/childIds order — sort by name).
+  for (const name of Array.from(byName.keys()).sort()) {
+    const entries = byName.get(name)!;
+    // Same block id listed in two containers is cross-parent duplication —
+    // deduplicateChildIds territory, not a twin. Collapse by id first.
+    const unique = Array.from(new Map(entries.map(e => [e.id, e])).values());
+    if (unique.length <= 1) continue;
+    unique.sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    groups.push({ winner: unique[0], losers: unique.slice(1) });
+  }
+  if (groups.length === 0) return 0;
+
+  // ── Write phase — single transaction ──
+  let processed = 0;
+  doc.transact(() => {
+    for (const { winner, losers } of groups) {
+      const winnerMap = blocksMap.get(winner.id);
+      if (!(winnerMap instanceof Y.Map)) continue;
+      const winnerKids = winnerMap.get('childIds');
+      if (!(winnerKids instanceof Y.Array)) continue;
+
+      for (const loser of losers) {
+        const loserMap = blocksMap.get(loser.id);
+        if (!(loserMap instanceof Y.Map)) continue;
+
+        // 1. Re-home the loser's children to the winner (order preserved).
+        const loserKids = loserMap.get('childIds');
+        if (loserKids instanceof Y.Array && loserKids.length > 0) {
+          const winnerKidSet = new Set(winnerKids.toArray() as string[]);
+          const moving = (loserKids.toArray() as string[])
+            .filter(cid => cid !== winner.id && !winnerKidSet.has(cid));
+          loserKids.delete(0, loserKids.length); // intentional full wipe — the block is being retired
+          if (moving.length > 0) {
+            winnerKids.push(moving);
+            for (const cid of moving) {
+              const cm = blocksMap.get(cid);
+              if (cm instanceof Y.Map) cm.set('parentId', winner.id);
+            }
+          }
+        }
+
+        // 2. Detach the loser from its container.
+        const containerMap = blocksMap.get(loser.containerId);
+        if (containerMap instanceof Y.Map) {
+          const containerKids = containerMap.get('childIds');
+          if (containerKids instanceof Y.Array) {
+            const idx = (containerKids.toArray() as string[]).indexOf(loser.id);
+            if (idx >= 0) containerKids.delete(idx, 1);
+          }
+        }
+
+        // 3. Retire the loser: shells die, body-bearing pages demote.
+        if (loser.singleLine) {
+          blocksMap.delete(loser.id);
+        } else {
+          winnerKids.push([loser.id]);
+          loserMap.set('parentId', winner.id);
+        }
+        processed++;
+      }
+    }
+  }, 'system');
+
+  if (processed > 0) {
+    const demoted = groups.reduce((n, g) => n + g.losers.filter(l => !l.singleLine).length, 0);
+    logger.warn(
+      `reconcilePageTwins: merged ${processed} twin page(s) across ${groups.length} name group(s) ` +
+      `(${demoted} demoted under winners, ${processed - demoted} shells deleted)`
+    );
+  }
+  return processed;
 }
 
 /**
@@ -1970,6 +2128,7 @@ export function useSyncedYDoc(
 
           // FLO-280: Dedup childIds on startup (catches pre-existing duplicates)
           const startupDeduped = deduplicateChildIds();
+          reconcilePageTwins();
           if (startupDeduped > 0) {
             logger.warn(`Startup dedup removed ${startupDeduped} duplicate childIds`);
           }
