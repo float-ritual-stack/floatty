@@ -242,13 +242,17 @@ impl YDocPersistence {
 
         // Get the max seq before deletion (this is what we're compacting away)
         // Use .optional()? to properly propagate DB errors while handling empty result
+        // MAX(id) on an empty/filtered-out table returns one row containing
+        // NULL — decode as Option<i64> (a plain i64 get fails on NULL; and
+        // .optional() alone doesn't help because a row IS returned).
         let max_seq_before: Option<i64> = tx
             .query_row(
                 "SELECT MAX(id) FROM ydoc_updates WHERE doc_key = ?",
                 [doc_key],
-                |row| row.get(0),
+                |row| row.get::<_, Option<i64>>(0),
             )
-            .optional()?;
+            .optional()?
+            .flatten();
 
         // Delete all existing updates for this doc
         tx.execute("DELETE FROM ydoc_updates WHERE doc_key = ?", [doc_key])?;
@@ -328,13 +332,17 @@ impl YDocPersistence {
             .map_err(|_| PersistenceError::LockPoisoned)?;
         let tx = conn.unchecked_transaction()?;
 
+        // MAX(id) on an empty/filtered-out table returns one row containing
+        // NULL — decode as Option<i64> (a plain i64 get fails on NULL; and
+        // .optional() alone doesn't help because a row IS returned).
         let max_seq_before: Option<i64> = tx
             .query_row(
                 "SELECT MAX(id) FROM ydoc_updates WHERE doc_key = ?",
                 [doc_key],
-                |row| row.get(0),
+                |row| row.get::<_, Option<i64>>(0),
             )
-            .optional()?;
+            .optional()?
+            .flatten();
 
         tx.execute("DELETE FROM ydoc_updates WHERE doc_key = ?", [doc_key])?;
 
@@ -725,6 +733,21 @@ mod tests {
             .unwrap();
         assert_eq!(epoch2, 2);
         assert_eq!(persistence.get_doc_epoch("test").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_reset_with_snapshot_on_empty_log() {
+        // MAX(id) on an empty table returns a row containing NULL — the reset
+        // must handle it (first-ever restore of a fresh doc), not error.
+        let persistence = YDocPersistence::open_in_memory().unwrap();
+
+        let (snap_seq, epoch) = persistence
+            .reset_with_snapshot("test", b"snapshot")
+            .unwrap();
+        assert!(snap_seq >= 1);
+        assert_eq!(epoch, 1);
+        // No prior updates -> no compaction boundary recorded
+        assert_eq!(persistence.get_compacted_through("test").unwrap(), None);
     }
 
     #[test]

@@ -259,6 +259,14 @@ pub struct YDocStore {
     /// reset_from_state. Cached here so hot paths (heartbeat, /state) don't
     /// query SQLite.
     doc_epoch: AtomicI64,
+    /// Serializes the persistence↔doc critical sections of apply_update /
+    /// persist_update / reset_from_state. Without it, a reset can slice
+    /// between an update's SQLite append and its in-memory apply (deleting
+    /// the appended row, then having the stale update applied onto the
+    /// restored doc), or discard a just-persisted local mutation.
+    /// NOT held across hook callbacks (emit_changes) — hooks re-enter the
+    /// store's write paths and would deadlock.
+    write_lock: std::sync::Mutex<()>,
     /// Optional callback for block change notifications.
     /// Set via `set_change_callback()` to enable hook integration.
     change_callback: RwLock<Option<ChangeCallback>>,
@@ -310,44 +318,69 @@ impl YDocStore {
 
         let doc = Doc::new();
 
-        // Replay persisted updates
-        let updates = persistence.get_updates(doc_key)?;
-        let update_count = updates.len();
-        let total_bytes: usize = updates.iter().map(|u| u.len()).sum();
+        // Replay persisted updates (seq-tagged, paged). Tracking each update's
+        // seq lets the applied-watermark stop at the first failure: seeding
+        // last_applied_seq past a decode/apply error would tell clients a
+        // sequence was applied when the in-memory doc doesn't contain it —
+        // they'd skip it permanently. Watermark = last seq before the first
+        // failure; later successes still apply (best-effort healing) but the
+        // conservative watermark makes clients re-fetch from the gap, and
+        // re-apply is idempotent.
+        let replay_start = std::time::Instant::now();
+        let mut watermark: i64 = 0;
+        let mut first_failure: Option<i64> = None;
+        let mut update_count: usize = 0;
+        let mut total_bytes: usize = 0;
+        let mut decode_errors = 0;
+        let mut apply_errors = 0;
 
-        if !updates.is_empty() {
-            log::info!(
-                "[startup] ydoc_replay_start update_count={} total_bytes={}",
-                update_count,
-                total_bytes
-            );
-            let replay_start = std::time::Instant::now();
+        const REPLAY_PAGE: usize = 10_000;
+        let mut since = 0i64;
+        loop {
+            let page = persistence.get_updates_since(doc_key, since, REPLAY_PAGE)?;
+            if page.is_empty() {
+                break;
+            }
             let mut txn = doc.transact_mut();
-            let mut decode_errors = 0;
-            let mut apply_errors = 0;
-
-            for update_bytes in updates {
-                match Update::decode_v1(&update_bytes) {
+            for (seq, update_bytes, _created_at) in &page {
+                update_count += 1;
+                total_bytes += update_bytes.len();
+                since = *seq;
+                match Update::decode_v1(update_bytes) {
                     Ok(u) => {
                         if let Err(e) = txn.apply_update(u) {
-                            log::error!("Failed to apply Y.Doc update: {}", e);
+                            log::error!("Failed to apply Y.Doc update seq={}: {}", seq, e);
                             apply_errors += 1;
+                            first_failure.get_or_insert(*seq);
+                        } else if first_failure.is_none() {
+                            watermark = *seq;
                         }
                     }
                     Err(e) => {
-                        log::error!("Corrupted Y.Doc update, cannot decode: {}", e);
+                        log::error!("Corrupted Y.Doc update seq={}, cannot decode: {}", seq, e);
                         decode_errors += 1;
+                        first_failure.get_or_insert(*seq);
                     }
                 }
             }
-
-            if decode_errors > 0 || apply_errors > 0 {
-                log::warn!(
-                    "Y.Doc replay completed with {} decode errors, {} apply errors",
-                    decode_errors,
-                    apply_errors
-                );
+            drop(txn);
+            if page.len() < REPLAY_PAGE {
+                break;
             }
+        }
+
+        if decode_errors > 0 || apply_errors > 0 {
+            log::warn!(
+                "Y.Doc replay completed with {} decode errors, {} apply errors — \
+                 applied-seq watermark held at {} (first failure at seq {:?}); \
+                 clients will re-fetch past the gap",
+                decode_errors,
+                apply_errors,
+                watermark,
+                first_failure
+            );
+        }
+        if update_count > 0 {
             log::info!(
                 "[startup] ydoc_replay_complete elapsed_ms={} update_count={} total_bytes={}",
                 replay_start.elapsed().as_millis(),
@@ -361,9 +394,9 @@ impl YDocStore {
             open_start.elapsed().as_millis()
         );
 
-        // Seed sync-position state: the whole persisted log was just replayed
-        // into the doc, so last-applied == persistence max.
-        let initial_seq = persistence.get_latest_seq(doc_key)?.unwrap_or(0);
+        // Seed sync-position state at the applied watermark (== persistence max
+        // when replay was clean).
+        let initial_seq = watermark;
         let initial_epoch = persistence.get_doc_epoch(doc_key)?;
 
         Ok(Self {
@@ -373,6 +406,7 @@ impl YDocStore {
             updates_since_compact_check: AtomicI64::new(0),
             last_applied_seq: AtomicI64::new(initial_seq),
             doc_epoch: AtomicI64::new(initial_epoch),
+            write_lock: std::sync::Mutex::new(()),
             change_callback: RwLock::new(None),
             broadcast_callback: std::sync::Mutex::new(None),
         })
@@ -714,6 +748,14 @@ impl YDocStore {
         let update =
             Update::decode_v1(update_bytes).map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
 
+        // Serialize the append↔apply pair against other writers — a
+        // concurrent reset_from_state slicing between them would delete the
+        // appended row and then apply this stale update onto the restored doc.
+        let op_guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?;
+
         // PERSIST FIRST: Write to DB before applying to memory
         // Returns the sequence number assigned to this update
         let seq = self
@@ -779,6 +821,7 @@ impl YDocStore {
                 );
             }
             drop(doc); // Release lock before callback
+            drop(op_guard); // hooks re-enter store write paths — never hold across callbacks
             self.emit_changes(changes);
         }
 
@@ -795,6 +838,13 @@ impl YDocStore {
         // Validate update format
         let _ =
             Update::decode_v1(update_bytes).map_err(|e| StoreError::UpdateDecode(e.to_string()))?;
+
+        // Serialize against reset_from_state — a reset slicing in here would
+        // discard this just-persisted local mutation from the fresh log.
+        let _op_guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?;
 
         // Persist only - memory already has the changes
         let seq = self
@@ -932,7 +982,15 @@ impl YDocStore {
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
 
-        // 5. Replace persisted state atomically (single SQLite transaction:
+        // 5. Serialize against in-flight apply_update/persist_update — without
+        //    this, an update's append↔apply pair can straddle the reset (row
+        //    deleted, stale update then applied onto the restored doc).
+        let _op_guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?;
+
+        //    Replace persisted state atomically (single SQLite transaction:
         //    delete + snapshot insert + compaction boundary + epoch bump).
         //    A crash leaves old state or new state, never an empty log.
         let (snapshot_seq, new_epoch) = self
@@ -975,6 +1033,20 @@ impl YDocStore {
     /// Current doc epoch. Increments on every reset_from_state.
     pub fn doc_epoch(&self) -> i64 {
         self.doc_epoch.load(Ordering::Acquire)
+    }
+
+    /// Read (last_applied_seq, doc_epoch) as a consistent pair.
+    ///
+    /// Both values are only mutated together under the doc write guard
+    /// (reset_from_state), so reading them under the read guard guarantees a
+    /// heartbeat can never pair the new snapshot's seq with the old epoch —
+    /// which would let a stale client treat restored data as the same lineage.
+    pub fn sync_position(&self) -> Result<(Option<i64>, i64), StoreError> {
+        let doc = self.doc.clone();
+        let _guard = doc.read().map_err(|_| StoreError::LockPoisoned)?;
+        let seq = self.last_applied_seq.load(Ordering::Acquire);
+        let epoch = self.doc_epoch.load(Ordering::Acquire);
+        Ok(((seq > 0).then_some(seq), epoch))
     }
 
     /// Get block metadata as JSON Value (for change events).
@@ -2039,6 +2111,51 @@ mod tests {
         // Reopen: whole log replayed → last-applied == persistence max
         let store = YDocStore::open(&db, "test").unwrap();
         assert_eq!(store.last_applied_seq(), Some(seq));
+    }
+
+    #[test]
+    fn test_replay_watermark_stops_at_corrupted_update() {
+        // A corrupted row mid-log must hold the applied-seq watermark BEFORE
+        // the failure — reporting past it would make clients permanently skip
+        // an update the in-memory doc never absorbed. Later valid updates
+        // still apply (best-effort), but the conservative watermark makes
+        // clients re-fetch across the gap (idempotent).
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("t.db");
+        let (seq1, seq3);
+        {
+            let store = YDocStore::open(&db, "test").unwrap();
+            seq1 = store.apply_update(&encode_test_state("b1", "one")).unwrap();
+            // Inject garbage directly at the persistence layer (seq1+1)
+            store
+                .persistence
+                .append_update("test", b"not a yjs update")
+                .unwrap();
+            seq3 = store.apply_update(&encode_test_state("b2", "two")).unwrap();
+            assert_eq!(store.last_applied_seq(), Some(seq3));
+        }
+
+        // Reopen: replay hits the garbage at seq1+1 → watermark holds at seq1.
+        let store = YDocStore::open(&db, "test").unwrap();
+        assert_eq!(store.last_applied_seq(), Some(seq1));
+        assert!(seq3 > seq1);
+    }
+
+    #[test]
+    fn test_sync_position_returns_consistent_pair() {
+        let dir = tempdir().unwrap();
+        let store = YDocStore::open(&dir.path().join("t.db"), "test").unwrap();
+        assert_eq!(store.sync_position().unwrap(), (None, 0));
+
+        let seq = store.apply_update(&encode_test_state("b1", "x")).unwrap();
+        assert_eq!(store.sync_position().unwrap(), (Some(seq), 0));
+
+        store
+            .reset_from_state(&encode_test_state("b2", "restored"))
+            .unwrap();
+        let (pos, epoch) = store.sync_position().unwrap();
+        assert_eq!(epoch, 1);
+        assert_eq!(pos, store.get_latest_seq().unwrap());
     }
 
     #[test]

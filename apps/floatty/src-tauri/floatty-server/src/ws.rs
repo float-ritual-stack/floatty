@@ -267,16 +267,21 @@ pub fn start_heartbeat(broadcaster: Arc<WsBroadcaster>, store: Arc<YDocStore>) {
                 continue; // Updates were sent, no heartbeat needed
             }
 
-            // Get latest seq from store
-            match store.get_latest_seq() {
-                Ok(Some(seq)) => {
-                    broadcaster.broadcast_heartbeat(seq, store.doc_epoch());
+            // Read (seq, epoch) as a consistent pair under the doc read guard —
+            // separate reads could emit a post-restore seq with the pre-restore
+            // epoch, letting stale clients treat restored data as the same
+            // lineage. Heartbeat seq is last-APPLIED (not persistence MAX(id)):
+            // may briefly trail the log under persist-first ordering, which is
+            // the safe direction (client re-fetches; apply is idempotent).
+            match store.sync_position() {
+                Ok((Some(seq), epoch)) => {
+                    broadcaster.broadcast_heartbeat(seq, epoch);
                 }
-                Ok(None) => {
-                    // No updates in database, nothing to heartbeat
+                Ok((None, _)) => {
+                    // No updates applied yet, nothing to heartbeat
                 }
                 Err(e) => {
-                    tracing::warn!("Heartbeat failed to get latest seq: {}", e);
+                    tracing::warn!("Heartbeat failed to read sync position: {}", e);
                 }
             }
         }
