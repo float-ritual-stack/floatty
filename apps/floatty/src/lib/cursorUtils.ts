@@ -360,11 +360,17 @@ export function hasLiveTextSelection(): boolean {
  */
 export function isShiftClickTextGesture(target: EventTarget | null): boolean {
   const active = document.activeElement;
-  if (
-    active && active.getAttribute('contenteditable') === 'true' &&
-    target instanceof Node && active.contains(target)
-  ) {
-    return true;
+  if (active && active.getAttribute('contenteditable') === 'true' && target instanceof Node) {
+    if (active.contains(target)) return true;
+    // Same-row clicks that DON'T land in the CE are still text gestures:
+    // the display overlay's tokens (wikilink pills, z-index above the
+    // editor) and the row's whitespace (past end-of-line, gutter padding)
+    // both produce targets outside the CE while the user is plainly
+    // extending within the block they're editing. Same .block-item that
+    // contains the focused editor = same block.
+    const el = target instanceof Element ? target : target.parentElement;
+    const row = el?.closest?.('.block-item');
+    if (row && row.contains(active)) return true;
   }
   return hasLiveTextSelection();
 }

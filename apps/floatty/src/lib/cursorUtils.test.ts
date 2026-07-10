@@ -486,3 +486,47 @@ describe('isShiftClickTextGesture', () => {
     expect(isShiftClickTextGesture(el.firstChild)).toBe(false);
   });
 });
+
+// Round 3 (live-test): overlay tokens and row whitespace produce click
+// targets OUTSIDE the CE while the user extends within the same block.
+describe('isShiftClickTextGesture — same-row targets outside the CE', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('true: target in the display overlay of the SAME block-item as the focused CE', () => {
+    const row = document.createElement('div');
+    row.className = 'block-item';
+    const ce = document.createElement('div');
+    ce.setAttribute('contenteditable', 'true');
+    ce.tabIndex = 0;
+    ce.appendChild(document.createTextNode('text with [[pill]]'));
+    const overlay = document.createElement('span');
+    overlay.className = 'md-wikilink';
+    overlay.appendChild(document.createTextNode('pill'));
+    row.appendChild(ce);
+    row.appendChild(overlay);
+    document.body.appendChild(row);
+    ce.focus();
+
+    expect(isShiftClickTextGesture(overlay.firstChild)).toBe(true);
+  });
+
+  it('false: target in a DIFFERENT block-item row', () => {
+    const rowA = document.createElement('div');
+    rowA.className = 'block-item';
+    const ceA = document.createElement('div');
+    ceA.setAttribute('contenteditable', 'true');
+    ceA.tabIndex = 0;
+    rowA.appendChild(ceA);
+    const rowB = document.createElement('div');
+    rowB.className = 'block-item';
+    rowB.appendChild(document.createTextNode('other block'));
+    document.body.append(rowA, rowB);
+    ceA.focus();
+    window.getSelection()?.removeAllRanges();
+
+    expect(isShiftClickTextGesture(rowB.firstChild)).toBe(false);
+  });
+});
