@@ -162,6 +162,7 @@ export function BlockItem(props: BlockItemProps) {
     store,
     cursor,
     onAutocompleteCheck: (content, offset, ref) => autocomplete.checkTrigger(content, offset, ref, props.id),
+    isAutocompleteOpen: autocomplete.isOpen,
     onContentChange: () => {
       // FLO-668 null contract: null → this block lives in a non-tab-hosted
       // pane (sidebar/floating); pinPane is tab-scoped, silent no-op.
