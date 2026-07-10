@@ -260,7 +260,11 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   // Cleanup: flush pending edits on unmount. If a block unmounts while dirty
   // (e.g., outline navigation, tab close, HMR reload) the user's in-flight
   // DOM content must be committed before teardown or it is lost.
+  // Reset the composition flag first: if compositionend never fired (element
+  // torn down mid-IME), a stuck true would make this final flush bail and
+  // silently drop the content.
   onCleanup(() => {
+    setIsComposing(false);
     flushContentUpdate();
   });
 
@@ -292,6 +296,13 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   // new store content.
   //
   // NOTE: Use innerText for comparison (preserves newlines from <br> elements)
+  //
+  // REACTIVITY CONTRACT: deps.getContentRef must be signal-backed (BlockItem
+  // passes a createSignal-mirror of the ref). CE mount/remount then re-runs
+  // this effect and hydrates the fresh editor from the store — the root fix
+  // for the "remounted editor is empty, next keystroke overwrites real
+  // content" family (quirk-audit cluster C). A plain `let` ref makes mounts
+  // invisible here and forces per-path DOM repairs at every remount site.
   createEffect(() => {
     const currentBlock = deps.getBlock();
     const contentRef = deps.getContentRef();
@@ -384,6 +395,11 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
   //
   // NOTE: Caller (BlockItem) wraps this to also dismiss autocomplete.
   const handleBlurSync = () => {
+    // Blur ends any IME composition de facto. WebKit normally fires
+    // compositionend before blur, but if it didn't (focus stolen mid-IME,
+    // element hidden), a stuck isComposing would block THIS commit and every
+    // future one for the block. Reset before committing.
+    setIsComposing(false);
     // Commit any in-flight DOM content to Y.Doc before blur completes.
     flushContentUpdate();
 

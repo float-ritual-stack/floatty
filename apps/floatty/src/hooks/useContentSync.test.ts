@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, type MockedFunction } from 'vitest';
-import { createRoot } from 'solid-js';
+import { createRoot, createSignal } from 'solid-js';
 
 // The hook calls `createLogger('ContentSync')` once at module load and stores
 // the result in a module-level `logger` variable. To inspect warn calls from
@@ -366,16 +366,16 @@ describe('FLO-387 blur-is-the-boundary: useContentSync', () => {
     });
   });
 
-  // This test documents an acknowledged limitation, not a bug. The PR plan
-  // claims "HMR reload while dirty → no data loss (onCleanup flushes)" —
-  // that claim is only true OUTSIDE of IME composition. flushContentUpdate
-  // bails early when isComposing() is true, because committing a half-
-  // composed CJK glyph would corrupt the block. As a result, a tab-close
-  // or HMR reload mid-composition silently drops the in-flight characters.
-  // The real fix (if one is ever queued) would be to call
-  // `compositionEnd` programmatically on teardown, which is non-trivial
-  // and cross-browser messy. For now the tradeoff is explicit.
-  it('10. Unmount during active IME composition does NOT flush (acknowledged limitation)', () => {
+  // FLIPPED by quirk-audit cluster C (was "acknowledged limitation: does
+  // NOT flush"). The old tradeoff dropped ALL in-flight characters when a
+  // block unmounted mid-IME, because flushContentUpdate bailed on the
+  // stuck isComposing flag. The audit reclassified the stuck flag as a
+  // data-loss bug: onCleanup now resets isComposing before the final
+  // flush, so unmount commits the in-flight DOM content. The cost is that
+  // the committed tail may include a half-composed glyph — data
+  // preservation wins over glyph purity at teardown, since the DOM (and
+  // any chance of finishing the composition) is gone either way.
+  it('10. Unmount during active IME composition DOES flush (cluster C: preservation over purity)', () => {
     let dispose!: () => void;
     const ref = makeContentRef('');
     const block: MutableBlock = { id: 'blk-10', content: '' };
@@ -389,21 +389,15 @@ describe('FLO-387 blur-is-the-boundary: useContentSync', () => {
       sync.setIsComposing(true);
       ref.innerText = '你';
       sync.updateContentFromDom(ref);
-      // Partial composition IS in the dirty set because updateContentFromDom
-      // still flips hasLocalChanges — but flushContentUpdate will bail on
-      // isComposing, so onCleanup cannot commit.
       expect(sync.hasLocalChanges()).toBe(true);
       expect(sync.isComposing()).toBe(true);
     });
 
-    // Unmount (disposer triggers onCleanup → flushContentUpdate → bails
-    // because isComposing is still true). The half-composed character is
-    // lost. This test makes the limitation explicit so a future regression
-    // where unmount-during-IME silently starts committing (possibly
-    // corrupting with a partial glyph) would be caught.
+    // Unmount: onCleanup resets isComposing, THEN flushes — the in-flight
+    // character is committed instead of silently dropped.
     dispose();
 
-    expect(store.updateBlockContent).toHaveBeenCalledTimes(0);
+    expect(store.updateBlockContent).toHaveBeenCalledWith('blk-10', '你');
   });
 });
 
@@ -479,5 +473,85 @@ describe('flushPendingContent — cross-module flush registry (FLO-646)', () => 
   it('is a no-op when nothing is mounted', () => {
     // No active instances — flushPendingContent should not throw.
     expect(() => flushPendingContent()).not.toThrow();
+  });
+});
+
+// ─── Quirk-audit cluster C — composition + remount hydration ──────────
+
+describe('cluster C: stuck composition recovery', () => {
+  it('handleBlurSync resets a stuck isComposing flag and still commits', () => {
+    inRoot(() => {
+      const block: MutableBlock = { id: 'b1', content: 'old' };
+      const contentRef = makeContentRef('typed content');
+      const { deps, store } = makeDeps({ block, contentRef });
+      const sync = useContentSync(deps);
+      // Simulate: compositionstart fired, element lost focus before
+      // compositionend ever arrived — the flag is stuck true.
+      sync.setIsComposing(true);
+      sync.setHasLocalChanges(true);
+
+      sync.handleBlurSync();
+
+      // The stuck flag must not block the blur commit.
+      expect(sync.isComposing()).toBe(false);
+      expect(store.updateBlockContent).toHaveBeenCalledWith('b1', 'typed content');
+      expect(sync.hasLocalChanges()).toBe(false);
+    });
+  });
+
+  it('unmount with stuck isComposing still flushes pending content', () => {
+    inRoot((dispose) => {
+      const block: MutableBlock = { id: 'b2', content: 'old' };
+      const contentRef = makeContentRef('unsaved typing');
+      const { deps, store } = makeDeps({ block, contentRef });
+      const sync = useContentSync(deps);
+      sync.setIsComposing(true);
+      sync.setHasLocalChanges(true);
+
+      dispose(); // unmount — onCleanup must reset the flag THEN flush
+
+      expect(store.updateBlockContent).toHaveBeenCalledWith('b2', 'unsaved typing');
+    });
+  });
+});
+
+describe('cluster C: remount hydration (signal-backed ref)', () => {
+  it('sync effect hydrates a newly mounted contentRef from the store', () => {
+    // The REACTIVITY CONTRACT: when getContentRef is signal-backed, a CE
+    // that mounts LATE (mode toggle, output-block Escape) re-runs the sync
+    // effect and receives store content — instead of sitting empty and
+    // letting the next keystroke overwrite real content.
+    //
+    // NOTE: effects don't run inside createRoot's body — mount the editor
+    // and assert AFTER the root completes (signal writes then propagate
+    // synchronously).
+    const block: MutableBlock = { id: 'b3', content: 'real content from store' };
+    const [refSig, setRefSig] = createSignal<HTMLDivElement | undefined>(undefined);
+    const store = {
+      updateBlockContent: vi.fn(),
+      lastUpdateOrigin: 'user',
+    };
+    const deps: ContentSyncDeps = {
+      getBlockId: () => block.id,
+      getBlock: () => block,
+      getContentRef: () => refSig(),
+      store,
+    };
+    let sync!: ReturnType<typeof useContentSync>;
+    const dispose = createRoot((d) => {
+      sync = useContentSync(deps);
+      return d;
+    });
+    try {
+      // A fresh, EMPTY editor mounts (Show flip). No manual repair anywhere —
+      // the signal write re-runs the sync effect.
+      const el = makeContentRef('');
+      setRefSig(el);
+
+      expect(el.innerText).toBe('real content from store');
+      expect(sync.displayContent()).toBe('real content from store');
+    } finally {
+      dispose();
+    }
   });
 });
