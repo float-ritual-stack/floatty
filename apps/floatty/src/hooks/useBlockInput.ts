@@ -58,7 +58,10 @@ export interface BlockInputDependencies {
 
   // Selection (optional - for multi-select support)
   onSelect?: (id: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => void;
-  selectionAnchor?: string | null;
+  // Getter, not value: SolidJS updates props on the same component instance,
+  // so a captured value goes stale after the first Shift+Arrow sets the
+  // anchor — breaking range growth entirely (solidjs-patterns #6).
+  getSelectionAnchor?: () => string | null | undefined;
 
   // Wikilink navigation (optional - for Cmd+Enter on [[links]])
   getWikilinkAtCursor?: () => string | null;
@@ -516,7 +519,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       case 'navigate_up_with_selection':
         e.preventDefault();
         if (keyAction.prevId && deps.onSelect) {
-          if (!deps.selectionAnchor) {
+          if (!deps.getSelectionAnchor?.()) {
             // First Shift+Arrow: select current, set anchor, move focus only
             deps.onSelect(deps.getBlockId(), 'anchor');
           } else {
@@ -532,7 +535,7 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
       case 'navigate_down_with_selection':
         e.preventDefault();
         if (keyAction.nextId && deps.onSelect) {
-          if (!deps.selectionAnchor) {
+          if (!deps.getSelectionAnchor?.()) {
             // First Shift+Arrow: select current, set anchor, move focus only
             deps.onSelect(deps.getBlockId(), 'anchor');
           } else {

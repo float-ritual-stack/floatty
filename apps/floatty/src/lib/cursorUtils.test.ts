@@ -14,6 +14,7 @@ import {
   setCursorAtOffset,
   isCursorAtContentStart,
   isCursorAtContentEnd,
+  hasLiveTextSelection,
 } from './cursorUtils';
 
 /**
@@ -326,5 +327,75 @@ describe('cursorUtils', () => {
         expect(getAbsoluteCursorOffset(el)).toBe(i);
       }
     });
+  });
+});
+
+// ─── hasLiveTextSelection (quirk-audit cluster B) ─────────────────────
+// The predicate both Cmd+C and shift+click consult before block-selecting:
+// a non-collapsed selection inside a focused contentEditable means the user
+// is working with TEXT, and block-level gestures must stand down.
+
+describe('hasLiveTextSelection', () => {
+  function buildFocusableCE(text: string): HTMLDivElement {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', 'true');
+    el.tabIndex = 0; // jsdom focuses elements with tabIndex
+    el.appendChild(document.createTextNode(text));
+    document.body.appendChild(el);
+    return el;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('true: focused contentEditable with a non-collapsed selection', () => {
+    const el = buildFocusableCE('hello world');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 5); // "hello"
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(hasLiveTextSelection()).toBe(true);
+  });
+
+  it('false: focused contentEditable but the selection is collapsed (caret only)', () => {
+    const el = buildFocusableCE('hello world');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 3);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(hasLiveTextSelection()).toBe(false);
+  });
+
+  it('false: selection exists but focus is NOT in a contentEditable', () => {
+    const el = document.createElement('div');
+    el.appendChild(document.createTextNode('plain text'));
+    document.body.appendChild(el);
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 5);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    (document.activeElement as HTMLElement | null)?.blur?.();
+
+    expect(hasLiveTextSelection()).toBe(false);
+  });
+
+  it('false: no selection at all', () => {
+    const el = buildFocusableCE('hello');
+    el.focus();
+    window.getSelection()?.removeAllRanges();
+
+    expect(hasLiveTextSelection()).toBe(false);
   });
 });

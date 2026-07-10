@@ -320,3 +320,18 @@ export function isCursorAtContentEnd(element: HTMLElement): boolean {
   return getAbsoluteCursorOffset(element) >= contentLength;
 }
 
+
+/**
+ * True when the user has a live (non-collapsed) text selection inside a
+ * focused contentEditable — the signal that text-level gestures (Cmd+C,
+ * shift+click range extension) should win over block-level selection.
+ *
+ * Uses the contenteditable attribute (not isContentEditable) to match the
+ * outliner's isEditing idiom and stay observable under jsdom.
+ */
+export function hasLiveTextSelection(): boolean {
+  const active = document.activeElement;
+  if (!active || active.getAttribute('contenteditable') !== 'true') return false;
+  const selection = window.getSelection();
+  return !!selection && !selection.isCollapsed;
+}
