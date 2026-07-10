@@ -340,3 +340,31 @@ export function hasLiveTextSelection(): boolean {
   return !!anchorNode && !!focusNode
     && active.contains(anchorNode) && active.contains(focusNode);
 }
+
+/**
+ * True when a shift+click should be treated as a TEXT gesture (caret →
+ * click-point extension) rather than block-range selection.
+ *
+ * Two signals, either suffices:
+ * 1. The click landed INSIDE the currently-focused contentEditable —
+ *    click-to-place-caret then shift+click-to-extend starts from a
+ *    COLLAPSED caret, and WebKit's selection state is not reliably
+ *    non-collapsed yet during the click event, so target containment is
+ *    the dependable signal for the within-one-block case.
+ * 2. A live non-collapsed selection exists (hasLiveTextSelection) — the
+ *    drag-then-shift-click case, where the target may sit outside the
+ *    focused editor's subtree.
+ *
+ * Shift+click on a DIFFERENT block (focus elsewhere, no live selection)
+ * returns false — that's genuine block-range selection.
+ */
+export function isShiftClickTextGesture(target: EventTarget | null): boolean {
+  const active = document.activeElement;
+  if (
+    active && active.getAttribute('contenteditable') === 'true' &&
+    target instanceof Node && active.contains(target)
+  ) {
+    return true;
+  }
+  return hasLiveTextSelection();
+}

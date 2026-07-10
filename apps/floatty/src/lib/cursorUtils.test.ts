@@ -15,6 +15,7 @@ import {
   isCursorAtContentStart,
   isCursorAtContentEnd,
   hasLiveTextSelection,
+  isShiftClickTextGesture,
 } from './cursorUtils';
 
 /**
@@ -414,5 +415,74 @@ describe('hasLiveTextSelection', () => {
 
     expect(document.activeElement).toBe(editorB);
     expect(hasLiveTextSelection()).toBe(false);
+  });
+});
+
+// ─── isShiftClickTextGesture (cluster B live-test round 2) ────────────
+// Click places a caret; shift+click extends. The selection is COLLAPSED
+// during the click event, so the guard keys on target containment within
+// the focused editor — not on selection state.
+
+describe('isShiftClickTextGesture', () => {
+  function buildFocusableCE2(text: string): HTMLDivElement {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', 'true');
+    el.tabIndex = 0;
+    el.appendChild(document.createTextNode(text));
+    document.body.appendChild(el);
+    return el;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('true: shift+click target inside the FOCUSED editor, even with a collapsed caret', () => {
+    const el = buildFocusableCE2('click here then shift-click there');
+    el.focus();
+    // caret placed (collapsed) — the exact state during a click→shift+click
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 3);
+    range.collapse(true);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    expect(isShiftClickTextGesture(el.firstChild)).toBe(true);
+  });
+
+  it('false: shift+click on a DIFFERENT block (block-range selection)', () => {
+    const editorA = buildFocusableCE2('block a');
+    const blockB = document.createElement('div');
+    blockB.appendChild(document.createTextNode('block b'));
+    document.body.appendChild(blockB);
+    editorA.focus();
+    window.getSelection()?.removeAllRanges();
+
+    expect(isShiftClickTextGesture(blockB.firstChild)).toBe(false);
+  });
+
+  it('true: target outside the focused editor but a live selection exists (drag case)', () => {
+    const el = buildFocusableCE2('dragged selection');
+    el.focus();
+    const range = document.createRange();
+    range.setStart(el.firstChild!, 0);
+    range.setEnd(el.firstChild!, 7);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const elsewhere = document.createElement('div');
+    document.body.appendChild(elsewhere);
+
+    expect(isShiftClickTextGesture(elsewhere)).toBe(true);
+  });
+
+  it('false: nothing focused, no selection', () => {
+    const el = buildFocusableCE2('inert');
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    window.getSelection()?.removeAllRanges();
+
+    expect(isShiftClickTextGesture(el.firstChild)).toBe(false);
   });
 });

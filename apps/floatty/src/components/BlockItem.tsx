@@ -5,7 +5,7 @@ import { useBlockOperations } from '../hooks/useBlockOperations';
 import { useCursor } from '../hooks/useCursor';
 import { useBlockInput } from '../hooks/useBlockInput';
 import { useBlockDrag } from '../hooks/useBlockDrag';
-import { getAbsoluteCursorOffset, setCursorAtOffset, hasLiveTextSelection } from '../lib/cursorUtils';
+import { getAbsoluteCursorOffset, setCursorAtOffset, isShiftClickTextGesture } from '../lib/cursorUtils';
 import { useContentSync } from '../hooks/useContentSync';
 import { useDoorChirpListener } from '../hooks/useDoorChirpListener';
 import { findTabIdByPaneId } from '../hooks/useLayoutStore';
@@ -903,11 +903,14 @@ export function BlockItem(props: BlockItemProps) {
         onClick={(e: MouseEvent) => {
           // FLO-74: Handle selection modifiers
           if (props.onSelect) {
-            // Shift+click while a native text selection is live inside a
-            // contentEditable is TEXT-range extension — the browser already
-            // handled it. Also block-selecting here double-registers the
-            // gesture and hijacks the subsequent Cmd+C.
-            if (e.shiftKey && hasLiveTextSelection()) {
+            // Shift+click as a TEXT gesture: either extending from a caret
+            // inside the focused editor (target containment — the selection
+            // is still collapsed during the click event, so it can't be the
+            // signal), or extending an existing drag selection. Both must
+            // reach the browser untouched; block-selecting here hijacks the
+            // gesture and the follow-up Cmd+C. Shift+click on a different
+            // block still does block-range selection.
+            if (e.shiftKey && isShiftClickTextGesture(e.target)) {
               return; // don't touch block selection OR focus routing
             }
             if (e.shiftKey) {
