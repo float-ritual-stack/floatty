@@ -28,6 +28,9 @@ Findings: full token-span remount per keystroke (`BlockDisplay.tsx:868`, fresh o
 Severity: daily at scale; each fix is shallow and independent.
 Fix shape: per-pane `createSelector`; parse cache + stable-keyed spans; cached Fuse alongside the pageNames memo; `!content.includes('[[')` prescreen. All **any-model**. Virtualization deferred until a profile proves the reflow dominates (verdict says WKWebView layout is incremental).
 
+### E. Sync/reconcile resurrection & data-loss holes
+The sixth mechanism — four CONFIRMED holes sharing the "healing path destroys data" shape. Broken out in full as §3 below (fix-vs-preserve lists), since it is the offline/fast-boot prerequisite set.
+
 ### F. Page-name uniqueness enforced nowhere
 Findings (all CONFIRMED): hook-lag window duplicates frontend-created pages (`discovery.rs:454`); frontend first-match vs server LWW split-brain, winner flips across restarts (`page_name_index.rs:274`, `useBacklinkNavigation.ts:91-99`); wikilink-click mirror race (`useBacklinkNavigation.ts:243`); un-normalized `:name` bypasses collision check then hijacks the index (`discovery.rs:445/586` vs `page_name_index.rs:398-409`); name-keyed removal evicts the survivor — deleting one twin makes three (`page_name_index.rs:293-299`, and fires for ANY deleted block whose first line matches a page name); no contract anywhere, container included, with `starts_with` vs exact-match asymmetry (`discovery.rs:474-494`, `page_name_index.rs:412-414`, `useBacklinkNavigation.ts:60`).
 Severity: the duplicate-daily-note quirk, and it amplifies under the natural cleanup response.
