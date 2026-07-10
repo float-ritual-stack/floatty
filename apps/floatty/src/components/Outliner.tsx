@@ -13,7 +13,7 @@
  * and manage state correctly but will lose those specific shortcuts until
  * the keybind paths are generalized (see FLO-669 for the call-site audit).
  */
-import { batch, createSignal, createEffect, createMemo, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
+import { batch, createSignal, createEffect, createMemo, createSelector, onMount, onCleanup, Show, on, ErrorBoundary, Switch, Match } from 'solid-js';
 import { Key } from '@solid-primitives/keyed';
 import { tinykeys } from 'tinykeys';
 import { useSyncedYDoc } from '../hooks/useSyncedYDoc';
@@ -65,6 +65,13 @@ export function Outliner(props: OutlinerProps) {
 
   // FLO-77: Use paneStore for focusedBlockId (enables clone-on-split)
   const focusedBlockId = () => paneStore.getFocusedBlockId(props.paneId);
+  // Keyed selector for per-block focus checks: only the two BlockItems whose
+  // answer flips re-run on a focus change, instead of every mounted memo
+  // doing its own === against the pane's focused id (O(N) fanout —
+  // quirk-audit cluster D). Drilled through the recursive BlockItem tree as
+  // a STABLE function prop, so the prop surface never invalidates (the
+  // FLO-529 concern that removed the focusedBlockId value drill).
+  const isFocusedInPane = createSelector(focusedBlockId);
   const setFocusedBlockId = (id: string | null) => paneStore.setFocusedBlockId(props.paneId, id);
   const [confirmClear, setConfirmClear] = createSignal(false);
 
@@ -881,6 +888,7 @@ export function Outliner(props: OutlinerProps) {
                       onNavigateUp={() => handleNavigateUp(id)}
                       onNavigateDown={() => handleNavigateDown(id)}
                       isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
+                      isFocusedInPane={isFocusedInPane}
                       onSelect={selection.handleSelect}
                       selectionAnchor={selection.selectionAnchor()}
                       getVisibleBlockIds={getVisibleBlockIds}
@@ -902,6 +910,7 @@ export function Outliner(props: OutlinerProps) {
                   onNavigateUp={() => handleNavigateUp(zoomedRootId()!)}
                   onNavigateDown={() => handleNavigateDown(zoomedRootId()!)}
                   isBlockSelected={(blockId) => selection.selectedBlockIds().has(blockId)}
+                      isFocusedInPane={isFocusedInPane}
                   onSelect={selection.handleSelect}
                   selectionAnchor={selection.selectionAnchor()}
                   getVisibleBlockIds={getVisibleBlockIds}

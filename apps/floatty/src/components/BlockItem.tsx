@@ -66,6 +66,9 @@ interface BlockItemProps {
   onFocus: (id: string) => void;
   // FLO-74: Multi-select
   isBlockSelected?: (id: string) => boolean;
+  /** Keyed focus selector from the pane host (createSelector in Outliner).
+   *  Optional: standalone hosts and tests fall back to the direct compare. */
+  isFocusedInPane?: (id: string) => boolean;
   onSelect?: (id: string, mode: 'set' | 'toggle' | 'range' | 'anchor') => void;
   selectionAnchor?: string | null;
   getVisibleBlockIds?: () => string[];
@@ -90,7 +93,10 @@ export function BlockItem(props: BlockItemProps) {
   // store path narrows the invalidation surface — memo bodies still re-run
   // (all readers of state.focusedBlockId[paneId]) but only the two BlockItems
   // whose isFocused result actually flips propagate to downstream effects.
-  const isFocused = createMemo(() => paneStore.getFocusedBlockId(props.paneId) === props.id);
+  const isFocused = createMemo(() =>
+    props.isFocusedInPane
+      ? props.isFocusedInPane(props.id)
+      : paneStore.getFocusedBlockId(props.paneId) === props.id);
   // pages:: children default collapsed — untrack parent content read to avoid
   // N×M reactivity (265 children re-evaluating on every keystroke in parent).
   // pages:: prefix is structural, doesn't change while children are mounted.
@@ -1116,6 +1122,7 @@ export function BlockItem(props: BlockItemProps) {
             onFocus={props.onFocus}
             cancelContentUpdate={cancelContentUpdate}
             isBlockSelected={props.isBlockSelected}
+                  isFocusedInPane={props.isFocusedInPane}
             setInlineDoorRef={setInlineDoorRef}
           />
 
@@ -1156,6 +1163,7 @@ export function BlockItem(props: BlockItemProps) {
                   depth={props.depth + 1}
                   onFocus={props.onFocus}
                   isBlockSelected={props.isBlockSelected}
+                  isFocusedInPane={props.isFocusedInPane}
                   onSelect={props.onSelect}
                   selectionAnchor={props.selectionAnchor}
                   getVisibleBlockIds={props.getVisibleBlockIds}
