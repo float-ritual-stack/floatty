@@ -595,3 +595,41 @@ describe('editable detection matches the Solid-rendered DOM', () => {
     expect(hasLiveTextSelection()).toBe(false);
   });
 });
+
+// Pins the DOM assumption isShiftClickTextGesture's row-containment relies
+// on: .block-item rows do NOT nest. Children render in .block-children, a
+// SIBLING of .block-item inside .block-wrapper (BlockItem.tsx:882/888/1158).
+// If the outliner DOM ever changes to nest rows, this test forces a revisit.
+describe('isShiftClickTextGesture — parent/child rows (real outliner DOM shape)', () => {
+  it('false: click on the PARENT row while a CHILD editor is focused', () => {
+    document.body.innerHTML = '';
+    // .block-wrapper > .block-item(parent) + .block-children > .block-wrapper > .block-item(child)
+    const wrapper = document.createElement('div');
+    wrapper.className = 'block-wrapper';
+    const parentRow = document.createElement('div');
+    parentRow.className = 'block-item';
+    parentRow.appendChild(document.createTextNode('parent overlay/whitespace'));
+    const childrenBox = document.createElement('div');
+    childrenBox.className = 'block-children';
+    const childWrapper = document.createElement('div');
+    childWrapper.className = 'block-wrapper';
+    const childRow = document.createElement('div');
+    childRow.className = 'block-item';
+    const childCE = document.createElement('div');
+    childCE.setAttribute('contenteditable', '');
+    childCE.tabIndex = 0;
+    childCE.appendChild(document.createTextNode('child editor'));
+    childRow.appendChild(childCE);
+    childWrapper.appendChild(childRow);
+    childrenBox.appendChild(childWrapper);
+    wrapper.append(parentRow, childrenBox);
+    document.body.appendChild(wrapper);
+    childCE.focus();
+    window.getSelection()?.removeAllRanges();
+
+    // Click target on the parent row: closest('.block-item') is the PARENT
+    // row, which does NOT contain the focused child editor → block-range
+    // selection proceeds (not suppressed).
+    expect(isShiftClickTextGesture(parentRow.firstChild)).toBe(false);
+  });
+});
