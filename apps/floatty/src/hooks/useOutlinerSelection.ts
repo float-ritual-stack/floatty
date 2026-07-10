@@ -15,6 +15,8 @@ interface UseOutlinerSelectionParams {
     blocks: Record<string, { content: string; parentId: string | null; childIds: string[] }>;
     rootIds: string[];
     deleteBlocks: (ids: string[]) => void;
+    updateBlockContent: (id: string, content: string) => void;
+    createBlockInside: (parentId: string) => string;
   };
   paneStore: {
     setZoomedRoot: (paneId: string, blockId: string | null) => void;
@@ -280,18 +282,55 @@ export function useOutlinerSelection(params: UseOutlinerSelectionParams) {
       }
     }
 
+    // Zoom invariant (quirk-audit cluster A, live-test follow-up): if the
+    // selection covers EVERY direct child of the zoomed page, deleting them
+    // all used to unzoom to the full tree — a jarring bounce when
+    // Cmd+A→Backspace was just meant to clear the last block. Instead:
+    // spare the first selected child and CLEAR its content. The page keeps
+    // exactly one typeable child, the zoom holds, and the spared block's
+    // identity survives (backlinks, undo). Everywhere else, selection
+    // delete keeps its normal remove-the-block semantics.
+    // (A direct child disappears iff it is itself selected — deeper
+    // selected blocks only take their own subtrees — so surviving
+    // children are exactly the unselected ones.)
+    const zoomedRoot = zoomedRootId();
+    if (zoomedRoot && !selected.has(zoomedRoot)) {
+      const zoomedBlock = store.blocks[zoomedRoot];
+      if (zoomedBlock && zoomedBlock.childIds.length > 0) {
+        const surviving = zoomedBlock.childIds.filter(id => !selected.has(id));
+        if (surviving.length === 0) {
+          const spareId = zoomedBlock.childIds.find(id => selected.has(id))!;
+          const toDelete = [...selected].filter(id => id !== spareId);
+          if (toDelete.length > 0) store.deleteBlocks(toDelete);
+          store.updateBlockContent(spareId, '');
+          clearSelection();
+          setFocusedBlockId(spareId);
+          return;
+        }
+      }
+    }
+
     // Delete all selected blocks atomically
     store.deleteBlocks([...selected]);
     clearSelection();
 
-    // Edge case: if zoomed and zoomed root now has no children, unzoom
-    const zoomedRoot = zoomedRootId();
+    // If the zoomed page itself was deleted, the zoom target is gone — the
+    // only correct move is out. If it survived but somehow lost every child
+    // (defensive; the clear-in-place branch above handles the normal path),
+    // restore the typeable-child invariant instead of bouncing to the top.
     if (zoomedRoot) {
       const zoomedBlock = store.blocks[zoomedRoot];
-      if (zoomedBlock && zoomedBlock.childIds.length === 0) {
+      if (!zoomedBlock) {
         paneStore.setZoomedRoot(paneId, null);
-        setFocusedBlockId(zoomedRoot);
+        setFocusedBlockId(null);
         return;
+      }
+      if (zoomedBlock.childIds.length === 0) {
+        const restoredId = store.createBlockInside(zoomedRoot);
+        if (restoredId) {
+          setFocusedBlockId(restoredId);
+          return;
+        }
       }
     }
 
