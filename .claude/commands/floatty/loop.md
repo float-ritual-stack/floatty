@@ -12,8 +12,8 @@ hooks:
             ONE check: if this session changed code or docs (Edit/Write tools or
             git commits appear in the transcript), was the track's STATE.md
             (.float/work/<track>/STATE.md) updated with an evidence-linked entry —
-            an outcome that cites a commit hash, test output, or equivalent
-            tool-result evidence from this session?
+            an outcome that cites a commit hash, PR link, test output, or
+            equivalent tool-result evidence from this session?
 
             Always allow:
             - User explicitly pausing ("stopping for now", "picking up later")
@@ -79,8 +79,11 @@ PR link. No evidence, no row.>
 
 1. **Reorient.** Read STATE.md top to bottom, read the linked design doc, fold
    in the invocation's session context. Then drift-check:
-   `git log --oneline --since="<last updated>" --all` — **git wins over STATE.md
-   claims**. Correct STATE.md before working, not after.
+   `git log --oneline --since="<last updated>" --all` plus
+   `git status --porcelain` — committed history AND uncommitted worktree state.
+   (`--all` is deliberate: tracks span branches — squash-merges land on main
+   while the track branch lives elsewhere.) **Git wins over STATE.md claims**.
+   Correct STATE.md before working, not after.
 
 2. **Work.** Take the next action from `## Now`. Units are PR-sized — one
    green-gated, reviewable increment per unit. Existing rules apply by
@@ -93,9 +96,9 @@ PR link. No evidence, no row.>
    (`lint-discipline.md` §4 — quote real output, not "should pass"), runtime
    verification in the running dev app when the unit has runtime behavior
    (unit tests are necessary, not sufficient), and a **fresh-context verifier
-   subagent** — give it the design doc + the diff, tell it to argue the unit is
-   NOT done, and have it check against `do-not.md` and CLAUDE.md's Four Bug
-   Categories. If the unit introduces a new primitive (new entity, storage
+   subagent** — give it the current STATE.md, the design doc + the diff, tell
+   it to argue the unit is NOT done, and have it check against banked Ground
+   Truth, `do-not.md`, and CLAUDE.md's Four Bug Categories. If the unit introduces a new primitive (new entity, storage
    topology, cross-cutting abstraction, public API surface), dispatch
    `architecture-reviewer` before committing to it.
 
