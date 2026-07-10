@@ -6,6 +6,34 @@ All notable changes to floatty are documented here.
 
 ---
 
+## [0.20.0] - 2026-07-10
+
+The gestures release. Every remaining frontend cluster from the 2026-07-09 quirk audit, plus a same-day live-test loop that ended in a root cause worth reading twice. **Frontend-only — float-box needs nothing.**
+
+### 🎯 Zoom invariant ([[PR #330]] / [[PR #335]] — cluster A)
+
+- **The empty-page dead-end is gone.** Enter on a zoomed page's title creates a *visible* child (boundary positions) or splits the tail into the first child (mid-title) — never an invisible sibling under `pages::`. Backspace can't merge your first block into the title. Deleting the last child restores a typeable one.
+- **Cmd+A → Backspace on a page's last block clears it in place** — no more bounce to the top of the full outline. Block identity survives (undo, backlinks). Partial selections keep normal delete semantics.
+
+### ✂️ Selection & copy ([[PR #331]] / [[PR #335]] — cluster B + live-test)
+
+- **Text selection wins over block selection.** Cmd+C with words selected copies the words. Shift+click inside the block you're editing extends the text selection (including across `[[wikilink]]` pills, which now yield to shift instead of navigating). Shift+Arrow grows a multi-line text selection from a live selection — with gesture continuity through the collapse-point when reversing direction. Block selection still engages from a fresh collapsed cursor, and shift+click across different blocks still does block-range selection.
+- **The root cause that made three earlier guard fixes dead on arrival**: SolidJS renders the `contentEditable` prop as `contenteditable=""` — so the historical `getAttribute('contenteditable') === 'true'` idiom **never matched a production editor**, including two `isEditing` checks from the FLO-74 era. Everything now routes through one `isEditableElement()` predicate, with tests pinned to the real rendered DOM shape. This also fixes the long-standing "highlight mid-block, type to replace → outline stops responding to keyboard" family.
+
+### ⌨️ Dead typing ([[PR #332]] — cluster C)
+
+- **A freshly-mounted editor can no longer eat your next keystroke.** CE mount is a first-class reactive sync trigger — remounted editors (table raw toggle, render-title exit, Escape from image/door views) hydrate from the store instead of sitting empty over real content. Structured paste into an empty block repairs the editor immediately; unhandled paste inserts plain text (no more rich-HTML overlay garbage); a stuck IME composition flag can no longer block all future commits (unmount mid-composition now commits — preservation over glyph purity).
+
+### ⚡ Keyboard perf ([[PR #333]] — cluster D)
+
+- Focus flips are O(2) instead of O(N-blocks) (keyed selector). The `[[` autocomplete no longer rebuilds its search index per keystroke (identity-cached Fuse). The per-input cursor DOM walk is skipped entirely for content without `[[`. Inline token parsing is content-cached, so identical content re-renders identity-stable — spans stop remounting.
+
+### 🌱 Twin-page healing ([[PR #334]] — cluster F step 5)
+
+- `reconcilePageTwins` runs at startup: duplicate pages merge into the oldest twin (children re-homed in order, body-bearing losers demoted under the winner for review, pure title shells deleted) — the 2026-07-10 prod tidy, codified and automatic. Deterministic across clients; leading-newline malformed pages can't false-match a real page.
+
+---
+
 ## [0.19.0] - 2026-07-10
 
 The data-loss release — in the good sense. A 40-agent audit ([[PR #323]], `docs/audits/2026-07-09-quirk-audit.md`) traced every long-standing sync quirk to a root cause, and this release closes all five confirmed data-destroyers: destructive restores can no longer resurrect deleted content, a failed boot can no longer destroy your local backup, and the tree-integrity sweep now **recovers** orphaned blocks instead of deleting them. Slurped markdown also stops mangling: lists stay whole, code fences get their own block. **Both the server (float-box) and the app need this release** — the epoch protocol is end-to-end.
