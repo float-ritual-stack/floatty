@@ -1837,3 +1837,48 @@ describe('reconcilePageTwins — duplicate page healing', () => {
     expect(pageKids(doc, 'pages-root-2')).toEqual([]);
   });
 });
+
+// CodeRabbit round-1 regression (PR #334): a malformed page whose content
+// STARTS with a newline has an EMPTY first line — its title is empty on the
+// server (content.lines().next()) and must be empty here too. Pre-trimming
+// folded "\n# Foo" into "foo" and destructively merged it with a real Foo.
+describe('reconcilePageTwins — leading-newline pages do not twin', () => {
+  it('leaves a "\\n# Foo" page alone next to a real Foo page', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+    doc.transact(() => {
+      const container = new Y.Map<unknown>();
+      container.set('id', 'pages-root');
+      container.set('parentId', null);
+      container.set('content', 'pages::');
+      container.set('collapsed', true);
+      container.set('createdAt', 1);
+      container.set('updatedAt', 1);
+      const kids = new Y.Array<string>();
+      kids.push(['real-foo', 'malformed-foo']);
+      container.set('childIds', kids);
+      blocksMap.set('pages-root', container);
+      rootIds.push(['pages-root']);
+
+      for (const [id, content, createdAt] of [
+        ['real-foo', '# Foo', 100],
+        ['malformed-foo', '\n# Foo', 50], // OLDER — would WIN and absorb the real page if it twinned
+      ] as const) {
+        const m = new Y.Map<unknown>();
+        m.set('id', id);
+        m.set('parentId', 'pages-root');
+        m.set('content', content);
+        m.set('collapsed', false);
+        m.set('createdAt', createdAt);
+        m.set('updatedAt', createdAt);
+        m.set('childIds', new Y.Array<string>());
+        blocksMap.set(id, m);
+      }
+    });
+
+    expect(reconcilePageTwins(doc)).toBe(0);
+    expect(blocksMap.has('real-foo')).toBe(true);
+    expect(blocksMap.has('malformed-foo')).toBe(true);
+  });
+});
