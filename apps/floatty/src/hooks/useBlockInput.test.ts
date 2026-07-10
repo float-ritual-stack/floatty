@@ -897,3 +897,153 @@ describe('useBlockInput.handleKeyDown — lazy cursor snapshot', () => {
     expect(snapshotSpy).toHaveBeenCalledTimes(2);
   });
 });
+
+// ─── Zoomed-root invariants (quirk-audit cluster A) ───────────────────
+// The zoomed root is the page title. Enter must never create siblings
+// (they land invisibly under the pages:: container), Backspace must never
+// merge the first child into the title, and deleting the last child must
+// restore the typeable-child guarantee that zoom-entry establishes.
+
+describe('determineKeyAction — Enter on the zoomed root', () => {
+  beforeAll(() => registerHandlers());
+
+  it('creates a child when cursor is at the end of the title', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'page-1', content: 'My Page' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 7,
+      content: 'My Page',
+    }));
+    expectAction(result, 'create_block_inside');
+  });
+
+  it('creates a child when cursor is at the start of the title', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'page-1', content: 'My Page' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 0,
+      content: 'My Page',
+    }));
+    expectAction(result, 'create_block_inside');
+  });
+
+  it('creates a child on an empty title (the empty-page dead-end)', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'page-1', content: '' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 0,
+      content: '',
+    }));
+    expectAction(result, 'create_block_inside');
+  });
+
+  it('splits the tail into the first child mid-title (no sibling truncation)', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'page-1', content: 'My Page' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 2,
+      content: 'My Page',
+    }));
+    const action = expectAction(result, 'split_to_child');
+    expect(action.offset).toBe(2);
+  });
+
+  it('leaves Enter on non-root blocks inside a zoomed view unchanged', () => {
+    const result = determineKeyAction('Enter', false, null, createDeps({
+      block: createBlock({ id: 'child-1', content: 'some text' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 4,
+      content: 'some text',
+    }));
+    expectAction(result, 'split_block');
+  });
+});
+
+describe('determineKeyAction — Backspace merge guard at zoom boundary', () => {
+  it('does not merge the first child into the zoomed root (page title)', () => {
+    const result = determineKeyAction('Backspace', false, null, createDeps({
+      block: createBlock({ id: 'child-1', content: 'first child' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 0,
+      selectionCollapsed: true,
+      findPrevId: () => 'page-1',
+    }));
+    expectAction(result, 'none');
+  });
+
+  it('still merges into a non-root previous block inside the zoomed view', () => {
+    const result = determineKeyAction('Backspace', false, null, createDeps({
+      block: createBlock({ id: 'child-2', content: 'second child' }),
+      zoomedRootId: 'page-1',
+      cursorOffset: 0,
+      selectionCollapsed: true,
+      findPrevId: () => 'child-1',
+    }));
+    const action = expectAction(result, 'merge_with_previous');
+    expect(action.prevId).toBe('child-1');
+  });
+});
+
+describe('useBlockInput.handleKeyDown — zoom delete invariant restore', () => {
+  beforeAll(() => registerHandlers());
+
+  function setupDeleteScenario(zoomRootChildIdsAfterDelete: string[]) {
+    const deleteBlock = vi.fn(() => true);
+    const createBlockInside = vi.fn(() => 'restored-child');
+    const onFocus = vi.fn();
+
+    const blockStore = createMockBlockStore({
+      deleteBlock,
+      createBlockInside,
+      getBlock: (id: string) =>
+        id === 'page-1'
+          ? createBlock({ id: 'page-1', content: 'My Page', childIds: zoomRootChildIdsAfterDelete })
+          : undefined,
+    });
+    const paneStore = createMockPaneStore({
+      getZoomedRootId: () => 'page-1',
+    });
+
+    const deps: BlockInputDependencies = {
+      getBlockId: () => 'child-1',
+      paneId: 'test-pane',
+      getBlock: () => createBlock({ id: 'child-1', content: 'last child', parentId: 'page-1' }),
+      isCollapsed: () => false,
+      blockStore,
+      paneStore,
+      cursor: createCursorMock(),
+      findNextVisibleBlock: () => null,
+      findPrevVisibleBlock: () => null,
+      findFocusAfterDelete: () => 'page-1',
+      onFocus,
+      flushContentUpdate: () => {},
+      getContentRef: () => undefined,
+    };
+
+    const { handleKeyDown } = useBlockInput(deps);
+    return { handleKeyDown, deleteBlock, createBlockInside, onFocus };
+  }
+
+  it('recreates a typeable child after deleting the last child of the zoomed page', () => {
+    const { handleKeyDown, deleteBlock, createBlockInside, onFocus } =
+      setupDeleteScenario([]);
+
+    // jsdom has no navigator.platform → isMac=false → mod is ctrlKey
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Backspace', ctrlKey: true }));
+
+    expect(deleteBlock).toHaveBeenCalledWith('child-1');
+    expect(createBlockInside).toHaveBeenCalledWith('page-1');
+    expect(onFocus).toHaveBeenCalledWith('restored-child');
+  });
+
+  it('does not create a child when the zoomed page still has children', () => {
+    const { handleKeyDown, deleteBlock, createBlockInside, onFocus } =
+      setupDeleteScenario(['child-2']);
+
+    handleKeyDown(new KeyboardEvent('keydown', { key: 'Backspace', ctrlKey: true }));
+
+    expect(deleteBlock).toHaveBeenCalledWith('child-1');
+    expect(createBlockInside).not.toHaveBeenCalled();
+    expect(onFocus).toHaveBeenCalledWith('page-1'); // findFocusAfterDelete fallback
+  });
+});

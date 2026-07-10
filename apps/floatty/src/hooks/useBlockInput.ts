@@ -227,6 +227,18 @@ export function determineKeyAction(
     const atEnd = cursorOffset >= content.length;
     const atStart = cursorOffset === 0;
 
+    // The zoomed root is the page title — sibling-creating variants would
+    // land the new block OUTSIDE the zoom scope (invisibly, under the
+    // pages:: container). Route every variant into the subtree: boundary
+    // positions create a child; a mid-title split sends the tail down as
+    // the first child instead of truncating the title into a sibling.
+    if (block.id === zoomedRootId) {
+      if (atStart || atEnd) {
+        return { type: 'create_block_inside', newId: '' };
+      }
+      return { type: 'split_to_child', newId: null, offset: cursorOffset };
+    }
+
     // At START of block with content → create sibling BEFORE
     if (atStart && content.length > 0) {
       return { type: 'create_block_before', newId: '' }; // newId filled by caller
@@ -259,7 +271,11 @@ export function determineKeyAction(
     const hasHiddenChildren = block.childIds.length > 0 && deps.isCollapsed;
     if (atStartWithSelection && !hasHiddenChildren) {
       const prevId = deps.findPrevId();
-      if (prevId) {
+      // Never merge INTO the zoomed root: findPrevVisibleBlock returns the
+      // zoomed root for its first child, and merging there rewrites the
+      // page title. Backspace at the top of a zoomed page is a no-op,
+      // matching the "backspace at start of parent does nothing" safeguard.
+      if (prevId && prevId !== zoomedRootId) {
         return { type: 'merge_with_previous', prevId };
       }
     }
@@ -460,12 +476,30 @@ export function useBlockInput(deps: BlockInputDependencies): BlockInputResult {
         paneStore.toggleCollapsed(deps.paneId, deps.getBlockId(), deps.getBlock()?.collapsed || false);
         return;
 
-      case 'delete_block':
+      case 'delete_block': {
         e.preventDefault();
         deps.cancelContentUpdate?.();
-        store.deleteBlock(deps.getBlockId());
+        const deletedId = deps.getBlockId();
+        store.deleteBlock(deletedId);
+        // Zoom-entry paths guarantee the zoomed page has a typeable child;
+        // deleting the last one used to park focus on the title with no
+        // way to type below it. Restore the invariant instead. (Multi-select
+        // deletion handles this by unzooming — see deleteSelection in
+        // useOutlinerSelection.ts.)
+        const zoomRoot = paneStore.getZoomedRootId(deps.paneId);
+        if (zoomRoot && zoomRoot !== deletedId) {
+          const rootBlock = store.getBlock(zoomRoot);
+          if (rootBlock && rootBlock.childIds.length === 0) {
+            const restoredId = store.createBlockInside(zoomRoot);
+            if (restoredId) {
+              deps.onFocus(restoredId);
+              return;
+            }
+          }
+        }
         if (keyAction.prevId) deps.onFocus(keyAction.prevId);
         return;
+      }
 
       case 'move_block_up': {
         e.preventDefault();
