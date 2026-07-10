@@ -168,8 +168,8 @@ export function getSharedDoc(): Y.Doc {
  * Returns the number of duplicates removed. All removals happen in a single
  * transaction with 'system' origin (excluded from UndoManager).
  */
-export function deduplicateChildIds(): number {
-  const doc = sharedDoc;
+export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
+  const doc = targetDoc;
   const blocksMap = doc.getMap('blocks');
   const rootIds = doc.getArray<string>('rootIds');
 
@@ -271,16 +271,37 @@ export function deduplicateChildIds(): number {
       referenced.add(cid);
     }
   });
-  const orphanBlockIds: string[] = [];
-  blocksMap.forEach((_value, blockId) => {
-    if (!referenced.has(blockId)) {
-      orphanBlockIds.push(blockId);
+  // Orphans are subtree ROOTS by construction (their descendants are still
+  // referenced by the orphan's own childIds). Classify: EMPTY SHELLS (no
+  // content, no children) are deletable noise; anything with content or
+  // children is USER DATA and gets reattached under a recovery root — the old
+  // hard-delete here destroyed real content, propagated it to every client,
+  // and was not undoable (quirk-audit 2026-07-09, sync cluster; the offline
+  // design doc mistook it for a safety net).
+  const orphanReattachIds: string[] = [];
+  const orphanEmptyShellIds: string[] = [];
+  blocksMap.forEach((value, blockId) => {
+    if (referenced.has(blockId)) return;
+    if (!(value instanceof Y.Map)) {
+      orphanEmptyShellIds.push(blockId);
+      return;
+    }
+    const content = typeof value.get('content') === 'string' ? (value.get('content') as string) : '';
+    const kids = value.get('childIds');
+    const hasKids = kids instanceof Y.Array && kids.length > 0;
+    if (content.trim() === '' && !hasKids) {
+      orphanEmptyShellIds.push(blockId);
+    } else {
+      orphanReattachIds.push(blockId);
     }
   });
+  // Deterministic processing order — this sweep runs on every client.
+  orphanReattachIds.sort();
+  orphanEmptyShellIds.sort();
 
   const hasWork = blockDups.length > 0 || rootIndicesToRemove.length > 0
     || crossParentRemovals.length > 0 || phantomChildren.length > 0
-    || orphanBlockIds.length > 0;
+    || orphanReattachIds.length > 0 || orphanEmptyShellIds.length > 0;
   if (!hasWork) {
     return 0;
   }
@@ -342,9 +363,55 @@ export function deduplicateChildIds(): number {
       }
     }
 
-    // Delete orphan blocks (unreachable from any parent or rootIds)
-    for (const orphanId of orphanBlockIds) {
-      blocksMap.delete(orphanId);
+    // Reattach content-bearing orphans under a recovery root (never delete
+    // user data). The orphan is a subtree root, so reattaching it preserves
+    // its whole subtree.
+    if (orphanReattachIds.length > 0) {
+      // Find an existing recovery root, or create one.
+      let recoveryRootId: string | null = null;
+      for (const rid of rootIds.toArray()) {
+        const rm = blocksMap.get(rid);
+        if (rm instanceof Y.Map) {
+          const c = rm.get('content');
+          if (typeof c === 'string' && c.startsWith('recovered::')) {
+            recoveryRootId = rid;
+            break;
+          }
+        }
+      }
+      if (recoveryRootId === null) {
+        recoveryRootId = crypto.randomUUID();
+        const rootMap = new Y.Map<unknown>();
+        rootMap.set('id', recoveryRootId);
+        rootMap.set('parentId', null);
+        rootMap.set('content', 'recovered:: orphaned blocks (auto-reattached — review & re-home)');
+        rootMap.set('type', 'text');
+        rootMap.set('metadata', null);
+        rootMap.set('collapsed', true);
+        rootMap.set('createdAt', Date.now());
+        rootMap.set('updatedAt', Date.now());
+        rootMap.set('childIds', new Y.Array<string>());
+        blocksMap.set(recoveryRootId, rootMap);
+        rootIds.push([recoveryRootId]);
+      }
+
+      const recoveryMap = blocksMap.get(recoveryRootId);
+      const recoveryKids = recoveryMap instanceof Y.Map ? recoveryMap.get('childIds') : null;
+      if (recoveryKids instanceof Y.Array) {
+        for (const orphanId of orphanReattachIds) {
+          recoveryKids.push([orphanId]);
+          const om = blocksMap.get(orphanId);
+          if (om instanceof Y.Map) {
+            om.set('parentId', recoveryRootId);
+          }
+          totalRemoved++;
+        }
+      }
+    }
+
+    // Empty shells (no content, no children) are safe to delete.
+    for (const shellId of orphanEmptyShellIds) {
+      blocksMap.delete(shellId);
       totalRemoved++;
     }
   }, 'system');
@@ -363,8 +430,11 @@ export function deduplicateChildIds(): number {
     if (phantomChildren.length > 0) {
       parts.push(`${phantomChildren.length} phantom children`);
     }
-    if (orphanBlockIds.length > 0) {
-      parts.push(`${orphanBlockIds.length} orphan blocks deleted`);
+    if (orphanReattachIds.length > 0) {
+      parts.push(`${orphanReattachIds.length} orphans reattached under recovered::`);
+    }
+    if (orphanEmptyShellIds.length > 0) {
+      parts.push(`${orphanEmptyShellIds.length} empty orphan shells deleted`);
     }
     logger.warn(`Tree integrity: fixed ${totalRemoved} issues (${parts.join(', ')})`);
 

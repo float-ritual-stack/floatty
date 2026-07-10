@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
+import { deduplicateChildIds } from './useSyncedYDoc';
 
 // ═══════════════════════════════════════════════════════════════
 // TEST HELPERS — mirror the private helpers from useBlockStore.ts
@@ -1496,5 +1497,113 @@ describe('FLO-498: outdent with adoption', () => {
       expect(getValue(blocksMap, 'source', 'content')).toBe('parent content');
       expect(getChildIds(blocksMap, 'source')).toEqual(['child']);
     });
+  });
+});
+
+describe('deduplicateChildIds — orphan reattach (quirk-audit sync cluster)', () => {
+
+  function makeBlock(doc: Y.Doc, id: string, content: string, childIds: string[] = []) {
+    const blocksMap = doc.getMap('blocks');
+    const m = new Y.Map<unknown>();
+    m.set('id', id);
+    m.set('parentId', null);
+    m.set('content', content);
+    m.set('collapsed', false);
+    m.set('createdAt', 1000);
+    m.set('updatedAt', 1000);
+    const arr = new Y.Array<string>();
+    if (childIds.length > 0) arr.push(childIds);
+    m.set('childIds', arr);
+    blocksMap.set(id, m);
+    return m;
+  }
+
+  function findRecoveryRoot(doc: Y.Doc): { id: string; kids: string[] } | null {
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+    for (const rid of rootIds.toArray()) {
+      const rm = blocksMap.get(rid);
+      if (rm instanceof Y.Map && typeof rm.get('content') === 'string'
+          && (rm.get('content') as string).startsWith('recovered::')) {
+        const kids = rm.get('childIds');
+        return { id: rid, kids: kids instanceof Y.Array ? (kids.toArray() as string[]) : [] };
+      }
+    }
+    return null;
+  }
+
+  it('reattaches content-bearing orphans under a recovered:: root instead of deleting', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+
+    doc.transact(() => {
+      makeBlock(doc, 'reachable', 'i am fine');
+      rootIds.push(['reachable']);
+      // Orphan subtree: orphan-root has content + a child; child is referenced BY the orphan
+      makeBlock(doc, 'orphan-root', 'precious user data', ['orphan-kid']);
+      makeBlock(doc, 'orphan-kid', 'also precious');
+    });
+
+    deduplicateChildIds(doc);
+
+    // Orphan root + its subtree survive
+    expect(blocksMap.has('orphan-root')).toBe(true);
+    expect(blocksMap.has('orphan-kid')).toBe(true);
+
+    const recovery = findRecoveryRoot(doc);
+    expect(recovery).not.toBeNull();
+    expect(recovery!.kids).toContain('orphan-root');
+    // Subtree preserved: kid still under orphan-root, NOT flattened into recovery
+    expect(recovery!.kids).not.toContain('orphan-kid');
+    const orphanMap = blocksMap.get('orphan-root') as Y.Map<unknown>;
+    expect(orphanMap.get('parentId')).toBe(recovery!.id);
+  });
+
+  it('deletes empty orphan shells (no content, no children)', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+
+    doc.transact(() => {
+      makeBlock(doc, 'reachable', 'fine');
+      rootIds.push(['reachable']);
+      makeBlock(doc, 'empty-shell', '   ');
+    });
+
+    deduplicateChildIds(doc);
+
+    expect(blocksMap.has('empty-shell')).toBe(false);
+    expect(findRecoveryRoot(doc)).toBeNull();
+  });
+
+  it('reuses an existing recovered:: root across sweeps', () => {
+    const doc = new Y.Doc();
+    const blocksMap = doc.getMap('blocks');
+    const rootIds = doc.getArray<string>('rootIds');
+
+    doc.transact(() => {
+      makeBlock(doc, 'reachable', 'fine');
+      rootIds.push(['reachable']);
+      makeBlock(doc, 'orphan-1', 'first stray');
+    });
+    deduplicateChildIds(doc);
+
+    doc.transact(() => {
+      makeBlock(doc, 'orphan-2', 'second stray');
+    });
+    deduplicateChildIds(doc);
+
+    // Exactly one recovery root holding both
+    const recoveryRoots = rootIds
+      .toArray()
+      .filter((rid) => {
+        const rm = blocksMap.get(rid);
+        return rm instanceof Y.Map && typeof rm.get('content') === 'string'
+          && (rm.get('content') as string).startsWith('recovered::');
+      });
+    expect(recoveryRoots).toHaveLength(1);
+    const recovery = findRecoveryRoot(doc)!;
+    expect(recovery.kids).toEqual(expect.arrayContaining(['orphan-1', 'orphan-2']));
   });
 });
