@@ -309,9 +309,17 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
   orphanReattachIds.sort();
   orphanEmptyShellIds.sort();
 
+  // The recovery root is excluded from orphan classification, so its own lost
+  // rootIds membership must count as work in its own right — otherwise a sweep
+  // with nothing else to do early-returns and everything recovered under it
+  // stays unreachable.
+  const recoveryRootNeedsRepair =
+    blocksMap.has(RECOVERY_ROOT_ID) && !referenced.has(RECOVERY_ROOT_ID);
+
   const hasWork = blockDups.length > 0 || rootIndicesToRemove.length > 0
     || crossParentRemovals.length > 0 || phantomChildren.length > 0
-    || orphanReattachIds.length > 0 || orphanEmptyShellIds.length > 0;
+    || orphanReattachIds.length > 0 || orphanEmptyShellIds.length > 0
+    || recoveryRootNeedsRepair;
   if (!hasWork) {
     return 0;
   }
@@ -373,6 +381,13 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
       }
     }
 
+    // Standalone membership repair: the recovery root exists but fell out of
+    // rootIds (runs even when there are no new orphans this sweep).
+    if (recoveryRootNeedsRepair) {
+      rootIds.push([RECOVERY_ROOT_ID]);
+      totalRemoved++;
+    }
+
     // Reattach content-bearing orphans under a recovery root (never delete
     // user data). The orphan is a subtree root, so reattaching it preserves
     // its whole subtree.
@@ -390,10 +405,9 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
         }
       }
       if (recoveryRootId === null && blocksMap.has(RECOVERY_ROOT_ID)) {
-        // Exists but fell out of rootIds — repair membership instead of
-        // creating a twin (or reattaching it under itself).
+        // Membership was repaired above (or is being repaired this txn) —
+        // reuse the well-known root rather than creating a twin.
         recoveryRootId = RECOVERY_ROOT_ID;
-        rootIds.push([RECOVERY_ROOT_ID]);
       }
       if (recoveryRootId === null) {
         recoveryRootId = RECOVERY_ROOT_ID;
@@ -451,6 +465,9 @@ export function deduplicateChildIds(targetDoc: Y.Doc = sharedDoc): number {
     }
     if (orphanEmptyShellIds.length > 0) {
       parts.push(`${orphanEmptyShellIds.length} empty orphan shells deleted`);
+    }
+    if (recoveryRootNeedsRepair) {
+      parts.push('recovery-root rootIds membership repaired');
     }
     logger.warn(`Tree integrity: fixed ${totalRemoved} issues (${parts.join(', ')})`);
 

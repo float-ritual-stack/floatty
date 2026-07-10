@@ -1608,10 +1608,16 @@ describe('deduplicateChildIds — orphan reattach (quirk-audit sync cluster)', (
     deduplicateChildIds(doc);
     const recoveryId = findRecoveryRoot(doc)!.id;
 
-    // Simulate the recovery root falling out of rootIds
+    // Simulate the recovery root falling out of rootIds — repair must happen
+    // even when it is the ONLY pending work (no new orphans forcing a write).
     doc.transact(() => {
       const idx = rootIds.toArray().indexOf(recoveryId);
       rootIds.delete(idx, 1);
+    });
+    deduplicateChildIds(doc);
+    expect(rootIds.toArray()).toContain(recoveryId);
+
+    doc.transact(() => {
       makeBlock(doc, 'orphan-b', 'another stray');
     });
     deduplicateChildIds(doc);
