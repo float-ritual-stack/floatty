@@ -1085,3 +1085,21 @@ describe('inline reference highlighting', () => {
     });
   });
 });
+
+// ─── Parse cache (quirk-audit cluster D) ──────────────────────────────
+
+describe('parseAllInlineTokens cache', () => {
+  it('returns the SAME array reference for repeated identical content', () => {
+    const a = parseAllInlineTokens('some [[wiki]] content **bold**');
+    const b = parseAllInlineTokens('some [[wiki]] content **bold**');
+    // Identity stability is the point: SolidJS <For> keys by reference, so
+    // identical content re-parsed after a remount must not remount spans.
+    expect(b).toBe(a);
+  });
+
+  it('different content gets a fresh parse', () => {
+    const a = parseAllInlineTokens('content one');
+    const b = parseAllInlineTokens('content two');
+    expect(b).not.toBe(a);
+  });
+});

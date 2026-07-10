@@ -105,6 +105,10 @@ export interface ContentSyncDeps {
   getContentRef: () => HTMLDivElement | undefined;
   store: ContentSyncStore;
   onAutocompleteCheck?: (content: string, offset: number, ref: HTMLElement) => void;
+  /** Gate for the [[ prescreen: when the autocomplete popup is already open,
+   *  the per-input check must still run (to dismiss / narrow) even if the
+   *  content no longer contains a [[ trigger. */
+  isAutocompleteOpen?: () => boolean;
   onContentChange?: () => void;
   /**
    * FLO-387: Optional cursor state used to invalidate the snapshot cache
@@ -451,8 +455,15 @@ export function useContentSync(deps: ContentSyncDeps): ContentSyncReturn {
     setDisplayContent(content);
 
     // Autocomplete trigger check (callback to BlockItem).
+    // Prescreen (quirk-audit cluster D): getAbsoluteCursorOffset walks the
+    // DOM on EVERY input event. Content without a [[ anywhere cannot open
+    // the autocomplete, so skip the walk entirely — unless the popup is
+    // already open, where the check must still run to dismiss/narrow it.
     const contentRef = deps.getContentRef();
-    if (contentRef && deps.onAutocompleteCheck) {
+    if (
+      contentRef && deps.onAutocompleteCheck &&
+      (content.includes('[[') || deps.isAutocompleteOpen?.())
+    ) {
       const offset = getAbsoluteCursorOffset(contentRef);
       deps.onAutocompleteCheck(content, offset, contentRef);
     }

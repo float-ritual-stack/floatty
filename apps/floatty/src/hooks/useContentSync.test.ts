@@ -555,3 +555,44 @@ describe('cluster C: remount hydration (signal-backed ref)', () => {
     }
   });
 });
+
+// ─── [[ prescreen (quirk-audit cluster D) ─────────────────────────────
+
+describe('cluster D: autocomplete prescreen', () => {
+  function makePrescreenDeps(content: string, isOpen: boolean) {
+    const block: MutableBlock = { id: 'pd', content: '' };
+    const ref = makeContentRef(content);
+    const onAutocompleteCheck = vi.fn();
+    const { deps } = makeDeps({ block, contentRef: ref });
+    deps.onAutocompleteCheck = onAutocompleteCheck;
+    deps.isAutocompleteOpen = () => isOpen;
+    return { deps, ref, onAutocompleteCheck };
+  }
+
+  it('skips the cursor walk + check when content has no [[ and popup is closed', () => {
+    inRoot(() => {
+      const { deps, ref, onAutocompleteCheck } = makePrescreenDeps('plain typing', false);
+      const sync = useContentSync(deps);
+      sync.updateContentFromDom(ref);
+      expect(onAutocompleteCheck).not.toHaveBeenCalled();
+    });
+  });
+
+  it('runs the check when content contains [[', () => {
+    inRoot(() => {
+      const { deps, ref, onAutocompleteCheck } = makePrescreenDeps('see [[pa', false);
+      const sync = useContentSync(deps);
+      sync.updateContentFromDom(ref);
+      expect(onAutocompleteCheck).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('runs the check when the popup is open even without [[ (dismissal path)', () => {
+    inRoot(() => {
+      const { deps, ref, onAutocompleteCheck } = makePrescreenDeps('trigger deleted', true);
+      const sync = useContentSync(deps);
+      sync.updateContentFromDom(ref);
+      expect(onAutocompleteCheck).toHaveBeenCalledTimes(1);
+    });
+  });
+});

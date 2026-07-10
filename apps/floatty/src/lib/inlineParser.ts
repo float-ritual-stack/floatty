@@ -815,7 +815,44 @@ export function hasInlineFormatting(content: string): boolean {
  * Tables are block-level - if content IS a table, return single token.
  * Code fences are next highest priority because their content should NOT be parsed.
  */
+// Content-keyed parse cache (quirk-audit cluster D). Every render of a
+// block's display layer re-parses its content into fresh token objects, and
+// SolidJS <For> keys by reference — so identical content re-parsed after a
+// remount (or by a second pane showing the same block) remounted every
+// span. Serving the SAME array for the same content makes repeat renders
+// identity-stable and free. Parsing is pure (content in → tokens out), so
+// string-keyed memoization is sound; callers must treat the returned
+// tokens as immutable (all current callers map/filter or render).
+const PARSE_CACHE_CAP = 1000;
+const parseCache = new Map<string, InlineToken[]>();
+
+// HMR cleanup — see .claude/rules/do-not.md HMR section: module-level Map
+// would leak token arrays across hot reloads.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    parseCache.clear();
+  });
+}
+
 export function parseAllInlineTokens(content: string): InlineToken[] {
+  const cached = parseCache.get(content);
+  if (cached) {
+    // Refresh recency (Map preserves insertion order — delete + reinsert).
+    parseCache.delete(content);
+    parseCache.set(content, cached);
+    return cached;
+  }
+  const tokens = parseTokensUncached(content);
+  if (parseCache.size >= PARSE_CACHE_CAP) {
+    // Evict least-recently-used (first key in insertion order).
+    const oldest = parseCache.keys().next().value;
+    if (oldest !== undefined) parseCache.delete(oldest);
+  }
+  parseCache.set(content, tokens);
+  return tokens;
+}
+
+function parseTokensUncached(content: string): InlineToken[] {
   // Tables are block-level - if content IS a table, return single token
   // This takes priority over everything else
   if (hasTablePattern(content)) {
