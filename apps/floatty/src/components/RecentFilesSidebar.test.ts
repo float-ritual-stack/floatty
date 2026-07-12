@@ -5,7 +5,8 @@ import {
   catCommand,
   sortFiles,
   resolveInsertTarget,
-  insertCatBlockAt,
+  insertBlockAt,
+  readCommand,
   FILTER_KEYS,
   type SortMode,
 } from './RecentFilesSidebar';
@@ -116,7 +117,7 @@ describe('resolveInsertTarget', () => {
 
 // ── insert ────────────────────────────────────────────────────────────
 
-describe('insertCatBlockAt', () => {
+describe('insertBlockAt', () => {
   const target = { paneId: 'pane-1', focusedBlockId: 'block-1' };
 
   const storeWith = (focusedContent: string | undefined) => ({
@@ -132,7 +133,7 @@ describe('insertCatBlockAt', () => {
     // file. Creating a sibling here would strand an empty block above it.
     const store = storeWith('');
 
-    const id = insertCatBlockAt(target, '/path/to/design.md', store);
+    const id = insertBlockAt(target, catCommand('/path/to/design.md'), store);
 
     expect(id).toBe('block-1');
     expect(store.createBlockAfter).not.toHaveBeenCalled();
@@ -145,14 +146,14 @@ describe('insertCatBlockAt', () => {
   it('treats a whitespace-only block as empty', () => {
     const store = storeWith('   \n  ');
 
-    expect(insertCatBlockAt(target, '/path/to/x.md', store)).toBe('block-1');
+    expect(insertBlockAt(target, catCommand('/path/to/x.md'), store)).toBe('block-1');
     expect(store.createBlockAfter).not.toHaveBeenCalled();
   });
 
   it('creates a sibling BELOW when the focused block has content — never clobbers', () => {
     const store = storeWith('notes the user already typed');
 
-    const id = insertCatBlockAt(target, '/path/to/design.md', store);
+    const id = insertBlockAt(target, catCommand('/path/to/design.md'), store);
 
     expect(id).toBe('new-block');
     expect(store.createBlockAfter).toHaveBeenCalledWith('block-1');
@@ -167,14 +168,14 @@ describe('insertCatBlockAt', () => {
   it('falls back to creating a sibling when the focused block cannot be read', () => {
     const store = storeWith(undefined);
 
-    expect(insertCatBlockAt(target, '/path/to/x.md', store)).toBe('new-block');
+    expect(insertBlockAt(target, catCommand('/path/to/x.md'), store)).toBe('new-block');
     expect(store.createBlockAfter).toHaveBeenCalledWith('block-1');
   });
 
   it('shell-quotes the inserted path too — an inserted sh:: block is one Enter from running', () => {
     const store = storeWith('has content');
 
-    insertCatBlockAt(target, '/tmp/$(rm -rf ~)/my notes.md', store);
+    insertBlockAt(target, catCommand('/tmp/$(rm -rf ~)/my notes.md'), store);
 
     expect(store.updateBlockContent).toHaveBeenCalledWith(
       'new-block',
@@ -190,7 +191,7 @@ describe('insertCatBlockAt', () => {
       updateBlockContent: vi.fn(),
     };
 
-    expect(insertCatBlockAt(target, '/path/to/x.md', store)).toBeNull();
+    expect(insertBlockAt(target, catCommand('/path/to/x.md'), store)).toBeNull();
     expect(store.updateBlockContent).not.toHaveBeenCalled();
   });
 });
@@ -284,6 +285,18 @@ describe('shellQuotePath', () => {
     // The injected quote is escaped, so the `; rm` stays inside the argument.
     expect(cmd).toBe(`cat '/tmp/x'\\''; rm -rf ~ #.md'`);
   });
+
+  it('leaves a leading ~ bare so it still expands', () => {
+    // '~/notes.md' inside quotes does NOT expand — the tilde must stay outside.
+    // Matches the reader door's shellQuotePath (doors/read/readDoc.ts) exactly,
+    // so two same-named helpers can't quietly disagree.
+    expect(shellQuotePath('~/my notes.md')).toBe(`~/'my notes.md'`);
+    expect(shellQuotePath('~')).toBe('~');
+  });
+
+  it('does not treat a mid-path tilde as an expansion', () => {
+    expect(shellQuotePath('/tmp/~backup.md')).toBe(`'/tmp/~backup.md'`);
+  });
 });
 
 describe('formatRelativeTime', () => {
@@ -316,5 +329,36 @@ describe('formatRelativeTime', () => {
 
   it('never reports a future write as a negative age', () => {
     expect(formatRelativeTime('2026-07-12T12:05:00.000Z', now)).toBe('just now');
+  });
+});
+
+// ── read:: insert payload (three-way gesture, 2026-07-12) ─────────────
+
+describe('readCommand', () => {
+  it('emits read:: with the raw path — no shell quoting (no shell involved)', () => {
+    expect(readCommand('/path/to/design doc.md')).toBe('read:: /path/to/design doc.md');
+    expect(readCommand('~/notes/a.md')).toBe('read:: ~/notes/a.md');
+  });
+
+  it('is the mod-click payload; catCommand stays the shell-quoted one', () => {
+    // The reader renders the doc; sh:: cat dumps raw text. Both insert paths
+    // share insertBlockAt — only the builder differs.
+    expect(catCommand("/tmp/x'; rm -rf ~ #.md")).toContain("sh:: cat '");
+    expect(readCommand("/tmp/x'; rm -rf ~ #.md")).toBe("read:: /tmp/x'; rm -rf ~ #.md");
+  });
+
+  it('inserts a read:: block through the same insert semantics', () => {
+    const store = {
+      getBlock: vi.fn(() => ({ content: '' })),
+      createBlockAfter: vi.fn(() => 'new-block'),
+      updateBlockContent: vi.fn(),
+    };
+    const id = insertBlockAt(
+      { paneId: 'pane-1', focusedBlockId: 'block-1' },
+      readCommand('/path/to/design.md'),
+      store
+    );
+    expect(id).toBe('block-1');
+    expect(store.updateBlockContent).toHaveBeenCalledWith('block-1', 'read:: /path/to/design.md');
   });
 });

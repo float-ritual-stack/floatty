@@ -6,7 +6,9 @@
  * per path, newest first.
  *
  * v1.1 interaction layer:
- * - plain click  → copy `sh:: cat '<path>'` to the clipboard (v1 behavior)
+ * - plain click      → copy `sh:: cat '<path>'` to the clipboard (v1 behavior)
+ * - mod+click        → insert `read:: <path>` (rendered document)
+ * - mod+shift+click  → insert `sh:: cat '<path>'` (raw text)
  * - ⌘/Meta click → insert that block into the outline, after the focused block
  * - sort toggle  → date (default) ⇄ filename
  * - fuzzy filter → client-side, reuses lib/fuzzyFilter (Fuse, same as [[ autocomplete)
@@ -37,25 +39,56 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 /** Tauri event pushed by the Rust watcher when new file-writes land. */
 const RECENT_FILES_CHANGED_EVENT = 'recent-files-changed';
 
-/**
- * POSIX single-quote a path for safe use in a shell command.
- *
- * The `sh:: cat <path>` block is run through `$SHELL -lc` by
- * `execute_shell_command`, so an unquoted path with spaces reads the wrong
- * args, and one containing `$(...)`, backticks, `;`, or quotes could execute
- * arbitrary shell code. Single quotes disable every shell metacharacter; the
- * only escape needed is the single quote itself, closed and reopened via `'\''`.
- *
- * This applies to the INSERTED block as much as the copied one — an inserted
- * `sh::` block is one Enter away from executing.
- */
-export function shellQuotePath(path: string): string {
-  return `'${path.replace(/'/g, `'\\''`)}'`;
+/** Single-quote a string for POSIX sh, escaping embedded single quotes. */
+function singleQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-/** The exact `sh:: cat` command copied/inserted/shown for a file. Always quoted. */
+/**
+ * Quote a path for the shell, preserving `~` expansion.
+ *
+ * A `sh:: cat <path>` block is run through `$SHELL -lc` by
+ * `execute_shell_command`, so an unquoted path with spaces reads the wrong
+ * args, and one containing `$(...)`, backticks, `;`, or quotes could execute
+ * arbitrary shell code. Single quotes disable every shell metacharacter.
+ *
+ * `~` is the exception: inside quotes it does NOT expand, so the tilde stays
+ * bare and only the remainder is quoted (`~/'my notes.md'`). Agent-written
+ * paths from the JSONL are always absolute, so this is belt-and-braces — but it
+ * keeps this function semantically identical to the reader's `shellQuotePath`
+ * (`doors/read/readDoc.ts`), so two same-named helpers can't quietly disagree.
+ * They stay separate because doors are dynamically-loaded plugins outside the
+ * app's compile unit (`tsconfig.app.json` includes only `src`); core importing
+ * door internals would invert that dependency.
+ */
+export function shellQuotePath(path: string): string {
+  if (path === '~') return '~';
+  if (path.startsWith('~/')) return `~/${singleQuote(path.slice(2))}`;
+  return singleQuote(path);
+}
+
+/**
+ * `sh:: cat '<path>'` — raw text, for grep/edit/pipe cases. Always quoted.
+ * This is also the clipboard shape: it's what you paste into a terminal.
+ */
 export function catCommand(filePath: string): string {
   return `sh:: cat ${shellQuotePath(filePath)}`;
+}
+
+/**
+ * `read:: <path>` — the rendered-document form (v0.21.0 reader door).
+ *
+ * The DEFAULT insert: the whole point of finding an agent-written doc is to
+ * read it, and the reader is what renders it.
+ *
+ * Passed raw, deliberately. No shell is involved, so there is nothing to quote
+ * — and `parseReadPath` (`doors/read/readDoc.ts`) takes the rest of the line
+ * and trims it, so spaces survive unquoted. It strips a surrounding quote pair
+ * if one is present and handles `~` itself. Quoting here would be redundant at
+ * best, and could make the quotes part of the filename at worst.
+ */
+export function readCommand(filePath: string): string {
+  return `read:: ${filePath}`;
 }
 
 /** How long success feedback sticks around. */
@@ -131,10 +164,11 @@ export interface InsertStore {
 }
 
 /**
- * Put the `sh:: cat` command into the outline at the focused block.
+ * Put an already-built command (`read::` or `sh:: cat`) into the outline at the
+ * focused block. The caller decides the shape; this only decides *where*.
  *
  * If the focused block is EMPTY, fill it in place — the common case is "user
- * hits Enter for a fresh block, then ⌘-clicks a file", and creating a sibling
+ * hits Enter for a fresh block, then mod-clicks a file", and creating a sibling
  * there would strand an empty block above the result.
  *
  * If it has content, insert a new sibling BELOW instead. Never clobber text the
@@ -144,12 +178,11 @@ export interface InsertStore {
  * refused the insert (`createBlockAfter` returns '' if the anchor or its parent
  * vanished between render and click).
  */
-export function insertCatBlockAt(
+export function insertBlockAt(
   target: InsertTarget,
-  filePath: string,
+  command: string,
   store: InsertStore
 ): string | null {
-  const command = catCommand(filePath);
   const focused = store.getBlock(target.focusedBlockId);
 
   if (focused && focused.content.trim() === '') {
@@ -314,7 +347,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
     }
   };
 
-  const insertIntoOutline = (file: FileEvent) => {
+  const insertIntoOutline = (file: FileEvent, build: (p: string) => string) => {
     const target = resolveInsertTarget({
       activeTabId: () => tabStore.activeTabId(),
       resolveSidebarTarget: (tabId) => paneLinkStore.resolveSidebarTarget(tabId),
@@ -327,7 +360,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
       return;
     }
 
-    const newId = insertCatBlockAt(target, file.filePath, blockStore);
+    const newId = insertBlockAt(target, build(file.filePath), blockStore);
     if (!newId) {
       logger.warn(`Insert refused for ${file.filePath} — anchor block likely gone`);
       flashRow(file.id, 'error', "couldn't insert — try again");
@@ -338,7 +371,11 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
     // files in a row inserts all three after the SAME anchor, landing them in
     // reverse click order. Advancing makes them stack in the order clicked.
     paneStore.setFocusedBlockId(target.paneId, newId);
-    flashRow(file.id, 'inserted', 'inserted into outline');
+    flashRow(
+      file.id,
+      'inserted',
+      build === readCommand ? 'inserted read::' : 'inserted sh:: cat'
+    );
   };
 
   const activateRow = (file: FileEvent, event: MouseEvent) => {
@@ -352,8 +389,14 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
     // keyboard-only — nothing listens for mod+click on a sidebar row.
     const modKey = isMac ? event.metaKey : event.ctrlKey;
 
-    if (modKey) {
-      insertIntoOutline(file);
+    // Three destinations, one per gesture:
+    //   plain      → clipboard (sh:: cat — what you paste into a terminal)
+    //   mod        → read::    (renders the doc — the reason the reader exists)
+    //   mod+shift  → sh:: cat  (raw text in the outline, for grep/edit/pipe)
+    if (modKey && event.shiftKey) {
+      insertIntoOutline(file, catCommand);
+    } else if (modKey) {
+      insertIntoOutline(file, readCommand);
     } else {
       void copyCatCommand(file);
     }
@@ -494,7 +537,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
                 />
 
                 <div class="files-hint-inline">
-                  click copies · {isMac ? '⌘' : 'ctrl'}-click inserts
+                  click copies · {isMac ? '⌘' : 'ctrl'}-click reads · +⇧ cats
                 </div>
               </div>
 
@@ -537,14 +580,16 @@ function FileRow(props: {
   const when = () => formatRelativeTime(timestampOf(props.file));
 
   // Provenance as hover text — cheap, no extra state, no layout cost.
-  // Shows the exact command that gets copied/inserted, quoting included, so the
-  // tooltip never diverges from what actually lands.
+  // Spells out all three gestures with the EXACT string each one produces, so
+  // the tooltip can never diverge from what actually lands.
   const modLabel = isMac ? '⌘' : 'Ctrl';
+  const modWord = isMac ? 'Command' : 'Control';
 
   const title = () => {
     const lines = [
-      `Click to copy: ${catCommand(props.file.filePath)}`,
-      `${modLabel}-click to insert it at the focused block`,
+      `Click — copy to clipboard: ${catCommand(props.file.filePath)}`,
+      `${modLabel}-click — insert: ${readCommand(props.file.filePath)}`,
+      `${modLabel}⇧-click — insert: ${catCommand(props.file.filePath)}`,
     ];
     if (props.file.snippet) lines.push('', props.file.snippet);
     return lines.join('\n');
@@ -554,9 +599,11 @@ function FileRow(props: {
     <button
       class={`files-row ${props.flash ? `files-row-${props.flash.kind}` : ''}`}
       title={title()}
-      aria-label={`${name()} — click to copy shell command, ${
-        isMac ? 'Command' : 'Control'
-      }-click to insert into the outline`}
+      aria-label={
+        `${name()} — click to copy the shell command, ` +
+        `${modWord}-click to insert it as a rendered read:: block, ` +
+        `${modWord}-Shift-click to insert it as a raw sh:: cat block`
+      }
       onClick={(e) => props.onActivate(props.file, e)}
     >
       <div class="files-row-top">
