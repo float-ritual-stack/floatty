@@ -79,6 +79,55 @@ pub struct WorkspaceStateRecord {
     pub save_seq: i64,
 }
 
+/// A file-write event mined from a Claude Code session JSONL (FLO-799).
+///
+/// One row per `tool_use` block whose tool is Write/Edit/MultiEdit and whose
+/// `input.file_path` points at a prose file (.md/.markdown/.txt). Dedupe key
+/// is the Anthropic `tool_use` id (`toolu_...`), which is stable across
+/// re-scans of the same JSONL — so re-processing a file is idempotent.
+///
+/// Wire format is camelCase (see .claude/rules/serde-api-patterns.md).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEvent {
+    /// Deterministic id — derived from the JSONL `tool_use` id.
+    pub id: String,
+    /// Absolute path the agent wrote to.
+    pub file_path: String,
+    /// Write | Edit | MultiEdit
+    pub tool_name: String,
+    /// JSONL file this event was mined from.
+    pub session_file: String,
+    pub session_id: Option<String>,
+    pub cwd: Option<String>,
+    pub git_branch: Option<String>,
+    /// Provenance: nearest preceding user/assistant text, truncated.
+    pub snippet: Option<String>,
+    /// JSONL `timestamp` of the assistant message that made the write.
+    pub event_time: Option<String>,
+    pub created_at: String,
+}
+
+/// Insert-side payload for a file event (no `created_at` — SQLite stamps it).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FileEventInsert {
+    pub id: String,
+    pub file_path: String,
+    pub tool_name: String,
+    pub session_id: Option<String>,
+    pub cwd: Option<String>,
+    pub git_branch: Option<String>,
+    pub snippet: Option<String>,
+    pub event_time: Option<String>,
+}
+
+/// Row counts from a single incremental JSONL scan commit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScanInserts {
+    pub markers: usize,
+    pub file_events: usize,
+}
+
 /// Main application database.
 ///
 /// Manages all persistent state for floatty:
@@ -192,6 +241,27 @@ impl FloattyDb {
                 updated_at INTEGER NOT NULL,
                 save_seq INTEGER NOT NULL DEFAULT 0
             );
+
+            -- Agent file-write events mined from session JSONL (FLO-799).
+            -- id = the JSONL tool_use id, so re-scanning a file is idempotent.
+            CREATE TABLE IF NOT EXISTS file_events (
+                id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                session_file TEXT NOT NULL,
+                session_id TEXT,
+                cwd TEXT,
+                git_branch TEXT,
+                snippet TEXT,
+                event_time TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Recency ordering + the "latest event per distinct path" join.
+            CREATE INDEX IF NOT EXISTS idx_file_events_time
+                ON file_events(event_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_file_events_path
+                ON file_events(file_path);
         "#,
         )?;
 
@@ -448,18 +518,25 @@ impl FloattyDb {
         Ok((pending, parsed, error))
     }
 
-    /// Insert markers and update file position atomically in a transaction
-    /// Returns number of new markers inserted
-    pub fn insert_markers_with_position(
+    /// Insert markers + file events and update the file position atomically.
+    ///
+    /// All three writes share one transaction so the byte offset can never
+    /// advance past rows that failed to land — a crash mid-scan replays the
+    /// same lines, and `INSERT OR IGNORE` on the deterministic ids makes the
+    /// replay idempotent.
+    ///
+    /// Returns the number of genuinely new rows of each kind.
+    pub fn insert_scan_with_position(
         &self,
         session_file: &str,
         markers: &[(String, String, JsonlMetadata)], // (id, raw_line, metadata)
+        file_events: &[FileEventInsert],
         new_position: i64,
-    ) -> Result<usize> {
+    ) -> Result<ScanInserts> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
-        let mut inserted = 0;
+        let mut inserted = ScanInserts::default();
         for (id, raw_line, meta) in markers {
             let changes = tx.execute(
                 "INSERT OR IGNORE INTO ctx_markers (id, session_file, raw_line, status, sort_key, cwd, git_branch, session_id, msg_type)
@@ -475,7 +552,26 @@ impl FloattyDb {
                     meta.msg_type
                 ],
             )?;
-            inserted += changes;
+            inserted.markers += changes;
+        }
+
+        for ev in file_events {
+            let changes = tx.execute(
+                "INSERT OR IGNORE INTO file_events (id, file_path, tool_name, session_file, session_id, cwd, git_branch, snippet, event_time)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    ev.id,
+                    ev.file_path,
+                    ev.tool_name,
+                    session_file,
+                    ev.session_id,
+                    ev.cwd,
+                    ev.git_branch,
+                    ev.snippet,
+                    ev.event_time
+                ],
+            )?;
+            inserted.file_events += changes;
         }
 
         tx.execute(
@@ -488,10 +584,54 @@ impl FloattyDb {
         Ok(inserted)
     }
 
-    /// Clear all markers and file positions (reset database)
+    /// Most recently written files — the latest event per distinct path.
+    ///
+    /// A file edited 30 times shows up once, carrying its newest event.
+    /// Recency uses the JSONL timestamp, falling back to insert time for rows
+    /// whose source line had no `timestamp` field.
+    pub fn get_recent_files(&self, limit: i32) -> Result<Vec<FileEvent>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT fe.id, fe.file_path, fe.tool_name, fe.session_file, fe.session_id,
+                   fe.cwd, fe.git_branch, fe.snippet, fe.event_time, fe.created_at
+            FROM file_events fe
+            JOIN (
+                SELECT file_path, MAX(COALESCE(event_time, created_at)) AS latest
+                FROM file_events
+                GROUP BY file_path
+            ) newest
+              ON fe.file_path = newest.file_path
+             AND COALESCE(fe.event_time, fe.created_at) = newest.latest
+            GROUP BY fe.file_path
+            ORDER BY COALESCE(fe.event_time, fe.created_at) DESC
+            LIMIT ?
+            "#,
+        )?;
+
+        let events = stmt.query_map([limit], |row| {
+            Ok(FileEvent {
+                id: row.get(0)?,
+                file_path: row.get(1)?,
+                tool_name: row.get(2)?,
+                session_file: row.get(3)?,
+                session_id: row.get(4)?,
+                cwd: row.get(5)?,
+                git_branch: row.get(6)?,
+                snippet: row.get(7)?,
+                event_time: row.get(8)?,
+                created_at: row.get(9)?,
+            })
+        })?;
+
+        events.collect()
+    }
+
+    /// Clear all markers, file events, and file positions (reset database)
     pub fn clear_all(&self) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM ctx_markers", [])?;
+        conn.execute("DELETE FROM file_events", [])?;
         conn.execute("DELETE FROM file_positions", [])?;
         // We do not delete system_state (Yjs doc) on clear_all unless explicitly requested,
         // as that destroys user notes.

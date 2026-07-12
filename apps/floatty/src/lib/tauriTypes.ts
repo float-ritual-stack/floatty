@@ -38,6 +38,28 @@ export interface CtxMarker {
   retry_count: number;
 }
 
+/**
+ * A file the agent wrote, mined from session JSONL (FLO-799).
+ *
+ * camelCase on the wire — matches `#[serde(rename_all = "camelCase")]` on the
+ * Rust `FileEvent`. (CtxMarker above is snake_case for legacy reasons; new
+ * structs follow .claude/rules/serde-api-patterns.md.)
+ */
+export interface FileEvent {
+  id: string;
+  filePath: string;
+  toolName: string;
+  sessionFile: string;
+  sessionId?: string;
+  cwd?: string;
+  gitBranch?: string;
+  /** Nearest preceding agent narration — why the file was written. */
+  snippet?: string;
+  /** JSONL timestamp of the write (ISO-8601). */
+  eventTime?: string;
+  createdAt: string;
+}
+
 /** Marker counts by status */
 export interface MarkerCounts {
   pending: number;
@@ -138,6 +160,11 @@ interface TauriCommands {
   get_ctx_markers: {
     args: { limit?: number; offset?: number };
     returns: CtxMarker[];
+  };
+  /** FLO-799: recent agent-written files, newest first, one row per path. */
+  get_recent_files: {
+    args: { limit?: number };
+    returns: FileEvent[];
   };
   get_ctx_counts: {
     args: Record<string, never>;
