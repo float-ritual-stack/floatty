@@ -18,7 +18,29 @@ const logger = createLogger('httpClient');
 /** Server info returned from Tauri's get_server_info command */
 export interface ServerInfo {
   url: string;
+  /** snake_case on the wire — see the note in src-tauri/src/config.rs. */
   api_key: string;
+}
+
+/**
+ * How the backing floatty-server resolved at startup (Tauri `get_server_status`).
+ *
+ * Un-conflates the two worlds that both used to surface as the single string
+ * `"Server not running"`:
+ *
+ * - `{ remoteConfigured: true, reachable: false }` — `remote_server_url` IS set
+ *   (FLO-762 thin-client mode) and the remote is simply down. The outline still
+ *   exists on float-box; this app is **offline**, not broken. Recoverable by
+ *   waiting; the only state in which booting from the local cache is legal.
+ * - `{ remoteConfigured: false, reachable: false }` — no remote configured and
+ *   the local subprocess failed to spawn. Genuinely broken.
+ *
+ * Phase 0 does not branch on this — it only makes the thrown error say something
+ * true. Phase 2's offline mode is what it exists for.
+ */
+export interface ServerStatus {
+  remoteConfigured: boolean;
+  reachable: boolean;
 }
 
 /** State hash response for sync health check */
@@ -337,6 +359,34 @@ let clientInstance: FloattyHttpClient | null = null;
 let initPromise: Promise<FloattyHttpClient> | null = null;
 
 /**
+ * How the backing floatty-server resolved at startup.
+ *
+ * Never throws: a failure to read the status is itself reported as
+ * "nothing configured, nothing reachable", which is the conservative reading.
+ */
+export async function getServerStatus(): Promise<ServerStatus> {
+  try {
+    return await invoke('get_server_status', {});
+  } catch (err) {
+    logger.warn(`Could not read server status: ${err}`);
+    return { remoteConfigured: false, reachable: false };
+  }
+}
+
+/**
+ * Turn a failed connection into a message that distinguishes "float-box is down"
+ * from "this app is broken". Both used to read as `Server not running`.
+ */
+async function describeConnectionFailure(cause: unknown): Promise<string> {
+  const status = await getServerStatus();
+  const detail = cause ? `: ${String(cause)}` : '';
+  if (status.remoteConfigured && !status.reachable) {
+    return `Remote floatty-server (remote_server_url) is unreachable${detail}`;
+  }
+  return `Server connection failed after retries${detail}`;
+}
+
+/**
  * Initialize the HTTP client from Tauri's server info.
  * Call this once on app startup.
  */
@@ -387,7 +437,11 @@ export async function initHttpClient(): Promise<FloattyHttpClient> {
       }
     }
 
-    throw lastError ?? new Error('Server connection failed after retries');
+    // Retries exhausted. Behavior is unchanged (we still throw — Phase 0 lands
+    // invisible); the status only makes the message say something TRUE. "Server
+    // not running" is a lie when float-box is merely unreachable: the outline
+    // exists, this app is offline. Phase 2 branches here instead of throwing.
+    throw new Error(await describeConnectionFailure(lastError));
   })().finally(() => {
     // Always clear promise so next caller retries fresh (prevents stuck rejected promise)
     initPromise = null;

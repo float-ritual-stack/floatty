@@ -4,7 +4,7 @@
 //! floatty-server headless backend. It supports both standalone mode
 //! (reusing existing server) and managed mode (spawning as subprocess).
 
-use crate::config::ServerInfo;
+use crate::config::{ServerInfo, ServerStatus};
 use crate::paths::DataPaths;
 use std::path::PathBuf;
 use std::process::Child;
@@ -369,6 +369,29 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
     })
 }
 
+/// Why a remote-authority connect attempt produced no `ServerState`.
+///
+/// The old signature returned `Option<ServerState>`, collapsing "float-box is
+/// down", "no local API key" and "the remote rejected our key" into one `None` —
+/// which the frontend then collapsed further into `"Server not running"`,
+/// indistinguishable from "no remote is configured at all". Fast-boot Phase 2
+/// has to tell remote-configured-but-down (→ offline mode, boot from cache)
+/// apart from misconfiguration (→ genuinely broken, don't pretend to be offline).
+///
+/// The variants are not currently branched on individually — they carry the
+/// reason into the logs and give Phase 2 a typed surface to widen into. The
+/// distinction that IS load-bearing today is `Err(_)` vs `Ok(_)`, surfaced to the
+/// frontend as `ServerStatus { remote_configured: true, reachable: false }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteConnectError {
+    /// Health probe failed after retries — remote down, tailnet blip.
+    Unreachable,
+    /// No `[server].api_key` in the local config to authenticate with.
+    NoApiKey,
+    /// The remote rejected our API key (401/403). Local key must match theirs.
+    AuthRejected,
+}
+
 /// Connect to a remote floatty-server instead of spawning a local subprocess (FLO-762).
 ///
 /// Returns the same external-mode `ServerState` shape as the "reusing existing
@@ -384,7 +407,10 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
 /// events (config-sourced URLs are sensitive by default — see
 /// .claude/rules/logging-discipline.md rule 1). Messages reference the
 /// `remote_server_url` config field instead, which is unambiguous.
-pub fn connect_remote_server(remote_url: &str, paths: &DataPaths) -> Option<ServerState> {
+pub fn connect_remote_server(
+    remote_url: &str,
+    paths: &DataPaths,
+) -> Result<ServerState, RemoteConnectError> {
     let url = remote_url.trim_end_matches('/').to_string();
     let pid_file = paths.pid_file.clone();
 
@@ -411,7 +437,7 @@ pub fn connect_remote_server(remote_url: &str, paths: &DataPaths) -> Option<Serv
             "Remote floatty-server unreachable — check `remote_server_url` in config.toml \
              and network (tailnet) connectivity. NOT falling back to local spawn."
         );
-        return None;
+        return Err(RemoteConnectError::Unreachable);
     }
 
     // Version-skew visibility: desktop, laptop, and the remote authority are
@@ -430,7 +456,7 @@ pub fn connect_remote_server(remote_url: &str, paths: &DataPaths) -> Option<Serv
         }
     }
 
-    let api_key = read_api_key_from_config(&paths.config)?;
+    let api_key = read_api_key_from_config(&paths.config).ok_or(RemoteConnectError::NoApiKey)?;
 
     // Authed probe — /api/v1/health is unauthenticated, so a key mismatch
     // would otherwise pass startup and surface as silent 401s on every
@@ -442,7 +468,7 @@ pub fn connect_remote_server(remote_url: &str, paths: &DataPaths) -> Option<Serv
                 "API key rejected by remote floatty-server — local [server].api_key \
                  must match the remote server's key. Refusing to start in remote mode."
             );
-            return None;
+            return Err(RemoteConnectError::AuthRejected);
         }
         Some(code) => {
             // Unexpected but not an auth failure (e.g., 500). The health probe
@@ -459,11 +485,62 @@ pub fn connect_remote_server(remote_url: &str, paths: &DataPaths) -> Option<Serv
 
     tracing::info!("Connected to remote floatty-server (external mode, no local spawn)");
 
-    Some(ServerState {
+    Ok(ServerState {
         info: ServerInfo { url, api_key },
         process: None, // Remote server — we didn't spawn it, never kill it
         pid_file,
     })
+}
+
+/// Resolve which floatty-server backs this app, and report that resolution
+/// honestly (fast-boot Phase 0).
+///
+/// Remote-authority mode (FLO-762) when `remote_server_url` is set in
+/// config.toml; a local subprocess otherwise. **An unreachable remote never
+/// falls back to a local spawn** — that is the split-brain guard, and it stays.
+/// What changes here is only that the failure is now *legible*: the returned
+/// `ServerStatus` says whether a remote was configured at all, which is what
+/// separates "offline, your outline is fine, wait for float-box" from "this app
+/// is misconfigured".
+///
+/// `spawn_local` is injected so tests can assert "we did NOT spawn a local
+/// server" without the side effects of actually spawning one.
+pub fn resolve_server(
+    remote_url: Option<&str>,
+    paths: &DataPaths,
+    spawn_local: impl FnOnce(&DataPaths) -> Option<ServerState>,
+) -> (Option<ServerState>, ServerStatus) {
+    match remote_url {
+        Some(url) => match connect_remote_server(url, paths) {
+            Ok(state) => (
+                Some(state),
+                ServerStatus {
+                    remote_configured: true,
+                    reachable: true,
+                },
+            ),
+            // The reason is already in the logs (see RemoteConnectError). What
+            // crosses the IPC boundary is the recoverable/not distinction.
+            Err(_) => (
+                None,
+                ServerStatus {
+                    remote_configured: true,
+                    reachable: false,
+                },
+            ),
+        },
+        None => {
+            let state = spawn_local(paths);
+            let reachable = state.is_some();
+            (
+                state,
+                ServerStatus {
+                    remote_configured: false,
+                    reachable,
+                },
+            )
+        }
+    }
 }
 
 /// Fetch and parse the remote server's health JSON (`{status, version, ...}`).
@@ -764,7 +841,14 @@ mod tests {
         // silent 401s on every later call).
         let url = spawn_mock_server("right-key", "0.0.0");
         let (_dir, paths) = temp_paths_with_key(Some("wrong-key"));
-        assert!(connect_remote_server(&url, &paths).is_none());
+        // ServerState holds a Child handle, so it is neither Debug nor PartialEq —
+        // assert on the error side.
+        assert_eq!(
+            connect_remote_server(&url, &paths).err(),
+            Some(RemoteConnectError::AuthRejected),
+            "a rejected key is misconfiguration, NOT 'offline' — Phase 2 must not \
+             boot from cache and pretend the outline is fine"
+        );
     }
 
     #[test]
@@ -778,13 +862,49 @@ mod tests {
             .unwrap()
             .port();
         let (_dir, paths) = temp_paths_with_key(Some("k"));
-        assert!(connect_remote_server(&format!("http://127.0.0.1:{}", port), &paths).is_none());
+        assert_eq!(
+            connect_remote_server(&format!("http://127.0.0.1:{}", port), &paths).err(),
+            Some(RemoteConnectError::Unreachable),
+            "the ONE recoverable failure: remote is configured and simply down"
+        );
     }
 
     #[test]
     fn remote_connect_fails_without_local_api_key() {
         let url = spawn_mock_server("k", "0.0.0");
         let (_dir, paths) = temp_paths_with_key(None);
-        assert!(connect_remote_server(&url, &paths).is_none());
+        assert_eq!(
+            connect_remote_server(&url, &paths).err(),
+            Some(RemoteConnectError::NoApiKey)
+        );
+    }
+
+    #[test]
+    fn server_status_distinguishes_no_remote_from_remote_down() {
+        // The whole reason the Option→Result change exists: these two used to
+        // be the same `None`, and the frontend saw the same "Server not
+        // running" string for both.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let (_dir, paths) = temp_paths_with_key(Some("k"));
+
+        let down = resolve_server(
+            Some(&format!("http://127.0.0.1:{}", port)),
+            &paths,
+            /* local_spawn */ |_| None,
+        );
+        assert!(
+            down.0.is_none(),
+            "unreachable remote must NOT spawn locally"
+        );
+        assert!(down.1.remote_configured);
+        assert!(!down.1.reachable);
+
+        let no_remote = resolve_server(None, &paths, |_| None);
+        assert!(!no_remote.1.remote_configured);
+        assert!(!no_remote.1.reachable);
     }
 }
