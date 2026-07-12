@@ -171,6 +171,90 @@
   margin-top: 8px;
 }
 
+/* ─── v1.1 header controls: sort toggle + fuzzy filter ─── */
+
+.files-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.files-sort {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.files-sort-button {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  padding: 2px 6px;
+  background: none;
+  color: var(--color-fg-muted);
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.files-sort-button:hover {
+  color: var(--color-fg);
+}
+
+/* Active sort — colour alone must not be the only signal (a11y baseline), so
+ * the pressed state also gets a border + weight shift. */
+.files-sort-button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  font-weight: 600;
+}
+
+.files-sort-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.files-filter-input {
+  width: 100%;
+  margin-top: 8px;
+  padding: 4px 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-fg);
+  background: color-mix(in srgb, var(--color-border) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-radius: 3px;
+}
+
+.files-filter-input::placeholder {
+  color: var(--color-fg-muted);
+}
+
+.files-filter-input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.files-hint-inline {
+  margin-top: 6px;
+  font-size: 9px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-fg-muted);
+}
+
+.files-no-matches {
+  padding: 16px;
+}
+
 .files-list {
   flex: 1;
   overflow-y: auto;
@@ -201,8 +285,15 @@
   outline-offset: -2px;
 }
 
-.files-row-copied {
+/* Row flash states: copy / insert succeeded, or the insert had nowhere to go. */
+
+.files-row-copied,
+.files-row-inserted {
   background: color-mix(in srgb, var(--color-success, var(--color-accent)) 15%, transparent);
+}
+
+.files-row-error {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
 }
 
 .files-row-top {
@@ -250,13 +341,18 @@
   overflow: hidden;
 }
 
-.files-row-copied-badge {
+/* Reserved line, so a flashing row doesn't reflow the list under the cursor. */
+.files-row-flash {
   display: block;
   min-height: 12px;
   margin-top: 4px;
   font-family: "JetBrains Mono", monospace;
   font-size: 9px;
   color: var(--color-success, var(--color-accent));
+}
+
+.files-row-flash-error {
+  color: var(--color-error);
 }
 
 .files-error-state {
@@ -302,7 +398,8 @@
 @media (prefers-reduced-motion: reduce) {
   .sidebar-door-tab,
   .files-row,
-  .files-retry-button {
+  .files-retry-button,
+  .files-sort-button {
     transition: none;
   }
 }

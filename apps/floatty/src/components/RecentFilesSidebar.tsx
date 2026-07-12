@@ -5,20 +5,29 @@
  * MultiEdit an agent made to a .md/.markdown/.txt file, collapsed to one row
  * per path, newest first.
  *
- * Clicking a row copies `sh:: cat <path>` — paste it into the outline and the
- * file renders. That's the whole loop: agent writes a doc somewhere, you find
- * it here, you read it in floatty.
+ * v1.1 interaction layer:
+ * - plain click  → copy `sh:: cat '<path>'` to the clipboard (v1 behavior)
+ * - ⌘/Meta click → insert that block into the outline, after the focused block
+ * - sort toggle  → date (default) ⇄ filename
+ * - fuzzy filter → client-side, reuses lib/fuzzyFilter (Fuse, same as [[ autocomplete)
  *
- * Focus contract (see SidebarDoorContainer): the sidebar is display-only. Rows
- * are real <button>s, so they're keyboard-reachable, but the panel takes no
- * tabIndex/onKeyDown of its own.
+ * Focus contract (see SidebarDoorContainer): the panel itself takes no
+ * tabIndex/onKeyDown — the outliner owns focus. The rows/controls here are real
+ * <button>/<input> elements, so they're natively keyboard-reachable without the
+ * panel grabbing key routing.
  */
 
-import { createSignal, createEffect, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createEffect, createMemo, onCleanup, Show, For } from 'solid-js';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { createLogger } from '../lib/logger';
 import { invoke, type FileEvent } from '../lib/tauriTypes';
 import { emitRecentFilesChanged, onRecentFilesChanged } from '../lib/fileEvents';
+import { fuzzyFilter } from '../lib/fuzzyFilter';
+import { isMac } from '../lib/keybinds';
+import { blockStore } from '../hooks/useBlockStore';
+import { paneStore } from '../hooks/usePaneStore';
+import { paneLinkStore } from '../hooks/usePaneLinkStore';
+import { tabStore } from '../hooks/useTabStore';
 
 const logger = createLogger('RecentFilesSidebar');
 
@@ -31,35 +40,205 @@ const RECENT_FILES_CHANGED_EVENT = 'recent-files-changed';
 /**
  * POSIX single-quote a path for safe use in a shell command.
  *
- * The copied `sh:: cat <path>` block is run through `$SHELL -lc` by
+ * The `sh:: cat <path>` block is run through `$SHELL -lc` by
  * `execute_shell_command`, so an unquoted path with spaces reads the wrong
  * args, and one containing `$(...)`, backticks, `;`, or quotes could execute
- * arbitrary shell code when the user pastes the block. Single quotes disable
- * every shell metacharacter; the only escape needed is the single quote
- * itself, closed and reopened via `'\''`.
+ * arbitrary shell code. Single quotes disable every shell metacharacter; the
+ * only escape needed is the single quote itself, closed and reopened via `'\''`.
+ *
+ * This applies to the INSERTED block as much as the copied one — an inserted
+ * `sh::` block is one Enter away from executing.
  */
 export function shellQuotePath(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`;
 }
 
-/** The exact `sh:: cat` command copied/shown for a file — path always quoted. */
-function catCommand(filePath: string): string {
+/** The exact `sh:: cat` command copied/inserted/shown for a file. Always quoted. */
+export function catCommand(filePath: string): string {
   return `sh:: cat ${shellQuotePath(filePath)}`;
 }
 
-/** How long the "copied" affordance sticks around. */
-const COPIED_FEEDBACK_MS = 1500;
+/** How long success feedback sticks around. */
+const FLASH_OK_MS = 1500;
+/** Errors linger longer — the user needs time to read why nothing happened. */
+const FLASH_ERROR_MS = 2600;
+
+/** Filter input debounce. Long enough to skip mid-word churn, short enough to feel live. */
+const FILTER_DEBOUNCE_MS = 120;
+
+/**
+ * Everything on a row is filterable — not just the name.
+ *
+ * Evan asked to "filter based on metadata, not just name", so the query runs
+ * over the path, the tool that wrote it, which session/branch/cwd it came from,
+ * and the provenance snippet. `filePath` subsumes the filename (a basename is
+ * a substring of its path), so it doesn't need its own key.
+ */
+export const FILTER_KEYS = ['filePath', 'toolName', 'sessionId', 'cwd', 'gitBranch', 'snippet'];
+
+export type SortMode = 'date' | 'name';
+
+type RowFlashKind = 'copied' | 'inserted' | 'error';
+
+interface RowFlash {
+  id: string;
+  kind: RowFlashKind;
+  message: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PURE HELPERS (exported for tests)
+// ═══════════════════════════════════════════════════════════════
+
+/** Where a ⌘-click insert would land. */
+export interface InsertTarget {
+  paneId: string;
+  focusedBlockId: string;
+}
+
+/**
+ * Resolve the outline destination for an insert, or null if there isn't one.
+ *
+ * Three ways this legitimately comes back null: no active tab, no outliner pane
+ * in that tab, or an outliner with nothing focused. All three mean "the user
+ * hasn't told us where to put it" — the caller surfaces that on the row rather
+ * than guessing a destination.
+ *
+ * Deps are injected so this is testable without a live workspace.
+ */
+export function resolveInsertTarget(deps: {
+  activeTabId: () => string | null;
+  resolveSidebarTarget: (tabId: string) => string | null;
+  getFocusedBlockId: (paneId: string) => string | null;
+}): InsertTarget | null {
+  const tabId = deps.activeTabId();
+  if (!tabId) return null;
+
+  const paneId = deps.resolveSidebarTarget(tabId);
+  if (!paneId) return null;
+
+  const focusedBlockId = deps.getFocusedBlockId(paneId);
+  if (!focusedBlockId) return null;
+
+  return { paneId, focusedBlockId };
+}
+
+/** Minimal shape of the block-store surface the insert needs. */
+export interface InsertStore {
+  getBlock: (id: string) => { content: string } | undefined;
+  createBlockAfter: (afterId: string) => string;
+  updateBlockContent: (id: string, content: string) => void;
+}
+
+/**
+ * Put the `sh:: cat` command into the outline at the focused block.
+ *
+ * If the focused block is EMPTY, fill it in place — the common case is "user
+ * hits Enter for a fresh block, then ⌘-clicks a file", and creating a sibling
+ * there would strand an empty block above the result.
+ *
+ * If it has content, insert a new sibling BELOW instead. Never clobber text the
+ * user already typed.
+ *
+ * Returns the id of the block now holding the command, or null when the store
+ * refused the insert (`createBlockAfter` returns '' if the anchor or its parent
+ * vanished between render and click).
+ */
+export function insertCatBlockAt(
+  target: InsertTarget,
+  filePath: string,
+  store: InsertStore
+): string | null {
+  const command = catCommand(filePath);
+  const focused = store.getBlock(target.focusedBlockId);
+
+  if (focused && focused.content.trim() === '') {
+    store.updateBlockContent(target.focusedBlockId, command);
+    return target.focusedBlockId;
+  }
+
+  const newId = store.createBlockAfter(target.focusedBlockId);
+  if (!newId) return null;
+
+  store.updateBlockContent(newId, command);
+  return newId;
+}
+
+/**
+ * Sort is authoritative over fuzzy match-rank.
+ *
+ * `fuzzyFilter` returns hits ordered by Fuse score, which would silently
+ * override the user's chosen sort while a query is active. Sorting *after*
+ * filtering keeps the toggle meaning what it says. Both orders tie-break on
+ * `id` so the list never reshuffles between renders (same reasoning as the
+ * `id DESC` tie-breaker in the SQL).
+ */
+export function sortFiles(files: FileEvent[], mode: SortMode): FileEvent[] {
+  const sorted = [...files];
+
+  if (mode === 'name') {
+    sorted.sort((a, b) => {
+      const cmp = basename(a.filePath).localeCompare(basename(b.filePath), undefined, {
+        sensitivity: 'base',
+      });
+      return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
+    });
+    return sorted;
+  }
+
+  sorted.sort((a, b) => {
+    const at = parseTimestamp(a);
+    const bt = parseTimestamp(b);
+    if (at !== bt) return bt - at; // newest first
+    return b.id.localeCompare(a.id);
+  });
+  return sorted;
+}
+
+function parseTimestamp(file: FileEvent): number {
+  const raw = timestampOf(file);
+  if (!raw) return 0;
+  const parsed = Date.parse(raw);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMPONENT
+// ═══════════════════════════════════════════════════════════════
 
 export function RecentFilesSidebar(props: { visible: boolean }) {
   const [files, setFiles] = createSignal<FileEvent[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
-  const [copiedId, setCopiedId] = createSignal<string | null>(null);
+  const [flash, setFlash] = createSignal<RowFlash | null>(null);
+  const [sortMode, setSortMode] = createSignal<SortMode>('date');
+  // Two signals: `filterInput` drives the controlled <input> (must update on
+  // every keystroke), `filterQuery` drives the actual filtering (debounced, so
+  // Fuse doesn't re-search on every character).
+  const [filterInput, setFilterInput] = createSignal('');
+  const [filterQuery, setFilterQuery] = createSignal('');
 
   let fetchInFlight = false;
   let fetchQueued = false;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
+  let filterTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const onFilterInput = (value: string) => {
+    setFilterInput(value);
+    if (filterTimer) clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      filterTimer = null;
+      setFilterQuery(value.trim());
+    }, FILTER_DEBOUNCE_MS);
+  };
+
+  // Filter first, then sort. `fuzzyFilter` caches its Fuse index by array
+  // IDENTITY, so it must receive the raw signal array — never a copy.
+  const filtered = createMemo(() =>
+    fuzzyFilter(files(), filterQuery(), { keys: FILTER_KEYS })
+  );
+  const visibleFiles = createMemo(() => sortFiles(filtered(), sortMode()));
 
   const queueFetch = (delayMs = 0) => {
     if (refreshTimer) {
@@ -113,19 +292,70 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
     }
   };
 
-  const copyCatCommand = async (file: FileEvent) => {
-    const command = catCommand(file.filePath);
-    try {
-      await navigator.clipboard.writeText(command);
+  const flashRow = (id: string, kind: RowFlashKind, message: string) => {
+    setFlash({ id, kind, message });
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(
+      () => {
+        flashTimer = null;
+        setFlash(null);
+      },
+      kind === 'error' ? FLASH_ERROR_MS : FLASH_OK_MS
+    );
+  };
 
-      setCopiedId(file.id);
-      if (copiedTimer) clearTimeout(copiedTimer);
-      copiedTimer = setTimeout(() => {
-        copiedTimer = null;
-        setCopiedId(null);
-      }, COPIED_FEEDBACK_MS);
+  const copyCatCommand = async (file: FileEvent) => {
+    try {
+      await navigator.clipboard.writeText(catCommand(file.filePath));
+      flashRow(file.id, 'copied', 'copied sh:: cat');
     } catch (e) {
       logger.error(`Failed to copy command to clipboard: ${e}`);
+      flashRow(file.id, 'error', "couldn't copy to clipboard");
+    }
+  };
+
+  const insertIntoOutline = (file: FileEvent) => {
+    const target = resolveInsertTarget({
+      activeTabId: () => tabStore.activeTabId(),
+      resolveSidebarTarget: (tabId) => paneLinkStore.resolveSidebarTarget(tabId),
+      getFocusedBlockId: (paneId) => paneStore.getFocusedBlockId(paneId),
+    });
+
+    if (!target) {
+      // Not a silent no-op and not a modal — say what's missing, on the row.
+      flashRow(file.id, 'error', 'select a destination block first');
+      return;
+    }
+
+    const newId = insertCatBlockAt(target, file.filePath, blockStore);
+    if (!newId) {
+      logger.warn(`Insert refused for ${file.filePath} — anchor block likely gone`);
+      flashRow(file.id, 'error', "couldn't insert — try again");
+      return;
+    }
+
+    // Advance focus to the block we just made. Without this, ⌘-clicking three
+    // files in a row inserts all three after the SAME anchor, landing them in
+    // reverse click order. Advancing makes them stack in the order clicked.
+    paneStore.setFocusedBlockId(target.paneId, newId);
+    flashRow(file.id, 'inserted', 'inserted into outline');
+  };
+
+  const activateRow = (file: FileEvent, event: MouseEvent) => {
+    // "mod" click → insert; plain click keeps v1 clipboard behavior.
+    //
+    // Same platform idiom as every other mod+click in the app (BlockItem,
+    // LinkedReferences, BlockOutputView all do `isMac ? metaKey : ctrlKey`),
+    // so this is ⌘-click on macOS and Ctrl-click elsewhere. No conflict: the
+    // existing mod+click handlers are all bound to wikilink targets inside
+    // outliner surfaces, and keybinds.ts / the Outliner tinykeys map are
+    // keyboard-only — nothing listens for mod+click on a sidebar row.
+    const modKey = isMac ? event.metaKey : event.ctrlKey;
+
+    if (modKey) {
+      insertIntoOutline(file);
+    } else {
+      void copyCatCommand(file);
     }
   };
 
@@ -173,9 +403,13 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
         clearTimeout(refreshTimer);
         refreshTimer = null;
       }
-      if (copiedTimer) {
-        clearTimeout(copiedTimer);
-        copiedTimer = null;
+      if (flashTimer) {
+        clearTimeout(flashTimer);
+        flashTimer = null;
+      }
+      if (filterTimer) {
+        clearTimeout(filterTimer);
+        filterTimer = null;
       }
       fetchQueued = false;
     });
@@ -229,18 +463,63 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
             }
           >
             <aside class="files-sidebar" role="complementary" aria-label="Recent files">
-              <div class="files-sidebar-header">Recent Files ({files().length})</div>
-              <div class="files-list">
-                <For each={files()}>
-                  {(file) => (
-                    <FileRow
-                      file={file}
-                      copied={copiedId() === file.id}
-                      onCopy={copyCatCommand}
-                    />
-                  )}
-                </For>
+              <div class="files-sidebar-header">
+                <div class="files-header-top">
+                  <span>Recent Files ({visibleFiles().length})</span>
+                  <div class="files-sort" role="group" aria-label="Sort recent files">
+                    <button
+                      class="files-sort-button"
+                      aria-pressed={sortMode() === 'date'}
+                      onClick={() => setSortMode('date')}
+                    >
+                      date
+                    </button>
+                    <button
+                      class="files-sort-button"
+                      aria-pressed={sortMode() === 'name'}
+                      onClick={() => setSortMode('name')}
+                    >
+                      name
+                    </button>
+                  </div>
+                </div>
+
+                <input
+                  class="files-filter-input"
+                  type="text"
+                  placeholder="filter name, path, tool, session…"
+                  aria-label="Filter recent files by name, path, tool, session, or snippet"
+                  value={filterInput()}
+                  onInput={(e) => onFilterInput(e.currentTarget.value)}
+                />
+
+                <div class="files-hint-inline">
+                  click copies · {isMac ? '⌘' : 'ctrl'}-click inserts
+                </div>
               </div>
+
+              {/* Header stays mounted when the filter matches nothing — otherwise
+                * there'd be no way to clear the query that emptied the list. */}
+              <Show
+                when={visibleFiles().length > 0}
+                fallback={
+                  <div class="files-empty-state files-no-matches">
+                    No files match “{filterQuery()}”
+                  </div>
+                }
+              >
+                <div class="files-list">
+                  <For each={visibleFiles()}>
+                    {(file) => {
+                      const rowFlash = () => {
+                        const f = flash();
+                        return f && f.id === file.id ? f : null;
+                      };
+                      return <FileRow file={file} flash={rowFlash()} onActivate={activateRow} />;
+                    }}
+                  </For>
+                </div>
+              </Show>
             </aside>
           </Show>
         </Show>
@@ -251,27 +530,34 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
 
 function FileRow(props: {
   file: FileEvent;
-  copied: boolean;
-  onCopy: (file: FileEvent) => void;
+  flash: RowFlash | null;
+  onActivate: (file: FileEvent, event: MouseEvent) => void;
 }) {
   const name = () => basename(props.file.filePath);
   const when = () => formatRelativeTime(timestampOf(props.file));
 
   // Provenance as hover text — cheap, no extra state, no layout cost.
-  // Show the exact command that gets copied, quoting included, so the tooltip
-  // never diverges from what lands on the clipboard.
+  // Shows the exact command that gets copied/inserted, quoting included, so the
+  // tooltip never diverges from what actually lands.
+  const modLabel = isMac ? '⌘' : 'Ctrl';
+
   const title = () => {
-    const lines = [`Copy: ${catCommand(props.file.filePath)}`];
+    const lines = [
+      `Click to copy: ${catCommand(props.file.filePath)}`,
+      `${modLabel}-click to insert it at the focused block`,
+    ];
     if (props.file.snippet) lines.push('', props.file.snippet);
     return lines.join('\n');
   };
 
   return (
     <button
-      class={`files-row ${props.copied ? 'files-row-copied' : ''}`}
+      class={`files-row ${props.flash ? `files-row-${props.flash.kind}` : ''}`}
       title={title()}
-      aria-label={`Copy shell command to read ${name()}`}
-      onClick={() => props.onCopy(props.file)}
+      aria-label={`${name()} — click to copy shell command, ${
+        isMac ? 'Command' : 'Control'
+      }-click to insert into the outline`}
+      onClick={(e) => props.onActivate(props.file, e)}
     >
       <div class="files-row-top">
         <span class="files-row-name">{name()}</span>
@@ -281,15 +567,18 @@ function FileRow(props: {
       <Show when={props.file.snippet}>
         <div class="files-row-snippet">{props.file.snippet}</div>
       </Show>
-      <span class="files-row-copied-badge" aria-live="polite">
-        {props.copied ? 'copied sh:: cat' : ''}
+      <span
+        class={`files-row-flash ${props.flash?.kind === 'error' ? 'files-row-flash-error' : ''}`}
+        aria-live="polite"
+      >
+        {props.flash?.message ?? ''}
       </span>
     </button>
   );
 }
 
 /** Last path segment — the part you actually recognize. */
-function basename(path: string): string {
+export function basename(path: string): string {
   const parts = path.split('/').filter(Boolean);
   return parts[parts.length - 1] || path;
 }
