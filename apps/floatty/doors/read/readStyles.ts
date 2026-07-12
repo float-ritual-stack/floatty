@@ -70,13 +70,13 @@ export const READ_DOOR_CSS = `
 .door-read-front .fm-k::after { content: ': '; }
 .door-read-front .fm-v {
   color: var(--door-fg, inherit);
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .door-read-raw {
   margin: 0;
   overflow-x: auto;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   font-size: 12px;
   color: var(--door-fg, inherit);
 }

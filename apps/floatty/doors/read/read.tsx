@@ -160,9 +160,11 @@ export const door = {
     try {
       let raw = await exec(buildReadCommand(path));
       if (raw && isQmdSource(path)) raw = stripQmdPreamble(raw);
-      if (!raw) {
-        return { data: { path, raw: '' }, error: `Empty or unreadable: ${path}` };
-      }
+      // A successful exec() returning '' is a valid empty file — render it as
+      // an empty document, don't error. exec() throws on command failure
+      // (missing file → non-zero exit), which the catch below turns into the
+      // real error. Reserving errors for rejected exec() matches how the other
+      // doors (portless, rangle-dash) trust exec().
       ctx.log('read::', path, `${raw.length} chars`);
       return { data: { path, raw } };
     } catch (err) {
