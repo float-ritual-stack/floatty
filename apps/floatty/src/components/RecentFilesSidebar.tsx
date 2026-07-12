@@ -174,9 +174,23 @@ export interface InsertStore {
  * If it has content, insert a new sibling BELOW instead. Never clobber text the
  * user already typed.
  *
- * Returns the id of the block now holding the command, or null when the store
- * refused the insert (`createBlockAfter` returns '' if the anchor or its parent
- * vanished between render and click).
+ * Returns the id of the block now holding the command, or null when the write
+ * did not land — the caller must surface that rather than claim success.
+ *
+ * ## Why the in-place write is verified
+ *
+ * `getBlock` reads the SolidJS reactive projection, not Y.Doc, and per
+ * ydoc-patterns.md #14 that projection can be STALE — a block deleted remotely
+ * may still be present in `state.blocks`. `updateBlockContent` → `setValueOnYMap`
+ * then *silently no-ops* when the id is absent from the Y.Map (no throw). So a
+ * naive "write, return the id" would focus a dead block and report "inserted"
+ * while nothing was written (Greptile P1 on PR #339).
+ *
+ * Reading back through the same projection is safe here: yjs observers fire
+ * synchronously at the end of `transact()`, so a write that landed is visible
+ * immediately. If the read-back doesn't show our command, the block is gone from
+ * Y.Doc — fall through to `createBlockAfter`, which validates against Y.Doc
+ * inside its own transaction and returns '' on failure.
  */
 export function insertBlockAt(
   target: InsertTarget,
@@ -187,7 +201,12 @@ export function insertBlockAt(
 
   if (focused && focused.content.trim() === '') {
     store.updateBlockContent(target.focusedBlockId, command);
-    return target.focusedBlockId;
+
+    if (store.getBlock(target.focusedBlockId)?.content === command) {
+      return target.focusedBlockId;
+    }
+    // Write didn't land — the block isn't in Y.Doc. Fall through and make a
+    // real one rather than report a phantom success.
   }
 
   const newId = store.createBlockAfter(target.focusedBlockId);
@@ -446,13 +465,23 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
         clearTimeout(refreshTimer);
         refreshTimer = null;
       }
+      // Cancelling a timer must also settle the state it was going to settle.
+      // This cleanup runs on HIDE (⌘\) as well as unmount, and the component
+      // survives a hide — so a bare clearTimeout would strand whatever the
+      // timer was mid-way through.
       if (flashTimer) {
         clearTimeout(flashTimer);
         flashTimer = null;
+        // Otherwise the row stays lit "inserted" forever: the timer that would
+        // have cleared it is gone, and the signal outlives the hide.
+        setFlash(null);
       }
       if (filterTimer) {
         clearTimeout(filterTimer);
         filterTimer = null;
+        // Flush rather than drop: the input still shows what was typed, so the
+        // applied query has to catch up or the list contradicts the box.
+        setFilterQuery(filterInput().trim());
       }
       fetchQueued = false;
     });
@@ -480,7 +509,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
               <div class="files-sidebar-header">Recent Files</div>
               <div class="files-error-state">
                 <div class="files-error-message" role="alert">{error()}</div>
-                <button class="files-retry-button" onClick={() => queueFetch(0)}>
+                <button type="button" class="files-retry-button" onClick={() => queueFetch(0)}>
                   Retry
                 </button>
               </div>
@@ -511,6 +540,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
                   <span>Recent Files ({visibleFiles().length})</span>
                   <div class="files-sort" role="group" aria-label="Sort recent files">
                     <button
+                      type="button"
                       class="files-sort-button"
                       aria-pressed={sortMode() === 'date'}
                       onClick={() => setSortMode('date')}
@@ -518,6 +548,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
                       date
                     </button>
                     <button
+                      type="button"
                       class="files-sort-button"
                       aria-pressed={sortMode() === 'name'}
                       onClick={() => setSortMode('name')}
@@ -597,6 +628,7 @@ function FileRow(props: {
 
   return (
     <button
+      type="button"
       class={`files-row ${props.flash ? `files-row-${props.flash.kind}` : ''}`}
       title={title()}
       aria-label={
@@ -624,9 +656,23 @@ function FileRow(props: {
   );
 }
 
-/** Last path segment — the part you actually recognize. */
+/**
+ * Last path segment — the part you actually recognize. Drives the row label and
+ * the name-sort key.
+ *
+ * Splits on BOTH separators. floatty is cross-platform (CLAUDE.md: "Cmd on
+ * macOS, Ctrl on Windows/Linux"), and an agent running on Windows writes
+ * `C:\work\notes.md` — splitting on `/` alone would leave the whole path as the
+ * "filename", so every row would show its full path and name-sort would key on
+ * the drive letter.
+ *
+ * Tradeoff, deliberately taken: a POSIX filename may legally contain a literal
+ * backslash (`a\b.md`), and this would render it as `b.md`. That's a display/sort
+ * nit on a pathological name; showing a full Windows path on every row is a
+ * visible bug on a supported platform.
+ */
 export function basename(path: string): string {
-  const parts = path.split('/').filter(Boolean);
+  const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || path;
 }
 

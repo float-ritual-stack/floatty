@@ -7,6 +7,7 @@ import {
   resolveInsertTarget,
   insertBlockAt,
   readCommand,
+  basename,
   FILTER_KEYS,
   type SortMode,
 } from './RecentFilesSidebar';
@@ -120,13 +121,24 @@ describe('resolveInsertTarget', () => {
 describe('insertBlockAt', () => {
   const target = { paneId: 'pane-1', focusedBlockId: 'block-1' };
 
-  const storeWith = (focusedContent: string | undefined) => ({
-    getBlock: vi.fn((id: string) =>
-      id === 'block-1' && focusedContent !== undefined ? { content: focusedContent } : undefined
-    ),
-    createBlockAfter: vi.fn(() => 'new-block'),
-    updateBlockContent: vi.fn(),
-  });
+  /**
+   * A store whose writes actually LAND — content is mutable, so the read-back
+   * inside insertBlockAt sees the write (yjs observers fire synchronously, so
+   * this models the real store). The phantom-write cases below deliberately use
+   * a no-op `updateBlockContent` instead, to model a stale projection.
+   */
+  const storeWith = (focusedContent: string | undefined) => {
+    let content = focusedContent;
+    return {
+      getBlock: vi.fn((id: string) =>
+        id === 'block-1' && content !== undefined ? { content } : undefined
+      ),
+      createBlockAfter: vi.fn(() => 'new-block'),
+      updateBlockContent: vi.fn((id: string, next: string) => {
+        if (id === 'block-1') content = next;
+      }),
+    };
+  };
 
   it('fills the focused block IN PLACE when it is empty', () => {
     // The common case: user hits Enter for a fresh block, then mod-clicks a
@@ -193,6 +205,54 @@ describe('insertBlockAt', () => {
 
     expect(insertBlockAt(target, catCommand('/path/to/x.md'), store)).toBeNull();
     expect(store.updateBlockContent).not.toHaveBeenCalled();
+  });
+
+  // Greptile P1 on PR #339. `getBlock` reads the SolidJS projection, which can
+  // be stale w.r.t. Y.Doc; `setValueOnYMap` then silently no-ops for a missing
+  // id. So "block looks empty, write it, return its id" can report a phantom
+  // success on a block that no longer exists.
+  describe('when the focused block is gone from Y.Doc but stale in the projection', () => {
+    it('does not report a phantom success — falls through to a real block', () => {
+      const command = catCommand('/path/to/x.md');
+      const store = {
+        // Looks like an empty block, but the write never lands (no-op).
+        getBlock: vi.fn(() => ({ content: '' })),
+        createBlockAfter: vi.fn(() => 'fresh-block'),
+        updateBlockContent: vi.fn(), // no-op: content never becomes `command`
+      };
+
+      const id = insertBlockAt(target, command, store);
+
+      expect(id).toBe('fresh-block');
+      expect(store.createBlockAfter).toHaveBeenCalledWith('block-1');
+      expect(store.updateBlockContent).toHaveBeenLastCalledWith('fresh-block', command);
+    });
+
+    it('returns null when the fallback ALSO fails — never a false "inserted"', () => {
+      const store = {
+        getBlock: vi.fn(() => ({ content: '' })),
+        createBlockAfter: vi.fn(() => ''), // Y.Doc has no such anchor either
+        updateBlockContent: vi.fn(),
+      };
+
+      expect(insertBlockAt(target, catCommand('/path/to/x.md'), store)).toBeNull();
+    });
+
+    it('still fills in place when the write DOES land', () => {
+      // Guard against the verification read breaking the happy path.
+      const command = catCommand('/path/to/x.md');
+      let content = '';
+      const store = {
+        getBlock: vi.fn(() => ({ content })),
+        createBlockAfter: vi.fn(() => 'should-not-be-called'),
+        updateBlockContent: vi.fn((_id: string, c: string) => {
+          content = c; // yjs observers fire synchronously — the read-back sees it
+        }),
+      };
+
+      expect(insertBlockAt(target, command, store)).toBe('block-1');
+      expect(store.createBlockAfter).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -348,10 +408,15 @@ describe('readCommand', () => {
   });
 
   it('inserts a read:: block through the same insert semantics', () => {
+    // The write must actually land, or insertBlockAt's phantom-write guard
+    // correctly refuses to claim success (see the stale-projection cases above).
+    let content = '';
     const store = {
-      getBlock: vi.fn(() => ({ content: '' })),
+      getBlock: vi.fn(() => ({ content })),
       createBlockAfter: vi.fn(() => 'new-block'),
-      updateBlockContent: vi.fn(),
+      updateBlockContent: vi.fn((_id: string, next: string) => {
+        content = next;
+      }),
     };
     const id = insertBlockAt(
       { paneId: 'pane-1', focusedBlockId: 'block-1' },
@@ -360,5 +425,37 @@ describe('readCommand', () => {
     );
     expect(id).toBe('block-1');
     expect(store.updateBlockContent).toHaveBeenCalledWith('block-1', 'read:: /path/to/design.md');
+  });
+});
+
+// ── basename (cross-platform) ─────────────────────────────────────────
+
+describe('basename', () => {
+  it('takes the last segment of a POSIX path', () => {
+    expect(basename('/path/to/design.md')).toBe('design.md');
+  });
+
+  it('handles Windows separators — an agent on Windows writes C:\\work\\notes.md', () => {
+    // Splitting on '/' alone would return the whole path, so every row would
+    // display its full path and name-sort would key on the drive letter.
+    expect(basename('C:\\work\\notes.md')).toBe('notes.md');
+    expect(basename('C:\\notes.md')).toBe('notes.md');
+  });
+
+  it('handles a mixed-separator path', () => {
+    expect(basename('C:/work\\sub/notes.md')).toBe('notes.md');
+  });
+
+  it('falls back to the input when there is no separator', () => {
+    expect(basename('notes.md')).toBe('notes.md');
+  });
+
+  it('sorts by the Windows filename, not the drive letter', () => {
+    const a = file({ id: '1', filePath: 'C:\\zzz\\apple.md' });
+    const b = file({ id: '2', filePath: 'C:\\aaa\\zebra.md' });
+    expect(sortFiles([b, a], 'name').map((f) => f.filePath)).toEqual([
+      'C:\\zzz\\apple.md',
+      'C:\\aaa\\zebra.md',
+    ]);
   });
 });
