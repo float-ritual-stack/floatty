@@ -589,22 +589,31 @@ impl FloattyDb {
     /// A file edited 30 times shows up once, carrying its newest event.
     /// Recency uses the JSONL timestamp, falling back to insert time for rows
     /// whose source line had no `timestamp` field.
+    ///
+    /// `id DESC` is the tie-breaker in BOTH stages, so the result is fully
+    /// deterministic when timestamps collide (two writes in the same SQLite
+    /// second, or two tool_use blocks sharing a JSONL timestamp). Without it
+    /// the per-path pick and the final order were both arbitrary — the id
+    /// (`file-<tool_use_id>`) is unique and monotonic-enough for a stable
+    /// "newest" definition. `ROW_NUMBER` is available because rusqlite is
+    /// built with the `bundled` SQLite (3.46 ≫ 3.25, which added window fns).
     pub fn get_recent_files(&self, limit: i32) -> Result<Vec<FileEvent>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             r#"
-            SELECT fe.id, fe.file_path, fe.tool_name, fe.session_file, fe.session_id,
-                   fe.cwd, fe.git_branch, fe.snippet, fe.event_time, fe.created_at
-            FROM file_events fe
-            JOIN (
-                SELECT file_path, MAX(COALESCE(event_time, created_at)) AS latest
-                FROM file_events
-                GROUP BY file_path
-            ) newest
-              ON fe.file_path = newest.file_path
-             AND COALESCE(fe.event_time, fe.created_at) = newest.latest
-            GROUP BY fe.file_path
-            ORDER BY COALESCE(fe.event_time, fe.created_at) DESC
+            SELECT id, file_path, tool_name, session_file, session_id,
+                   cwd, git_branch, snippet, event_time, created_at
+            FROM (
+                SELECT fe.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY fe.file_path
+                           ORDER BY COALESCE(fe.event_time, fe.created_at) DESC,
+                                    fe.id DESC
+                       ) AS rn
+                FROM file_events fe
+            ) ranked
+            WHERE rn = 1
+            ORDER BY COALESCE(event_time, created_at) DESC, id DESC
             LIMIT ?
             "#,
         )?;

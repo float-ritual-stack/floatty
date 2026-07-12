@@ -1,5 +1,34 @@
 import { describe, it, expect } from 'vitest';
-import { formatRelativeTime } from './RecentFilesSidebar';
+import { formatRelativeTime, shellQuotePath } from './RecentFilesSidebar';
+
+describe('shellQuotePath', () => {
+  it('wraps a plain path in single quotes', () => {
+    expect(shellQuotePath('/path/to/file.md')).toBe(`'/path/to/file.md'`);
+  });
+
+  it('keeps paths with spaces as a single argument', () => {
+    expect(shellQuotePath('/path/to/my notes.md')).toBe(`'/path/to/my notes.md'`);
+  });
+
+  it('neutralizes shell metacharacters', () => {
+    // Inside single quotes these are all literal — no command substitution,
+    // no command chaining, no globbing.
+    expect(shellQuotePath('/tmp/$(rm -rf ~).md')).toBe(`'/tmp/$(rm -rf ~).md'`);
+    expect(shellQuotePath('/tmp/`whoami`.md')).toBe(`'/tmp/\`whoami\`.md'`);
+    expect(shellQuotePath('/tmp/a;b.md')).toBe(`'/tmp/a;b.md'`);
+  });
+
+  it('escapes embedded single quotes via close-escape-reopen', () => {
+    // /tmp/it's.md → '/tmp/it'\''s.md' — the only escape single-quoting needs.
+    expect(shellQuotePath("/tmp/it's.md")).toBe(`'/tmp/it'\\''s.md'`);
+  });
+
+  it('produces a command whose payload cannot break out of the quotes', () => {
+    const cmd = `cat ${shellQuotePath("/tmp/x'; rm -rf ~ #.md")}`;
+    // The injected quote is escaped, so the `; rm` stays inside the argument.
+    expect(cmd).toBe(`cat '/tmp/x'\\''; rm -rf ~ #.md'`);
+  });
+});
 
 describe('formatRelativeTime', () => {
   // Fixed "now" so these never go flaky.

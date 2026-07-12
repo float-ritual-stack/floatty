@@ -28,6 +28,25 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 /** Tauri event pushed by the Rust watcher when new file-writes land. */
 const RECENT_FILES_CHANGED_EVENT = 'recent-files-changed';
 
+/**
+ * POSIX single-quote a path for safe use in a shell command.
+ *
+ * The copied `sh:: cat <path>` block is run through `$SHELL -lc` by
+ * `execute_shell_command`, so an unquoted path with spaces reads the wrong
+ * args, and one containing `$(...)`, backticks, `;`, or quotes could execute
+ * arbitrary shell code when the user pastes the block. Single quotes disable
+ * every shell metacharacter; the only escape needed is the single quote
+ * itself, closed and reopened via `'\''`.
+ */
+export function shellQuotePath(path: string): string {
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The exact `sh:: cat` command copied/shown for a file — path always quoted. */
+function catCommand(filePath: string): string {
+  return `sh:: cat ${shellQuotePath(filePath)}`;
+}
+
 /** How long the "copied" affordance sticks around. */
 const COPIED_FEEDBACK_MS = 1500;
 
@@ -95,7 +114,7 @@ export function RecentFilesSidebar(props: { visible: boolean }) {
   };
 
   const copyCatCommand = async (file: FileEvent) => {
-    const command = `sh:: cat ${file.filePath}`;
+    const command = catCommand(file.filePath);
     try {
       await navigator.clipboard.writeText(command);
 
@@ -239,8 +258,10 @@ function FileRow(props: {
   const when = () => formatRelativeTime(timestampOf(props.file));
 
   // Provenance as hover text — cheap, no extra state, no layout cost.
+  // Show the exact command that gets copied, quoting included, so the tooltip
+  // never diverges from what lands on the clipboard.
   const title = () => {
-    const lines = [`Copy: sh:: cat ${props.file.filePath}`];
+    const lines = [`Copy: ${catCommand(props.file.filePath)}`];
     if (props.file.snippet) lines.push('', props.file.snippet);
     return lines.join('\n');
   };

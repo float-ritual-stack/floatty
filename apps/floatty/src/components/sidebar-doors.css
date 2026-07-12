@@ -187,7 +187,6 @@
   border-radius: 0;
   text-align: left;
   font: inherit;
-
   padding: 10px 16px;
   cursor: pointer;
   transition: background 0.15s ease;
@@ -270,7 +269,7 @@
   font-size: 11px;
   color: var(--color-error);
   margin-bottom: 16px;
-  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .files-retry-button {

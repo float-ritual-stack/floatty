@@ -33,6 +33,16 @@ mod tests {
         }
     }
 
+    fn event_with_tool(id: &str, path: &str, time: Option<&str>, tool: &str) -> FileEventInsert {
+        FileEventInsert {
+            id: id.to_string(),
+            file_path: path.to_string(),
+            tool_name: tool.to_string(),
+            event_time: time.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
     fn seeded_db(events: &[FileEventInsert]) -> Arc<FloattyDb> {
         let db = Arc::new(FloattyDb::open_in_memory().expect("open in-memory db"));
         db.insert_scan_with_position("/path/to/session.jsonl", &[], events, 0)
@@ -71,6 +81,58 @@ mod tests {
             spec.event_time.as_deref(),
             Some("2026-07-12T12:00:00.000Z"),
             "carries the newest event, not the first"
+        );
+    }
+
+    #[test]
+    fn tied_timestamps_resolve_deterministically_by_id() {
+        // Two writes to the same path in the same JSONL timestamp. Without an
+        // id tie-breaker the per-path pick was arbitrary (CodeRabbit MAJOR /
+        // Greptile P2). The higher id must win, deterministically, every run.
+        let tie = "2026-07-12T12:00:00.000Z";
+        let db = seeded_db(&[
+            event_with_tool("file-aaa", "/path/to/spec.md", Some(tie), "Write"),
+            event_with_tool("file-zzz", "/path/to/spec.md", Some(tie), "Edit"),
+        ]);
+
+        let recent = get_recent_files(&db, 10).expect("query");
+        assert_eq!(recent.len(), 1, "still one row per path");
+        assert_eq!(recent[0].id, "file-zzz", "highest id wins the tie");
+        assert_eq!(recent[0].tool_name, "Edit", "carries that row's columns");
+    }
+
+    #[test]
+    fn tied_timestamps_across_paths_order_deterministically() {
+        // Two different paths sharing a timestamp must not swap order run-to-run.
+        let tie = "2026-07-12T12:00:00.000Z";
+        let db = seeded_db(&[
+            event("file-aaa", "/path/to/first.md", tie),
+            event("file-bbb", "/path/to/second.md", tie),
+        ]);
+
+        let first = get_recent_files(&db, 10).expect("query");
+        let second = get_recent_files(&db, 10).expect("query");
+        let paths =
+            |v: &[crate::db::FileEvent]| v.iter().map(|e| e.file_path.clone()).collect::<Vec<_>>();
+        assert_eq!(paths(&first), paths(&second), "stable across calls");
+        // id DESC in the final ORDER BY → file-bbb before file-aaa.
+        assert_eq!(first[0].file_path, "/path/to/second.md");
+    }
+
+    #[test]
+    fn timestampless_rows_fall_back_to_created_at_then_id() {
+        // Rows with no JSONL timestamp share the same CURRENT_TIMESTAMP second;
+        // id DESC keeps their selection/order deterministic.
+        let db = seeded_db(&[
+            event_with_tool("file-aaa", "/path/to/notes.md", None, "Write"),
+            event_with_tool("file-mmm", "/path/to/notes.md", None, "Edit"),
+        ]);
+
+        let recent = get_recent_files(&db, 10).expect("query");
+        assert_eq!(recent.len(), 1);
+        assert_eq!(
+            recent[0].id, "file-mmm",
+            "highest id wins among null-time rows"
         );
     }
 
