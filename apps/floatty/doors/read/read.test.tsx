@@ -292,3 +292,38 @@ describe('qmd sources', () => {
     expect(stripQmdPreamble('# Regular doc\n')).toBe('# Regular doc\n');
   });
 });
+
+// ─── BlockDown primitives (RFC 2026-04-27, qmd dig 2026-07-12) ─────────
+import { pillHue } from './readDoc';
+
+describe('BlockDown rendering', () => {
+  it('renders [key::value] as a color-hashed pill, not bracket noise', () => {
+    const html = renderMarkdownDoc('status update [project::floatty] [mode::synthesis]');
+    expect(html).toContain('read-pill');
+    expect(html).toContain('--pill-h:');
+    expect(html).toContain('floatty');
+    expect(html).not.toContain('[project::floatty]');
+  });
+
+  it('pill hue is deterministic per key+value', () => {
+    expect(pillHue('project::floatty')).toBe(pillHue('project::floatty'));
+    expect(pillHue('project::floatty')).not.toBe(pillHue('project::evna'));
+  });
+
+  it('does NOT treat indented lines as code blocks (2-space indent = child block)', () => {
+    const html = renderMarkdownDoc('parent line\n\n    ~01:35pm indented timelog entry\n    ~01:45pm another\n');
+    expect(html).not.toContain('<pre>');
+    expect(html).toContain('~01:35pm');
+  });
+
+  it('fenced code still renders as code', () => {
+    const html = renderMarkdownDoc('```\ntree art here\n```\n');
+    expect(html).toContain('<pre>');
+  });
+
+  it('wikilinks and pills coexist on one line', () => {
+    const html = renderMarkdownDoc('[project::floatty] see [[FLO-474]]');
+    expect(html).toContain('read-pill');
+    expect(html).toContain(`${WIKILINK_ATTR}="FLO-474"`);
+  });
+});

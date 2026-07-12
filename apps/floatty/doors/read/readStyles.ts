@@ -162,4 +162,23 @@ export const READ_DOOR_CSS = `
   text-decoration: none;
 }
 .door-read-doc .read-wikilink:hover { text-decoration: underline; }
+.door-read-doc .read-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 0.85em;
+  background: hsla(var(--pill-h), 45%, 55%, 0.16);
+  border: 1px solid hsla(var(--pill-h), 45%, 60%, 0.35);
+  white-space: nowrap;
+}
+.door-read-doc .read-pill-k {
+  color: hsl(var(--pill-h), 55%, 70%);
+}
+.door-read-doc .read-pill-v {
+  color: var(--door-fg, inherit);
+  opacity: 0.9;
+}
+.door-read-doc .read-pill-k:not(:only-child)::after { content: '::'; opacity: 0.6; }
 `;

@@ -154,12 +154,65 @@ const wikilinkExtension: TokenizerAndRendererExtension = {
   },
 };
 
+
+interface PillToken extends Tokens.Generic {
+  type: 'floatPill';
+  raw: string;
+  key: string;
+  value: string;
+}
+
+/** Deterministic hue from a pill's key+value — mirrors the outline parser's
+ *  value-hashed pill colors (capture-format Layer 0: pills ARE hierarchy). */
+export function pillHue(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
+/**
+ * Inline extension: [key::value] → color-hashed pill span.
+ * BlockDown primitive (RFC 2026-04-27): pills are first-class inline
+ * metadata, not bracket noise. Keys are word-ish; values stay short.
+ */
+const pillExtension: TokenizerAndRendererExtension = {
+  name: 'floatPill',
+  level: 'inline',
+  start(src: string) {
+    const idx = src.indexOf('[');
+    return idx === -1 ? undefined : idx;
+  },
+  tokenizer(src: string): PillToken | undefined {
+    const m = src.match(/^\[([a-zA-Z][\w-]*)::([^\]\n]{0,80})\]/);
+    if (!m) return undefined;
+    return { type: 'floatPill', raw: m[0], key: m[1], value: m[2].trim() };
+  },
+  renderer(token: Tokens.Generic): string {
+    const { key, value } = token as PillToken;
+    const hue = pillHue(key + '::' + value);
+    return `<span class="read-pill" style="--pill-h:${hue}">` +
+      `<span class="read-pill-k">${escapeHtml(key)}</span>` +
+      (value ? `<span class="read-pill-v">${escapeHtml(value)}</span>` : '') +
+      `</span>`;
+  },
+};
+
 // breaks: true — Obsidian-convention line breaks. The corpus (daily notes,
 // timelogs, BBS posts) is authored line-per-entry with single newlines;
 // CommonMark's fold-into-paragraph turns a timelog into an unreadable
 // run-on (2026-07-12 screenshot). Newline = <br>, like Obsidian renders it.
 const md = new Marked({ gfm: true, breaks: true });
-md.use({ extensions: [wikilinkExtension] });
+md.use({
+  extensions: [wikilinkExtension, pillExtension],
+  // BlockDown (RFC 2026-04-27): "2-space indent = child-block, NOT
+  // code-fence trigger". CommonMark's indented-code rule turns indented
+  // note hierarchy into <pre> garbage — fenced code only in the reader.
+  tokenizer: {
+    code() {
+      return undefined;
+    },
+  },
+});
 
 /**
  * Split leading YAML frontmatter from a document (display-only — no YAML
