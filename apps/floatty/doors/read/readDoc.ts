@@ -124,7 +124,11 @@ const wikilinkExtension: TokenizerAndRendererExtension = {
   },
 };
 
-const md = new Marked({ gfm: true });
+// breaks: true — Obsidian-convention line breaks. The corpus (daily notes,
+// timelogs, BBS posts) is authored line-per-entry with single newlines;
+// CommonMark's fold-into-paragraph turns a timelog into an unreadable
+// run-on (2026-07-12 screenshot). Newline = <br>, like Obsidian renders it.
+const md = new Marked({ gfm: true, breaks: true });
 md.use({ extensions: [wikilinkExtension] });
 
 /**

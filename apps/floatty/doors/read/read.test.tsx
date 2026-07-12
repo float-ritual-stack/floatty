@@ -252,3 +252,11 @@ describe('splitFrontmatter', () => {
     expect(container.querySelector('.door-read-doc')!.textContent).not.toContain('project:');
   });
 });
+
+// ─── Obsidian-style line breaks (2026-07-12 timelog screenshot) ────────
+describe('single-newline line breaks', () => {
+  it('renders line-per-entry content (timelogs) as separate lines, not a run-on paragraph', () => {
+    const html = renderMarkdownDoc('~01:35pm rexall re-grounded\n~01:45pm board reconciled\n');
+    expect(html).toContain('<br');
+  });
+});
