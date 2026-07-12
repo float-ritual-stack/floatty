@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import solidPlugin from 'vite-plugin-solid';
 
@@ -18,5 +19,11 @@ export default defineConfig({
   },
   resolve: {
     conditions: ['development', 'browser'],
+    alias: {
+      // Doors import '@floatty/stdlib' as a bare specifier — at runtime the
+      // door loader shims it, and compile-door-bundle.mjs keeps it external.
+      // Tests import door sources directly, so point it at the real module.
+      '@floatty/stdlib': fileURLToPath(new URL('./src/lib/doorStdlib.ts', import.meta.url)),
+    },
   },
 });

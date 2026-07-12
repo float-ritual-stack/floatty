@@ -241,6 +241,9 @@
   height: 100%;
 }
 
+/* read:: door styles live INSIDE the door bundle (doors/read/readStyles.ts)
+   — doors are drop-in plugins; their CSS must travel with them. */
+
 /* ─── Reduced motion ─── */
 
 @media (prefers-reduced-motion: reduce) {
