@@ -181,8 +181,9 @@ pub struct AppState {
 
 // Sync DTOs re-exported (used by ApiError::IntoResponse, tests)
 pub use sync::{
-    HealthResponse, RestoreResponse, StateHashResponse, StateResponse, StateVectorResponse,
-    UpdateEntry, UpdateRequest, UpdatesCompactedResponse, UpdatesQuery, UpdatesResponse,
+    HealthResponse, RestoreResponse, StateDiffRequest, StateDiffResponse, StateHashResponse,
+    StateResponse, StateVectorResponse, UpdateEntry, UpdateRequest, UpdatesCompactedResponse,
+    UpdatesQuery, UpdatesResponse,
 };
 // Search DTOs re-exported (used by block_service, tests)
 pub use search::{BlockSearchHit, BlockSearchQuery, BlockSearchResponse};
@@ -3686,6 +3687,246 @@ mod tests {
             &router,
             &format!("/api/v1/blocks/{}", id),
             serde_json::json!({ "output": render_envelope("orphan") }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // POST /api/v1/state-diff — state-vector PULL diff (fast-boot Phase 0)
+    // ═══════════════════════════════════════════════════════════════
+
+    fn b64_encode(bytes: &[u8]) -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    fn b64_decode(s: &str) -> Vec<u8> {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.decode(s).unwrap()
+    }
+
+    /// Apply a base64 v1 update to a client-side doc — mirrors what the
+    /// frontend does with the response (`Y.applyUpdate(doc, update)`).
+    fn apply_b64_update(doc: &yrs::Doc, update_b64: &str) {
+        use yrs::updates::decoder::Decode;
+        let update = yrs::Update::decode_v1(&b64_decode(update_b64)).unwrap();
+        doc.transact_mut().apply_update(update).unwrap();
+    }
+
+    /// The client's own state vector, base64 — `Y.encodeStateVector(doc)`.
+    fn client_state_vector_b64(doc: &yrs::Doc) -> String {
+        use yrs::updates::encoder::Encode;
+        use yrs::Transact;
+        b64_encode(&doc.transact().state_vector().encode_v1())
+    }
+
+    /// The state vector of a doc that has never seen an update — what a
+    /// cold-cache client sends on first boot.
+    fn empty_state_vector_b64() -> String {
+        client_state_vector_b64(&yrs::Doc::new())
+    }
+
+    fn block_contents_in(doc: &yrs::Doc) -> Vec<String> {
+        use yrs::{Map, Transact};
+        let txn = doc.transact();
+        let Some(blocks) = txn.get_map("blocks") else {
+            return Vec::new();
+        };
+        blocks
+            .iter(&txn)
+            .filter_map(|(_, v)| {
+                let yrs::Out::YMap(m) = v else { return None };
+                m.get(&txn, "content").map(|c| c.to_string(&txn))
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_state_diff_empty_vector_returns_full_state() {
+        // A cold-cache client (empty state vector) must get everything —
+        // /state-diff degrades to /state, which is the boot fallback.
+        let (router, _dir, _store) = test_app();
+        let mut app = router.clone().into_service();
+        create_test_block(&mut app, "Alpha", None).await;
+        create_test_block(&mut app, "Beta", None).await;
+
+        let (status, diff) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": empty_state_vector_b64() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let client = yrs::Doc::new();
+        apply_b64_update(&client, diff["update"].as_str().unwrap());
+
+        let mut contents = block_contents_in(&client);
+        contents.sort();
+        assert_eq!(contents, vec!["Alpha".to_string(), "Beta".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_state_diff_partial_vector_returns_only_the_delta() {
+        // The whole point of the endpoint: a client that already has most of
+        // the doc pays only for what it is missing.
+        let (router, _dir, _store) = test_app();
+        let mut app = router.clone().into_service();
+        for i in 0..5 {
+            create_test_block(&mut app, &format!("Already synced {}", i), None).await;
+        }
+
+        // Client catches up to the current server state.
+        let (_, full) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": empty_state_vector_b64() }),
+        )
+        .await;
+        let client = yrs::Doc::new();
+        apply_b64_update(&client, full["update"].as_str().unwrap());
+
+        // Server moves on while the client is away.
+        create_test_block(&mut app, "Arrived while away", None).await;
+
+        let (status, delta) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": client_state_vector_b64(&client) }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Compare against the CURRENT full state, not the pre-move-on snapshot:
+        // the claim is "you pay for the delta, not the document".
+        let (_, full_now) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": empty_state_vector_b64() }),
+        )
+        .await;
+        let delta_bytes = b64_decode(delta["update"].as_str().unwrap()).len();
+        let full_bytes = b64_decode(full_now["update"].as_str().unwrap()).len();
+        assert!(
+            delta_bytes * 2 < full_bytes,
+            "one new block out of six: delta ({delta_bytes} B) should be a fraction \
+             of the full state ({full_bytes} B)"
+        );
+
+        apply_b64_update(&client, delta["update"].as_str().unwrap());
+        let mut contents = block_contents_in(&client);
+        contents.sort();
+        assert_eq!(
+            contents,
+            vec![
+                "Already synced 0".to_string(),
+                "Already synced 1".to_string(),
+                "Already synced 2".to_string(),
+                "Already synced 3".to_string(),
+                "Already synced 4".to_string(),
+                "Arrived while away".to_string(),
+            ],
+            "applying the delta must converge the client onto server state"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_state_diff_up_to_date_vector_returns_empty_update() {
+        // Nothing to pull → an empty update (2-byte v1 header). The frontend
+        // treats `> 2 bytes` as "carries real ops"; keep that contract honest.
+        let (router, _dir, _store) = test_app();
+        let mut app = router.clone().into_service();
+        create_test_block(&mut app, "Only block", None).await;
+
+        let (_, full) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": empty_state_vector_b64() }),
+        )
+        .await;
+        let client = yrs::Doc::new();
+        apply_b64_update(&client, full["update"].as_str().unwrap());
+
+        let (status, delta) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": client_state_vector_b64(&client) }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            b64_decode(delta["update"].as_str().unwrap()).len() <= 2,
+            "an up-to-date client must get an empty update, got {} B",
+            b64_decode(delta["update"].as_str().unwrap()).len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_state_diff_latest_seq_and_epoch_pair_with_get_state() {
+        // The sync-integrity pairing (v0.19.0): latestSeq must describe the
+        // snapshot the update was encoded from. /state establishes the
+        // contract; /state-diff mirrors it — for an empty state vector the two
+        // encode the same doc, so their (latestSeq, epoch) must agree.
+        let (router, _dir, _store) = test_app();
+        let mut app = router.clone().into_service();
+        create_test_block(&mut app, "One", None).await;
+        create_test_block(&mut app, "Two", None).await;
+
+        let (state_status, state) = get_json_oneshot(&router, "/api/v1/state").await;
+        assert_eq!(state_status, StatusCode::OK);
+
+        let (diff_status, diff) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": empty_state_vector_b64() }),
+        )
+        .await;
+        assert_eq!(diff_status, StatusCode::OK);
+
+        assert_eq!(
+            diff["latestSeq"], state["latestSeq"],
+            "state-diff latestSeq must match the /state snapshot it mirrors"
+        );
+        assert_eq!(diff["epoch"], state["epoch"]);
+        assert!(
+            diff["latestSeq"].is_number(),
+            "a doc with applied updates must report a seq, got {:?}",
+            diff["latestSeq"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_state_diff_rejects_snake_case_field() {
+        // deny_unknown_fields: the wire is camelCase. Silent field-drop here
+        // would send an empty state vector → a full 31 MB refetch, invisibly.
+        let (router, _dir, _store) = test_app();
+        let (status, _) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "state_vector": empty_state_vector_b64() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_state_diff_rejects_garbage_state_vector() {
+        let (router, _dir, _store) = test_app();
+
+        let (status, _) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": "!!!not base64!!!" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Valid base64, but not a decodable state vector.
+        let (status, _) = post_json_oneshot(
+            &router,
+            "/api/v1/state-diff",
+            serde_json::json!({ "stateVector": b64_encode(&[0xff, 0xff, 0xff, 0xff]) }),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);

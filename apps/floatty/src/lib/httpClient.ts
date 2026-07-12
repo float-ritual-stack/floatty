@@ -75,12 +75,38 @@ export interface FullStateResponse {
   epoch: number | null;
 }
 
+/** Response for POST /api/v1/state-diff — the state-vector PULL diff. */
+export interface StateDiffResponse {
+  /** Only the ops the client lacks. Empty (<= 2-byte header) when up to date. */
+  update: Uint8Array;
+  /**
+   * Seq of the last update APPLIED to the doc this diff was encoded from —
+   * paired with the encode under one server-side read guard, so seeding the
+   * seq baseline from it can never skip an update the diff omits.
+   */
+  latestSeq: number | null;
+  /** Doc epoch of the diffed snapshot. Null on pre-epoch servers. */
+  epoch: number | null;
+}
+
 /** HTTP client interface for Y.Doc sync */
 export interface FloattyHttpClient {
   /** Get full Y.Doc state from server with latest sequence number */
   getState(): Promise<FullStateResponse>;
   /** Get state vector for reconciliation (what updates server has) */
   getStateVector(): Promise<Uint8Array>;
+  /**
+   * Pull only the ops the server has that this client lacks.
+   *
+   * The symmetric partner of the state-vector PUSH (`Y.encodeStateAsUpdate(doc,
+   * serverSV)` → `applyUpdate`). Diffs against actual doc state rather than the
+   * seq log, so it survives compaction — unlike `getUpdatesSince`, which 410s
+   * once the server compacts past the client's last seq and forces a full-state
+   * refetch.
+   *
+   * @param stateVector - `Y.encodeStateVector(doc)` for the local doc
+   */
+  stateDiff(stateVector: Uint8Array): Promise<StateDiffResponse>;
   /** Send update delta to server. Optional txId for echo prevention. */
   applyUpdate(update: Uint8Array, txId?: string): Promise<void>;
   /** Health check */
@@ -175,6 +201,32 @@ class HttpClient implements FloattyHttpClient {
     }
 
     return base64ToBytes(data.state_vector);
+  }
+
+  async stateDiff(stateVector: Uint8Array): Promise<StateDiffResponse> {
+    const response = await fetch(`${this.api('/state-diff')}`, {
+      method: 'POST',
+      headers: this.headers(),
+      // camelCase on the wire — the server declares deny_unknown_fields, so
+      // `state_vector` would be a 422, not a silent field-drop.
+      body: JSON.stringify({ stateVector: bytesToBase64(stateVector) }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to get state diff: ${response.status} ${text}`);
+    }
+
+    const data = await response.json();
+    if (typeof data.update !== 'string') {
+      throw new Error('Invalid response: missing update field');
+    }
+
+    return {
+      update: base64ToBytes(data.update),
+      latestSeq: data.latestSeq ?? null,
+      epoch: typeof data.epoch === 'number' ? data.epoch : null,
+    };
   }
 
   async applyUpdate(update: Uint8Array, txId?: string): Promise<void> {
