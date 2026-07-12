@@ -255,8 +255,10 @@ describe('splitFrontmatter', () => {
 
 // ─── Obsidian-style line breaks (2026-07-12 timelog screenshot) ────────
 describe('single-newline line breaks', () => {
-  it('renders line-per-entry content (timelogs) as separate lines, not a run-on paragraph', () => {
-    const html = renderMarkdownDoc('~01:35pm rexall re-grounded\n~01:45pm board reconciled\n');
+  it('renders line-per-entry content (refs lists) as separate lines, not a run-on paragraph', () => {
+    // Timelog-shaped lines now route through the timelog extension; this
+    // covers the general Obsidian-convention case (refs blocks, notes).
+    const html = renderMarkdownDoc('first ref line\nsecond ref line\n');
     expect(html).toContain('<br');
   });
 });
@@ -325,5 +327,33 @@ describe('BlockDown rendering', () => {
     const html = renderMarkdownDoc('[project::floatty] see [[FLO-474]]');
     expect(html).toContain('read-pill');
     expect(html).toContain(`${WIKILINK_ATTR}="FLO-474"`);
+  });
+});
+
+// ─── timelog idiom (2026-07-12 screenshot round 2) ─────────────────────
+describe('timelog rendering', () => {
+  it('renders consecutive timelog lines as hanging-indent entries with cyan time', () => {
+    const html = renderMarkdownDoc('~01:35pm  rexall-catalyst  re-grounded off W27\n~01:45pm  rexall-catalyst  board reconciled\n');
+    expect(html).toContain('read-tl-block');
+    expect((html.match(/read-tl-time/g) || []).length).toBe(2);
+    expect(html).toContain('read-tl-proj');
+    expect(html).toContain('rexall-catalyst');
+  });
+
+  it('keeps wikilinks live inside timelog entries', () => {
+    const html = renderMarkdownDoc('~02:46pm  rexall  sync processed → [[2026-07-06-sync]]\n');
+    expect(html).toContain(`${WIKILINK_ATTR}="2026-07-06-sync"`);
+  });
+
+  it('does not hijack bare H:MM in prose (am/pm required at line start)', () => {
+    const html = renderMarkdownDoc('the meeting at 14:30 went long\n');
+    expect(html).not.toContain('read-tl');
+  });
+
+  it('handles single-space separator by keeping body whole (no false project peel)', () => {
+    const html = renderMarkdownDoc('~02:00pm spike relit for demo\n');
+    expect(html).toContain('read-tl-time');
+    expect(html).not.toContain('read-tl-proj');
+    expect(html).toContain('spike relit');
   });
 });

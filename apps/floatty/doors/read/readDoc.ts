@@ -197,13 +197,82 @@ const pillExtension: TokenizerAndRendererExtension = {
   },
 };
 
+
+interface TimelogEntry {
+  time: string;
+  proj: string;
+  tokens: Tokens.Generic[];
+}
+
+interface TimelogToken extends Tokens.Generic {
+  type: 'floatTimelog';
+  raw: string;
+  entries: TimelogEntry[];
+}
+
+const TL_LINE = /^(~?\d{1,2}:\d{2}\s?(?:am|pm))\s+(.*)$/i;
+
+/**
+ * Block extension: consecutive timelog lines (`~01:35pm project text…`)
+ * render as hanging-indent entries with a cyan timestamp — the daily-note
+ * timelog idiom (BlockDown; capture-format Layer 0: timestamps are cyan).
+ * Without this, wrapped entries re-flow to column 0 and the log is mush
+ * (2026-07-12 screenshot round 2). am/pm required — bare H:MM in prose
+ * must not get hijacked.
+ */
+const timelogExtension: TokenizerAndRendererExtension = {
+  name: 'floatTimelog',
+  level: 'block',
+  start(src: string) {
+    const i = src.search(/^~?\d{1,2}:\d{2}\s?(?:am|pm)\s/im);
+    return i === -1 ? undefined : i;
+  },
+  tokenizer(src: string): TimelogToken | undefined {
+    const block = /^(?:~?\d{1,2}:\d{2}\s?(?:am|pm)\s+[^\n]*(?:\n|$))+/i.exec(src);
+    if (!block) return undefined;
+    const entries: TimelogEntry[] = [];
+    for (const line of block[0].split('\n')) {
+      const m = line.match(TL_LINE);
+      if (!m) continue;
+      // Timelog convention is `time  project  text` (2+ space separators).
+      // Only peel a project slug when that separator shape is present.
+      let proj = '';
+      let rest = m[2];
+      const pm = rest.match(/^([\w./-]+)\s{2,}(.*)$/);
+      if (pm) {
+        proj = pm[1];
+        rest = pm[2];
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tokens = (this as any).lexer.inlineTokens(rest);
+      entries.push({ time: m[1], proj, tokens });
+    }
+    if (!entries.length) return undefined;
+    return { type: 'floatTimelog', raw: block[0], entries };
+  },
+  renderer(token: Tokens.Generic): string {
+    const { entries } = token as TimelogToken;
+    const rows = entries
+      .map((e) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const body = (this as any).parser.parseInline(e.tokens);
+        const proj = e.proj
+          ? `<span class="read-tl-proj">${escapeHtml(e.proj)}</span> `
+          : '';
+        return `<div class="read-tl"><span class="read-tl-time">${escapeHtml(e.time)}</span> ${proj}${body}</div>`;
+      })
+      .join('');
+    return `<div class="read-tl-block">${rows}</div>`;
+  },
+};
+
 // breaks: true — Obsidian-convention line breaks. The corpus (daily notes,
 // timelogs, BBS posts) is authored line-per-entry with single newlines;
 // CommonMark's fold-into-paragraph turns a timelog into an unreadable
 // run-on (2026-07-12 screenshot). Newline = <br>, like Obsidian renders it.
 const md = new Marked({ gfm: true, breaks: true });
 md.use({
-  extensions: [wikilinkExtension, pillExtension],
+  extensions: [wikilinkExtension, pillExtension, timelogExtension],
   // BlockDown (RFC 2026-04-27): "2-space indent = child-block, NOT
   // code-fence trigger". CommonMark's indented-code rule turns indented
   // note hierarchy into <pre> garbage — fenced code only in the reader.

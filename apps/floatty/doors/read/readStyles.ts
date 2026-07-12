@@ -181,4 +181,18 @@ export const READ_DOOR_CSS = `
   opacity: 0.9;
 }
 .door-read-doc .read-pill-k:not(:only-child)::after { content: '::'; opacity: 0.6; }
+.door-read-doc .read-tl-block { margin: 0.65em 0; }
+.door-read-doc .read-tl {
+  padding-left: 6.5em;
+  text-indent: -6.5em; /* hanging indent: wraps align under the text */
+  margin: 0.18em 0;
+}
+.door-read-doc .read-tl-time {
+  color: var(--color-ansi-cyan, #7dcfff);
+  font-variant-numeric: tabular-nums;
+}
+.door-read-doc .read-tl-proj {
+  color: var(--door-muted, rgba(150,155,165,0.9));
+  font-size: 0.9em;
+}
 `;
