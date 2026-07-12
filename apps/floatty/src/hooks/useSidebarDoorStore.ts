@@ -21,6 +21,8 @@ const BUILTIN: SidebarDoorInfo[] = [
   // FLO-502: Pin shelf — renders a stack of Outliners zoomed at whatever
   // block each child of the `pinned::` root block references via [[...]].
   { id: 'pins', label: 'pins' },
+  // FLO-799: Recent agent-written .md/.txt files, mined from session JSONL.
+  { id: 'files', label: 'files' },
 ];
 
 /** Set of builtin door ids — single source of truth shared with SidebarDoorContainer. */

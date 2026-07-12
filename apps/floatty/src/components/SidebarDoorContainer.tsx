@@ -11,6 +11,7 @@ import { Show, For, createMemo, onMount, onCleanup, ErrorBoundary } from 'solid-
 import { Dynamic } from 'solid-js/web';
 import { ContextSidebar } from './ContextSidebar';
 import { PinShelfView } from './PinShelfView';
+import { RecentFilesSidebar } from './RecentFilesSidebar';
 import { BUILTIN_DOOR_IDS, createSidebarDoorStore } from '../hooks/useSidebarDoorStore';
 import { doorRegistry } from '../lib/handlers/doorRegistry';
 import { getServerAccess } from './views/DoorHost';
@@ -96,6 +97,13 @@ export function SidebarDoorContainer(props: SidebarDoorContainerProps) {
         {/* Built-in: ctx sidebar */}
         <Show when={store.activeDoorId() === 'ctx'}>
           <ContextSidebar visible={props.visible} />
+        </Show>
+
+        {/* Built-in: FLO-799 recent agent-written files. Unlike the pin shelf
+         * this holds no per-pane state worth preserving across tab switches —
+         * it re-fetches on mount — so `<Show>` (which unmounts) is correct. */}
+        <Show when={store.activeDoorId() === 'files'}>
+          <RecentFilesSidebar visible={props.visible} />
         </Show>
 
         {/* Built-in: FLO-502 pin shelf. Kept MOUNTED across tab switches so
