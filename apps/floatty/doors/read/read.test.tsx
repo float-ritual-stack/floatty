@@ -260,3 +260,35 @@ describe('single-newline line breaks', () => {
     expect(html).toContain('<br');
   });
 });
+
+// ─── qmd:// sources (2026-07-12) ───────────────────────────────────────
+import { isQmdSource, stripQmdPreamble } from './readDoc';
+
+describe('qmd sources', () => {
+  it('routes qmd:// URIs through qmd get, first token only (pasted hits carry trailing #docid)', () => {
+    expect(buildReadCommand('qmd://sysops-log/2026-04-27-rfc.md:2 #1973c2'))
+      .toBe("qmd get 'qmd://sysops-log/2026-04-27-rfc.md:2'");
+  });
+
+  it('routes bare #docids through qmd get', () => {
+    expect(buildReadCommand('#1973c2')).toBe("qmd get '#1973c2'");
+  });
+
+  it('does not treat markdown-heading-ish args as docids', () => {
+    expect(buildReadCommand('#notes')).toBe("cat -- '#notes'");
+    expect(isQmdSource('/tmp/a.md')).toBe(false);
+  });
+
+  it('strips the qmd Folder Context preamble so frontmatter lands at position 0', () => {
+    const raw = 'Folder Context: memory stuff\n\nOperational log: things\n---\n\n---\ntitle: RFC\n---\n# Body\n';
+    const stripped = stripQmdPreamble(raw);
+    expect(stripped.startsWith('---\ntitle: RFC')).toBe(true);
+    const { front, body } = splitFrontmatter(stripped);
+    expect(front).toEqual([['title', 'RFC']]);
+    expect(body).toContain('# Body');
+  });
+
+  it('leaves non-qmd output untouched', () => {
+    expect(stripQmdPreamble('# Regular doc\n')).toBe('# Regular doc\n');
+  });
+});

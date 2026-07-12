@@ -62,12 +62,42 @@ export function shellQuotePath(path: string): string {
   return singleQuote(path);
 }
 
+/** True when the argument addresses QMD (qmd:// URI or #docid). */
+export function isQmdSource(path: string): boolean {
+  return path.startsWith('qmd://') || /^#[0-9a-f]{6,}$/i.test(path);
+}
+
 /**
  * Build the read command. `--` stops option parsing so a path beginning
  * with `-` is treated as a file, not a flag.
+ *
+ * qmd:// URIs and #docids route through `qmd get` instead of cat — the
+ * corpus is addressable the same way the filesystem is (2026-07-12:
+ * "read:: qmd://sysops-log/….md:2" is literally a thing Evan just did
+ * via sh:: qmd get). For qmd:// only the first whitespace token is used:
+ * pasted qmd search hits carry a trailing " #docid" annotation.
  */
 export function buildReadCommand(path: string): string {
+  if (path.startsWith('qmd://')) {
+    const uri = path.split(/\s+/, 1)[0];
+    return `qmd get ${singleQuote(uri)}`;
+  }
+  if (/^#[0-9a-f]{6,}$/i.test(path)) {
+    return `qmd get ${singleQuote(path)}`;
+  }
   return `cat -- ${shellQuotePath(path)}`;
+}
+
+/**
+ * Strip `qmd get`'s "Folder Context:" preamble (context lines ending at the
+ * first standalone ---) so the document's own frontmatter lands at position
+ * 0 where splitFrontmatter can lift it.
+ */
+export function stripQmdPreamble(raw: string): string {
+  if (!raw.startsWith('Folder Context:')) return raw;
+  const end = raw.indexOf('\n---\n');
+  if (end === -1) return raw;
+  return raw.slice(end + 5).replace(/^\s+/, '');
 }
 
 // ═══════════════════════════════════════════════════════════════

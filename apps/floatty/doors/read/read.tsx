@@ -26,9 +26,11 @@ import type { Component } from 'solid-js';
 import { exec } from '@floatty/stdlib';
 import {
   buildReadCommand,
+  isQmdSource,
   parseReadPath,
   renderMarkdownDoc,
   splitFrontmatter,
+  stripQmdPreamble,
   wikilinkTargetFromEvent,
   type ReadData,
 } from './readDoc';
@@ -156,7 +158,8 @@ export const door = {
     }
 
     try {
-      const raw = await exec(buildReadCommand(path));
+      let raw = await exec(buildReadCommand(path));
+      if (raw && isQmdSource(path)) raw = stripQmdPreamble(raw);
       if (!raw) {
         return { data: { path, raw: '' }, error: `Empty or unreadable: ${path}` };
       }
