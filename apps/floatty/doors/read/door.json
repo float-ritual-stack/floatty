@@ -1,0 +1,6 @@
+{
+  "id": "read",
+  "name": "Read",
+  "prefixes": ["read::"],
+  "version": "0.1.0"
+}
