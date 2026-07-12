@@ -21,16 +21,18 @@
  *     apps/floatty/doors/read/read.tsx ~/.floatty-dev/doors/read/index.js
  */
 
-import { Show, createSignal, createMemo } from 'solid-js';
+import { For, Show, createSignal, createMemo } from 'solid-js';
 import type { Component } from 'solid-js';
 import { exec } from '@floatty/stdlib';
 import {
   buildReadCommand,
   parseReadPath,
   renderMarkdownDoc,
+  splitFrontmatter,
   wikilinkTargetFromEvent,
   type ReadData,
 } from './readDoc';
+import { READ_DOOR_CSS } from './readStyles';
 
 // ═══════════════════════════════════════════════════════════════
 // DOOR API SHAPES (doors declare their own — see timestamp.tsx)
@@ -77,7 +79,10 @@ export function ReadView(props: DoorViewProps<ReadData>) {
       ? d
       : { path: typeof d?.path === 'string' ? d.path : '', raw: '' };
   });
-  const html = createMemo(() => renderMarkdownDoc(data().raw));
+  // Frontmatter renders as a compact metadata strip, never as body prose —
+  // marked would mash the YAML into giant paragraphs (live-test finding).
+  const doc = createMemo(() => splitFrontmatter(data().raw));
+  const html = createMemo(() => renderMarkdownDoc(doc().body));
 
   // Wikilink click → propose `navigate` to the host. The host resolves the
   // target pane through the pane-link chain (handleChirpNavigate) — the door
@@ -92,6 +97,9 @@ export function ReadView(props: DoorViewProps<ReadData>) {
 
   return (
     <div class="door-read">
+      {/* Styles travel WITH the door bundle — doors are drop-in plugins and
+          must render correctly on app builds that predate them. */}
+      <style>{READ_DOOR_CSS}</style>
       <div class="door-read-toolbar">
         <span class="door-read-path" title={data().path}>{data().path || 'read:: (re-run to load)'}</span>
         <button
@@ -108,6 +116,20 @@ export function ReadView(props: DoorViewProps<ReadData>) {
         when={!showSource()}
         fallback={<pre class="door-read-raw">{data().raw}</pre>}
       >
+        <Show when={doc().front}>
+          {(front) => (
+            <div class="door-read-front">
+              <For each={front()}>
+                {([k, v]) => (
+                  <span class="fm-pair">
+                    <span class="fm-k">{k}</span>
+                    <span class="fm-v">{v}</span>
+                  </span>
+                )}
+              </For>
+            </div>
+          )}
+        </Show>
         {/* innerHTML is sanitized by DOMPurify inside renderMarkdownDoc(). */}
         <div class="door-read-doc" onClick={handleClick} innerHTML={html()} />
       </Show>

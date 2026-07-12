@@ -128,6 +128,27 @@ const md = new Marked({ gfm: true });
 md.use({ extensions: [wikilinkExtension] });
 
 /**
+ * Split leading YAML frontmatter from a document (display-only — no YAML
+ * parsing beyond `key: value` lines; nested values render as their raw text).
+ * marked has no frontmatter concept and mashes the block into body
+ * paragraphs (2026-07-12 live-test screenshot), so we lift it out and let
+ * the view render a compact metadata strip instead.
+ */
+export function splitFrontmatter(raw: string): {
+  front: Array<[string, string]> | null;
+  body: string;
+} {
+  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!m) return { front: null, body: raw };
+  const pairs: Array<[string, string]> = [];
+  for (const line of m[1].split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i > 0) pairs.push([line.slice(0, i).trim(), line.slice(i + 1).trim()]);
+  }
+  return { front: pairs.length ? pairs : null, body: raw.slice(m[0].length) };
+}
+
+/**
  * Render markdown to sanitized HTML.
  *
  * DOMPurify is mandatory — this HTML is assigned via innerHTML and the source

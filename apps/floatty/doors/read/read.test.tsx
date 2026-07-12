@@ -16,6 +16,7 @@ import {
   parseReadPath,
   renderMarkdownDoc,
   shellQuotePath,
+  splitFrontmatter,
   wikilinkTargetFromEvent,
   WIKILINK_ATTR,
 } from './readDoc';
@@ -217,5 +218,37 @@ describe('stale/null output data', () => {
     const props = { ...viewProps(''), data: { someOldField: 1 } as never };
     const { container } = render(() => <ReadView {...props} />);
     expect(container.querySelector('.door-read-doc')).not.toBeNull();
+  });
+});
+
+// ─── frontmatter strip (2026-07-12 live-test finding) ─────────────────
+describe('splitFrontmatter', () => {
+  it('lifts leading YAML frontmatter out of the body', () => {
+    const raw = '---\ncreated: 2026-07-10 @ 09:20 PM\ntags: [a, b]\n---\n# Title\nbody\n';
+    const { front, body } = splitFrontmatter(raw);
+    expect(front).toEqual([['created', '2026-07-10 @ 09:20 PM'], ['tags', '[a, b]']]);
+    expect(body).toBe('# Title\nbody\n');
+  });
+
+  it('returns the document untouched when there is no frontmatter', () => {
+    const { front, body } = splitFrontmatter('# Just a doc\n');
+    expect(front).toBeNull();
+    expect(body).toBe('# Just a doc\n');
+  });
+
+  it('does not treat a mid-document --- (hr) as frontmatter', () => {
+    const raw = 'intro\n\n---\n\nafter the rule\n';
+    const { front, body } = splitFrontmatter(raw);
+    expect(front).toBeNull();
+    expect(body).toBe(raw);
+  });
+
+  it('renders frontmatter as a metadata strip, not body prose', () => {
+    const raw = '---\nproject: rangle/rexall\n---\n# Doc\n';
+    const props = { ...viewProps(raw) };
+    const { container } = render(() => <ReadView {...props} />);
+    expect(container.querySelector('.door-read-front')).not.toBeNull();
+    expect(container.querySelector('.door-read-front')!.textContent).toContain('rangle/rexall');
+    expect(container.querySelector('.door-read-doc')!.textContent).not.toContain('project:');
   });
 });
