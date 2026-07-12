@@ -67,7 +67,17 @@ interface DoorResult<T> {
 
 export function ReadView(props: DoorViewProps<ReadData>) {
   const [showSource, setShowSource] = createSignal(false);
-  const html = createMemo(() => renderMarkdownDoc(props.data.raw));
+  // Stale-output guard: a block previously executed by a different door (or
+  // an older shape of this one) can carry output.data that is null or
+  // missing fields. Never crash on render — degrade to an empty document;
+  // re-executing the block writes fresh, correctly-shaped output.
+  const data = createMemo<ReadData>(() => {
+    const d = props.data as ReadData | null | undefined;
+    return d && typeof d.raw === 'string'
+      ? d
+      : { path: typeof d?.path === 'string' ? d.path : '', raw: '' };
+  });
+  const html = createMemo(() => renderMarkdownDoc(data().raw));
 
   // Wikilink click → propose `navigate` to the host. The host resolves the
   // target pane through the pane-link chain (handleChirpNavigate) — the door
@@ -83,7 +93,7 @@ export function ReadView(props: DoorViewProps<ReadData>) {
   return (
     <div class="door-read">
       <div class="door-read-toolbar">
-        <span class="door-read-path" title={props.data.path}>{props.data.path}</span>
+        <span class="door-read-path" title={data().path}>{data().path || 'read:: (re-run to load)'}</span>
         <button
           class="door-read-toggle"
           onClick={(e) => { e.stopPropagation(); setShowSource((v) => !v); }}
@@ -96,7 +106,7 @@ export function ReadView(props: DoorViewProps<ReadData>) {
       </div>
       <Show
         when={!showSource()}
-        fallback={<pre class="door-read-raw">{props.data.raw}</pre>}
+        fallback={<pre class="door-read-raw">{data().raw}</pre>}
       >
         {/* innerHTML is sanitized by DOMPurify inside renderMarkdownDoc(). */}
         <div class="door-read-doc" onClick={handleClick} innerHTML={html()} />

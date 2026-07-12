@@ -201,3 +201,21 @@ describe('ReadView', () => {
     expect(onNavigate).not.toHaveBeenCalled();
   });
 });
+
+// ─── stale-output guard (2026-07-12 live-test finding) ────────────────
+// A block executed by a prior door (the retired `reader` prototype) carries
+// output.data of a foreign shape — or null. The view must render, not crash.
+describe('stale/null output data', () => {
+  it('renders without crashing when data is null', () => {
+    const props = { ...viewProps(''), data: null as never };
+    const { container } = render(() => <ReadView {...props} />);
+    expect(container.querySelector('.door-read')).not.toBeNull();
+    expect(container.textContent).toContain('re-run to load');
+  });
+
+  it('renders without crashing when data has a foreign shape', () => {
+    const props = { ...viewProps(''), data: { someOldField: 1 } as never };
+    const { container } = render(() => <ReadView {...props} />);
+    expect(container.querySelector('.door-read-doc')).not.toBeNull();
+  });
+});
