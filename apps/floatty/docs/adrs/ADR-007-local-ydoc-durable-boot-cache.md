@@ -33,12 +33,21 @@ them.
    bespoke snapshot `idbBackup`; stop `clearBackup()`-on-sync
    (`useSyncedYDoc.ts:976`). The durable local doc doubles as the offline
    outbox.
-2. **One `reconcile()` primitive.** The push-before-pull logic currently
-   exists in triplicate inside `useSyncedYDoc.ts` — at `:659`, `:1174`, and
-   `:1864` (the design doc's `:378` citation is wrong; that line is
-   orphan-sweep code — corrected here, reviewer catch 2026-07-12). Phase 0
-   extracts ONE primitive and seams transport/persistence/doc apart before
-   any behavior change.
+2. **One `reconcile()` primitive.** Phase 0 extracts ONE primitive before any
+   behavior change, so offline becomes a call site rather than a fourth
+   variant.
+
+   **Correction (Phase 0 implementation, 2026-07-12): it was a duplicate, not
+   a triplicate.** Only two sites are push-before-pull state-vector
+   reconciles — `triggerFullResync` (diff source: the live doc) and the
+   `loadInitialState` backup path (diff source: the IDB snapshot, because at
+   boot the live doc is still empty). The third site, reconnect in
+   `connectWebSocket` onopen, is **not a state-vector reconcile at all**: its
+   "push" is a flush of the pending-update *queue* and its "pull" is a
+   seq-incremental catch-up. Forcing it through the primitive would re-push a
+   diff it already sent. It shares only the pull step and now takes exactly
+   that (`pullServerState`). Line citations in earlier drafts (`:378`,
+   `:1174`, `:1864`) were all stale; see the Phase 0 commit for the real ones.
 3. **New endpoint `POST /api/v1/state-diff`** `{stateVector}` →
    `{update, latestSeq}` — state-vector pull that survives compaction
    (unlike `/updates?after=N`). `latestSeq` MUST be captured under the same
@@ -57,7 +66,11 @@ them.
 ## Phasing
 
 Phase 0 foundation (no user-visible change): reconcile() extraction + seams
-+ Rust `{remoteConfigured, reachable}` contract + `/state-diff`.
++ Rust `{remoteConfigured, reachable}` contract + `/state-diff`. **Landed
+2026-07-12** — `reconcile()` / `pullServerState()` / `isLocalCacheRedundant()`
+in `useSyncedYDoc.ts`, `POST /api/v1/state-diff`, `resolve_server` +
+`get_server_status`. The transport/persistence seam (design §B) was NOT part
+of it and remains open.
 Phase 1 fast boot: y-indexeddb + durable IDB + boot-from-cache + diff-on-boot.
 Phase 2 offline: offline mode + reconnect loop + status states.
 
