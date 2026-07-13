@@ -35,8 +35,13 @@ pub struct ServerInfo {
 /// - `remote_configured: true, reachable: false` — `remote_server_url` IS set
 ///   (FLO-762 thin-client mode) and float-box is simply down. The outline still
 ///   exists; the app is offline, not broken.
+/// - `remote_configured: true, reachable: true, auth_failed: true` — the remote
+///   answered its health probe but the local API key is missing or was
+///   rejected. Misconfiguration, NOT an outage: waiting won't fix it, and a
+///   cache-boot on top of a live-but-unauthorized remote would fork the
+///   outline.
 ///
-/// Only the second is recoverable by waiting, and only the second can legally
+/// Only remote-down is recoverable by waiting, and only remote-down can legally
 /// boot from the local cache. Phase 2's offline mode branches on exactly this
 /// distinction, so the distinction has to survive the IPC boundary.
 ///
@@ -54,6 +59,9 @@ pub struct ServerStatus {
     pub remote_configured: bool,
     /// The server backing this app answered its startup probe.
     pub reachable: bool,
+    /// The remote answered but authentication failed (no local key, or the
+    /// key was rejected). Config problem — never the recoverable-offline case.
+    pub auth_failed: bool,
 }
 
 /// Aggregator configuration (stored/loaded from ~/.floatty/config.toml)

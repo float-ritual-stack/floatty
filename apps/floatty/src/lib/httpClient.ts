@@ -34,6 +34,9 @@ export interface ServerInfo {
  *   waiting; the only state in which booting from the local cache is legal.
  * - `{ remoteConfigured: false, reachable: false }` — no remote configured and
  *   the local subprocess failed to spawn. Genuinely broken.
+ * - `{ remoteConfigured: true, reachable: true, authFailed: true }` — the
+ *   remote answered but the local API key is missing or rejected.
+ *   Misconfiguration, not an outage: never the cache-boot case.
  *
  * Phase 0 does not branch on this — it only makes the thrown error say something
  * true. Phase 2's offline mode is what it exists for.
@@ -41,6 +44,7 @@ export interface ServerInfo {
 export interface ServerStatus {
   remoteConfigured: boolean;
   reachable: boolean;
+  authFailed: boolean;
 }
 
 /** State hash response for sync health check */
@@ -369,7 +373,7 @@ export async function getServerStatus(): Promise<ServerStatus> {
     return await invoke('get_server_status', {});
   } catch (err) {
     logger.warn(`Could not read server status: ${err}`);
-    return { remoteConfigured: false, reachable: false };
+    return { remoteConfigured: false, reachable: false, authFailed: false };
   }
 }
 
@@ -380,6 +384,9 @@ export async function getServerStatus(): Promise<ServerStatus> {
 async function describeConnectionFailure(cause: unknown): Promise<string> {
   const status = await getServerStatus();
   const detail = cause ? `: ${String(cause)}` : '';
+  if (status.remoteConfigured && status.authFailed) {
+    return `Remote floatty-server rejected this app's API key — local [server].api_key must match the remote's${detail}`;
+  }
   if (status.remoteConfigured && !status.reachable) {
     return `Remote floatty-server (remote_server_url) is unreachable${detail}`;
   }

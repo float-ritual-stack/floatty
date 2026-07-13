@@ -378,10 +378,10 @@ pub fn spawn_server(paths: &DataPaths, port: u16) -> Option<ServerState> {
 /// has to tell remote-configured-but-down (→ offline mode, boot from cache)
 /// apart from misconfiguration (→ genuinely broken, don't pretend to be offline).
 ///
-/// The variants are not currently branched on individually — they carry the
-/// reason into the logs and give Phase 2 a typed surface to widen into. The
-/// distinction that IS load-bearing today is `Err(_)` vs `Ok(_)`, surfaced to the
-/// frontend as `ServerStatus { remote_configured: true, reachable: false }`.
+/// `resolve_server` branches on the variants: `Unreachable` surfaces as
+/// `reachable: false` (the recoverable-offline case), while `NoApiKey` /
+/// `AuthRejected` surface as `reachable: true, auth_failed: true` — the remote
+/// answered, the config is wrong, and waiting will not fix it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteConnectError {
     /// Health probe failed after retries — remote down, tailnet blip.
@@ -517,15 +517,29 @@ pub fn resolve_server(
                 ServerStatus {
                     remote_configured: true,
                     reachable: true,
+                    auth_failed: false,
+                },
+            ),
+            // By the time these fire the health probe has PASSED — the remote
+            // is up, our key is missing/rejected. Reporting reachable: false
+            // here would let a cache-boot branch treat misconfiguration as the
+            // recoverable-offline case.
+            Err(RemoteConnectError::NoApiKey | RemoteConnectError::AuthRejected) => (
+                None,
+                ServerStatus {
+                    remote_configured: true,
+                    reachable: true,
+                    auth_failed: true,
                 },
             ),
             // The reason is already in the logs (see RemoteConnectError). What
             // crosses the IPC boundary is the recoverable/not distinction.
-            Err(_) => (
+            Err(RemoteConnectError::Unreachable) => (
                 None,
                 ServerStatus {
                     remote_configured: true,
                     reachable: false,
+                    auth_failed: false,
                 },
             ),
         },
@@ -537,6 +551,7 @@ pub fn resolve_server(
                 ServerStatus {
                     remote_configured: false,
                     reachable,
+                    auth_failed: false,
                 },
             )
         }
@@ -902,9 +917,36 @@ mod tests {
         );
         assert!(down.1.remote_configured);
         assert!(!down.1.reachable);
+        assert!(!down.1.auth_failed);
 
         let no_remote = resolve_server(None, &paths, |_| None);
         assert!(!no_remote.1.remote_configured);
         assert!(!no_remote.1.reachable);
+        assert!(!no_remote.1.auth_failed);
+    }
+
+    #[test]
+    fn server_status_reports_auth_failure_as_reachable_not_offline() {
+        // A rejected key is misconfiguration, not an outage: the health probe
+        // passed, so `reachable` stays true and `auth_failed` carries the
+        // difference. Collapsing this into reachable:false would let a
+        // cache-boot branch treat a live-but-unauthorized remote as the
+        // recoverable offline case.
+        let url = spawn_mock_server("k", "0.0.0");
+
+        // NB: the mock authorizes any header CONTAINING valid_key, so the
+        // wrong key must not have "k" as a substring.
+        let (_dir, wrong_key) = temp_paths_with_key(Some("wrong"));
+        let rejected = resolve_server(Some(&url), &wrong_key, |_| None);
+        assert!(rejected.0.is_none(), "auth failure must NOT spawn locally");
+        assert!(rejected.1.remote_configured);
+        assert!(rejected.1.reachable, "the remote answered — not an outage");
+        assert!(rejected.1.auth_failed);
+
+        let (_dir, no_key) = temp_paths_with_key(None);
+        let missing = resolve_server(Some(&url), &no_key, |_| None);
+        assert!(missing.0.is_none());
+        assert!(missing.1.reachable);
+        assert!(missing.1.auth_failed);
     }
 }

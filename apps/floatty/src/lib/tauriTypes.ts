@@ -194,7 +194,7 @@ interface TauriCommands {
    */
   get_server_status: {
     args: Record<string, never>;
-    returns: { remoteConfigured: boolean; reachable: boolean };
+    returns: { remoteConfigured: boolean; reachable: boolean; authFailed: boolean };
   };
 
   // ─────────────────────────────────────────────────────────────
