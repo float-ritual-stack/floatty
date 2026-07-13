@@ -191,11 +191,15 @@ floatty_curl() {
   local attempt=1 http_code curl_rc
   while (( attempt <= max_attempts )); do
     curl_rc=0
-    http_code=$(curl -sS -o "$tmpbody" -w "%{http_code}" \
+    # The helper's -w MUST come after "$@": curl is last-wins on -w, and a
+    # caller passing its own -w (e.g. -w "http_code=%{http_code}\n") used to
+    # clobber ours — $http_code became "http_code=200", the 2xx case didn't
+    # match, and a SUCCESSFUL request burned all retries before "failing".
+    http_code=$(curl -sS -o "$tmpbody" \
       "${auth_args[@]}" \
       -H "Content-Type: application/json" \
       -H "ngrok-skip-browser-warning: 1" \
-      "$@" 2>/dev/null) || curl_rc=$?
+      "$@" -w "%{http_code}" 2>/dev/null) || curl_rc=$?
 
     # Success path: 2xx/3xx/4xx return the body and exit. 4xx is a client
     # error (bad request, 404, etc.) — retrying won't fix it, surface it.
